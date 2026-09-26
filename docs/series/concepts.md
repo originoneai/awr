@@ -1,6 +1,6 @@
 # Core concepts
 
-AWR (Agent Work Runtime) keeps a project's work facts outside any single agent
+AWR keeps a project's work facts outside any single agent
 conversation, so work survives context loss, agent switches and restarts. This
 article explains the five ideas behind that model; the commands in the
 [Quickstart](quickstart.md) and the routines in the
