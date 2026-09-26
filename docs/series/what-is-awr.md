@@ -1,6 +1,6 @@
 # What is AWR
 
-AWR (Agent Work Runtime) is an open-source project delivery platform for people
+AWR is an open-source project delivery platform for people
 and AI. It connects **goals, workstreams, dependencies, context and acceptance**
 into one project delivery workflow, so that a project can move from an agreed
 goal to a verified delivery — even when the work is split across multiple
