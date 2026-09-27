@@ -4,9 +4,9 @@
 //! owner connection.
 
 use awr_team_pg::{
-    AccessPlan, AgentProvisionPlan, AgentRenewPlan, ExecutionAttributionPlan, OperatorAccess,
-    OperatorAgent, OperatorBackup, OperatorExecutionAttribution, OperatorHistory,
-    OperatorQuarantine, OperatorRecovery, PgError,
+    AccessPlan, AgentAuthorizationIssuePlan, AgentProvisionPlan, AgentRenewPlan,
+    ExecutionAttributionPlan, OperatorAccess, OperatorAgent, OperatorBackup,
+    OperatorExecutionAttribution, OperatorHistory, OperatorQuarantine, OperatorRecovery, PgError,
 };
 use clap::Subcommand;
 use serde::Deserialize;
@@ -58,6 +58,31 @@ pub enum AccessCommand {
     },
     /// Recover the redacted receipt for an initial Agent provisioning request.
     AgentOutcome {
+        #[arg(long)]
+        tenant_id: String,
+        #[arg(long)]
+        project_id: String,
+        #[arg(long)]
+        request_id: String,
+    },
+    /// Preview a finite Agent authorization for an additional independent scope.
+    AgentAuthorizePreview {
+        #[arg(long)]
+        input: PathBuf,
+    },
+    /// Issue the reviewed additional authorization without changing access.
+    AgentAuthorizeApply {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        expected_state: String,
+        #[arg(long)]
+        expected_plan: String,
+    },
+    /// Recover an additional Agent authorization result before an exact retry.
+    AgentAuthorizeOutcome {
         #[arg(long)]
         tenant_id: String,
         #[arg(long)]
@@ -439,6 +464,20 @@ fn agent_renew_plan(path: &PathBuf) -> Result<AgentRenewPlan, Error> {
     serde_json::from_slice(&bytes).map_err(|_| ("InvalidInput", "invalid Agent renewal plan JSON"))
 }
 
+fn agent_authorization_issue_plan(path: &PathBuf) -> Result<AgentAuthorizationIssuePlan, Error> {
+    let file = std::fs::File::open(path)
+        .map_err(|_| ("InvalidInput", "cannot open Agent authorization plan"))?;
+    let mut bytes = Vec::new();
+    file.take(65537)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ("InvalidInput", "cannot read Agent authorization plan"))?;
+    if bytes.len() > 65536 {
+        return Err(("InvalidInput", "Agent authorization plan exceeds 64 KiB"));
+    }
+    serde_json::from_slice(&bytes)
+        .map_err(|_| ("InvalidInput", "invalid Agent authorization plan JSON"))
+}
+
 fn attribution_plan(path: &PathBuf) -> Result<ExecutionAttributionPlan, Error> {
     let file =
         std::fs::File::open(path).map_err(|_| ("InvalidInput", "cannot open attribution plan"))?;
@@ -550,6 +589,33 @@ pub async fn run(command: AccessCommand) -> Result<Value, Error> {
             project_id,
             request_id,
         } => OperatorAgent::outcome(&mut client, &tenant_id, &project_id, &request_id).await,
+        AccessCommand::AgentAuthorizePreview { input } => {
+            OperatorAgent::authorize_preview(&mut client, &agent_authorization_issue_plan(&input)?)
+                .await
+        }
+        AccessCommand::AgentAuthorizeApply {
+            input,
+            request_id,
+            expected_state,
+            expected_plan,
+        } => {
+            OperatorAgent::authorize_apply(
+                &mut client,
+                &agent_authorization_issue_plan(&input)?,
+                &request_id,
+                &expected_state,
+                &expected_plan,
+            )
+            .await
+        }
+        AccessCommand::AgentAuthorizeOutcome {
+            tenant_id,
+            project_id,
+            request_id,
+        } => {
+            OperatorAgent::authorize_outcome(&mut client, &tenant_id, &project_id, &request_id)
+                .await
+        }
         AccessCommand::AgentRenewPreview { input } => {
             OperatorAgent::renew_preview(&mut client, &agent_renew_plan(&input)?).await
         }
@@ -962,7 +1028,12 @@ mod agent_cli_tests {
 
     #[test]
     fn owner_agent_commands_require_reviewed_input_and_apply_digests() {
-        for op in ["agent-preview", "agent-inspect", "agent-renew-preview"] {
+        for op in [
+            "agent-preview",
+            "agent-inspect",
+            "agent-authorize-preview",
+            "agent-renew-preview",
+        ] {
             assert!(
                 crate::Args::try_parse_from(["awr-server", "access", op, "--input", "plan.json"])
                     .is_ok()
@@ -992,6 +1063,46 @@ mod agent_cli_tests {
                 "state",
                 "--expected-plan",
                 "plan"
+            ])
+            .is_ok()
+        );
+        assert!(
+            crate::Args::try_parse_from([
+                "awr-server",
+                "access",
+                "agent-authorize-apply",
+                "--input",
+                "authorize.json"
+            ])
+            .is_err()
+        );
+        assert!(
+            crate::Args::try_parse_from([
+                "awr-server",
+                "access",
+                "agent-authorize-apply",
+                "--input",
+                "authorize.json",
+                "--request-id",
+                "authorize",
+                "--expected-state",
+                "state",
+                "--expected-plan",
+                "plan"
+            ])
+            .is_ok()
+        );
+        assert!(
+            crate::Args::try_parse_from([
+                "awr-server",
+                "access",
+                "agent-authorize-outcome",
+                "--tenant-id",
+                "tenant",
+                "--project-id",
+                "project",
+                "--request-id",
+                "authorize"
             ])
             .is_ok()
         );

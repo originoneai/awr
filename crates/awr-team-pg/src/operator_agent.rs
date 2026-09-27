@@ -12,6 +12,7 @@ use tokio_postgres::{Client, Transaction};
 
 const PROTOCOL: &str = "awr-operator-agent-v1";
 const RENEW_PROTOCOL: &str = "awr-operator-agent-renew-v1";
+const AUTHORIZE_PROTOCOL: &str = "awr-operator-agent-authorize-v1";
 /// Initial plans must be reviewed/applied within 24 hours of their issue time.
 const MAX_ISSUE_AGE_MS: i64 = 86_400_000;
 
@@ -31,6 +32,15 @@ pub struct AgentRenewPlan {
     pub tenant_id: String,
     pub project_id: String,
     pub previous_authorization_id: String,
+    pub authorization: AgentAuthorization,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentAuthorizationIssuePlan {
+    pub protocol_version: u32,
+    pub tenant_id: String,
+    pub project_id: String,
     pub authorization: AgentAuthorization,
 }
 
@@ -121,6 +131,25 @@ impl AgentRenewPlan {
     }
 }
 
+impl AgentAuthorizationIssuePlan {
+    fn provision_plan(&self) -> AgentProvisionPlan {
+        AgentProvisionPlan {
+            protocol_version: self.protocol_version,
+            tenant_id: self.tenant_id.clone(),
+            project_id: self.project_id.clone(),
+            authorization: self.authorization.clone(),
+        }
+    }
+
+    fn validate(&self) -> PgResult<()> {
+        self.provision_plan().validate()?;
+        if self.authorization.expires_at_ms.is_none() {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+}
+
 pub struct OperatorAgent;
 impl OperatorAgent {
     /// Inspect the current binding against the retained initial plan. A receipt
@@ -187,6 +216,165 @@ impl OperatorAgent {
         };
         tx.commit().await?;
         Ok(result)
+    }
+
+    /// Preview an additional finite Agent authorization for a distinct scope.
+    /// Existing identity, binding, access, and authorization rows are immutable.
+    pub async fn authorize_preview(
+        client: &mut Client,
+        plan: &AgentAuthorizationIssuePlan,
+    ) -> PgResult<Value> {
+        plan.validate()?;
+        crate::check_schema(client).await?;
+        let tx = client
+            .build_transaction()
+            .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
+            .start()
+            .await?;
+        require_owner_project(&tx, &plan.tenant_id, &plan.project_id, false).await?;
+        let state = authorization_state(&tx, &plan.provision_plan()).await?;
+        validate_authorization_issue(plan, &state, clock(&tx).await?, false)?;
+        let result = json!({
+            "protocol": AUTHORIZE_PROTOCOL,
+            "applied": false,
+            "state_digest": hash(&state)?,
+            "plan_digest": hash(&json!(plan))?,
+            "current": state,
+            "desired": plan,
+            "binding_reused": true,
+            "historical_authorizations_rewritten": false,
+            "maximum_issue_age_ms": MAX_ISSUE_AGE_MS,
+            "execution_authorized": false,
+        });
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub async fn authorize_outcome(
+        client: &mut Client,
+        tenant: &str,
+        project: &str,
+        request: &str,
+    ) -> PgResult<Value> {
+        if ![tenant, project, request].iter().all(|s| identity(s)) {
+            return Err(invalid());
+        }
+        crate::check_schema(client).await?;
+        let tx = client.transaction().await?;
+        require_owner_project(&tx, tenant, project, false).await?;
+        let row=tx.query_opt("SELECT result_json FROM awr_team.access_changes WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",&[&tenant,&project,&request]).await?;
+        let result = if let Some(row) = row {
+            let receipt: Value = row.get(0);
+            if receipt["protocol"] != AUTHORIZE_PROTOCOL {
+                return Err(PgError::IdempotencyConflict);
+            }
+            json!({"outcome":"committed","receipt":receipt,"execution_authorized":false})
+        } else {
+            json!({"outcome":"unknown","execution_authorized":false})
+        };
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub async fn authorize_apply(
+        client: &mut Client,
+        plan: &AgentAuthorizationIssuePlan,
+        request: &str,
+        expected_state: &str,
+        expected_plan: &str,
+    ) -> PgResult<Value> {
+        plan.validate()?;
+        if !identity(request) || !digest(expected_state) || !digest(expected_plan) {
+            return Err(invalid());
+        }
+        crate::check_schema(client).await?;
+        let tx = client.transaction().await?;
+        let operator = require_owner_project(&tx, &plan.tenant_id, &plan.project_id, true).await?;
+        let intent = hash(
+            &json!({"protocol":AUTHORIZE_PROTOCOL,"plan":plan,"expected_state":expected_state,"expected_plan":expected_plan}),
+        )?;
+        if let Some(row)=tx.query_opt("SELECT request_hash,result_json FROM awr_team.access_changes WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",&[&plan.tenant_id,&plan.project_id,&request]).await?{
+            let receipt:Value=row.get(1);
+            if row.get::<_,String>(0)!=intent || receipt["protocol"]!=AUTHORIZE_PROTOCOL{return Err(PgError::IdempotencyConflict);}
+            tx.commit().await?;
+            return Ok(json!({"replayed":true,"receipt":receipt,"execution_authorized":false}));
+        }
+        let a = &plan.authorization;
+        let mut actors = vec![a.subject_id.as_str(), a.responsible_person_id.as_str()];
+        actors.sort();
+        actors.dedup();
+        for actor in actors {
+            tx.query_opt(
+                "SELECT id FROM awr_team.actors WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+                &[&plan.tenant_id, &actor],
+            )
+            .await?
+            .ok_or(PgError::Forbidden)?;
+        }
+        let provision = plan.provision_plan();
+        let before = authorization_state(&tx, &provision).await?;
+        if hash(&before)? != expected_state || hash(&json!(plan))? != expected_plan {
+            return Err(PgError::PreconditionsChanged);
+        }
+        validate_authorization_issue(plan, &before, clock(&tx).await?, false)?;
+        let authorization_request = format!("operator-agent-authorize:{}", hash(&json!(request))?);
+        let (_, issued) = crate::agent_authorization::issue_in_tx(
+            &tx,
+            &plan.tenant_id,
+            &plan.project_id,
+            &IssueAuthorizationRequest {
+                request_key: authorization_request,
+                authorization: a.clone(),
+            },
+        )
+        .await?;
+        if issued.replayed {
+            return Err(PgError::IdempotencyConflict);
+        }
+        let mut after = authorization_state(&tx, &provision).await?;
+        if validate_authorization_issue(plan, &after, clock(&tx).await?, true).is_err() {
+            return Err(PgError::PreconditionsChanged);
+        }
+        let revision:i64=tx.query_opt("UPDATE awr_team.projects SET project_revision=project_revision+1 WHERE tenant_id=$1 AND id=$2 AND project_revision<9223372036854775807 RETURNING project_revision",&[&plan.tenant_id,&plan.project_id]).await?.ok_or(PgError::PreconditionsChanged)?.get(0);
+        after["project_revision"] = json!(revision.to_string());
+        let binding = a.binding_id.as_deref().ok_or_else(invalid)?;
+        let receipt = json!({"protocol":AUTHORIZE_PROTOCOL,"request_id":request,"request_hash":intent,"operator_role":operator,
+            "tenant_id":plan.tenant_id,"project_id":plan.project_id,"actor_id":a.subject_id,"client_id":a.client_id,
+            "authorization_id":a.id,"authorization_request_key":issued.request_key,"binding_id":binding,
+            "person_id":a.responsible_person_id,"scope":a.scope,"actions":a.actions,
+            "before_digest":expected_state,"after_digest":hash(&after)?,"event_id":issued.event_id,
+            "plan_digest":expected_plan,"project_revision":revision.to_string(),"state_basis":"at_commit",
+            "execution_authorized":false,"binding_reused":true,"historical_authorizations_rewritten":false,
+            "historical_identities_rewritten":false,"human_approval":false,"team_independent_acceptance":false});
+        tx.execute("INSERT INTO awr_team.access_changes(tenant_id,project_id,request_id,request_hash,operator_role,result_json) VALUES($1,$2,$3,$4,$5,$6)",&[&plan.tenant_id,&plan.project_id,&request,&intent,&operator,&receipt]).await?;
+        let summary = json!({"plan_digest":expected_plan,"request_id":request,"authorization_id":a.id,
+            "binding_id":binding,"subject_actor_id":a.subject_id,"subject_client_id":a.client_id,
+            "responsible_person_id":a.responsible_person_id,"scope":a.scope,"actions":a.actions,
+            "operator_role":operator,"historical_authorizations_rewritten":false});
+        tx.execute("INSERT INTO awr_team.events(tenant_id,project_id,id,project_revision,event_index,event_type,actor_id,payload_json) VALUES($1,$2,$3,$4,0,'agent.authorization.authorized',$5,$6)",
+            &[&plan.tenant_id,&plan.project_id,&issued.event_id,&revision,&operator,&summary]).await?;
+        let audit = crate::OpsAuditWrite {
+            category: crate::OpsCategory::Access,
+            action: "agent.authorization.authorize".into(),
+            result: "committed",
+            person_id: None,
+            actor_id: operator.clone(),
+            client_id: "awr-server-owner-cli".into(),
+            target_kind: "access_plan".into(),
+            target_id: Some(a.id.clone()),
+            work_id: None,
+            change_id: None,
+            request_id: Some(request.into()),
+            membership_version: None,
+            authority_version: None,
+            policy_version: Some(awr_team::PERMISSION_POLICY_VERSION as i32),
+            source_version: None,
+            digest: Some(crate::digest_of(&summary)),
+            summary,
+        };
+        crate::record_in_tx(&tx, &plan.tenant_id, &plan.project_id, &audit).await?;
+        tx.commit().await?;
+        Ok(json!({"replayed":false,"receipt":receipt,"execution_authorized":false}))
     }
 
     /// Preview a finite-lived successor for an expired initial authorization.
@@ -457,6 +645,122 @@ impl OperatorAgent {
     }
 }
 
+fn current_task_stream<'a>(state: &'a Value, work_item_id: &str) -> Option<&'a str> {
+    let item = state["authorization_task_ownership"]
+        .as_array()?
+        .iter()
+        .find(|item| item["work_item_id"] == work_item_id)?;
+    let ownership = &item["ownership"];
+    if ownership["definition_state"] != "enabled"
+        || ownership["workstream_id"] != ownership["snapshot_workstream_id"]
+        || ownership["ownership_version"] != ownership["snapshot_ownership_version"]
+    {
+        return None;
+    }
+    ownership["workstream_id"].as_str()
+}
+
+fn authorization_scopes_overlap(
+    existing: &AuthorizationScope,
+    proposed: &AuthorizationScope,
+    state: &Value,
+) -> bool {
+    match (existing, proposed) {
+        (AuthorizationScope::Project { .. }, _) | (_, AuthorizationScope::Project { .. }) => true,
+        (
+            AuthorizationScope::Workstream {
+                workstream_id: existing,
+                ..
+            },
+            AuthorizationScope::Workstream {
+                workstream_id: proposed,
+                ..
+            },
+        ) => existing == proposed,
+        (
+            AuthorizationScope::Task {
+                work_item_id: existing,
+                ..
+            },
+            AuthorizationScope::Task {
+                work_item_id: proposed,
+                ..
+            },
+        ) => existing == proposed,
+        (
+            AuthorizationScope::Workstream { workstream_id, .. },
+            AuthorizationScope::Task { work_item_id, .. },
+        ) => current_task_stream(state, work_item_id) == Some(workstream_id),
+        (
+            AuthorizationScope::Task { work_item_id, .. },
+            AuthorizationScope::Workstream { workstream_id, .. },
+        ) => {
+            current_task_stream(state, work_item_id).is_none_or(|current| current == workstream_id)
+        }
+        (AuthorizationScope::TaskPool { .. }, _) | (_, AuthorizationScope::TaskPool { .. }) => true,
+    }
+}
+
+fn validate_authorization_issue(
+    p: &AgentAuthorizationIssuePlan,
+    state: &Value,
+    now: i64,
+    authorization_present: bool,
+) -> PgResult<()> {
+    let provision = p.provision_plan();
+    if state["access"]["membership"].is_null()
+        || access_reason(&provision, state, now).is_some()
+        || state["person"].is_null()
+    {
+        return Err(PgError::Forbidden);
+    }
+    let a = &p.authorization;
+    let bindings = state["bindings"].as_array().ok_or(PgError::Forbidden)?;
+    let active_bindings = bindings
+        .iter()
+        .filter(|binding| binding["status"] == "active")
+        .collect::<Vec<_>>();
+    if active_bindings.len() != 1
+        || active_bindings[0]["id"].as_str() != a.binding_id.as_deref()
+        || active_bindings[0]["person_id"] != a.responsible_person_id.as_str()
+        || active_bindings[0]["agent_id"] != a.subject_id
+        || !issue_time_valid(a.created_at_ms, now)
+        || !a.is_effective_at(now)
+    {
+        return Err(PgError::Forbidden);
+    }
+    let authorizations = state["authorizations"]
+        .as_array()
+        .ok_or(PgError::Forbidden)?;
+    let stored_authorization = authorizations.iter().find(|item| item["id"] == a.id);
+    if authorization_present {
+        let stored: AgentAuthorization = serde_json::from_value(
+            stored_authorization
+                .cloned()
+                .ok_or(PgError::PreconditionsChanged)?,
+        )
+        .map_err(|_| invalid())?;
+        if &stored != a || !stored.is_effective_at(now) {
+            return Err(PgError::PreconditionsChanged);
+        }
+    } else if stored_authorization.is_some() {
+        return Err(PgError::PreconditionsChanged);
+    }
+    for stored in authorizations {
+        let stored: AgentAuthorization =
+            serde_json::from_value(stored.clone()).map_err(|_| invalid())?;
+        if stored.id != a.id
+            && stored.subject_id == a.subject_id
+            && stored.client_id == a.client_id
+            && stored.is_effective_at(now)
+            && authorization_scopes_overlap(&stored.scope, &a.scope, state)
+        {
+            return Err(PgError::Forbidden);
+        }
+    }
+    Ok(())
+}
+
 fn predecessor<'a>(p: &AgentRenewPlan, s: &'a Value) -> PgResult<AgentAuthorization> {
     let stored = s["authorizations"]
         .as_array()
@@ -581,6 +885,17 @@ fn validate_renewal(
     Ok(())
 }
 
+async fn task_ownership_state(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    snapshot: Option<&str>,
+    work_item_id: &str,
+) -> PgResult<Option<Value>> {
+    Ok(tx.query_opt("SELECT o.workstream_id,o.ownership_version,s.workstream_id,s.ownership_version,c.contract_hash,c.definition_state FROM awr_team.workstream_ownership o JOIN awr_team.workstream_snapshot_ownership s ON s.tenant_id=o.tenant_id AND s.project_id=o.project_id AND s.work_id=o.work_id AND s.scope_id='main' JOIN awr_team.work_contracts c ON c.tenant_id=s.tenant_id AND c.project_id=s.project_id AND c.snapshot_id=s.snapshot_id AND c.scope_id=s.scope_id AND c.work_id=s.work_id WHERE o.tenant_id=$1 AND o.project_id=$2 AND o.work_id=$3 AND s.snapshot_id=$4 FOR SHARE OF o,s,c",&[&tenant,&project,&work_item_id,&snapshot]).await?
+        .map(|r|json!({"workstream_id":r.get::<_,String>(0),"ownership_version":r.get::<_,i64>(1),"snapshot_workstream_id":r.get::<_,String>(2),"snapshot_ownership_version":r.get::<_,i64>(3),"contract_hash":r.get::<_,String>(4),"definition_state":r.get::<_,String>(5)})))
+}
+
 async fn state(tx: &Transaction<'_>, p: &AgentProvisionPlan) -> PgResult<Value> {
     let a = &p.authorization;
     let access = snapshot(tx, &p.tenant_id, &p.project_id, &a.subject_id, &a.client_id).await?;
@@ -597,12 +912,60 @@ async fn state(tx: &Transaction<'_>, p: &AgentProvisionPlan) -> PgResult<Value> 
     let bindings=tx.query("SELECT id,person_id,agent_id,status FROM awr_team.person_agent_bindings WHERE tenant_id=$1 AND project_id=$2 AND (agent_id=$3 OR id=$4) ORDER BY id FOR SHARE",&[&p.tenant_id,&p.project_id,&a.subject_id,&a.binding_id]).await?.into_iter()
         .map(|r|json!({"id":r.get::<_,String>(0),"person_id":r.get::<_,String>(1),"agent_id":r.get::<_,String>(2),"status":r.get::<_,String>(3)})).collect::<Vec<_>>();
     let auths=tx.query("SELECT body_json FROM awr_team.agent_authorizations WHERE tenant_id=$1 AND project_id=$2 AND (id=$3 OR (subject_id=$4 AND client_id=$5)) ORDER BY id FOR SHARE",&[&p.tenant_id,&p.project_id,&a.id,&a.subject_id,&a.client_id]).await?.into_iter().map(|r|r.get::<_,Value>(0)).collect::<Vec<_>>();
-    let ownership=match &a.scope{
-        AuthorizationScope::Task{work_item_id,..}=>tx.query_opt("SELECT o.workstream_id,o.ownership_version,s.workstream_id,s.ownership_version,c.contract_hash,c.definition_state FROM awr_team.workstream_ownership o JOIN awr_team.workstream_snapshot_ownership s ON s.tenant_id=o.tenant_id AND s.project_id=o.project_id AND s.work_id=o.work_id AND s.scope_id='main' JOIN awr_team.work_contracts c ON c.tenant_id=s.tenant_id AND c.project_id=s.project_id AND c.snapshot_id=s.snapshot_id AND c.scope_id=s.scope_id AND c.work_id=s.work_id WHERE o.tenant_id=$1 AND o.project_id=$2 AND o.work_id=$3 AND s.snapshot_id=$4 FOR SHARE OF o,s,c",&[&p.tenant_id,&p.project_id,work_item_id,&access["source_snapshot_id"].as_str()]).await?.map(|r|json!({"workstream_id":r.get::<_,String>(0),"ownership_version":r.get::<_,i64>(1),"snapshot_workstream_id":r.get::<_,String>(2),"snapshot_ownership_version":r.get::<_,i64>(3),"contract_hash":r.get::<_,String>(4),"definition_state":r.get::<_,String>(5)})),
-        _=>None};
+    let source_snapshot = access["source_snapshot_id"].as_str();
+    let ownership = match &a.scope {
+        AuthorizationScope::Task { work_item_id, .. } => {
+            task_ownership_state(
+                tx,
+                &p.tenant_id,
+                &p.project_id,
+                source_snapshot,
+                work_item_id,
+            )
+            .await?
+        }
+        _ => None,
+    };
     Ok(
         json!({"project_status":project.get::<_,String>(0),"project_revision":project.get::<_,i64>(1).to_string(),"access":access,"human_actor":human,"person":person,"bindings":bindings,"authorizations":auths,"task_ownership":ownership}),
     )
+}
+
+async fn authorization_state(tx: &Transaction<'_>, plan: &AgentProvisionPlan) -> PgResult<Value> {
+    let mut state = state(tx, plan).await?;
+    let source_snapshot = state["access"]["source_snapshot_id"].as_str();
+    let mut authorization_tasks = state["authorizations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|value| serde_json::from_value::<AgentAuthorization>(value.clone()).ok())
+        .filter_map(|authorization| match authorization.scope {
+            AuthorizationScope::Task { work_item_id, .. } => Some(work_item_id),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if let AuthorizationScope::Task { work_item_id, .. } = &plan.authorization.scope {
+        authorization_tasks.push(work_item_id.clone());
+    }
+    authorization_tasks.sort();
+    authorization_tasks.dedup();
+    let mut ownership = Vec::with_capacity(authorization_tasks.len());
+    for work_item_id in authorization_tasks {
+        let task_ownership = task_ownership_state(
+            tx,
+            &plan.tenant_id,
+            &plan.project_id,
+            source_snapshot,
+            &work_item_id,
+        )
+        .await?;
+        ownership.push(json!({
+            "work_item_id": work_item_id,
+            "ownership": task_ownership,
+        }));
+    }
+    state["authorization_task_ownership"] = json!(ownership);
+    Ok(state)
 }
 
 fn access_reason(p: &AgentProvisionPlan, s: &Value, now: i64) -> Option<&'static str> {

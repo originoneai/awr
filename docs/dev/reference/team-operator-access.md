@@ -183,6 +183,55 @@ is rejected. This owner recovery path does not rotate credentials, revive a
 revoked authorization, grant new authority, dispatch an Agent, or prove native
 client execution.
 
+### Authorize an additional Agent scope
+
+An already bound Agent can receive an independently reviewed authorization for
+a new workstream or one enabled task without changing its existing
+authorizations. Use a closed plan containing `protocol_version`, `tenant_id`,
+`project_id`, and a complete new `authorization` document. The authorization
+must have a fresh ID, current issue time, finite future expiry, the same
+authorizer and responsible person, and the existing active binding. Parent,
+session, maintainer, capability, skill-hint, and revocation fields are not
+accepted. Exactly one active binding must match the proposed person, Agent, and
+binding ID. Disabled historical binding rows remain part of the preview
+fingerprint and are preserved, but do not defeat that active-binding check.
+
+The target workstream must be active in the current source snapshot. A task
+scope must name an enabled task whose live ownership matches that snapshot. The
+Agent, person, project membership, credential, and target grant must all remain
+active. Requested `inspect`, `claim_coordination`, `start_work`, and `review`
+actions must fit the current membership and exact target grant; management,
+attestation, or reconciliation grants are refused. An effective authorization
+for the same Agent/client cannot already cover the same workstream or task, a
+task in the proposed workstream, or the proposed task's workstream.
+If an effective task authorization's current and snapshot ownership is missing,
+disabled, or diverged, a proposed workstream authorization is refused because
+scope separation cannot be proved. Expired and revoked authorization history
+does not create an overlap.
+
+```sh
+awr-server access agent-authorize-preview --input /secure/agent-authorization.json
+awr-server access agent-authorize-apply --input /secure/agent-authorization.json \
+  --request-id authorize-agent-stream-2 \
+  --expected-state <state_digest> --expected-plan <plan_digest>
+awr-server access agent-authorize-outcome --tenant-id tenant-a --project-id project-a \
+  --request-id authorize-agent-stream-2
+```
+
+Preview and apply fingerprints include current source, ownership, access,
+binding, identity, and authorization history. Apply inserts only the new
+authorization and its receipts; prior authorizations and all identity, binding,
+credential, membership, and grant rows remain unchanged. After an uncertain
+response, query `agent-authorize-outcome` before retrying the exact request.
+
+Explicit reads and commands select the authorization that covers their
+`work_id`. Selector-free discovery does not combine independent authorization
+scopes: current resolution selects one covering authorization in deterministic
+history order, which can remain an older workstream. Use an explicit `work_id`
+when addressing the newly authorized scope. This operation records owner
+authorization; it does not dispatch the Agent or constitute human approval or
+team-independent acceptance.
+
 ## Register a client
 
 Generate a bearer before registration, into a new file in an operator-controlled
