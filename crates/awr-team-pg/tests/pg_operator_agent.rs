@@ -2,10 +2,12 @@
 mod common;
 #[path = "fixtures/workstream_access.rs"]
 mod fixture;
-use awr_core::{AuthorizedAction, RevokeAuthorizationRequest};
+use awr_core::{
+    AgentAuthorization, AuthorizationStatus, AuthorizedAction, RevokeAuthorizationRequest,
+};
 use awr_team_pg::{
-    AccessPlan, AgentProvisionPlan, AuthorizationStore, OperatorAccess, OperatorAgent, PgError,
-    workstream_credential_hash,
+    AccessPlan, AgentProvisionPlan, AgentRenewPlan, AuthorizationStore, OperatorAccess,
+    OperatorAgent, PgError, workstream_credential_hash,
 };
 use fixture::*;
 use serde_json::{Value, json};
@@ -67,6 +69,45 @@ async fn apply(admin: &mut Client, p: &AgentProvisionPlan, request: &str) -> Val
     .await
     .unwrap()
 }
+
+async fn expired_renewal_plan(admin: &Client, provision: &AgentProvisionPlan) -> AgentRenewPlan {
+    let now: i64 = admin
+        .query_one(
+            "SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let mut previous = provision.authorization.clone();
+    previous.created_at_ms = now - 7_200_000;
+    previous.expires_at_ms = Some(now - 3_600_000);
+    admin
+        .execute(
+            "UPDATE awr_team.agent_authorizations SET created_at_ms=$1,expires_at_ms=$2,body_json=$3 WHERE tenant_id=$4 AND project_id=$5 AND id=$6",
+            &[
+                &previous.created_at_ms,
+                &previous.expires_at_ms,
+                &json!(previous),
+                &TENANT,
+                &PROJECT,
+                &previous.id,
+            ],
+        )
+        .await
+        .unwrap();
+    let mut successor = previous.clone();
+    successor.id = "native-authorization-renewed".into();
+    successor.created_at_ms = now;
+    successor.expires_at_ms = Some(now + 3_600_000);
+    AgentRenewPlan {
+        protocol_version: 1,
+        tenant_id: TENANT.into(),
+        project_id: PROJECT.into(),
+        previous_authorization_id: previous.id,
+        authorization: successor,
+    }
+}
 async fn snapshot(admin: &Client) -> Value {
     admin.query_one("SELECT jsonb_build_object(
         'people',(SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM awr_team.persons t),
@@ -78,6 +119,364 @@ async fn snapshot(admin: &Client) -> Value {
         'audit',(SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM awr_team.ops_audit_records t),
         'projects',(SELECT jsonb_agg(to_jsonb(t) ORDER BY tenant_id,id) FROM awr_team.projects t),
         'actors',(SELECT jsonb_agg(to_jsonb(t) ORDER BY tenant_id,id) FROM awr_team.actors t))",&[]).await.unwrap().get(0)
+}
+
+#[tokio::test]
+async fn expired_authorization_gets_immutable_digest_gated_successor_and_replays() {
+    let (_g, mut admin, db, store) = setup().await;
+    stage(&mut admin).await;
+    let initial = plan(&admin).await;
+    apply(&mut admin, &initial, "agent-issue").await;
+    let prepared_before_expiry = prepare(&store, TOKEN, "a").await;
+    let renewal = expired_renewal_plan(&admin, &initial).await;
+    let previous_before: Value = admin
+        .query_one(
+            "SELECT body_json FROM awr_team.agent_authorizations WHERE id=$1",
+            &[&renewal.previous_authorization_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let denied = command(
+        &prepared_before_expiry,
+        "expired-before-renewal",
+        "session.start",
+        json!({"conversation_id":"expired"}),
+    );
+    assert!(matches!(
+        store
+            .commands()
+            .execute(TENANT, PROJECT, TOKEN, denied)
+            .await,
+        Err(PgError::Forbidden)
+    ));
+    let before = snapshot(&admin).await;
+    let preview = OperatorAgent::renew_preview(&mut admin, &renewal)
+        .await
+        .unwrap();
+    assert_eq!(snapshot(&admin).await, before);
+    assert_eq!(preview["binding_reused"], true);
+    assert_eq!(preview["predecessor_rewritten"], false);
+    assert_eq!(preview["previous_lifetime_ms"], "3600000");
+    let applied = OperatorAgent::renew_apply(
+        &mut admin,
+        &renewal,
+        "agent-renew",
+        preview["state_digest"].as_str().unwrap(),
+        preview["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(applied["receipt"]["binding_reused"], true);
+    assert_eq!(applied["receipt"]["predecessor_rewritten"], false);
+    assert_eq!(applied["receipt"]["previous_lifetime_ms"], "3600000");
+    let successor_plan = AgentProvisionPlan {
+        protocol_version: renewal.protocol_version,
+        tenant_id: renewal.tenant_id.clone(),
+        project_id: renewal.project_id.clone(),
+        authorization: renewal.authorization.clone(),
+    };
+    assert_eq!(
+        OperatorAgent::inspect(&mut admin, &successor_plan)
+            .await
+            .unwrap()["configuration_matches_plan"],
+        true
+    );
+    let previous_after: Value = admin
+        .query_one(
+            "SELECT body_json FROM awr_team.agent_authorizations WHERE id=$1",
+            &[&renewal.previous_authorization_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(previous_after, previous_before);
+    let counts = admin
+        .query_one(
+            "SELECT (SELECT count(*) FROM awr_team.persons),(SELECT count(*) FROM awr_team.person_agent_bindings),(SELECT count(*) FROM awr_team.agent_authorizations)",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(counts.get::<_, i64>(0), 1);
+    assert_eq!(counts.get::<_, i64>(1), 1);
+    assert_eq!(counts.get::<_, i64>(2), 2);
+    let started = command(
+        &prepare(&store, TOKEN, "a").await,
+        "start-after-renewal",
+        "session.start",
+        json!({"conversation_id":"renewed"}),
+    );
+    store
+        .commands()
+        .execute(TENANT, PROJECT, TOKEN, started)
+        .await
+        .unwrap();
+    let after = snapshot(&admin).await;
+    let replayed = OperatorAgent::renew_apply(
+        &mut admin,
+        &renewal,
+        "agent-renew",
+        preview["state_digest"].as_str().unwrap(),
+        preview["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(replayed["replayed"], true);
+    assert_eq!(replayed["receipt"], applied["receipt"]);
+    assert_eq!(snapshot(&admin).await, after);
+    assert_eq!(
+        OperatorAgent::renew_outcome(&mut admin, TENANT, PROJECT, "agent-renew")
+            .await
+            .unwrap()["receipt"],
+        applied["receipt"]
+    );
+    assert!(matches!(
+        OperatorAgent::outcome(&mut admin, TENANT, PROJECT, "agent-renew").await,
+        Err(PgError::IdempotencyConflict)
+    ));
+
+    let auth = AuthorizationStore::from_config(common::with_app_role(&common::test_config(), &db));
+    auth.revoke(
+        TENANT,
+        PROJECT,
+        &RevokeAuthorizationRequest {
+            request_key: "revoke-successor".into(),
+            authorization_id: renewal.authorization.id.clone(),
+            revoked_by: renewal.authorization.responsible_person_id.clone(),
+            revoked_at_ms: renewal.authorization.created_at_ms + 1,
+            reason: "stop renewed access".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let now: i64 = admin
+        .query_one(
+            "SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let mut stale_predecessor = renewal.clone();
+    stale_predecessor.authorization.id = "native-authorization-stale-retry".into();
+    stale_predecessor.authorization.created_at_ms = now;
+    stale_predecessor.authorization.expires_at_ms = Some(now + 3_600_000);
+    assert!(matches!(
+        OperatorAgent::renew_preview(&mut admin, &stale_predecessor).await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
+async fn renewal_rejects_revoked_or_changed_authority_and_stale_preview() {
+    let (_g, mut admin, db, _) = setup().await;
+    stage(&mut admin).await;
+    let initial = plan(&admin).await;
+    apply(&mut admin, &initial, "agent-issue").await;
+    let renewal = expired_renewal_plan(&admin, &initial).await;
+
+    for changed in ["client", "scope", "actions", "binding", "lifetime"] {
+        let mut drifted = renewal.clone();
+        match changed {
+            "client" => drifted.authorization.client_id = "other-client".into(),
+            "scope" => {
+                drifted.authorization.scope = awr_core::AuthorizationScope::Task {
+                    project_id: PROJECT.into(),
+                    work_item_id: "b".into(),
+                };
+            }
+            "actions" => {
+                drifted
+                    .authorization
+                    .actions
+                    .remove(&AuthorizedAction::ClaimCoordination);
+            }
+            "binding" => drifted.authorization.binding_id = Some("other-binding".into()),
+            "lifetime" => {
+                *drifted.authorization.expires_at_ms.as_mut().unwrap() += 1;
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            OperatorAgent::renew_preview(&mut admin, &drifted)
+                .await
+                .is_err(),
+            "{changed}"
+        );
+    }
+
+    let inactive_previous_json: Value = admin
+        .query_one(
+            "SELECT body_json FROM awr_team.agent_authorizations WHERE id=$1",
+            &[&renewal.previous_authorization_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let mut inactive_previous: AgentAuthorization =
+        serde_json::from_value(inactive_previous_json).unwrap();
+    inactive_previous.status = AuthorizationStatus::Expired;
+    admin
+        .execute(
+            "UPDATE awr_team.agent_authorizations SET status='expired',body_json=$1 WHERE id=$2",
+            &[
+                &json!(inactive_previous),
+                &renewal.previous_authorization_id,
+            ],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        OperatorAgent::renew_preview(&mut admin, &renewal).await,
+        Err(PgError::Forbidden)
+    ));
+    inactive_previous.status = AuthorizationStatus::Active;
+    admin
+        .execute(
+            "UPDATE awr_team.agent_authorizations SET status='active',body_json=$1 WHERE id=$2",
+            &[
+                &json!(inactive_previous),
+                &renewal.previous_authorization_id,
+            ],
+        )
+        .await
+        .unwrap();
+
+    admin
+        .execute(
+            "UPDATE awr_team.person_agent_bindings SET status='disabled' WHERE id='native-binding'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        OperatorAgent::renew_preview(&mut admin, &renewal).await,
+        Err(PgError::Forbidden)
+    ));
+    admin
+        .execute(
+            "UPDATE awr_team.person_agent_bindings SET status='active' WHERE id='native-binding'",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let preview = OperatorAgent::renew_preview(&mut admin, &renewal)
+        .await
+        .unwrap();
+    let mut app = common::app_client(&db).await;
+    assert!(matches!(
+        OperatorAgent::renew_preview(&mut app, &renewal).await,
+        Err(PgError::Forbidden)
+    ));
+    assert!(matches!(
+        OperatorAgent::renew_apply(
+            &mut app,
+            &renewal,
+            "app-renewal",
+            preview["state_digest"].as_str().unwrap(),
+            preview["plan_digest"].as_str().unwrap(),
+        )
+        .await,
+        Err(PgError::Forbidden)
+    ));
+    assert!(matches!(
+        OperatorAgent::renew_outcome(&mut app, TENANT, PROJECT, "app-renewal").await,
+        Err(PgError::Forbidden)
+    ));
+    admin
+        .execute(
+            "UPDATE awr_team.workstream_grants SET can_write=false WHERE actor_id='native-agent'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        OperatorAgent::renew_apply(
+            &mut admin,
+            &renewal,
+            "stale-renewal",
+            preview["state_digest"].as_str().unwrap(),
+            preview["plan_digest"].as_str().unwrap(),
+        )
+        .await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    admin
+        .execute(
+            "UPDATE awr_team.workstream_grants SET can_write=true WHERE actor_id='native-agent'",
+            &[],
+        )
+        .await
+        .unwrap();
+    let auth = AuthorizationStore::from_config(common::with_app_role(&common::test_config(), &db));
+    auth.revoke(
+        TENANT,
+        PROJECT,
+        &RevokeAuthorizationRequest {
+            request_key: "revoke-expired".into(),
+            authorization_id: renewal.previous_authorization_id.clone(),
+            revoked_by: renewal.authorization.responsible_person_id.clone(),
+            revoked_at_ms: renewal.authorization.created_at_ms,
+            reason: "do not renew".into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        OperatorAgent::renew_preview(&mut admin, &renewal).await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
+async fn concurrent_renewal_previews_have_one_successor() {
+    let (_g, mut admin, db, _) = setup().await;
+    stage(&mut admin).await;
+    let initial = plan(&admin).await;
+    apply(&mut admin, &initial, "agent-issue").await;
+    let first_plan = expired_renewal_plan(&admin, &initial).await;
+    let mut second_plan = first_plan.clone();
+    second_plan.authorization.id = "native-authorization-renewed-b".into();
+    let first_preview = OperatorAgent::renew_preview(&mut admin, &first_plan)
+        .await
+        .unwrap();
+    let second_preview = OperatorAgent::renew_preview(&mut admin, &second_plan)
+        .await
+        .unwrap();
+    assert_eq!(
+        first_preview["state_digest"],
+        second_preview["state_digest"]
+    );
+    let mut other = common::connect_config(&common::with_db(&common::test_config(), &db)).await;
+    let (first, second) = tokio::join!(
+        OperatorAgent::renew_apply(
+            &mut admin,
+            &first_plan,
+            "renew-race-a",
+            first_preview["state_digest"].as_str().unwrap(),
+            first_preview["plan_digest"].as_str().unwrap(),
+        ),
+        OperatorAgent::renew_apply(
+            &mut other,
+            &second_plan,
+            "renew-race-b",
+            second_preview["state_digest"].as_str().unwrap(),
+            second_preview["plan_digest"].as_str().unwrap(),
+        ),
+    );
+    assert_ne!(first.is_ok(), second.is_ok());
+    assert!(matches!(
+        first.as_ref().err().or(second.as_ref().err()),
+        Some(PgError::PreconditionsChanged)
+    ));
+    let count: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.agent_authorizations", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 2);
 }
 
 #[tokio::test]

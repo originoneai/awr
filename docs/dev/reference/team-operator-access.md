@@ -148,6 +148,41 @@ does not implement binding replacement, retirement or extension; those are
 separate lifecycle operations. Retain the reviewed plan for inspection, and use
 fresh identity/authorization IDs for an independently scoped initial setup.
 
+### Renew an expired Agent authorization
+
+An expired finite authorization can receive one immutable successor without
+rerunning initial provisioning or replacing the person↔Agent binding. First use
+the ordinary access token/preview/apply flow to register a fresh credential when
+the prior credential also expired. Then create a renewal plan with
+`protocol_version`, `tenant_id`, `project_id`, `previous_authorization_id`, and a
+new `authorization` document.
+
+The successor requires a fresh authorization ID and current issue/expiry times.
+Every authority-bearing field must exactly match the predecessor: authorizer and
+responsible person, subject kind/ID, client, binding, session/model, scope,
+actions, capabilities, hints, parent and maintainer. Its finite lifetime duration
+must equal the predecessor's duration. The predecessor must already be expired
+and must not be revoked, and it must be the latest authorization in that
+subject/client history. A later successor, including one later revoked, prevents
+renewal from an older grant. The active project, person, Agent, binding,
+membership, grant, source scope and credential must still be valid. Renewal
+inserts the successor and leaves the predecessor and binding unchanged.
+
+```sh
+awr-server access agent-renew-preview --input /secure/agent-renewal.json
+awr-server access agent-renew-apply --input /secure/agent-renewal.json \
+  --request-id renew-agent-1 --expected-state <state_digest> --expected-plan <plan_digest>
+awr-server access agent-renew-outcome --tenant-id tenant-a --project-id project-a \
+  --request-id renew-agent-1
+```
+
+After an uncertain result, query `agent-renew-outcome` before retrying the exact
+plan, request ID and digests. A changed client, binding, scope, action set,
+lifetime, revoked predecessor, stale preview, or another effective authorization
+is rejected. This owner recovery path does not rotate credentials, revive a
+revoked authorization, grant new authority, dispatch an Agent, or prove native
+client execution.
+
 ## Register a client
 
 Generate a bearer before registration, into a new file in an operator-controlled
@@ -418,4 +453,3 @@ pending-confirmation identity rules) is documented in
 `tests/fixtures/workstreams/migration-takeover/` before project takeover
 dry-runs. Owner-only `backup-*` / `history-*` commands remain the PG operational
 path; the core oracle does not replace them.
-
