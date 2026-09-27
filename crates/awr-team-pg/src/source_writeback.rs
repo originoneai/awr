@@ -249,7 +249,7 @@ impl SourceStore {
             ) {
                 let journal = prior.expect("phase implies journal row");
                 let disk =
-                    std::fs::read(&ledger_path).map_err(PgError::SourceStorageUnavailable)?;
+                    std::fs::read(&ledger_path).map_err(PgError::source_storage_unavailable)?;
                 let disk_fp = fingerprint(&disk);
                 if disk_fp == journal.after_fingerprint {
                     // Source write landed; resume activation without re-applying creates.
@@ -302,7 +302,7 @@ impl SourceStore {
                 // Fresh / planned / refused-retry: plan patch and validate fully
                 // before the first authoritative source mutation.
                 let before_bytes =
-                    std::fs::read(&ledger_path).map_err(PgError::SourceStorageUnavailable)?;
+                    std::fs::read(&ledger_path).map_err(PgError::source_storage_unavailable)?;
                 let observed_fp = fingerprint(&before_bytes);
                 let patch = apply_planning_changes_to_ledger(&before_bytes, &changes)
                     .map_err(|e| PgError::Protocol(e.to_string()))?;
@@ -376,7 +376,8 @@ impl SourceStore {
 
         if !source_already_written {
             // Fingerprint re-check immediately before write (external race).
-            let recheck = std::fs::read(&ledger_path).map_err(PgError::SourceStorageUnavailable)?;
+            let recheck =
+                std::fs::read(&ledger_path).map_err(PgError::source_storage_unavailable)?;
             refuse_external_overwrite(&before_fingerprint, &fingerprint(&recheck))
                 .map_err(|e| PgError::Protocol(e.to_string()))?;
             atomic_write(&ledger_path, &after_bytes)?;
@@ -1023,8 +1024,8 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> PgResult<()> {
             .and_then(|s| s.to_str())
             .unwrap_or("ledger")
     ));
-    std::fs::write(&tmp, bytes).map_err(PgError::SourceStorageUnavailable)?;
-    std::fs::rename(&tmp, path).map_err(PgError::SourceStorageUnavailable)?;
+    std::fs::write(&tmp, bytes).map_err(PgError::source_storage_unavailable)?;
+    std::fs::rename(&tmp, path).map_err(PgError::source_storage_unavailable)?;
     Ok(())
 }
 
@@ -1041,7 +1042,7 @@ mod tests {
         std::fs::create_dir(&target).unwrap();
         std::fs::write(target.join("existing"), b"preserved").unwrap();
         let error = atomic_write(&target, b"replacement").unwrap_err();
-        assert!(matches!(error, PgError::SourceStorageUnavailable(_)));
+        assert!(error.source_storage_reason().is_some());
         assert_eq!(
             error.to_string(),
             "authoritative source storage is unavailable"

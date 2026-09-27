@@ -456,10 +456,7 @@ async fn writeback_storage_failure_retains_journal_and_resumes_the_same_request(
         .activate_planning_writeback(TENANT, PROJECT, A, &req)
         .await
         .unwrap_err();
-    assert!(
-        matches!(error, PgError::SourceStorageUnavailable(_)),
-        "{error:?}"
-    );
+    assert!(error.source_storage_reason().is_some(), "{error:?}");
     assert_eq!(std::fs::read(&path).unwrap(), before);
     assert!(
         store
@@ -515,10 +512,7 @@ async fn unreadable_writeback_source_is_storage_failure_not_invalid_input() {
         .activate_planning_writeback(TENANT, PROJECT, A, &req)
         .await
         .unwrap_err();
-    assert!(
-        matches!(error, PgError::SourceStorageUnavailable(_)),
-        "{error:?}"
-    );
+    assert!(error.source_storage_reason().is_some(), "{error:?}");
 }
 
 #[tokio::test]

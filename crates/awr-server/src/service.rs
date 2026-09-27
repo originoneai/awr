@@ -354,6 +354,7 @@ pub(crate) async fn audited(
     let status = match &result {
         Ok(_) => "succeeded",
         Err(PgError::Forbidden) => "denied",
+        Err(error) if error.source_storage_reason().is_some() => "unknown",
         Err(
             PgError::Protocol(_)
             | PgError::Unsupported(_)
@@ -824,6 +825,17 @@ pub(crate) fn error_response(error: PgError) -> Response {
 
 // Shared by HTTP and MCP; never expose SQL, URLs, credentials or source bodies.
 fn public_error(error: PgError) -> (StatusCode, Value) {
+    if let Some(reason) = error.source_storage_reason() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({
+                "code":"SourceStorageUnavailable",
+                "message":"authoritative source storage could not be read or updated",
+                "reason": reason,
+                "next_step":"Ask the service operator to check source storage, free space, service-account read/write access and parent-directory access for atomic replacement, and inspect the writeback journal. Query planning.outcome for the original request_id before resuming that same request; do not create a new request or assume no changes occurred."
+            }),
+        );
+    }
     if error.is_invalid_command_fields() {
         return (
             StatusCode::BAD_REQUEST,
@@ -873,19 +885,6 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
                 "code":"WritebackRefused",
                 "message": msg,
                 "next_step":"fix the refused source write condition, then inspect planning.outcome before any new request_id"
-            }),
-        ),
-        PgError::SourceStorageUnavailable(error) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            json!({
-                "code":"SourceStorageUnavailable",
-                "message":"authoritative source storage could not be read or updated",
-                "reason": if error.kind() == std::io::ErrorKind::PermissionDenied {
-                    "permission_denied"
-                } else {
-                    "io_error"
-                },
-                "next_step":"Ask the service operator to check source storage, free space, and service-account read/write access, including parent-directory access for atomic replacement. Inspect planning.outcome for the original request_id and its writeback journal before resuming that same request; do not create a new request or assume no changes occurred."
             }),
         ),
         PgError::CandidateNotApproved => (

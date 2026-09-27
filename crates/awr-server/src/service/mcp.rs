@@ -757,7 +757,7 @@ mod tests {
             (std::io::ErrorKind::NotFound, "io_error"),
             (std::io::ErrorKind::Other, "io_error"),
         ] {
-            let (status, body) = public_error(PgError::SourceStorageUnavailable(
+            let (status, body) = public_error(PgError::source_storage_unavailable(
                 std::io::Error::new(kind, "/private/source/ledger.yaml: secret-sentinel"),
             ));
             assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
