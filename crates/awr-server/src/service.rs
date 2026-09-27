@@ -911,8 +911,15 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
             StatusCode::CONFLICT,
             json!({"code":"CursorExpired","message":"refresh the scoped query"}),
         ),
-        e @ (PgError::PreconditionsChanged
-        | PgError::IdempotencyConflict
+        e @ PgError::PreconditionsChanged => (
+            StatusCode::CONFLICT,
+            json!({
+                "code":"PreconditionsChanged",
+                "message":e.to_string(),
+                "next_step":"if this was session.checkpoint, inspect the session, consume a fresh work.prepare for the same session/work, and rebuild with the current session_version and fresh context_hash; session.inspect's context_hash is historical"
+            }),
+        ),
+        e @ (PgError::IdempotencyConflict
         | PgError::EpochChanged
         | PgError::ProjectNotAvailable
         | PgError::RecoveryBlocked
@@ -924,7 +931,6 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
         | PgError::BindingInvalid
         | PgError::WaitOpen) => {
             let code = match e {
-                PgError::PreconditionsChanged => "PreconditionsChanged",
                 PgError::IdempotencyConflict => "IdempotencyConflict",
                 PgError::EpochChanged => "EpochChanged",
                 PgError::ProjectNotAvailable => "ProjectNotAvailable",

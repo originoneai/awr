@@ -751,6 +751,29 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_precondition_guidance_is_bounded_and_uses_fresh_context() {
+        let (status, conflict) = public_error(PgError::PreconditionsChanged);
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(conflict["code"], "PreconditionsChanged");
+        assert_eq!(
+            conflict["message"],
+            "command preconditions changed; refresh the selected work or session"
+        );
+        let next = conflict["next_step"].as_str().unwrap();
+        for expected in [
+            "if this was session.checkpoint",
+            "consume a fresh work.prepare",
+            "current session_version",
+            "fresh context_hash",
+            "session.inspect's context_hash is historical",
+        ] {
+            assert!(next.contains(expected), "missing guidance: {expected}");
+        }
+        assert_eq!(conflict.as_object().unwrap().len(), 3);
+        assert!(conflict.to_string().len() < 500);
+    }
+
+    #[test]
     fn source_storage_diagnostics_preserve_recovery_guidance_without_private_details() {
         for (kind, reason) in [
             (std::io::ErrorKind::PermissionDenied, "permission_denied"),
