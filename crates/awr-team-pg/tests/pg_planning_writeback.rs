@@ -434,6 +434,88 @@ async fn writeback_activate_success_and_idempotent_replay() {
 }
 
 #[tokio::test]
+async fn writeback_storage_failure_retains_journal_and_resumes_the_same_request() {
+    let (_g, admin, _db, store) = store_and_roles().await;
+    let (_cid, _digest, receipt_id) = publish_candidate_with_workstream(&store, "alpha").await;
+    let tmp = tempfile_ledger();
+    let path = tmp.root.join("ledger.yaml");
+    let before = std::fs::read(&path).unwrap();
+    // Deterministic filesystem failure, including when tests run as root.
+    // The source remains readable, but the atomic replacement cannot be written.
+    let obstruction = tmp.root.join(".ledger.yaml.tmcp022.tmp");
+    std::fs::create_dir(&obstruction).unwrap();
+    let req = WritebackActivateRequest {
+        request_id: "req-storage-recovery".into(),
+        publish_receipt_id: receipt_id,
+        source_root: tmp.root.clone(),
+        ledger_relative_path: "ledger.yaml".into(),
+        impact_proven: true,
+        stopped_work_ids: vec![],
+    };
+    let error = store
+        .activate_planning_writeback(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap_err();
+    assert!(error.source_storage_reason().is_some(), "{error:?}");
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert!(
+        store
+            .get_planning_activation_receipt(TENANT, PROJECT, A, &req.request_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let phase: String = admin
+        .query_one(
+            "SELECT phase FROM awr_team.planning_writeback_journals
+             WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
+            &[&TENANT, &PROJECT, &req.request_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        phase, "validated",
+        "the request retains a recoverable journal"
+    );
+
+    std::fs::remove_dir(&obstruction).unwrap();
+    let resumed = store
+        .activate_planning_writeback(TENANT, PROJECT, A, &req)
+        .await
+        .expect("the original request resumes after storage is repaired");
+    assert_eq!(resumed["already_recorded"], false);
+    let replay = store
+        .activate_planning_writeback(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    assert_eq!(replay["already_recorded"], true);
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(text.matches("id: SHARED-1").count(), 1);
+}
+
+#[tokio::test]
+async fn unreadable_writeback_source_is_storage_failure_not_invalid_input() {
+    let (_g, _admin, _db, store) = store_and_roles().await;
+    let (_cid, _digest, receipt_id) = publish_candidate_with_workstream(&store, "alpha").await;
+    let tmp = tempfile_ledger();
+    std::fs::remove_file(tmp.root.join("ledger.yaml")).unwrap();
+    let req = WritebackActivateRequest {
+        request_id: "req-source-unreadable".into(),
+        publish_receipt_id: receipt_id,
+        source_root: tmp.root.clone(),
+        ledger_relative_path: "ledger.yaml".into(),
+        impact_proven: true,
+        stopped_work_ids: vec![],
+    };
+    let error = store
+        .activate_planning_writeback(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap_err();
+    assert!(error.source_storage_reason().is_some(), "{error:?}");
+}
+
+#[tokio::test]
 async fn source_written_phase_resumes_without_reapplying_creates() {
     use awr_source::{apply_planning_changes_to_ledger, fingerprint};
     let (_g, admin, _db, store) = store_and_roles().await;

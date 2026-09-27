@@ -116,6 +116,33 @@ pub enum PgError {
 impl PgError {
     // Keep the existing Protocol representation: PgError is a public,
     // exhaustively matched enum, and callers already classify it as bad input.
+    const SOURCE_STORAGE_IO: &'static str = "authoritative source storage is unavailable";
+    const SOURCE_STORAGE_PERMISSION: &'static str =
+        "authoritative source storage permission denied";
+
+    /// Classify filesystem failures without retaining private paths or raw OS errors.
+    /// Keep Protocol for compatibility with downstream exhaustive enum matches.
+    pub fn source_storage_unavailable(error: std::io::Error) -> Self {
+        Self::Protocol(
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                Self::SOURCE_STORAGE_PERMISSION
+            } else {
+                Self::SOURCE_STORAGE_IO
+            }
+            .into(),
+        )
+    }
+
+    pub fn source_storage_reason(&self) -> Option<&'static str> {
+        match self {
+            Self::Protocol(message) if message == Self::SOURCE_STORAGE_PERMISSION => {
+                Some("permission_denied")
+            }
+            Self::Protocol(message) if message == Self::SOURCE_STORAGE_IO => Some("io_error"),
+            _ => None,
+        }
+    }
+
     const INVALID_COMMAND_FIELDS: &'static str = "invalid scoped command fields or bounds";
 
     pub fn invalid_command_fields() -> Self {

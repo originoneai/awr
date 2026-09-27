@@ -92,6 +92,7 @@ fn draft(id: &str) -> TaskDraft {
         required_dependencies: vec![],
         completion_policy: "independent_review".into(),
         definition_state: DraftDefinitionState::Draft,
+        workstream: None,
         split_from: None,
         split_children: vec![],
     }
@@ -285,4 +286,169 @@ async fn planning_draft_create_via_mcp_uses_business_entrypoint() {
         preview.get("diff").is_some() || preview.get("candidate_id").is_some(),
         "{preview}"
     );
+}
+
+#[tokio::test]
+async fn storage_failure_http_mcp_and_original_request_recovery() {
+    let (_g, admin, _db, store) = setup().await;
+    enable_writes(&admin).await;
+    let root = std::env::temp_dir().join(format!("awr-planning-storage-{}", common::nonce(0)));
+    std::fs::create_dir(&root).unwrap();
+    let definitions: Vec<_> = [
+        ("00000000000000000000000001", "alpha"),
+        ("00000000000000000000000002", "private-beta"),
+    ]
+    .into_iter()
+    .map(|(id, key)| {
+        json!({
+            "id": id, "external_key": key, "title": key, "state": "active",
+            "authority_version": 1, "goal_keys": [key], "acceptance_contracts": []
+        })
+    })
+    .collect();
+    let works: Vec<_> = [
+        ("a", "alpha", vec![]),
+        ("b-private", "private-beta", vec![]),
+        ("c", "alpha", vec!["b-private"]),
+    ]
+    .into_iter()
+    .map(|(id, stream, deps)| {
+        json!({
+            "id": id, "title": id, "status": "planned", "workstream": stream,
+            "goals": [stream], "acceptance": ["verified"], "paths": ["src"], "depends_on": deps
+        })
+    })
+    .collect();
+    let before = serde_json::to_vec(&json!({
+        "workstreams": {"version": 1, "definitions": definitions},
+        "goals": [{"id":"alpha","title":"Alpha","status":"active"},
+                  {"id":"private-beta","title":"Private","status":"active"}],
+        "work_items": works
+    }))
+    .unwrap();
+    let ledger = root.join("ledger.yaml");
+    std::fs::write(&ledger, &before).unwrap();
+    // Register only this test's temporary source against its isolated fixture.
+    let binding = json!({"kind":"server_directory","locator":root,
+                         "ledger_relative_path":"ledger.yaml"});
+    admin
+        .execute(
+            "UPDATE awr_team.source_snapshots s
+         SET source_ref_json=jsonb_set(s.source_ref_json,'{sole_source}',$3)
+         FROM awr_team.projects p
+         WHERE p.tenant_id=$1 AND p.id=$2 AND s.tenant_id=p.tenant_id
+           AND s.project_id=p.id AND s.id=p.active_snapshot_id",
+            &[&TENANT, &PROJECT, &binding],
+        )
+        .await
+        .unwrap();
+    let server = start(store).await;
+    let client = connect(&server, A).await;
+    let mut after = draft("NEW-1");
+    after.workstream = Some("alpha".into());
+    let created = call(
+        &client,
+        "awr_team_planning_draft",
+        json!({
+            "protocol_version":1, "request_id":"storage-draft", "mode":"create",
+            "changes":[DraftChange {op:DraftOpKind::CreateTask,before:None,after}],
+            "allowed_spec_roots":["specs"], "project_goal_keys":["delivery"],
+            "self_approve_policy":OrdinaryPlanningSelfApprovePolicy::ordinary_default()
+        }),
+        false,
+    )
+    .await;
+    let candidate = &created["result"]["candidate_id"];
+    let digest = &created["result"]["candidate_digest"];
+    call(
+        &client,
+        "awr_team_planning_approve",
+        json!({
+            "protocol_version":1,"request_id":"storage-approve",
+            "candidate_id":candidate,"candidate_digest":digest
+        }),
+        false,
+    )
+    .await;
+    let body = json!({
+        "protocol_version":1,"request_id":"storage-activate",
+        "candidate_id":candidate,"candidate_digest":digest,
+        "activate":true,"impact_proven":true
+    });
+    let obstruction = root.join(".ledger.yaml.tmcp022.tmp");
+    std::fs::create_dir(&obstruction).unwrap();
+    let failed = call(&client, "awr_team_planning_publish", body.clone(), true).await;
+    assert_eq!(failed["code"], "SourceStorageUnavailable");
+    assert!(!failed.to_string().contains(root.to_str().unwrap()));
+    assert!(
+        failed["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("planning.outcome")
+    );
+    // HTTP uses 503; MCP uses isError with the same bounded structured body.
+    let http_result = http()
+        .post(format!("{}/one/planning/publish", server.url))
+        .bearer_auth(A)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        http_result.status(),
+        reqwest::StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(http_result.json::<Value>().await.unwrap(), failed);
+    assert_eq!(std::fs::read(&ledger).unwrap(), before);
+    let outcome_args = json!({"protocol_version":1,"request_id":"storage-activate"});
+    let unknown = call(
+        &client,
+        "awr_team_planning_outcome",
+        outcome_args.clone(),
+        false,
+    )
+    .await;
+    assert_eq!(unknown["already_recorded"], false);
+    assert!(unknown["result"].is_null());
+    assert!(unknown["next_step"].as_str().unwrap().contains("unknown"));
+    let reserved = admin
+        .query_one(
+            "SELECT c.request_hash,c.status,j.phase FROM awr_team.planning_command_receipts c
+         JOIN awr_team.planning_writeback_journals j USING(tenant_id,project_id,request_id)
+         WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.request_id='storage-activate'",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap();
+    let original_hash: String = reserved.get(0);
+    assert_eq!(reserved.get::<_, String>(1), "reserved");
+    assert_eq!(reserved.get::<_, String>(2), "validated");
+    let mut changed = body.clone();
+    changed["impact_proven"] = json!(false);
+    let conflict = call(&client, "awr_team_planning_publish", changed, true).await;
+    assert_eq!(conflict["code"], "IdempotencyConflict");
+    std::fs::remove_dir(&obstruction).unwrap();
+    let resumed = call(&client, "awr_team_planning_publish", body.clone(), false).await;
+    assert_eq!(resumed["already_recorded"], false);
+    assert_eq!(resumed["request_hash"], original_hash);
+    assert!(resumed["result"]["activation"]["activated_snapshot_id"].is_string());
+    let replay = call(&client, "awr_team_planning_publish", body, false).await;
+    assert_eq!(replay["already_recorded"], true);
+    let completed = call(&client, "awr_team_planning_outcome", outcome_args, false).await;
+    assert_eq!(completed["already_recorded"], true);
+    assert_eq!(completed["request_hash"], original_hash);
+    assert_eq!(completed["result"]["result"], resumed["result"]);
+    let source = std::fs::read_to_string(&ledger).unwrap();
+    assert_eq!(source.matches("id: NEW-1").count(), 1);
+    let receipts: i64 = admin
+        .query_one(
+            "SELECT count(*) FROM awr_team.planning_publish_receipts
+         WHERE tenant_id=$1 AND project_id=$2 AND candidate_id=$3",
+            &[&TENANT, &PROJECT, &candidate.as_str().unwrap()],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(receipts, 1);
+    std::fs::remove_dir_all(root).unwrap();
 }
