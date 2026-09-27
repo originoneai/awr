@@ -156,6 +156,55 @@ pub async fn fresh_team_schema() -> (MutexGuard<'static, ()>, Client, String) {
     (guard, admin, name)
 }
 
+/// Rebuild an actual historical schema in this process's exclusive database.
+/// Resetting only schema_state on a current schema leaves future DDL behind.
+pub async fn historical_team_schema(version: i32) -> (MutexGuard<'static, ()>, Client, String) {
+    assert!((1..=awr_team_pg::EXPECTED_SCHEMA_VERSION).contains(&version));
+    let (guard, admin, name) = fresh_team_schema().await;
+    admin
+        .batch_execute("DROP SCHEMA awr_team CASCADE")
+        .await
+        .unwrap();
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let mut migrations: Vec<_> = std::fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "sql"))
+        .collect();
+    migrations.sort();
+    let mut applied = 0;
+    for path in migrations {
+        let name = path.file_name().unwrap().to_str().unwrap();
+        let number: i32 = name.split_once('_').unwrap().0[8..].parse().unwrap();
+        if number > version {
+            break;
+        }
+        assert_eq!(
+            number,
+            applied + 1,
+            "historical migrations must be contiguous"
+        );
+        admin
+            .batch_execute(&std::fs::read_to_string(path).unwrap())
+            .await
+            .unwrap();
+        applied = number;
+    }
+    assert_eq!(applied, version);
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT version FROM awr_team.schema_state WHERE component='awr_team'",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, i32>(0),
+        version
+    );
+    (guard, admin, name)
+}
+
 pub async fn app_client(db: &str) -> Client {
     connect_config(&with_app_role(&test_config(), db)).await
 }

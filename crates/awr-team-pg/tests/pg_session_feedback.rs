@@ -266,21 +266,38 @@ async fn host_counters_are_snapshots_and_reject_reordering_decreases_and_future_
 }
 
 #[tokio::test]
-async fn migration_33_preserves_legacy_checkpoints_and_can_be_reapplied() {
-    let (_g, admin, _, store) = setup().await;
-    let before = observe(&store, A).await["checkpoint"].clone();
+async fn migration_34_preserves_legacy_checkpoints_and_can_be_reapplied() {
+    let (_g, admin, _) = common::historical_team_schema(33).await;
     admin
         .batch_execute(
-            "DROP INDEX awr_team.checkpoint_feedback_latest;
-        ALTER TABLE awr_team.sessions DROP COLUMN client_info_json,DROP COLUMN client_info_at;
-        ALTER TABLE awr_team.checkpoints DROP COLUMN progress_json,DROP COLUMN usage_json;
-        UPDATE awr_team.schema_state SET version=33 WHERE component='awr_team'",
+            "INSERT INTO awr_team.tenants(id,name,status) VALUES('reader-tenant','Readers','active');
+        INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status) VALUES('reader-tenant','reader-project','p','team','epoch-a','active');
+        INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,latest_checkpoint_id)
+          VALUES('reader-tenant','reader-project','legacy-session','main','a','agent','cli-a','conversation','active','legacy-checkpoint');
+        INSERT INTO awr_team.checkpoints(tenant_id,project_id,id,session_id,context_hash,contract_hash,observed_revision,next_action,open_loops_json)
+          VALUES('reader-tenant','reader-project','legacy-checkpoint','legacy-session','consumed-context','accepted-contract',7,'Verify the saved result','[\"pending verification\"]')",
         )
         .await
         .unwrap();
+    let before: Value = admin
+        .query_one("SELECT to_jsonb(c) FROM awr_team.checkpoints c", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let session_before: Value = admin
+        .query_one("SELECT to_jsonb(s) FROM awr_team.sessions s", &[])
+        .await
+        .unwrap()
+        .get(0);
     awr_team_pg::migrate(&admin).await.unwrap();
     awr_team_pg::migrate(&admin).await.unwrap();
-    assert_eq!(observe(&store, A).await["checkpoint"], before);
+    awr_team_pg::check_schema(&admin).await.unwrap();
+    let after = admin.query_one("SELECT to_jsonb(c)-'progress_json'-'usage_json', progress_json IS NULL AND usage_json IS NULL FROM awr_team.checkpoints c", &[]).await.unwrap();
+    assert_eq!(after.get::<_, Value>(0), before);
+    assert!(after.get::<_, bool>(1));
+    let session_after = admin.query_one("SELECT to_jsonb(s)-'client_info_json'-'client_info_at', client_info_json IS NULL AND client_info_at IS NULL FROM awr_team.sessions s", &[]).await.unwrap();
+    assert_eq!(session_after.get::<_, Value>(0), session_before);
+    assert!(session_after.get::<_, bool>(1));
 }
 
 #[tokio::test]

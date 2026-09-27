@@ -742,18 +742,11 @@ async fn legacy_or_reassigned_active_rows_cannot_be_silently_adopted_after_expir
 
 #[tokio::test]
 async fn schema_eleven_is_atomic_and_preserves_unattributed_claim_history() {
-    let (_guard, admin, _, _store) = setup().await;
-    // Reconstruct schema 10 in this process's exclusive database.
-    admin.batch_execute("DROP TABLE IF EXISTS awr_team.execution_attributions; DROP TABLE IF EXISTS awr_team.operator_quarantines; DROP TABLE IF EXISTS awr_team.backup_operations; DROP TABLE IF EXISTS awr_team.history_migrations; DROP TABLE IF EXISTS awr_team.access_changes;
-        ALTER TABLE awr_team.resource_reservations DROP COLUMN execution_id;
-        ALTER TABLE awr_team.executions DROP CONSTRAINT executions_resource_identity;
-        ALTER TABLE awr_team.executions DROP COLUMN attestation_grant_version;
-        ALTER TABLE awr_team.workstream_grants DROP COLUMN can_attest_execution,DROP COLUMN can_reconcile_execution;
-        ALTER TABLE awr_team.executions DROP CONSTRAINT executions_workstream_binding;
-        ALTER TABLE awr_team.executions DROP COLUMN workstream_id,DROP COLUMN ownership_version,DROP COLUMN executor_client_id,DROP COLUMN execution_version;
-        ALTER TABLE awr_team.claims DROP CONSTRAINT claims_workstream_binding;
-        ALTER TABLE awr_team.claims DROP COLUMN workstream_id,DROP COLUMN ownership_version,DROP COLUMN coordinator_epoch;
-        UPDATE awr_team.schema_state SET version=10;
+    let (_guard, admin, _) = common::historical_team_schema(10).await;
+    admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('reader-tenant','Readers','active');
+        INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status) VALUES('reader-tenant','reader-project','p','team','epoch-a','active');
+        INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state)
+          VALUES('reader-tenant','reader-project','session-a','main','a','agent','cli-a','conversation','active');
         INSERT INTO awr_team.claims(tenant_id,project_id,id,scope_id,work_id,session_id,actor_id,fence,expires_at,state)
           VALUES('reader-tenant','reader-project','history','main','a','session-a','agent',4,clock_timestamp()-interval '1 day','expired')").await.unwrap();
     let migration = include_str!("../migrations/20260921000011_workstream_claims.sql");

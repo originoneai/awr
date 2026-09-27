@@ -320,14 +320,14 @@ async fn replay_recovers_report_from_native_journal_without_reexecuting_effects(
 }
 
 #[tokio::test]
-async fn stale_or_expired_admission_writes_nothing() {
+async fn stale_authority_or_expired_admission_writes_nothing() {
     let (_g, admin, _, store) = setup().await;
     trust(&admin).await;
     let req = request(&store, writes()).await;
     let dir = Directory::new();
     let runner = ScopedReferenceRunner::new(store.commands(), &dir.0);
     let mut stale = req.clone();
-    stale.command.expected_project_revision = "0".into();
+    stale.command.expected_authority_version = "2".into();
     assert!(matches!(
         runner.run(A, stale).await,
         Err(PgError::PreconditionsChanged)
@@ -343,51 +343,42 @@ async fn stale_or_expired_admission_writes_nothing() {
 }
 
 #[tokio::test]
-async fn unconfirmed_report_after_unrelated_revision_change_requires_reviewed_retry() {
+async fn unrelated_audit_revision_change_preserves_report_and_idempotent_replay() {
     let (_g, admin, _, store) = setup().await;
     trust(&admin).await;
     let req = request(&store, writes()).await;
-    // A competing progress change after admission makes the first report stale.
+    // Project revision is an audit cursor. Another task's progress after
+    // admission must not invalidate this execution's unchanged read set.
     admin.batch_execute("CREATE FUNCTION awr_team.advance_after_start() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
         IF NEW.event_type='execution.start' THEN UPDATE awr_team.projects SET project_revision=project_revision+1
         WHERE tenant_id=NEW.tenant_id AND id=NEW.project_id; END IF; RETURN NEW; END $$;
         CREATE TRIGGER advance_after_start AFTER INSERT ON awr_team.events FOR EACH ROW EXECUTE FUNCTION awr_team.advance_after_start()").await.unwrap();
     let dir = Directory::new();
     let runner = ScopedReferenceRunner::new(store.commands(), &dir.0);
-    let result = runner.run(A, req).await.unwrap();
-    assert_eq!(result["report_required"], true);
+    let result = runner.run(A, req.clone()).await.unwrap();
+    assert_eq!(result["report_required"], false);
     assert_eq!(result["outcome"]["state"], "succeeded");
-    let mut report: ReferenceReportRequest = serde_json::from_slice(
+    let report: ReferenceReportRequest = serde_json::from_slice(
         &std::fs::read(result["report_request_file"].as_str().unwrap()).unwrap(),
     )
     .unwrap();
-    assert!(matches!(
-        runner.report(A, report.clone()).await,
-        Err(PgError::PreconditionsChanged)
-    ));
-    let mut q = query("command.inspect");
-    q.work_id = Some("a".into());
-    q.request_id = Some(report.command.request_id.clone());
-    assert_eq!(
-        store.query(TENANT, PROJECT, A, q).await.unwrap()["data"]["state"],
-        "unknown"
+    assert_ne!(
+        report.command.expected_project_revision,
+        prepare(&store, A, "a").await["project_revision"]
+            .as_str()
+            .unwrap()
     );
-    // The returned definitive precondition rejection and current inspection are
-    // reviewed before changing the request. No effect is repeated by report().
-    report.command.request_id = "reviewed-report-after-progress".into();
-    report.command.expected_project_revision = prepare(&store, A, "a").await["project_revision"]
-        .as_str()
-        .unwrap()
-        .into();
     let artifact = runner
         .project_root(TENANT, PROJECT)
         .unwrap()
         .join("worktree/src/api/result.txt");
     std::fs::write(&artifact, "subsequent work").unwrap();
-    assert_eq!(
-        runner.report(A, report).await.unwrap()["receipt"]["data"]["state"],
-        "succeeded"
-    );
+    let replayed_report = runner.report(A, report).await.unwrap();
+    assert_eq!(replayed_report["replayed"], true);
+    assert_eq!(replayed_report["receipt"]["data"]["state"], "succeeded");
+    let replayed_run = runner.run(A, req).await.unwrap();
+    assert_eq!(replayed_run["replayed"], true);
+    assert_eq!(replayed_run["effects_attempted"], false);
     assert_eq!(
         std::fs::read_to_string(artifact).unwrap(),
         "subsequent work"
