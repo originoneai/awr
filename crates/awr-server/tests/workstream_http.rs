@@ -157,8 +157,12 @@ async fn http_requires_live_auth_and_never_accepts_grants_or_identity_from_a_bod
         let mut request = body.clone();
         request[field] = json!("forged");
         let response = post(&server, "one", A, request).await;
-        assert_eq!(response.status(), 400);
+        assert_eq!(response.status(), 403);
         let text = response.text().await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&text).unwrap(),
+            json!({"code":"Forbidden","message":"access denied"})
+        );
         assert!(!text.contains(A));
         assert!(!text.contains("reader-tenant"));
     }
@@ -399,9 +403,14 @@ async fn http_command_conflicts_and_forged_authority_return_explicit_errors_with
     .unwrap();
     let mut forged = request.clone();
     forged["actor_id"] = json!("operator");
-    assert_eq!(post_command(&server, A, forged).await.status(), 400);
+    let denied = post_command(&server, A, forged).await;
+    assert_eq!(denied.status(), 403);
+    assert_eq!(
+        denied.json::<Value>().await.unwrap(),
+        json!({"code":"Forbidden","message":"access denied"})
+    );
     let mut stale = request.clone();
-    stale["expected_project_revision"] = json!("0");
+    stale["expected_authority_version"] = json!("999");
     let result = post_command(&server, A, stale).await;
     assert_eq!(result.status(), 409);
     assert_eq!(

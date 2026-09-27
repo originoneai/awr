@@ -953,9 +953,19 @@ async fn mcp_session_journal_reconnects_replays_and_shares_http_outcomes() {
         "expected_session_version":"1","context_hash":prep["data"]["context_hash"],"next_action":"Review the SDK integration","open_loops":["business acceptance pending"]}))).unwrap();
     let mut mismatch = checkpoint.clone();
     mismatch["args"]["context_hash"] = json!("0".repeat(64));
-    assert_eq!(
-        call(&a, "awr_team_command", mismatch, true).await["code"],
-        "PreconditionsChanged"
+    let mismatch = call(&a, "awr_team_command", mismatch, true).await;
+    assert_eq!(mismatch["code"], "PreconditionsChanged");
+    assert!(
+        mismatch["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("consume a fresh work.prepare")
+    );
+    assert!(
+        mismatch["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("session.inspect's context_hash is historical")
     );
     call(&a, "awr_team_command", checkpoint, false).await;
     let session = call(
