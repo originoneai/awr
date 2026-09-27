@@ -1042,11 +1042,15 @@ mod tests {
         std::fs::create_dir(&target).unwrap();
         std::fs::write(target.join("existing"), b"preserved").unwrap();
         let error = atomic_write(&target, b"replacement").unwrap_err();
-        assert!(error.source_storage_reason().is_some());
-        assert_eq!(
-            error.to_string(),
-            "authoritative source storage is unavailable"
-        );
+        // Windows reports this failed replacement as PermissionDenied, while
+        // Unix typically reports a different I/O error. Both must retain the
+        // bounded classification and omit private paths and raw OS messages.
+        let expected_message = match error.source_storage_reason() {
+            Some("permission_denied") => "authoritative source storage permission denied",
+            Some("io_error") => "authoritative source storage is unavailable",
+            other => panic!("unexpected source-storage classification: {other:?}"),
+        };
+        assert_eq!(error.to_string(), expected_message);
         assert_eq!(
             std::fs::read(target.join("existing")).unwrap(),
             b"preserved"
