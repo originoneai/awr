@@ -86,7 +86,7 @@ pub(super) fn select(data: &Value, context_complete: bool, owns_session: bool) -
             "a current PR is already registered",
             "versioned delivery exists for the current contract",
             "delivery.inspect",
-            "Inspect delivery and review requirements; do not register the same PR again or infer acceptance from CI.",
+            "Inspect delivery and review. Use delivery.register_pr for a changed head; delivery.observe_pr only updates the bound head. Do not infer acceptance from CI.",
             "PR head, evidence or review changes",
         )
     } else if data["session"].is_null() {

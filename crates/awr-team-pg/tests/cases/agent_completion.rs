@@ -59,16 +59,19 @@ async fn caller_chain(admin: &Client, db: &str, store: &WorkstreamReadStore) -> 
         "execution_id":execution["execution_id"],"expected_execution_version":started["execution_version"],
         "outcome":"succeeded","output_digest":RESULT,"observed_paths":["src/api/result.json"],"note":"Caller observed its own result."})).await;
     assert_eq!(reported["state"], "unknown");
+    let mut evidence_args = submit_args(
+        "session-a",
+        execution["execution_id"].as_str().unwrap(),
+        "",
+    );
+    evidence_args.as_object_mut().unwrap().remove("artifact_hex");
+    evidence_args["artifact_text"] = json!("caller artifact");
     let evidence = run(
         store,
         A,
         "caller-evidence",
         "evidence.submit",
-        submit_args(
-            "session-a",
-            execution["execution_id"].as_str().unwrap(),
-            &hex_encode(b"caller artifact"),
-        ),
+        evidence_args,
     )
     .await;
     assert_eq!(evidence["trust_basis"], "caller_asserted");
