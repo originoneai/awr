@@ -108,6 +108,74 @@ fn raw(server: &Server, token: &str) -> reqwest::RequestBuilder {
 }
 
 #[tokio::test]
+async fn numeric_command_versions_are_rejected_without_mutation_and_strings_succeed() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let before = prepared(&client).await;
+    let request = serde_json::to_value(command(
+        &before,
+        "version-input-sentinel",
+        "claim.acquire",
+        json!({"session_id":"session-a","expected_session_version":"1",
+            "expected_work_version":"0","ttl_seconds":60}),
+    ))
+    .unwrap();
+    let counts_sql = "SELECT (SELECT count(*) FROM awr_team.claims),
+        (SELECT count(*) FROM awr_team.operations),
+        (SELECT count(*) FROM awr_team.checkpoints),
+        (SELECT count(*) FROM awr_team.executions)";
+    let baseline = admin.query_one(counts_sql, &[]).await.unwrap();
+    for (nested, field, number) in [
+        (true, "expected_session_version", 1),
+        (true, "expected_work_version", 0),
+        (false, "expected_project_revision", 1),
+    ] {
+        let mut invalid = request.clone();
+        if nested {
+            invalid["args"][field] = json!(number);
+        } else {
+            invalid[field] = json!(number);
+        }
+        let error = call(&client, "awr_team_command", invalid, true).await;
+        assert_eq!(error["code"], "InvalidInput");
+        assert_eq!(error["message"], "command fields or bounds are invalid");
+        assert!(
+            error["next_step"]
+                .as_str()
+                .unwrap()
+                .contains("decimal strings")
+        );
+        for private in ["version-input-sentinel", "session-a", A] {
+            assert!(!error.to_string().contains(private));
+        }
+        let audit = admin
+            .query_one(
+                "SELECT result, finished_at IS NOT NULL FROM awr_team.request_audit
+                 WHERE action='claim.acquire' ORDER BY created_at DESC,id DESC LIMIT 1",
+                &[],
+            )
+            .await
+            .unwrap();
+        assert_eq!(audit.get::<_, String>(0), "failed");
+        assert!(audit.get::<_, bool>(1));
+        let after = admin.query_one(counts_sql, &[]).await.unwrap();
+        for index in 0..4 {
+            assert_eq!(after.get::<_, i64>(index), baseline.get::<_, i64>(index));
+        }
+        assert_eq!(
+            prepared(&client).await["project_revision"],
+            before["project_revision"]
+        );
+    }
+    let receipt = call(&client, "awr_team_command", request, false).await;
+    assert_eq!(receipt["receipt"]["data"]["state"], "active");
+    assert_eq!(receipt["replayed"], false);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn discovered_review_and_evidence_selectors_reach_scoped_records() {
     let (_guard, admin, _, store) = setup().await;
     enable_writes(&admin).await;

@@ -121,3 +121,17 @@ pub async fn run(command: RunnerCommand) -> Result<Value, Error> {
     }
     .map_err(pg_error)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_command_is_invalid_input_without_exposing_protocol_details() {
+        let command = pg_error(PgError::invalid_command_fields());
+        assert_eq!(command.0, "InvalidInput");
+        let internal = pg_error(PgError::Protocol("private-runner-sentinel".into()));
+        assert_eq!(command, internal);
+        assert!(!internal.1.contains("private-runner-sentinel"));
+    }
+}

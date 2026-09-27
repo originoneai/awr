@@ -109,7 +109,7 @@ struct Applied {
 }
 
 fn invalid() -> PgError {
-    PgError::Protocol("invalid scoped command fields or bounds".into())
+    PgError::invalid_command_fields()
 }
 fn identity(s: &str) -> bool {
     !s.is_empty() && s.len() <= 128 && !s.chars().any(char::is_control)

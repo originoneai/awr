@@ -112,3 +112,17 @@ pub enum PgError {
     #[error("{0}")]
     Protocol(String),
 }
+
+impl PgError {
+    // Keep the existing Protocol representation: PgError is a public,
+    // exhaustively matched enum, and callers already classify it as bad input.
+    const INVALID_COMMAND_FIELDS: &'static str = "invalid scoped command fields or bounds";
+
+    pub fn invalid_command_fields() -> Self {
+        Self::Protocol(Self::INVALID_COMMAND_FIELDS.into())
+    }
+
+    pub fn is_invalid_command_fields(&self) -> bool {
+        matches!(self, Self::Protocol(message) if message == Self::INVALID_COMMAND_FIELDS)
+    }
+}

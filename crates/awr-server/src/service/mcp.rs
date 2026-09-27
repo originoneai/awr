@@ -147,6 +147,14 @@ fn catalog() -> Vec<Tool> {
         "args":{"type":"object","description":"session.start: conversation_id, optional client_info. session.checkpoint: session_id, expected_session_version, context_hash, next_action, open_loops; optional client_info, progress, usage (schemas below). Batch feedback at meaningful boundaries; execution.report is terminal-only. session.end: session_id, expected_session_version. All claim/execution actions: session_id, expected_session_version. claim.acquire adds expected_work_version (0 when runtime absent), ttl_seconds (1..3600). claim.renew/release add claim_id, expected_fence, expected_lease_version; renew also ttl_seconds. execution.prepare adds claim_id, expected_fence, expected_lease_version, expected_work_version, input_digest (64 lowercase hex), declared_scope (canonical relative paths). execution.cancel adds execution_id, expected_execution_version. execution.start adds execution_id, expected_execution_version, claim_id, expected_fence, expected_lease_version, expected_work_version, execution_mode (caller_managed or reference_write_v1), optional expected_input_digest. reference_write_v1 requires the prepared input digest and system attestation authority; the service does not dispatch the local runner. execution.report adds execution_id, expected_execution_version, outcome (succeeded/failed/cancelled/unknown), optional output_digest (required for success), observed_paths, note. execution.attest adds execution_id, expected_execution_version, facts. execution.reconcile also adds expected_work_version, reviewed_receipt_id (latest inspected ID or null), clear_recovery_block, optional previous_epoch_recovery. Old-epoch recovery requires {execution_epoch (exact inspected epoch), executor_stopped (true to settle), review_reference (nonempty, <=2048 bytes, no controls)}; this is an authorized operator assertion, not independently verified fencing. facts: outcome, input_digest, optional output_digest (required for success), environment_digest, observed_paths, note. Digests are 64 lowercase hex. Versions are decimal strings; unknown fields fail. handoff.propose: session_id, expected_session_version, handoff_id, kind (execution|responsibility), to_person_id, package (task_id, contract_version, contract_hash, current_person_id, current_execution, consumed_context_digest, checkpoint_ids, artifact_versions, branch_id, working_directory, dependency_ids, todos, awaiting_replies, unknown_side_effects), optional proposed_successor/proposer_execution_id/proposer_fence/expires_at_ms, now_ms. handoff.inspect/accept/reject/cancel/timeout: session_id, expected_session_version, handoff_id, expected_handoff_version, now_ms; accept adds acceptor_person_id, successor_execution, prior_execution_stopped, prior_reconciled, context_reprepared, optional expected_current_fence; reject/cancel add by_person_id+reason; inspect adds inspector_person_id.  Timeout closes the proposal only and does not stop execution. evidence.submit: session_id, expected_session_version, payload, optional claimed_trust/artifact_hex/input_digest/dirty_tree/execution_id. review.open / delivery.submit_and_request_review: session_id, expected_session_version, evidence_id. review.accept/return: session_id, expected_session_version, round_id, reason. review.decide: session_id, expected_session_version, round_id, decision (approve|reject), reason — requires the matching human or Agent review grant and policy. work.rework: session_id, expected_session_version, round_id, note. work.complete / delivery.finalize: session_id, expected_session_version, evidence_id, context_complete, optional requested_policy. delivery.register_pr: repository, pr_number, pr_url, head_sha, fact_source (authorized_human_github_verification|operator_recorded_observation), observed_at (RFC3339), optional merge_sha/test_evidence_id/gh_* flags — v1 manual GitHub verification, not webhook sync. delivery.observe_pr: delivery_id, expected_head_sha, fact_source, observed_at, optional gh_approved/gh_merged/merge_sha. Query delivery.inspect separates GitHub submitted/approved/merged from AWR acceptance complete."}
     }});
     command["properties"]["args"]["properties"] = json!({
+        "expected_session_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
+        "expected_work_version":{"type":"string","pattern":"^(0|[1-9][0-9]*)$",
+            "description":"claim.acquire uses \"0\" before work runtime exists; otherwise use the current work version."},
+        "expected_fence":{"type":"string","pattern":"^[1-9][0-9]*$"},
+        "expected_lease_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
+        "expected_execution_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
+        "expected_handoff_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
+        "expected_current_fence":{"type":["string","null"],"pattern":"^(0|[1-9][0-9]*)$"},
         "client_info":{"type":["object","null"],"additionalProperties":false,"required":["product"],"properties":{
             "product":{"type":"string","maxLength":128},"version":{"type":["string","null"],"maxLength":128},
             "model":{"type":["object","null"],"additionalProperties":false,"required":["id","source"],"properties":{
@@ -457,7 +465,7 @@ impl ServerHandler for Endpoint {
                 }
                 "awr_team_command" => {
                     let c: WorkstreamCommand = serde_json::from_value(args)
-                        .map_err(|_| PgError::Protocol("invalid command".into()))?;
+                        .map_err(|_| PgError::invalid_command_fields())?;
                     self.state
                         .commands
                         .execute(
@@ -650,6 +658,61 @@ impl ServerHandler for Endpoint {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn discovery_types_nested_command_versions_without_requiring_them_for_every_op() {
+        let tool = catalog()
+            .into_iter()
+            .find(|tool| tool.name == "awr_team_command")
+            .unwrap();
+        let args = &tool.input_schema["properties"]["args"];
+        assert!(args.get("required").is_none());
+        let fields = &args["properties"];
+        for name in [
+            "expected_session_version",
+            "expected_fence",
+            "expected_lease_version",
+            "expected_execution_version",
+            "expected_handoff_version",
+        ] {
+            assert_eq!(fields[name]["type"], "string", "{name}");
+            assert_eq!(fields[name]["pattern"], "^[1-9][0-9]*$", "{name}");
+        }
+        // An initial claim has no runtime version; optional handoff fences
+        // retain the parser's existing null/zero semantics.
+        assert_eq!(fields["expected_work_version"]["type"], "string");
+        assert_eq!(
+            fields["expected_work_version"]["pattern"],
+            "^(0|[1-9][0-9]*)$"
+        );
+        assert_eq!(
+            fields["expected_current_fence"]["type"],
+            json!(["string", "null"])
+        );
+        assert_eq!(
+            fields["expected_current_fence"]["pattern"],
+            "^(0|[1-9][0-9]*)$"
+        );
+    }
+
+    #[test]
+    fn command_diagnostics_are_bounded_and_do_not_expose_internal_protocol_details() {
+        let (status, command) = public_error(PgError::invalid_command_fields());
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(command["code"], "InvalidInput");
+        assert_eq!(command["message"], "command fields or bounds are invalid");
+        assert!(
+            command["next_step"]
+                .as_str()
+                .unwrap()
+                .contains("decimal strings")
+        );
+        assert!(command.to_string().len() < 400);
+        let (_, internal) = public_error(PgError::Protocol("private-diagnostic-sentinel".into()));
+        assert_eq!(internal["code"], "InvalidInput");
+        assert!(!internal.to_string().contains("private-diagnostic-sentinel"));
+        assert!(internal.get("next_step").is_none());
+    }
 
     #[test]
     fn discovery_covers_every_query_contract_field() {

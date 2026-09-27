@@ -824,6 +824,13 @@ pub(crate) fn error_response(error: PgError) -> Response {
 
 // Shared by HTTP and MCP; never expose SQL, URLs, credentials or source bodies.
 fn public_error(error: PgError) -> (StatusCode, Value) {
+    if error.is_invalid_command_fields() {
+        return (
+            StatusCode::BAD_REQUEST,
+            json!({"code":"InvalidInput","message":"command fields or bounds are invalid",
+                "next_step":"Check the operation's required args. Version and fence fields are JSON decimal strings (for example \"1\"); use the schema for zero and omitted values."}),
+        );
+    }
     match error {
         PgError::Forbidden => (
             StatusCode::FORBIDDEN,
