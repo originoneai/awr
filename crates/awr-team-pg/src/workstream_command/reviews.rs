@@ -1,5 +1,6 @@
 //! Mainline evidence / review / rework / complete commands (WS-018).
 mod agent_completion;
+mod artifact_input;
 
 use super::*;
 use crate::review::{
@@ -16,6 +17,7 @@ pub(super) struct SubmitEvidence {
     claimed_trust: Option<String>,
     payload: Value,
     artifact_hex: Option<String>,
+    artifact_text: Option<String>,
     input_digest: Option<String>,
     dirty_tree: bool,
     execution_id: Option<String>,
@@ -296,28 +298,8 @@ async fn submit(
         .map(|r| r.get(0))
         .ok_or(PgError::Forbidden)?;
     let trust_basis = trust(&kind, a.claimed_trust.as_deref());
-    let artifact_bytes = match a.artifact_hex.as_deref() {
-        None => None,
-        Some(s) => {
-            if s.len() > 2_097_152 || s.len() % 2 != 0 || !s.bytes().all(|b| b.is_ascii_hexdigit())
-            {
-                return Err(invalid());
-            }
-            let mut out = Vec::with_capacity(s.len() / 2);
-            let bytes = s.as_bytes();
-            let mut i = 0;
-            while i < bytes.len() {
-                let hi = (bytes[i] as char).to_digit(16).ok_or_else(invalid)? as u8;
-                let lo = (bytes[i + 1] as char).to_digit(16).ok_or_else(invalid)? as u8;
-                out.push((hi << 4) | lo);
-                i += 2;
-            }
-            if out.len() > 1_048_576 {
-                return Err(invalid());
-            }
-            Some(out)
-        }
-    };
+    let artifact_bytes =
+        artifact_input::decode(a.artifact_hex.as_deref(), a.artifact_text.as_deref())?;
     if a.dirty_tree && a.input_digest.is_none() && artifact_bytes.is_none() {
         return Err(PgError::EvidenceInvalid);
     }
@@ -413,6 +395,8 @@ async fn submit(
         data: json!({
             "evidence_id": id,
             "digest": digest_v,
+            "artifact_id": artifact_id,
+            "artifact_digest": output_digest,
             "trust_basis": trust_basis,
             "contract_hash": contract_hash,
             "execution_success": a.payload.get("passed").and_then(Value::as_bool),
@@ -1632,7 +1616,7 @@ pub(crate) async fn inspect_evidence(
     let row = tx
         .query_opt(
             "SELECT id, work_id, contract_hash, digest, trust_basis, execution_id,
-                    output_digest, execution_result_digest, created_by
+                    output_digest, execution_result_digest, created_by, artifact_id
              FROM awr_team.evidence
              WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
             &[&tenant, &project, &evidence_id],
@@ -1649,6 +1633,7 @@ pub(crate) async fn inspect_evidence(
         "artifact_digest": row.get::<_,Option<String>>(6),
         "execution_result_digest": row.get::<_,Option<String>>(7),
         "created_by": row.get::<_,String>(8),
+        "artifact_id": row.get::<_,Option<String>>(9),
     }}))
 }
 

@@ -1,5 +1,7 @@
 #![cfg(feature = "pg-tests")]
 mod common;
+#[path = "cases/evidence_input.rs"]
+mod evidence_input_tests;
 #[path = "fixtures/workstream_access.rs"]
 mod fixture;
 

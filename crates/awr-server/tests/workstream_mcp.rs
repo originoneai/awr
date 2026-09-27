@@ -198,6 +198,16 @@ async fn discovered_review_and_evidence_selectors_reach_scoped_records() {
         assert_eq!(schema["properties"][field]["maxLength"], 128);
     }
     assert_eq!(schema["properties"]["include_denies"]["type"], "boolean");
+    let command_schema = &tools
+        .iter()
+        .find(|tool| tool.name == "awr_team_command")
+        .unwrap()
+        .input_schema;
+    assert_eq!(
+        command_schema["properties"]["args"]["properties"]["artifact_text"]["type"],
+        json!(["string", "null"])
+    );
+    let report = "Scoped evidence: 验证 🦀\r\n";
     let submitted = call(
         &client,
         "awr_team_command",
@@ -206,13 +216,25 @@ async fn discovered_review_and_evidence_selectors_reach_scoped_records() {
             "selector-evidence",
             "evidence.submit",
             json!({"session_id":"session-a","expected_session_version":"1",
-                "payload":{"passed":true},"artifact_hex":"73636f706564","dirty_tree":false}),
+                "payload":{"passed":true},"artifact_text":report,"dirty_tree":false}),
         ))
         .unwrap(),
         false,
     )
     .await;
     let evidence_id = &submitted["receipt"]["data"]["evidence_id"];
+    let artifact = call(
+        &client,
+        "awr_team_query",
+        json!({
+            "protocol_version":1,"op":"artifact.content","work_id":"a",
+            "artifact_id":submitted["receipt"]["data"]["artifact_id"],
+            "expected_sha256":submitted["receipt"]["data"]["artifact_digest"]
+        }),
+        false,
+    )
+    .await;
+    assert_eq!(artifact["data"]["text"], report);
     let opened = call(
         &client,
         "awr_team_command",

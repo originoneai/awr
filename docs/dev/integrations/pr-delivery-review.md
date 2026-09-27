@@ -20,6 +20,36 @@ Legacy membership label `reviewer` maps to the reader template and **cannot**
 receive `independent_review`. Grant the developer (or higher) template plus the
 flag via project-admin access apply (`independent_review: true`).
 
+Current Agent delegations do not map to `delivery.finalize`. Even a maintainer
+role or a `Review` delegation does not grant an Agent finalization authority.
+After approval, an authorized human/system maintainer or project administrator
+finalizes the delivery through the same completion gates.
+
+## Submitting inspectable evidence
+
+`evidence.submit` requires `session_id`, `expected_session_version`, `payload`
+and the boolean `dirty_tree`. Generic evidence accepts any JSON payload. For
+Agent-reviewed caller completion, provide `execution_id`, the `input_digest`
+from `execution.prepare`, and a payload object with `passed: true` and
+`output_digest` matching the successful `execution.report`. These bindings are
+checked again at completion against the reconciled execution and review.
+
+For a text report, send `artifact_text` directly. The service stores the exact
+UTF-8 bytes after JSON decoding, including whitespace, line endings and Unicode
+normalization; it does not reformat JSON reports. Binary callers may continue
+using mechanically generated `artifact_hex`. Supply at most one non-null
+encoding. Both produce identical evidence digests for identical bytes and
+payloads, with the existing 1 MiB artifact byte limit. The whole MCP request
+still has a 64 KiB limit, so keep inline reports compact.
+
+The receipt returns `artifact_id` and `artifact_digest` (both null without an
+artifact). `evidence.inspect` also returns this locator. Before opening review,
+read `artifact.content` with the same `work_id`, returned `artifact_id` and
+`expected_sha256: artifact_digest` to check the submitted content. This read
+retains existing work access and response-size limits. The artifact digest
+hashes the report bytes; it is distinct from the execution's output digest.
+Encoding changes never upgrade caller evidence trust or grant approval.
+
 ## PR version evidence (v1)
 
 `delivery.register_pr` records:
@@ -36,6 +66,10 @@ role, or `gh_merged=true` never complete the work.
 `delivery.observe_pr` updates GitHub approved/merged observations while rechecking
 `expected_head_sha`. A head or live-contract mismatch **invalidates** the delivery
 and open/approved AWR review rounds bound to the old contract.
+
+When a rework changes the PR head, use `delivery.register_pr` to bind the new
+head and evidence before requesting a fresh review. `delivery.observe_pr` only
+updates observations for its already-bound head.
 
 ## Status surfaces
 
