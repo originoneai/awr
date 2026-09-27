@@ -46,7 +46,13 @@ pub async fn enable_writes(admin: &Client) {
 }
 
 pub async fn setup() -> (MutexGuard<'static, ()>, Client, String, WorkstreamReadStore) {
-    let (guard, admin, db, store, _) = setup_inner(false, None).await;
+    let (guard, admin, db, store, _) = setup_inner(false, None, false).await;
+    (guard, admin, db, store)
+}
+
+pub async fn setup_with_three_streams()
+-> (MutexGuard<'static, ()>, Client, String, WorkstreamReadStore) {
+    let (guard, admin, db, store, _) = setup_inner(false, None, true).await;
     (guard, admin, db, store)
 }
 
@@ -57,20 +63,21 @@ pub async fn setup_with_legacy_resource() -> (
     WorkstreamReadStore,
     String,
 ) {
-    let (guard, admin, db, store, legacy) = setup_inner(true, None).await;
+    let (guard, admin, db, store, legacy) = setup_inner(true, None, false).await;
     (guard, admin, db, store, legacy.expect("legacy resource"))
 }
 
 pub async fn setup_with_specs(
     files: Vec<SourceFile>,
 ) -> (MutexGuard<'static, ()>, Client, String, WorkstreamReadStore) {
-    let (guard, admin, db, store, _) = setup_inner(false, Some(files)).await;
+    let (guard, admin, db, store, _) = setup_inner(false, Some(files), false).await;
     (guard, admin, db, store)
 }
 
 async fn setup_inner(
     legacy_resource: bool,
     spec_files: Option<Vec<SourceFile>>,
+    third_stream: bool,
 ) -> (
     MutexGuard<'static, ()>,
     Client,
@@ -120,7 +127,11 @@ async fn setup_inner(
     } else {
         None
     };
-    let definitions = vec![(1, "alpha"), (2, "private-beta")]
+    let mut stream_definitions = vec![(1, "alpha"), (2, "private-beta")];
+    if third_stream {
+        stream_definitions.push((3, "hidden-gamma"));
+    }
+    let definitions = stream_definitions
         .into_iter()
         .map(|(i, key)| Workstream {
             id: Id::from(i),
@@ -137,29 +148,33 @@ async fn setup_inner(
             },
         })
         .collect();
-    let contracts = vec![
+    let mut work_definitions = vec![
         ("a", 1, vec![]),
         ("b-private", 2, vec![]),
         ("c", 1, vec!["b-private"]),
-    ]
-    .into_iter()
-    .map(|(id, stream, deps)| WorkstreamContract {
-        workstream_id: Id::from(stream),
-        contract: WorkContract {
-            dependency_acceptance: Default::default(),
-            codec: WorkContract::CODEC.into(),
-            work_id: WorkId::new(id).unwrap(),
-            external_key: id.into(),
-            goals: vec!["ship".into()],
-            hard_rules: vec!["preserve compatibility".into()],
-            scope_paths: vec!["src".into()],
-            acceptance: vec!["verified".into()],
-            required_dependencies: deps.into_iter().map(Into::into).collect(),
-            completion_policy: "review".into(),
-            verification_requirements: vec!["report".into()],
-        },
-    })
-    .collect();
+    ];
+    if third_stream {
+        work_definitions.push(("d-hidden", 3, vec![]));
+    }
+    let contracts = work_definitions
+        .into_iter()
+        .map(|(id, stream, deps)| WorkstreamContract {
+            workstream_id: Id::from(stream),
+            contract: WorkContract {
+                dependency_acceptance: Default::default(),
+                codec: WorkContract::CODEC.into(),
+                work_id: WorkId::new(id).unwrap(),
+                external_key: id.into(),
+                goals: vec!["ship".into()],
+                hard_rules: vec!["preserve compatibility".into()],
+                scope_paths: vec!["src".into()],
+                acceptance: vec!["verified".into()],
+                required_dependencies: deps.into_iter().map(Into::into).collect(),
+                completion_policy: "review".into(),
+                verification_requirements: vec!["report".into()],
+            },
+        })
+        .collect();
     let bundle = WorkstreamBundle {
         codec: WorkstreamBundle::CODEC.into(),
         catalog: WorkstreamCatalog {

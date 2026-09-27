@@ -323,17 +323,8 @@ pub(crate) async fn authenticated_read(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
-    crate::delegation_auth::resolve_agent_delegation(
-        tx,
-        &mut auth,
-        project,
-        request.work_id.as_deref(),
-        request.session_id.as_deref(),
-        crate::workstream_auth::query_business_action(&request.op),
-        now_ms,
-    )
-    .await?;
-    crate::delegation_auth::restrict_read_scope(tx, &mut auth, project, request).await?;
+    crate::delegation_auth::resolve_agent_read_delegation(tx, &mut auth, project, request, now_ms)
+        .await?;
     read(tx, tenant, project, &auth, request).await
 }
 

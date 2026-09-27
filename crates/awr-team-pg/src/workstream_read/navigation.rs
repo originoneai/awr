@@ -51,9 +51,16 @@ pub(super) async fn next(
           AND o.snapshot_id=$3 AND o.work_id=s.work_id AND o.workstream_id=s.workstream_id AND o.ownership_version=s.ownership_version
         WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.actor_id=$4 AND s.client_id=$5 AND s.state='active'
           AND s.workstream_id=ANY($6) ORDER BY s.id LIMIT 21", &[&tenant,&project,&auth.snapshot,&auth.actor_id,&auth.client_id,&streams]).await?;
-    let resume: Vec<_> = own.iter().take(20).map(|s| json!({"session_id":s.get::<_,String>(0),"work_id":s.get::<_,String>(1),
+    let resume: Vec<_> = own
+        .iter()
+        .take(20)
+        .map(|s| {
+            json!({"session_id":s.get::<_,String>(0),"work_id":s.get::<_,String>(1),
         "workstream_id":s.get::<_,String>(2),"session_version":s.get::<_,i64>(3).to_string(),
-        "next_query":{"protocol_version":1,"op":"session.inspect","session_id":s.get::<_,String>(0)}})).collect();
+        "next_query":{"protocol_version":1,"op":"session.inspect","session_id":s.get::<_,String>(0),
+            "work_id":s.get::<_,String>(1),"workstream_id":s.get::<_,String>(2)}})
+        })
+        .collect();
     let mut items = Vec::new();
     for row in rows.iter().take(limit as usize) {
         let work: String = row.get(0);
@@ -95,8 +102,13 @@ pub(super) async fn next(
                 WorkstreamAction::Write,
             )
             .is_ok()
-            && authorize_domain_action(auth, awr_team::Action::ClaimManageOwn, None, Some(&work))
-                .is_ok();
+            && crate::delegation_auth::authorize_navigation_action(
+                auth,
+                awr_team::Action::ClaimManageOwn,
+                stream.parse().map_err(|_| PgError::SourceDivergence)?,
+                &work,
+            )
+            .is_ok();
         let pending = tx.query_one("SELECT
             EXISTS(SELECT 1 FROM awr_team.wait_items WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND state='open'),
             EXISTS(SELECT 1 FROM awr_team.executions WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND state NOT IN ('succeeded','failed','cancelled')) OR
