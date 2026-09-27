@@ -875,6 +875,19 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
                 "next_step":"fix the refused source write condition, then inspect planning.outcome before any new request_id"
             }),
         ),
+        PgError::SourceStorageUnavailable(error) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({
+                "code":"SourceStorageUnavailable",
+                "message":"authoritative source storage could not be read or updated",
+                "reason": if error.kind() == std::io::ErrorKind::PermissionDenied {
+                    "permission_denied"
+                } else {
+                    "io_error"
+                },
+                "next_step":"Ask the service operator to check source storage, free space, and service-account read/write access, including parent-directory access for atomic replacement. Inspect planning.outcome for the original request_id and its writeback journal before resuming that same request; do not create a new request or assume no changes occurred."
+            }),
+        ),
         PgError::CandidateNotApproved => (
             StatusCode::CONFLICT,
             json!({

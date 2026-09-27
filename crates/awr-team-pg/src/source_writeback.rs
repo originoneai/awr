@@ -248,9 +248,8 @@ impl SourceStore {
                 "validated" | "source_written" | "pg_activating"
             ) {
                 let journal = prior.expect("phase implies journal row");
-                let disk = std::fs::read(&ledger_path).map_err(|e| {
-                    PgError::Protocol(format!("cannot read ledger for resume: {e}"))
-                })?;
+                let disk =
+                    std::fs::read(&ledger_path).map_err(PgError::SourceStorageUnavailable)?;
                 let disk_fp = fingerprint(&disk);
                 if disk_fp == journal.after_fingerprint {
                     // Source write landed; resume activation without re-applying creates.
@@ -302,12 +301,8 @@ impl SourceStore {
             } else {
                 // Fresh / planned / refused-retry: plan patch and validate fully
                 // before the first authoritative source mutation.
-                let before_bytes = std::fs::read(&ledger_path).map_err(|e| {
-                    PgError::Protocol(format!(
-                        "cannot read authoritative ledger {}: {e}",
-                        ledger_path.display()
-                    ))
-                })?;
+                let before_bytes =
+                    std::fs::read(&ledger_path).map_err(PgError::SourceStorageUnavailable)?;
                 let observed_fp = fingerprint(&before_bytes);
                 let patch = apply_planning_changes_to_ledger(&before_bytes, &changes)
                     .map_err(|e| PgError::Protocol(e.to_string()))?;
@@ -381,8 +376,7 @@ impl SourceStore {
 
         if !source_already_written {
             // Fingerprint re-check immediately before write (external race).
-            let recheck = std::fs::read(&ledger_path)
-                .map_err(|e| PgError::Protocol(format!("re-read ledger failed: {e}")))?;
+            let recheck = std::fs::read(&ledger_path).map_err(PgError::SourceStorageUnavailable)?;
             refuse_external_overwrite(&before_fingerprint, &fingerprint(&recheck))
                 .map_err(|e| PgError::Protocol(e.to_string()))?;
             atomic_write(&ledger_path, &after_bytes)?;
@@ -1029,9 +1023,39 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> PgResult<()> {
             .and_then(|s| s.to_str())
             .unwrap_or("ledger")
     ));
-    std::fs::write(&tmp, bytes)
-        .map_err(|e| PgError::Protocol(format!("writeback temp write failed: {e}")))?;
-    std::fs::rename(&tmp, path)
-        .map_err(|e| PgError::Protocol(format!("writeback rename failed: {e}")))?;
+    std::fs::write(&tmp, bytes).map_err(PgError::SourceStorageUnavailable)?;
+    std::fs::rename(&tmp, path).map_err(PgError::SourceStorageUnavailable)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn atomic_replacement_failure_is_classified_without_exposing_the_path() {
+        let root = std::env::temp_dir().join(format!("awr-writeback-{}", ulid::Ulid::new()));
+        std::fs::create_dir(&root).unwrap();
+        let target = root.join("private-ledger");
+        // A file cannot replace a nonempty directory, on any supported platform.
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("existing"), b"preserved").unwrap();
+        let error = atomic_write(&target, b"replacement").unwrap_err();
+        assert!(matches!(error, PgError::SourceStorageUnavailable(_)));
+        assert_eq!(
+            error.to_string(),
+            "authoritative source storage is unavailable"
+        );
+        assert_eq!(
+            std::fs::read(target.join("existing")).unwrap(),
+            b"preserved"
+        );
+        // A failed rename may leave a temporary file: diagnostics must not claim
+        // that there were no effects or tell callers to use a new request ID.
+        assert_eq!(
+            std::fs::read(root.join(".private-ledger.tmcp022.tmp")).unwrap(),
+            b"replacement"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

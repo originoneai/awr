@@ -751,6 +751,32 @@ mod tests {
     }
 
     #[test]
+    fn source_storage_diagnostics_preserve_recovery_guidance_without_private_details() {
+        for (kind, reason) in [
+            (std::io::ErrorKind::PermissionDenied, "permission_denied"),
+            (std::io::ErrorKind::NotFound, "io_error"),
+            (std::io::ErrorKind::Other, "io_error"),
+        ] {
+            let (status, body) = public_error(PgError::SourceStorageUnavailable(
+                std::io::Error::new(kind, "/private/source/ledger.yaml: secret-sentinel"),
+            ));
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(body["code"], "SourceStorageUnavailable");
+            assert_eq!(body["reason"], reason);
+            let next = body["next_step"].as_str().unwrap();
+            assert!(next.contains("parent-directory"));
+            assert!(next.contains("planning.outcome"));
+            assert!(next.contains("original request_id"));
+            assert!(next.contains("do not create a new request"));
+            assert!(next.contains("assume no changes occurred"));
+            let rendered = body.to_string();
+            assert!(!rendered.contains("/private/source"));
+            assert!(!rendered.contains("secret-sentinel"));
+            assert!(rendered.len() < 650);
+        }
+    }
+
+    #[test]
     fn discovery_covers_every_query_contract_field() {
         // Populate every field, including optional fields omitted by serde, so
         // additions to the backend contract also require discovery coverage.

@@ -71,6 +71,8 @@ pub enum PgError {
     ClaimBlocksActivation,
     #[error("planning writeback refused: {0}")]
     WritebackRefused(String),
+    #[error("authoritative source storage is unavailable")]
+    SourceStorageUnavailable(#[source] std::io::Error),
     #[error("planning activation impact unproven: {0}")]
     ActivationImpactUnproven(String),
     #[error("graph budget exceeded")]
