@@ -65,7 +65,9 @@ pub use operator_access::{
     AccessActor, AccessCredential, AccessGrant, AccessPlan, AdminAccessPlan, OperatorAccess,
     ProjectAccessStore,
 };
-pub use operator_agent::{AgentProvisionPlan, AgentRenewPlan, OperatorAgent};
+pub use operator_agent::{
+    AgentAuthorizationIssuePlan, AgentProvisionPlan, AgentRenewPlan, OperatorAgent,
+};
 pub use operator_backup::OperatorBackup;
 pub use operator_execution_attribution::{
     ExecutionAttributionEntry, ExecutionAttributionPlan, OperatorExecutionAttribution,

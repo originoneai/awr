@@ -3,11 +3,12 @@ mod common;
 #[path = "fixtures/workstream_access.rs"]
 mod fixture;
 use awr_core::{
-    AgentAuthorization, AuthorizationStatus, AuthorizedAction, RevokeAuthorizationRequest,
+    AgentAuthorization, AuthorizationScope, AuthorizationStatus, AuthorizedAction, Id,
+    IssueAuthorizationRequest, RevokeAuthorizationRequest,
 };
 use awr_team_pg::{
-    AccessPlan, AgentProvisionPlan, AgentRenewPlan, AuthorizationStore, OperatorAccess,
-    OperatorAgent, PgError, workstream_credential_hash,
+    AccessPlan, AgentAuthorizationIssuePlan, AgentProvisionPlan, AgentRenewPlan,
+    AuthorizationStore, OperatorAccess, OperatorAgent, PgError, workstream_credential_hash,
 };
 use fixture::*;
 use serde_json::{Value, json};
@@ -108,6 +109,43 @@ async fn expired_renewal_plan(admin: &Client, provision: &AgentProvisionPlan) ->
         authorization: successor,
     }
 }
+
+async fn grant_second_stream(admin: &Client) {
+    admin
+        .execute(
+            "INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,can_write) VALUES($1,$2,'native-agent','native-client',$3,1,true,true)",
+            &[&TENANT, &PROJECT, &Id::from(2).to_string()],
+        )
+        .await
+        .unwrap();
+}
+
+async fn authorization_issue_plan(
+    admin: &Client,
+    id: &str,
+    scope: AuthorizationScope,
+) -> AgentAuthorizationIssuePlan {
+    let mut authorization = plan(admin).await.authorization;
+    authorization.id = id.into();
+    authorization.scope = scope;
+    AgentAuthorizationIssuePlan {
+        protocol_version: 1,
+        tenant_id: TENANT.into(),
+        project_id: PROJECT.into(),
+        authorization,
+    }
+}
+
+async fn preserved_authority(admin: &Client) -> Value {
+    admin.query_one("SELECT jsonb_build_object(
+        'person',(SELECT to_jsonb(t) FROM awr_team.persons t WHERE id='agent'),
+        'bindings',(SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM awr_team.person_agent_bindings t WHERE agent_id='native-agent'),
+        'authorization',(SELECT to_jsonb(t) FROM awr_team.agent_authorizations t WHERE id='native-authorization'),
+        'actor',(SELECT to_jsonb(t) FROM awr_team.actors t WHERE id='native-agent'),
+        'credential',(SELECT to_jsonb(t) FROM awr_team.credentials t WHERE id='native-agent'),
+        'membership',(SELECT to_jsonb(t) FROM awr_team.project_memberships t WHERE actor_id='native-agent'),
+        'grants',(SELECT jsonb_agg(to_jsonb(t) ORDER BY workstream_id) FROM awr_team.workstream_grants t WHERE actor_id='native-agent' AND client_id='native-client'))",&[]).await.unwrap().get(0)
+}
 async fn snapshot(admin: &Client) -> Value {
     admin.query_one("SELECT jsonb_build_object(
         'people',(SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM awr_team.persons t),
@@ -119,6 +157,553 @@ async fn snapshot(admin: &Client) -> Value {
         'audit',(SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM awr_team.ops_audit_records t),
         'projects',(SELECT jsonb_agg(to_jsonb(t) ORDER BY tenant_id,id) FROM awr_team.projects t),
         'actors',(SELECT jsonb_agg(to_jsonb(t) ORDER BY tenant_id,id) FROM awr_team.actors t))",&[]).await.unwrap().get(0)
+}
+
+#[tokio::test]
+async fn additional_workstream_authorization_preserves_history_and_resolves_explicit_work() {
+    let (_g, mut admin, _, store) = setup().await;
+    stage(&mut admin).await;
+    grant_second_stream(&admin).await;
+    let mut initial = plan(&admin).await;
+    initial.authorization.scope = AuthorizationScope::Workstream {
+        project_id: PROJECT.into(),
+        workstream_id: Id::from(1).to_string(),
+    };
+    apply(&mut admin, &initial, "agent-issue").await;
+    admin
+        .batch_execute(
+            "INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status) VALUES('reader-tenant','reader-project','reviewer','Reviewer','active');
+             INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status) VALUES('reader-tenant','reader-project','native-binding-disabled','reviewer','native-agent','disabled')",
+        )
+        .await
+        .unwrap();
+    let proposed = authorization_issue_plan(
+        &admin,
+        "native-authorization-second",
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: Id::from(2).to_string(),
+        },
+    )
+    .await;
+    let preserved = preserved_authority(&admin).await;
+    let before = snapshot(&admin).await;
+    let preview = OperatorAgent::authorize_preview(&mut admin, &proposed)
+        .await
+        .unwrap();
+    assert_eq!(snapshot(&admin).await, before);
+    assert_eq!(preview["current"]["bindings"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        preview["current"]["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|binding| binding["status"] == "active")
+            .count(),
+        1
+    );
+    assert_eq!(preview["binding_reused"], true);
+    assert_eq!(preview["historical_authorizations_rewritten"], false);
+    assert_eq!(
+        OperatorAgent::authorize_outcome(&mut admin, TENANT, PROJECT, "authorize-second")
+            .await
+            .unwrap()["outcome"],
+        "unknown"
+    );
+    let applied = OperatorAgent::authorize_apply(
+        &mut admin,
+        &proposed,
+        "authorize-second",
+        preview["state_digest"].as_str().unwrap(),
+        preview["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        applied["receipt"]["scope"],
+        json!(proposed.authorization.scope)
+    );
+    assert_eq!(
+        applied["receipt"]["actions"],
+        json!(proposed.authorization.actions)
+    );
+    assert_eq!(applied["receipt"]["human_approval"], false);
+    assert_eq!(applied["receipt"]["team_independent_acceptance"], false);
+    assert_eq!(preserved_authority(&admin).await, preserved);
+    assert_eq!(
+        admin
+            .query_one("SELECT count(*) FROM awr_team.agent_authorizations", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        2
+    );
+
+    let explicit = prepare(&store, TOKEN, "b-private").await;
+    assert_eq!(explicit["data"]["work_id"], "b-private");
+    let selector_free = store
+        .query(TENANT, PROJECT, TOKEN, query("workstreams.list"))
+        .await
+        .unwrap();
+    assert_eq!(selector_free["total"], 1);
+    assert_eq!(selector_free["items"][0]["external_key"], "alpha");
+    assert!(!selector_free.to_string().contains("private-beta"));
+
+    let after = snapshot(&admin).await;
+    let replayed = OperatorAgent::authorize_apply(
+        &mut admin,
+        &proposed,
+        "authorize-second",
+        preview["state_digest"].as_str().unwrap(),
+        preview["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(replayed["replayed"], true);
+    assert_eq!(replayed["receipt"], applied["receipt"]);
+    assert_eq!(snapshot(&admin).await, after);
+    assert_eq!(
+        OperatorAgent::authorize_outcome(&mut admin, TENANT, PROJECT, "authorize-second")
+            .await
+            .unwrap()["receipt"],
+        applied["receipt"]
+    );
+    let mut conflicting = proposed.clone();
+    conflicting.authorization.id = "native-authorization-conflict".into();
+    assert!(matches!(
+        OperatorAgent::authorize_apply(
+            &mut admin,
+            &conflicting,
+            "authorize-second",
+            preview["state_digest"].as_str().unwrap(),
+            preview["plan_digest"].as_str().unwrap(),
+        )
+        .await,
+        Err(PgError::IdempotencyConflict)
+    ));
+}
+
+#[tokio::test]
+async fn additional_authorization_rejects_invalid_overlap_elevation_and_stale_state() {
+    let (_g, mut admin, db, _) = setup().await;
+    stage(&mut admin).await;
+    grant_second_stream(&admin).await;
+    let mut initial = plan(&admin).await;
+    initial.authorization.scope = AuthorizationScope::Workstream {
+        project_id: PROJECT.into(),
+        workstream_id: Id::from(1).to_string(),
+    };
+    apply(&mut admin, &initial, "agent-issue").await;
+    let proposed = authorization_issue_plan(
+        &admin,
+        "native-authorization-second",
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: Id::from(2).to_string(),
+        },
+    )
+    .await;
+
+    for invalid_case in [
+        "authorizer",
+        "session",
+        "scope",
+        "lifetime",
+        "inactive",
+        "action",
+        "review",
+    ] {
+        let mut invalid = proposed.clone();
+        match invalid_case {
+            "authorizer" => {
+                invalid.authorization.authorizer_person_id =
+                    awr_core::PersonId::new("reviewer").unwrap()
+            }
+            "session" => invalid.authorization.session_id = Some("session-b".into()),
+            "scope" => {
+                invalid.authorization.scope = AuthorizationScope::Project {
+                    project_id: PROJECT.into(),
+                }
+            }
+            "lifetime" => invalid.authorization.expires_at_ms = None,
+            "inactive" => {
+                invalid.authorization.expires_at_ms = Some(invalid.authorization.created_at_ms)
+            }
+            "action" => {
+                invalid
+                    .authorization
+                    .actions
+                    .insert(AuthorizedAction::ManageAuthorization);
+            }
+            "review" => {
+                invalid
+                    .authorization
+                    .actions
+                    .insert(AuthorizedAction::Review);
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            OperatorAgent::authorize_preview(&mut admin, &invalid)
+                .await
+                .is_err(),
+            "{invalid_case}"
+        );
+    }
+
+    let mut same_stream = proposed.clone();
+    same_stream.authorization.scope = initial.authorization.scope.clone();
+    assert!(matches!(
+        OperatorAgent::authorize_preview(&mut admin, &same_stream).await,
+        Err(PgError::Forbidden)
+    ));
+    let mut covered_task = proposed.clone();
+    covered_task.authorization.scope = AuthorizationScope::Task {
+        project_id: PROJECT.into(),
+        work_item_id: "a".into(),
+    };
+    assert!(matches!(
+        OperatorAgent::authorize_preview(&mut admin, &covered_task).await,
+        Err(PgError::Forbidden)
+    ));
+
+    admin
+        .execute(
+            "UPDATE awr_team.person_agent_bindings SET status='disabled' WHERE id='native-binding'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        OperatorAgent::authorize_preview(&mut admin, &proposed).await,
+        Err(PgError::Forbidden)
+    ));
+    admin
+        .execute(
+            "UPDATE awr_team.person_agent_bindings SET status='active' WHERE id='native-binding'",
+            &[],
+        )
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "UPDATE awr_team.persons SET status='disabled' WHERE id='agent'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        OperatorAgent::authorize_preview(&mut admin, &proposed).await,
+        Err(PgError::Forbidden)
+    ));
+    admin
+        .execute(
+            "UPDATE awr_team.persons SET status='active' WHERE id='agent'",
+            &[],
+        )
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "UPDATE awr_team.actors SET status='disabled' WHERE id='native-agent'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        OperatorAgent::authorize_preview(&mut admin, &proposed).await,
+        Err(PgError::Forbidden)
+    ));
+    admin
+        .execute(
+            "UPDATE awr_team.actors SET status='active' WHERE id='native-agent'",
+            &[],
+        )
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='native-agent'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        OperatorAgent::authorize_preview(&mut admin, &proposed).await,
+        Err(PgError::Forbidden)
+    ));
+    admin
+        .execute(
+            "UPDATE awr_team.credentials SET revoked_at=NULL WHERE id='native-agent'",
+            &[],
+        )
+        .await
+        .unwrap();
+    for elevated in [
+        "can_manage",
+        "can_attest_execution",
+        "can_reconcile_execution",
+    ] {
+        admin
+            .execute(
+                &format!(
+                    "UPDATE awr_team.workstream_grants SET {elevated}=true WHERE actor_id='native-agent' AND client_id='native-client' AND workstream_id=$1"
+                ),
+                &[&Id::from(2).to_string()],
+            )
+            .await
+            .unwrap();
+        assert!(
+            matches!(
+                OperatorAgent::authorize_preview(&mut admin, &proposed).await,
+                Err(PgError::Forbidden)
+            ),
+            "{elevated}"
+        );
+        admin
+            .execute(
+                &format!(
+                    "UPDATE awr_team.workstream_grants SET {elevated}=false WHERE actor_id='native-agent' AND client_id='native-client' AND workstream_id=$1"
+                ),
+                &[&Id::from(2).to_string()],
+            )
+            .await
+            .unwrap();
+    }
+
+    let preview = OperatorAgent::authorize_preview(&mut admin, &proposed)
+        .await
+        .unwrap();
+    let mut app = common::app_client(&db).await;
+    assert!(matches!(
+        OperatorAgent::authorize_preview(&mut app, &proposed).await,
+        Err(PgError::Forbidden)
+    ));
+    assert!(matches!(
+        OperatorAgent::authorize_apply(
+            &mut app,
+            &proposed,
+            "app-authorize",
+            preview["state_digest"].as_str().unwrap(),
+            preview["plan_digest"].as_str().unwrap(),
+        )
+        .await,
+        Err(PgError::Forbidden)
+    ));
+    assert!(matches!(
+        OperatorAgent::authorize_outcome(&mut app, TENANT, PROJECT, "app-authorize").await,
+        Err(PgError::Forbidden)
+    ));
+    admin
+        .execute(
+            "UPDATE awr_team.workstream_grants SET can_write=false WHERE actor_id='native-agent' AND client_id='native-client' AND workstream_id=$1",
+            &[&Id::from(2).to_string()],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        OperatorAgent::authorize_apply(
+            &mut admin,
+            &proposed,
+            "stale-grant",
+            preview["state_digest"].as_str().unwrap(),
+            preview["plan_digest"].as_str().unwrap(),
+        )
+        .await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    admin
+        .execute(
+            "UPDATE awr_team.workstream_grants SET can_write=true WHERE actor_id='native-agent' AND client_id='native-client' AND workstream_id=$1",
+            &[&Id::from(2).to_string()],
+        )
+        .await
+        .unwrap();
+
+    let task_plan = authorization_issue_plan(
+        &admin,
+        "native-authorization-task-b",
+        AuthorizationScope::Task {
+            project_id: PROJECT.into(),
+            work_item_id: "b-private".into(),
+        },
+    )
+    .await;
+    let task_preview = OperatorAgent::authorize_preview(&mut admin, &task_plan)
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "UPDATE awr_team.work_contracts SET definition_state='archived' WHERE work_id='b-private'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        OperatorAgent::authorize_apply(
+            &mut admin,
+            &task_plan,
+            "stale-source",
+            task_preview["state_digest"].as_str().unwrap(),
+            task_preview["plan_digest"].as_str().unwrap(),
+        )
+        .await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    admin
+        .execute(
+            "UPDATE awr_team.work_contracts SET definition_state='enabled' WHERE work_id='b-private'",
+            &[],
+        )
+        .await
+        .unwrap();
+    let authorization_store =
+        AuthorizationStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let mut existing_task = proposed.authorization.clone();
+    existing_task.id = "native-authorization-existing-task-b".into();
+    existing_task.scope = AuthorizationScope::Task {
+        project_id: PROJECT.into(),
+        work_item_id: "b-private".into(),
+    };
+    authorization_store
+        .issue(
+            TENANT,
+            PROJECT,
+            &IssueAuthorizationRequest {
+                request_key: "issue-existing-task-b".into(),
+                authorization: existing_task.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        OperatorAgent::authorize_preview(&mut admin, &proposed).await,
+        Err(PgError::Forbidden)
+    ));
+    let mut same_task = proposed.clone();
+    same_task.authorization.id = "native-authorization-same-task-b".into();
+    same_task.authorization.scope = AuthorizationScope::Task {
+        project_id: PROJECT.into(),
+        work_item_id: "b-private".into(),
+    };
+    assert!(matches!(
+        OperatorAgent::authorize_preview(&mut admin, &same_task).await,
+        Err(PgError::Forbidden)
+    ));
+
+    admin
+        .execute(
+            "UPDATE awr_team.workstream_ownership SET workstream_id=$1 WHERE work_id='b-private'",
+            &[&Id::from(1).to_string()],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        OperatorAgent::authorize_preview(&mut admin, &proposed).await,
+        Err(PgError::Forbidden)
+    ));
+
+    existing_task.status = AuthorizationStatus::Expired;
+    admin
+        .execute(
+            "UPDATE awr_team.agent_authorizations SET status='expired',body_json=$1 WHERE id=$2",
+            &[&json!(existing_task), &existing_task.id],
+        )
+        .await
+        .unwrap();
+    OperatorAgent::authorize_preview(&mut admin, &proposed)
+        .await
+        .unwrap();
+
+    existing_task.status = AuthorizationStatus::Active;
+    admin
+        .execute(
+            "UPDATE awr_team.agent_authorizations SET status='active',body_json=$1 WHERE id=$2",
+            &[&json!(existing_task), &existing_task.id],
+        )
+        .await
+        .unwrap();
+    authorization_store
+        .revoke(
+            TENANT,
+            PROJECT,
+            &RevokeAuthorizationRequest {
+                request_key: "revoke-existing-task-b".into(),
+                authorization_id: existing_task.id.clone(),
+                revoked_by: existing_task.responsible_person_id.clone(),
+                revoked_at_ms: existing_task.created_at_ms + 1,
+                reason: "retire task authorization".into(),
+            },
+        )
+        .await
+        .unwrap();
+    OperatorAgent::authorize_preview(&mut admin, &proposed)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_overlapping_authorization_previews_issue_once() {
+    let (_g, mut admin, db, _) = setup().await;
+    stage(&mut admin).await;
+    grant_second_stream(&admin).await;
+    let mut initial = plan(&admin).await;
+    initial.authorization.scope = AuthorizationScope::Workstream {
+        project_id: PROJECT.into(),
+        workstream_id: Id::from(1).to_string(),
+    };
+    apply(&mut admin, &initial, "agent-issue").await;
+    let first_plan = authorization_issue_plan(
+        &admin,
+        "native-authorization-second-a",
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: Id::from(2).to_string(),
+        },
+    )
+    .await;
+    let mut second_plan = first_plan.clone();
+    second_plan.authorization.id = "native-authorization-second-b".into();
+    let first_preview = OperatorAgent::authorize_preview(&mut admin, &first_plan)
+        .await
+        .unwrap();
+    let second_preview = OperatorAgent::authorize_preview(&mut admin, &second_plan)
+        .await
+        .unwrap();
+    assert_eq!(
+        first_preview["state_digest"],
+        second_preview["state_digest"]
+    );
+    let mut other = common::connect_config(&common::with_db(&common::test_config(), &db)).await;
+    let (first, second) = tokio::join!(
+        OperatorAgent::authorize_apply(
+            &mut admin,
+            &first_plan,
+            "authorize-race-a",
+            first_preview["state_digest"].as_str().unwrap(),
+            first_preview["plan_digest"].as_str().unwrap(),
+        ),
+        OperatorAgent::authorize_apply(
+            &mut other,
+            &second_plan,
+            "authorize-race-b",
+            second_preview["state_digest"].as_str().unwrap(),
+            second_preview["plan_digest"].as_str().unwrap(),
+        ),
+    );
+    assert_ne!(first.is_ok(), second.is_ok());
+    assert!(matches!(
+        first.as_ref().err().or(second.as_ref().err()),
+        Some(PgError::PreconditionsChanged)
+    ));
+    assert_eq!(
+        admin
+            .query_one("SELECT count(*) FROM awr_team.agent_authorizations", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        2
+    );
 }
 
 #[tokio::test]
