@@ -3,14 +3,15 @@
 use crate::operator_access::{require_owner_project, snapshot};
 use crate::{PgError, PgResult};
 use awr_core::{
-    AgentAuthorization, AuthorizationScope, AuthorizedAction, ExecutionSubjectKind,
-    IssueAuthorizationRequest, WorkstreamCatalog,
+    AgentAuthorization, AuthorizationScope, AuthorizationStatus, AuthorizedAction,
+    ExecutionSubjectKind, IssueAuthorizationRequest, WorkstreamCatalog,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_postgres::{Client, Transaction};
 
 const PROTOCOL: &str = "awr-operator-agent-v1";
+const RENEW_PROTOCOL: &str = "awr-operator-agent-renew-v1";
 /// Initial plans must be reviewed/applied within 24 hours of their issue time.
 const MAX_ISSUE_AGE_MS: i64 = 86_400_000;
 
@@ -20,6 +21,16 @@ pub struct AgentProvisionPlan {
     pub protocol_version: u32,
     pub tenant_id: String,
     pub project_id: String,
+    pub authorization: AgentAuthorization,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentRenewPlan {
+    pub protocol_version: u32,
+    pub tenant_id: String,
+    pub project_id: String,
+    pub previous_authorization_id: String,
     pub authorization: AgentAuthorization,
 }
 
@@ -89,6 +100,27 @@ impl AgentProvisionPlan {
     }
 }
 
+impl AgentRenewPlan {
+    fn provision_plan(&self) -> AgentProvisionPlan {
+        AgentProvisionPlan {
+            protocol_version: self.protocol_version,
+            tenant_id: self.tenant_id.clone(),
+            project_id: self.project_id.clone(),
+            authorization: self.authorization.clone(),
+        }
+    }
+
+    fn validate(&self) -> PgResult<()> {
+        self.provision_plan().validate()?;
+        if !identity(&self.previous_authorization_id)
+            || self.previous_authorization_id == self.authorization.id
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+}
+
 pub struct OperatorAgent;
 impl OperatorAgent {
     /// Inspect the current binding against the retained initial plan. A receipt
@@ -155,6 +187,169 @@ impl OperatorAgent {
         };
         tx.commit().await?;
         Ok(result)
+    }
+
+    /// Preview a finite-lived successor for an expired initial authorization.
+    /// The existing person↔Agent binding and predecessor row remain immutable.
+    pub async fn renew_preview(client: &mut Client, plan: &AgentRenewPlan) -> PgResult<Value> {
+        plan.validate()?;
+        crate::check_schema(client).await?;
+        let tx = client
+            .build_transaction()
+            .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
+            .start()
+            .await?;
+        require_owner_project(&tx, &plan.tenant_id, &plan.project_id, false).await?;
+        let state = state(&tx, &plan.provision_plan()).await?;
+        let now = clock(&tx).await?;
+        validate_renewal(plan, &state, now, false)?;
+        let previous_lifetime_ms = predecessor_lifetime(plan, &state)?;
+        let result = json!({
+            "protocol": RENEW_PROTOCOL,
+            "applied": false,
+            "state_digest": hash(&state)?,
+            "plan_digest": hash(&json!(plan))?,
+            "current": state,
+            "desired": plan,
+            "previous_lifetime_ms": previous_lifetime_ms.to_string(),
+            "binding_reused": true,
+            "predecessor_rewritten": false,
+            "maximum_issue_age_ms": MAX_ISSUE_AGE_MS,
+            "execution_authorized": false,
+        });
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub async fn renew_outcome(
+        client: &mut Client,
+        tenant: &str,
+        project: &str,
+        request: &str,
+    ) -> PgResult<Value> {
+        if ![tenant, project, request].iter().all(|s| identity(s)) {
+            return Err(invalid());
+        }
+        crate::check_schema(client).await?;
+        let tx = client.transaction().await?;
+        require_owner_project(&tx, tenant, project, false).await?;
+        let row=tx.query_opt("SELECT result_json FROM awr_team.access_changes WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",&[&tenant,&project,&request]).await?;
+        let result = if let Some(row) = row {
+            let receipt: Value = row.get(0);
+            if receipt["protocol"] != RENEW_PROTOCOL {
+                return Err(PgError::IdempotencyConflict);
+            }
+            json!({"outcome":"committed","receipt":receipt,"execution_authorized":false})
+        } else {
+            json!({"outcome":"unknown","execution_authorized":false})
+        };
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub async fn renew_apply(
+        client: &mut Client,
+        plan: &AgentRenewPlan,
+        request: &str,
+        expected_state: &str,
+        expected_plan: &str,
+    ) -> PgResult<Value> {
+        plan.validate()?;
+        if !identity(request) || !digest(expected_state) || !digest(expected_plan) {
+            return Err(invalid());
+        }
+        crate::check_schema(client).await?;
+        let tx = client.transaction().await?;
+        let operator = require_owner_project(&tx, &plan.tenant_id, &plan.project_id, true).await?;
+        let intent = hash(
+            &json!({"protocol":RENEW_PROTOCOL,"plan":plan,"expected_state":expected_state,"expected_plan":expected_plan}),
+        )?;
+        if let Some(row)=tx.query_opt("SELECT request_hash,result_json FROM awr_team.access_changes WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",&[&plan.tenant_id,&plan.project_id,&request]).await?{
+            let receipt:Value=row.get(1);
+            if row.get::<_,String>(0)!=intent || receipt["protocol"]!=RENEW_PROTOCOL{return Err(PgError::IdempotencyConflict);}
+            tx.commit().await?;
+            return Ok(json!({"replayed":true,"receipt":receipt,"execution_authorized":false}));
+        }
+        let a = &plan.authorization;
+        let mut actors = vec![a.subject_id.as_str(), a.responsible_person_id.as_str()];
+        actors.sort();
+        actors.dedup();
+        for actor in actors {
+            tx.query_opt(
+                "SELECT id FROM awr_team.actors WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+                &[&plan.tenant_id, &actor],
+            )
+            .await?
+            .ok_or(PgError::Forbidden)?;
+        }
+        let provision = plan.provision_plan();
+        let before = state(&tx, &provision).await?;
+        if hash(&before)? != expected_state || hash(&json!(plan))? != expected_plan {
+            return Err(PgError::PreconditionsChanged);
+        }
+        let now = clock(&tx).await?;
+        validate_renewal(plan, &before, now, false)?;
+        let previous_lifetime_ms = predecessor_lifetime(plan, &before)?;
+        let authorization_request = format!("operator-agent-renew:{}", hash(&json!(request))?);
+        let (_, issued) = crate::agent_authorization::issue_in_tx(
+            &tx,
+            &plan.tenant_id,
+            &plan.project_id,
+            &IssueAuthorizationRequest {
+                request_key: authorization_request,
+                authorization: a.clone(),
+            },
+        )
+        .await?;
+        if issued.replayed {
+            return Err(PgError::IdempotencyConflict);
+        }
+        let mut after = state(&tx, &provision).await?;
+        if validate_renewal(plan, &after, clock(&tx).await?, true).is_err() {
+            return Err(PgError::PreconditionsChanged);
+        }
+        let revision:i64=tx.query_opt("UPDATE awr_team.projects SET project_revision=project_revision+1 WHERE tenant_id=$1 AND id=$2 AND project_revision<9223372036854775807 RETURNING project_revision",&[&plan.tenant_id,&plan.project_id]).await?.ok_or(PgError::PreconditionsChanged)?.get(0);
+        after["project_revision"] = json!(revision.to_string());
+        let binding = a.binding_id.as_deref().ok_or_else(invalid)?;
+        let receipt = json!({"protocol":RENEW_PROTOCOL,"request_id":request,"request_hash":intent,"operator_role":operator,
+            "tenant_id":plan.tenant_id,"project_id":plan.project_id,"actor_id":a.subject_id,"client_id":a.client_id,
+            "previous_authorization_id":plan.previous_authorization_id,"authorization_id":a.id,
+            "authorization_request_key":issued.request_key,"binding_id":binding,"person_id":a.responsible_person_id,
+            "previous_lifetime_ms":previous_lifetime_ms.to_string(),"before_digest":expected_state,
+            "after_digest":hash(&after)?,"event_id":issued.event_id,"plan_digest":expected_plan,
+            "project_revision":revision.to_string(),"state_basis":"at_commit","execution_authorized":false,
+            "binding_reused":true,"predecessor_rewritten":false,"historical_identities_rewritten":false,
+            "human_approval":false,"team_independent_acceptance":false});
+        tx.execute("INSERT INTO awr_team.access_changes(tenant_id,project_id,request_id,request_hash,operator_role,result_json) VALUES($1,$2,$3,$4,$5,$6)",&[&plan.tenant_id,&plan.project_id,&request,&intent,&operator,&receipt]).await?;
+        let summary = json!({"plan_digest":expected_plan,"request_id":request,
+            "previous_authorization_id":plan.previous_authorization_id,"authorization_id":a.id,
+            "binding_id":binding,"subject_actor_id":a.subject_id,"subject_client_id":a.client_id,
+            "responsible_person_id":a.responsible_person_id,"previous_lifetime_ms":previous_lifetime_ms.to_string(),
+            "operator_role":operator,"predecessor_rewritten":false});
+        tx.execute("INSERT INTO awr_team.events(tenant_id,project_id,id,project_revision,event_index,event_type,actor_id,payload_json) VALUES($1,$2,$3,$4,0,'agent.authorization.renewed',$5,$6)",
+            &[&plan.tenant_id,&plan.project_id,&issued.event_id,&revision,&operator,&summary]).await?;
+        let audit = crate::OpsAuditWrite {
+            category: crate::OpsCategory::Access,
+            action: "agent.authorization.renew".into(),
+            result: "committed",
+            person_id: None,
+            actor_id: operator.clone(),
+            client_id: "awr-server-owner-cli".into(),
+            target_kind: "access_plan".into(),
+            target_id: Some(a.id.clone()),
+            work_id: None,
+            change_id: None,
+            request_id: Some(request.into()),
+            membership_version: None,
+            authority_version: None,
+            policy_version: Some(awr_team::PERMISSION_POLICY_VERSION as i32),
+            source_version: None,
+            digest: Some(crate::digest_of(&summary)),
+            summary,
+        };
+        crate::record_in_tx(&tx, &plan.tenant_id, &plan.project_id, &audit).await?;
+        tx.commit().await?;
+        Ok(json!({"replayed":false,"receipt":receipt,"execution_authorized":false}))
     }
 
     pub async fn apply(
@@ -260,6 +455,130 @@ impl OperatorAgent {
         tx.commit().await?;
         Ok(json!({"replayed":false,"receipt":receipt,"execution_authorized":false}))
     }
+}
+
+fn predecessor<'a>(p: &AgentRenewPlan, s: &'a Value) -> PgResult<AgentAuthorization> {
+    let stored = s["authorizations"]
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item["id"] == p.previous_authorization_id)
+        })
+        .ok_or(PgError::Forbidden)?;
+    serde_json::from_value(stored.clone()).map_err(|_| invalid())
+}
+
+fn predecessor_lifetime(p: &AgentRenewPlan, s: &Value) -> PgResult<i64> {
+    let previous = predecessor(p, s)?;
+    previous
+        .expires_at_ms
+        .and_then(|expires| expires.checked_sub(previous.created_at_ms))
+        .filter(|duration| *duration > 0)
+        .ok_or_else(invalid)
+}
+
+fn same_renewed_authority(previous: &AgentAuthorization, next: &AgentAuthorization) -> bool {
+    previous.authorizer_person_id == next.authorizer_person_id
+        && previous.responsible_person_id == next.responsible_person_id
+        && previous.subject_kind == next.subject_kind
+        && previous.subject_id == next.subject_id
+        && previous.client_id == next.client_id
+        && previous.session_id == next.session_id
+        && previous.model_id == next.model_id
+        && previous.scope == next.scope
+        && previous.actions == next.actions
+        && previous.verifiable_capabilities == next.verifiable_capabilities
+        && previous.self_reported_skill_hints == next.self_reported_skill_hints
+        && previous.parent_authorization_id == next.parent_authorization_id
+        && previous.maintainer_person_id == next.maintainer_person_id
+        && previous.binding_id == next.binding_id
+}
+
+fn validate_renewal(
+    p: &AgentRenewPlan,
+    s: &Value,
+    now: i64,
+    successor_present: bool,
+) -> PgResult<()> {
+    let provision = p.provision_plan();
+    if s["access"]["membership"].is_null() || access_reason(&provision, s, now).is_some() {
+        return Err(PgError::Forbidden);
+    }
+    if s["person"].is_null() {
+        return Err(PgError::Forbidden);
+    }
+    let a = &p.authorization;
+    let bindings = s["bindings"].as_array().ok_or(PgError::Forbidden)?;
+    if bindings.len() != 1
+        || bindings[0]["id"].as_str() != a.binding_id.as_deref()
+        || bindings[0]["person_id"] != a.responsible_person_id.as_str()
+        || bindings[0]["agent_id"] != a.subject_id
+        || bindings[0]["status"] != "active"
+    {
+        return Err(PgError::Forbidden);
+    }
+    let previous = predecessor(p, s)?;
+    previous.validate().map_err(|_| invalid())?;
+    if previous.id == a.id
+        || !matches!(previous.status, AuthorizationStatus::Active)
+        || previous.revoked_at_ms.is_some()
+        || previous.revoked_by.is_some()
+        || !same_renewed_authority(&previous, a)
+    {
+        return Err(PgError::Forbidden);
+    }
+    let previous_expiry = previous.expires_at_ms.ok_or(PgError::Forbidden)?;
+    let successor_expiry = a.expires_at_ms.ok_or(PgError::Forbidden)?;
+    let previous_lifetime = previous_expiry
+        .checked_sub(previous.created_at_ms)
+        .filter(|duration| *duration > 0)
+        .ok_or(PgError::Forbidden)?;
+    let successor_lifetime = successor_expiry
+        .checked_sub(a.created_at_ms)
+        .filter(|duration| *duration > 0)
+        .ok_or(PgError::Forbidden)?;
+    if now < previous_expiry
+        || previous.is_effective_at(now)
+        || a.created_at_ms < previous_expiry
+        || !issue_time_valid(a.created_at_ms, now)
+        || !a.is_effective_at(now)
+        || successor_lifetime != previous_lifetime
+    {
+        return Err(PgError::Forbidden);
+    }
+    let auths = s["authorizations"].as_array().ok_or(PgError::Forbidden)?;
+    let stored_successor = auths.iter().find(|item| item["id"] == a.id);
+    if successor_present {
+        let stored: AgentAuthorization = serde_json::from_value(
+            stored_successor
+                .cloned()
+                .ok_or(PgError::PreconditionsChanged)?,
+        )
+        .map_err(|_| invalid())?;
+        if &stored != a || !stored.is_effective_at(now) {
+            return Err(PgError::PreconditionsChanged);
+        }
+    } else if stored_successor.is_some() {
+        return Err(PgError::PreconditionsChanged);
+    }
+    for stored in auths {
+        let stored: AgentAuthorization =
+            serde_json::from_value(stored.clone()).map_err(|_| invalid())?;
+        if stored.id != a.id
+            && stored.id != previous.id
+            && stored.created_at_ms >= previous.created_at_ms
+        {
+            return Err(PgError::Forbidden);
+        }
+        if stored.id != p.previous_authorization_id
+            && stored.id != a.id
+            && stored.is_effective_at(now)
+        {
+            return Err(PgError::Forbidden);
+        }
+    }
+    Ok(())
 }
 
 async fn state(tx: &Transaction<'_>, p: &AgentProvisionPlan) -> PgResult<Value> {
@@ -447,11 +766,13 @@ fn configuration_reason(p: &AgentProvisionPlan, s: &Value, now: i64) -> Option<&
     if !auth.is_effective_at(now) || auth.created_at_ms > now {
         return Some("authorization_inactive");
     }
-    if auths
-        .iter()
-        .any(|x| x["id"] != a.id && x["status"] == "active")
-    {
-        return Some("authorization_ambiguous");
+    for other in auths.iter().filter(|x| x["id"] != a.id) {
+        let Ok(other) = serde_json::from_value::<AgentAuthorization>(other.clone()) else {
+            return Some("authorization_invalid");
+        };
+        if other.is_effective_at(now) {
+            return Some("authorization_ambiguous");
+        }
     }
     if &auth != a {
         return Some("authorization_identity_mismatch");
