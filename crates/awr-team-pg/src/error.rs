@@ -144,6 +144,8 @@ impl PgError {
     }
 
     const INVALID_COMMAND_FIELDS: &'static str = "invalid scoped command fields or bounds";
+    const MISSING_SESSION_START_CONVERSATION_ID: &'static str =
+        "session.start requires conversation_id";
 
     pub fn invalid_command_fields() -> Self {
         Self::Protocol(Self::INVALID_COMMAND_FIELDS.into())
@@ -151,6 +153,14 @@ impl PgError {
 
     pub fn is_invalid_command_fields(&self) -> bool {
         matches!(self, Self::Protocol(message) if message == Self::INVALID_COMMAND_FIELDS)
+    }
+
+    pub fn missing_session_start_conversation_id() -> Self {
+        Self::Protocol(Self::MISSING_SESSION_START_CONVERSATION_ID.into())
+    }
+
+    pub fn is_missing_session_start_conversation_id(&self) -> bool {
+        matches!(self, Self::Protocol(message) if message == Self::MISSING_SESSION_START_CONVERSATION_ID)
     }
 
     const WORK_NEXT_SELECTORS: &'static str = "work.next does not accept work selectors";

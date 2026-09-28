@@ -177,6 +177,20 @@ impl WorkstreamCommand {
                 self.args.clone(),
             )?)),
             "session.start" => {
+                if let Some(args) = self.args.as_object() {
+                    if !args.contains_key("conversation_id")
+                        && args.keys().all(|key| key == "client_info")
+                    {
+                        if let Some(value) = args.get("client_info") {
+                            let info: Option<crate::feedback::ClientInfo> =
+                                serde_json::from_value(value.clone()).map_err(|_| invalid())?;
+                            if let Some(info) = &info {
+                                info.validate()?;
+                            }
+                        }
+                        return Err(PgError::missing_session_start_conversation_id());
+                    }
+                }
                 let a: Start = serde_json::from_value(self.args.clone()).map_err(|_| invalid())?;
                 if !identity(&a.conversation_id) {
                     return Err(invalid());
@@ -222,6 +236,52 @@ impl WorkstreamCommand {
             }
             _ => Err(invalid()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session_start(args: Value) -> WorkstreamCommand {
+        WorkstreamCommand {
+            protocol_version: 1,
+            request_id: "request-1".into(),
+            op: "session.start".into(),
+            workstream_id: Id::from(1),
+            work_id: "work-1".into(),
+            coordinator_epoch: "epoch-1".into(),
+            expected_project_revision: "1".into(),
+            expected_authority_version: "1".into(),
+            expected_ownership_version: "1".into(),
+            expected_contract_hash: "a".repeat(64),
+            args,
+        }
+    }
+
+    #[test]
+    fn session_start_action_distinguishes_a_missing_conversation_id() {
+        let missing = session_start(json!({})).action().err().unwrap();
+        assert!(missing.is_missing_session_start_conversation_id());
+
+        for malformed in [
+            json!({"conversation_id":null}),
+            json!({"conversation_id":7}),
+            json!({"conversation_id":""}),
+            json!({"conversation_id":"a".repeat(129)}),
+            json!({"conversation_id":"control\ncharacter"}),
+            json!({"conversation_id":"valid","unknown":true}),
+            json!({"unknown":true}),
+        ] {
+            let error = session_start(malformed).action().err().unwrap();
+            assert!(error.is_invalid_command_fields(), "{error}");
+        }
+
+        assert!(
+            session_start(json!({"conversation_id":"stable-thread-1"}))
+                .action()
+                .is_ok()
+        );
     }
 }
 
