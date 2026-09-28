@@ -112,25 +112,23 @@ pub(super) enum Action {
 
 impl Action {
     pub(super) fn parse(op: &str, args: Value) -> PgResult<Self> {
+        fn parse_args<T: serde::de::DeserializeOwned>(args: Value) -> PgResult<T> {
+            if args.is_object() && args.get("expected_session_version").is_none() {
+                return Err(PgError::missing_review_session_version());
+            }
+            serde_json::from_value(args).map_err(|_| invalid())
+        }
         let action = match op {
-            "evidence.submit" => Self::Submit(serde_json::from_value(args).map_err(|_| invalid())?),
-            "review.open" => Self::Open(serde_json::from_value(args).map_err(|_| invalid())?),
-            "review.accept" => Self::Accept(serde_json::from_value(args).map_err(|_| invalid())?),
-            "review.return" => Self::Return(serde_json::from_value(args).map_err(|_| invalid())?),
-            "review.decide" => Self::Decide(serde_json::from_value(args).map_err(|_| invalid())?),
-            "work.rework" => Self::Rework(serde_json::from_value(args).map_err(|_| invalid())?),
-            "work.complete" | "delivery.finalize" => {
-                Self::Complete(serde_json::from_value(args).map_err(|_| invalid())?)
-            }
-            "delivery.register_pr" => {
-                Self::RegisterPr(serde_json::from_value(args).map_err(|_| invalid())?)
-            }
-            "delivery.observe_pr" => {
-                Self::ObservePr(serde_json::from_value(args).map_err(|_| invalid())?)
-            }
-            "delivery.submit_and_request_review" => {
-                Self::SubmitAndRequest(serde_json::from_value(args).map_err(|_| invalid())?)
-            }
+            "evidence.submit" => Self::Submit(parse_args(args)?),
+            "review.open" => Self::Open(parse_args(args)?),
+            "review.accept" => Self::Accept(parse_args(args)?),
+            "review.return" => Self::Return(parse_args(args)?),
+            "review.decide" => Self::Decide(parse_args(args)?),
+            "work.rework" => Self::Rework(parse_args(args)?),
+            "work.complete" | "delivery.finalize" => Self::Complete(parse_args(args)?),
+            "delivery.register_pr" => Self::RegisterPr(parse_args(args)?),
+            "delivery.observe_pr" => Self::ObservePr(parse_args(args)?),
+            "delivery.submit_and_request_review" => Self::SubmitAndRequest(parse_args(args)?),
             _ => return Err(invalid()),
         };
         let (s, v) = action.session();
@@ -160,6 +158,92 @@ impl Action {
 
 fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+#[cfg(test)]
+mod input_guidance_tests {
+    use super::*;
+
+    #[test]
+    fn review_actions_require_an_explicit_session_version() {
+        let cases = [
+            ("evidence.submit", json!({"payload":{},"dirty_tree":false})),
+            ("review.open", json!({"evidence_id":"evidence"})),
+            (
+                "review.accept",
+                json!({"round_id":"round","reason":"reviewed"}),
+            ),
+            (
+                "review.return",
+                json!({"round_id":"round","reason":"revise"}),
+            ),
+            (
+                "review.decide",
+                json!({"round_id":"round","reason":"reviewed","decision":"approve"}),
+            ),
+            ("work.rework", json!({"round_id":"round","note":"revised"})),
+            (
+                "work.complete",
+                json!({"evidence_id":"evidence","context_complete":true}),
+            ),
+            (
+                "delivery.finalize",
+                json!({"evidence_id":"evidence","context_complete":true}),
+            ),
+            (
+                "delivery.submit_and_request_review",
+                json!({"evidence_id":"evidence"}),
+            ),
+            (
+                "delivery.register_pr",
+                json!({"repository":"example/project","pr_number":1,
+                "pr_url":"https://github.com/example/project/pull/1","head_sha":"a".repeat(40),
+                "fact_source":"operator_recorded_observation","observed_at":"2026-01-01T00:00:00Z"}),
+            ),
+            (
+                "delivery.observe_pr",
+                json!({"delivery_id":"delivery","expected_head_sha":"a".repeat(40),
+                "fact_source":"operator_recorded_observation","observed_at":"2026-01-01T00:00:00Z"}),
+            ),
+        ];
+        for (op, mut args) in cases {
+            args["session_id"] = json!("private-session-sentinel");
+            let error = Action::parse(op, args.clone()).err().unwrap();
+            assert!(error.is_missing_review_session_version(), "{op}");
+            assert!(!error.to_string().contains("private-session-sentinel"));
+            args["expected_session_version"] = json!("2");
+            let action = Action::parse(op, args.clone()).ok().unwrap();
+            assert_eq!(action.session(), ("private-session-sentinel", "2"));
+            for invalid_version in [
+                json!(2),
+                Value::Null,
+                json!("0"),
+                json!("02"),
+                json!("unknown"),
+            ] {
+                args["expected_session_version"] = invalid_version;
+                let error = Action::parse(op, args.clone()).err().unwrap();
+                assert!(error.is_invalid_command_fields(), "{op}");
+            }
+            args["expected_session_version"] = json!("2");
+            args["unexpected"] = json!("private-value-sentinel");
+            let error = Action::parse(op, args).err().unwrap();
+            assert!(error.is_invalid_command_fields());
+            assert!(!error.to_string().contains("private-value-sentinel"));
+        }
+        assert!(
+            Action::parse("unknown", json!({}))
+                .err()
+                .unwrap()
+                .is_invalid_command_fields()
+        );
+        assert!(
+            Action::parse("evidence.submit", Value::Null)
+                .err()
+                .unwrap()
+                .is_invalid_command_fields()
+        );
+    }
 }
 
 fn trust(actor_kind: &str, claimed: Option<&str>) -> String {

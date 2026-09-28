@@ -121,6 +121,11 @@ impl WorkstreamQuery {
         {
             return Err(PgError::Protocol("query bounds exceeded".into()));
         }
+        if self.op == "work.next"
+            && (self.workstream_id.is_some() || self.work_id.is_some() || self.session_id.is_some())
+        {
+            return Err(PgError::work_next_selectors());
+        }
         let paged = matches!(
             self.op.as_str(),
             "workstreams.list" | "work.list" | "work.search" | "events.list" | "work.next"
@@ -175,12 +180,10 @@ impl WorkstreamQuery {
                     || path.contains("://")
                     || path.chars().any(char::is_control)
             })
-            || matches!(
-                self.op.as_str(),
-                "capabilities" | "workstreams.list" | "work.next"
-            ) && (self.work_id.is_some()
-                || self.session_id.is_some()
-                || self.workstream_id.is_some())
+            || matches!(self.op.as_str(), "capabilities" | "workstreams.list")
+                && (self.work_id.is_some()
+                    || self.session_id.is_some()
+                    || self.workstream_id.is_some())
             || matches!(self.op.as_str(), "work.list" | "work.search")
                 && (self.work_id.is_some() || self.session_id.is_some())
             || matches!(self.op.as_str(), "audit.requests" | "audit.development")
@@ -220,6 +223,47 @@ impl WorkstreamQuery {
 
 pub struct WorkstreamReadStore {
     pool: std::sync::Arc<PgPool>,
+}
+
+#[cfg(test)]
+mod input_guidance_tests {
+    use super::*;
+
+    #[test]
+    fn work_next_rejects_selectors_with_specific_guidance() {
+        for (field, value) in [
+            ("workstream_id", "01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+            ("work_id", "private-work-sentinel"),
+            ("session_id", "private-session-sentinel"),
+        ] {
+            let mut input = json!({"protocol_version":1,"op":"work.next"});
+            input[field] = json!(value);
+            let query: WorkstreamQuery = serde_json::from_value(input).unwrap();
+            let error = query.validate().unwrap_err();
+            assert!(error.is_work_next_selectors());
+            assert!(!error.to_string().contains(value));
+        }
+    }
+
+    #[test]
+    fn work_next_guidance_preserves_pagination_and_other_validation() {
+        for input in [
+            json!({"protocol_version":1,"op":"work.next"}),
+            json!({"protocol_version":1,"op":"work.next","limit":1,"cursor":"opaque"}),
+        ] {
+            let query: WorkstreamQuery = serde_json::from_value(input).unwrap();
+            assert!(query.validate().is_ok());
+        }
+        for input in [
+            json!({"protocol_version":1,"op":"work.next","limit":0}),
+            json!({"protocol_version":1,"op":"work.next","search":"unexpected"}),
+            json!({"protocol_version":1,"op":"capabilities","work_id":"a"}),
+            json!({"protocol_version":1,"op":"unsupported","work_id":"a"}),
+        ] {
+            let query: WorkstreamQuery = serde_json::from_value(input).unwrap();
+            assert!(!query.validate().unwrap_err().is_work_next_selectors());
+        }
+    }
 }
 
 impl WorkstreamReadStore {

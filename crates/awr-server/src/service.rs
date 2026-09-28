@@ -836,6 +836,22 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
             }),
         );
     }
+    if error.is_work_next_selectors() {
+        return (
+            StatusCode::BAD_REQUEST,
+            json!({"code":"InvalidInput",
+                "message":"work.next does not accept workstream_id, work_id, or session_id",
+                "next_step":"Retry work.next without those selectors; limit and cursor are optional. Follow resume or an item's next_query to inspect selected work."}),
+        );
+    }
+    if error.is_missing_review_session_version() {
+        return (
+            StatusCode::BAD_REQUEST,
+            json!({"code":"InvalidInput",
+                "message":"args.expected_session_version is required",
+                "next_step":"Inspect your current session with session.inspect or use selector-free work.next resume. Retry with its current session_version as a JSON decimal string in args.expected_session_version."}),
+        );
+    }
     if error.is_invalid_command_fields() {
         return (
             StatusCode::BAD_REQUEST,

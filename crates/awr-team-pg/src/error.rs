@@ -152,4 +152,24 @@ impl PgError {
     pub fn is_invalid_command_fields(&self) -> bool {
         matches!(self, Self::Protocol(message) if message == Self::INVALID_COMMAND_FIELDS)
     }
+
+    const WORK_NEXT_SELECTORS: &'static str = "work.next does not accept work selectors";
+    const MISSING_REVIEW_SESSION_VERSION: &'static str =
+        "review command requires expected_session_version";
+
+    pub fn work_next_selectors() -> Self {
+        Self::Protocol(Self::WORK_NEXT_SELECTORS.into())
+    }
+
+    pub fn is_work_next_selectors(&self) -> bool {
+        matches!(self, Self::Protocol(message) if message == Self::WORK_NEXT_SELECTORS)
+    }
+
+    pub fn missing_review_session_version() -> Self {
+        Self::Protocol(Self::MISSING_REVIEW_SESSION_VERSION.into())
+    }
+
+    pub fn is_missing_review_session_version(&self) -> bool {
+        matches!(self, Self::Protocol(message) if message == Self::MISSING_REVIEW_SESSION_VERSION)
+    }
 }

@@ -110,8 +110,9 @@ fn catalog() -> Vec<Tool> {
     "required":["protocol_version","op"],"properties":{
         "protocol_version":{"type":"integer","const":1},
         "op":{"type":"string","enum":WorkstreamQuery::OPERATIONS},
-        "workstream_id":{"type":"string"},"work_id":{"type":"string"},
-        "session_id":{"type":"string"},"request_id":{"type":"string"},"claim_id":{"type":"string"},
+        "workstream_id":{"type":"string","description":"Omit for work.next; follow its returned next_query to select work."},
+        "work_id":{"type":"string","description":"Omit for work.next."},
+        "session_id":{"type":"string","description":"Omit for work.next; session.inspect requires this selector."},"request_id":{"type":"string"},"claim_id":{"type":"string"},
         "execution_id":{"type":"string"},"handoff_id":{"type":"string"},
         "evidence_id":{"type":"string","minLength":1,"maxLength":128,
             "description":"Required for evidence.inspect; omit for other operations."},
@@ -144,7 +145,7 @@ fn catalog() -> Vec<Tool> {
         "expected_authority_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
         "expected_ownership_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
         "expected_contract_hash":{"type":"string"},
-        "args":{"type":"object","description":"session.start: conversation_id, optional client_info. session.checkpoint: session_id, expected_session_version, context_hash, next_action, open_loops; optional client_info, progress, usage (schemas below). Batch feedback at meaningful boundaries; execution.report is terminal-only. session.end: session_id, expected_session_version. All claim/execution actions: session_id, expected_session_version. claim.acquire adds expected_work_version (0 when runtime absent), ttl_seconds (1..3600). claim.renew/release add claim_id, expected_fence, expected_lease_version; renew also ttl_seconds. execution.prepare adds claim_id, expected_fence, expected_lease_version, expected_work_version, input_digest (64 lowercase hex), declared_scope (canonical relative paths). execution.cancel adds execution_id, expected_execution_version. execution.start adds execution_id, expected_execution_version, claim_id, expected_fence, expected_lease_version, expected_work_version, execution_mode (caller_managed or reference_write_v1), optional expected_input_digest. reference_write_v1 requires the prepared input digest and system attestation authority; the service does not dispatch the local runner. execution.report adds execution_id, expected_execution_version, outcome (succeeded/failed/cancelled/unknown), optional output_digest (required for success), observed_paths, note. execution.attest adds execution_id, expected_execution_version, facts. execution.reconcile also adds expected_work_version, reviewed_receipt_id (latest inspected ID or null), clear_recovery_block, optional previous_epoch_recovery. Old-epoch recovery requires {execution_epoch (exact inspected epoch), executor_stopped (true to settle), review_reference (nonempty, <=2048 bytes, no controls)}; this is an authorized operator assertion, not independently verified fencing. facts: outcome, input_digest, optional output_digest (required for success), environment_digest, observed_paths, note. Digests are 64 lowercase hex. Versions are decimal strings; unknown fields fail. handoff.propose: session_id, expected_session_version, handoff_id, kind (execution|responsibility), to_person_id, package (task_id, contract_version, contract_hash, current_person_id, current_execution, consumed_context_digest, checkpoint_ids, artifact_versions, branch_id, working_directory, dependency_ids, todos, awaiting_replies, unknown_side_effects), optional proposed_successor/proposer_execution_id/proposer_fence/expires_at_ms, now_ms. handoff.inspect/accept/reject/cancel/timeout: session_id, expected_session_version, handoff_id, expected_handoff_version, now_ms; accept adds acceptor_person_id, successor_execution, prior_execution_stopped, prior_reconciled, context_reprepared, optional expected_current_fence; reject/cancel add by_person_id+reason; inspect adds inspector_person_id.  Timeout closes the proposal only and does not stop execution. evidence.submit: session_id, expected_session_version, payload, dirty_tree (required boolean); optional claimed_trust/input_digest/execution_id and one of artifact_text or legacy artifact_hex (schemas below). Agent completion requires payload.passed=true, payload.output_digest matching execution.report, input_digest matching execution.prepare, execution_id and artifact bytes. The server hashes artifact bytes separately; never substitute that hash for the execution output digest. Inspect evidence and artifact.content before review. review.open / delivery.submit_and_request_review: session_id, expected_session_version, evidence_id. review.accept/return: session_id, expected_session_version, round_id, reason. review.decide: session_id, expected_session_version, round_id, decision (approve|reject), reason — requires the matching human or Agent review grant and policy. work.rework: session_id, expected_session_version, round_id, note. work.complete / delivery.finalize: session_id, expected_session_version, evidence_id, context_complete, optional requested_policy. Finalization needs maintainer/project_admin permission; current Agent delegations do not authorize it, so an authorized human/system operator finalizes after review. delivery.register_pr: repository, pr_number, pr_url, head_sha, fact_source (authorized_human_github_verification|operator_recorded_observation), observed_at (RFC3339), optional merge_sha/test_evidence_id/gh_* flags — v1 manual GitHub verification, not webhook sync. delivery.observe_pr: delivery_id, expected_head_sha, fact_source, observed_at, optional gh_approved/gh_merged/merge_sha. Query delivery.inspect separates GitHub submitted/approved/merged from AWR acceptance complete."}
+        "args":{"type":"object","description":"session.start: conversation_id, optional client_info. session.checkpoint: session_id, expected_session_version, context_hash, next_action, open_loops; optional client_info, progress, usage (schemas below). Batch feedback at meaningful boundaries; execution.report is terminal-only. session.end: session_id, expected_session_version. All claim/execution actions: session_id, expected_session_version. claim.acquire adds expected_work_version (0 when runtime absent), ttl_seconds (1..3600). claim.renew/release add claim_id, expected_fence, expected_lease_version; renew also ttl_seconds. execution.prepare adds claim_id, expected_fence, expected_lease_version, expected_work_version, input_digest (64 lowercase hex), declared_scope (canonical relative paths). execution.cancel adds execution_id, expected_execution_version. execution.start adds execution_id, expected_execution_version, claim_id, expected_fence, expected_lease_version, expected_work_version, execution_mode (caller_managed or reference_write_v1), optional expected_input_digest. reference_write_v1 requires the prepared input digest and system attestation authority; the service does not dispatch the local runner. execution.report adds execution_id, expected_execution_version, outcome (succeeded/failed/cancelled/unknown), optional output_digest (required for success), observed_paths, note. execution.attest adds execution_id, expected_execution_version, facts. execution.reconcile also adds expected_work_version, reviewed_receipt_id (latest inspected ID or null), clear_recovery_block, optional previous_epoch_recovery. Old-epoch recovery requires {execution_epoch (exact inspected epoch), executor_stopped (true to settle), review_reference (nonempty, <=2048 bytes, no controls)}; this is an authorized operator assertion, not independently verified fencing. facts: outcome, input_digest, optional output_digest (required for success), environment_digest, observed_paths, note. Digests are 64 lowercase hex. Versions are decimal strings; unknown fields fail. handoff.propose: session_id, expected_session_version, handoff_id, kind (execution|responsibility), to_person_id, package (task_id, contract_version, contract_hash, current_person_id, current_execution, consumed_context_digest, checkpoint_ids, artifact_versions, branch_id, working_directory, dependency_ids, todos, awaiting_replies, unknown_side_effects), optional proposed_successor/proposer_execution_id/proposer_fence/expires_at_ms, now_ms. handoff.inspect/accept/reject/cancel/timeout: session_id, expected_session_version, handoff_id, expected_handoff_version, now_ms; accept adds acceptor_person_id, successor_execution, prior_execution_stopped, prior_reconciled, context_reprepared, optional expected_current_fence; reject/cancel add by_person_id+reason; inspect adds inspector_person_id.  Timeout closes the proposal only and does not stop execution. evidence.submit: session_id, expected_session_version, payload, dirty_tree (required boolean); optional claimed_trust/input_digest/execution_id and one of artifact_text or legacy artifact_hex (schemas below). Agent completion requires payload.passed=true, payload.output_digest matching execution.report, input_digest matching execution.prepare, execution_id and artifact bytes. The server hashes artifact bytes separately; never substitute that hash for the execution output digest. Inspect evidence and artifact.content before review. review.open / delivery.submit_and_request_review: session_id, expected_session_version, evidence_id. review.accept/return: session_id, expected_session_version, round_id, reason. review.decide: session_id, expected_session_version, round_id, decision (approve|reject), reason — requires the matching human or Agent review grant and policy. work.rework: session_id, expected_session_version, round_id, note. work.complete / delivery.finalize: session_id, expected_session_version, evidence_id, context_complete, optional requested_policy. Finalization needs maintainer/project_admin permission; current Agent delegations do not authorize it, so an authorized human/system operator finalizes after review. delivery.register_pr: session_id, expected_session_version, repository, pr_number, pr_url, head_sha, fact_source (authorized_human_github_verification|operator_recorded_observation), observed_at (RFC3339), optional merge_sha/test_evidence_id/gh_* flags — v1 manual GitHub verification, not webhook sync. delivery.observe_pr: session_id, expected_session_version, delivery_id, expected_head_sha, fact_source, observed_at, optional gh_approved/gh_merged/merge_sha. Query delivery.inspect separates GitHub submitted/approved/merged from AWR acceptance complete."}
     }});
     command["properties"]["args"]["properties"] = json!({
         "dirty_tree":{"type":"boolean","description":"Required for evidence.submit. Report the actual workspace state; not a completion or trust assertion."},
@@ -156,7 +157,8 @@ fn catalog() -> Vec<Tool> {
         "input_digest":{"type":["string","null"],"pattern":"^[0-9a-f]{64}$",
             "description":"Evidence input binding; Agent completion must match execution.prepare input_digest."},
         "execution_id":{"type":["string","null"],"description":"Required for execution actions and Agent-completion evidence; use execution_id from the matching execution.prepare receipt."},
-        "expected_session_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
+        "expected_session_version":{"type":"string","pattern":"^[1-9][0-9]*$",
+            "description":"Required for session lifecycle, claim, execution, handoff, evidence, review, rework and delivery actions except session.start. Use current session_version from work.next resume or session.inspect items; send a JSON decimal string."},
         "expected_work_version":{"type":"string","pattern":"^(0|[1-9][0-9]*)$",
             "description":"claim.acquire uses \"0\" before work runtime exists; otherwise use the current work version."},
         "expected_fence":{"type":"string","pattern":"^[1-9][0-9]*$"},
@@ -748,6 +750,59 @@ mod tests {
         assert_eq!(internal["code"], "InvalidInput");
         assert!(!internal.to_string().contains("private-diagnostic-sentinel"));
         assert!(internal.get("next_step").is_none());
+    }
+
+    #[test]
+    fn input_guidance_names_the_rejected_field_and_next_action() {
+        for (error, message, action) in [
+            (
+                PgError::work_next_selectors(),
+                "work.next does not accept workstream_id, work_id, or session_id",
+                "without those selectors",
+            ),
+            (
+                PgError::missing_review_session_version(),
+                "args.expected_session_version is required",
+                "current session_version",
+            ),
+        ] {
+            let (status, body) = public_error(error);
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(body["code"], "InvalidInput");
+            assert_eq!(body["message"], message);
+            assert!(body["next_step"].as_str().unwrap().contains(action));
+            assert_eq!(body.as_object().unwrap().len(), 3);
+            assert!(body.to_string().len() < 400);
+        }
+    }
+
+    #[test]
+    fn discovery_explains_work_next_selectors_and_pr_session_versions() {
+        let tools = catalog();
+        let query = tools.iter().find(|t| t.name == "awr_team_query").unwrap();
+        for field in ["workstream_id", "work_id", "session_id"] {
+            assert!(
+                query.input_schema["properties"][field]["description"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Omit for work.next")
+            );
+        }
+        let command = tools.iter().find(|t| t.name == "awr_team_command").unwrap();
+        let args = &command.input_schema["properties"]["args"];
+        let version = &args["properties"]["expected_session_version"];
+        let description = version["description"].as_str().unwrap();
+        assert!(description.contains("work.next resume or session.inspect items"));
+        assert!(description.contains("except session.start"));
+        for op in ["delivery.register_pr", "delivery.observe_pr"] {
+            assert!(
+                args["description"]
+                    .as_str()
+                    .unwrap()
+                    .contains(&format!("{op}: session_id, expected_session_version,"))
+            );
+        }
+        assert!(args.get("required").is_none());
     }
 
     #[test]
