@@ -150,6 +150,8 @@ fn catalog() -> Vec<Tool> {
     command["properties"]["args"]["properties"] = json!({
         "conversation_id":{"type":"string","minLength":1,"maxLength":128,
             "description":"Required for session.start. Stable host conversation, thread, or session identifier used to bind the durable AWR session."},
+        "session_id":{"type":"string","minLength":1,"maxLength":128,
+            "description":"Required for session lifecycle, claim, execution, handoff, evidence, review, rework and delivery actions except session.start. Use the owned session_id from work.next resume or session.inspect."},
         "dirty_tree":{"type":"boolean","description":"Required for evidence.submit. Report the actual workspace state; not a completion or trust assertion."},
         "payload":{"description":"Required for evidence.submit; generic evidence accepts any JSON value. Agent completion requires an object with passed=true and output_digest (64 lowercase hex) matching the successful execution report."},
         "artifact_text":{"type":["string","null"],"maxLength":1048576,
@@ -199,15 +201,26 @@ fn catalog() -> Vec<Tool> {
                 "cached_input_tokens":{"type":["integer","null"],"minimum":0,"maximum":9007199254740991u64}
             }}
     });
-    command["allOf"] = json!([{
-        "if":{
-            "properties":{"op":{"const":"session.start"}},
-            "required":["op"]
+    command["allOf"] = json!([
+        {
+            "if":{
+                "properties":{"op":{"const":"session.start"}},
+                "required":["op"]
+            },
+            "then":{
+                "properties":{"args":{"required":["conversation_id"]}}
+            }
         },
-        "then":{
-            "properties":{"args":{"required":["conversation_id"]}}
+        {
+            "if":{
+                "properties":{"op":{"const":"execution.prepare"}},
+                "required":["op"]
+            },
+            "then":{
+                "properties":{"args":{"required":["session_id","expected_session_version"]}}
+            }
         }
-    }]);
+    ]);
     let access_plan = json!({
         "type":"object","additionalProperties":false,
         "required":["protocol_version","subject","subject_client_id","role","grants"],
@@ -767,6 +780,11 @@ mod tests {
     fn input_guidance_names_the_rejected_field_and_next_action() {
         for (error, message, action) in [
             (
+                PgError::missing_execution_prepare_session_binding(),
+                "args.session_id and args.expected_session_version are required for execution.prepare",
+                "that session_id and its current session_version",
+            ),
+            (
                 PgError::missing_session_start_conversation_id(),
                 "args.conversation_id is required for session.start",
                 "stable, nonempty host conversation, thread, or session identifier",
@@ -818,6 +836,34 @@ mod tests {
         assert_eq!(
             condition["then"]["properties"]["args"]["required"],
             json!(["conversation_id"])
+        );
+    }
+
+    #[test]
+    fn discovery_types_and_requires_execution_prepare_session_binding() {
+        let command = catalog()
+            .into_iter()
+            .find(|tool| tool.name == "awr_team_command")
+            .unwrap();
+        let args = &command.input_schema["properties"]["args"];
+        let session_id = &args["properties"]["session_id"];
+        assert_eq!(session_id["type"], "string");
+        assert_eq!(session_id["minLength"], 1);
+        assert_eq!(session_id["maxLength"], 128);
+        let description = session_id["description"].as_str().unwrap();
+        assert!(description.contains("except session.start"));
+        assert!(description.contains("work.next resume or session.inspect"));
+
+        let condition = command.input_schema["allOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|condition| condition["if"]["properties"]["op"]["const"] == "execution.prepare")
+            .unwrap();
+        assert_eq!(condition["if"]["required"], json!(["op"]));
+        assert_eq!(
+            condition["then"]["properties"]["args"]["required"],
+            json!(["session_id", "expected_session_version"])
         );
     }
 

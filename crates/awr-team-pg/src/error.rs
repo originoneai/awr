@@ -144,6 +144,8 @@ impl PgError {
     }
 
     const INVALID_COMMAND_FIELDS: &'static str = "invalid scoped command fields or bounds";
+    const MISSING_EXECUTION_PREPARE_SESSION_BINDING: &'static str =
+        "execution.prepare requires session binding";
     const MISSING_SESSION_START_CONVERSATION_ID: &'static str =
         "session.start requires conversation_id";
 
@@ -153,6 +155,14 @@ impl PgError {
 
     pub fn is_invalid_command_fields(&self) -> bool {
         matches!(self, Self::Protocol(message) if message == Self::INVALID_COMMAND_FIELDS)
+    }
+
+    pub fn missing_execution_prepare_session_binding() -> Self {
+        Self::Protocol(Self::MISSING_EXECUTION_PREPARE_SESSION_BINDING.into())
+    }
+
+    pub fn is_missing_execution_prepare_session_binding(&self) -> bool {
+        matches!(self, Self::Protocol(message) if message == Self::MISSING_EXECUTION_PREPARE_SESSION_BINDING)
     }
 
     pub fn missing_session_start_conversation_id() -> Self {
