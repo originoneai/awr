@@ -129,9 +129,11 @@ credential or grant revocation to stop access. Inspection is not native-client
 execution or acceptance evidence.
 
 Native read isolation follows [Delegated Agent read scope](team-access.md#delegated-agent-read-scope).
-Task-scoped Agents must provide a covered `work_id` on each read and cannot use
-selector-free capabilities, list or next-task discovery. Use Workstream scope
-for an Agent that needs to discover and choose tasks. Provisioning must be
+Task-scoped Agents can use selector-free `work.next` to discover their exact
+assigned tasks and resume their own current-client sessions on those tasks.
+Other reads require a covered `work_id`; task grants do not expose the owning
+workstream's catalog or sibling tasks. Use Workstream scope for an Agent that
+needs to discover and choose any task in a workstream. Provisioning must be
 shipped with this read-scope enforcement; grants alone do not narrow delegation.
 
 A developer normally uses `inspect`, `claim_coordination` and `start_work` with

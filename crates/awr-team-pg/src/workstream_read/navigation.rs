@@ -32,7 +32,15 @@ pub(super) async fn next(
     auth: &ReaderAuthority,
     q: &WorkstreamQuery,
 ) -> PgResult<Value> {
-    let streams = visible_streams(auth);
+    let (streams, task_ids, task_streams): (Vec<String>, Vec<String>, Vec<String>) =
+        match &auth.navigation_read_scope {
+            Some(scope) => (
+                scope.streams.iter().map(ToString::to_string).collect(),
+                scope.tasks.keys().cloned().collect(),
+                scope.tasks.values().map(ToString::to_string).collect(),
+            ),
+            None => (visible_streams(auth), Vec::new(), Vec::new()),
+        };
     let binding = hash(
         &json!({"reader":auth.binding,"snapshot":auth.snapshot,"catalog":auth.catalog,
         "grants":auth.grant_versions,"op":"work.next"}),
@@ -43,14 +51,20 @@ pub(super) async fn next(
         FROM awr_team.work_contracts c JOIN awr_team.workstream_snapshot_ownership o
           USING(tenant_id,project_id,snapshot_id,scope_id,work_id)
         LEFT JOIN awr_team.work_runtime r USING(tenant_id,project_id,scope_id,work_id)
-        WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.snapshot_id=$3 AND o.workstream_id=ANY($4)
+        WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.snapshot_id=$3
+          AND (o.workstream_id=ANY($4) OR EXISTS (
+            SELECT 1 FROM unnest($7::text[], $8::text[]) allowed(work_id,workstream_id)
+            WHERE allowed.work_id=c.work_id AND allowed.workstream_id=o.workstream_id))
           AND c.work_id>$5 AND (r.state IS NULL OR r.state NOT IN ('completed','cancelled','archived'))
-        ORDER BY c.work_id LIMIT $6", &[&tenant,&project,&auth.snapshot,&streams,&c.key,&(limit+1)]).await?;
+        ORDER BY c.work_id LIMIT $6", &[&tenant,&project,&auth.snapshot,&streams,&c.key,&(limit+1),&task_ids,&task_streams]).await?;
     let own = tx.query("SELECT s.id,s.work_id,s.workstream_id,s.session_version FROM awr_team.sessions s
         JOIN awr_team.workstream_snapshot_ownership o ON o.tenant_id=s.tenant_id AND o.project_id=s.project_id
           AND o.snapshot_id=$3 AND o.work_id=s.work_id AND o.workstream_id=s.workstream_id AND o.ownership_version=s.ownership_version
         WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.actor_id=$4 AND s.client_id=$5 AND s.state='active'
-          AND s.workstream_id=ANY($6) ORDER BY s.id LIMIT 21", &[&tenant,&project,&auth.snapshot,&auth.actor_id,&auth.client_id,&streams]).await?;
+          AND (s.workstream_id=ANY($6) OR EXISTS (
+            SELECT 1 FROM unnest($7::text[], $8::text[]) allowed(work_id,workstream_id)
+            WHERE allowed.work_id=s.work_id AND allowed.workstream_id=s.workstream_id))
+          ORDER BY s.id LIMIT 21", &[&tenant,&project,&auth.snapshot,&auth.actor_id,&auth.client_id,&streams,&task_ids,&task_streams]).await?;
     let resume: Vec<_> = own
         .iter()
         .take(20)

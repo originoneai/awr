@@ -2,7 +2,7 @@
 //! product permissions. Consumes stored person/agent grants; does not reimplement
 //! the person model or claim state machine.
 
-use crate::workstream_auth::ReaderAuthority;
+use crate::workstream_auth::{NavigationReadScope, ReaderAuthority};
 use crate::{PgError, PgResult};
 use awr_core::{
     AgentAuthorization, AuthorizationStatus, AuthorizedAction, ExecutionSubjectKind,
@@ -273,20 +273,80 @@ pub(crate) async fn resolve_agent_read_delegation(
                 )
         })
         .collect();
-    if readers.is_empty() {
-        return Err(PgError::Forbidden);
-    }
-    auth.access.grants.retain(|access| {
-        readers
+    if request.op == "work.next" {
+        let mut scope = NavigationReadScope::default();
+        for stream in &auth.catalog.workstreams {
+            if readers
+                .iter()
+                .any(|reader| covers_stream(&reader.grant, stream.id))
+                && auth
+                    .access
+                    .authorize(&auth.catalog, stream.id, awr_core::WorkstreamAction::Read)
+                    .is_ok()
+            {
+                scope.streams.insert(stream.id);
+            }
+        }
+        let tasks: Vec<_> = candidates
             .iter()
-            .any(|candidate| covers_stream(&candidate.grant, access.workstream_id))
-    });
+            .filter_map(|candidate| {
+                if !candidate.actions.contains(&Action::WorkRead) {
+                    return None;
+                }
+                match &candidate.grant.scope {
+                    awr_core::AuthorizationScope::Task { work_item_id, .. } => {
+                        Some(work_item_id.clone())
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+        let rows = tx.query("SELECT work_id,workstream_id FROM awr_team.workstream_snapshot_ownership
+            WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND scope_id='main' AND work_id=ANY($4)",
+            &[&auth.tenant_id, &project, &auth.snapshot, &tasks]).await?;
+        for row in rows {
+            let stream = row
+                .get::<_, String>(1)
+                .parse()
+                .map_err(|_| PgError::SourceDivergence)?;
+            if auth
+                .access
+                .authorize(&auth.catalog, stream, awr_core::WorkstreamAction::Read)
+                .is_ok()
+            {
+                scope.tasks.insert(row.get(0), stream);
+            }
+        }
+        if scope.streams.is_empty() && scope.tasks.is_empty() {
+            return Err(PgError::Forbidden);
+        }
+        // A task's owner is retained for per-row checks, never promoted to a
+        // broadly readable stream. SQL applies the exact task-owner predicate.
+        auth.access.grants.retain(|access| {
+            scope.streams.contains(&access.workstream_id)
+                || scope
+                    .tasks
+                    .values()
+                    .any(|stream| *stream == access.workstream_id)
+        });
+        auth.navigation_read_scope = Some(scope);
+    } else {
+        if readers.is_empty() {
+            return Err(PgError::Forbidden);
+        }
+        auth.access.grants.retain(|access| {
+            readers
+                .iter()
+                .any(|candidate| covers_stream(&candidate.grant, access.workstream_id))
+        });
+    }
     // Navigation also depends on non-read actions, so bind its cursor to every
     // effective candidate, including action-only grants. Each row still selects
     // a single covering grant when deciding whether to offer a claim.
     auth.binding = awr_team::request_hash(&serde_json::json!({
         "identity": auth.binding,
-        "authorizations": candidates.iter().map(|candidate| &candidate.grant).collect::<Vec<_>>()
+        "authorizations": candidates.iter().map(|candidate| &candidate.grant).collect::<Vec<_>>(),
+        "navigation_scope": auth.navigation_read_scope
     }))
     .map_err(|_| PgError::Forbidden)?;
     auth.delegation_id = None;

@@ -53,6 +53,32 @@ async fn grant(db: &str, scope: AuthorizationScope) {
 }
 
 async fn grant_stream(db: &str, id: &str, stream: u128, actions: &[AuthorizedAction]) {
+    grant_scope(
+        db,
+        id,
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: Id::from(stream).to_string(),
+        },
+        actions,
+    )
+    .await;
+}
+
+async fn grant_task(db: &str, id: &str, work: &str, actions: &[AuthorizedAction]) {
+    grant_scope(
+        db,
+        id,
+        AuthorizationScope::Task {
+            project_id: PROJECT.into(),
+            work_item_id: work.into(),
+        },
+        actions,
+    )
+    .await;
+}
+
+async fn grant_scope(db: &str, id: &str, scope: AuthorizationScope, actions: &[AuthorizedAction]) {
     let store = AuthorizationStore::from_config(common::with_app_role(&common::test_config(), db));
     let mut authorization = store
         .get(TENANT, PROJECT, "read-authorization")
@@ -61,10 +87,7 @@ async fn grant_stream(db: &str, id: &str, stream: u128, actions: &[AuthorizedAct
         .unwrap();
     authorization.id = id.into();
     authorization.created_at_ms += 1;
-    authorization.scope = AuthorizationScope::Workstream {
-        project_id: PROJECT.into(),
-        workstream_id: Id::from(stream).to_string(),
-    };
+    authorization.scope = scope;
     authorization.actions = actions.iter().copied().collect();
     store
         .issue(
@@ -189,6 +212,261 @@ async fn multiple_scopes_are_discoverable_without_sharing_actions_or_hidden_work
             )
             .await;
     assert!(matches!(denied, Err(PgError::Forbidden)), "{denied:?}");
+}
+
+#[tokio::test]
+async fn task_navigation_does_not_promote_its_owner_or_resume_siblings() {
+    let (_g, admin, db, store) = setup().await;
+    agent_identity(&admin).await;
+    enable_writes(&admin).await;
+    grant(
+        &db,
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: Id::from(2).to_string(),
+        },
+    )
+    .await;
+    grant_task(
+        &db,
+        "assigned-a",
+        "a",
+        &[
+            AuthorizedAction::Inspect,
+            AuthorizedAction::ClaimCoordination,
+        ],
+    )
+    .await;
+    // An own session on an unassigned sibling must not appear through the
+    // readable owner retained for task a's per-row authorization checks.
+    admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
+        VALUES($1,$2,'session-c','main','c','agent','cli-a','sibling','active',$3,1)", &[&TENANT,&PROJECT,&Id::from(1).to_string()]).await.unwrap();
+    let streams = store
+        .query(TENANT, PROJECT, A, query("workstreams.list"))
+        .await
+        .unwrap();
+    assert_eq!(streams["total"], 1);
+    assert_eq!(streams["items"][0]["external_key"], "private-beta");
+    let next = store
+        .query(TENANT, PROJECT, A, query("work.next"))
+        .await
+        .unwrap();
+    let items = next["data"]["items"].as_array().unwrap();
+    assert_eq!(
+        items
+            .iter()
+            .map(|i| i["work_id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["a", "b-private"]
+    );
+    assert_eq!(items[0]["navigation"], "prepare");
+    assert_eq!(items[1]["navigation"], "observe");
+    for item in items {
+        let prepared = store
+            .query(
+                TENANT,
+                PROJECT,
+                A,
+                serde_json::from_value(item["next_query"].clone()).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(prepared["data"]["work_id"], item["work_id"]);
+    }
+    assert_eq!(next["data"]["resume"].as_array().unwrap().len(), 1);
+    assert_eq!(next["data"]["resume"][0]["session_id"], "session-a");
+    assert!(!next.to_string().contains("session-c"));
+    let mut q = query("work.prepare");
+    q.work_id = Some("c".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, q).await,
+        Err(PgError::Forbidden)
+    ));
+    let mut q = query("work.list");
+    q.workstream_id = Some(Id::from(1));
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, q).await,
+        Err(PgError::Forbidden)
+    ));
+    // Task a's claim action cannot borrow the other stream's StartWork action.
+    let prepared = prepare(&store, A, "a").await;
+    assert!(matches!(
+        store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                command(
+                    &prepared,
+                    "task-no-start",
+                    "session.start",
+                    json!({"conversation_id":"denied"})
+                )
+            )
+            .await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
+async fn task_navigation_pages_in_global_order_and_invalidates_changed_scope() {
+    let (_g, admin, db, store) = setup().await;
+    agent_identity(&admin).await;
+    grant(
+        &db,
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: Id::from(1).to_string(),
+        },
+    )
+    .await;
+    grant_task(&db, "assigned-b", "b-private", &[AuthorizedAction::Inspect]).await;
+    let mut q = query("work.next");
+    q.limit = Some(1);
+    let mut seen = Vec::new();
+    loop {
+        let page = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+        let items = page["data"]["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        seen.push(items[0]["work_id"].as_str().unwrap().to_owned());
+        q.cursor = page["data"]["next_cursor"].as_str().map(Into::into);
+        if q.cursor.is_none() {
+            break;
+        }
+        assert!(seen.len() < 4);
+    }
+    assert_eq!(seen, vec!["a", "b-private", "c"]);
+    let original: serde_json::Value = admin
+        .query_one(
+            "SELECT body_json FROM awr_team.agent_authorizations WHERE id='assigned-b'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    for change in [
+        "revoked",
+        "expired",
+        "no-inspect",
+        "body",
+        "access",
+        "owner",
+    ] {
+        q.cursor = None;
+        let page = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+        q.cursor = Some(page["data"]["next_cursor"].as_str().unwrap().into());
+        let mut changed = original.clone();
+        match change {
+            "revoked" => changed["status"] = json!("revoked"),
+            "expired" => changed["expires_at_ms"] = json!(1),
+            "no-inspect" => changed["actions"] = json!(["start_work"]),
+            "body" => changed["created_at_ms"] = json!(1002),
+            "access" => {
+                admin.execute("UPDATE awr_team.workstream_grants SET can_read=false,grant_version=grant_version+1 WHERE client_id='cli-a' AND workstream_id=$1", &[&Id::from(2).to_string()]).await.unwrap();
+            }
+            "owner" => {
+                admin.execute("UPDATE awr_team.workstream_snapshot_ownership SET workstream_id=$1 WHERE work_id='b-private'", &[&Id::from(1).to_string()]).await.unwrap();
+            }
+            _ => unreachable!(),
+        }
+        admin
+            .execute(
+                "UPDATE awr_team.agent_authorizations SET body_json=$1 WHERE id='assigned-b'",
+                &[&changed],
+            )
+            .await
+            .unwrap();
+        assert!(
+            matches!(
+                store.query(TENANT, PROJECT, A, q.clone()).await,
+                Err(PgError::CursorExpired)
+            ),
+            "{change}"
+        );
+        admin
+            .execute(
+                "UPDATE awr_team.agent_authorizations SET body_json=$1 WHERE id='assigned-b'",
+                &[&original],
+            )
+            .await
+            .unwrap();
+        admin.execute("UPDATE awr_team.workstream_grants SET can_read=true WHERE client_id='cli-a' AND workstream_id=$1", &[&Id::from(2).to_string()]).await.unwrap();
+        admin.execute("UPDATE awr_team.workstream_snapshot_ownership SET workstream_id=$1 WHERE work_id='b-private'", &[&Id::from(2).to_string()]).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn task_navigation_rechecks_live_delegation_access_and_exact_task_scope() {
+    let (_g, admin, db, store) = setup().await;
+    agent_identity(&admin).await;
+    grant(
+        &db,
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: Id::from(1).to_string(),
+        },
+    )
+    .await;
+    grant_task(&db, "assigned-b", "b-private", &[AuthorizedAction::Inspect]).await;
+    let original: serde_json::Value = admin
+        .query_one(
+            "SELECT body_json FROM awr_team.agent_authorizations WHERE id='assigned-b'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    for (field, value) in [
+        ("expires_at_ms", json!(1)),
+        ("client_id", json!("cli-b")),
+        ("status", json!("revoked")),
+        ("actions", json!(["start_work", "claim_coordination"])),
+        (
+            "scope",
+            serde_json::to_value(AuthorizationScope::Task {
+                project_id: PROJECT.into(),
+                work_item_id: "missing".into(),
+            })
+            .unwrap(),
+        ),
+        (
+            "scope",
+            serde_json::to_value(AuthorizationScope::TaskPool {
+                project_id: PROJECT.into(),
+                pool_id: "b".into(),
+            })
+            .unwrap(),
+        ),
+    ] {
+        let mut invalid = original.clone();
+        invalid[field] = value;
+        admin
+            .execute(
+                "UPDATE awr_team.agent_authorizations SET body_json=$1 WHERE id='assigned-b'",
+                &[&invalid],
+            )
+            .await
+            .unwrap();
+        let next = store
+            .query(TENANT, PROJECT, A, query("work.next"))
+            .await
+            .unwrap();
+        assert!(!next.to_string().contains("b-private"), "{field}: {next}");
+    }
+    admin
+        .execute(
+            "UPDATE awr_team.agent_authorizations SET body_json=$1 WHERE id='assigned-b'",
+            &[&original],
+        )
+        .await
+        .unwrap();
+    admin.execute("UPDATE awr_team.workstream_grants SET can_read=false WHERE client_id='cli-a' AND workstream_id=$1", &[&Id::from(2).to_string()]).await.unwrap();
+    let next = store
+        .query(TENANT, PROJECT, A, query("work.next"))
+        .await
+        .unwrap();
+    assert!(!next.to_string().contains("b-private"));
 }
 
 #[tokio::test]
@@ -369,7 +647,7 @@ async fn workstream_delegation_filters_discovery_navigation_sources_and_denies_p
 }
 
 #[tokio::test]
-async fn task_grants_require_an_explicit_covered_work_and_do_not_enable_discovery() {
+async fn task_grants_discover_only_exact_work_without_enabling_other_discovery() {
     let (_g, admin, db, store) = setup().await;
     agent_identity(&admin).await;
     grant(
@@ -384,7 +662,6 @@ async fn task_grants_require_an_explicit_covered_work_and_do_not_enable_discover
         "capabilities",
         "workstreams.list",
         "work.list",
-        "work.next",
         "events.list",
         "audit.requests",
     ] {
@@ -396,6 +673,26 @@ async fn task_grants_require_an_explicit_covered_work_and_do_not_enable_discover
             "{op}"
         );
     }
+    let next = store
+        .query(TENANT, PROJECT, A, query("work.next"))
+        .await
+        .unwrap();
+    assert_eq!(next["data"]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(next["data"]["items"][0]["work_id"], "a");
+    assert_eq!(next["data"]["resume"].as_array().unwrap().len(), 1);
+    assert_eq!(next["data"]["resume"][0]["session_id"], "session-a");
+    let mut search = query("work.search");
+    search.search = Some("a".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, search).await,
+        Err(PgError::Forbidden)
+    ));
+    let mut list = query("work.list");
+    list.workstream_id = Some(Id::from(1));
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, list).await,
+        Err(PgError::Forbidden)
+    ));
     let mut q = query("session.inspect");
     q.session_id = Some("session-a".into());
     assert!(matches!(
@@ -414,6 +711,16 @@ async fn task_grants_require_an_explicit_covered_work_and_do_not_enable_discover
             Err(PgError::Forbidden)
         ));
     }
+    admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_grants SET can_read=false WHERE client_id='cli-a'",
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, query("work.next")).await,
+        Err(PgError::Forbidden)
+    ));
 }
 
 #[tokio::test]
@@ -563,7 +870,7 @@ async fn same_action_scope_narrowing_cannot_fall_back_to_broader_parent() {
 }
 
 #[tokio::test]
-async fn task_child_prevents_selector_free_reads_and_parent_fallback_on_sibling() {
+async fn task_child_limits_navigation_and_prevents_parent_fallback_on_sibling() {
     let (_g, admin, db, store) = setup().await;
     agent_identity(&admin).await;
     grant(
@@ -597,8 +904,16 @@ async fn task_child_prevents_selector_free_reads_and_parent_fallback_on_sibling(
     )
     .await
     .unwrap();
+    let next = store
+        .query(TENANT, PROJECT, A, query("work.next"))
+        .await
+        .unwrap();
+    assert_eq!(next["data"]["items"].as_array().unwrap().len(), 1);
+    assert_eq!(next["data"]["items"][0]["work_id"], "a");
     assert!(matches!(
-        store.query(TENANT, PROJECT, A, query("work.next")).await,
+        store
+            .query(TENANT, PROJECT, A, query("workstreams.list"))
+            .await,
         Err(PgError::Forbidden)
     ));
     let mut q = query("work.prepare");
