@@ -148,6 +148,8 @@ fn catalog() -> Vec<Tool> {
         "args":{"type":"object","description":"session.start: conversation_id, optional client_info. session.checkpoint: session_id, expected_session_version, context_hash, next_action, open_loops; optional client_info, progress, usage (schemas below). Batch feedback at meaningful boundaries; execution.report is terminal-only. session.end: session_id, expected_session_version. All claim/execution actions: session_id, expected_session_version. claim.acquire adds expected_work_version (0 when runtime absent), ttl_seconds (1..3600). claim.renew/release add claim_id, expected_fence, expected_lease_version; renew also ttl_seconds. execution.prepare adds claim_id, expected_fence, expected_lease_version, expected_work_version, input_digest (64 lowercase hex), declared_scope (canonical relative paths). execution.cancel adds execution_id, expected_execution_version. execution.start adds execution_id, expected_execution_version, claim_id, expected_fence, expected_lease_version, expected_work_version, execution_mode (caller_managed or reference_write_v1), optional expected_input_digest. reference_write_v1 requires the prepared input digest and system attestation authority; the service does not dispatch the local runner. execution.report adds execution_id, expected_execution_version, outcome (succeeded/failed/cancelled/unknown), optional output_digest (required for success), observed_paths, note. execution.attest adds execution_id, expected_execution_version, facts. execution.reconcile also adds expected_work_version, reviewed_receipt_id (latest inspected ID or null), clear_recovery_block, optional previous_epoch_recovery. Old-epoch recovery requires {execution_epoch (exact inspected epoch), executor_stopped (true to settle), review_reference (nonempty, <=2048 bytes, no controls)}; this is an authorized operator assertion, not independently verified fencing. facts: outcome, input_digest, optional output_digest (required for success), environment_digest, observed_paths, note. Digests are 64 lowercase hex. Versions are decimal strings; unknown fields fail. handoff.propose: session_id, expected_session_version, handoff_id, kind (execution|responsibility), to_person_id, package (task_id, contract_version, contract_hash, current_person_id, current_execution, consumed_context_digest, checkpoint_ids, artifact_versions, branch_id, working_directory, dependency_ids, todos, awaiting_replies, unknown_side_effects), optional proposed_successor/proposer_execution_id/proposer_fence/expires_at_ms, now_ms. handoff.inspect/accept/reject/cancel/timeout: session_id, expected_session_version, handoff_id, expected_handoff_version, now_ms; accept adds acceptor_person_id, successor_execution, prior_execution_stopped, prior_reconciled, context_reprepared, optional expected_current_fence; reject/cancel add by_person_id+reason; inspect adds inspector_person_id.  Timeout closes the proposal only and does not stop execution. evidence.submit: session_id, expected_session_version, payload, dirty_tree (required boolean); optional claimed_trust/input_digest/execution_id and one of artifact_text or legacy artifact_hex (schemas below). Agent completion requires payload.passed=true, payload.output_digest matching execution.report, input_digest matching execution.prepare, execution_id and artifact bytes. The server hashes artifact bytes separately; never substitute that hash for the execution output digest. Inspect evidence and artifact.content before review. review.open / delivery.submit_and_request_review: session_id, expected_session_version, evidence_id. review.accept/return: session_id, expected_session_version, round_id, reason. review.decide: session_id, expected_session_version, round_id, decision (approve|reject), reason — requires the matching human or Agent review grant and policy. work.rework: session_id, expected_session_version, round_id, note. work.complete / delivery.finalize: session_id, expected_session_version, evidence_id, context_complete, optional requested_policy. Finalization needs maintainer/project_admin permission; current Agent delegations do not authorize it, so an authorized human/system operator finalizes after review. delivery.register_pr: session_id, expected_session_version, repository, pr_number, pr_url, head_sha, fact_source (authorized_human_github_verification|operator_recorded_observation), observed_at (RFC3339), optional merge_sha/test_evidence_id/gh_* flags — v1 manual GitHub verification, not webhook sync. delivery.observe_pr: session_id, expected_session_version, delivery_id, expected_head_sha, fact_source, observed_at, optional gh_approved/gh_merged/merge_sha. Query delivery.inspect separates GitHub submitted/approved/merged from AWR acceptance complete."}
     }});
     command["properties"]["args"]["properties"] = json!({
+        "conversation_id":{"type":"string","minLength":1,"maxLength":128,
+            "description":"Required for session.start. Stable host conversation, thread, or session identifier used to bind the durable AWR session."},
         "dirty_tree":{"type":"boolean","description":"Required for evidence.submit. Report the actual workspace state; not a completion or trust assertion."},
         "payload":{"description":"Required for evidence.submit; generic evidence accepts any JSON value. Agent completion requires an object with passed=true and output_digest (64 lowercase hex) matching the successful execution report."},
         "artifact_text":{"type":["string","null"],"maxLength":1048576,
@@ -197,6 +199,15 @@ fn catalog() -> Vec<Tool> {
                 "cached_input_tokens":{"type":["integer","null"],"minimum":0,"maximum":9007199254740991u64}
             }}
     });
+    command["allOf"] = json!([{
+        "if":{
+            "properties":{"op":{"const":"session.start"}},
+            "required":["op"]
+        },
+        "then":{
+            "properties":{"args":{"required":["conversation_id"]}}
+        }
+    }]);
     let access_plan = json!({
         "type":"object","additionalProperties":false,
         "required":["protocol_version","subject","subject_client_id","role","grants"],
@@ -756,6 +767,11 @@ mod tests {
     fn input_guidance_names_the_rejected_field_and_next_action() {
         for (error, message, action) in [
             (
+                PgError::missing_session_start_conversation_id(),
+                "args.conversation_id is required for session.start",
+                "stable, nonempty host conversation, thread, or session identifier",
+            ),
+            (
                 PgError::work_next_selectors(),
                 "work.next does not accept workstream_id, work_id, or session_id",
                 "without those selectors",
@@ -774,6 +790,35 @@ mod tests {
             assert_eq!(body.as_object().unwrap().len(), 3);
             assert!(body.to_string().len() < 400);
         }
+    }
+
+    #[test]
+    fn discovery_types_and_requires_session_start_conversation_id() {
+        let command = catalog()
+            .into_iter()
+            .find(|tool| tool.name == "awr_team_command")
+            .unwrap();
+        let args = &command.input_schema["properties"]["args"];
+        let conversation_id = &args["properties"]["conversation_id"];
+        assert_eq!(conversation_id["type"], "string");
+        assert_eq!(conversation_id["minLength"], 1);
+        assert_eq!(conversation_id["maxLength"], 128);
+        let description = conversation_id["description"].as_str().unwrap();
+        assert!(description.contains("Required for session.start"));
+        assert!(description.contains("Stable host conversation, thread, or session identifier"));
+        assert!(args.get("required").is_none());
+
+        let condition = command.input_schema["allOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|condition| condition["if"]["properties"]["op"]["const"] == "session.start")
+            .unwrap();
+        assert_eq!(condition["if"]["required"], json!(["op"]));
+        assert_eq!(
+            condition["then"]["properties"]["args"]["required"],
+            json!(["conversation_id"])
+        );
     }
 
     #[test]

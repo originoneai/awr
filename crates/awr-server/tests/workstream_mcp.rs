@@ -176,6 +176,79 @@ async fn numeric_command_versions_are_rejected_without_mutation_and_strings_succ
 }
 
 #[tokio::test]
+async fn missing_session_start_conversation_id_is_actionable_and_does_not_mutate() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let before = prepared(&client).await;
+    let counts_sql = "SELECT
+        (SELECT count(*) FROM awr_team.sessions WHERE tenant_id=$1 AND project_id=$2),
+        (SELECT count(*) FROM awr_team.operations WHERE tenant_id=$1 AND project_id=$2),
+        (SELECT count(*) FROM awr_team.events WHERE tenant_id=$1 AND project_id=$2),
+        (SELECT project_revision FROM awr_team.projects WHERE tenant_id=$1 AND id=$2)";
+    let baseline = admin
+        .query_one(counts_sql, &[&TENANT, &PROJECT])
+        .await
+        .unwrap();
+    let missing = serde_json::to_value(command(
+        &before,
+        "session-start-missing-conversation",
+        "session.start",
+        json!({}),
+    ))
+    .unwrap();
+
+    let error = call(&client, "awr_team_command", missing, true).await;
+    assert_eq!(error["code"], "InvalidInput");
+    assert_eq!(
+        error["message"],
+        "args.conversation_id is required for session.start"
+    );
+    assert_eq!(
+        error["next_step"],
+        "Retry session.start with args.conversation_id set to a stable, nonempty host conversation, thread, or session identifier of at most 128 characters."
+    );
+    let audit = admin
+        .query_one(
+            "SELECT result, finished_at IS NOT NULL FROM awr_team.request_audit
+             WHERE action='session.start' ORDER BY created_at DESC,id DESC LIMIT 1",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(audit.get::<_, String>(0), "failed");
+    assert!(audit.get::<_, bool>(1));
+    let after = admin
+        .query_one(counts_sql, &[&TENANT, &PROJECT])
+        .await
+        .unwrap();
+    for index in 0..4 {
+        assert_eq!(after.get::<_, i64>(index), baseline.get::<_, i64>(index));
+    }
+    assert_eq!(
+        prepared(&client).await["project_revision"],
+        before["project_revision"]
+    );
+
+    let corrected = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &before,
+            "session-start-corrected",
+            "session.start",
+            json!({"conversation_id":"stable-host-thread"}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    assert_eq!(corrected["receipt"]["data"]["state"], "active");
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn discovered_review_and_evidence_selectors_reach_scoped_records() {
     let (_guard, admin, _, store) = setup().await;
     enable_writes(&admin).await;

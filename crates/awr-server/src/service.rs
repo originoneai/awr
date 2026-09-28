@@ -852,6 +852,14 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
                 "next_step":"Inspect your current session with session.inspect or use selector-free work.next resume. Retry with its current session_version as a JSON decimal string in args.expected_session_version."}),
         );
     }
+    if error.is_missing_session_start_conversation_id() {
+        return (
+            StatusCode::BAD_REQUEST,
+            json!({"code":"InvalidInput",
+                "message":"args.conversation_id is required for session.start",
+                "next_step":"Retry session.start with args.conversation_id set to a stable, nonempty host conversation, thread, or session identifier of at most 128 characters."}),
+        );
+    }
     if error.is_invalid_command_fields() {
         return (
             StatusCode::BAD_REQUEST,
