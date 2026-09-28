@@ -140,11 +140,20 @@ Fixtures: `tests/fixtures/team-mcp/migration_preview.json` and
 
 ## Delegated Agent read scope
 
-Native Agent reads intersect access grants with the selected WS-016 delegation.
-A workstream delegation can discover and list only that workstream, even if its
-credential has additional access grants. Scoped Agents cannot inspect
-project-wide planning outcome receipts. Cursors bind the authorization body as
-well as identity and source, so authorization changes expire an earlier page.
+Native Agent reads intersect access grants with live WS-016 delegations.
+`workstreams.list` and `work.next` discover all independently authorized readable
+workstreams. `work.list`, `work.search` and `events.list` require a returned
+`workstream_id` when more than one readable workstream is available. An explicit
+selection uses a delegation covering that workstream; credential access alone
+does not disclose an undelegated stream. Scoped Agents cannot inspect
+project-wide planning outcome receipts.
+
+Navigation checks each task's actions against a covering delegation. A claim
+permission on one workstream never makes another read-only workstream claimable.
+Commands still select one covering authorization independently on every request.
+Discovery cursors bind the effective authorization bodies as well as identity,
+access grants and source, so changes invalidate earlier pages. Resume queries
+carry the returned work and workstream selectors to resolve the correct grant.
 
 Task and task-pool delegations require an explicit covered `work_id` on every
 read, including session inspection. Selector-free capabilities, task discovery

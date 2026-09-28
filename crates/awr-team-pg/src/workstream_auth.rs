@@ -37,6 +37,7 @@ fn token_id(token: &str) -> PgResult<&str> {
     Ok(parts[1])
 }
 
+#[derive(Clone)]
 pub(crate) struct ReaderAuthority {
     pub tenant_id: String,
     pub actor_id: String,
@@ -65,6 +66,8 @@ pub(crate) struct ReaderAuthority {
     pub delegated_actions: Option<std::collections::BTreeSet<awr_team::Action>>,
     /// Covering WS-016 authorization id when `delegated_actions` is populated.
     pub delegation_id: Option<String>,
+    /// Transaction-local discovery candidates; never used for command admission.
+    pub read_delegations: Option<Vec<crate::delegation_auth::ReadDelegation>>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -253,6 +256,7 @@ async fn authenticate_inner(
         grant_versions,
         delegated_actions: delegation_required.then(std::collections::BTreeSet::new),
         delegation_id: None,
+        read_delegations: None,
     })
 }
 
@@ -704,6 +708,7 @@ mod tests {
             grant_versions: BTreeMap::from([(stream, 1)]),
             delegated_actions: None,
             delegation_id: None,
+            read_delegations: None,
         }
     }
 

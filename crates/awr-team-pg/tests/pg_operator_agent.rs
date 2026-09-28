@@ -160,7 +160,7 @@ async fn snapshot(admin: &Client) -> Value {
 }
 
 #[tokio::test]
-async fn additional_workstream_authorization_preserves_history_and_resolves_explicit_work() {
+async fn additional_workstream_authorization_preserves_history_and_is_discoverable() {
     let (_g, mut admin, _, store) = setup().await;
     stage(&mut admin).await;
     grant_second_stream(&admin).await;
@@ -245,9 +245,15 @@ async fn additional_workstream_authorization_preserves_history_and_resolves_expl
         .query(TENANT, PROJECT, TOKEN, query("workstreams.list"))
         .await
         .unwrap();
-    assert_eq!(selector_free["total"], 1);
+    assert_eq!(selector_free["total"], 2);
     assert_eq!(selector_free["items"][0]["external_key"], "alpha");
-    assert!(!selector_free.to_string().contains("private-beta"));
+    assert_eq!(selector_free["items"][1]["external_key"], "private-beta");
+    let mut search = query("work.search");
+    search.workstream_id =
+        Some(serde_json::from_value(selector_free["items"][1]["id"].clone()).unwrap());
+    search.search = Some("private".into());
+    let found = store.query(TENANT, PROJECT, TOKEN, search).await.unwrap();
+    assert_eq!(found["data"]["items"][0]["work_id"], "b-private");
 
     let after = snapshot(&admin).await;
     let replayed = OperatorAgent::authorize_apply(

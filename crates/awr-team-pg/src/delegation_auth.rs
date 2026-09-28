@@ -11,6 +11,12 @@ use awr_core::{
 use awr_team::{Action, RoleTemplate, template_actions};
 use std::collections::BTreeSet;
 
+#[derive(Clone)]
+pub(crate) struct ReadDelegation {
+    grant: AgentAuthorization,
+    actions: BTreeSet<Action>,
+}
+
 /// Map one WS-016 authorized action onto TMCP-010 product actions it may enable.
 /// `ManageAuthorization` maps to nothing here: child grants are WS-016 store ops,
 /// never project-admin / audit product power.
@@ -85,17 +91,7 @@ pub(crate) async fn resolve_agent_delegation(
         return Ok(());
     }
 
-    let rows = tx
-        .query(
-            "SELECT body_json FROM awr_team.agent_authorizations
-             WHERE tenant_id=$1 AND project_id=$2 AND subject_id=$3 AND status='active'
-             ORDER BY created_at_ms ASC, id ASC
-             FOR SHARE",
-            &[&auth.tenant_id, &project_id, &auth.actor_id],
-        )
-        .await?;
-
-    let mut candidates = Vec::new();
+    let candidates = effective_delegations(tx, auth, project_id, session_id, now_ms).await?;
     let task_stream = if let Some(work) = work_id.filter(|w| !w.is_empty()) {
         crate::tx::bind_workstream_scope(tx, &auth.tenant_id, project_id).await?;
         tx.query_opt(
@@ -108,7 +104,46 @@ pub(crate) async fn resolve_agent_delegation(
     } else {
         None
     };
+    let chosen = candidates.iter().find(|candidate| {
+        work_id.filter(|w| !w.is_empty()).is_none_or(|work| {
+            candidate
+                .grant
+                .covers_task(project_id, work, task_stream.as_deref())
+        }) && requested_action.map_or(!candidate.actions.is_empty(), |action| {
+            candidate.actions.contains(&action)
+        })
+    });
+    install_delegation(auth, chosen);
+    Ok(())
+}
 
+fn install_delegation(auth: &mut ReaderAuthority, chosen: Option<&ReadDelegation>) {
+    auth.delegation_id = chosen.map(|candidate| candidate.grant.id.clone());
+    auth.delegated_actions = Some(
+        chosen
+            .map(|candidate| candidate.actions.clone())
+            .unwrap_or_default(),
+    );
+}
+
+async fn effective_delegations(
+    tx: &tokio_postgres::Transaction<'_>,
+    auth: &ReaderAuthority,
+    project_id: &str,
+    session_id: Option<&str>,
+    now_ms: i64,
+) -> PgResult<Vec<ReadDelegation>> {
+    let rows = tx
+        .query(
+            "SELECT body_json FROM awr_team.agent_authorizations
+             WHERE tenant_id=$1 AND project_id=$2 AND subject_id=$3 AND status='active'
+             ORDER BY created_at_ms ASC, id ASC
+             FOR SHARE",
+            &[&auth.tenant_id, &project_id, &auth.actor_id],
+        )
+        .await?;
+
+    let mut candidates = Vec::new();
     for row in rows {
         let body: serde_json::Value = row.get(0);
         let grant: AgentAuthorization = serde_json::from_value(body)
@@ -146,7 +181,10 @@ pub(crate) async fn resolve_agent_delegation(
         if auth.agent_review && mapped.contains(&Action::ReviewDecide) {
             intersected.insert(Action::ReviewDecide);
         }
-        candidates.push((grant, intersected));
+        candidates.push(ReadDelegation {
+            grant,
+            actions: intersected,
+        });
     }
 
     // Resolve narrowing before choosing an action. Otherwise an action removed
@@ -154,37 +192,139 @@ pub(crate) async fn resolve_agent_delegation(
     // task filtering: an out-of-scope task cannot resurrect a narrowed parent.
     // Independent grants may
     // cover different actions, but are never unioned into synthetic authority.
-    let narrowed: BTreeSet<&str> = candidates
+    let narrowed: BTreeSet<String> = candidates
         .iter()
-        .filter_map(|(child, child_actions)| {
-            let parent_id = child.parent_authorization_id.as_deref()?;
-            candidates.iter().find_map(|(parent, parent_actions)| {
-                (parent.id == parent_id
-                    && child_actions.is_subset(parent_actions)
-                    && child.scope.is_within(&parent.scope)
-                    && (child_actions.len() < parent_actions.len() || child.scope != parent.scope))
-                    .then_some(parent_id)
+        .filter_map(|child| {
+            let parent_id = child.grant.parent_authorization_id.as_deref()?;
+            candidates.iter().find_map(|parent| {
+                (parent.grant.id == parent_id
+                    && child.actions.is_subset(&parent.actions)
+                    && child.grant.scope.is_within(&parent.grant.scope)
+                    && (child.actions.len() < parent.actions.len()
+                        || child.grant.scope != parent.grant.scope))
+                    .then(|| parent_id.to_owned())
             })
         })
         .collect();
-    let chosen = candidates.iter().find(|(grant, actions)| {
-        !narrowed.contains(grant.id.as_str())
-            && work_id
-                .filter(|w| !w.is_empty())
-                .is_none_or(|work| grant.covers_task(project_id, work, task_stream.as_deref()))
-            && requested_action.map_or(!actions.is_empty(), |action| actions.contains(&action))
-    });
-    match chosen {
-        Some((grant, actions)) => {
-            auth.delegation_id = Some(grant.id.clone());
-            auth.delegated_actions = Some(actions.clone());
+    candidates.retain(|candidate| !narrowed.contains(&candidate.grant.id));
+    Ok(candidates)
+}
+
+fn covers_stream(grant: &AgentAuthorization, stream: awr_core::Id) -> bool {
+    match &grant.scope {
+        awr_core::AuthorizationScope::Project { .. } => true,
+        awr_core::AuthorizationScope::Workstream { workstream_id, .. } => {
+            workstream_id == &stream.to_string()
         }
-        None => {
-            auth.delegation_id = None;
-            auth.delegated_actions = Some(BTreeSet::new());
-        }
+        // Task grants do not disclose the other tasks in their workstream.
+        _ => false,
     }
+}
+
+/// Discovery can expose several independently authorized read scopes. It never
+/// combines their action sets into a reusable command authority.
+pub(crate) async fn resolve_agent_read_delegation(
+    tx: &tokio_postgres::Transaction<'_>,
+    auth: &mut ReaderAuthority,
+    project: &str,
+    request: &crate::WorkstreamQuery,
+    now_ms: i64,
+) -> PgResult<()> {
+    let discovery = request.work_id.is_none()
+        && request.session_id.is_none()
+        && matches!(
+            request.op.as_str(),
+            "capabilities"
+                | "workstreams.list"
+                | "work.next"
+                | "work.list"
+                | "work.search"
+                | "events.list"
+        );
+    if !actor_requires_explicit_delegation(&auth.actor_kind) || !discovery {
+        resolve_agent_delegation(
+            tx,
+            auth,
+            project,
+            request.work_id.as_deref(),
+            request.session_id.as_deref(),
+            crate::workstream_auth::query_business_action(&request.op),
+            now_ms,
+        )
+        .await?;
+        return restrict_read_scope(tx, auth, project, request).await;
+    }
+    let candidates = effective_delegations(tx, auth, project, None, now_ms).await?;
+    if let Some(stream) = request.workstream_id {
+        let chosen = candidates.iter().find(|candidate| {
+            candidate.actions.contains(&Action::WorkRead) && covers_stream(&candidate.grant, stream)
+        });
+        install_delegation(auth, chosen);
+        return restrict_read_scope(tx, auth, project, request).await;
+    }
+    let readers: Vec<_> = candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.actions.contains(&Action::WorkRead)
+                && matches!(
+                    candidate.grant.scope,
+                    awr_core::AuthorizationScope::Project { .. }
+                        | awr_core::AuthorizationScope::Workstream { .. }
+                )
+        })
+        .collect();
+    if readers.is_empty() {
+        return Err(PgError::Forbidden);
+    }
+    auth.access.grants.retain(|access| {
+        readers
+            .iter()
+            .any(|candidate| covers_stream(&candidate.grant, access.workstream_id))
+    });
+    // Navigation also depends on non-read actions, so bind its cursor to every
+    // effective candidate, including action-only grants. Each row still selects
+    // a single covering grant when deciding whether to offer a claim.
+    auth.binding = awr_team::request_hash(&serde_json::json!({
+        "identity": auth.binding,
+        "authorizations": candidates.iter().map(|candidate| &candidate.grant).collect::<Vec<_>>()
+    }))
+    .map_err(|_| PgError::Forbidden)?;
+    auth.delegation_id = None;
+    auth.delegated_actions = Some(BTreeSet::from([Action::WorkRead]));
+    auth.read_delegations = Some(candidates);
     Ok(())
+}
+
+/// Advisory navigation uses a covering grant for this exact work; an action in
+/// another workstream cannot make this row claimable. Commands resolve afresh.
+pub(crate) fn authorize_navigation_action(
+    auth: &ReaderAuthority,
+    action: Action,
+    stream: awr_core::Id,
+    work: &str,
+) -> PgResult<()> {
+    let Some(candidates) = &auth.read_delegations else {
+        return crate::workstream_auth::authorize_domain_action(
+            auth,
+            action,
+            Some(stream),
+            Some(work),
+        );
+    };
+    let chosen = candidates
+        .iter()
+        .find(|candidate| {
+            candidate.actions.contains(&action)
+                && candidate.grant.covers_task(
+                    &auth.access.project_id,
+                    work,
+                    Some(&stream.to_string()),
+                )
+        })
+        .ok_or(PgError::Forbidden)?;
+    let mut scoped = auth.clone();
+    install_delegation(&mut scoped, Some(chosen));
+    crate::workstream_auth::authorize_domain_action(&scoped, action, Some(stream), Some(work))
 }
 
 /// Keep selector-free discovery inside the selected delegation, not merely

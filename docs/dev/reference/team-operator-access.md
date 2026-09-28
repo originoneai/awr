@@ -225,10 +225,11 @@ credential, membership, and grant rows remain unchanged. After an uncertain
 response, query `agent-authorize-outcome` before retrying the exact request.
 
 Explicit reads and commands select the authorization that covers their
-`work_id`. Selector-free discovery does not combine independent authorization
-scopes: current resolution selects one covering authorization in deterministic
-history order, which can remain an older workstream. Use an explicit `work_id`
-when addressing the newly authorized scope. This operation records owner
+`work_id`. `workstreams.list` and `work.next` discover all independently
+authorized readable workstreams. Use a returned `workstream_id` for scoped
+listing or search; when several streams are visible, an unscoped list/search
+requires a scope selection. Discovery does not combine action permissions
+across streams or authorize execution. This operation records owner
 authorization; it does not dispatch the Agent or constitute human approval or
 team-independent acceptance.
 
