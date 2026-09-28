@@ -216,7 +216,7 @@ async fn multiple_scopes_are_discoverable_without_sharing_actions_or_hidden_work
 
 #[tokio::test]
 async fn task_navigation_does_not_promote_its_owner_or_resume_siblings() {
-    let (_g, admin, db, store) = setup().await;
+    let (_g, admin, db, store) = setup_with_assigned_tasks().await;
     agent_identity(&admin).await;
     enable_writes(&admin).await;
     grant(
@@ -237,6 +237,11 @@ async fn task_navigation_does_not_promote_its_owner_or_resume_siblings() {
         ],
     )
     .await;
+    // Three independent assignments in a different owner stream, in a grant
+    // order distinct from work ordering, mirror the native-client regression.
+    for task in ["ab-assigned", "aa-assigned"] {
+        grant_task(&db, task, task, &[AuthorizedAction::Inspect]).await;
+    }
     // An own session on an unassigned sibling must not appear through the
     // readable owner retained for task a's per-row authorization checks.
     admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
@@ -257,10 +262,14 @@ async fn task_navigation_does_not_promote_its_owner_or_resume_siblings() {
             .iter()
             .map(|i| i["work_id"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        vec!["a", "b-private"]
+        vec!["a", "aa-assigned", "ab-assigned", "b-private"]
     );
     assert_eq!(items[0]["navigation"], "prepare");
-    assert_eq!(items[1]["navigation"], "observe");
+    assert!(
+        items[1..]
+            .iter()
+            .all(|item| item["navigation"] == "observe")
+    );
     for item in items {
         let prepared = store
             .query(
