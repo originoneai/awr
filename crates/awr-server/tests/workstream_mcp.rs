@@ -176,6 +176,108 @@ async fn numeric_command_versions_are_rejected_without_mutation_and_strings_succ
 }
 
 #[tokio::test]
+async fn missing_execution_prepare_session_binding_is_actionable_and_does_not_mutate() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let claimed = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "prepare-guidance-claim",
+            "claim.acquire",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "expected_work_version":"0","ttl_seconds":60}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    let claim = &claimed["receipt"]["data"];
+    let before = prepared(&client).await;
+    let counts_sql = "SELECT
+        (SELECT count(*) FROM awr_team.executions WHERE tenant_id=$1 AND project_id=$2),
+        (SELECT count(*) FROM awr_team.operations WHERE tenant_id=$1 AND project_id=$2),
+        (SELECT count(*) FROM awr_team.events WHERE tenant_id=$1 AND project_id=$2),
+        (SELECT project_revision FROM awr_team.projects WHERE tenant_id=$1 AND id=$2)";
+    let baseline = admin
+        .query_one(counts_sql, &[&TENANT, &PROJECT])
+        .await
+        .unwrap();
+    let prepare_args = json!({
+        "claim_id":claim["claim_id"],
+        "expected_fence":claim["fence"],
+        "expected_lease_version":claim["lease_version"],
+        "expected_work_version":before["data"]["runtime"]["work_version"],
+        "input_digest":"a".repeat(64),
+        "declared_scope":["src"]
+    });
+    let missing = serde_json::to_value(command(
+        &before,
+        "prepare-missing-session-binding",
+        "execution.prepare",
+        prepare_args.clone(),
+    ))
+    .unwrap();
+
+    let error = call(&client, "awr_team_command", missing, true).await;
+    assert_eq!(error["code"], "InvalidInput");
+    assert_eq!(
+        error["message"],
+        "args.session_id and args.expected_session_version are required for execution.prepare"
+    );
+    assert_eq!(
+        error["next_step"],
+        "Inspect your owned session with session.inspect or follow work.next resume, then retry with that session_id and its current session_version as a JSON decimal string."
+    );
+    let audit = admin
+        .query_one(
+            "SELECT result, finished_at IS NOT NULL FROM awr_team.request_audit
+             WHERE action='execution.prepare' ORDER BY created_at DESC,id DESC LIMIT 1",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(audit.get::<_, String>(0), "failed");
+    assert!(audit.get::<_, bool>(1));
+    let after = admin
+        .query_one(counts_sql, &[&TENANT, &PROJECT])
+        .await
+        .unwrap();
+    for index in 0..4 {
+        assert_eq!(after.get::<_, i64>(index), baseline.get::<_, i64>(index));
+    }
+    assert_eq!(
+        prepared(&client).await["project_revision"],
+        before["project_revision"]
+    );
+
+    let mut corrected_args = prepare_args;
+    corrected_args["session_id"] = json!("session-a");
+    corrected_args["expected_session_version"] = json!("1");
+    let corrected = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &before,
+            "prepare-corrected-session-binding",
+            "execution.prepare",
+            corrected_args,
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    assert_eq!(corrected["receipt"]["data"]["state"], "prepared");
+    assert_eq!(corrected["receipt"]["data"]["session_id"], "session-a");
+    assert_eq!(corrected["receipt"]["data"]["dispatched"], false);
+    assert_eq!(corrected["receipt"]["execution_authorized"], false);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn missing_session_start_conversation_id_is_actionable_and_does_not_mutate() {
     let (_guard, admin, _, store) = setup().await;
     enable_writes(&admin).await;

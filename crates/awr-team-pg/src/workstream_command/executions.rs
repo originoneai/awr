@@ -32,6 +32,76 @@ pub(super) enum Action {
     Report(lifecycle::Report),
     Recovery(recovery::Action),
 }
+
+const PREPARE_FIELDS: &[&str] = &[
+    "session_id",
+    "expected_session_version",
+    "claim_id",
+    "expected_fence",
+    "expected_lease_version",
+    "expected_work_version",
+    "input_digest",
+    "declared_scope",
+];
+const PREPARE_NON_SESSION_FIELDS: &[&str] = &[
+    "claim_id",
+    "expected_fence",
+    "expected_lease_version",
+    "expected_work_version",
+    "input_digest",
+    "declared_scope",
+];
+
+fn validate_prepare(a: &Prepare) -> PgResult<()> {
+    if !identity(&a.session_id)
+        || version(&a.expected_session_version)? == 0
+        || !identity(&a.claim_id)
+        || !digest(&a.input_digest)
+        || version(&a.expected_fence)? == 0
+        || version(&a.expected_lease_version)? == 0
+        || version(&a.expected_work_version)? == 0
+        || a.declared_scope.len() > 128
+        || a.declared_scope.iter().any(|p| !canonical_path(p))
+    {
+        return Err(invalid());
+    }
+    let mut unique = a.declared_scope.clone();
+    unique.sort();
+    unique.dedup();
+    if unique.len() != a.declared_scope.len() {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+fn missing_prepare_session_binding(args: &Value) -> bool {
+    let Some(object) = args.as_object() else {
+        return false;
+    };
+    let missing_session =
+        !object.contains_key("session_id") || !object.contains_key("expected_session_version");
+    if !missing_session
+        || !PREPARE_NON_SESSION_FIELDS
+            .iter()
+            .all(|field| object.contains_key(*field))
+        || !object
+            .keys()
+            .all(|field| PREPARE_FIELDS.contains(&field.as_str()))
+    {
+        return false;
+    }
+    let mut completed = args.clone();
+    let completed = completed.as_object_mut().expect("checked object");
+    completed
+        .entry("session_id")
+        .or_insert_with(|| json!("missing-session-placeholder"));
+    completed
+        .entry("expected_session_version")
+        .or_insert_with(|| json!("1"));
+    serde_json::from_value::<Prepare>(Value::Object(completed.clone()))
+        .is_ok_and(|prepare| validate_prepare(&prepare).is_ok())
+}
+
 impl Action {
     pub(super) fn parse(op: &str, args: Value) -> PgResult<Self> {
         let action = match op {
@@ -41,23 +111,11 @@ impl Action {
                 Self::Recovery(recovery::Action::parse(op, args)?)
             }
             "execution.prepare" => {
+                if missing_prepare_session_binding(&args) {
+                    return Err(PgError::missing_execution_prepare_session_binding());
+                }
                 let a: Prepare = serde_json::from_value(args).map_err(|_| invalid())?;
-                if !identity(&a.claim_id)
-                    || !digest(&a.input_digest)
-                    || version(&a.expected_fence)? == 0
-                    || version(&a.expected_lease_version)? == 0
-                    || version(&a.expected_work_version)? == 0
-                    || a.declared_scope.len() > 128
-                    || a.declared_scope.iter().any(|p| !canonical_path(p))
-                {
-                    return Err(invalid());
-                }
-                let mut unique = a.declared_scope.clone();
-                unique.sort();
-                unique.dedup();
-                if unique.len() != a.declared_scope.len() {
-                    return Err(invalid());
-                }
+                validate_prepare(&a)?;
                 Self::Prepare(a)
             }
             "execution.cancel" => {
@@ -94,6 +152,79 @@ fn canonical_path(p: &str) -> bool {
         && !p.chars().any(char::is_control)
         && !p.contains(['\\', ':'])
         && p.split('/').all(|s| !matches!(s, "" | "." | ".."))
+}
+
+#[cfg(test)]
+mod input_guidance_tests {
+    use super::*;
+
+    fn prepare_args() -> Value {
+        json!({
+            "session_id":"session-a",
+            "expected_session_version":"1",
+            "claim_id":"claim-a",
+            "expected_fence":"1",
+            "expected_lease_version":"1",
+            "expected_work_version":"1",
+            "input_digest":"a".repeat(64),
+            "declared_scope":["src"]
+        })
+    }
+
+    #[test]
+    fn prepare_names_an_otherwise_valid_missing_session_binding() {
+        for missing in [
+            &["session_id"][..],
+            &["expected_session_version"][..],
+            &["session_id", "expected_session_version"][..],
+        ] {
+            let mut args = prepare_args();
+            let object = args.as_object_mut().unwrap();
+            for field in missing {
+                object.remove(*field);
+            }
+            let error = Action::parse("execution.prepare", args).err().unwrap();
+            assert!(error.is_missing_execution_prepare_session_binding());
+        }
+    }
+
+    #[test]
+    fn prepare_keeps_malformed_unknown_and_other_incomplete_inputs_generic() {
+        let mut cases = Vec::new();
+
+        let mut malformed_version = prepare_args();
+        malformed_version
+            .as_object_mut()
+            .unwrap()
+            .remove("session_id");
+        malformed_version["expected_session_version"] = json!(1);
+        cases.push(malformed_version);
+
+        let mut malformed_session = prepare_args();
+        malformed_session
+            .as_object_mut()
+            .unwrap()
+            .remove("expected_session_version");
+        malformed_session["session_id"] = json!("");
+        cases.push(malformed_session);
+
+        let mut unknown = prepare_args();
+        unknown.as_object_mut().unwrap().remove("session_id");
+        unknown["unexpected"] = json!(true);
+        cases.push(unknown);
+
+        let mut other_missing = prepare_args();
+        let object = other_missing.as_object_mut().unwrap();
+        object.remove("session_id");
+        object.remove("claim_id");
+        cases.push(other_missing);
+
+        for args in cases {
+            let error = Action::parse("execution.prepare", args).err().unwrap();
+            assert!(error.is_invalid_command_fields(), "{error}");
+        }
+        assert!(Action::parse("execution.prepare", prepare_args()).is_ok());
+    }
 }
 
 pub(super) async fn apply(

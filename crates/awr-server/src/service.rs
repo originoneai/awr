@@ -852,6 +852,14 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
                 "next_step":"Inspect your current session with session.inspect or use selector-free work.next resume. Retry with its current session_version as a JSON decimal string in args.expected_session_version."}),
         );
     }
+    if error.is_missing_execution_prepare_session_binding() {
+        return (
+            StatusCode::BAD_REQUEST,
+            json!({"code":"InvalidInput",
+                "message":"args.session_id and args.expected_session_version are required for execution.prepare",
+                "next_step":"Inspect your owned session with session.inspect or follow work.next resume, then retry with that session_id and its current session_version as a JSON decimal string."}),
+        );
+    }
     if error.is_missing_session_start_conversation_id() {
         return (
             StatusCode::BAD_REQUEST,
