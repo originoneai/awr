@@ -68,6 +68,14 @@ pub(crate) struct ReaderAuthority {
     pub delegation_id: Option<String>,
     /// Transaction-local discovery candidates; never used for command admission.
     pub read_delegations: Option<Vec<crate::delegation_auth::ReadDelegation>>,
+    /// Exact selector-free work.next visibility; never reusable command authority.
+    pub navigation_read_scope: Option<NavigationReadScope>,
+}
+
+#[derive(Clone, Default, serde::Serialize)]
+pub(crate) struct NavigationReadScope {
+    pub streams: std::collections::BTreeSet<Id>,
+    pub tasks: BTreeMap<String, Id>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -257,6 +265,7 @@ async fn authenticate_inner(
         delegated_actions: delegation_required.then(std::collections::BTreeSet::new),
         delegation_id: None,
         read_delegations: None,
+        navigation_read_scope: None,
     })
 }
 
@@ -709,6 +718,7 @@ mod tests {
             delegated_actions: None,
             delegation_id: None,
             read_delegations: None,
+            navigation_read_scope: None,
         }
     }
 

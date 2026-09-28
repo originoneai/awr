@@ -155,10 +155,13 @@ Discovery cursors bind the effective authorization bodies as well as identity,
 access grants and source, so changes invalidate earlier pages. Resume queries
 carry the returned work and workstream selectors to resolve the correct grant.
 
-Task and task-pool delegations require an explicit covered `work_id` on every
-read, including session inspection. Selector-free capabilities, task discovery
-and next-task navigation are unavailable with those scopes; use a workstream
-delegation when the Agent must discover work. Project-scoped delegation retains
+Task delegations also support selector-free `work.next`, limited to exact assigned
+tasks whose current owners are independently readable through credential access.
+Their own current-client sessions on those tasks can be resumed. This does not
+expose the owning stream's catalog, sibling tasks or other discovery surfaces;
+other reads still require an explicit covered `work_id`, including session
+inspection. Task-pool delegations continue to require an explicit covered task
+on every read. Project-scoped delegation retains
 project discovery. Humans and system actors retain their existing access rules.
 Agents start with an empty product-action set until a live delegation is
 resolved. Separate audit/access surfaces do not inherit an Agent's broad role

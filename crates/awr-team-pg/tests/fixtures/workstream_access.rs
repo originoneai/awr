@@ -46,13 +46,13 @@ pub async fn enable_writes(admin: &Client) {
 }
 
 pub async fn setup() -> (MutexGuard<'static, ()>, Client, String, WorkstreamReadStore) {
-    let (guard, admin, db, store, _) = setup_inner(false, None, false).await;
+    let (guard, admin, db, store, _) = setup_inner(false, None, false, false).await;
     (guard, admin, db, store)
 }
 
 pub async fn setup_with_three_streams()
 -> (MutexGuard<'static, ()>, Client, String, WorkstreamReadStore) {
-    let (guard, admin, db, store, _) = setup_inner(false, None, true).await;
+    let (guard, admin, db, store, _) = setup_inner(false, None, true, false).await;
     (guard, admin, db, store)
 }
 
@@ -63,14 +63,20 @@ pub async fn setup_with_legacy_resource() -> (
     WorkstreamReadStore,
     String,
 ) {
-    let (guard, admin, db, store, legacy) = setup_inner(true, None, false).await;
+    let (guard, admin, db, store, legacy) = setup_inner(true, None, false, false).await;
     (guard, admin, db, store, legacy.expect("legacy resource"))
 }
 
 pub async fn setup_with_specs(
     files: Vec<SourceFile>,
 ) -> (MutexGuard<'static, ()>, Client, String, WorkstreamReadStore) {
-    let (guard, admin, db, store, _) = setup_inner(false, Some(files), false).await;
+    let (guard, admin, db, store, _) = setup_inner(false, Some(files), false, false).await;
+    (guard, admin, db, store)
+}
+
+pub async fn setup_with_assigned_tasks()
+-> (MutexGuard<'static, ()>, Client, String, WorkstreamReadStore) {
+    let (guard, admin, db, store, _) = setup_inner(false, None, false, true).await;
     (guard, admin, db, store)
 }
 
@@ -78,6 +84,7 @@ async fn setup_inner(
     legacy_resource: bool,
     spec_files: Option<Vec<SourceFile>>,
     third_stream: bool,
+    assigned_tasks: bool,
 ) -> (
     MutexGuard<'static, ()>,
     Client,
@@ -155,6 +162,9 @@ async fn setup_inner(
     ];
     if third_stream {
         work_definitions.push(("d-hidden", 3, vec![]));
+    }
+    if assigned_tasks {
+        work_definitions.extend([("aa-assigned", 1, vec![]), ("ab-assigned", 1, vec![])]);
     }
     let contracts = work_definitions
         .into_iter()
