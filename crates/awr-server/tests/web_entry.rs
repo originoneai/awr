@@ -32,6 +32,7 @@ async fn start(store: WorkstreamReadStore, projects: Vec<ProjectBinding>) -> Ser
         listen: address,
         allowed_hosts: vec![],
         allowed_web_origins: vec![origin.clone()],
+        oauth: None,
         projects,
     };
     let router = awr_server::service::router(config, address, store).unwrap();

@@ -312,6 +312,30 @@ impl OAuthStore {
         Ok(pending.view.clone())
     }
 
+    /// Cancel only the browser-bound transaction; the registered callback and
+    /// state are returned so the HTTP adapter can send `access_denied` safely.
+    pub fn cancel(
+        &self,
+        transaction: &str,
+        cookie: &str,
+        now: Instant,
+    ) -> Result<ConsentView, OAuthError> {
+        let mut entries = self.entries.lock().map_err(|_| OAuthError::Unavailable)?;
+        entries.prune(now);
+        let pending = entries
+            .pending
+            .get(transaction)
+            .ok_or(OAuthError::AccessDenied)?;
+        if !equal_hash(&pending.cookie_hash, &hash(cookie)) {
+            return Err(OAuthError::AccessDenied);
+        }
+        Ok(entries
+            .pending
+            .remove(transaction)
+            .expect("validated pending entry")
+            .view)
+    }
+
     /// Caller must first validate current access for this exact pending resource.
     /// Credential contents are kept only in memory, never returned to the client.
     pub fn approve(

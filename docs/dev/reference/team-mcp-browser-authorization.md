@@ -1,13 +1,15 @@
 # Team MCP browser authorization
 
-The authorization-code policy in `awr-server::oauth` is a foundation for an
-optional Team MCP browser entry. This policy module alone does **not** enable
-OAuth endpoints or authenticate a native client; HTTP integration and native
-client verification are separate delivery steps.
+Team MCP supports an optional authorization-code browser entry. An agent's
+MCP client discovers the service, registers a callback and opens the AWR consent
+page. The user enters their personal credential there and confirms the project.
+The client receives a short-lived, project-bound token instead of the personal
+credential. Native-client compatibility requires verification with that client;
+protocol tests alone do not establish it.
 
 The adapter retains the existing Team identity and permissions. It does not
 create an account, project membership, grant, claim or task delegation. The HTTP
-entry must verify current project access before approving consent, then recheck
+entry verifies current project access before approving consent, then rechecks
 the underlying credential and authorization in each MCP operation.
 
 ## Policy
@@ -37,10 +39,76 @@ lookup keys; underlying personal credentials stay in memory only.
 Registrations expire after 24 hours. There are at most 1,024 registrations,
 1,024 consent transactions, 1,024 codes and 4,096 access tokens. Expired entries
 are pruned before mutations; reaching a live capacity returns a generic
-temporary-unavailability error. Request bodies and HTTP admission also need
-their own limits in the transport integration.
+temporary-unavailability error. OAuth bodies and query strings are limited to
+16 KiB and share the service's 64-request admission limit and 30-second timeout.
 
-These unit-tested policy guarantees do not establish browser security, native
-OAuth compatibility or business acceptance. The browser integration must add
-same-origin consent, CSRF protection, escaped client labels, no-store/no-referrer
-responses, frame protection and operator-bound discovery metadata.
+## Enable the browser entry
+
+OAuth is disabled unless the operator adds an issuer to the service configuration:
+
+```toml
+version = 1
+listen = "127.0.0.1:9910"
+allowed_hosts = ["team.example.org"]
+
+[oauth]
+issuer = "https://team.example.org"
+
+[[projects]]
+key = "portal"
+tenant_id = "team"
+project_id = "customer-portal"
+```
+
+The issuer must be a canonical HTTPS origin without a trailing slash, explicitly
+listed in `allowed_hosts`. It is never inferred from `Host` or forwarded headers.
+Terminate TLS at the trusted proxy, preserve this Host, and route the following
+paths to the same server process:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/.well-known/oauth-authorization-server` | Authorization metadata |
+| GET | `/.well-known/oauth-protected-resource/v1/projects/{key}/mcp` | Exact resource metadata |
+| POST | `/oauth/register` | Public-client registration; `none` authentication |
+| GET | `/oauth/authorize` | `response_type=code`, S256 PKCE and exact `resource` |
+| POST | `/oauth/consent` | Browser-bound approval or cancellation |
+| POST | `/oauth/token` | URL-encoded authorization-code exchange |
+| GET/POST/DELETE | `/v1/projects/{key}/mcp` | Existing MCP transport |
+
+Missing MCP authentication returns `401` with a `WWW-Authenticate` resource
+metadata URL when OAuth is enabled. Expired or invalid OAuth tokens also return
+`401`. OAuth-disabled services retain the previous `403` behavior. Existing
+static bearer authentication remains available. An OAuth token is accepted only
+at its exact MCP resource, never as a classic HTTP or Inspector credential.
+
+The supported scope is `awr.project`. Authorization and token exchange require
+the exact project resource URL. Registration may request refresh along with the
+authorization-code grant, but the response advertises only authorization code;
+no refresh token is issued. An expired connection or server restart requires a
+new connection and consent, including re-registration if necessary.
+
+## Consent and proxy handling
+
+Consent requires the original Secure/HttpOnly/SameSite browser cookie, an exact
+issuer Origin and the bound transaction. Duplicate form/query parameters and
+ambiguous security headers are rejected. Approval checks current project access
+before issuing a code; cancellation consumes the transaction and returns
+`access_denied` with the client's original state. Invalid credentials are not
+echoed into the retry page or errors.
+
+Client names and callbacks are escaped and explicitly labeled as self-registered.
+The page uses no scripts or external assets. Responses set no-store, no-referrer,
+frame protection and a restrictive CSP. The form posts only to AWR; its CSP also
+permits the registered callback origin for the post-consent redirect. Starting a
+second authorization in the same browser replaces the first consent cookie;
+restart the earlier connection rather than reusing its page.
+
+Do not log consent bodies, token responses, cookies or Authorization headers.
+At the proxy, suppress or redact OAuth access-log query strings: authorization
+URLs contain state and PKCE material, and callbacks contain single-use codes.
+Do not include personal credentials in agent chat, URLs or MCP configuration.
+Browser consent does not change project permissions or task delegation.
+
+HTTP, SDK and policy regressions are distinct from actual browser/native-client
+verification and from business acceptance. Connecting a client alone is not
+evidence that a collaborative development scenario is complete.

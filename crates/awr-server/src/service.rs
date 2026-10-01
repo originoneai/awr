@@ -2,6 +2,7 @@
 //! inside PostgreSQL; tenant/actor/client/grants are never taken from its JSON.
 mod action_auth;
 mod mcp;
+mod oauth;
 mod web;
 
 pub use crate::named_agent_host::{
@@ -11,6 +12,7 @@ pub use action_auth::{
     action_authorization_capabilities, command_action_name, query_action_name,
     reject_access_management_forgeries, reject_forged_authority_fields,
 };
+pub use oauth::OAuthConfig;
 
 use awr_team_pg::{
     AdminAccessPlan, PgError, PlanningApproveRequest, PlanningDraftRequest, PlanningPublishRequest,
@@ -50,6 +52,9 @@ pub struct ServiceConfig {
     /// Classic `/v1/projects/*` and MCP continue to reject any Origin.
     #[serde(default)]
     pub allowed_web_origins: Vec<String>,
+    /// Opt-in browser authorization for MCP; never used by classic HTTP/Web.
+    #[serde(default)]
+    pub oauth: Option<OAuthConfig>,
     pub projects: Vec<ProjectBinding>,
 }
 
@@ -112,6 +117,9 @@ impl ServiceConfig {
         {
             return Err("allowed_web_origins must be exact http(s) Origins".into());
         }
+        if let Some(oauth) = &self.oauth {
+            oauth.validate(&self.allowed_hosts)?;
+        }
         Ok(())
     }
 }
@@ -123,6 +131,7 @@ pub(crate) struct StateData {
     hosts: Vec<String>,
     web_origins: Vec<String>,
     web_sessions: Arc<web::WebSessionStore>,
+    oauth: Option<oauth::OAuthRuntime>,
     permits: Arc<tokio::sync::Semaphore>,
 }
 
@@ -132,6 +141,11 @@ pub fn router(
     store: WorkstreamReadStore,
 ) -> Result<Router, String> {
     config.validate()?;
+    let oauth = config
+        .oauth
+        .as_ref()
+        .map(|c| oauth::OAuthRuntime::new(c, &config.projects))
+        .transpose()?;
     let mut hosts = config.allowed_hosts;
     if actual.ip().is_loopback() {
         hosts.push(actual.to_string());
@@ -149,6 +163,7 @@ pub fn router(
         hosts,
         web_origins,
         web_sessions: Arc::new(web::WebSessionStore::default()),
+        oauth,
         permits: Arc::new(tokio::sync::Semaphore::new(64)),
     });
     let mut router = Router::new()
@@ -197,6 +212,9 @@ pub fn router(
         router = router.merge(mcp::router(state.clone(), project.clone()));
     }
     router = router.merge(web::router(state.clone()));
+    if state.oauth.is_some() {
+        router = router.merge(oauth::router(state));
+    }
     Ok(router)
 }
 
