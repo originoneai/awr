@@ -389,6 +389,11 @@ fn consent_page(
         "content-security-policy",
         policy.parse().expect("canonical callback origin"),
     );
+    // A no-referrer form navigation can send Origin: null in browsers. Keep
+    // the issuer origin for the same-origin POST while withholding referrers
+    // from other origins. Redirect responses retain no-referrer.
+    res.headers_mut()
+        .insert("referrer-policy", HeaderValue::from_static("same-origin"));
     res
 }
 

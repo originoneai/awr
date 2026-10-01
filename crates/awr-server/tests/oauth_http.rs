@@ -272,6 +272,29 @@ async fn consent_checks_origin_cookie_and_transaction_then_cancels_atomically() 
     );
 }
 #[tokio::test]
+async fn opaque_origin_is_rejected_without_consuming_the_transaction() {
+    let s = server(true).await;
+    let pending = begin(&s, "fixture").await;
+    let res = s
+        .post("/oauth/consent")
+        .header("origin", "null")
+        .header("cookie", &pending.cookie)
+        .header("sec-fetch-site", "same-origin")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(encode(&[
+            ("transaction", &pending.transaction),
+            ("action", "cancel"),
+        ]))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 403);
+    assert!(res.headers().get("location").is_none());
+    let res = consent(&s, &pending, "cancel", "").send().await.unwrap();
+    assert_eq!(res.status(), 303);
+    assert_eq!(res.headers()["referrer-policy"], "no-referrer");
+}
+#[tokio::test]
 async fn request_limits_and_token_input_errors_never_echo_values() {
     let s = server(true).await;
     let res = s

@@ -184,11 +184,13 @@ async fn consent_checks_current_project_access_and_failure_does_not_leak_or_cons
         .await
         .unwrap();
     assert_eq!(res.status(), 403);
+    assert_eq!(res.headers()["referrer-policy"], "same-origin");
     let html = res.text().await.unwrap();
     assert!(!html.contains(bad));
     assert!(html.contains("try again"));
     let res = consent(&server, &pending, "allow", B).send().await.unwrap();
     assert_eq!(res.status(), 303);
+    assert_eq!(res.headers()["referrer-policy"], "no-referrer");
     admin
         .execute(
             "UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='reader-a'",

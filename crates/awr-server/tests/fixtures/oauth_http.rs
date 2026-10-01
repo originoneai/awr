@@ -120,7 +120,7 @@ pub async fn begin(server: &Server, name: &str) -> Pending {
         .unwrap();
     assert_eq!(res.status(), 200);
     assert_eq!(res.headers()["cache-control"], "no-store");
-    assert_eq!(res.headers()["referrer-policy"], "no-referrer");
+    assert_eq!(res.headers()["referrer-policy"], "same-origin");
     assert!(
         res.headers()["content-security-policy"]
             .to_str()
