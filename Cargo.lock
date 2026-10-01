@@ -210,15 +210,18 @@ dependencies = [
  "awr-team",
  "awr-team-pg",
  "axum",
+ "base64 0.22.1",
  "clap",
  "getrandom 0.4.3",
  "reqwest",
  "rmcp",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "tokio-postgres",
  "toml",
+ "url",
 ]
 
 [[package]]
