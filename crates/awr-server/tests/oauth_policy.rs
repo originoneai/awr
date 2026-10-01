@@ -297,6 +297,53 @@ fn registration_and_pending_capacity_recovers_only_after_expiry() {
 }
 
 #[test]
+fn cancellation_checks_browser_binding_and_consumes_only_its_transaction() {
+    let store = store();
+    let now = Instant::now();
+    let client = client(&store, now);
+    let page = store.begin(request(&client), now).unwrap();
+    let other = store.begin(request(&client), now).unwrap();
+    assert!(
+        store
+            .cancel(&page.transaction_id, &other.cookie, now)
+            .is_err()
+    );
+    let cancelled = store
+        .cancel(&page.transaction_id, &page.cookie, now)
+        .unwrap();
+    assert_eq!(cancelled.request.redirect_uri, CALLBACK);
+    assert_eq!(
+        cancelled.request.state.as_deref(),
+        Some("client-owned-state")
+    );
+    assert!(
+        store
+            .cancel(&page.transaction_id, &page.cookie, now)
+            .is_err()
+    );
+    assert!(
+        store
+            .approve(
+                &page.transaction_id,
+                &page.cookie,
+                SYNTHETIC_BEARER.into(),
+                now
+            )
+            .is_err()
+    );
+    assert!(
+        store
+            .consent(&other.transaction_id, &other.cookie, now)
+            .is_ok()
+    );
+    assert!(
+        store
+            .cancel(&other.transaction_id, &other.cookie, now + CONSENT_TTL)
+            .is_err()
+    );
+}
+
+#[test]
 fn code_and_token_capacity_is_bounded_and_expiry_releases_slots() {
     let store = store();
     let now = Instant::now();

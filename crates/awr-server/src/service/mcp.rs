@@ -53,7 +53,23 @@ async fn authorize(State(endpoint): State<Endpoint>, request: Request, next: Nex
         return denied();
     }
     let Some(token) = bearer(request.headers()).map(str::to_owned) else {
-        return denied();
+        return oauth::challenge(&endpoint.state, &endpoint.project.key, false);
+    };
+    let is_oauth = token.starts_with(crate::oauth::ACCESS_TOKEN_PREFIX);
+    let token = if is_oauth {
+        let resolved = endpoint.state.oauth.as_ref().and_then(|oauth| {
+            oauth.store.resolve(
+                &token,
+                &oauth.resource(&endpoint.project.key),
+                std::time::Instant::now(),
+            )
+        });
+        let Some(token) = resolved else {
+            return oauth::challenge(&endpoint.state, &endpoint.project.key, true);
+        };
+        token
+    } else {
+        token
     };
     let Ok(permit) = endpoint.state.permits.clone().try_acquire_owned() else {
         return response(StatusCode::SERVICE_UNAVAILABLE, json!({"code":"Busy"}));
@@ -87,6 +103,9 @@ async fn authorize(State(endpoint): State<Endpoint>, request: Request, next: Nex
             )
             .await
         {
+            if is_oauth && matches!(error, PgError::Forbidden) {
+                return oauth::challenge(&endpoint.state, &endpoint.project.key, true);
+            }
             return error_response(error);
         }
         parts.extensions.insert(access.clone());
