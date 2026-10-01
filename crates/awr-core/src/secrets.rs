@@ -389,13 +389,19 @@ fn has_value(rest: &str) -> bool {
 // their verified enclosing quote without granting Shell concatenations the
 // same exemption. Raw assignments are still scanned, including duplicate keys.
 fn source_string_ranges(text: &str) -> Vec<(usize, usize)> {
-    let value =
-        serde_json::from_str::<Value>(text).or_else(|_| serde_yaml_ng::from_str::<Value>(text));
-    if !value.is_ok_and(|value| value.is_object() || value.is_array()) {
+    let (value, json) = match serde_json::from_str::<Value>(text) {
+        Ok(value) => (value, true),
+        Err(_) => match serde_yaml_ng::from_str::<Value>(text) {
+            Ok(value) => (value, false),
+            Err(_) => return Vec::new(),
+        },
+    };
+    if !value.is_object() && !value.is_array() {
         return Vec::new();
     }
     let mut chars = text.char_indices().peekable();
     let mut open = None;
+    let mut flow_depth = 0usize;
     let mut ranges = Vec::new();
     while let Some((offset, c)) = chars.next() {
         match open {
@@ -409,11 +415,46 @@ fn source_string_ranges(text: &str) -> Vec<(usize, usize)> {
                 ranges.push((start, offset));
                 open = None;
             }
-            None if matches!(c, '\'' | '"') => open = Some((offset, c)),
+            None if !json
+                && matches!(c, '{' | '[')
+                && (flow_depth > 0 || yaml_scalar_start(&text[..offset])) =>
+            {
+                flow_depth += 1;
+            }
+            None if !json && matches!(c, '}' | ']') => {
+                flow_depth = flow_depth.saturating_sub(1);
+            }
+            None if matches!(c, '\'' | '"')
+                && ((json && c == '"')
+                    || (!json
+                        && (yaml_scalar_start(&text[..offset])
+                            || (flow_depth > 0
+                                && text[..offset]
+                                    .trim_end()
+                                    .ends_with([':', ',', '[', '{']))))) =>
+            {
+                open = Some((offset, c));
+            }
             _ => {}
         }
     }
     ranges
+}
+
+fn yaml_scalar_start(prefix: &str) -> bool {
+    let mut prefix = prefix.rsplit('\n').next().unwrap_or("").trim();
+    while let Some(rest) = prefix.strip_prefix("- ") {
+        prefix = rest.trim_start();
+    }
+    if matches!(prefix, "" | "-" | "?") {
+        return true;
+    }
+    prefix.ends_with(':')
+        && serde_yaml_ng::from_str::<Value>(&format!("{prefix} null")).is_ok_and(|value| {
+            value
+                .as_object()
+                .is_some_and(|fields| fields.len() == 1 && fields.values().all(Value::is_null))
+        })
 }
 
 fn assignment_has_value(text: &str, end: usize, strings: &OnceCell<Vec<(usize, usize)>>) -> bool {
@@ -999,6 +1040,9 @@ mod tests {
             "export PASSWORD=true' synthetic-private-value'",
             "export PASSWORD=null\" synthetic-private-value\"",
             "export PASSWORD=FALSE' synthetic-private-value'",
+            "script: don't export PASSWORD=false' synthetic-private-value'\n",
+            "script: echo, 'export PASSWORD=false' synthetic-private-value'\n",
+            "script: words [ don't export PASSWORD=false' synthetic-private-value'\n",
         ] {
             assert!(ensure_public_text(text).is_err(), "{text}");
             assert!(ensure_public_bytes(text.as_bytes()).is_err());
@@ -1079,6 +1123,8 @@ mod tests {
             r#"["Use refreshToken=false","Continue"]"#,
             "body: 'Use refreshToken=false'\n",
             "body: 'We''ll use refreshToken=false'\n",
+            "{body: 'Use refreshToken=false'}\n",
+            "body: ['Use refreshToken=false']\n",
         ] {
             ensure_public_source(text.as_bytes(), "synthetic-notes.txt")
                 .unwrap_or_else(|e| panic!("{text}: {e}"));

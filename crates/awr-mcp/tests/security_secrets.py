@@ -25,6 +25,7 @@ class SecretTransports(unittest.TestCase):
         for body, category in [
             ('export PASSWORD=false" ' + SENTINEL + '"', "labelled_value"),
             ("export PASSWORD=true' " + SENTINEL + "'", "labelled_value"),
+            ("script: don't export PASSWORD=false' " + SENTINEL + "'", "labelled_value"),
             ("# Private prompt\nTrue customer identities must be included.\n" + SENTINEL, "private_prompt"),
             ("# Private prompt\nfalse\n" + SENTINEL, "private_prompt"),
         ]:

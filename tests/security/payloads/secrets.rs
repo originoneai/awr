@@ -424,6 +424,7 @@ fn labelled_unicode_environment_private_prompt_and_recognizable_tokens_reach_rea
                 format!("env: {{HOME: {SENTINEL}}}"),
                 format!("export PASSWORD=false\" {SENTINEL}\""),
                 format!("export PASSWORD=true' {SENTINEL}'"),
+                format!("script: don't export PASSWORD=false' {SENTINEL}'"),
             ],
         ),
         (
