@@ -49,7 +49,7 @@ impl Drop for Project {
 fn public_literals_index_from_arbitrary_sources_without_reviews() {
     let p = Project::new();
     fs::create_dir(p.0.join("design")).unwrap();
-    let notes = "# Public options {#options status=active}\n\nUse `refreshToken=false`; observe `checkpoint_token=null`、then continue.\n";
+    let notes = "# Public options {#options status=active}\n\nUse `refreshToken=false`. Observe `checkpoint_token=null`、then continue.\nCall account/read(refreshToken=false).\n";
     fs::write(p.0.join("design/options.md"), notes).unwrap();
     let ledger = "goals:\n- id: G\n  title: Explain public options\n  status: active\n  success_criteria: [Usable context]\nwork_items:\n- id: W\n  title: Document options\n  status: ready\n  goal: G\n  summary: 'Call(refreshToken=false); checkpoint_token=null、then continue.'\n  acceptance: [Usable context]\n  next_action: Explain the option types\n";
     fs::write(p.0.join("queue.yaml"), ledger).unwrap();
@@ -81,15 +81,33 @@ fn public_literals_index_from_arbitrary_sources_without_reviews() {
     )
     .unwrap();
     p.ok(&["source", "reindex"]);
-    fs::write(
-        p.0.join("design/options.md"),
-        format!("{notes}\npassword: synthetic-private-value\n"),
-    )
-    .unwrap();
-    let rejected = p.run(&["source", "reindex"]);
-    assert!(!rejected.status.success());
-    assert!(!String::from_utf8_lossy(&rejected.stdout).contains("synthetic-private-value"));
-    assert!(!String::from_utf8_lossy(&rejected.stderr).contains("synthetic-private-value"));
+    assert_eq!(
+        p.ok(&["context", "compile", "--work", "W", "--budget", "6500"])["completeness"]["complete"],
+        true
+    );
+    assert!(!p.0.join(".awr/content-reviews").exists());
+    assert_eq!(
+        fs::read_to_string(p.0.join("design/options.md")).unwrap(),
+        format!("{notes}\nOrdinary update.\n")
+    );
+    for unsafe_body in [
+        "password: synthetic-private-value",
+        "export PASSWORD=false\" synthetic-private-value\"",
+        "export PASSWORD=true' synthetic-private-value'",
+        "# Private prompt\nTrue customer identities must be included.\nInternal customer: synthetic-private-value.",
+        "# Private prompt\nfalse\nInternal customer: synthetic-private-value.",
+    ] {
+        let source = format!("{notes}\n{unsafe_body}\n");
+        fs::write(p.0.join("design/options.md"), &source).unwrap();
+        let rejected = p.run(&["source", "reindex"]);
+        assert!(!rejected.status.success(), "{unsafe_body}");
+        assert!(!String::from_utf8_lossy(&rejected.stdout).contains("synthetic-private-value"));
+        assert!(!String::from_utf8_lossy(&rejected.stderr).contains("synthetic-private-value"));
+        assert_eq!(
+            fs::read_to_string(p.0.join("design/options.md")).unwrap(),
+            source
+        );
+    }
 }
 
 #[test]

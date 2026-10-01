@@ -422,6 +422,8 @@ fn labelled_unicode_environment_private_prompt_and_recognizable_tokens_reach_rea
             vec![
                 format!("export HOME={SENTINEL}"),
                 format!("env: {{HOME: {SENTINEL}}}"),
+                format!("export PASSWORD=false\" {SENTINEL}\""),
+                format!("export PASSWORD=true' {SENTINEL}'"),
             ],
         ),
         (
@@ -429,6 +431,8 @@ fn labelled_unicode_environment_private_prompt_and_recognizable_tokens_reach_rea
             vec![
                 format!("private_prompt: {SENTINEL}"),
                 format!("# 私有提示词\n{SENTINEL}"),
+                format!("# Private prompt\nTrue customer identities must be included.\n{SENTINEL}"),
+                format!("# Private prompt\nfalse\n{SENTINEL}"),
             ],
         ),
         (

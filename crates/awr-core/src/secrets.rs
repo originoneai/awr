@@ -9,7 +9,7 @@ use base64::{
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{borrow::Cow, sync::LazyLock};
+use std::{borrow::Cow, cell::OnceCell, sync::LazyLock};
 
 pub const SECRET_POLICY_VERSION: u32 = 7;
 pub const SENSITIVE_CONTENT_WITHHELD: &str = "[sensitive content withheld]";
@@ -205,10 +205,14 @@ static ENV_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
 // A heading is context, not evidence of a dump. Keep flow containers and
 // indented YAML mappings / assignment lists protected, but do not classify
 // Markdown prose or version lists merely because they follow "Environment:".
-fn environment_block_entry(text: &str, end: usize) -> Option<usize> {
+fn environment_block_entry(
+    text: &str,
+    end: usize,
+    strings: &OnceCell<Vec<(usize, usize)>>,
+) -> Option<usize> {
     let rest = &text[end..];
     let value = rest.trim_start();
-    if !has_value(value) || definition_after_assignment(rest) {
+    if !assignment_has_value(text, end, strings) || definition_after_assignment(rest) {
         return None;
     }
     if value.starts_with(['{', '[']) {
@@ -333,12 +337,16 @@ const PUBLIC_LITERALS: &[&str] = &[
     "true", "True", "TRUE", "false", "False", "FALSE", "null", "Null", "NULL", "~", "{}", "[]",
 ];
 fn public_literal_end(tail: &str) -> bool {
-    // Closing syntax can wrap a literal, but cannot make a longer value public.
-    let tail = tail.trim_start_matches([')', ']', '}', '`', '\'', '"']);
+    // Quotes can begin a concatenated value; only verified source-string
+    // envelopes may remove their closing quote before reaching this check.
+    let tail = tail.trim_start_matches([')', ']', '}', '`']);
     tail.is_empty()
         || tail.starts_with(|c: char| {
             c.is_whitespace() || matches!(c, ',' | ';' | '、' | '。' | '，' | '；')
         })
+        || tail
+            .strip_prefix('.')
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
 }
 fn has_value(rest: &str) -> bool {
     let rest = rest.trim_start();
@@ -375,6 +383,56 @@ fn has_value(rest: &str) -> bool {
     };
     // Nonempty strings and numbers remain values, even when a string spells a literal.
     !placeholder(value)
+}
+
+// Raw JSON/YAML strings can contain public notes ending in a scalar. Retain
+// their verified enclosing quote without granting Shell concatenations the
+// same exemption. Raw assignments are still scanned, including duplicate keys.
+fn source_string_ranges(text: &str) -> Vec<(usize, usize)> {
+    let value =
+        serde_json::from_str::<Value>(text).or_else(|_| serde_yaml_ng::from_str::<Value>(text));
+    if !value.is_ok_and(|value| value.is_object() || value.is_array()) {
+        return Vec::new();
+    }
+    let mut chars = text.char_indices().peekable();
+    let mut open = None;
+    let mut ranges = Vec::new();
+    while let Some((offset, c)) = chars.next() {
+        match open {
+            Some((_, '"')) if c == '\\' => {
+                chars.next();
+            }
+            Some((_, '\'')) if c == '\'' && chars.peek().is_some_and(|(_, c)| *c == '\'') => {
+                chars.next();
+            }
+            Some((start, quote)) if c == quote => {
+                ranges.push((start, offset));
+                open = None;
+            }
+            None if matches!(c, '\'' | '"') => open = Some((offset, c)),
+            _ => {}
+        }
+    }
+    ranges
+}
+
+fn assignment_has_value(text: &str, end: usize, strings: &OnceCell<Vec<(usize, usize)>>) -> bool {
+    let rest = &text[end..];
+    if !has_value(rest) {
+        return false;
+    }
+    let candidate = rest.trim_start().trim_start_matches('`');
+    if !PUBLIC_LITERALS
+        .iter()
+        .any(|literal| candidate.starts_with(literal))
+    {
+        return true;
+    }
+    strings
+        .get_or_init(|| source_string_ranges(text))
+        .iter()
+        .find(|(start, close)| *start < end && end <= *close)
+        .is_none_or(|(_, close)| has_value(&text[end..*close]))
 }
 
 pub fn sensitive_text_category(text: &str) -> Option<SensitiveCategory> {
@@ -432,8 +490,9 @@ fn sensitive_matches(text: &str, limit: usize) -> Vec<(SensitiveCategory, usize)
         }
     }
     let declarations: Vec<_> = TYPE_DECLARATION.find_iter(text).collect();
+    let strings = OnceCell::new();
     for m in ASSIGNMENT.find_iter(text).filter(|m| {
-        has_value(&text[m.end()..])
+        assignment_has_value(text, m.end(), &strings)
             && !definition_after_assignment(&text[m.end()..])
             && !narrative_authorization(text, m.as_str(), m.start(), m.end())
             && !declarations
@@ -444,20 +503,20 @@ fn sensitive_matches(text: &str, limit: usize) -> Vec<(SensitiveCategory, usize)
     }
     for m in ENV_ASSIGNMENT.find_iter(text).filter(|m| {
         environment_assignment(text, m.as_str(), m.start())
-            && has_value(&text[m.end()..])
+            && assignment_has_value(text, m.end(), &strings)
             && !definition_after_assignment(&text[m.end()..])
     }) {
         record!(SensitiveCategory::EnvironmentDump, m.start());
     }
     for m in PRIVATE_BLOCK
         .find_iter(text)
-        .filter(|m| has_value(&text[m.end()..]))
+        .filter(|m| !placeholder(&text[m.end()..]))
     {
         record!(SensitiveCategory::PrivatePrompt, m.start());
     }
     for offset in ENV_BLOCK
         .find_iter(text)
-        .filter_map(|m| environment_block_entry(text, m.end()))
+        .filter_map(|m| environment_block_entry(text, m.end(), &strings))
     {
         record!(SensitiveCategory::EnvironmentDump, offset);
     }
@@ -930,6 +989,99 @@ mod tests {
                 ensure_public_text(&text).unwrap();
                 ensure_public_bytes(&serde_json::to_vec(&json!({"body": text})).unwrap()).unwrap();
             }
+        }
+    }
+
+    #[test]
+    fn shell_literal_concatenations_are_nonempty_values() {
+        for text in [
+            "export PASSWORD=false\" synthetic-private-value\"",
+            "export PASSWORD=true' synthetic-private-value'",
+            "export PASSWORD=null\" synthetic-private-value\"",
+            "export PASSWORD=FALSE' synthetic-private-value'",
+        ] {
+            assert!(ensure_public_text(text).is_err(), "{text}");
+            assert!(ensure_public_bytes(text.as_bytes()).is_err());
+            assert!(ensure_public_source(text.as_bytes(), "synthetic-notes.md").is_err());
+            let wrapped = json!({"body": text});
+            assert!(ensure_public_value(&wrapped).is_err());
+            assert!(ensure_public_bytes(&serde_json::to_vec(&wrapped).unwrap()).is_err());
+            assert_eq!(safe_diagnostic(text), SENSITIVE_CONTENT_WITHHELD);
+            let error = ensure_public_source(text.as_bytes(), "synthetic-notes.md")
+                .unwrap_err()
+                .report();
+            assert!(
+                !serde_json::to_string(&error)
+                    .unwrap()
+                    .contains("synthetic-private-value")
+            );
+        }
+    }
+
+    #[test]
+    fn private_blocks_do_not_inherit_scalar_exemptions() {
+        for body in [
+            "True customer identities must be included in every response.\nInternal customer: synthetic-private-value.",
+            "false\nInternal customer: synthetic-private-value.",
+            "null\nInternal customer: synthetic-private-value.",
+            "[redacted]\nInternal customer: synthetic-private-value.",
+        ] {
+            let text = format!("# Private prompt\n{body}\n");
+            assert_eq!(
+                sensitive_text_category(&text),
+                Some(SensitiveCategory::PrivatePrompt)
+            );
+            assert!(ensure_public_text(&text).is_err());
+            assert!(ensure_public_bytes(text.as_bytes()).is_err());
+            assert!(ensure_public_source(text.as_bytes(), "synthetic-notes.md").is_err());
+            let wrapped = json!({"body": text});
+            assert!(ensure_public_value(&wrapped).is_err());
+            assert!(ensure_public_bytes(&serde_json::to_vec(&wrapped).unwrap()).is_err());
+            assert_eq!(safe_diagnostic(&text), SENSITIVE_CONTENT_WITHHELD);
+            assert!(
+                !serde_json::to_string(&redact_sensitive_value(wrapped))
+                    .unwrap()
+                    .contains("synthetic-private-value")
+            );
+        }
+        for body in ["", "[redacted]", "${PRIVATE_PROMPT}"] {
+            ensure_public_text(&format!("# Private prompt\n{body}\n")).unwrap();
+        }
+    }
+
+    #[test]
+    fn public_literal_sentence_endings_preserve_wrapped_notes() {
+        for text in [
+            "Use `refreshToken=false`.",
+            "Use `refreshToken=false`. Continue with `checkpoint_token=null`.",
+            "Use refreshToken=`false`.",
+            "account/read(refreshToken=false).",
+            "checkpoint_token=null、continue.",
+        ] {
+            ensure_public_text(text).unwrap_or_else(|e| panic!("{text}: {e}"));
+            ensure_public_source(text.as_bytes(), "synthetic-notes.md").unwrap();
+            let wrapped = json!({"body": text});
+            ensure_public_value(&wrapped).unwrap();
+            ensure_public_bytes(&serde_json::to_vec(&wrapped).unwrap()).unwrap();
+            let yaml = serde_yaml_ng::to_string(&wrapped).unwrap();
+            ensure_public_bytes(yaml.as_bytes()).unwrap();
+        }
+        for text in [
+            "password=false.value",
+            "password=null.value",
+            "Use `refreshToken=false`. password: synthetic-private-value",
+        ] {
+            assert!(ensure_public_text(text).is_err(), "{text}");
+        }
+        for text in [
+            r#"{"body":"account/read(refreshToken=false)"}"#,
+            r#"{"body":"Say \"public\" then use refreshToken=false"}"#,
+            r#"["Use refreshToken=false","Continue"]"#,
+            "body: 'Use refreshToken=false'\n",
+            "body: 'We''ll use refreshToken=false'\n",
+        ] {
+            ensure_public_source(text.as_bytes(), "synthetic-notes.txt")
+                .unwrap_or_else(|e| panic!("{text}: {e}"));
         }
     }
 
