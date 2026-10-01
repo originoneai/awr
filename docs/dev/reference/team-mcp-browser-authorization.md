@@ -97,9 +97,13 @@ before issuing a code; cancellation consumes the transaction and returns
 echoed into the retry page or errors.
 
 Client names and callbacks are escaped and explicitly labeled as self-registered.
-The page uses no scripts or external assets. Responses set no-store, no-referrer,
-frame protection and a restrictive CSP. The form posts only to AWR; its CSP also
-permits the registered callback origin for the post-consent redirect. Starting a
+The page uses no scripts or external assets. Responses set no-store, frame
+protection and a restrictive CSP. Consent forms use `Referrer-Policy: same-origin`
+so browsers preserve the issuer Origin on the form POST without sending a
+referrer to another origin. Redirects and other OAuth responses use `no-referrer`.
+Opaque (`null`), missing and foreign Origins remain rejected. The form posts only
+to AWR; its CSP also permits the registered callback origin for the post-consent
+redirect. Starting a
 second authorization in the same browser replaces the first consent cookie;
 restart the earlier connection rather than reusing its page.
 
