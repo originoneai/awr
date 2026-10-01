@@ -137,18 +137,24 @@ async fn issued_token_works_in_native_sdk_but_cannot_expand_scope_or_replace_sta
     );
     // Change live grants after issuance; the adapter must not cache authority.
     admin.execute("UPDATE awr_team.workstream_grants SET can_read=false,grant_version=grant_version+1 WHERE client_id='cli-a'",&[]).await.unwrap();
-    let result = client
-        .call_tool(
-            CallToolRequestParams::new("awr_team_query").with_arguments(
-                json!({"protocol_version":1,"op":"work.prepare","work_id":"a"})
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-            ),
-        )
-        .await
-        .unwrap();
-    assert!(result.is_error.unwrap_or(false));
+    // Revoking all project read grants fails MCP admission, before tool dispatch.
+    assert_eq!(
+        initialize(&server, "one", &token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    admin.execute("UPDATE awr_team.workstream_grants SET can_read=true,grant_version=grant_version+1 WHERE client_id='cli-a'",&[]).await.unwrap();
+    assert_eq!(
+        initialize(&server, "one", &token)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
     admin
         .execute(
             "UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='reader-a'",
