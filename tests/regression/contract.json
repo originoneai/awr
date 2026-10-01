@@ -144,7 +144,7 @@
       "kind": "contract",
       "requires_build": true,
       "contract": "tests/security/payloads/contract.json",
-      "version": "1.5.0",
+      "version": "1.8.0",
       "target_conditions": 32,
       "command": [
         "{python}",

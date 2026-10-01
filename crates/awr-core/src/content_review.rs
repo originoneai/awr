@@ -357,6 +357,37 @@ impl SourceContentReview {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_literals_survive_markdown_decoding_and_structured_assessment() {
+        for text in [
+            "# Protocol notes\n\nUse `refreshToken=false`; the checkpoint is `checkpoint_token=null`、then continue.\n",
+            "# Protocol notes\n\n| Option | Meaning |\n| --- | --- |\n| refreshToken=false | checkpoint_token=null、continue |\n",
+            "{\"refreshToken\":false,\"client_secret\":true,\"checkpoint_token\":null}",
+            "refreshToken: false\nclient_secret: true\ncheckpoint_token: null\n",
+        ] {
+            let scan = ContentAssessment::scan(text.as_bytes(), "arbitrary-source.txt").unwrap();
+            assert!(scan.findings.is_empty(), "{text}: {:?}", scan.findings);
+        }
+        let scan =
+            ContentAssessment::derived_value(&serde_json::json!({"refreshToken": false})).unwrap();
+        assert!(scan.findings.is_empty());
+    }
+
+    #[test]
+    fn public_literals_do_not_hide_later_unsafe_findings() {
+        let text =
+            "# Protocol notes\n\nUse `refreshToken=false`; password: synthetic-private-value\n";
+        let scan = ContentAssessment::scan(text.as_bytes(), "arbitrary-source.txt").unwrap();
+        assert!(!scan.findings.is_empty());
+        assert!(
+            scan.findings
+                .iter()
+                .all(|f| f.category == SensitiveCategory::LabelledValue)
+        );
+        let public = serde_json::to_string(&scan).unwrap();
+        assert!(!public.contains("synthetic-private-value"));
+    }
     const LOCATION: &str = "file:///synthetic/project/notes.md";
     fn review(text: &str) -> SourceContentReview {
         let assessment = ContentAssessment::scan(text.as_bytes(), LOCATION).unwrap();

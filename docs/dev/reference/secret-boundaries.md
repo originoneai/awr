@@ -1,6 +1,6 @@
 # 秘密数据边界
 
-当前使用 `awr-core` 的秘密策略 6。组件合同 `tests/security/payloads/contract.json` 1.7.1 保持 32 个条件，覆盖无凭据结构定义、公开命令说明、授权叙述、Bearer 普通文字和伪装夹带检查。[Content-bound Agent review](content-review.md) can authorize suspected public local-file content; recognizable credentials remain nonreviewable. 原始来源仍由项目维护者负责；AWR 不改写或删除包含敏感值的源文件。
+当前使用 `awr-core` 的秘密策略 7。组件合同 `tests/security/payloads/contract.json` 1.8.0 保持 32 个条件，覆盖布尔和空值字面量、无凭据结构定义、公开命令说明、授权叙述、Bearer 普通文字和伪装夹带检查。[Content-bound Agent review](content-review.md) can authorize suspected public local-file content; recognizable credentials remain nonreviewable. 原始来源仍由项目维护者负责；AWR 不改写或删除包含敏感值的源文件。
 
 写入前检查原始文本和解析后的结构。覆盖来源文件及直接解析、Manifest、直接投影与来源配置、提案 patch、所有事件、checkpoint 的 digest/列表、证据元数据和产物元数据。拒绝保留 `RuleViolation`，并提供 `details.policy_version`、`details.category` 和按类别区分的 `details.next_action`/`repair`：真实凭据和环境转储明确指示“不属于 AWR 管理，保持在注册来源之外，真实值放 env/secret 管理并用 `${VAR}` 引用”；`labelled_value` 同时给出真实秘密的安置路径与公开 schema 的结构化写法。诊断不附带命中的值、键或片段。来源索引问题保留这些分类，CLI/MCP 使用同一合同。来源读取失败会保留旧投影并报告非新鲜状态；直接运行态写入被拒绝时不提交记录和事件。
 
@@ -25,6 +25,8 @@ Bearer 的普通协议讨论（例如 `Bearer authentication`）可以保留。`
 
 可以保留安全主题的普通讨论、空值和明确占位符，例如 `[redacted]`、`<redacted>`、`[withheld]`、`***`、`${EXAMPLE_API_KEY}`。实际值应从来源中移除，只留下必要的引用。讨论密码保护、token 预算或 API key 管理不会因这些词本身被删除。
 
+布尔字面量 `true` / `false`、JSON/YAML 空值 `null` / `~` 和空容器 `{}` / `[]` 不作为秘密值。文本、结构化字段和 Markdown 解码使用相同规则，也接受 YAML 的首字母大写和全大写布尔/空值形式。文本中的字面量必须完整：支持闭合括号、代码分隔符、空白、逗号、分号及中文句读边界；`falsehood`、`null.value` 或闭合符之后仍连着值的写法继续拒绝。Markdown 代码分隔符可包裹字面量，普通单/双引号得到的非空字符串不会因此放行。数字、其他非空值和同一文本中的其他凭据仍独立检查；此规则不依赖来源文件名、项目名或特定字段名。策略变更仍使旧来源审查凭据失效。
+
 公开配置的命令说明也可以保留，例如 `PROJECT_ROOT=/public/project EXPECTED_ITEMS=42 cargo test --offline`，以及叙述或注释中的 `EXPECTED_ITEMS=42`。识别范围限于简单的无引号变量前缀加可识别命令词；不执行命令，不按项目名或某个变量名豁免。独立赋值、只有若干赋值的环境转储、`export` 和明确的 environment 对象继续拒绝。所有位置的敏感键赋值和可识别凭据仍独立检查；把实际密钥放在命令前缀中不能使其通过。
 
 `Completed native authorization: the user confirmed this operation.` 这类叙述也可保留：标签前有普通文字，后面是多词文字或带明确标点的中文句子。独立的 authorization 字段、HTTP Header、不透明单值，以及跟随 Bearer/Basic 的值继续拒绝。不确定内容保留拒绝，不提供全局关闭检查或任意字符串白名单。需要明确表达公开配置时可以使用普通结构字段，授权过程可以记在 summary 等叙述字段；这不是对任意未标记私有文字的自动分类承诺。
@@ -33,7 +35,7 @@ Bearer 的普通协议讨论（例如 `Bearer authentication`）可以保留。`
 
 对旧数据的输出保护：
 
-- FTS 策略为 8，首次读取时重建旧缓存，包括旧策略下误删的普通认证说明、公开配置和结构定义。失败来源重索引时重新读取原始内容；来源映射和适配器配置变更同样使缓存失效。摘要检查完整字段后才取短文本；敏感摘要标为 `[redacted]`。身份、关联工作或来源引用含敏感值时，整条搜索文档不进入索引。查询参数也经过检查。
+- FTS 策略为 9，首次读取时重建旧缓存，包括旧策略下误删的布尔/空值说明、普通认证说明、公开配置和结构定义。失败来源重索引时重新读取原始内容；来源映射和适配器配置变更同样使缓存失效。摘要检查完整字段后才取短文本；敏感摘要标为 `[redacted]`。身份、关联工作或来源引用含敏感值时，整条搜索文档不进入索引。查询参数也经过检查。
 - L0、L1、硬规则/关联事实及 delta 检查实际选中的输出。选中的必需事实包含敏感值时返回 `ContextIncomplete`，不返回看似完整的包、哈希或渲染文本。原本不进入 Context 的正文仍然被排除；例如 delta 只使用 checkpoint 的基线和身份，不返回 digest。
 - CLI 的敏感参数在参数解析报错前拒绝；证据、完成输入、分支关闭输入及 Manifest 的结构错误不回显字段内容。CLI 和 MCP 共用安全错误报告；MCP 同时保护结构化结果、文本副本与读取输出。
 

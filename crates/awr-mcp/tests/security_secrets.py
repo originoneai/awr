@@ -17,7 +17,7 @@ TOOLS = ["awr_project_status", "awr_work_ready", "awr_work_get", "awr_search",
 
 class SecretTransports(unittest.TestCase):
     def test_public_notes_and_classified_diagnostics_share_the_transport_contract(self):
-        summary = "PROJECT_ROOT=/public/project EXPECTED_ITEMS=42 cargo test --offline"
+        summary = "PROJECT_ROOT=/public/project EXPECTED_ITEMS=42 cargo test --offline; refreshToken=false; checkpoint_token=null、continue."
         response = self.client.rpc("tools/call", {"name": "awr_event_append", "arguments": {
             "expected_revision": self.revision(), "event_type": "work.observed", "summary": summary,
             "payload": {"body": "Completed native authorization: 用户确认；原记录保留。"}}})
@@ -26,7 +26,7 @@ class SecretTransports(unittest.TestCase):
             "event_type": "work.observed", "summary": "password: " + SENTINEL})
         self.assertEqual(result["code"], "RuleViolation")
         self.assertEqual(result["details"]["category"], "labelled_value")
-        self.assertEqual(result["details"]["policy_version"], 6)
+        self.assertEqual(result["details"]["policy_version"], 7)
         self.assertIn("outside registered sources", result["details"]["next_action"])
         public_schema = "# Deliver useful analysis\n\ninterface Login { password: string; }\n"
         (self.root / "goal.md").write_text(public_schema)

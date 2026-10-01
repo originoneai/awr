@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{borrow::Cow, sync::LazyLock};
 
-pub const SECRET_POLICY_VERSION: u32 = 6;
+pub const SECRET_POLICY_VERSION: u32 = 7;
 pub const SENSITIVE_CONTENT_WITHHELD: &str = "[sensitive content withheld]";
 const REJECTION: &str =
     "sensitive content is not accepted; remove secret values or use explicit redacted placeholders";
@@ -329,18 +329,36 @@ fn env_name(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_')
         && !value.as_bytes()[0].is_ascii_digit()
 }
+const PUBLIC_LITERALS: &[&str] = &[
+    "true", "True", "TRUE", "false", "False", "FALSE", "null", "Null", "NULL", "~", "{}", "[]",
+];
+fn public_literal_end(tail: &str) -> bool {
+    // Closing syntax can wrap a literal, but cannot make a longer value public.
+    let tail = tail.trim_start_matches([')', ']', '}', '`', '\'', '"']);
+    tail.is_empty()
+        || tail.starts_with(|c: char| {
+            c.is_whitespace() || matches!(c, ',' | ';' | '、' | '。' | '，' | '；')
+        })
+}
 fn has_value(rest: &str) -> bool {
     let rest = rest.trim_start();
     if rest.is_empty() {
         return false;
     }
-    if ["null", "~", "{}", "[]"].iter().any(|literal| {
-        rest.strip_prefix(literal).is_some_and(|tail| {
-            tail.is_empty()
-                || tail
-                    .starts_with(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '}' | ']'))
+    if PUBLIC_LITERALS
+        .iter()
+        .any(|literal| rest.strip_prefix(literal).is_some_and(public_literal_end))
+    {
+        return false;
+    }
+    // Markdown code delimiters preserve a literal; string quotes change its type.
+    if rest
+        .strip_prefix('`')
+        .and_then(|tail| tail.split_once('`'))
+        .is_some_and(|(value, tail)| {
+            PUBLIC_LITERALS.contains(&value.trim()) && public_literal_end(tail)
         })
-    }) {
+    {
         return false;
     }
     let value = if let Some(quote) = rest
@@ -355,8 +373,8 @@ fn has_value(rest: &str) -> bool {
             .next()
             .unwrap_or(rest)
     };
-    // JSON/YAML null and empty containers carry no secret value. A labelled number does.
-    !matches!(value, "null" | "~" | "{}" | "[]") && !placeholder(value)
+    // Nonempty strings and numbers remain values, even when a string spells a literal.
+    !placeholder(value)
 }
 
 pub fn sensitive_text_category(text: &str) -> Option<SensitiveCategory> {
@@ -617,7 +635,7 @@ fn env_key(key: &str) -> bool {
 }
 fn has_json_value(value: &Value) -> bool {
     match value {
-        Value::Null => false,
+        Value::Null | Value::Bool(_) => false,
         Value::String(s) => !placeholder(s),
         Value::Array(a) => !a.is_empty(),
         Value::Object(o) => !o.is_empty(),
@@ -892,6 +910,84 @@ pub fn redact_sensitive_value(value: Value) -> Value {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn public_scalar_literals_have_complete_text_boundaries() {
+        for key in ["refreshToken", "client_secret", "checkpoint_token"] {
+            for literal in [
+                "true", "false", "null", "~", "{}", "[]", "True", "False", "Null", "TRUE", "FALSE",
+                "NULL",
+            ] {
+                for end in ["", ")", "]", "}", ",", ";", "`", "、", "。", "，", "；"] {
+                    let text = format!("Call({key}={literal}{end}");
+                    ensure_public_text(&text).unwrap_or_else(|e| panic!("{text}: {e}"));
+                    ensure_public_source(text.as_bytes(), "protocol-notes.txt").unwrap();
+                    ensure_public_value(&json!({"body": text})).unwrap();
+                    ensure_public_bytes(&serde_json::to_vec(&json!({"body": text})).unwrap())
+                        .unwrap();
+                }
+                let text = format!("Use {key}=`{literal}`; continue.");
+                ensure_public_text(&text).unwrap();
+                ensure_public_bytes(&serde_json::to_vec(&json!({"body": text})).unwrap()).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn public_boolean_fields_are_consistent_with_source_bytes() {
+        for value in [
+            json!({"refreshToken": false, "client_secret": true, "checkpoint_token": null}),
+            json!({"options": {"fixture_token": false}}),
+        ] {
+            ensure_public_value(&value).unwrap();
+            ensure_public_bytes(&serde_json::to_vec(&value).unwrap()).unwrap();
+        }
+        ensure_public_bytes(b"refreshToken: false\nclient_secret: true\n").unwrap();
+        ensure_public_bytes(b"refreshToken: False\nclient_secret: TRUE\ncheckpoint_token: Null\n")
+            .unwrap();
+    }
+
+    #[test]
+    fn literal_prefixes_and_quoted_scalar_strings_remain_sensitive() {
+        for value in [
+            "falsehood",
+            "true_value",
+            "nullish",
+            "false-value",
+            "null.value",
+            "true/opaque",
+            "\"false\"",
+            "'true'",
+            "\"null\"",
+            "'[]'",
+            "\"{}\"",
+            "\"~\"",
+            "null}suffix",
+            "[]suffix",
+            "{}suffix",
+            "`false`opaque",
+            "false\"opaque",
+            "FALSE-value",
+        ] {
+            let text = format!("password: {value}");
+            let error = ensure_public_text(&text).unwrap_err().report();
+            assert!(!serde_json::to_string(&error).unwrap().contains(value));
+        }
+        for value in [
+            json!({"refreshToken": "false"}),
+            json!({"password": "null"}),
+        ] {
+            assert!(ensure_public_value(&value).is_err());
+            assert!(ensure_public_bytes(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+        for text in [
+            "refreshToken=false; password: synthetic-private-value",
+            "checkpoint_token=null、Basic YTpi",
+            "refreshToken=false; export HOME=/synthetic-private-value",
+        ] {
+            assert!(ensure_public_text(text).is_err(), "{text}");
+        }
+    }
 
     #[test]
     fn complete_primitive_type_declarations_are_not_secret_assignments() {
