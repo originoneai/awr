@@ -241,19 +241,12 @@ async fn consent_checks_origin_cookie_and_transaction_then_cancels_atomically() 
         .unwrap();
     assert_eq!(res.status(), 400);
     let res = consent(&s, &pending, "cancel", "").send().await.unwrap();
-    assert_eq!(res.status(), 303);
-    let callback = url::Url::parse(res.headers()["location"].to_str().unwrap()).unwrap();
+    let callback = completion_callback(res).await;
     assert_eq!(callback.host_str(), Some("client.example"));
     let pairs: std::collections::BTreeMap<_, _> = callback.query_pairs().into_owned().collect();
     assert_eq!(pairs["error"], "access_denied");
     assert_eq!(pairs["state"], "client state & original");
     assert!(!pairs.contains_key("code"));
-    assert!(
-        res.headers()["set-cookie"]
-            .to_str()
-            .unwrap()
-            .contains("Max-Age=0")
-    );
     assert_eq!(
         consent(&s, &pending, "cancel", "")
             .send()
@@ -262,14 +255,7 @@ async fn consent_checks_origin_cookie_and_transaction_then_cancels_atomically() 
             .status(),
         403
     );
-    assert_eq!(
-        consent(&s, &other, "cancel", "")
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        303
-    );
+    completion_callback(consent(&s, &other, "cancel", "").send().await.unwrap()).await;
 }
 #[tokio::test]
 async fn opaque_origin_is_rejected_without_consuming_the_transaction() {
@@ -291,8 +277,78 @@ async fn opaque_origin_is_rejected_without_consuming_the_transaction() {
     assert_eq!(res.status(), 403);
     assert!(res.headers().get("location").is_none());
     let res = consent(&s, &pending, "cancel", "").send().await.unwrap();
-    assert_eq!(res.status(), 303);
-    assert_eq!(res.headers()["referrer-policy"], "no-referrer");
+    completion_callback(res).await;
+}
+#[tokio::test]
+async fn completion_preserves_registered_callback_query_and_untrusted_state() {
+    let s = server(true).await;
+    let callback = "https://client.example/return?channel=awr&label=%27quoted%27";
+    let state = "<svg onload=alert(1)>\"' &; client state";
+    let client: Value = s
+        .post("/oauth/register")
+        .json(&json!({"redirect_uris":[callback],"token_endpoint_auth_method":"none"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let query = auth_query(client["client_id"].as_str().unwrap());
+    let pairs: Vec<_> = url::form_urlencoded::parse(query.as_bytes())
+        .map(|(key, value)| {
+            let value = match key.as_ref() {
+                "redirect_uri" => callback.into(),
+                "state" => state.into(),
+                _ => value,
+            };
+            (key, value)
+        })
+        .collect();
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(pairs)
+        .finish();
+    let res = s
+        .get(&format!("/oauth/authorize?{query}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let cookie = res.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let html = res.text().await.unwrap();
+    let transaction = html
+        .split("name=\"transaction\" value=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap();
+    let res = s
+        .post("/oauth/consent")
+        .header("origin", ISSUER)
+        .header("cookie", cookie)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(encode(&[
+            ("transaction", transaction),
+            ("action", "cancel"),
+        ]))
+        .send()
+        .await
+        .unwrap();
+    let result = completion_callback(res).await;
+    assert_eq!(result.origin(), url::Url::parse(callback).unwrap().origin());
+    assert_eq!(result.path(), "/return");
+    let pairs: std::collections::BTreeMap<_, _> = result.query_pairs().into_owned().collect();
+    assert_eq!(pairs["channel"], "awr");
+    assert_eq!(pairs["label"], "'quoted'");
+    assert_eq!(pairs["state"], state);
+    assert_eq!(pairs["error"], "access_denied");
+    assert_eq!(pairs.len(), 4);
 }
 #[tokio::test]
 async fn request_limits_and_token_input_errors_never_echo_values() {

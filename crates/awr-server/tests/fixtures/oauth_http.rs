@@ -127,11 +127,14 @@ pub async fn begin(server: &Server, name: &str) -> Pending {
             .unwrap()
             .contains("frame-ancestors 'none'")
     );
-    assert!(
+    assert_eq!(
         res.headers()["content-security-policy"]
             .to_str()
             .unwrap()
-            .contains("form-action 'self' https://client.example")
+            .split(';')
+            .map(str::trim)
+            .find(|directive| directive.starts_with("form-action")),
+        Some("form-action 'self'")
     );
     let set_cookie = res.headers()["set-cookie"].to_str().unwrap();
     for flag in ["Secure", "HttpOnly", "SameSite=Lax", "Path=/"] {
@@ -171,6 +174,46 @@ pub fn consent(
             ("action", action),
             ("credential", credential),
         ]))
+}
+pub async fn completion_callback(res: reqwest::Response) -> url::Url {
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.headers()["content-type"], "text/html; charset=utf-8");
+    assert_eq!(res.headers()["cache-control"], "no-store");
+    assert_eq!(res.headers()["referrer-policy"], "no-referrer");
+    assert!(res.headers().get("location").is_none());
+    assert_eq!(
+        res.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .map(str::trim)
+            .find(|directive| directive.starts_with("form-action")),
+        Some("form-action 'self'")
+    );
+    assert!(
+        res.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0")
+    );
+    let html = res.text().await.unwrap();
+    assert!(!html.contains("<form"));
+    assert!(!html.contains("<script"));
+    let target = html
+        .split("http-equiv=\"refresh\" content=\"0;url=")
+        .nth(1)
+        .expect("automatic callback navigation")
+        .split('"')
+        .next()
+        .unwrap();
+    assert!(html.contains(&format!("href=\"{target}\" rel=\"noreferrer\"")));
+    let target = target
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&");
+    url::Url::parse(&target).unwrap()
 }
 pub fn token_body(client_id: &str, code: &str, resource: &str, verifier: &str) -> String {
     encode(&[

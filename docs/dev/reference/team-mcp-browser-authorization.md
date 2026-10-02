@@ -100,12 +100,20 @@ Client names and callbacks are escaped and explicitly labeled as self-registered
 The page uses no scripts or external assets. Responses set no-store, frame
 protection and a restrictive CSP. Consent forms use `Referrer-Policy: same-origin`
 so browsers preserve the issuer Origin on the form POST without sending a
-referrer to another origin. Redirects and other OAuth responses use `no-referrer`.
-Opaque (`null`), missing and foreign Origins remain rejected. The form posts only
-to AWR; its CSP also permits the registered callback origin for the post-consent
-redirect. Starting a
-second authorization in the same browser replaces the first consent cookie;
-restart the earlier connection rather than reusing its page.
+referrer to another origin. Completion pages and other OAuth responses use
+`no-referrer`. Opaque (`null`), missing and foreign Origins remain rejected.
+The form posts only to AWR and its CSP keeps `form-action 'self'`.
+
+Successful approval and cancellation return a `200` HTML completion page that
+automatically navigates to the exact registered callback, with the code or error
+and original state. A fallback link targets the same URL. The cookie is cleared,
+and the page contains no credential, scripts or external assets. This ends the
+form submission before navigating: browsers can apply `form-action` to an HTTP
+redirect's entire chain, including a client's later redirect to another origin.
+An HTTP client testing this endpoint must read the completion page rather than
+expect a `303` Location header; PKCE, token exchange and callback binding are
+unchanged. Starting a second authorization in the same browser replaces the
+first consent cookie; restart the earlier connection rather than reusing its page.
 
 Do not log consent bodies, token responses, cookies or Authorization headers.
 At the proxy, suppress or redact OAuth access-log query strings: authorization
