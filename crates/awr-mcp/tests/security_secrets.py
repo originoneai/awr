@@ -26,14 +26,21 @@ class SecretTransports(unittest.TestCase):
             ('export PASSWORD=false" ' + SENTINEL + '"', "labelled_value"),
             ("export PASSWORD=true' " + SENTINEL + "'", "labelled_value"),
             ("script: don't export PASSWORD=false' " + SENTINEL + "'", "labelled_value"),
+            ("export PASSWORD=false` printf " + SENTINEL + "`", "labelled_value"),
+            ("script: [\n  # example: '\n  export PASSWORD=false' " + SENTINEL + "'\n]\n", "labelled_value"),
+            ("script: |\n  'export PASSWORD=false' " + SENTINEL + "'\n", "labelled_value"),
             ("# Private prompt\nTrue customer identities must be included.\n" + SENTINEL, "private_prompt"),
             ("# Private prompt\nfalse\n" + SENTINEL, "private_prompt"),
         ]:
             with self.subTest(category=category, body=body):
-                rejected = self.tool_error("awr_event_append", {
-                    "expected_revision": self.revision(), "event_type": "work.observed",
-                    "summary": "Reviewed synthetic results", "payload": {"body": body}})
-                self.assertEqual(rejected["details"]["category"], category)
+                for use_summary in [False, True]:
+                    before = self.snapshot()
+                    rejected = self.tool_error("awr_event_append", {
+                        "expected_revision": self.revision(), "event_type": "work.observed",
+                        "summary": body if use_summary else "Reviewed synthetic results",
+                        "payload": {} if use_summary else {"body": body}})
+                    self.assertEqual(rejected["details"]["category"], category)
+                    self.assertEqual(self.snapshot(), before)
         result = self.tool_error("awr_event_append", {"expected_revision": self.revision(),
             "event_type": "work.observed", "summary": "password: " + SENTINEL})
         self.assertEqual(result["code"], "RuleViolation")

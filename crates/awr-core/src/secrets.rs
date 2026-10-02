@@ -337,9 +337,9 @@ const PUBLIC_LITERALS: &[&str] = &[
     "true", "True", "TRUE", "false", "False", "FALSE", "null", "Null", "NULL", "~", "{}", "[]",
 ];
 fn public_literal_end(tail: &str) -> bool {
-    // Quotes can begin a concatenated value; only verified source-string
-    // envelopes may remove their closing quote before reaching this check.
-    let tail = tail.trim_start_matches([')', ']', '}', '`']);
+    // Quotes and backticks can begin concatenated Shell values. Only verified
+    // string/code envelopes may remove their delimiter before this check.
+    let tail = tail.trim_start_matches([')', ']', '}']);
     tail.is_empty()
         || tail.starts_with(|c: char| {
             c.is_whitespace() || matches!(c, ',' | ';' | '、' | '。' | '，' | '；')
@@ -385,9 +385,9 @@ fn has_value(rest: &str) -> bool {
     !placeholder(value)
 }
 
-// Raw JSON/YAML strings can contain public notes ending in a scalar. Retain
-// their verified enclosing quote without granting Shell concatenations the
-// same exemption. Raw assignments are still scanned, including duplicate keys.
+// Raw JSON/YAML strings can contain public notes ending in a scalar. Only
+// actual quoted scalars may remove their enclosing delimiter. A whole-document
+// parse does not make quotes inside YAML comments or block scalars delimiters.
 fn source_string_ranges(text: &str) -> Vec<(usize, usize)> {
     let (value, json) = match serde_json::from_str::<Value>(text) {
         Ok(value) => (value, true),
@@ -399,62 +399,97 @@ fn source_string_ranges(text: &str) -> Vec<(usize, usize)> {
     if !value.is_object() && !value.is_array() {
         return Vec::new();
     }
+    if !json {
+        return yaml_string_ranges(text);
+    }
     let mut chars = text.char_indices().peekable();
     let mut open = None;
-    let mut flow_depth = 0usize;
     let mut ranges = Vec::new();
     while let Some((offset, c)) = chars.next() {
         match open {
             Some((_, '"')) if c == '\\' => {
                 chars.next();
             }
-            Some((_, '\'')) if c == '\'' && chars.peek().is_some_and(|(_, c)| *c == '\'') => {
-                chars.next();
-            }
             Some((start, quote)) if c == quote => {
                 ranges.push((start, offset));
                 open = None;
             }
-            None if !json
-                && matches!(c, '{' | '[')
-                && (flow_depth > 0 || yaml_scalar_start(&text[..offset])) =>
-            {
-                flow_depth += 1;
-            }
-            None if !json && matches!(c, '}' | ']') => {
-                flow_depth = flow_depth.saturating_sub(1);
-            }
-            None if matches!(c, '\'' | '"')
-                && ((json && c == '"')
-                    || (!json
-                        && (yaml_scalar_start(&text[..offset])
-                            || (flow_depth > 0
-                                && text[..offset]
-                                    .trim_end()
-                                    .ends_with([':', ',', '[', '{']))))) =>
-            {
-                open = Some((offset, c));
-            }
+            None if c == '"' => open = Some((offset, c)),
             _ => {}
         }
     }
     ranges
 }
 
-fn yaml_scalar_start(prefix: &str) -> bool {
-    let mut prefix = prefix.rsplit('\n').next().unwrap_or("").trim();
-    while let Some(rest) = prefix.strip_prefix("- ") {
-        prefix = rest.trim_start();
+fn yaml_string_ranges(text: &str) -> Vec<(usize, usize)> {
+    use yaml_rust2::scanner::{Scanner, TScalarStyle, Token, TokenType};
+
+    // Use line/column rather than the scanner's index, which can mix character
+    // and byte counts after multibyte block scalars. Columns are zero-based.
+    let mut line_starts = vec![0];
+    for (offset, c) in text.char_indices() {
+        if c == '\n' || (c == '\r' && !text[offset + 1..].starts_with('\n')) {
+            line_starts.push(offset + 1);
+        }
     }
-    if matches!(prefix, "" | "-" | "?") {
-        return true;
+    let mut scanner = Scanner::new(text.chars());
+    let mut ranges = Vec::new();
+    for Token(marker, token) in scanner.by_ref() {
+        let quote = match token {
+            TokenType::Scalar(TScalarStyle::SingleQuoted, _) => '\'',
+            TokenType::Scalar(TScalarStyle::DoubleQuoted, _) => '"',
+            _ => continue,
+        };
+        let Some(&line_start) = line_starts.get(marker.line() - 1) else {
+            return Vec::new();
+        };
+        let line_end = line_starts
+            .get(marker.line())
+            .copied()
+            .unwrap_or(text.len());
+        let Some((column_offset, c)) = text[line_start..line_end].char_indices().nth(marker.col())
+        else {
+            return Vec::new();
+        };
+        if c != quote {
+            return Vec::new();
+        }
+        let start = line_start + column_offset;
+        let mut chars = text[start + 1..].char_indices().peekable();
+        while let Some((offset, c)) = chars.next() {
+            if (quote == '"' && c == '\\')
+                || (quote == '\'' && c == '\'' && chars.peek().is_some_and(|(_, c)| *c == '\''))
+            {
+                chars.next();
+            } else if c == quote {
+                ranges.push((start, start + 1 + offset));
+                break;
+            }
+        }
     }
-    prefix.ends_with(':')
-        && serde_yaml_ng::from_str::<Value>(&format!("{prefix} null")).is_ok_and(|value| {
-            value
-                .as_object()
-                .is_some_and(|fields| fields.len() == 1 && fields.values().all(Value::is_null))
-        })
+    if scanner.get_error().is_some() {
+        Vec::new()
+    } else {
+        ranges
+    }
+}
+
+fn value_envelopes(text: &str) -> Vec<(usize, usize)> {
+    use pulldown_cmark::{Event, Parser};
+
+    let mut ranges = source_string_ranges(text);
+    for (event, range) in Parser::new(text).into_offset_iter() {
+        if let Event::Code(_) = event {
+            let width = text[range.clone()]
+                .bytes()
+                .take_while(|c| *c == b'`')
+                .count();
+            if width > 0 && range.len() >= width * 2 {
+                ranges.push((range.start, range.end - width));
+            }
+        }
+    }
+    ranges
 }
 
 fn assignment_has_value(text: &str, end: usize, strings: &OnceCell<Vec<(usize, usize)>>) -> bool {
@@ -470,10 +505,9 @@ fn assignment_has_value(text: &str, end: usize, strings: &OnceCell<Vec<(usize, u
         return true;
     }
     strings
-        .get_or_init(|| source_string_ranges(text))
+        .get_or_init(|| value_envelopes(text))
         .iter()
-        .find(|(start, close)| *start < end && end <= *close)
-        .is_none_or(|(_, close)| has_value(&text[end..*close]))
+        .all(|(start, close)| !(*start < end && end <= *close) || has_value(&text[end..*close]))
 }
 
 pub fn sensitive_text_category(text: &str) -> Option<SensitiveCategory> {
@@ -1019,7 +1053,11 @@ mod tests {
                 "NULL",
             ] {
                 for end in ["", ")", "]", "}", ",", ";", "`", "、", "。", "，", "；"] {
-                    let text = format!("Call({key}={literal}{end}");
+                    let text = if end == "`" {
+                        format!("`Call({key}={literal}{end}")
+                    } else {
+                        format!("Call({key}={literal}{end}")
+                    };
                     ensure_public_text(&text).unwrap_or_else(|e| panic!("{text}: {e}"));
                     ensure_public_source(text.as_bytes(), "protocol-notes.txt").unwrap();
                     ensure_public_value(&json!({"body": text})).unwrap();
@@ -1058,6 +1096,106 @@ mod tests {
                 !serde_json::to_string(&error)
                     .unwrap()
                     .contains("synthetic-private-value")
+            );
+        }
+    }
+
+    #[test]
+    fn shell_substitutions_are_not_markdown_closing_delimiters() {
+        for text in [
+            "export PASSWORD=false` printf synthetic-private-value`",
+            "export PASSWORD=true` echo synthetic-private-value`",
+            "export PASSWORD=[]` printf synthetic-private-value`",
+            "export HOME=null` printf synthetic-private-value`",
+            "password: false` printf synthetic-private-value`",
+        ] {
+            assert!(ensure_public_text(text).is_err(), "{text}");
+            assert!(ensure_public_source(text.as_bytes(), "synthetic-notes.md").is_err());
+            assert!(ensure_public_value(&json!({"body": text})).is_err());
+            assert!(
+                ensure_public_bytes(&serde_json::to_vec(&json!({"body": text})).unwrap()).is_err()
+            );
+            assert!(
+                !crate::ContentAssessment::scan(text.as_bytes(), "synthetic-notes.md")
+                    .unwrap()
+                    .findings
+                    .is_empty()
+            );
+            assert_eq!(safe_diagnostic(text), SENSITIVE_CONTENT_WITHHELD);
+        }
+        for text in [
+            "Use `refreshToken=false` then continue.",
+            "Use ``refreshToken=false`` then continue.",
+            "Use `refreshToken=false`. Continue with `checkpoint_token=null`.",
+            "`export PUBLIC_FLAG=false` describes a public flag.",
+        ] {
+            ensure_public_text(text).unwrap_or_else(|e| panic!("{text}: {e}"));
+            ensure_public_bytes(&serde_json::to_vec(&json!({"body": text})).unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn yaml_comments_and_block_text_cannot_create_string_envelopes() {
+        for text in [
+            "script: [\n  # example: '\n  export PASSWORD=false' synthetic-private-value'\n]\n",
+            "script: [\n  # example: \"\n  export PASSWORD=false\" synthetic-private-value\"\n]\n",
+            "script: |\n  'export PASSWORD=false' synthetic-private-value'\n",
+            "script: >-\n  'export PASSWORD=false' synthetic-private-value'\n",
+        ] {
+            serde_yaml_ng::from_str::<Value>(text).unwrap();
+            assert!(ensure_public_text(text).is_err(), "{text}");
+            assert!(ensure_public_bytes(text.as_bytes()).is_err());
+            assert!(ensure_public_source(text.as_bytes(), "synthetic-notes.yaml").is_err());
+            let wrapped = json!({"body": text});
+            assert!(ensure_public_value(&wrapped).is_err());
+            assert!(ensure_public_bytes(&serde_json::to_vec(&wrapped).unwrap()).is_err());
+            assert_eq!(safe_diagnostic(text), SENSITIVE_CONTENT_WITHHELD);
+            assert!(
+                !redact_sensitive_value(wrapped)
+                    .to_string()
+                    .contains("synthetic-private-value")
+            );
+        }
+    }
+
+    #[test]
+    fn yaml_node_properties_and_unicode_preserve_public_string_boundaries() {
+        for text in [
+            "body: &note 'Use refreshToken=false'\n",
+            "body: !!str 'Use refreshToken=false'\n",
+            "body: &note !!str 'Use refreshToken=false'\n",
+            "body: [ &note 'Use refreshToken=false' ]\n",
+            "body: &note \"Use refreshToken=false\"\ncopy: *note\n",
+            "body: &note 'We''ll use refreshToken=false'\n",
+            "body: &note \"Say \\\"public\\\" then use refreshToken=false\"\n",
+            "body: &note '\u{4e2d}\u{6587} Use refreshToken=false'\n",
+            "\u{4e2d}\u{6587}: &note 'Use refreshToken=false'\n",
+            "intro: |\n  \u{4e2d}\u{6587} public introduction with enough text to leave the scanner buffer\nbody: &note 'Use refreshToken=false'\n",
+        ] {
+            for newline in ["\n", "\r\n", "\r"] {
+                let text = text.replace('\n', newline);
+                let value = serde_yaml_ng::from_str::<Value>(&text).unwrap();
+                ensure_public_value(&value).unwrap();
+                ensure_public_source(text.as_bytes(), "synthetic-notes.yaml")
+                    .unwrap_or_else(|e| panic!("{text}: {e}"));
+                assert!(
+                    crate::ContentAssessment::scan(text.as_bytes(), "synthetic-notes.yaml")
+                        .unwrap()
+                        .findings
+                        .is_empty(),
+                    "{text}"
+                );
+            }
+        }
+        for text in [
+            "password: &value 'false'\n",
+            "password: !!str false\n",
+            "body: &note 'password=false'' synthetic-private-value'\n",
+            "body: &note \"password=false\\\" synthetic-private-value\"\n",
+        ] {
+            assert!(
+                ensure_public_source(text.as_bytes(), "synthetic-notes.yaml").is_err(),
+                "{text}"
             );
         }
     }

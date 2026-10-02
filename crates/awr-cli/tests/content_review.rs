@@ -90,10 +90,51 @@ fn public_literals_index_from_arbitrary_sources_without_reviews() {
         fs::read_to_string(p.0.join("design/options.md")).unwrap(),
         format!("{notes}\nOrdinary update.\n")
     );
+    for public_yaml in [
+        "body: &note 'Use refreshToken=false'\n",
+        "body: !!str 'Use refreshToken=false'\n",
+    ] {
+        fs::write(p.0.join("public-note.yaml"), public_yaml).unwrap();
+        assert_eq!(
+            p.ok(&["intake", "review", "--source", "public-note.yaml"])["status"],
+            "clear"
+        );
+        assert_eq!(
+            fs::read_to_string(p.0.join("public-note.yaml")).unwrap(),
+            public_yaml
+        );
+    }
+    for unsafe_summary in [
+        "export PASSWORD=false` printf synthetic-private-value`",
+        "script: [\n  # example: '\n  export PASSWORD=false' synthetic-private-value'\n]\n",
+        "script: |\n  'export PASSWORD=false' synthetic-private-value'\n",
+    ] {
+        let before = p.ok(&["status", "--cached", "--view", "summary"])["project_revision"]
+            .as_u64()
+            .unwrap();
+        let rejected = p.run(&[
+            "event",
+            "append",
+            "--type",
+            "work.observed",
+            "--summary",
+            unsafe_summary,
+            "--expected-revision",
+            &before.to_string(),
+        ]);
+        assert!(!rejected.status.success(), "{unsafe_summary}");
+        assert!(!String::from_utf8_lossy(&rejected.stdout).contains("synthetic-private-value"));
+        assert!(!String::from_utf8_lossy(&rejected.stderr).contains("synthetic-private-value"));
+        assert_eq!(
+            p.ok(&["status", "--cached", "--view", "summary"])["project_revision"],
+            before
+        );
+    }
     for unsafe_body in [
         "password: synthetic-private-value",
         "export PASSWORD=false\" synthetic-private-value\"",
         "export PASSWORD=true' synthetic-private-value'",
+        "export PASSWORD=false` printf synthetic-private-value`",
         "# Private prompt\nTrue customer identities must be included.\nInternal customer: synthetic-private-value.",
         "# Private prompt\nfalse\nInternal customer: synthetic-private-value.",
     ] {

@@ -27,6 +27,12 @@ Bearer 的普通协议讨论（例如 `Bearer authentication`）可以保留。`
 
 布尔字面量 `true` / `false`、JSON/YAML 空值 `null` / `~` 和空容器 `{}` / `[]` 不作为秘密值。文本、结构化字段和 Markdown 解码使用相同规则，也接受 YAML 的首字母大写和全大写布尔/空值形式。文本中的字面量必须完整：支持闭合括号、代码分隔符、空白、逗号、分号及中文句读边界，也支持其后为空白或结束的英文句末句号；`falsehood`、`null.value` 或闭合符之后仍连着值的写法继续拒绝。Markdown 代码分隔符可包裹字面量，普通单/双引号得到的非空字符串不会因此放行，Shell 的布尔词与引号字符串拼接也会拒绝。只有已解析的 JSON/YAML 容器中确实包裹公开说明的外层字符串闭合引号可作为包裹边界。私有提示词标题后的正文按整块检查，只有整块为空或明确占位符时可通过，不按首个布尔词或空值豁免。数字、其他非空值和同一文本中的其他凭据仍独立检查；此规则不依赖来源文件名、项目名或特定字段名。策略变更仍使旧来源审查凭据失效。
 
+Quoted YAML boundaries come from scalar tokens in the YAML scanner, including
+anchors and tags. Quotes in comments, plain scalars, or literal/folded blocks do
+not create string envelopes. Markdown backticks must belong to a complete code
+span; a Shell command substitution after a literal remains a nonempty value.
+Raw source checks, event summaries and structured payloads share these boundaries.
+
 公开配置的命令说明也可以保留，例如 `PROJECT_ROOT=/public/project EXPECTED_ITEMS=42 cargo test --offline`，以及叙述或注释中的 `EXPECTED_ITEMS=42`。识别范围限于简单的无引号变量前缀加可识别命令词；不执行命令，不按项目名或某个变量名豁免。独立赋值、只有若干赋值的环境转储、`export` 和明确的 environment 对象继续拒绝。所有位置的敏感键赋值和可识别凭据仍独立检查；把实际密钥放在命令前缀中不能使其通过。
 
 `Completed native authorization: the user confirmed this operation.` 这类叙述也可保留：标签前有普通文字，后面是多词文字或带明确标点的中文句子。独立的 authorization 字段、HTTP Header、不透明单值，以及跟随 Bearer/Basic 的值继续拒绝。不确定内容保留拒绝，不提供全局关闭检查或任意字符串白名单。需要明确表达公开配置时可以使用普通结构字段，授权过程可以记在 summary 等叙述字段；这不是对任意未标记私有文字的自动分类承诺。

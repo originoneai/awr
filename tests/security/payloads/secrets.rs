@@ -425,6 +425,9 @@ fn labelled_unicode_environment_private_prompt_and_recognizable_tokens_reach_rea
                 format!("export PASSWORD=false\" {SENTINEL}\""),
                 format!("export PASSWORD=true' {SENTINEL}'"),
                 format!("script: don't export PASSWORD=false' {SENTINEL}'"),
+                format!("export PASSWORD=false` printf {SENTINEL}`"),
+                format!("script: [\n  # example: '\n  export PASSWORD=false' {SENTINEL}'\n]\n"),
+                format!("script: |\n  'export PASSWORD=false' {SENTINEL}'\n"),
             ],
         ),
         (
