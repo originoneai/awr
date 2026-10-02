@@ -51,6 +51,51 @@ fn initialize(server: &Server, alias: &str, token: &str) -> reqwest::RequestBuil
             "protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"synthetic-fixture","version":"1"}}}))
 }
 #[tokio::test]
+async fn rejected_static_credentials_offer_native_reauthentication_only_when_oauth_is_enabled() {
+    let (_guard, admin, db, store) = setup().await;
+    let enabled = start(store, true).await;
+    let disabled = start(
+        awr_team_pg::WorkstreamReadStore::from_config(common::with_db(&common::test_config(), &db)),
+        false,
+    )
+    .await;
+    assert_eq!(
+        initialize(&enabled, "one", A)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    for change in [
+        "UPDATE awr_team.credentials SET expires_at=clock_timestamp()-interval '1 second' WHERE id='reader-a'",
+        "UPDATE awr_team.credentials SET expires_at=NULL,revoked_at=clock_timestamp() WHERE id='reader-a'",
+    ] {
+        admin.batch_execute(change).await.unwrap();
+        let res = initialize(&enabled, "one", A).send().await.unwrap();
+        assert_eq!(res.status(), 401);
+        assert_eq!(
+            res.headers()["www-authenticate"],
+            format!(
+                "Bearer resource_metadata=\"{ISSUER}/.well-known/oauth-protected-resource/v1/projects/one/mcp\", error=\"invalid_token\""
+            )
+        );
+        assert_eq!(res.headers()["cache-control"], "no-store");
+        assert!(!res.text().await.unwrap().contains(A));
+        let legacy = initialize(&disabled, "one", A).send().await.unwrap();
+        assert_eq!(legacy.status(), 403);
+        assert!(legacy.headers().get("www-authenticate").is_none());
+        let classic = enabled
+            .post("/v1/projects/one/query")
+            .bearer_auth(A)
+            .json(&json!({"protocol_version":1,"op":"capabilities"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(classic.status(), 403);
+    }
+}
+#[tokio::test]
 async fn issued_token_works_in_native_sdk_but_cannot_expand_scope_or_replace_static_web_auth() {
     let (_guard, admin, _, store) = setup().await;
     let server = start(store, true).await;
