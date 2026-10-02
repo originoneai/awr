@@ -17,16 +17,35 @@ TOOLS = ["awr_project_status", "awr_work_ready", "awr_work_get", "awr_search",
 
 class SecretTransports(unittest.TestCase):
     def test_public_notes_and_classified_diagnostics_share_the_transport_contract(self):
-        summary = "PROJECT_ROOT=/public/project EXPECTED_ITEMS=42 cargo test --offline"
+        summary = "PROJECT_ROOT=/public/project EXPECTED_ITEMS=42 cargo test --offline; Use `refreshToken=false`. checkpoint_token=null、continue."
         response = self.client.rpc("tools/call", {"name": "awr_event_append", "arguments": {
             "expected_revision": self.revision(), "event_type": "work.observed", "summary": summary,
             "payload": {"body": "Completed native authorization: 用户确认；原记录保留。"}}})
         self.assertFalse(response["result"].get("isError", False), response)
+        for body, category in [
+            ('export PASSWORD=false" ' + SENTINEL + '"', "labelled_value"),
+            ("export PASSWORD=true' " + SENTINEL + "'", "labelled_value"),
+            ("script: don't export PASSWORD=false' " + SENTINEL + "'", "labelled_value"),
+            ("export PASSWORD=false` printf " + SENTINEL + "`", "labelled_value"),
+            ("script: [\n  # example: '\n  export PASSWORD=false' " + SENTINEL + "'\n]\n", "labelled_value"),
+            ("script: |\n  'export PASSWORD=false' " + SENTINEL + "'\n", "labelled_value"),
+            ("# Private prompt\nTrue customer identities must be included.\n" + SENTINEL, "private_prompt"),
+            ("# Private prompt\nfalse\n" + SENTINEL, "private_prompt"),
+        ]:
+            with self.subTest(category=category, body=body):
+                for use_summary in [False, True]:
+                    before = self.snapshot()
+                    rejected = self.tool_error("awr_event_append", {
+                        "expected_revision": self.revision(), "event_type": "work.observed",
+                        "summary": body if use_summary else "Reviewed synthetic results",
+                        "payload": {} if use_summary else {"body": body}})
+                    self.assertEqual(rejected["details"]["category"], category)
+                    self.assertEqual(self.snapshot(), before)
         result = self.tool_error("awr_event_append", {"expected_revision": self.revision(),
             "event_type": "work.observed", "summary": "password: " + SENTINEL})
         self.assertEqual(result["code"], "RuleViolation")
         self.assertEqual(result["details"]["category"], "labelled_value")
-        self.assertEqual(result["details"]["policy_version"], 6)
+        self.assertEqual(result["details"]["policy_version"], 7)
         self.assertIn("outside registered sources", result["details"]["next_action"])
         public_schema = "# Deliver useful analysis\n\ninterface Login { password: string; }\n"
         (self.root / "goal.md").write_text(public_schema)

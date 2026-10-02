@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "contract_id": "awr-security-payloads",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "work_item": "AWR-SEC-002",
   "target_cases": 32,
   "evidence_level": "local_component_and_cli",
@@ -157,7 +157,7 @@
     {
       "id": "ordinary_text_allowed",
       "area": "confidentiality",
-      "expected": "ordinary prose, including Basic terminology, remains indexable and usable across events, evidence, search and context"
+      "expected": "ordinary prose, including Basic terminology and complete boolean/null literals, remains indexable and usable across events, evidence, search and context"
     },
     {
       "id": "unicode_secret_labels",
@@ -180,6 +180,6 @@
       "expected": "reject_or_withhold_sensitive_fixture_values_and_keep_ordinary_business_text_usable"
     }
   ],
-  "secret_policy_version": 6,
-  "secret_policy_reference": "docs/reference/secret-boundaries.md"
+  "secret_policy_version": 7,
+  "secret_policy_reference": "docs/dev/reference/secret-boundaries.md"
 }

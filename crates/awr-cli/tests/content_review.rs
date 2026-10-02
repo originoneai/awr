@@ -44,6 +44,113 @@ impl Drop for Project {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+
+#[test]
+fn public_literals_index_from_arbitrary_sources_without_reviews() {
+    let p = Project::new();
+    fs::create_dir(p.0.join("design")).unwrap();
+    let notes = "# Public options {#options status=active}\n\nUse `refreshToken=false`. Observe `checkpoint_token=null`、then continue.\nCall account/read(refreshToken=false).\n";
+    fs::write(p.0.join("design/options.md"), notes).unwrap();
+    let ledger = "goals:\n- id: G\n  title: Explain public options\n  status: active\n  success_criteria: [Usable context]\nwork_items:\n- id: W\n  title: Document options\n  status: ready\n  goal: G\n  summary: 'Call(refreshToken=false); checkpoint_token=null、then continue.'\n  acceptance: [Usable context]\n  next_action: Explain the option types\n";
+    fs::write(p.0.join("queue.yaml"), ledger).unwrap();
+    fs::write(p.0.join("manifest.toml"), "[project]\nname = \"Public literal fixture\"\ncontext_profile = \"minimal\"\n[[sources]]\ndomain = \"ledger\"\nrole = \"primary\"\npath = \"queue.yaml\"\nadapter = \"yaml-ledger-v1\"\n[[sources]]\ndomain = \"plan\"\nrole = \"primary\"\npath = \"design/options.md\"\nadapter = \"markdown-heading-v1\"\n").unwrap();
+    let preview = p.ok(&["init", "--manifest", "manifest.toml"]);
+    assert_eq!(preview["preview"]["can_apply"], true);
+    p.ok(&["init", "--manifest", "manifest.toml", "--accept"]);
+    p.ok(&["source", "reindex"]);
+    let context = p.ok(&["context", "compile", "--work", "W", "--budget", "6500"]);
+    assert_eq!(context["completeness"]["complete"], true);
+    let rendered = context["work_context"]["rendered_context"]
+        .as_str()
+        .unwrap();
+    assert!(rendered.contains("refreshToken=false"));
+    assert!(rendered.contains("checkpoint_token=null"));
+    assert_eq!(
+        p.ok(&["intake", "review", "--source", "design/options.md"])["status"],
+        "clear"
+    );
+    assert!(!p.0.join(".awr/content-reviews").exists());
+    assert_eq!(fs::read_to_string(p.0.join("queue.yaml")).unwrap(), ledger);
+    assert_eq!(
+        fs::read_to_string(p.0.join("design/options.md")).unwrap(),
+        notes
+    );
+    fs::write(
+        p.0.join("design/options.md"),
+        format!("{notes}\nOrdinary update.\n"),
+    )
+    .unwrap();
+    p.ok(&["source", "reindex"]);
+    assert_eq!(
+        p.ok(&["context", "compile", "--work", "W", "--budget", "6500"])["completeness"]["complete"],
+        true
+    );
+    assert!(!p.0.join(".awr/content-reviews").exists());
+    assert_eq!(
+        fs::read_to_string(p.0.join("design/options.md")).unwrap(),
+        format!("{notes}\nOrdinary update.\n")
+    );
+    for public_yaml in [
+        "body: &note 'Use refreshToken=false'\n",
+        "body: !!str 'Use refreshToken=false'\n",
+    ] {
+        fs::write(p.0.join("public-note.yaml"), public_yaml).unwrap();
+        assert_eq!(
+            p.ok(&["intake", "review", "--source", "public-note.yaml"])["status"],
+            "clear"
+        );
+        assert_eq!(
+            fs::read_to_string(p.0.join("public-note.yaml")).unwrap(),
+            public_yaml
+        );
+    }
+    for unsafe_summary in [
+        "export PASSWORD=false` printf synthetic-private-value`",
+        "script: [\n  # example: '\n  export PASSWORD=false' synthetic-private-value'\n]\n",
+        "script: |\n  'export PASSWORD=false' synthetic-private-value'\n",
+    ] {
+        let before = p.ok(&["status", "--cached", "--view", "summary"])["project_revision"]
+            .as_u64()
+            .unwrap();
+        let rejected = p.run(&[
+            "event",
+            "append",
+            "--type",
+            "work.observed",
+            "--summary",
+            unsafe_summary,
+            "--expected-revision",
+            &before.to_string(),
+        ]);
+        assert!(!rejected.status.success(), "{unsafe_summary}");
+        assert!(!String::from_utf8_lossy(&rejected.stdout).contains("synthetic-private-value"));
+        assert!(!String::from_utf8_lossy(&rejected.stderr).contains("synthetic-private-value"));
+        assert_eq!(
+            p.ok(&["status", "--cached", "--view", "summary"])["project_revision"],
+            before
+        );
+    }
+    for unsafe_body in [
+        "password: synthetic-private-value",
+        "export PASSWORD=false\" synthetic-private-value\"",
+        "export PASSWORD=true' synthetic-private-value'",
+        "export PASSWORD=false` printf synthetic-private-value`",
+        "# Private prompt\nTrue customer identities must be included.\nInternal customer: synthetic-private-value.",
+        "# Private prompt\nfalse\nInternal customer: synthetic-private-value.",
+    ] {
+        let source = format!("{notes}\n{unsafe_body}\n");
+        fs::write(p.0.join("design/options.md"), &source).unwrap();
+        let rejected = p.run(&["source", "reindex"]);
+        assert!(!rejected.status.success(), "{unsafe_body}");
+        assert!(!String::from_utf8_lossy(&rejected.stdout).contains("synthetic-private-value"));
+        assert!(!String::from_utf8_lossy(&rejected.stderr).contains("synthetic-private-value"));
+        assert_eq!(
+            fs::read_to_string(p.0.join("design/options.md")).unwrap(),
+            source
+        );
+    }
+}
+
 #[test]
 fn reviewed_original_survives_init_reindex_and_source_queries() {
     let p = Project::new();

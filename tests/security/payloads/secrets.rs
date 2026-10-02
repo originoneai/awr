@@ -422,6 +422,12 @@ fn labelled_unicode_environment_private_prompt_and_recognizable_tokens_reach_rea
             vec![
                 format!("export HOME={SENTINEL}"),
                 format!("env: {{HOME: {SENTINEL}}}"),
+                format!("export PASSWORD=false\" {SENTINEL}\""),
+                format!("export PASSWORD=true' {SENTINEL}'"),
+                format!("script: don't export PASSWORD=false' {SENTINEL}'"),
+                format!("export PASSWORD=false` printf {SENTINEL}`"),
+                format!("script: [\n  # example: '\n  export PASSWORD=false' {SENTINEL}'\n]\n"),
+                format!("script: |\n  'export PASSWORD=false' {SENTINEL}'\n"),
             ],
         ),
         (
@@ -429,6 +435,8 @@ fn labelled_unicode_environment_private_prompt_and_recognizable_tokens_reach_rea
             vec![
                 format!("private_prompt: {SENTINEL}"),
                 format!("# 私有提示词\n{SENTINEL}"),
+                format!("# Private prompt\nTrue customer identities must be included.\n{SENTINEL}"),
+                format!("# Private prompt\nfalse\n{SENTINEL}"),
             ],
         ),
         (
@@ -471,6 +479,12 @@ fn labelled_unicode_environment_private_prompt_and_recognizable_tokens_reach_rea
 fn prior_content_caches_are_rebuilt_without_rewriting_authority() {
     for (policy, authority, cached, expected) in [
         (3, "Basic YTpi", "Basic YTpi", "[redacted]"),
+        (
+            8,
+            "Call(refreshToken=false); checkpoint_token=null、continue.",
+            "[redacted]",
+            "Call(refreshToken=false); checkpoint_token=null、continue.",
+        ),
         (
             7,
             "Environment:\n\n- Python: 3.12.11",
@@ -586,7 +600,7 @@ fn legacy_search_redacts_summaries_omits_sensitive_identity_and_rebuilds_the_old
             },
         )
         .unwrap();
-    assert_eq!(report.index_policy_version, 8);
+    assert_eq!(report.index_policy_version, 9);
     let hit = report.hits.iter().find(|h| h.external_key == "W").unwrap();
     assert_eq!(hit.summary, "[redacted]");
     assert!(!serde_json::to_string(&report).unwrap().contains(SENTINEL));
@@ -738,7 +752,7 @@ fn legacy_required_facts_withhold_l0_l1_and_checkpoint_delta_without_false_compl
 fn ordinary_security_discussion_stays_writable_searchable_and_context_complete() {
     let mut f = Fixture::new();
     let session = f.session();
-    let text = "Review password protection and token budgets; discuss API keys and environment variables. The basic source-intake example covers basic authentication and Bearer authentication concepts. Schema: {\"token\":{\"type\":\"string\"},\"authorization\":{\"type\":\"http\",\"scheme\":\"bearer\"}}";
+    let text = "Review password protection and token budgets; discuss API keys and environment variables. Use refreshToken=false; checkpoint_token=null、continue. The basic source-intake example covers basic authentication and Bearer authentication concepts. Schema: {\"token\":{\"type\":\"string\"},\"authorization\":{\"type\":\"http\",\"scheme\":\"bearer\"}}";
     fs::write(
         f.root.join("work.yaml"),
         WORK.replace("Draft the analysis", &serde_json::to_string(text).unwrap()),

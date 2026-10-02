@@ -357,6 +357,81 @@ impl SourceContentReview {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_literals_survive_markdown_decoding_and_structured_assessment() {
+        for text in [
+            "# Protocol notes\n\nUse `refreshToken=false`. Continue with `checkpoint_token=null`.\n",
+            "# Protocol notes\n\nUse `refreshToken=false`; the checkpoint is `checkpoint_token=null`、then continue.\n",
+            "# Protocol notes\n\n| Option | Meaning |\n| --- | --- |\n| refreshToken=false | checkpoint_token=null、continue |\n",
+            "{\"refreshToken\":false,\"client_secret\":true,\"checkpoint_token\":null}",
+            "refreshToken: false\nclient_secret: true\ncheckpoint_token: null\n",
+        ] {
+            let scan = ContentAssessment::scan(text.as_bytes(), "arbitrary-source.txt").unwrap();
+            assert!(scan.findings.is_empty(), "{text}: {:?}", scan.findings);
+        }
+        let scan =
+            ContentAssessment::derived_value(&serde_json::json!({"refreshToken": false})).unwrap();
+        assert!(scan.findings.is_empty());
+    }
+
+    #[test]
+    fn public_literals_do_not_hide_later_unsafe_findings() {
+        let text =
+            "# Protocol notes\n\nUse `refreshToken=false`; password: synthetic-private-value\n";
+        let scan = ContentAssessment::scan(text.as_bytes(), "arbitrary-source.txt").unwrap();
+        assert!(!scan.findings.is_empty());
+        assert!(
+            scan.findings
+                .iter()
+                .all(|f| f.category == SensitiveCategory::LabelledValue)
+        );
+        let public = serde_json::to_string(&scan).unwrap();
+        assert!(!public.contains("synthetic-private-value"));
+    }
+
+    #[test]
+    fn scalar_prefixes_cannot_hide_shell_values_or_private_blocks() {
+        for (text, category) in [
+            (
+                "export PASSWORD=false\" synthetic-private-value\"",
+                SensitiveCategory::LabelledValue,
+            ),
+            (
+                "export PASSWORD=true' synthetic-private-value'",
+                SensitiveCategory::LabelledValue,
+            ),
+            (
+                "# Private prompt\nTrue customer identities must be included.\nInternal customer: synthetic-private-value.",
+                SensitiveCategory::PrivatePrompt,
+            ),
+            (
+                "# Private prompt\nfalse\nInternal customer: synthetic-private-value.",
+                SensitiveCategory::PrivatePrompt,
+            ),
+        ] {
+            let scan = ContentAssessment::scan(text.as_bytes(), "synthetic-notes.md").unwrap();
+            assert!(
+                scan.findings
+                    .iter()
+                    .any(|finding| finding.category == category),
+                "{text}"
+            );
+            assert!(
+                !serde_json::to_string(&scan)
+                    .unwrap()
+                    .contains("synthetic-private-value")
+            );
+            let bytes = serde_json::to_vec(&serde_json::json!({"body": text})).unwrap();
+            let decoded = ContentAssessment::scan(&bytes, "synthetic-notes.json").unwrap();
+            assert!(
+                decoded
+                    .findings
+                    .iter()
+                    .any(|finding| finding.category == category)
+            );
+        }
+    }
     const LOCATION: &str = "file:///synthetic/project/notes.md";
     fn review(text: &str) -> SourceContentReview {
         let assessment = ContentAssessment::scan(text.as_bytes(), LOCATION).unwrap();
