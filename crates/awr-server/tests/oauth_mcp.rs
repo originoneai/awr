@@ -22,11 +22,8 @@ async fn code(server: &Server, credential: &str) -> (String, String) {
         .send()
         .await
         .unwrap();
-    assert_eq!(res.status(), 303);
-    assert_eq!(res.headers()["cache-control"], "no-store");
-    let location = res.headers()["location"].to_str().unwrap();
-    assert!(!location.contains(credential));
-    let url = url::Url::parse(location).unwrap();
+    let url = completion_callback(res).await;
+    assert!(!url.as_str().contains(credential));
     let pairs: std::collections::BTreeMap<_, _> = url.query_pairs().into_owned().collect();
     assert_eq!(pairs["state"], "client state & original");
     (pending.client_id, pairs["code"].clone())
@@ -189,8 +186,7 @@ async fn consent_checks_current_project_access_and_failure_does_not_leak_or_cons
     assert!(!html.contains(bad));
     assert!(html.contains("try again"));
     let res = consent(&server, &pending, "allow", B).send().await.unwrap();
-    assert_eq!(res.status(), 303);
-    assert_eq!(res.headers()["referrer-policy"], "no-referrer");
+    completion_callback(res).await;
     admin
         .execute(
             "UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='reader-a'",
@@ -203,14 +199,13 @@ async fn consent_checks_current_project_access_and_failure_does_not_leak_or_cons
     assert_eq!(res.status(), 403);
     let html = res.text().await.unwrap();
     assert!(!html.contains(A));
-    assert_eq!(
+    completion_callback(
         consent(&server, &pending, "cancel", "")
             .send()
             .await
-            .unwrap()
-            .status(),
-        303
-    );
+            .unwrap(),
+    )
+    .await;
 }
 #[tokio::test]
 async fn exchange_checks_all_bindings_and_expired_underlying_credentials_stop_next_request() {

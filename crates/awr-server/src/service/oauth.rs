@@ -376,22 +376,9 @@ fn consent_page(
 </style></head><body><main><div class="brand">AWR</div><h1>Connect your agent</h1><p class="muted">Allow <strong>{client}</strong> to work with this project using your current permissions.</p><dl class="details"><dt>Project access</dt><dd>{resource}</dd><dt>Return address</dt><dd>{callback}</dd><dt>Client identity</dt><dd>This client name and address are self-registered and have not been verified by AWR. Continue only if you started this connection.</dd></dl><p>Your agent can read project context and perform only actions you already have permission to perform. Authorizing this connection does not change your membership or permissions.</p>{error}<form method="post" action="/oauth/consent"><input type="hidden" name="transaction" value="{transaction}"><label for="credential">Your personal access credential</label><input id="credential" name="credential" type="password" autocomplete="off" spellcheck="false" required maxlength="512"><small>Get this credential from your project administrator. It stays with AWR and is never sent to your agent.</small><div class="actions"><button class="allow" name="action" value="allow" type="submit">Allow access</button><button class="cancel" name="action" value="cancel" type="submit" formnovalidate>Cancel</button></div></form><small>This connection lasts up to one hour. Revoking your credential or project permissions stops its access. After a service restart, connect again.</small></main></body></html>"#
     );
     let mut res = (status, [("content-type", "text/html; charset=utf-8")], html).into_response();
-    // Browsers also apply form-action to the post-consent redirect. Permit the
-    // registered callback origin; the actual form still posts only to AWR.
-    let callback_origin = Url::parse(&view.request.redirect_uri)
-        .expect("registered callback")
-        .origin()
-        .ascii_serialization();
-    let policy = format!(
-        "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' {callback_origin}; frame-ancestors 'none'; base-uri 'none'"
-    );
-    res.headers_mut().insert(
-        "content-security-policy",
-        policy.parse().expect("canonical callback origin"),
-    );
     // A no-referrer form navigation can send Origin: null in browsers. Keep
     // the issuer origin for the same-origin POST while withholding referrers
-    // from other origins. Redirect responses retain no-referrer.
+    // from other origins. Completion responses retain no-referrer.
     res.headers_mut()
         .insert("referrer-policy", HeaderValue::from_static("same-origin"));
     res
@@ -428,7 +415,7 @@ fn browser_cookie(headers: &HeaderMap) -> Option<String> {
     }
     found
 }
-fn redirect(callback: &str, parameter: &str, value: &str, state: Option<&str>) -> Response {
+fn return_to_client(callback: &str, parameter: &str, value: &str, state: Option<&str>) -> Response {
     let mut url = Url::parse(callback).expect("registered callback");
     {
         let mut pairs = url.query_pairs_mut();
@@ -437,7 +424,22 @@ fn redirect(callback: &str, parameter: &str, value: &str, state: Option<&str>) -
             pairs.append_pair("state", state);
         }
     }
-    let mut res = (StatusCode::SEE_OTHER, [(header::LOCATION, url.as_str())]).into_response();
+    // End the credential form submission before navigating to the registered
+    // callback. A 303 keeps its entire redirect chain subject to form-action,
+    // including any later origin changes controlled by the client. A completion
+    // document can navigate without granting another origin form access.
+    let target = escape(url.as_str());
+    let html = format!(
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="0;url={target}"><title>Returning to your agent · AWR</title><style>
+body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#f1f6ff;color:#142c50;font:16px/1.5 system-ui,sans-serif}}main{{margin:24px;padding:32px;background:white;border:1px solid #dbe7fa;border-radius:16px}}h1{{font-size:24px}}a{{color:#2563eb}}
+</style></head><body><main><h1>Returning to your agent</h1><p>Your response is ready. This page will return you to your agent automatically.</p><p>If this page stays open, <a href="{target}" rel="noreferrer">continue to your agent</a>.</p></main></body></html>"#
+    );
+    let mut res = (
+        StatusCode::OK,
+        [("content-type", "text/html; charset=utf-8")],
+        html,
+    )
+        .into_response();
     set_cookie(&mut res, "", 0);
     res
 }
@@ -472,7 +474,7 @@ async fn consent(State(state): State<Arc<StateData>>, headers: HeaderMap, body: 
     };
     if params.get("action").is_some_and(|v| v == "cancel") {
         return match oauth.store.cancel(&transaction, &cookie, Instant::now()) {
-            Ok(view) => redirect(
+            Ok(view) => return_to_client(
                 &view.request.redirect_uri,
                 "error",
                 "access_denied",
@@ -529,7 +531,7 @@ async fn consent(State(state): State<Arc<StateData>>, headers: HeaderMap, body: 
         .store
         .approve(&transaction, &cookie, credential.to_owned(), Instant::now())
     {
-        Ok(code) => redirect(
+        Ok(code) => return_to_client(
             &code.redirect_uri,
             "code",
             &code.code,
