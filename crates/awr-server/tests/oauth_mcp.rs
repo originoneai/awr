@@ -52,9 +52,13 @@ fn initialize(server: &Server, alias: &str, token: &str) -> reqwest::RequestBuil
 }
 #[tokio::test]
 async fn rejected_static_credentials_offer_native_reauthentication_only_when_oauth_is_enabled() {
-    let (_guard, admin, _, store) = setup().await;
-    let enabled = start(store.clone(), true).await;
-    let disabled = start(store, false).await;
+    let (_guard, admin, db, store) = setup().await;
+    let enabled = start(store, true).await;
+    let disabled = start(
+        awr_team_pg::WorkstreamReadStore::from_config(common::with_db(&common::test_config(), &db)),
+        false,
+    )
+    .await;
     assert_eq!(
         initialize(&enabled, "one", A)
             .send()
