@@ -102,7 +102,7 @@ async fn discovery_is_opt_in_and_challenges_bind_exact_project_metadata() {
     );
     assert_eq!(
         metadata["grant_types_supported"],
-        json!(["authorization_code"])
+        json!(["authorization_code", "refresh_token"])
     );
     let resource: Value = s
         .get("/.well-known/oauth-protected-resource/v1/projects/one/mcp")
@@ -158,11 +158,15 @@ async fn discovery_is_opt_in_and_challenges_bind_exact_project_metadata() {
 async fn registration_never_trusts_or_fetches_client_metadata_and_narrows_grants() {
     let s = server(true).await;
     let client = register(&s, "<img src=x onerror=alert(1)> & \"client\"").await;
-    assert_eq!(client["grant_types"], json!(["authorization_code"]));
+    assert_eq!(
+        client["grant_types"],
+        json!(["authorization_code", "refresh_token"])
+    );
     assert!(client.get("client_secret").is_none());
     for body in [
         json!({"redirect_uris":["https://client.example/callback"],"token_endpoint_auth_method":"client_secret_post"}),
         json!({"redirect_uris":["https://client.example/callback"],"grant_types":["refresh_token"]}),
+        json!({"redirect_uris":["https://client.example/callback"],"grant_types":["authorization_code","client_credentials"]}),
         json!({"redirect_uris":["http://remote.example/callback"]}),
         json!({"redirect_uris":["https://client.example/callback"],"scope":"admin"}),
     ] {
@@ -181,6 +185,8 @@ async fn registration_never_trusts_or_fetches_client_metadata_and_narrows_grants
     assert!(!pending.html.contains("<img"));
     assert!(pending.html.contains("type=\"password\""));
     assert!(pending.html.contains("formnovalidate"));
+    assert!(pending.html.contains("Access tokens last up to one hour."));
+    assert!(pending.html.contains("up to 24 hours from approval"));
 }
 #[tokio::test]
 async fn authorization_rejects_duplicates_and_unbound_redirects_without_redirecting() {
@@ -372,6 +378,11 @@ async fn request_limits_and_token_input_errors_never_echo_values() {
     );
     for body in [
         "grant_type=refresh_token&refresh_token=private-test-sentinel".to_owned(),
+        "grant_type=refresh_token&client_id=client&refresh_token=one&refresh_token=private-test-sentinel".to_owned(),
+        "grant_type=refresh_token&client_id=client&client_id=private-test-sentinel&refresh_token=one".to_owned(),
+        "grant_type=refresh_token&client_id=client&refresh_token=one&resource=one&resource=private-test-sentinel".to_owned(),
+        "grant_type=refresh_token&client_id=client&refresh_token=one&scope=private-test-sentinel".to_owned(),
+        "grant_type=refresh_token&client_id=client&refresh_token=one&client_secret=private-test-sentinel".to_owned(),
         token_body("client", "code", RESOURCE, VERIFIER) + "&resource=private-test-sentinel",
         token_body("client", "code", RESOURCE, VERIFIER) + "&client_secret=private-test-sentinel",
     ] {

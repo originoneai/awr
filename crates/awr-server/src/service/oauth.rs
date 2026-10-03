@@ -1,7 +1,9 @@
 //! Opt-in OAuth discovery and browser consent. Authority still comes from the
 //! original credential and live PostgreSQL checks, never client metadata.
 use super::*;
-use crate::oauth::{AuthorizationRequest, ConsentView, OAuthError, OAuthStore, TokenRequest};
+use crate::oauth::{
+    AuthorizationRequest, ConsentView, OAuthError, OAuthStore, RefreshRequest, TokenRequest,
+};
 use axum::{
     body::{Body, to_bytes},
     extract::{RawQuery, Request},
@@ -184,7 +186,7 @@ async fn metadata(State(state): State<Arc<StateData>>) -> Response {
             "token_endpoint":format!("{issuer}/oauth/token"),
             "registration_endpoint":format!("{issuer}/oauth/register"),
             "response_types_supported":["code"],
-            "grant_types_supported":["authorization_code"],
+            "grant_types_supported":["authorization_code","refresh_token"],
             "token_endpoint_auth_methods_supported":["none"],
             "code_challenge_methods_supported":["S256"],
             "scopes_supported":["awr.project"]
@@ -254,10 +256,11 @@ async fn register(
         .token_endpoint_auth_method
         .as_deref()
         .is_some_and(|m| m != "none")
-        || input
-            .grant_types
-            .as_ref()
-            .is_some_and(|g| !g.iter().any(|v| v == "authorization_code"))
+        || input.grant_types.as_ref().is_some_and(|g| {
+            !g.iter().any(|v| v == "authorization_code")
+                || g.iter()
+                    .any(|v| v != "authorization_code" && v != "refresh_token")
+        })
         || input
             .response_types
             .as_ref()
@@ -279,7 +282,7 @@ async fn register(
             json!({
                 "client_id":client.client_id,"client_name":client.client_name,
                 "redirect_uris":client.redirect_uris,"token_endpoint_auth_method":"none",
-                "grant_types":["authorization_code"],"response_types":["code"],"scope":"awr.project"
+                "grant_types":["authorization_code","refresh_token"],"response_types":["code"],"scope":"awr.project"
             }),
         ),
         Err(e) => oauth_error(e),
@@ -373,7 +376,7 @@ fn consent_page(
     let html = format!(
         r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect your agent · AWR</title><style>
 *{{box-sizing:border-box}}body{{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#f1f6ff;color:#142c50;font:16px/1.5 system-ui,sans-serif}}main{{width:min(100%,560px);background:white;border:1px solid #dbe7fa;border-radius:20px;padding:36px;box-shadow:0 20px 60px #14376d0d}}.brand{{color:#2563eb;font-size:24px;font-weight:800;letter-spacing:2px}}h1{{font-size:28px;line-height:1.2;margin:24px 0 12px}}.muted,small{{color:#526580}}.details{{background:#f7faff;border:1px solid #e0e9f8;border-radius:12px;padding:16px;margin:20px 0;font-size:14px;overflow-wrap:anywhere}}dt{{font-weight:650;margin-top:10px}}dt:first-child{{margin-top:0}}dd{{margin:4px 0 0}}label{{display:block;font-weight:650;margin:20px 0 8px}}input{{width:100%;border:1px solid #b9cbea;border-radius:8px;padding:12px;font:inherit}}input:focus{{outline:3px solid #d4e2ff;border-color:#2563eb}}.actions{{display:flex;gap:12px;margin:24px 0 12px}}button{{border:0;border-radius:8px;padding:12px 18px;font:inherit;font-weight:650;cursor:pointer}}.allow{{background:#2563eb;color:white;flex:1}}.cancel{{background:#eaf0fa;color:#203b64}}.error{{background:#fff1f1;color:#993131;padding:12px;border-radius:8px}}small{{display:block;font-size:13px}}
-</style></head><body><main><div class="brand">AWR</div><h1>Connect your agent</h1><p class="muted">Allow <strong>{client}</strong> to work with this project using your current permissions.</p><dl class="details"><dt>Project access</dt><dd>{resource}</dd><dt>Return address</dt><dd>{callback}</dd><dt>Client identity</dt><dd>This client name and address are self-registered and have not been verified by AWR. Continue only if you started this connection.</dd></dl><p>Your agent can read project context and perform only actions you already have permission to perform. Authorizing this connection does not change your membership or permissions.</p>{error}<form method="post" action="/oauth/consent"><input type="hidden" name="transaction" value="{transaction}"><label for="credential">Your personal access credential</label><input id="credential" name="credential" type="password" autocomplete="off" spellcheck="false" required maxlength="512"><small>Get this credential from your project administrator. It stays with AWR and is never sent to your agent.</small><div class="actions"><button class="allow" name="action" value="allow" type="submit">Allow access</button><button class="cancel" name="action" value="cancel" type="submit" formnovalidate>Cancel</button></div></form><small>This connection lasts up to one hour. Revoking your credential or project permissions stops its access. After a service restart, connect again.</small></main></body></html>"#
+</style></head><body><main><div class="brand">AWR</div><h1>Connect your agent</h1><p class="muted">Allow <strong>{client}</strong> to work with this project using your current permissions.</p><dl class="details"><dt>Project access</dt><dd>{resource}</dd><dt>Return address</dt><dd>{callback}</dd><dt>Client identity</dt><dd>This client name and address are self-registered and have not been verified by AWR. Continue only if you started this connection.</dd></dl><p>Your agent can read project context and perform only actions you already have permission to perform. Authorizing this connection does not change your membership or permissions.</p>{error}<form method="post" action="/oauth/consent"><input type="hidden" name="transaction" value="{transaction}"><label for="credential">Your personal access credential</label><input id="credential" name="credential" type="password" autocomplete="off" spellcheck="false" required maxlength="512"><small>Get this credential from your project administrator. It stays with AWR and is never sent to your agent.</small><div class="actions"><button class="allow" name="action" value="allow" type="submit">Allow access</button><button class="cancel" name="action" value="cancel" type="submit" formnovalidate>Cancel</button></div></form><small>Access tokens last up to one hour. Clients can automatically renew this connection for up to 24 hours from approval. Revoking your credential or project permissions stops its access. After a service restart or the connection deadline, connect again.</small></main></body></html>"#
     );
     let mut res = (status, [("content-type", "text/html; charset=utf-8")], html).into_response();
     // A no-referrer form navigation can send Origin: null in browsers. Keep
@@ -546,12 +549,76 @@ async fn token(State(state): State<Arc<StateData>>, headers: HeaderMap, body: By
     {
         return oauth_error(OAuthError::InvalidRequest);
     }
-    let request = (|| {
+    let params = (|| {
         let raw = std::str::from_utf8(&body).map_err(|_| OAuthError::InvalidRequest)?;
         let params = parameters(raw)?;
-        if required(&params, "grant_type")? != "authorization_code"
-            || params.contains_key("client_secret")
+        if params.contains_key("client_secret")
+            || !valid_scope(params.get("scope").map(String::as_str))
         {
+            return Err(OAuthError::InvalidRequest);
+        }
+        Ok(params)
+    })();
+    let params = match params {
+        Ok(p) => p,
+        Err(e) => return oauth_error(e),
+    };
+    let oauth = state.oauth.as_ref().expect("enabled OAuth routes");
+    if params
+        .get("grant_type")
+        .is_some_and(|g| g == "refresh_token")
+    {
+        let request = (|| {
+            Ok(RefreshRequest {
+                refresh_token: required(&params, "refresh_token")?,
+                client_id: required(&params, "client_id")?,
+                resource: params.get("resource").cloned(),
+            })
+        })();
+        let request = match request {
+            Ok(r) => r,
+            Err(e) => return oauth_error(e),
+        };
+        let access = match oauth.store.refresh_access(&request, Instant::now()) {
+            Ok(a) => a,
+            Err(e) => return oauth_error(e),
+        };
+        let Some(project) = state
+            .projects
+            .values()
+            .find(|p| oauth.resource(&p.key) == access.resource)
+        else {
+            return oauth_error(OAuthError::InvalidGrant);
+        };
+        let capabilities: WorkstreamQuery =
+            serde_json::from_value(json!({"protocol_version":1,"op":"capabilities"}))
+                .expect("static query");
+        if let Err(error) = state
+            .store
+            .query(
+                &project.tenant_id,
+                &project.project_id,
+                &access.bearer,
+                capabilities,
+            )
+            .await
+        {
+            return oauth_error(if matches!(error, PgError::Forbidden) {
+                OAuthError::InvalidGrant
+            } else {
+                OAuthError::Unavailable
+            });
+        }
+        return match oauth.store.refresh(request, Instant::now()) {
+            Ok(token) => response(
+                StatusCode::OK,
+                serde_json::to_value(token).expect("refreshed access token"),
+            ),
+            Err(e) => oauth_error(e),
+        };
+    }
+    let request = (|| {
+        if required(&params, "grant_type")? != "authorization_code" {
             return Err(OAuthError::InvalidRequest);
         }
         Ok(TokenRequest {
@@ -566,7 +633,6 @@ async fn token(State(state): State<Arc<StateData>>, headers: HeaderMap, body: By
         Ok(r) => r,
         Err(e) => return oauth_error(e),
     };
-    let oauth = state.oauth.as_ref().expect("enabled OAuth routes");
     match oauth.store.exchange(request, Instant::now()) {
         Ok(token) => response(
             StatusCode::OK,
