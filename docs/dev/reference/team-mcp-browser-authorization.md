@@ -41,11 +41,36 @@ the underlying credential and authorization in each MCP operation.
 
 ## Storage and bounds
 
-All registrations, consent, codes and tokens are process-local. Restarting the
-server invalidates them, including refresh tokens. Durable sign-in across a
-server restart is not provided. The adapter hashes browser bindings, codes,
-access tokens and refresh tokens before storing their lookup keys; underlying
-personal credentials stay in memory only.
+By default registrations and connections are process-local: a restart requires
+new consent. Unix operators can enable `oauth.state_directory` to preserve
+registrations, approved connections, hashed access/refresh lookup keys and consumed
+refresh markers in an encrypted snapshot. Pending browser consent and unredeemed
+codes remain process-local. Restoration preserves absolute expiry and project
+binding; every MCP operation and refresh still checks live Team authority.
+
+Durable state uses AES-256-GCM with a separate stable random key. The service creates
+a new directory with mode `0700` and `key.bin`, `state.bin` and `writer.lock` with
+mode `0600`. The directory's parent must already exist and be controlled by the
+service operator. Existing state must belong to the service user; links, unsafe
+permissions, missing key/state pairs, corrupt snapshots, clock rollback and
+changed issuer/resource/tenant/project bindings fail startup. Do not silently
+regenerate keys or replace corrupt state. Non-Unix hosts reject durable mode;
+the default process-local mode remains supported.
+
+One process holds an exclusive writer lock for the store's lifetime. Rotation
+and replay revocation are atomically saved and synced before returning a response,
+including revocations reported as `invalid_grant`. An uncertain write disables
+OAuth access until restart and inspection. A crash before rename leaves the last
+committed snapshot authoritative. A lost rotation response still requires reconnect;
+durability does not make replay safe. This mode is not a multi-replica OAuth store.
+
+Back up the directory only with the service stopped, and protect the key and
+snapshot as credentials. Encryption protects snapshot contents without exposing
+the underlying personal credential to clients, but access to both files permits
+decryption. Never restore an older OAuth backup for clients that have continued
+rotating: it would restore obsolete consumed markers. After rollback or suspected
+state compromise, stop the service and choose a fresh state directory to require
+new consent; do not revert the project database just to reset OAuth connections.
 
 Registrations expire after 24 hours. There are at most 1,024 registrations,
 1,024 consent transactions, 1,024 codes, 4,096 access tokens, 4,096 connection
@@ -66,6 +91,8 @@ allowed_hosts = ["team.example.org"]
 
 [oauth]
 issuer = "https://team.example.org"
+# Optional Unix restart continuity. Use a new directory under a private parent.
+state_directory = "/var/lib/awr-team/oauth-connections"
 
 [[projects]]
 key = "portal"
@@ -101,8 +128,9 @@ token and a rotating refresh token. Send `grant_type=refresh_token`, `client_id`
 and the latest `refresh_token` to the same token endpoint; `resource` is optional
 only for refresh and remains bound to the original project. Store the returned
 replacement refresh token atomically and use the new access token for MCP calls.
-An expired connection deadline, detected replay or server restart requires new
-consent, including re-registration if necessary. Clients without refresh support
+An expired connection deadline, detected replay or restart without durable mode
+requires new consent, including re-registration if necessary. Durable mode does
+not import connections issued by an older process-local server. Clients without refresh support
 still reconnect when their access token expires. Existing already-issued tokens
 do not gain refresh support; reconnect after upgrading the server.
 

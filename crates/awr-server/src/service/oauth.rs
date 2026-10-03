@@ -11,7 +11,7 @@ use axum::{
     middleware::{self, Next},
     routing::get,
 };
-use std::time::Instant;
+use std::{path::PathBuf, time::Instant};
 use url::Url;
 
 const MAX_REQUEST_BYTES: usize = 16_384;
@@ -23,10 +23,20 @@ pub struct OAuthConfig {
     /// Canonical HTTPS origin, without a trailing slash. Never inferred from
     /// request Host/Forwarded headers or from registered client metadata.
     pub issuer: String,
+    /// Optional private Unix directory for encrypted, single-writer OAuth state.
+    #[serde(default)]
+    pub state_directory: Option<PathBuf>,
 }
 
 impl OAuthConfig {
     pub(super) fn validate(&self, allowed_hosts: &[String]) -> Result<(), String> {
+        if self
+            .state_directory
+            .as_ref()
+            .is_some_and(|p| !p.is_absolute())
+        {
+            return Err("OAuth state_directory must be absolute".into());
+        }
         let url = Url::parse(&self.issuer).map_err(|_| "invalid OAuth issuer".to_string())?;
         if self.issuer.len() > 255
             || url.scheme() != "https"
@@ -50,6 +60,7 @@ impl OAuthConfig {
 
 pub(super) struct OAuthRuntime {
     issuer: String,
+    durable: bool,
     pub(super) store: OAuthStore,
 }
 
@@ -59,10 +70,22 @@ impl OAuthRuntime {
             .iter()
             .map(|p| format!("{}/v1/projects/{}/mcp", config.issuer, p.key))
             .collect();
-        let store =
-            OAuthStore::new(resources).map_err(|_| "invalid OAuth resources".to_string())?;
+        let store = if let Some(directory) = &config.state_directory {
+            // Bind the tenant/project mapping, not just URLs. Reassigning an
+            // existing URL must not silently carry an old connection forward.
+            let binding: BTreeMap<_, _> = projects
+                .iter()
+                .map(|p| (&p.key, (&p.tenant_id, &p.project_id)))
+                .collect();
+            let binding = serde_json::to_string(&binding).expect("project mapping");
+            OAuthStore::open(resources, directory, &binding)
+                .map_err(|_| "OAuth state unavailable: check private ownership, permissions, exclusive access, key/state integrity and deployment binding".to_string())?
+        } else {
+            OAuthStore::new(resources).map_err(|_| "invalid OAuth resources".to_string())?
+        };
         Ok(Self {
             issuer: config.issuer.clone(),
+            durable: config.state_directory.is_some(),
             store,
         })
     }
@@ -344,7 +367,13 @@ async fn authorize(State(state): State<Arc<StateData>>, RawQuery(query): RawQuer
                 client_name: page.client_name,
                 request: page.request,
             };
-            let mut res = consent_page(&page.transaction_id, &view, None, StatusCode::OK);
+            let mut res = consent_page(
+                &page.transaction_id,
+                &view,
+                None,
+                StatusCode::OK,
+                oauth.durable,
+            );
             set_cookie(&mut res, &page.cookie, crate::oauth::CONSENT_TTL.as_secs());
             res
         }
@@ -365,6 +394,7 @@ fn consent_page(
     view: &ConsentView,
     error: Option<&str>,
     status: StatusCode,
+    durable: bool,
 ) -> Response {
     let client = escape(&view.client_name);
     let callback = escape(&view.request.redirect_uri);
@@ -373,10 +403,15 @@ fn consent_page(
     let error = error
         .map(|e| format!("<p class=error role=alert>{}</p>", escape(e)))
         .unwrap_or_default();
+    let continuity = if durable {
+        "Approved connections survive service restarts. After the connection deadline, connect again."
+    } else {
+        "After a service restart or the connection deadline, connect again."
+    };
     let html = format!(
         r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect your agent · AWR</title><style>
 *{{box-sizing:border-box}}body{{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#f1f6ff;color:#142c50;font:16px/1.5 system-ui,sans-serif}}main{{width:min(100%,560px);background:white;border:1px solid #dbe7fa;border-radius:20px;padding:36px;box-shadow:0 20px 60px #14376d0d}}.brand{{color:#2563eb;font-size:24px;font-weight:800;letter-spacing:2px}}h1{{font-size:28px;line-height:1.2;margin:24px 0 12px}}.muted,small{{color:#526580}}.details{{background:#f7faff;border:1px solid #e0e9f8;border-radius:12px;padding:16px;margin:20px 0;font-size:14px;overflow-wrap:anywhere}}dt{{font-weight:650;margin-top:10px}}dt:first-child{{margin-top:0}}dd{{margin:4px 0 0}}label{{display:block;font-weight:650;margin:20px 0 8px}}input{{width:100%;border:1px solid #b9cbea;border-radius:8px;padding:12px;font:inherit}}input:focus{{outline:3px solid #d4e2ff;border-color:#2563eb}}.actions{{display:flex;gap:12px;margin:24px 0 12px}}button{{border:0;border-radius:8px;padding:12px 18px;font:inherit;font-weight:650;cursor:pointer}}.allow{{background:#2563eb;color:white;flex:1}}.cancel{{background:#eaf0fa;color:#203b64}}.error{{background:#fff1f1;color:#993131;padding:12px;border-radius:8px}}small{{display:block;font-size:13px}}
-</style></head><body><main><div class="brand">AWR</div><h1>Connect your agent</h1><p class="muted">Allow <strong>{client}</strong> to work with this project using your current permissions.</p><dl class="details"><dt>Project access</dt><dd>{resource}</dd><dt>Return address</dt><dd>{callback}</dd><dt>Client identity</dt><dd>This client name and address are self-registered and have not been verified by AWR. Continue only if you started this connection.</dd></dl><p>Your agent can read project context and perform only actions you already have permission to perform. Authorizing this connection does not change your membership or permissions.</p>{error}<form method="post" action="/oauth/consent"><input type="hidden" name="transaction" value="{transaction}"><label for="credential">Your personal access credential</label><input id="credential" name="credential" type="password" autocomplete="off" spellcheck="false" required maxlength="512"><small>Get this credential from your project administrator. It stays with AWR and is never sent to your agent.</small><div class="actions"><button class="allow" name="action" value="allow" type="submit">Allow access</button><button class="cancel" name="action" value="cancel" type="submit" formnovalidate>Cancel</button></div></form><small>Access tokens last up to one hour. Clients can automatically renew this connection for up to 24 hours from approval. Revoking your credential or project permissions stops its access. After a service restart or the connection deadline, connect again.</small></main></body></html>"#
+</style></head><body><main><div class="brand">AWR</div><h1>Connect your agent</h1><p class="muted">Allow <strong>{client}</strong> to work with this project using your current permissions.</p><dl class="details"><dt>Project access</dt><dd>{resource}</dd><dt>Return address</dt><dd>{callback}</dd><dt>Client identity</dt><dd>This client name and address are self-registered and have not been verified by AWR. Continue only if you started this connection.</dd></dl><p>Your agent can read project context and perform only actions you already have permission to perform. Authorizing this connection does not change your membership or permissions.</p>{error}<form method="post" action="/oauth/consent"><input type="hidden" name="transaction" value="{transaction}"><label for="credential">Your personal access credential</label><input id="credential" name="credential" type="password" autocomplete="off" spellcheck="false" required maxlength="512"><small>Get this credential from your project administrator. It stays with AWR and is never sent to your agent.</small><div class="actions"><button class="allow" name="action" value="allow" type="submit">Allow access</button><button class="cancel" name="action" value="cancel" type="submit" formnovalidate>Cancel</button></div></form><small>Access tokens last up to one hour. Clients can automatically renew this connection for up to 24 hours from approval. Revoking your credential or project permissions stops its access. {continuity}</small></main></body></html>"#
     );
     let mut res = (status, [("content-type", "text/html; charset=utf-8")], html).into_response();
     // A no-referrer form navigation can send Origin: null in browsers. Keep
@@ -525,6 +560,7 @@ async fn consent(State(state): State<Arc<StateData>>, headers: HeaderMap, body: 
                     "Your credential was not accepted for this project. Check the credential with your administrator and try again.",
                 ),
                 StatusCode::FORBIDDEN,
+                oauth.durable,
             )
         } else {
             oauth_error(OAuthError::Unavailable)
