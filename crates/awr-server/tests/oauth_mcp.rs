@@ -28,7 +28,7 @@ async fn code(server: &Server, credential: &str) -> (String, String) {
     assert_eq!(pairs["state"], "client state & original");
     (pending.client_id, pairs["code"].clone())
 }
-async fn issue(server: &Server, credential: &str) -> String {
+async fn tokens(server: &Server, credential: &str) -> (String, Value) {
     let (client, code) = code(server, credential).await;
     let body = token_body(&client, &code, RESOURCE, VERIFIER);
     let res = exchange(server, body.clone()).send().await.unwrap();
@@ -40,9 +40,89 @@ async fn issue(server: &Server, credential: &str) -> String {
     let token: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(token["expires_in"], 3600);
     assert_eq!(token["scope"], "awr.project");
-    assert!(token.get("refresh_token").is_none());
+    assert!(
+        token["refresh_token"]
+            .as_str()
+            .unwrap()
+            .starts_with("awr_refresh_")
+    );
     assert_eq!(exchange(server, body).send().await.unwrap().status(), 400);
-    token["access_token"].as_str().unwrap().to_owned()
+    (client, token)
+}
+async fn issue(server: &Server, credential: &str) -> String {
+    tokens(server, credential).await.1["access_token"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[tokio::test]
+async fn refresh_retains_live_permissions_and_rejects_revocation_expiry_and_replay() {
+    let (_guard, admin, _, store) = setup().await;
+    let server = start(store, true).await;
+    let (client, token) = tokens(&server, A).await;
+    let body = encode(&[
+        ("grant_type", "refresh_token"),
+        ("client_id", &client),
+        ("refresh_token", token["refresh_token"].as_str().unwrap()),
+    ]);
+    for (revoke, restore) in [
+        (
+            "UPDATE awr_team.workstream_grants SET can_read=false WHERE client_id='cli-a'",
+            "UPDATE awr_team.workstream_grants SET can_read=true WHERE client_id='cli-a'",
+        ),
+        (
+            "UPDATE awr_team.credentials SET expires_at=clock_timestamp()-interval '1 second' WHERE id='reader-a'",
+            "UPDATE awr_team.credentials SET expires_at=NULL WHERE id='reader-a'",
+        ),
+        (
+            "UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='reader-a'",
+            "UPDATE awr_team.credentials SET revoked_at=NULL WHERE id='reader-a'",
+        ),
+    ] {
+        admin.batch_execute(revoke).await.unwrap();
+        let res = exchange(&server, body.clone()).send().await.unwrap();
+        assert_eq!(res.status(), 400);
+        let text = res.text().await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&text).unwrap()["error"],
+            "invalid_grant"
+        );
+        assert!(!text.contains(A));
+        assert!(!text.contains(token["refresh_token"].as_str().unwrap()));
+        admin.batch_execute(restore).await.unwrap();
+    }
+    let res = exchange(&server, body.clone()).send().await.unwrap();
+    assert_eq!(res.status(), 200);
+    assert_eq!(res.headers()["cache-control"], "no-store");
+    let renewed: Value = res.json().await.unwrap();
+    let access = renewed["access_token"].as_str().unwrap();
+    assert_ne!(renewed["refresh_token"], token["refresh_token"]);
+    assert_eq!(
+        initialize(&server, "one", access)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    assert_eq!(
+        initialize(&server, "other", access)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    assert_eq!(exchange(&server, body).send().await.unwrap().status(), 400);
+    assert_eq!(
+        initialize(&server, "one", access)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
 }
 fn initialize(server: &Server, alias: &str, token: &str) -> reqwest::RequestBuilder {
     server.post(&format!("/v1/projects/{alias}/mcp")).bearer_auth(token)

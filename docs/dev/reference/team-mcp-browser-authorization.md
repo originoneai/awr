@@ -28,16 +28,29 @@ the underlying credential and authorization in each MCP operation.
 - Opaque access tokens last at most 1 hour and resolve for one resource only.
   They neither contain nor return the original personal credential. Credential
   expiry, revocation and permission changes must still be enforced by Team.
+- Clients can rotate a refresh token to continue after access-token expiry.
+  Consent explicitly covers a connection of at most 24 hours from approval,
+  bounded further by the original client registration. Rotation never extends
+  that deadline, changes identity, or grants additional project access.
+- Refresh binds the original client and resource. An omitted `resource` retains
+  that exact resource; a different resource or wider scope is rejected. Every
+  refresh rechecks the underlying credential's live project access. Reuse of a
+  consumed refresh token by the bound client revokes the entire connection,
+  including its access tokens. Clients must serialize refresh attempts; after
+  an unknown rotation result, reconnect rather than replay the consumed token.
 
 ## Storage and bounds
 
 All registrations, consent, codes and tokens are process-local. Restarting the
-server invalidates them. No refresh token or durable sign-in is provided. The
-adapter hashes browser bindings, codes and access tokens before storing their
-lookup keys; underlying personal credentials stay in memory only.
+server invalidates them, including refresh tokens. Durable sign-in across a
+server restart is not provided. The adapter hashes browser bindings, codes,
+access tokens and refresh tokens before storing their lookup keys; underlying
+personal credentials stay in memory only.
 
 Registrations expire after 24 hours. There are at most 1,024 registrations,
-1,024 consent transactions, 1,024 codes and 4,096 access tokens. Expired entries
+1,024 consent transactions, 1,024 codes, 4,096 access tokens, 4,096 connection
+families and 32,768 refresh-token keys (including consumed keys for replay
+detection). Connection slots remain occupied while refresh is valid. Expired entries
 are pruned before mutations; reaching a live capacity returns a generic
 temporary-unavailability error. OAuth bodies and query strings are limited to
 16 KiB and share the service's 64-request admission limit and 30-second timeout.
@@ -72,7 +85,7 @@ paths to the same server process:
 | POST | `/oauth/register` | Public-client registration; `none` authentication |
 | GET | `/oauth/authorize` | `response_type=code`, S256 PKCE and exact `resource` |
 | POST | `/oauth/consent` | Browser-bound approval or cancellation |
-| POST | `/oauth/token` | URL-encoded authorization-code exchange |
+| POST | `/oauth/token` | URL-encoded authorization-code exchange or refresh rotation |
 | GET/POST/DELETE | `/v1/projects/{key}/mcp` | Existing MCP transport |
 
 Missing MCP authentication returns `401` with a `WWW-Authenticate` resource
@@ -82,10 +95,16 @@ static bearer authentication remains available. An OAuth token is accepted only
 at its exact MCP resource, never as a classic HTTP or Inspector credential.
 
 The supported scope is `awr.project`. Authorization and token exchange require
-the exact project resource URL. Registration may request refresh along with the
-authorization-code grant, but the response advertises only authorization code;
-no refresh token is issued. An expired connection or server restart requires a
-new connection and consent, including re-registration if necessary.
+the exact project resource URL. Metadata and registration advertise both
+`authorization_code` and `refresh_token`. Exchange returns a short-lived access
+token and a rotating refresh token. Send `grant_type=refresh_token`, `client_id`
+and the latest `refresh_token` to the same token endpoint; `resource` is optional
+only for refresh and remains bound to the original project. Store the returned
+replacement refresh token atomically and use the new access token for MCP calls.
+An expired connection deadline, detected replay or server restart requires new
+consent, including re-registration if necessary. Clients without refresh support
+still reconnect when their access token expires. Existing already-issued tokens
+do not gain refresh support; reconnect after upgrading the server.
 
 ## Consent and proxy handling
 

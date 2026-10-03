@@ -380,8 +380,11 @@ fn code_and_token_capacity_is_bounded_and_expiry_releases_slots() {
         store.exchange(input, later),
         Err(OAuthError::Unavailable)
     ));
-    let after_expiry = later + ACCESS_TTL;
-    let input = issue(&store, &client, after_expiry);
+    // A connection remains refreshable after its access token expires, so its
+    // family capacity is released only at the fixed connection deadline.
+    let after_expiry = later + CONNECTION_TTL;
+    let new_client = self::client(&store, after_expiry);
+    let input = issue(&store, &new_client, after_expiry);
     store.exchange(input, after_expiry).unwrap();
 }
 

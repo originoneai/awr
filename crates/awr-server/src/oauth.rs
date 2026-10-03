@@ -16,6 +16,8 @@ use url::Url;
 
 pub const ACCESS_TOKEN_PREFIX: &str = "awr_oauth_";
 pub const ACCESS_TTL: Duration = Duration::from_secs(3600);
+pub const CONNECTION_TTL: Duration = Duration::from_secs(86400);
+const REFRESH_TOKEN_PREFIX: &str = "awr_refresh_";
 pub const CONSENT_TTL: Duration = Duration::from_secs(600);
 const CLIENT_TTL: Duration = Duration::from_secs(86400);
 const CODE_TTL: Duration = Duration::from_secs(120);
@@ -23,6 +25,7 @@ const MAX_CLIENTS: usize = 1024;
 const MAX_PENDING: usize = 1024;
 const MAX_CODES: usize = 1024;
 const MAX_TOKENS: usize = 4096;
+const MAX_REFRESH_TOKENS: usize = 32768;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OAuthError {
@@ -92,9 +95,23 @@ pub struct TokenRequest {
     pub code_verifier: String,
 }
 
+pub struct RefreshRequest {
+    pub refresh_token: String,
+    pub client_id: String,
+    pub resource: Option<String>,
+}
+
+// Returned only to the HTTP adapter for its live authorization check.
+// Never serialize or log the underlying credential.
+pub struct RefreshAccess {
+    pub resource: String,
+    pub bearer: String,
+}
+
 #[derive(Serialize)]
 pub struct AccessToken {
     pub access_token: String,
+    pub refresh_token: String,
     pub token_type: &'static str,
     pub expires_in: u64,
     pub scope: &'static str,
@@ -115,12 +132,24 @@ struct Code {
     request: AuthorizationRequest,
     bearer: String,
     expires: Instant,
+    connection_expires: Instant,
 }
 
 struct Token {
+    family: [u8; 32],
+    expires: Instant,
+}
+
+struct Grant {
+    client_id: String,
     resource: String,
     bearer: String,
     expires: Instant,
+}
+
+struct RefreshToken {
+    family: [u8; 32],
+    used: bool,
 }
 
 #[derive(Default)]
@@ -129,6 +158,8 @@ struct Entries {
     pending: BTreeMap<String, Pending>,
     codes: BTreeMap<[u8; 32], Code>,
     tokens: BTreeMap<[u8; 32], Token>,
+    grants: BTreeMap<[u8; 32], Grant>,
+    refresh_tokens: BTreeMap<[u8; 32], RefreshToken>,
 }
 
 impl Entries {
@@ -136,7 +167,49 @@ impl Entries {
         self.clients.retain(|_, e| e.expires > now);
         self.pending.retain(|_, e| e.expires > now);
         self.codes.retain(|_, e| e.expires > now);
-        self.tokens.retain(|_, e| e.expires > now);
+        self.grants.retain(|_, e| e.expires > now);
+        self.tokens
+            .retain(|_, e| e.expires > now && self.grants.contains_key(&e.family));
+        self.refresh_tokens
+            .retain(|_, e| self.grants.contains_key(&e.family));
+    }
+
+    fn refresh_family(
+        &mut self,
+        request: &RefreshRequest,
+        now: Instant,
+    ) -> Result<[u8; 32], OAuthError> {
+        if !request.refresh_token.starts_with(REFRESH_TOKEN_PREFIX)
+            || !bounded(&request.refresh_token, 128)
+            || !bounded(&request.client_id, 128)
+        {
+            return Err(OAuthError::InvalidGrant);
+        }
+        self.prune(now);
+        let refresh = self
+            .refresh_tokens
+            .get(&hash(&request.refresh_token))
+            .ok_or(OAuthError::InvalidGrant)?;
+        let family = refresh.family;
+        let grant = self.grants.get(&family).ok_or(OAuthError::InvalidGrant)?;
+        if grant.client_id != request.client_id
+            || request
+                .resource
+                .as_ref()
+                .is_some_and(|r| r != &grant.resource)
+            || !self.clients.contains_key(&grant.client_id)
+        {
+            return Err(OAuthError::InvalidGrant);
+        }
+        // Retain consumed keys until the original connection expires. Reuse by
+        // the bound client revokes the whole family, including issued access.
+        // A different client/resource must not be able to revoke it.
+        if refresh.used {
+            self.grants.remove(&family);
+            self.prune(now);
+            return Err(OAuthError::InvalidGrant);
+        }
+        Ok(family)
     }
 }
 
@@ -376,6 +449,7 @@ impl OAuthStore {
                 request: pending.view.request,
                 bearer: validated_bearer,
                 expires: now + CODE_TTL,
+                connection_expires: now + CONNECTION_TTL,
             },
         );
         Ok(result)
@@ -393,7 +467,10 @@ impl OAuthStore {
         }
         let mut entries = self.entries.lock().map_err(|_| OAuthError::Unavailable)?;
         entries.prune(now);
-        if entries.tokens.len() >= MAX_TOKENS {
+        if entries.tokens.len() >= MAX_TOKENS
+            || entries.grants.len() >= MAX_TOKENS
+            || entries.refresh_tokens.len() >= MAX_REFRESH_TOKENS
+        {
             return Err(OAuthError::Unavailable);
         }
         // Every well-formed redemption attempt consumes the code atomically,
@@ -410,19 +487,113 @@ impl OAuthStore {
         {
             return Err(OAuthError::InvalidGrant);
         }
+        let client = entries
+            .clients
+            .get(&request.client_id)
+            .ok_or(OAuthError::InvalidGrant)?;
+        let connection_expires = code.connection_expires.min(client.expires);
+        let access_expires = (now + ACCESS_TTL).min(connection_expires);
+        if access_expires.saturating_duration_since(now).as_secs() == 0 {
+            return Err(OAuthError::InvalidGrant);
+        }
         let access_token = random(ACCESS_TOKEN_PREFIX)?;
+        let refresh_token = random(REFRESH_TOKEN_PREFIX)?;
+        let family = hash(&refresh_token);
+        entries.grants.insert(
+            family,
+            Grant {
+                client_id: code.request.client_id,
+                resource: code.request.resource,
+                bearer: code.bearer,
+                expires: connection_expires,
+            },
+        );
+        entries.refresh_tokens.insert(
+            family,
+            RefreshToken {
+                family,
+                used: false,
+            },
+        );
         entries.tokens.insert(
             hash(&access_token),
             Token {
-                resource: code.request.resource,
-                bearer: code.bearer,
-                expires: now + ACCESS_TTL,
+                family,
+                expires: access_expires,
             },
         );
         Ok(AccessToken {
             access_token,
+            refresh_token,
             token_type: "Bearer",
-            expires_in: ACCESS_TTL.as_secs(),
+            expires_in: access_expires.duration_since(now).as_secs(),
+            scope: "awr.project",
+        })
+    }
+
+    /// Inspect the exact refresh binding before the adapter rechecks current
+    /// project access. This does not consume a valid token or cache authority.
+    pub fn refresh_access(
+        &self,
+        request: &RefreshRequest,
+        now: Instant,
+    ) -> Result<RefreshAccess, OAuthError> {
+        let mut entries = self.entries.lock().map_err(|_| OAuthError::Unavailable)?;
+        let family = entries.refresh_family(request, now)?;
+        let grant = entries
+            .grants
+            .get(&family)
+            .expect("validated refresh grant");
+        Ok(RefreshAccess {
+            resource: grant.resource.clone(),
+            bearer: grant.bearer.clone(),
+        })
+    }
+
+    /// Caller must first validate the underlying credential's current access
+    /// using refresh_access. Rotation never extends the connection deadline.
+    pub fn refresh(
+        &self,
+        request: RefreshRequest,
+        now: Instant,
+    ) -> Result<AccessToken, OAuthError> {
+        let mut entries = self.entries.lock().map_err(|_| OAuthError::Unavailable)?;
+        let family = entries.refresh_family(&request, now)?;
+        if entries.tokens.len() >= MAX_TOKENS || entries.refresh_tokens.len() >= MAX_REFRESH_TOKENS
+        {
+            return Err(OAuthError::Unavailable);
+        }
+        let grant = entries
+            .grants
+            .get(&family)
+            .expect("validated refresh grant");
+        let expires = (now + ACCESS_TTL).min(grant.expires);
+        let expires_in = expires.saturating_duration_since(now).as_secs();
+        if expires_in == 0 {
+            return Err(OAuthError::InvalidGrant);
+        }
+        let access_token = random(ACCESS_TOKEN_PREFIX)?;
+        let refresh_token = random(REFRESH_TOKEN_PREFIX)?;
+        entries
+            .refresh_tokens
+            .get_mut(&hash(&request.refresh_token))
+            .expect("validated refresh token")
+            .used = true;
+        entries.refresh_tokens.insert(
+            hash(&refresh_token),
+            RefreshToken {
+                family,
+                used: false,
+            },
+        );
+        entries
+            .tokens
+            .insert(hash(&access_token), Token { family, expires });
+        Ok(AccessToken {
+            access_token,
+            refresh_token,
+            token_type: "Bearer",
+            expires_in,
             scope: "awr.project",
         })
     }
@@ -435,6 +606,8 @@ impl OAuthStore {
         }
         let entries = self.entries.lock().ok()?;
         let token = entries.tokens.get(&hash(access_token))?;
-        (token.expires > now && token.resource == resource).then(|| token.bearer.clone())
+        let grant = entries.grants.get(&token.family)?;
+        (token.expires > now && grant.expires > now && grant.resource == resource)
+            .then(|| grant.bearer.clone())
     }
 }
