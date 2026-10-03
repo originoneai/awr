@@ -198,6 +198,200 @@ async fn explicit_suggestion_only_operator_plan_admits_bounded_native_suggestion
 }
 
 #[tokio::test]
+async fn suggestion_overlay_preserves_development_authority_and_rejects_action_overlap() {
+    let (_guard, mut admin, db, store) = setup().await;
+    stage(&mut admin).await;
+    let initial = plan(&admin).await;
+    apply(&mut admin, &initial, "initial-development").await;
+    let mut overlay = authorization_issue_plan(
+        &admin,
+        "suggestion-overlay",
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: Id::from(1).to_string(),
+        },
+    )
+    .await;
+    overlay.authorization.actions =
+        std::collections::BTreeSet::from([AuthorizedAction::ProposePlanning]);
+    overlay.authorization.expires_at_ms = initial.authorization.expires_at_ms;
+    for action in [
+        AuthorizedAction::Inspect,
+        AuthorizedAction::ClaimCoordination,
+        AuthorizedAction::StartWork,
+    ] {
+        let mut partially_overlapping = overlay.clone();
+        partially_overlapping.authorization.actions.insert(action);
+        let unchanged = snapshot(&admin).await;
+        assert!(matches!(
+            OperatorAgent::authorize_preview(&mut admin, &partially_overlapping).await,
+            Err(PgError::Forbidden)
+        ));
+        assert_eq!(snapshot(&admin).await, unchanged);
+    }
+    let preserved = preserved_authority(&admin).await;
+    let before = snapshot(&admin).await;
+    let preview = OperatorAgent::authorize_preview(&mut admin, &overlay)
+        .await
+        .unwrap();
+    assert_eq!(snapshot(&admin).await, before);
+    let applied = OperatorAgent::authorize_apply(
+        &mut admin,
+        &overlay,
+        "add-suggestion-overlay",
+        preview["state_digest"].as_str().unwrap(),
+        preview["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(applied["execution_authorized"], false);
+    assert_eq!(preserved_authority(&admin).await, preserved);
+    let after = snapshot(&admin).await;
+    let replay = OperatorAgent::authorize_apply(
+        &mut admin,
+        &overlay,
+        "add-suggestion-overlay",
+        preview["state_digest"].as_str().unwrap(),
+        preview["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(replay["receipt"], applied["receipt"]);
+    assert_eq!(snapshot(&admin).await, after);
+    assert_eq!(prepare(&store, TOKEN, "a").await["data"]["work_id"], "a");
+    let mut sibling_read = query("work.prepare");
+    sibling_read.work_id = Some("c".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, TOKEN, sibling_read).await,
+        Err(PgError::Forbidden)
+    ));
+
+    let source =
+        awr_team_pg::SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let request = awr_team_pg::PlanningSuggestRequest {
+        protocol_version: 1,
+        request_id: "overlay-bounded-suggestion".into(),
+        rationale: "The assigned work needs a prerequisite reviewed by a planner.".into(),
+        affected_work_keys: vec!["a".into(), "c".into()],
+        proposed_notes: json!({"reason":"dependency"}),
+        author_person_id: None,
+    };
+    let suggestion = source
+        .planning_suggest(TENANT, PROJECT, TOKEN, &request)
+        .await
+        .unwrap();
+    assert_eq!(suggestion["result"]["claimable"], false);
+    assert_eq!(suggestion["result"]["adds_formal_work"], false);
+    let outside = awr_team_pg::PlanningSuggestRequest {
+        request_id: "overlay-uncovered-suggestion".into(),
+        affected_work_keys: vec!["b-private".into()],
+        ..request
+    };
+    assert!(matches!(
+        source
+            .planning_suggest(TENANT, PROJECT, TOKEN, &outside)
+            .await,
+        Err(PgError::Forbidden)
+    ));
+
+    let mut duplicate = overlay.clone();
+    duplicate.authorization.id = "duplicate-overlay".into();
+    let unchanged = snapshot(&admin).await;
+    assert!(matches!(
+        OperatorAgent::authorize_preview(&mut admin, &duplicate).await,
+        Err(PgError::Forbidden)
+    ));
+    assert_eq!(snapshot(&admin).await, unchanged);
+    assert_eq!(preserved_authority(&admin).await, preserved);
+}
+
+#[tokio::test]
+async fn renewal_preserves_disjoint_suggestion_overlay_in_overlapping_scope() {
+    for revoke_overlay in [false, true] {
+        let (_guard, mut admin, db, store) = setup().await;
+        stage(&mut admin).await;
+        let initial = plan(&admin).await;
+        apply(&mut admin, &initial, "initial-development").await;
+        let renewal = expired_renewal_plan(&admin, &initial).await;
+        let mut overlay = authorization_issue_plan(
+            &admin,
+            "suggestion-overlay",
+            AuthorizationScope::Workstream {
+                project_id: PROJECT.into(),
+                workstream_id: Id::from(1).to_string(),
+            },
+        )
+        .await;
+        overlay.authorization.actions =
+            std::collections::BTreeSet::from([AuthorizedAction::ProposePlanning]);
+        let preview = OperatorAgent::authorize_preview(&mut admin, &overlay)
+            .await
+            .unwrap();
+        OperatorAgent::authorize_apply(
+            &mut admin,
+            &overlay,
+            "add-suggestion-overlay",
+            preview["state_digest"].as_str().unwrap(),
+            preview["plan_digest"].as_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        if revoke_overlay {
+            let auth =
+                AuthorizationStore::from_config(common::with_app_role(&common::test_config(), &db));
+            auth.revoke(
+                TENANT,
+                PROJECT,
+                &RevokeAuthorizationRequest {
+                    request_key: "revoke-suggestion-overlay".into(),
+                    authorization_id: overlay.authorization.id.clone(),
+                    revoked_by: overlay.authorization.responsible_person_id.clone(),
+                    revoked_at_ms: overlay.authorization.created_at_ms + 1,
+                    reason: "Stop suggestions without replacing development authority".into(),
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let overlay_before: Value = admin
+            .query_one(
+                "SELECT body_json FROM awr_team.agent_authorizations WHERE id=$1",
+                &[&overlay.authorization.id],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        let preserved = preserved_authority(&admin).await;
+        let before = snapshot(&admin).await;
+        let preview = OperatorAgent::renew_preview(&mut admin, &renewal)
+            .await
+            .unwrap();
+        assert_eq!(snapshot(&admin).await, before);
+        OperatorAgent::renew_apply(
+            &mut admin,
+            &renewal,
+            "renew-development",
+            preview["state_digest"].as_str().unwrap(),
+            preview["plan_digest"].as_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(preserved_authority(&admin).await, preserved);
+        let overlay_after: Value = admin
+            .query_one(
+                "SELECT body_json FROM awr_team.agent_authorizations WHERE id=$1",
+                &[&overlay.authorization.id],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(overlay_after, overlay_before);
+        assert_eq!(prepare(&store, TOKEN, "a").await["data"]["work_id"], "a");
+    }
+}
+
+#[tokio::test]
 async fn additional_workstream_authorization_preserves_history_and_is_discoverable() {
     let (_g, mut admin, _, store) = setup().await;
     stage(&mut admin).await;

@@ -702,6 +702,14 @@ fn authorization_scopes_overlap(
     }
 }
 
+fn authorization_actions_overlap(
+    existing: &AgentAuthorization,
+    proposed: &AgentAuthorization,
+) -> bool {
+    !crate::tmcp_actions_for_authorized_set(&existing.actions)
+        .is_disjoint(&crate::tmcp_actions_for_authorized_set(&proposed.actions))
+}
+
 fn validate_authorization_issue(
     p: &AgentAuthorizationIssuePlan,
     state: &Value,
@@ -755,6 +763,7 @@ fn validate_authorization_issue(
             && stored.client_id == a.client_id
             && stored.is_effective_at(now)
             && authorization_scopes_overlap(&stored.scope, &a.scope, state)
+            && authorization_actions_overlap(&stored, a)
         {
             return Err(PgError::Forbidden);
         }
@@ -870,7 +879,9 @@ fn validate_renewal(
     for stored in auths {
         let stored: AgentAuthorization =
             serde_json::from_value(stored.clone()).map_err(|_| invalid())?;
-        if !authorization_scopes_overlap(&stored.scope, &a.scope, s) {
+        if !authorization_scopes_overlap(&stored.scope, &a.scope, s)
+            || !authorization_actions_overlap(&stored, a)
+        {
             continue;
         }
         if stored.id != a.id
@@ -1156,5 +1167,32 @@ mod tests {
         assert!(!issue_time_valid(101, 100));
         assert!(issue_time_valid(100, 100 + MAX_ISSUE_AGE_MS));
         assert!(!issue_time_valid(100, 101 + MAX_ISSUE_AGE_MS));
+    }
+
+    #[test]
+    fn action_overlap_uses_product_capabilities_including_aliases() {
+        use std::collections::BTreeSet;
+        let mut existing: AgentAuthorization = serde_json::from_value(json!({
+            "id":"existing", "authorizer_person_id":"person", "responsible_person_id":"person",
+            "subject_kind":"agent", "subject_id":"agent", "client_id":"client",
+            "scope":{"kind":"task", "project_id":"project", "work_item_id":"work"},
+            "actions":["inspect","claim_coordination","start_work"], "status":"active",
+            "verifiable_capabilities":[], "self_reported_skill_hints":[], "created_at_ms":100,
+            "expires_at_ms":200, "binding_id":"binding"
+        }))
+        .unwrap();
+        let mut proposed = existing.clone();
+        proposed.actions = BTreeSet::from([AuthorizedAction::ProposePlanning]);
+        assert!(!authorization_actions_overlap(&existing, &proposed));
+        proposed.actions.insert(AuthorizedAction::Inspect);
+        assert!(authorization_actions_overlap(&existing, &proposed));
+        existing.actions = BTreeSet::from([AuthorizedAction::ClaimCoordination]);
+        for alias in [
+            AuthorizedAction::AcceptResponsibility,
+            AuthorizedAction::OccupyCollaboratively,
+        ] {
+            proposed.actions = BTreeSet::from([alias]);
+            assert!(authorization_actions_overlap(&existing, &proposed));
+        }
     }
 }
