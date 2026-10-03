@@ -43,6 +43,9 @@ pub fn tmcp_actions_for_authorized(action: AuthorizedAction) -> BTreeSet<Action>
             // TMCP scope; mapping alone never sets that flag.
             out.insert(ReviewDecide);
         }
+        AuthorizedAction::ProposePlanning => {
+            out.insert(PlanningPropose);
+        }
         AuthorizedAction::ManageAuthorization => {}
     }
     out
@@ -124,6 +127,77 @@ fn install_delegation(auth: &mut ReaderAuthority, chosen: Option<&ReadDelegation
             .map(|candidate| candidate.actions.clone())
             .unwrap_or_default(),
     );
+}
+
+/// Suggestions are inert, but an Agent must have one live delegation covering
+/// every affected published task. Separate grants cannot synthesize authority.
+pub(crate) async fn authorize_planning_suggestion(
+    tx: &tokio_postgres::Transaction<'_>,
+    auth: &mut ReaderAuthority,
+    project_id: &str,
+    affected_work_keys: &[String],
+    now_ms: i64,
+) -> PgResult<()> {
+    if !actor_requires_explicit_delegation(&auth.actor_kind) {
+        return crate::workstream_auth::authorize_domain_action(
+            auth,
+            Action::PlanningPropose,
+            None,
+            None,
+        );
+    }
+    // Match the suggestion codec's bound before issuing per-task lookups.
+    if affected_work_keys.is_empty() || affected_work_keys.len() > 256 {
+        return Err(PgError::Forbidden);
+    }
+    crate::tx::bind_workstream_scope(tx, &auth.tenant_id, project_id).await?;
+    let mut tasks = Vec::new();
+    for work in affected_work_keys.iter().collect::<BTreeSet<_>>() {
+        let row = tx
+            .query_opt(
+                "SELECT o.workstream_id FROM awr_team.workstream_ownership o
+             JOIN awr_team.workstream_snapshot_ownership s
+               ON s.tenant_id=o.tenant_id AND s.project_id=o.project_id AND s.work_id=o.work_id
+              AND s.scope_id='main' AND s.workstream_id=o.workstream_id
+              AND s.ownership_version=o.ownership_version
+             JOIN awr_team.work_contracts c
+               ON c.tenant_id=s.tenant_id AND c.project_id=s.project_id
+              AND c.snapshot_id=s.snapshot_id AND c.scope_id=s.scope_id AND c.work_id=s.work_id
+             WHERE o.tenant_id=$1 AND o.project_id=$2 AND o.work_id=$3
+               AND s.snapshot_id=$4 AND c.definition_state='enabled'
+             FOR SHARE OF o",
+                &[&auth.tenant_id, &project_id, &work.as_str(), &auth.snapshot],
+            )
+            .await?
+            .ok_or(PgError::Forbidden)?;
+        let stream: awr_core::Id = row
+            .get::<_, String>(0)
+            .parse()
+            .map_err(|_| PgError::Forbidden)?;
+        auth.access
+            .authorize(&auth.catalog, stream, awr_core::WorkstreamAction::Write)
+            .map_err(|_| PgError::Forbidden)?;
+        tasks.push((work, stream));
+    }
+    let candidates = effective_delegations(tx, auth, project_id, None, now_ms).await?;
+    let chosen = candidates.iter().find(|candidate| {
+        candidate.actions.contains(&Action::PlanningPropose)
+            && tasks.iter().all(|(work, stream)| {
+                candidate
+                    .grant
+                    .covers_task(project_id, work, Some(&stream.to_string()))
+            })
+    });
+    install_delegation(auth, chosen);
+    for (work, stream) in tasks {
+        crate::workstream_auth::authorize_domain_action(
+            auth,
+            Action::PlanningPropose,
+            Some(stream),
+            Some(work),
+        )?;
+    }
+    Ok(())
 }
 
 async fn effective_delegations(
@@ -489,6 +563,35 @@ pub(crate) fn execution_side_effect_permitted(auth: &ReaderAuthority) -> bool {
 mod tests {
     use super::*;
     use awr_core::AuthorizationScope;
+
+    #[test]
+    fn planning_suggestion_is_explicit_and_never_plan_or_execution_power() {
+        assert_eq!(
+            tmcp_actions_for_authorized(AuthorizedAction::ProposePlanning),
+            BTreeSet::from([Action::PlanningPropose]),
+        );
+        let start = tmcp_actions_for_authorized(AuthorizedAction::StartWork);
+        assert!(!start.contains(&Action::PlanningPropose));
+        for role in RoleTemplate::all() {
+            let effective = intersect_delegation_with_template(
+                role,
+                &tmcp_actions_for_authorized(AuthorizedAction::ProposePlanning),
+            );
+            assert!(effective.is_subset(&BTreeSet::from([Action::PlanningPropose])));
+        }
+        assert_eq!(
+            AuthorizedAction::parse("propose_planning").unwrap(),
+            AuthorizedAction::ProposePlanning
+        );
+        assert_eq!(
+            AuthorizedAction::ProposePlanning.as_str(),
+            "propose_planning"
+        );
+        assert_eq!(
+            serde_json::to_value(AuthorizedAction::ProposePlanning).unwrap(),
+            "propose_planning"
+        );
+    }
 
     #[test]
     fn admin_agent_only_gets_explicit_work_slice() {

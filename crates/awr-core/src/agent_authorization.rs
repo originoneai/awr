@@ -38,6 +38,8 @@ pub enum AuthorizedAction {
     OccupyCollaboratively,
     ClaimCoordination,
     StartWork,
+    /// Submit inert suggestions for explicitly covered work; no plan mutation.
+    ProposePlanning,
     Review,
     ManageAuthorization,
 }
@@ -50,6 +52,7 @@ impl AuthorizedAction {
             Self::OccupyCollaboratively => "occupy_collaboratively",
             Self::ClaimCoordination => "claim_coordination",
             Self::StartWork => "start_work",
+            Self::ProposePlanning => "propose_planning",
             Self::Review => "review",
             Self::ManageAuthorization => "manage_authorization",
         }
@@ -62,6 +65,7 @@ impl AuthorizedAction {
             "occupy_collaboratively" => Ok(Self::OccupyCollaboratively),
             "claim_coordination" => Ok(Self::ClaimCoordination),
             "start_work" => Ok(Self::StartWork),
+            "propose_planning" => Ok(Self::ProposePlanning),
             "review" => Ok(Self::Review),
             "manage_authorization" => Ok(Self::ManageAuthorization),
             _ => Err(Error::InvalidInput(format!(

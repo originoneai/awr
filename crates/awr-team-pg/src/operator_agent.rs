@@ -90,6 +90,7 @@ impl AgentProvisionPlan {
                     AuthorizedAction::Inspect
                         | AuthorizedAction::ClaimCoordination
                         | AuthorizedAction::StartWork
+                        | AuthorizedAction::ProposePlanning
                         | AuthorizedAction::Review
                 )
             })

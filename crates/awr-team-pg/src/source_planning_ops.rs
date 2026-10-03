@@ -251,8 +251,26 @@ impl SourceStore {
         // after rolling back to a savepoint. Repeatable read would keep the
         // pre-insert snapshot and could not replay the concurrent reserve.
         let mut tx = client.transaction().await?;
-        let auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
-        authorize_domain_action(&auth, action, None, None)?;
+        let mut auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
+        if action == awr_team::Action::PlanningPropose {
+            let affected: Vec<String> = serde_json::from_value(
+                extra
+                    .get("affected_work_keys")
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+            )
+            .map_err(|_| PgError::Forbidden)?;
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            crate::delegation_auth::authorize_planning_suggestion(
+                &tx, &mut auth, project_id, &affected, now_ms,
+            )
+            .await?;
+        } else {
+            authorize_domain_action(&auth, action, None, None)?;
+        }
         bind_workstream_scope(&tx, tenant_id, project_id).await?;
         let existing = tx
             .query_opt(
@@ -472,7 +490,7 @@ impl SourceStore {
                 "planning.propose",
                 &hash,
                 &domain_id,
-                &json!({}),
+                &json!({"affected_work_keys": req.affected_work_keys}),
             )
             .await?;
         let domain_id = match reserved {

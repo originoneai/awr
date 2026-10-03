@@ -160,6 +160,44 @@ async fn snapshot(admin: &Client) -> Value {
 }
 
 #[tokio::test]
+async fn explicit_suggestion_only_operator_plan_admits_bounded_native_suggestion() {
+    let (_guard, mut admin, db, _) = setup().await;
+    stage(&mut admin).await;
+    let mut provision = plan(&admin).await;
+    provision.authorization.actions =
+        std::collections::BTreeSet::from([AuthorizedAction::ProposePlanning]);
+    let receipt = apply(&mut admin, &provision, "suggestion-only-provision").await;
+    assert_eq!(receipt["execution_authorized"], false);
+    let store =
+        awr_team_pg::SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let request = awr_team_pg::PlanningSuggestRequest {
+        protocol_version: 1,
+        request_id: "native-bounded-suggestion".into(),
+        rationale: "A prerequisite needs planner review.".into(),
+        affected_work_keys: vec!["a".into()],
+        proposed_notes: json!({"reason":"dependency"}),
+        author_person_id: None,
+    };
+    let result = store
+        .planning_suggest(TENANT, PROJECT, TOKEN, &request)
+        .await
+        .unwrap();
+    assert_eq!(result["result"]["claimable"], false);
+    assert_eq!(result["result"]["adds_formal_work"], false);
+    let sibling = awr_team_pg::PlanningSuggestRequest {
+        request_id: "native-uncovered-suggestion".into(),
+        affected_work_keys: vec!["c".into()],
+        ..request
+    };
+    assert!(matches!(
+        store
+            .planning_suggest(TENANT, PROJECT, TOKEN, &sibling)
+            .await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
 async fn additional_workstream_authorization_preserves_history_and_is_discoverable() {
     let (_g, mut admin, _, store) = setup().await;
     stage(&mut admin).await;
