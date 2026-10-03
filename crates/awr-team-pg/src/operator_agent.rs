@@ -388,7 +388,7 @@ impl OperatorAgent {
             .start()
             .await?;
         require_owner_project(&tx, &plan.tenant_id, &plan.project_id, false).await?;
-        let state = state(&tx, &plan.provision_plan()).await?;
+        let state = authorization_state(&tx, &plan.provision_plan()).await?;
         let now = clock(&tx).await?;
         validate_renewal(plan, &state, now, false)?;
         let previous_lifetime_ms = predecessor_lifetime(plan, &state)?;
@@ -471,7 +471,7 @@ impl OperatorAgent {
             .ok_or(PgError::Forbidden)?;
         }
         let provision = plan.provision_plan();
-        let before = state(&tx, &provision).await?;
+        let before = authorization_state(&tx, &provision).await?;
         if hash(&before)? != expected_state || hash(&json!(plan))? != expected_plan {
             return Err(PgError::PreconditionsChanged);
         }
@@ -492,7 +492,7 @@ impl OperatorAgent {
         if issued.replayed {
             return Err(PgError::IdempotencyConflict);
         }
-        let mut after = state(&tx, &provision).await?;
+        let mut after = authorization_state(&tx, &provision).await?;
         if validate_renewal(plan, &after, clock(&tx).await?, true).is_err() {
             return Err(PgError::PreconditionsChanged);
         }
@@ -869,6 +869,9 @@ fn validate_renewal(
     for stored in auths {
         let stored: AgentAuthorization =
             serde_json::from_value(stored.clone()).map_err(|_| invalid())?;
+        if !authorization_scopes_overlap(&stored.scope, &a.scope, s) {
+            continue;
+        }
         if stored.id != a.id
             && stored.id != previous.id
             && stored.created_at_ms >= previous.created_at_ms
