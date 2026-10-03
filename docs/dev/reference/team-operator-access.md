@@ -173,9 +173,11 @@ Every authority-bearing field must exactly match the predecessor: authorizer and
 responsible person, subject kind/ID, client, binding, session/model, scope,
 actions, capabilities, hints, parent and maintainer. Its finite lifetime duration
 must equal the predecessor's duration. The predecessor must already be expired
-and must not be revoked, and it must be the latest authorization in that
-subject/client history. A later successor, including one later revoked, prevents
-renewal from an older grant. The active project, person, Agent, binding,
+and must not be revoked, and it must be the latest authorization with overlapping
+scope and effective product actions in that subject/client history. A later
+overlapping successor, including one later revoked, prevents renewal from an
+older grant. Independently scoped or action-disjoint authorizations remain
+unchanged and do not prevent renewal. The active project, person, Agent, binding,
 membership, grant, source scope and credential must still be valid. Renewal
 inserts the successor and leaves the predecessor and binding unchanged.
 
@@ -190,7 +192,8 @@ awr-server access agent-renew-outcome --tenant-id tenant-a --project-id project-
 After an uncertain result, query `agent-renew-outcome` before retrying the exact
 plan, request ID and digests. A changed client, binding, scope, action set,
 lifetime, revoked predecessor, stale preview, or another effective authorization
-is rejected. This owner recovery path does not rotate credentials, revive a
+with overlapping scope and product actions is rejected. This owner recovery path
+does not rotate credentials, revive a
 revoked authorization, grant new authority, dispatch an Agent, or prove native
 client execution.
 
@@ -213,12 +216,18 @@ Agent, person, project membership, credential, and target grant must all remain
 active. Requested `inspect`, `claim_coordination`, `start_work`, `propose_planning`, and `review`
 actions must fit the current membership and exact target grant; management,
 attestation, or reconciliation grants are refused. An effective authorization
-for the same Agent/client cannot already cover the same workstream or task, a
-task in the proposed workstream, or the proposed task's workstream.
+for the same Agent/client cannot already cover overlapping scope **and** product
+actions. Scope overlaps include the same workstream or task, a task in the
+proposed workstream, or the proposed task's workstream. Product action sets are
+compared after mapping delegated actions, so aliases cannot bypass this check.
+A `propose_planning`-only workstream grant can therefore coexist with a task's
+development grant without changing that task's execution authority, identity,
+credential, or expiry. Any shared product action, including a partially
+overlapping set, is refused.
 If an effective task authorization's current and snapshot ownership is missing,
 disabled, or diverged, a proposed workstream authorization is refused because
-scope separation cannot be proved. Expired and revoked authorization history
-does not create an overlap.
+scope separation cannot be proved for overlapping actions. Expired and revoked
+authorization history does not create an effective overlap.
 
 ```sh
 awr-server access agent-authorize-preview --input /secure/agent-authorization.json
