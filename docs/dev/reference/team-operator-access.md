@@ -109,7 +109,7 @@ second plan. The initial authorization must have:
   capabilities or skill hints. `model_id` remains optional metadata.
 - Only `Task` or `Workstream` scope in the current source catalog. Task scope
   requires an enabled current contract and matching current/snapshot ownership.
-- Only `inspect`, `claim_coordination`, `start_work` and `review`, covered by the
+- Only `inspect`, `claim_coordination`, `start_work`, `propose_planning` and `review`, covered by the
   live membership and read/write grant. Other WS-016 actions lack a native
   product adapter and are refused here, as are special manage/attest/reconcile
   grants.
@@ -137,7 +137,16 @@ needs to discover and choose any task in a workstream. Provisioning must be
 shipped with this read-scope enforcement; grants alone do not narrow delegation.
 
 A developer normally uses `inspect`, `claim_coordination` and `start_work` with
-a developer membership. Agent review additionally requires membership
+a developer membership. Add `propose_planning` explicitly when the Agent should
+submit suggestions about its assigned work. Each suggestion must name 1–256
+enabled published tasks covered by **one** live delegation and writable client
+workstream grants. Empty, unknown or uncovered affected work is refused; separate
+task grants are never combined. Reservation, replay and domain submission all
+recheck live authority, including revocation, expiry and child narrowing.
+Suggestions remain unclaimable and cannot edit drafts, approve, publish, change
+live dependencies or authorize execution. Existing delegations gain no new
+permission. Deploy a compatible server before issuing the new action; older
+servers do not understand it. Agent review additionally requires membership
 `agent_review=true` and delegated `review`. Review currently needs a durable
 session, so a reviewer that creates its own session also needs `start_work`;
 that action includes execution/delivery permissions and is **not** review-only
@@ -201,7 +210,7 @@ fingerprint and are preserved, but do not defeat that active-binding check.
 The target workstream must be active in the current source snapshot. A task
 scope must name an enabled task whose live ownership matches that snapshot. The
 Agent, person, project membership, credential, and target grant must all remain
-active. Requested `inspect`, `claim_coordination`, `start_work`, and `review`
+active. Requested `inspect`, `claim_coordination`, `start_work`, `propose_planning`, and `review`
 actions must fit the current membership and exact target grant; management,
 attestation, or reconciliation grants are refused. An effective authorization
 for the same Agent/client cannot already cover the same workstream or task, a

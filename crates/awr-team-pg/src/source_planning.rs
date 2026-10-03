@@ -210,11 +210,14 @@ impl SourceStore {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
-        crate::delegation_auth::resolve_agent_delegation(
-            &tx, &mut auth, project_id, None, None, None, now_ms,
+        crate::delegation_auth::authorize_planning_suggestion(
+            &tx,
+            &mut auth,
+            project_id,
+            &submit.affected_work_keys,
+            now_ms,
         )
         .await?;
-        authorize_domain_action(&auth, awr_team::Action::PlanningPropose, None, None)?;
         let scope = crate::workstream_auth::authority_scope(&auth, None, None);
         refuse_reader_suggestion_write(&scope).map_err(map_team)?;
         if SUGGESTION_CLAIMABLE || SUGGESTION_ADDS_FORMAL_WORK {
