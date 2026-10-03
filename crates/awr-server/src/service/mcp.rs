@@ -797,6 +797,58 @@ mod tests {
         assert!(internal.get("next_step").is_none());
     }
 
+    #[tokio::test]
+    async fn completion_rejections_are_actionable_http_conflicts_and_mcp_tool_errors() {
+        for (error, code, inspection) in [
+            (
+                PgError::EvidenceInvalid,
+                "EvidenceInvalid",
+                "evidence.inspect",
+            ),
+            (PgError::ReviewRequired, "ReviewRequired", "review.inspect"),
+            (
+                PgError::CompletionRejected,
+                "CompletionRejected",
+                "work.prepare",
+            ),
+            (PgError::PolicyDowngrade, "PolicyDowngrade", "work.prepare"),
+        ] {
+            let http = error_response(error);
+            assert_eq!(http.status(), StatusCode::CONFLICT, "{code}");
+            let bytes = axum::body::to_bytes(http.into_body(), 1024).await.unwrap();
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["code"], code);
+            assert_eq!(body.as_object().unwrap().len(), 3);
+            assert!(body["next_step"].as_str().unwrap().contains(inspection));
+            assert!(bytes.len() < 700, "guidance must stay bounded: {code}");
+            assert!(!body.to_string().contains("outcome unavailable"));
+
+            let mcp = CallToolResult::structured_error(body.clone());
+            assert_eq!(mcp.is_error, Some(true));
+            assert_eq!(mcp.structured_content, Some(body));
+        }
+    }
+
+    #[test]
+    fn infrastructure_failure_retains_unknown_outcome_recovery_without_private_details() {
+        let (status, body) = public_error(PgError::SchemaIncompatible(
+            "private-source-and-credential-sentinel".into(),
+        ));
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body, unavailable_value());
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap()
+                .contains("inspect a command")
+        );
+        assert!(
+            !body
+                .to_string()
+                .contains("private-source-and-credential-sentinel")
+        );
+    }
+
     #[test]
     fn input_guidance_names_the_rejected_field_and_next_action() {
         for (error, message, action) in [

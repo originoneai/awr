@@ -953,6 +953,38 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
                 "next_step":"raise max_context_bytes, fetch source.content/artifact.content for missing refs, or restore authorized published specs"
             }),
         ),
+        PgError::EvidenceInvalid => (
+            StatusCode::CONFLICT,
+            json!({
+                "code":"EvidenceInvalid",
+                "message":"evidence does not satisfy the current work contract or execution binding",
+                "next_step":"Inspect evidence.inspect and execution.inspect for this work. Correct the report, artifact or execution binding before submitting new evidence. If the original caller report has a scope violation, run a fresh correctly scoped execution; reconciliation does not erase that report. Do not retry unchanged completion arguments."
+            }),
+        ),
+        PgError::ReviewRequired => (
+            StatusCode::CONFLICT,
+            json!({
+                "code":"ReviewRequired",
+                "message":"a current authorized review is required",
+                "next_step":"Inspect review.inspect for the evidence and delivery head. Obtain the review required by the current contract; changed evidence or a changed head requires a fresh review. Retry completion only after the review is accepted."
+            }),
+        ),
+        PgError::CompletionRejected => (
+            StatusCode::CONFLICT,
+            json!({
+                "code":"CompletionRejected",
+                "message":"the completion gates are not satisfied",
+                "next_step":"Inspect work.prepare, evidence.inspect and review.inspect. Resolve failed or missing verification and acceptance gates, then submit matching evidence and review before retrying completion. Do not treat this rejection as an unknown outcome or downgrade the contract."
+            }),
+        ),
+        PgError::PolicyDowngrade => (
+            StatusCode::CONFLICT,
+            json!({
+                "code":"PolicyDowngrade",
+                "message":"the requested policy does not match the current completion contract",
+                "next_step":"Read the current contract in work.prepare and use its completion policy. Resolve its evidence and review requirements; do not replace them with a weaker policy or retry the unchanged request."
+            }),
+        ),
         PgError::Protocol(_) => (
             StatusCode::BAD_REQUEST,
             json!({"code":"InvalidInput","message":"query fields or bounds are invalid"}),
