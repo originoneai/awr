@@ -860,6 +860,153 @@ async fn expired_authorization_gets_immutable_digest_gated_successor_and_replays
 }
 
 #[tokio::test]
+async fn expired_renewal_ignores_newer_authorizations_in_disjoint_scopes() {
+    for renew_stream in [false, true] {
+        for other_stream in [false, true] {
+            let (_g, mut admin, _, store) = setup().await;
+            stage(&mut admin).await;
+            grant_second_stream(&admin).await;
+            let mut initial = plan(&admin).await;
+            if renew_stream {
+                initial.authorization.scope = AuthorizationScope::Workstream {
+                    project_id: PROJECT.into(),
+                    workstream_id: Id::from(1).to_string(),
+                };
+            }
+            apply(&mut admin, &initial, "agent-issue").await;
+            let renewal = expired_renewal_plan(&admin, &initial).await;
+            let other_scope = if other_stream {
+                AuthorizationScope::Workstream {
+                    project_id: PROJECT.into(),
+                    workstream_id: Id::from(2).to_string(),
+                }
+            } else {
+                AuthorizationScope::Task {
+                    project_id: PROJECT.into(),
+                    work_item_id: "b-private".into(),
+                }
+            };
+            let other = authorization_issue_plan(&admin, "other-scope", other_scope).await;
+            let other_preview = OperatorAgent::authorize_preview(&mut admin, &other)
+                .await
+                .unwrap();
+            OperatorAgent::authorize_apply(
+                &mut admin,
+                &other,
+                "authorize-other-scope",
+                other_preview["state_digest"].as_str().unwrap(),
+                other_preview["plan_digest"].as_str().unwrap(),
+            )
+            .await
+            .unwrap();
+            let preserved = preserved_authority(&admin).await;
+            let before = snapshot(&admin).await;
+            let preview = OperatorAgent::renew_preview(&mut admin, &renewal)
+                .await
+                .unwrap();
+            assert_eq!(snapshot(&admin).await, before);
+            assert_eq!(preview["previous_lifetime_ms"], "3600000");
+            let applied = OperatorAgent::renew_apply(
+                &mut admin,
+                &renewal,
+                "renew-independent-scope",
+                preview["state_digest"].as_str().unwrap(),
+                preview["plan_digest"].as_str().unwrap(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(preserved_authority(&admin).await, preserved);
+            let other_after: Value = admin
+                .query_one(
+                    "SELECT body_json FROM awr_team.agent_authorizations WHERE id=$1",
+                    &[&other.authorization.id],
+                )
+                .await
+                .unwrap()
+                .get(0);
+            assert_eq!(other_after, json!(other.authorization));
+            assert_eq!(prepare(&store, TOKEN, "a").await["data"]["work_id"], "a");
+            assert_eq!(
+                prepare(&store, TOKEN, "b-private").await["data"]["work_id"],
+                "b-private"
+            );
+            let after = snapshot(&admin).await;
+            let replay = OperatorAgent::renew_apply(
+                &mut admin,
+                &renewal,
+                "renew-independent-scope",
+                preview["state_digest"].as_str().unwrap(),
+                preview["plan_digest"].as_str().unwrap(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(replay["replayed"], true);
+            assert_eq!(replay["receipt"], applied["receipt"]);
+            assert_eq!(snapshot(&admin).await, after);
+        }
+    }
+}
+
+#[tokio::test]
+async fn renewal_rejects_newer_overlapping_authorization_even_after_revocation() {
+    for overlap_stream in [false, true] {
+        let (_g, mut admin, db, _) = setup().await;
+        stage(&mut admin).await;
+        let initial = plan(&admin).await;
+        apply(&mut admin, &initial, "agent-issue").await;
+        let renewal = expired_renewal_plan(&admin, &initial).await;
+        let scope = if overlap_stream {
+            AuthorizationScope::Workstream {
+                project_id: PROJECT.into(),
+                workstream_id: Id::from(1).to_string(),
+            }
+        } else {
+            initial.authorization.scope.clone()
+        };
+        let newer = authorization_issue_plan(&admin, "newer-overlapping", scope).await;
+        let preview = OperatorAgent::authorize_preview(&mut admin, &newer)
+            .await
+            .unwrap();
+        OperatorAgent::authorize_apply(
+            &mut admin,
+            &newer,
+            "authorize-newer-overlapping",
+            preview["state_digest"].as_str().unwrap(),
+            preview["plan_digest"].as_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        let before = snapshot(&admin).await;
+        assert!(matches!(
+            OperatorAgent::renew_preview(&mut admin, &renewal).await,
+            Err(PgError::Forbidden)
+        ));
+        assert_eq!(snapshot(&admin).await, before);
+        let auth =
+            AuthorizationStore::from_config(common::with_app_role(&common::test_config(), &db));
+        auth.revoke(
+            TENANT,
+            PROJECT,
+            &RevokeAuthorizationRequest {
+                request_key: "revoke-newer-overlapping".into(),
+                authorization_id: newer.authorization.id,
+                revoked_by: newer.authorization.responsible_person_id,
+                revoked_at_ms: newer.authorization.created_at_ms + 1,
+                reason: "Stop overlapping authority".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let revoked = snapshot(&admin).await;
+        assert!(matches!(
+            OperatorAgent::renew_preview(&mut admin, &renewal).await,
+            Err(PgError::Forbidden)
+        ));
+        assert_eq!(snapshot(&admin).await, revoked);
+    }
+}
+
+#[tokio::test]
 async fn renewal_rejects_revoked_or_changed_authority_and_stale_preview() {
     let (_g, mut admin, db, _) = setup().await;
     stage(&mut admin).await;
