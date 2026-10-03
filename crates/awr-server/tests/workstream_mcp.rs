@@ -109,6 +109,68 @@ fn raw(server: &Server, token: &str) -> reqwest::RequestBuilder {
 }
 
 #[tokio::test]
+async fn rejected_completion_has_http_mcp_parity_and_never_completes_work() {
+    let (_guard, admin, _db, store) = setup().await;
+    enable_writes(&admin).await;
+    let before = prepare(&store, A, "a").await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+
+    for (request, requested_policy, code) in [
+        (
+            "completion-policy-rejected",
+            Some("ordinary_confirm"),
+            "PolicyDowngrade",
+        ),
+        ("completion-evidence-rejected", None, "EvidenceInvalid"),
+    ] {
+        let mut args = json!({
+            "session_id":"session-a", "expected_session_version":"1",
+            "evidence_id":"missing-evidence", "context_complete":true
+        });
+        if let Some(policy) = requested_policy {
+            args["requested_policy"] = json!(policy);
+        }
+        let envelope =
+            serde_json::to_value(fixture::command(&before, request, "work.complete", args))
+                .unwrap();
+        let http = http()
+            .post(format!("{}/one/command", server.url))
+            .bearer_auth(A)
+            .json(&envelope)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(http.status(), reqwest::StatusCode::CONFLICT, "{code}");
+        let body = http.json::<Value>().await.unwrap();
+        assert_eq!(body["code"], code);
+        assert!(body["next_step"].as_str().unwrap().len() > 0);
+        assert!(body.to_string().len() < 700);
+
+        // The identical rejected request remains a rejection across transports;
+        // it must not acquire a success receipt or be presented as unavailable.
+        let mcp = call(&client, "awr_team_command", envelope.clone(), true).await;
+        assert_eq!(mcp, body);
+        assert_eq!(
+            call(&client, "awr_team_command", envelope, true).await,
+            body
+        );
+    }
+
+    let after = prepared(&client).await;
+    assert_eq!(after["project_revision"], before["project_revision"]);
+    let count: i64 = admin.query_one(
+        "SELECT count(*) FROM awr_team.completion_receipts WHERE tenant_id=$1 AND project_id=$2 AND work_id='a'",
+        &[&TENANT, &PROJECT],
+    ).await.unwrap().get(0);
+    assert_eq!(
+        count, 0,
+        "a diagnostic must not weaken the completion gates"
+    );
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn numeric_command_versions_are_rejected_without_mutation_and_strings_succeed() {
     let (_guard, admin, _, store) = setup().await;
     enable_writes(&admin).await;
