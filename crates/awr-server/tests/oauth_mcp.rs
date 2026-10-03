@@ -377,3 +377,112 @@ async fn exchange_checks_all_bindings_and_expired_underlying_credentials_stop_ne
         401
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn durable_restart_keeps_identity_and_live_revocation_without_new_consent() {
+    let (_guard, admin, db, store) = setup().await;
+    let mut random = [0u8; 16];
+    getrandom::fill(&mut random).unwrap();
+    let directory = std::env::temp_dir().join(format!(
+        "awr-durable-http-{:x}",
+        u128::from_be_bytes(random)
+    ));
+    let server = start_with_directory(store, true, Some(directory.clone())).await;
+    let pending = begin(&server, "Durable connection fixture").await;
+    assert!(
+        pending
+            .html
+            .contains("Approved connections survive service restarts.")
+    );
+    let res = consent(&server, &pending, "cancel", "")
+        .send()
+        .await
+        .unwrap();
+    completion_callback(res).await;
+    let (client, original) = tokens(&server, A).await;
+    server.shutdown().await;
+    let store =
+        awr_team_pg::WorkstreamReadStore::from_config(common::with_db(&common::test_config(), &db));
+    let server = start_with_directory(store, true, Some(directory.clone())).await;
+    let access = original["access_token"].as_str().unwrap();
+    assert_eq!(
+        initialize(&server, "one", access)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    assert_eq!(
+        initialize(&server, "other", access)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    let body = encode(&[
+        ("grant_type", "refresh_token"),
+        ("client_id", &client),
+        ("refresh_token", original["refresh_token"].as_str().unwrap()),
+    ]);
+    for (revoke, restore) in [
+        (
+            "UPDATE awr_team.workstream_grants SET can_read=false WHERE client_id='cli-a'",
+            "UPDATE awr_team.workstream_grants SET can_read=true WHERE client_id='cli-a'",
+        ),
+        (
+            "UPDATE awr_team.credentials SET expires_at=clock_timestamp()-interval '1 second' WHERE id='reader-a'",
+            "UPDATE awr_team.credentials SET expires_at=NULL WHERE id='reader-a'",
+        ),
+        (
+            "UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='reader-a'",
+            "UPDATE awr_team.credentials SET revoked_at=NULL WHERE id='reader-a'",
+        ),
+    ] {
+        admin.batch_execute(revoke).await.unwrap();
+        assert_eq!(
+            initialize(&server, "one", access)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            401
+        );
+        let res = exchange(&server, body.clone()).send().await.unwrap();
+        assert_eq!(res.status(), 400);
+        assert_eq!(res.json::<Value>().await.unwrap()["error"], "invalid_grant");
+        admin.batch_execute(restore).await.unwrap();
+    }
+    let res = exchange(&server, body.clone()).send().await.unwrap();
+    assert_eq!(res.status(), 200);
+    let rotated: Value = res.json().await.unwrap();
+    server.shutdown().await;
+    let store =
+        awr_team_pg::WorkstreamReadStore::from_config(common::with_db(&common::test_config(), &db));
+    let server = start_with_directory(store, true, Some(directory.clone())).await;
+    assert_eq!(
+        initialize(&server, "one", rotated["access_token"].as_str().unwrap())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    assert_eq!(exchange(&server, body).send().await.unwrap().status(), 400);
+    server.shutdown().await;
+    let store =
+        awr_team_pg::WorkstreamReadStore::from_config(common::with_db(&common::test_config(), &db));
+    let server = start_with_directory(store, true, Some(directory.clone())).await;
+    assert_eq!(
+        initialize(&server, "one", rotated["access_token"].as_str().unwrap())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    server.shutdown().await;
+    std::fs::remove_dir_all(directory).unwrap();
+}

@@ -32,6 +32,7 @@ project_id="project"
         allowed_web_origins: vec![],
         oauth: Some(OAuthConfig {
             issuer: ISSUER.into(),
+            state_directory: None,
         }),
         projects: vec![ProjectBinding {
             key: "one".into(),
@@ -53,9 +54,15 @@ project_id="project"
     ] {
         c.oauth = Some(OAuthConfig {
             issuer: issuer.into(),
+            state_directory: None,
         });
         assert!(c.validate().is_err(), "{issuer}");
     }
+    c.oauth = Some(OAuthConfig {
+        issuer: ISSUER.into(),
+        state_directory: Some("relative-state".into()),
+    });
+    assert!(c.validate().is_err());
 }
 #[tokio::test]
 async fn discovery_is_opt_in_and_challenges_bind_exact_project_metadata() {

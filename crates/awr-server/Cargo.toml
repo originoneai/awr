@@ -17,12 +17,17 @@ serde_json.workspace = true
 serde.workspace = true
 toml.workspace = true
 getrandom = "0.4"
+ring = "0.17.14"
+zeroize = "1.9"
 base64.workspace = true
 sha2.workspace = true
 url.workspace = true
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 rmcp = { version = "3.2.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [features]
 pg-tests = ["awr-team-pg/pg-tests"]

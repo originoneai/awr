@@ -21,6 +21,13 @@ impl Drop for Server {
     }
 }
 pub async fn start(store: WorkstreamReadStore, enabled: bool) -> Server {
+    start_with_directory(store, enabled, None).await
+}
+pub async fn start_with_directory(
+    store: WorkstreamReadStore,
+    enabled: bool,
+    directory: Option<std::path::PathBuf>,
+) -> Server {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let config = ServiceConfig {
@@ -30,6 +37,7 @@ pub async fn start(store: WorkstreamReadStore, enabled: bool) -> Server {
         allowed_web_origins: vec![ISSUER.into()],
         oauth: enabled.then(|| OAuthConfig {
             issuer: ISSUER.into(),
+            state_directory: directory,
         }),
         projects: vec![
             ProjectBinding {
@@ -62,6 +70,10 @@ pub fn http() -> reqwest::Client {
         .unwrap()
 }
 impl Server {
+    pub async fn shutdown(mut self) {
+        self.task.abort();
+        let _ = (&mut self.task).await;
+    }
     pub fn get(&self, path: &str) -> reqwest::RequestBuilder {
         http()
             .get(format!("{}{path}", self.url))
