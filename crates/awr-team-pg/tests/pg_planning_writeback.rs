@@ -22,6 +22,8 @@ fn draft(id: &str, deps: &[&str], state: DraftDefinitionState) -> TaskDraft {
         required_dependencies: deps.iter().map(|s| (*s).into()).collect(),
         completion_policy: "independent_review".into(),
         dependency_acceptance: None,
+        hard_rules: None,
+        verification_requirements: None,
         definition_state: state,
         workstream: None,
         split_from: None,
@@ -647,6 +649,172 @@ async fn activated_contract(admin: &tokio_postgres::Client, key: &str) -> awr_te
     let contract: awr_team::WorkContract = serde_json::from_value(row.get(0)).unwrap();
     assert_eq!(contract.hash().unwrap(), row.get::<_, String>(1));
     contract
+}
+
+#[tokio::test]
+async fn reviewed_context_lists_roundtrip_through_pg_to_real_work_prepare() {
+    use awr_team::{PLANNING_CODEC, PLANNING_CODEC_V3, planning_codec_for_changes};
+    use awr_team_pg::WorkstreamReadStore;
+    use serde_json::{Value, json};
+
+    let (_g, admin, db, store) = store_and_roles().await;
+    let read = WorkstreamReadStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let tmp = tempfile_ledger();
+    let mut task = draft("SHARED-1", &[], DraftDefinitionState::Enabled);
+    task.workstream = Some("alpha".into());
+    task.hard_rules = Some(vec!["Preserve recorded history".into()]);
+    task.verification_requirements = Some(vec!["Run persistence regressions".into()]);
+    let original = task.clone();
+    let mut legacy_before = task.clone();
+    legacy_before.hard_rules = None;
+    legacy_before.verification_requirements = None;
+    let mut legacy_after = legacy_before.clone();
+    legacy_after.title = "Renamed shared work".into();
+    let mut replaced = task.clone();
+    replaced.hard_rules = Some(vec!["Preserve all issue identities".into()]);
+    replaced.verification_requirements = Some(vec!["Verify API and process reload".into()]);
+    let mut cleared = replaced.clone();
+    cleared.hard_rules = Some(vec![]);
+    cleared.verification_requirements = Some(vec![]);
+
+    for (index, change, expected, codec) in [
+        (
+            0,
+            DraftChange {
+                op: DraftOpKind::CreateTask,
+                before: None,
+                after: task,
+            },
+            original.clone(),
+            PLANNING_CODEC_V3,
+        ),
+        (
+            1,
+            DraftChange {
+                op: DraftOpKind::EditFields,
+                before: Some(legacy_before),
+                after: legacy_after,
+            },
+            original.clone(),
+            PLANNING_CODEC,
+        ),
+        (
+            2,
+            DraftChange {
+                op: DraftOpKind::EditFields,
+                before: Some(original),
+                after: replaced.clone(),
+            },
+            replaced.clone(),
+            PLANNING_CODEC_V3,
+        ),
+        (
+            3,
+            DraftChange {
+                op: DraftOpKind::EditFields,
+                before: Some(replaced),
+                after: cleared.clone(),
+            },
+            cleared,
+            PLANNING_CODEC_V3,
+        ),
+    ] {
+        let created =
+            store
+                .create_planning_candidate(
+                    TENANT,
+                    PROJECT,
+                    A,
+                    &DraftCandidateCreate {
+                        changes: vec![change],
+                        suggestion_ids: vec![],
+                        allowed_spec_roots: vec!["specs".into()],
+                        project_goal_keys: vec!["delivery".into()],
+                        self_approve_policy: Some(
+                            OrdinaryPlanningSelfApprovePolicy::ordinary_default(),
+                        ),
+                        author_person_id: Some("agent".into()),
+                        predetermined_candidate_id: None,
+                    },
+                )
+                .await
+                .unwrap();
+        let candidate_id = created["candidate_id"].as_str().unwrap();
+        let digest = created["candidate_digest"].as_str().unwrap();
+        let saved: Value = admin
+            .query_one(
+                "SELECT changes_json FROM awr_team.planning_candidates WHERE id=$1",
+                &[&candidate_id],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(
+            planning_codec_for_changes(&serde_json::from_value::<Vec<DraftChange>>(saved).unwrap()),
+            codec
+        );
+        let preview = store
+            .preview_planning_candidate(TENANT, PROJECT, A, candidate_id)
+            .await
+            .unwrap();
+        assert_eq!(preview["diff"]["candidate_digest"], digest);
+        let fields = preview["diff"]["field_diffs"].as_array().unwrap();
+        for field in ["hard_rules", "verification_requirements"] {
+            assert_eq!(fields.iter().any(|d| d["field"] == field), index != 1);
+        }
+        store
+            .approve_planning_candidate(TENANT, PROJECT, A, candidate_id, digest, Some("agent"))
+            .await
+            .unwrap();
+        let published = store
+            .publish_planning_candidate(TENANT, PROJECT, A, candidate_id, digest)
+            .await
+            .unwrap();
+        let request = WritebackActivateRequest {
+            request_id: format!("required-context-{index}"),
+            publish_receipt_id: published["receipt_id"].as_str().unwrap().into(),
+            source_root: tmp.root.clone(),
+            ledger_relative_path: "ledger.yaml".into(),
+            impact_proven: true,
+            stopped_work_ids: vec![],
+        };
+        store
+            .activate_planning_writeback(TENANT, PROJECT, A, &request)
+            .await
+            .unwrap();
+        let contract = activated_contract(&admin, "SHARED-1").await;
+        assert_eq!(contract.hard_rules, expected.hard_rules.unwrap());
+        assert_eq!(
+            contract.verification_requirements,
+            expected.verification_requirements.unwrap()
+        );
+        let prepared = prepare(&read, A, "SHARED-1").await;
+        assert_eq!(prepared["data"]["context_complete"], index != 3);
+        assert_eq!(
+            prepared["data"]["published_contract"]["hard_rules"],
+            json!(contract.hard_rules)
+        );
+        assert_eq!(
+            prepared["data"]["published_contract"]["verification_requirements"],
+            json!(contract.verification_requirements)
+        );
+        assert_eq!(prepared["data"]["execution_admission"], "not_evaluated");
+        if index == 3 {
+            assert!(
+                prepared["data"]["completeness_reasons"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("missing_hard_rules"))
+            );
+        }
+        assert_eq!(
+            store
+                .activate_planning_writeback(TENANT, PROJECT, A, &request)
+                .await
+                .unwrap()["already_recorded"],
+            true
+        );
+    }
 }
 
 #[tokio::test]

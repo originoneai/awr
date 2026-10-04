@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub const PLANNING_CODEC: &str = "awr-team-planning-v1";
 pub const PLANNING_CODEC_V2: &str = "awr-team-planning-v2";
+pub const PLANNING_CODEC_V3: &str = "awr-team-planning-v3";
 
 /// Suggestions never become claimable work and never enlarge the formal work
 /// denominator or mutate live deps/acceptance.
@@ -157,6 +158,20 @@ pub struct TaskDraft {
         deserialize_with = "crate::contract::present_modes"
     )]
     pub dependency_acceptance: Option<BTreeMap<String, crate::DependencyAcceptanceMode>>,
+    /// V3 only. Omission retains existing source constraints; a present list
+    /// replaces them through the reviewed candidate, including an explicit [].
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_contract_list"
+    )]
+    pub hard_rules: Option<Vec<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_contract_list"
+    )]
+    pub verification_requirements: Option<Vec<String>>,
     pub definition_state: DraftDefinitionState,
     /// Owning workstream external key. Required for CreateTask writeback so
     /// publish prep can bind the new task before authoritative source mutation.
@@ -166,6 +181,13 @@ pub struct TaskDraft {
     pub split_from: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub split_children: Vec<String>,
+}
+
+fn present_contract_list<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<Vec<String>>, D::Error> {
+    // A supplied null must not be interpreted as a legacy omission.
+    Vec::<String>::deserialize(d).map(Some)
 }
 
 impl TaskDraft {
@@ -187,6 +209,19 @@ impl TaskDraft {
             return Err(TeamError::InvalidInput(
                 "draft completion_policy required".into(),
             ));
+        }
+        for (field, entries) in [
+            ("hard_rules", &self.hard_rules),
+            ("verification_requirements", &self.verification_requirements),
+        ] {
+            if entries
+                .as_ref()
+                .is_some_and(|entries| entries.iter().any(|entry| entry.trim().is_empty()))
+            {
+                return Err(TeamError::InvalidInput(format!(
+                    "{field} entries must be nonblank strings"
+                )));
+            }
         }
         if let Some(modes) = &self.dependency_acceptance {
             if modes.is_empty()
@@ -668,12 +703,38 @@ pub fn build_candidate_diff(
         // None means retain, rather than remove, an existing policy.
         if after_modes.is_some() && before_modes != after_modes {
             field_diffs.push(FieldDiff {
-                work_key: key,
+                work_key: key.clone(),
                 field: "dependency_acceptance".into(),
                 before: before_modes.map(|m| json!(m)),
                 after: after_modes.map(|m| json!(m)),
             });
             review_requirements.insert("explicit_dependency_assurance_review".into());
+        }
+        for (field, before, after) in [
+            (
+                "hard_rules",
+                change.before.as_ref().and_then(|b| b.hard_rules.as_ref()),
+                change.after.hard_rules.as_ref(),
+            ),
+            (
+                "verification_requirements",
+                change
+                    .before
+                    .as_ref()
+                    .and_then(|b| b.verification_requirements.as_ref()),
+                change.after.verification_requirements.as_ref(),
+            ),
+        ] {
+            // None retains the source field, so it cannot preview a removal.
+            if after.is_some() && before != after {
+                field_diffs.push(FieldDiff {
+                    work_key: key.clone(),
+                    field: field.into(),
+                    before: before.map(|entries| json!(entries)),
+                    after: after.map(|entries| json!(entries)),
+                });
+                review_requirements.insert("execution_contract_review".into());
+            }
         }
         review_requirements.insert(change.after.completion_policy.clone());
         if change.after.definition_state == DraftDefinitionState::Cancelled
@@ -876,6 +937,14 @@ pub fn edit_candidate(
 /// original digest without a schema migration or a reinterpretation of policy.
 pub fn planning_codec_for_changes(changes: &[DraftChange]) -> &'static str {
     if changes.iter().any(|c| {
+        c.after.hard_rules.is_some()
+            || c.after.verification_requirements.is_some()
+            || c.before
+                .as_ref()
+                .is_some_and(|b| b.hard_rules.is_some() || b.verification_requirements.is_some())
+    }) {
+        PLANNING_CODEC_V3
+    } else if changes.iter().any(|c| {
         c.after.dependency_acceptance.is_some()
             || c.before
                 .as_ref()
@@ -903,6 +972,8 @@ mod tests {
             required_dependencies: deps.iter().map(|s| (*s).into()).collect(),
             completion_policy: "independent_review".into(),
             dependency_acceptance: None,
+            hard_rules: None,
+            verification_requirements: None,
             definition_state: DraftDefinitionState::Draft,
             workstream: None,
             split_from: None,
@@ -1039,6 +1110,106 @@ mod tests {
             edited.validate_structure().is_err(),
             "V1 must reject explicit V2 policy fields"
         );
+    }
+
+    #[test]
+    fn v2_wire_and_digest_material_do_not_gain_contract_fields() {
+        let mut task = draft("A", &["B"]);
+        task.dependency_acceptance = Some(dependency_modes());
+        let mut c = candidate(vec![DraftChange {
+            op: DraftOpKind::CreateTask,
+            before: None,
+            after: task,
+        }]);
+        c.codec = PLANNING_CODEC_V2.into();
+        let wire = serde_json::to_value(&c).unwrap();
+        let loaded: PlanningCandidate = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&loaded).unwrap(), wire);
+        let mut expected = loaded.digest_material().unwrap();
+        assert!(expected["changes"][0]["after"].get("hard_rules").is_none());
+        assert!(
+            expected["changes"][0]["after"]
+                .get("verification_requirements")
+                .is_none()
+        );
+        expected["changes"] = wire["changes"].clone();
+        assert_eq!(
+            loaded.candidate_digest().unwrap(),
+            contract_hash(&expected).unwrap()
+        );
+    }
+
+    #[test]
+    fn required_contract_fields_require_v3_preview_and_fresh_approval() {
+        let mut before = draft("A", &[]);
+        before.hard_rules = Some(vec!["Preserve compatibility".into()]);
+        before.verification_requirements = Some(vec!["Run regressions".into()]);
+        let changes = vec![DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(before.clone()),
+            after: before,
+        }];
+        let mut approved = candidate(changes.clone());
+        approved.codec = PLANNING_CODEC_V3.into();
+        let digest = approved.candidate_digest().unwrap();
+        approved.state = CandidateState::Approved;
+        approved.approval = Some(PlanningApproval {
+            approval_id: "ap-constraints".into(),
+            candidate_digest: digest.clone(),
+            approver_person_id: "person-maint".into(),
+            approver_actor_id: "actor-maint".into(),
+            self_approved: true,
+        });
+        let mut changes = changes;
+        changes[0].after.hard_rules = Some(vec!["Preserve task identity".into()]);
+        changes[0].after.verification_requirements = Some(vec![]);
+        let mut edited = edit_candidate(approved, changes).unwrap();
+        assert_eq!(edited.codec, PLANNING_CODEC_V3);
+        assert!(edited.approval.is_none());
+        assert_ne!(edited.candidate_digest().unwrap(), digest);
+        let diff = build_candidate_diff(&edited, vec![]).unwrap();
+        assert!(diff.field_diffs.iter().any(|d| d.field == "hard_rules"));
+        assert!(
+            diff.field_diffs
+                .iter()
+                .any(|d| { d.field == "verification_requirements" && d.after == Some(json!([])) })
+        );
+        assert!(
+            diff.review_requirements
+                .contains(&"execution_contract_review".into())
+        );
+        for codec in [PLANNING_CODEC, PLANNING_CODEC_V2] {
+            edited.codec = codec.into();
+            assert!(edited.validate_structure().is_err());
+        }
+        edited.codec = PLANNING_CODEC_V3.into();
+        edited.changes[0].after.hard_rules = None;
+        edited.changes[0].after.verification_requirements = None;
+        let retained = build_candidate_diff(&edited, vec![]).unwrap();
+        assert!(
+            !retained.field_diffs.iter().any(|d| {
+                matches!(d.field.as_str(), "hard_rules" | "verification_requirements")
+            })
+        );
+    }
+
+    #[test]
+    fn contract_lists_reject_null_nonarrays_nonstrings_and_blank_entries() {
+        for field in ["hard_rules", "verification_requirements"] {
+            for raw in [Value::Null, json!("rule"), json!([1])] {
+                let mut wire = json!(draft("A", &[]));
+                wire[field] = raw;
+                assert!(serde_json::from_value::<TaskDraft>(wire).is_err());
+            }
+            let mut wire = json!(draft("A", &[]));
+            wire[field] = json!(["  "]);
+            assert!(
+                serde_json::from_value::<TaskDraft>(wire)
+                    .unwrap()
+                    .validate()
+                    .is_err()
+            );
+        }
     }
 
     #[test]
