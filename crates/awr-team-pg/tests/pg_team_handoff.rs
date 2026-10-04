@@ -51,6 +51,71 @@ fn package(from: &str) -> HandoffPackage {
 }
 
 #[tokio::test]
+async fn scoped_lookup_masks_missing_and_other_work_handoffs_after_authorization() {
+    let (_guard, _admin, db, reader) = fixture::setup().await;
+    let store = HandoffStore::from_config(with_app_role(&test_config(), &db));
+    for (id, work) in [("public-handoff", "a"), ("private-handoff", "b-private")] {
+        let mut pkg = package("sender");
+        pkg.task_id = work.into();
+        store
+            .propose(
+                fixture::TENANT,
+                fixture::PROJECT,
+                work,
+                &PersonId::new("sender").unwrap(),
+                &ProposeHandoffRequest {
+                    request_key: format!("propose-{id}"),
+                    handoff_id: id.into(),
+                    kind: HandoffKind::Execution,
+                    package: pkg,
+                    to_person_id: PersonId::new("receiver").unwrap(),
+                    proposed_successor: None,
+                    proposer_execution_id: None,
+                    proposer_fence: None,
+                    expires_at_ms: None,
+                    now_ms: 1_000,
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let mut q = fixture::query("handoff.inspect");
+    q.work_id = Some("a".into());
+    q.handoff_id = Some("public-handoff".into());
+    let result = reader
+        .query(fixture::TENANT, fixture::PROJECT, fixture::A, q.clone())
+        .await
+        .unwrap();
+    assert_eq!(result["data"]["handoff"]["id"], "public-handoff");
+
+    for id in ["missing-handoff", "ev-session-a", "private-handoff"] {
+        q.handoff_id = Some(id.into());
+        let error = reader
+            .query(fixture::TENANT, fixture::PROJECT, fixture::A, q.clone())
+            .await
+            .unwrap_err();
+        assert!(error.is_handoff_unavailable(), "{error}");
+        assert!(!error.to_string().contains(id));
+    }
+    // An unauthorized selected work is rejected before looking up any record.
+    q.work_id = Some("b-private".into());
+    for id in ["missing-handoff", "private-handoff"] {
+        q.handoff_id = Some(id.into());
+        let error = reader
+            .query(fixture::TENANT, fixture::PROJECT, fixture::A, q.clone())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, PgError::Forbidden));
+    }
+    q.work_id = Some("a".into());
+    let error = reader
+        .query(fixture::TENANT, fixture::PROJECT, fixture::NONE, q)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, PgError::Forbidden));
+}
+
+#[tokio::test]
 async fn propose_inspect_accept_reject_timeout_roundtrip() {
     let (_g, _admin, _db, store) = setup().await;
     let alice = PersonId::new("alice").unwrap();
@@ -554,6 +619,24 @@ async fn authenticated_accept_requires_receiver_credential() {
 
     // Same alice credential forges acceptor_person_id=bob.
     let current_a = fixture::prepare(&store, fixture::A, "a").await;
+    let missing = fixture::command(
+        &current_a,
+        "inspect-missing-handoff",
+        "handoff.inspect",
+        serde_json::json!({
+            "session_id": sess_a,
+            "expected_session_version": "1",
+            "handoff_id": "not-a-handoff-record",
+            "expected_handoff_version": "1",
+            "inspector_person_id": "alice",
+            "now_ms": 1500
+        }),
+    );
+    let missing_error = commands
+        .execute(fixture::TENANT, fixture::PROJECT, fixture::A, missing)
+        .await
+        .unwrap_err();
+    assert!(missing_error.is_handoff_unavailable());
     let forged = fixture::command(
         &current_a,
         "ho-forged",
