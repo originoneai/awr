@@ -21,6 +21,7 @@ fn draft(id: &str, deps: &[&str], state: DraftDefinitionState) -> TaskDraft {
         acceptance: vec!["ok".into()],
         required_dependencies: deps.iter().map(|s| (*s).into()).collect(),
         completion_policy: "independent_review".into(),
+        dependency_acceptance: None,
         definition_state: state,
         workstream: None,
         split_from: None,

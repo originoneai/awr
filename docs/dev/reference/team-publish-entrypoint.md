@@ -27,6 +27,43 @@ Owner/operator bootstrap of the first source bundle still follows
 project is live, treat MCP/HTTP `planning.publish` (plus the registered source
 writer) as the **only** normal publish entrypoint.
 
+### Reviewed planning policies
+
+Task creation and edits write the approved `completion_policy` into the sole
+source. Recompiling and activating that source retains the reviewed policy;
+it must not silently fall back to the independent-review default.
+
+Planning candidates without explicit dependency policies retain the closed
+`awr-team-planning-v1` wire format and original digest material. A candidate
+with `dependency_acceptance` in a before/after task uses
+`awr-team-planning-v2`. The service reports both supported candidate codecs.
+
+For example, a downstream task may explicitly select this assurance for a
+required predecessor:
+
+```json
+{
+  "required_dependencies": ["API-1"],
+  "dependency_acceptance": {
+    "API-1": "agent_reviewed_caller_asserted_reconciled"
+  }
+}
+```
+
+This is an excerpt of a task draft, not a complete publish request. Omit the map
+to retain the existing source policy. A present map is a nonempty, typed,
+explicit replacement; include the exact current map in the before-draft when
+replacing one. Null, duplicate keys, unknown modes, and policies for nonrequired
+predecessors are rejected. Removing a predecessor while omitting its retained
+policy is also rejected.
+
+Preview exposes policy changes and their review requirements. Editing a
+candidate changes its digest and clears prior approval. Existing independent
+delivery review cannot be downgraded through this planning path. Selecting
+dependency assurance grants no review permission and creates no completion or
+human-acceptance receipt; the upstream delivery still needs the selected
+evidence and reconciliation.
+
 ## Runtime vs develop versions
 
 | Concern | Runtime host | Develop / PR branches |
