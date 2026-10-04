@@ -126,6 +126,98 @@ async fn authorize(State(endpoint): State<Endpoint>, request: Request, next: Nex
     result.unwrap_or_else(|_| unavailable())
 }
 
+// Keep handoff wire types visible without requiring their fields for other operations.
+fn add_handoff_input_schema(command: &mut Value) {
+    let identity = json!({"type":"string","minLength":1,"maxLength":128});
+    let execution = json!({"description":"ExecutionInstance object, never prose. Use the actual authenticated person; agent_run additionally requires an existing agent binding. This does not authorize execution.","oneOf":[
+        {"type":"object","required":["kind","person_id"],"properties":{
+            "kind":{"const":"person"},"person_id":identity}},
+        {"type":"object","required":["kind","person_id","agent_id","binding_id"],"properties":{
+            "kind":{"const":"agent_run"},"person_id":identity,"agent_id":identity,"binding_id":identity}}
+    ]});
+    let ids = |max| json!({"type":"array","maxItems":max,"items":identity});
+    let notes = json!({"type":"array","maxItems":64,"items":{"type":"string","minLength":1,"maxLength":4096}});
+    let fields = command["properties"]["args"]["properties"]
+        .as_object_mut()
+        .unwrap();
+    let handoff = json!({
+        "handoff_id":{"type":"string","minLength":1,"maxLength":128,
+            "description":"The actual handoff.id, not an event, checkpoint, session or artifact ID. Query handoff.inspect with this ID before receiving."},
+        "kind":{"enum":["execution","responsibility"],"description":"handoff.propose: execution changes the executor; responsibility changes ownership separately."},
+        "to_person_id":identity,
+        "package":{"type":"object","additionalProperties":false,
+            "required":["task_id","contract_version","contract_hash","current_person_id","current_execution","consumed_context_digest","checkpoint_ids","artifact_versions","dependency_ids","todos","awaiting_replies","unknown_side_effects"],
+            "properties":{
+                "task_id":identity,"contract_version":{"type":"string","minLength":1,"maxLength":128},
+                "contract_hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+                "current_person_id":identity,"current_execution":execution,
+                "consumed_context_digest":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+                "checkpoint_ids":{"type":"array","minItems":1,"maxItems":64,"items":identity},
+                "artifact_versions":{"type":"array","maxItems":128,"items":{"type":"object","additionalProperties":false,"required":["artifact_id","version"],"properties":{
+                    "artifact_id":identity,"version":{"type":"string","minLength":1,"maxLength":128}}}},
+                "branch_id":{"type":["string","null"],"minLength":1,"maxLength":128},
+                "working_directory":{"type":["string","null"],"minLength":1,"maxLength":4096},
+                "dependency_ids":ids(128),"todos":notes,"awaiting_replies":notes,"unknown_side_effects":notes
+            }},
+        "proposed_successor":{"anyOf":[execution,{"type":"null"}]},
+        "proposer_execution_id":{"type":["string","null"]},
+        "proposer_fence":{"type":["string","null"],"pattern":"^(0|[1-9][0-9]*)$"},
+        "expires_at_ms":{"type":["integer","null"]},
+        "now_ms":{"type":"integer","description":"Required for every handoff command. Current Unix time in milliseconds, distinct from a version or expiry."},
+        "inspector_person_id":identity,"acceptor_person_id":identity,"by_person_id":identity,
+        "successor_execution":execution,
+        "prior_execution_stopped":{"type":"boolean","description":"Report verified stopped state; expiry or disconnect alone is not proof."},
+        "prior_reconciled":{"type":"boolean","description":"Report actual reconciliation of original effects; do not infer it from a success message."},
+        "context_reprepared":{"type":"boolean","description":"Receiver must consume current work.prepare context before acceptance."},
+        "reason":{"type":"string","description":"Use the operation-specific reason bound; handoff.reject/cancel accept at most 2048 bytes."}
+    });
+    fields.extend(handoff.as_object().unwrap().clone());
+    let conditions = command["allOf"].as_array_mut().unwrap();
+    for (op, extra) in [
+        ("handoff.propose", vec!["kind", "to_person_id", "package"]),
+        (
+            "handoff.inspect",
+            vec!["expected_handoff_version", "inspector_person_id"],
+        ),
+        (
+            "handoff.accept",
+            vec![
+                "expected_handoff_version",
+                "acceptor_person_id",
+                "successor_execution",
+                "prior_execution_stopped",
+                "prior_reconciled",
+                "context_reprepared",
+            ],
+        ),
+        (
+            "handoff.reject",
+            vec!["expected_handoff_version", "by_person_id", "reason"],
+        ),
+        (
+            "handoff.cancel",
+            vec!["expected_handoff_version", "by_person_id", "reason"],
+        ),
+        ("handoff.timeout", vec!["expected_handoff_version"]),
+    ] {
+        let mut required = vec![
+            "session_id",
+            "expected_session_version",
+            "handoff_id",
+            "now_ms",
+        ];
+        required.extend(extra);
+        let mut args = json!({"required":required});
+        if matches!(op, "handoff.reject" | "handoff.cancel") {
+            args["properties"] = json!({"reason":{"type":"string","minLength":1,"maxLength":2048}});
+        }
+        conditions.push(
+            json!({"if":{"properties":{"op":{"const":op}},"required":["op"]},
+            "then":{"properties":{"args":args}}}),
+        );
+    }
+}
+
 fn catalog() -> Vec<Tool> {
     let query = json!({"type":"object","additionalProperties":false,
     "required":["protocol_version","op"],"properties":{
@@ -134,7 +226,7 @@ fn catalog() -> Vec<Tool> {
         "workstream_id":{"type":"string","description":"Omit for work.next; follow its returned next_query to select work."},
         "work_id":{"type":"string","description":"Omit for work.next."},
         "session_id":{"type":"string","description":"Omit for work.next; session.inspect requires this selector."},"request_id":{"type":"string"},"claim_id":{"type":"string"},
-        "execution_id":{"type":"string"},"handoff_id":{"type":"string"},
+        "execution_id":{"type":"string"},"handoff_id":{"type":"string","description":"Actual handoff.id from a proposal receipt or handoff.inspect; events.list item IDs identify events, not handoffs. Read the exact handoff before receiving it."},
         "evidence_id":{"type":"string","minLength":1,"maxLength":128,
             "description":"Required for evidence.inspect; omit for other operations."},
         "review_round_id":{"type":"string","minLength":1,"maxLength":128,
@@ -190,7 +282,7 @@ fn catalog() -> Vec<Tool> {
         "expected_lease_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
         "expected_execution_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
         "expected_handoff_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
-        "expected_current_fence":{"type":["string","null"],"pattern":"^(0|[1-9][0-9]*)$"},
+        "expected_current_fence":{"type":["string","null"],"pattern":"^(0|[1-9][0-9]*)$","description":"handoff.accept: required whenever work runtime exists; use runtime.last_fence from work.prepare. Omit or null only before runtime exists. Terminal execution and expired claims retain this fence."},
         "client_info":{"type":["object","null"],"additionalProperties":false,"required":["product"],"properties":{
             "product":{"type":"string","maxLength":128},"version":{"type":["string","null"],"maxLength":128},
             "model":{"type":["object","null"],"additionalProperties":false,"required":["id","source"],"properties":{
@@ -242,6 +334,7 @@ fn catalog() -> Vec<Tool> {
             }
         }
     ]);
+    add_handoff_input_schema(&mut command);
     let access_plan = json!({
         "type":"object","additionalProperties":false,
         "required":["protocol_version","subject","subject_client_id","role","grants"],
@@ -714,6 +807,157 @@ impl ServerHandler for Endpoint {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn missing_handoff_fence_has_precise_bounded_recovery_guidance() {
+        let (status, response) = public_error(PgError::missing_handoff_fence());
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(response["code"], "InvalidInput");
+        assert!(
+            response["message"]
+                .as_str()
+                .unwrap()
+                .contains("args.expected_current_fence")
+        );
+        assert!(
+            response["next_step"]
+                .as_str()
+                .unwrap()
+                .contains("runtime.last_fence")
+        );
+        assert!(
+            response["next_step"]
+                .as_str()
+                .unwrap()
+                .contains("terminal sender")
+        );
+        assert!(serde_json::to_vec(&response).unwrap().len() < 1024);
+        let (_, unknown) = public_error(PgError::Protocol("untrusted-private-detail".into()));
+        assert!(
+            !serde_json::to_string(&unknown)
+                .unwrap()
+                .contains("untrusted-private-detail")
+        );
+    }
+
+    #[test]
+    fn handoff_discovery_preserves_core_execution_wire_variants() {
+        let tool = catalog()
+            .into_iter()
+            .find(|t| t.name == "awr_team_command")
+            .unwrap();
+        let fields = &tool.input_schema["properties"]["args"]["properties"];
+        let cases = [
+            awr_core::ExecutionInstance::Person {
+                person_id: awr_core::PersonId::new("developer").unwrap(),
+            },
+            awr_core::ExecutionInstance::AgentRun {
+                person_id: awr_core::PersonId::new("developer").unwrap(),
+                agent_id: "agent".into(),
+                binding_id: "bound-agent".into(),
+            },
+        ];
+        for executor in cases {
+            let wire = serde_json::to_value(executor).unwrap();
+            let variants = fields["successor_execution"]["oneOf"].as_array().unwrap();
+            let matching: Vec<_> = variants
+                .iter()
+                .filter(|v| v["properties"]["kind"]["const"] == wire["kind"])
+                .collect();
+            assert_eq!(
+                matching.len(),
+                1,
+                "Every actual wire variant must have one schema branch"
+            );
+            for required in matching[0]["required"].as_array().unwrap() {
+                assert!(wire.get(required.as_str().unwrap()).is_some());
+            }
+        }
+        assert_eq!(
+            fields["package"]["properties"]["current_execution"],
+            fields["successor_execution"]
+        );
+        assert_eq!(
+            fields["package"]["properties"]["artifact_versions"]["items"]["required"],
+            json!(["artifact_id", "version"])
+        );
+        assert_eq!(
+            fields["package"]["properties"]["checkpoint_ids"]["minItems"],
+            1
+        );
+        assert_eq!(fields["now_ms"]["type"], "integer");
+    }
+
+    #[test]
+    fn handoff_requirements_are_conditional_and_include_current_time() {
+        let tool = catalog()
+            .into_iter()
+            .find(|t| t.name == "awr_team_command")
+            .unwrap();
+        assert!(
+            tool.input_schema["properties"]["args"]
+                .get("required")
+                .is_none()
+        );
+        // Review reasons accept 4096 bytes; handoff bounds must not narrow them.
+        assert!(
+            tool.input_schema["properties"]["args"]["properties"]["reason"]
+                .get("maxLength")
+                .is_none()
+        );
+        for operation in [
+            "handoff.propose",
+            "handoff.inspect",
+            "handoff.accept",
+            "handoff.reject",
+            "handoff.cancel",
+            "handoff.timeout",
+        ] {
+            let condition = tool.input_schema["allOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["if"]["properties"]["op"]["const"] == operation)
+                .unwrap();
+            let required = condition["then"]["properties"]["args"]["required"]
+                .as_array()
+                .unwrap();
+            for key in [
+                "session_id",
+                "expected_session_version",
+                "handoff_id",
+                "now_ms",
+            ] {
+                assert!(required.contains(&json!(key)), "{operation} requires {key}");
+            }
+            if operation == "handoff.accept" {
+                for key in [
+                    "successor_execution",
+                    "prior_execution_stopped",
+                    "prior_reconciled",
+                    "context_reprepared",
+                ] {
+                    assert!(required.contains(&json!(key)));
+                }
+            }
+            if matches!(operation, "handoff.reject" | "handoff.cancel") {
+                assert_eq!(
+                    condition["then"]["properties"]["args"]["properties"]["reason"]["maxLength"],
+                    2048
+                );
+            }
+        }
+        let query = catalog()
+            .into_iter()
+            .find(|t| t.name == "awr_team_query")
+            .unwrap();
+        assert!(
+            query.input_schema["properties"]["handoff_id"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("events.list")
+        );
+    }
 
     #[test]
     fn discovery_exposes_evidence_inputs_without_narrowing_generic_payloads() {

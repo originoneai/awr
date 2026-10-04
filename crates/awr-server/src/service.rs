@@ -886,6 +886,14 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
                 "next_step":"Retry session.start with args.conversation_id set to a stable, nonempty host conversation, thread, or session identifier of at most 128 characters."}),
         );
     }
+    if error.is_missing_handoff_fence() {
+        return (
+            StatusCode::BAD_REQUEST,
+            json!({"code":"InvalidInput",
+                "message":"args.expected_current_fence is required for handoff.accept when work runtime exists",
+                "next_step":"Inspect work.prepare for runtime.last_fence, re-prepare the receiving session context, then retry with that current fence as a JSON decimal string. A terminal sender or expired claim does not remove the runtime fence."}),
+        );
+    }
     if error.is_invalid_command_fields() {
         return (
             StatusCode::BAD_REQUEST,

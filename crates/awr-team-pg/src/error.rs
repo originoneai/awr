@@ -149,6 +149,16 @@ impl PgError {
     const MISSING_SESSION_START_CONVERSATION_ID: &'static str =
         "session.start requires conversation_id";
 
+    const MISSING_HANDOFF_FENCE: &'static str = "handoff.accept requires the current runtime fence";
+
+    pub fn missing_handoff_fence() -> Self {
+        Self::Protocol(Self::MISSING_HANDOFF_FENCE.into())
+    }
+
+    pub fn is_missing_handoff_fence(&self) -> bool {
+        matches!(self, Self::Protocol(message) if message == Self::MISSING_HANDOFF_FENCE)
+    }
+
     pub fn invalid_command_fields() -> Self {
         Self::Protocol(Self::INVALID_COMMAND_FIELDS.into())
     }
