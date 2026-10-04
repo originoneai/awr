@@ -39,7 +39,7 @@ pub use planning::{
     AffectedTaskImpact, BaselineView, CandidateDiff, CandidateState, DraftChange,
     DraftDefinitionState, DraftOpKind, FORGE_COMPLETION_VIA_STATUS_ALLOWED, FieldDiff,
     HARD_DELETE_HISTORY_ALLOWED, OrdinaryPlanningSelfApprovePolicy, PLANNING_CODEC,
-    PLANNING_CODEC_V2, PlanningApproval, PlanningCandidate, PlanningSuggestion,
+    PLANNING_CODEC_V2, PLANNING_CODEC_V3, PlanningApproval, PlanningCandidate, PlanningSuggestion,
     SUGGESTION_ADDS_FORMAL_WORK, SUGGESTION_API_WRITABLE_BY_READER, SUGGESTION_CLAIMABLE,
     SUGGESTION_MUTATES_LIVE_ACCEPTANCE, SUGGESTION_MUTATES_LIVE_DEPS, SuggestionState, TaskDraft,
     attested_actor_person, authorize_planning_action, authorize_planning_approve,

@@ -502,6 +502,8 @@ mod tests {
             required_dependencies: vec![],
             completion_policy: "independent_review".into(),
             dependency_acceptance: None,
+            hard_rules: None,
+            verification_requirements: None,
             definition_state: DraftDefinitionState::Enabled,
             workstream: None,
             split_from: None,

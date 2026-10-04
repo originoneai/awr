@@ -21,6 +21,8 @@ pub const SOURCE_WRITABLE_FIELDS: &[&str] = &[
     "required_dependencies",
     "completion_policy",
     "dependency_acceptance",
+    "hard_rules",
+    "verification_requirements",
     "definition_state",
     "workstream",
     "split_from",
@@ -216,6 +218,32 @@ pub fn apply_planning_changes_to_ledger(
                 };
                 // Preserve identity and any runtime-looking keys that already
                 // exist only if they are true source vocabulary (e.g. status).
+                for (field, before, after) in [
+                    (
+                        "hard_rules",
+                        change.before.as_ref().and_then(|b| b.hard_rules.as_ref()),
+                        change.after.hard_rules.as_ref(),
+                    ),
+                    (
+                        "verification_requirements",
+                        change
+                            .before
+                            .as_ref()
+                            .and_then(|b| b.verification_requirements.as_ref()),
+                        change.after.verification_requirements.as_ref(),
+                    ),
+                ] {
+                    let source: Option<Vec<String>> = row
+                        .get(field)
+                        .map(|entries| serde_json::from_value(entries.clone()))
+                        .transpose()
+                        .map_err(|_| Error::InvalidInput(format!("invalid source {field}")))?;
+                    if (after.is_some() || before.is_some()) && before != source.as_ref() {
+                        return Err(Error::SourceConflict(format!(
+                            "include the exact prior {field} before replacing it"
+                        )));
+                    }
+                }
                 let source_modes: Option<BTreeMap<String, awr_team::DependencyAcceptanceMode>> =
                     row.get("dependency_acceptance")
                         .map(|modes| serde_json::from_value(modes.clone()))
@@ -333,6 +361,12 @@ fn draft_to_ledger_row(draft: &TaskDraft) -> Value {
         if let Some(modes) = &draft.dependency_acceptance {
             obj.insert("dependency_acceptance".into(), json!(modes));
         }
+        if let Some(rules) = &draft.hard_rules {
+            obj.insert("hard_rules".into(), json!(rules));
+        }
+        if let Some(requirements) = &draft.verification_requirements {
+            obj.insert("verification_requirements".into(), json!(requirements));
+        }
         if let Some(ws) = draft
             .workstream
             .as_deref()
@@ -361,6 +395,12 @@ fn apply_draft_fields(row: &mut Value, draft: &TaskDraft) {
         obj.insert("completion_policy".into(), json!(draft.completion_policy));
         if let Some(modes) = &draft.dependency_acceptance {
             obj.insert("dependency_acceptance".into(), json!(modes));
+        }
+        if let Some(rules) = &draft.hard_rules {
+            obj.insert("hard_rules".into(), json!(rules));
+        }
+        if let Some(requirements) = &draft.verification_requirements {
+            obj.insert("verification_requirements".into(), json!(requirements));
         }
         // Preserve existing workstream ownership unless the draft explicitly
         // carries a non-empty workstream (CreateTask always does).
@@ -419,6 +459,8 @@ mod tests {
             required_dependencies: deps.iter().map(|s| (*s).into()).collect(),
             completion_policy: "independent_review".into(),
             dependency_acceptance: None,
+            hard_rules: None,
+            verification_requirements: None,
             definition_state: DraftDefinitionState::Enabled,
             workstream: None,
             split_from: None,
@@ -509,6 +551,87 @@ work_items:
     fn external_fingerprint_mismatch_refuses_overwrite() {
         assert!(refuse_external_overwrite("sha256:a", "sha256:b").is_err());
         assert!(refuse_external_overwrite("sha256:a", "sha256:a").is_ok());
+    }
+
+    #[test]
+    fn required_contract_fields_survive_create_and_legacy_edits() {
+        let mut task = draft("A", &[]);
+        task.workstream = Some("delivery".into());
+        task.hard_rules = Some(vec!["Preserve identity".into()]);
+        task.verification_requirements = Some(vec!["Run regressions".into()]);
+        let patch = apply_planning_changes_to_ledger(
+            b"work_items: []\n",
+            &[DraftChange {
+                op: DraftOpKind::CreateTask,
+                before: None,
+                after: task.clone(),
+            }],
+        )
+        .unwrap();
+        let row: Value = serde_yaml_ng::from_slice(&patch.after_bytes).unwrap();
+        assert_eq!(
+            row["work_items"][0]["hard_rules"],
+            json!(["Preserve identity"])
+        );
+        assert_eq!(
+            row["work_items"][0]["verification_requirements"],
+            json!(["Run regressions"])
+        );
+        let mut before = task.clone();
+        before.hard_rules = None;
+        before.verification_requirements = None;
+        let mut after = before.clone();
+        after.title = "Renamed task".into();
+        let legacy = apply_planning_changes_to_ledger(
+            &patch.after_bytes,
+            &[DraftChange {
+                op: DraftOpKind::EditFields,
+                before: Some(before),
+                after,
+            }],
+        )
+        .unwrap();
+        let retained: Value = serde_yaml_ng::from_slice(&legacy.after_bytes).unwrap();
+        for field in ["hard_rules", "verification_requirements"] {
+            assert_eq!(
+                retained["work_items"][0][field],
+                row["work_items"][0][field]
+            );
+            assert_eq!(
+                source_field_authority(field),
+                Some(FieldWriteAuthority::Source)
+            );
+        }
+
+        let mut after = task.clone();
+        after.hard_rules = Some(vec![]);
+        after.verification_requirements = Some(vec!["Check persisted output".into()]);
+        let change = DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(task),
+            after,
+        };
+        let replaced =
+            apply_planning_changes_to_ledger(&legacy.after_bytes, &[change.clone()]).unwrap();
+        let row: Value = serde_yaml_ng::from_slice(&replaced.after_bytes).unwrap();
+        assert_eq!(row["work_items"][0]["hard_rules"], json!([]));
+        assert_eq!(
+            row["work_items"][0]["verification_requirements"],
+            json!(["Check persisted output"])
+        );
+        for field in ["hard_rules", "verification_requirements"] {
+            let mut stale = change.clone();
+            if field == "hard_rules" {
+                stale.before.as_mut().unwrap().hard_rules = None;
+            } else {
+                stale.before.as_mut().unwrap().verification_requirements =
+                    Some(vec!["Unobserved".into()]);
+            }
+            assert!(matches!(
+                apply_planning_changes_to_ledger(&legacy.after_bytes, &[stale]),
+                Err(Error::SourceConflict(_))
+            ));
+        }
     }
 
     #[test]

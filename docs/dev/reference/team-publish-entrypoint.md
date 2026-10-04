@@ -36,7 +36,9 @@ it must not silently fall back to the independent-review default.
 Planning candidates without explicit dependency policies retain the closed
 `awr-team-planning-v1` wire format and original digest material. A candidate
 with `dependency_acceptance` in a before/after task uses
-`awr-team-planning-v2`. The service reports both supported candidate codecs.
+`awr-team-planning-v2`. Explicit `hard_rules` or `verification_requirements` in a
+before/after task select `awr-team-planning-v3`. The service reports all three
+supported candidate codecs; omission preserves V1/V2 serialization and digests.
 
 For example, a downstream task may explicitly select this assurance for a
 required predecessor:
@@ -63,6 +65,30 @@ delivery review cannot be downgraded through this planning path. Selecting
 dependency assurance grants no review permission and creates no completion or
 human-acceptance receipt; the upstream delivery still needs the selected
 evidence and reconciliation.
+
+### Required execution context in planning
+
+Use the structured task fields to publish execution constraints, rather than
+putting them only in acceptance prose:
+
+```json
+{
+  "hard_rules": ["Preserve existing issue identities and recorded history"],
+  "verification_requirements": ["Run the focused persistence and API regressions"]
+}
+```
+
+Both fields are optional lists of nonblank strings. Omission retains the current
+source field; null is rejected. A present list explicitly replaces the field,
+and `[]` explicitly clears it. When replacing an existing field, include its
+exact source list in the before-draft. Preview exposes the changes and requires
+execution-contract review; any edit clears previous approval. These fields are
+persisted through source writeback and contract recompilation. They do not
+change the published work-contract codec or grant execution permissions.
+
+After activation, use `work.prepare` to confirm the actual context is complete.
+Clearing required hard rules leaves that context incomplete and keeps the
+existing execution gate in force; planning does not fabricate a complete task.
 
 ## Runtime vs develop versions
 

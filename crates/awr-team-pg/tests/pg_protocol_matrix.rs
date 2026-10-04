@@ -61,6 +61,8 @@ fn draft(id: &str, deps: &[&str]) -> TaskDraft {
         required_dependencies: deps.iter().map(|s| (*s).into()).collect(),
         completion_policy: "independent_review".into(),
         dependency_acceptance: None,
+        hard_rules: None,
+        verification_requirements: None,
         definition_state: DraftDefinitionState::Draft,
         split_from: None,
         split_children: vec![],
