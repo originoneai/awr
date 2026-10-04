@@ -52,7 +52,7 @@ fn package(from: &str) -> HandoffPackage {
 
 #[tokio::test]
 async fn scoped_lookup_masks_missing_and_other_work_handoffs_after_authorization() {
-    let (_guard, _admin, db, reader) = fixture::setup().await;
+    let (_guard, admin, db, reader) = fixture::setup().await;
     let store = HandoffStore::from_config(with_app_role(&test_config(), &db));
     for (id, work) in [("public-handoff", "a"), ("private-handoff", "b-private")] {
         let mut pkg = package("sender");
@@ -113,6 +113,23 @@ async fn scoped_lookup_masks_missing_and_other_work_handoffs_after_authorization
         .await
         .unwrap_err();
     assert!(matches!(error, PgError::Forbidden));
+
+    // Retain the body-level work check even if stored metadata is inconsistent.
+    admin
+        .batch_execute(
+            "UPDATE awr_team.team_handoffs SET body_json=jsonb_set(body_json, '{work_item_id}', '\"b-private\"')
+             WHERE id='public-handoff'",
+        )
+        .await
+        .unwrap();
+    let mut q = fixture::query("handoff.inspect");
+    q.work_id = Some("a".into());
+    q.handoff_id = Some("public-handoff".into());
+    let error = reader
+        .query(fixture::TENANT, fixture::PROJECT, fixture::A, q)
+        .await
+        .unwrap_err();
+    assert!(error.is_handoff_unavailable());
 }
 
 #[tokio::test]

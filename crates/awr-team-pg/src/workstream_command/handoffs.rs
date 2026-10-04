@@ -619,6 +619,9 @@ pub(crate) async fn inspect_query(
     let body: Value = row.get(0);
     let h: TeamHandoff =
         serde_json::from_value(body.clone()).map_err(|e| PgError::Protocol(e.to_string()))?;
+    if h.work_item_id != work {
+        return Err(PgError::handoff_unavailable());
+    }
     let duty = h.duty_at(h.updated_at_ms).map_err(map_core)?;
     Ok(json!({
         "handoff": body,
