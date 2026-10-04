@@ -103,6 +103,45 @@ Reconnecting MCP does not end a durable work session or renew its lease. A secon
 Agent belonging to the same person is not an independent reviewer. Keep
 implementation, verification, GitHub merge and AWR acceptance as separate facts.
 
+## Receive unfinished work
+
+Use the actual `handoff.id` returned by the proposal receipt. An `events.list`
+item ID identifies an event; it cannot be used as a session, handoff, evidence or
+artifact selector. Query `handoff.inspect` with the selected work and handoff ID
+to read the current proposal, package and receiver duties. Use your own active,
+task-bound session for receiving commands.
+
+The tool schema describes every nested package field. `artifact_versions` holds
+objects with `artifact_id` and `version`; checkpoint, dependency and unfinished
+work lists remain separate. `current_execution`, `proposed_successor` and
+`successor_execution` use the same execution identity format:
+
+```json
+{"kind": "person", "person_id": "alex"}
+```
+
+An explicitly bound Agent run uses:
+
+```json
+{"kind": "agent_run", "person_id": "alex", "agent_id": "coding-agent", "binding_id": "existing-agent-binding"}
+```
+
+Use actual identities and existing bindings. Free-text plans, `kind: "agent"`,
+client names and working-directory fields cannot substitute for execution
+identity. Two Agents controlled by one person do not establish independent
+human ownership or acceptance.
+
+Every handoff command requires `now_ms`, the current Unix time in milliseconds.
+Receiving commands additionally use the current handoff and owned session
+versions. When work runtime exists, set `expected_current_fence` to the current
+`runtime.last_fence` returned by `work.prepare`, even when the sender is terminal
+or its claim has expired. Omit it only when no runtime exists. Before acceptance,
+consume fresh `work.prepare` context and verify that the original execution has
+stopped or its effects have been reconciled;
+disconnection or lease expiry alone does not establish that fact. The server
+rechecks these prerequisites. Acceptance does not replace the fresh claim and
+execution admission required before the successor runs local effects.
+
 ## Optional workspace view
 
 Open Inspector to inspect task relationships, ownership, progress and recorded

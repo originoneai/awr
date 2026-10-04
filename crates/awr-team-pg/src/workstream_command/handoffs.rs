@@ -340,6 +340,9 @@ pub(super) async fn apply(
                 .map(|s| version(s))
                 .transpose()?;
             require_person_match(&actor_person, &a.acceptor_person_id)?;
+            if live.is_some() && expected_fence.is_none() {
+                return Err(PgError::missing_handoff_fence());
+            }
             let req = AcceptHandoffRequest {
                 request_key: command.request_id.clone(),
                 handoff_id: a.handoff_id,

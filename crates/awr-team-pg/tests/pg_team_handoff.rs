@@ -580,6 +580,39 @@ async fn authenticated_accept_requires_receiver_credential() {
         "proposer must not accept as receiver: {err:?}"
     );
 
+    // A settled or expired original claim still leaves runtime fencing in place.
+    admin.execute(
+        "INSERT INTO awr_team.work_runtime(tenant_id,project_id,scope_id,work_id,state,work_version,last_fence) VALUES ($1,$2,'main','a','unclaimed',1,7)",
+        &[&fixture::TENANT, &fixture::PROJECT],
+    ).await.unwrap();
+    let current_b = fixture::prepare(&store, fixture::B, "a").await;
+    assert_eq!(current_b["data"]["runtime"]["last_fence"], "7");
+    let missing_fence = fixture::command(
+        &current_b,
+        "ho-missing-fence",
+        "handoff.accept",
+        serde_json::json!({
+            "session_id":sess_b, "expected_session_version":"1", "handoff_id":"ho-auth",
+            "expected_handoff_version":version, "acceptor_person_id":"bob",
+            "successor_execution":{"kind":"person","person_id":"bob"},
+            "prior_execution_stopped":true, "prior_reconciled":false, "context_reprepared":true, "now_ms":2000
+        }),
+    );
+    let err = commands
+        .execute(fixture::TENANT, fixture::PROJECT, fixture::B, missing_fence)
+        .await
+        .unwrap_err();
+    assert!(
+        err.is_missing_handoff_fence(),
+        "A required runtime fence must have actionable diagnostics: {err:?}"
+    );
+    let handoff = admin.query_one(
+        "SELECT status,version FROM awr_team.team_handoffs WHERE tenant_id=$1 AND project_id=$2 AND id='ho-auth'",
+        &[&fixture::TENANT,&fixture::PROJECT],
+    ).await.unwrap();
+    assert_eq!(handoff.get::<_, String>(0), "proposed");
+    assert_eq!(handoff.get::<_, i64>(1).to_string(), version);
+
     let current_b = fixture::prepare(&store, fixture::B, "a").await;
     let accept = fixture::command(
         &current_b,
@@ -595,6 +628,7 @@ async fn authenticated_accept_requires_receiver_credential() {
             "prior_execution_stopped": true,
             "prior_reconciled": false,
             "context_reprepared": true,
+            "expected_current_fence": "7",
             "now_ms": 2000
         }),
     );
