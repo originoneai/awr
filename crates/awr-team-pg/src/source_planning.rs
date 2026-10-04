@@ -12,10 +12,11 @@ use crate::workstream_auth::{
 use awr_core::{Id, WorkstreamAction};
 use awr_team::{
     AffectedTaskImpact, BaselineView, CandidateState, DraftChange,
-    OrdinaryPlanningSelfApprovePolicy, PLANNING_CODEC, PlanningApproval, PlanningCandidate,
-    PlanningSuggestion, ResourceRef, SUGGESTION_ADDS_FORMAL_WORK, SUGGESTION_CLAIMABLE,
-    SuggestionState, attested_actor_person, authorize_planning_approve, authorize_planning_publish,
-    build_candidate_diff, edit_candidate, ensure_independent_review_not_downgraded,
+    OrdinaryPlanningSelfApprovePolicy, PLANNING_CODEC, PLANNING_CODEC_V2, PlanningApproval,
+    PlanningCandidate, PlanningSuggestion, ResourceRef, SUGGESTION_ADDS_FORMAL_WORK,
+    SUGGESTION_CLAIMABLE, SuggestionState, attested_actor_person, authorize_planning_approve,
+    authorize_planning_publish, build_candidate_diff, edit_candidate,
+    ensure_independent_review_not_downgraded, planning_codec_for_changes,
     refuse_reader_suggestion_write, validate_candidate,
 };
 use serde::{Deserialize, Serialize};
@@ -415,7 +416,7 @@ impl SourceStore {
             return Ok(result);
         }
         let candidate = PlanningCandidate {
-            codec: PLANNING_CODEC.into(),
+            codec: planning_codec_for_changes(&create.changes).into(),
             candidate_id: candidate_id.clone(),
             project_id: project_id.into(),
             author_person_id: person,
@@ -970,6 +971,7 @@ impl SourceStore {
     pub fn planning_capabilities() -> Value {
         json!({
             "codec": PLANNING_CODEC,
+            "supported_candidate_codecs": [PLANNING_CODEC, PLANNING_CODEC_V2],
             "actions": [
                 "planning.propose",
                 "planning.edit_draft",
@@ -1242,7 +1244,7 @@ async fn load_candidate(
     let project_goal_keys = json_string_list(&row.get(10))?;
     let draft_revision: i32 = row.get(4);
     let mut candidate = PlanningCandidate {
-        codec: PLANNING_CODEC.into(),
+        codec: planning_codec_for_changes(&changes).into(),
         candidate_id: candidate_id.into(),
         project_id: project_id.into(),
         author_person_id: row.get(0),

@@ -501,6 +501,7 @@ mod tests {
             acceptance: vec!["ok".into()],
             required_dependencies: vec![],
             completion_policy: "independent_review".into(),
+            dependency_acceptance: None,
             definition_state: DraftDefinitionState::Enabled,
             workstream: None,
             split_from: None,

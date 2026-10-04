@@ -21,6 +21,7 @@ fn draft(id: &str, deps: &[&str], state: DraftDefinitionState) -> TaskDraft {
         acceptance: vec!["ok".into()],
         required_dependencies: deps.iter().map(|s| (*s).into()).collect(),
         completion_policy: "independent_review".into(),
+        dependency_acceptance: None,
         definition_state: state,
         workstream: None,
         split_from: None,
@@ -431,6 +432,221 @@ async fn writeback_activate_success_and_idempotent_replay() {
         .await
         .expect("idempotent replay");
     assert_eq!(second["already_recorded"], true);
+}
+
+#[tokio::test]
+async fn reviewed_policies_survive_reload_publish_activation_and_v1_omission() {
+    use awr_team::{DependencyAcceptanceMode, PLANNING_CODEC, PLANNING_CODEC_V2, WorkContract};
+    use serde_json::Value;
+    use std::collections::BTreeMap;
+    const POLICY: &str = "caller_managed_execution_and_agent_review";
+    let (_g, admin, _db, store) = store_and_roles().await;
+    let tmp = tempfile_ledger();
+    let path = tmp.root.join("ledger.yaml");
+    let ledger = std::fs::read_to_string(&path).unwrap();
+    let client_end = "    depends_on: [API-1]\n  - id: OTHER-1";
+    assert_eq!(ledger.matches(client_end).count(), 1);
+    std::fs::write(&path, ledger.replace(client_end, &format!(
+        "    depends_on: [API-1]\n    completion_policy: {POLICY}\n    dependency_acceptance:\n      API-1: agent_reviewed_caller_asserted_reconciled\n  - id: OTHER-1"
+    ))).unwrap();
+
+    let mut created_task = draft("SHARED-1", &[], DraftDefinitionState::Draft);
+    created_task.workstream = Some("alpha".into());
+    created_task.completion_policy = POLICY.into();
+    let mut before = draft("CLIENT-1", &["API-1"], DraftDefinitionState::Enabled);
+    before.completion_policy = POLICY.into();
+    before.dependency_acceptance = Some(BTreeMap::from([(
+        "API-1".into(),
+        DependencyAcceptanceMode::AgentReviewedCallerAssertedReconciled,
+    )]));
+    let mut after = before.clone();
+    after.required_dependencies.push("SHARED-1".into());
+    after.dependency_acceptance.as_mut().unwrap().insert(
+        "SHARED-1".into(),
+        DependencyAcceptanceMode::AgentReviewedCallerAssertedReconciled,
+    );
+    let expected_modes = after.dependency_acceptance.clone().unwrap();
+    let created = store
+        .create_planning_candidate(
+            TENANT,
+            PROJECT,
+            A,
+            &DraftCandidateCreate {
+                changes: vec![
+                    DraftChange {
+                        op: DraftOpKind::CreateTask,
+                        before: None,
+                        after: created_task,
+                    },
+                    DraftChange {
+                        op: DraftOpKind::EditFields,
+                        before: Some(before),
+                        after: after.clone(),
+                    },
+                ],
+                suggestion_ids: vec![],
+                allowed_spec_roots: vec!["specs".into()],
+                project_goal_keys: vec!["delivery".into()],
+                self_approve_policy: Some(OrdinaryPlanningSelfApprovePolicy::ordinary_default()),
+                author_person_id: Some("agent".into()),
+                predetermined_candidate_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let candidate_id = created["candidate_id"].as_str().unwrap();
+    let digest = created["candidate_digest"].as_str().unwrap();
+    let saved: Value = admin
+        .query_one(
+            "SELECT changes_json FROM awr_team.planning_candidates WHERE id=$1",
+            &[&candidate_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        awr_team::planning_codec_for_changes(
+            &serde_json::from_value::<Vec<DraftChange>>(saved).unwrap()
+        ),
+        PLANNING_CODEC_V2
+    );
+    // Every lifecycle operation reloads the candidate from PostgreSQL.
+    let preview = store
+        .preview_planning_candidate(TENANT, PROJECT, A, candidate_id)
+        .await
+        .unwrap();
+    assert_eq!(preview["diff"]["candidate_digest"], digest);
+    assert!(
+        preview["diff"]["field_diffs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["field"] == "dependency_acceptance")
+    );
+    store
+        .approve_planning_candidate(TENANT, PROJECT, A, candidate_id, digest, Some("agent"))
+        .await
+        .unwrap();
+    let published = store
+        .publish_planning_candidate(TENANT, PROJECT, A, candidate_id, digest)
+        .await
+        .unwrap();
+    let activate = WritebackActivateRequest {
+        request_id: "reviewed-policy-activation".into(),
+        publish_receipt_id: published["receipt_id"].as_str().unwrap().into(),
+        source_root: tmp.root.clone(),
+        ledger_relative_path: "ledger.yaml".into(),
+        impact_proven: true,
+        stopped_work_ids: vec![],
+    };
+    store
+        .activate_planning_writeback(TENANT, PROJECT, A, &activate)
+        .await
+        .unwrap();
+    for (key, codec, modes) in [
+        ("SHARED-1", WorkContract::CODEC, BTreeMap::new()),
+        ("CLIENT-1", WorkContract::CODEC_V2, expected_modes.clone()),
+    ] {
+        let contract = activated_contract(&admin, key).await;
+        assert_eq!(contract.completion_policy, POLICY);
+        assert_eq!(contract.codec, codec);
+        assert_eq!(contract.dependency_acceptance, modes);
+    }
+    assert_eq!(
+        store
+            .activate_planning_writeback(TENANT, PROJECT, A, &activate)
+            .await
+            .unwrap()["already_recorded"],
+        true
+    );
+
+    // A legacy V1 title edit does not erase or reinterpret the V2 source policy.
+    after.dependency_acceptance = None;
+    let mut renamed = after.clone();
+    renamed.title = "Revised SDK".into();
+    let created = store
+        .create_planning_candidate(
+            TENANT,
+            PROJECT,
+            A,
+            &DraftCandidateCreate {
+                changes: vec![DraftChange {
+                    op: DraftOpKind::EditFields,
+                    before: Some(after),
+                    after: renamed,
+                }],
+                suggestion_ids: vec![],
+                allowed_spec_roots: vec!["specs".into()],
+                project_goal_keys: vec!["delivery".into()],
+                self_approve_policy: Some(OrdinaryPlanningSelfApprovePolicy::ordinary_default()),
+                author_person_id: Some("agent".into()),
+                predetermined_candidate_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let candidate_id = created["candidate_id"].as_str().unwrap();
+    let digest = created["candidate_digest"].as_str().unwrap();
+    let saved: Value = admin
+        .query_one(
+            "SELECT changes_json FROM awr_team.planning_candidates WHERE id=$1",
+            &[&candidate_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        awr_team::planning_codec_for_changes(
+            &serde_json::from_value::<Vec<DraftChange>>(saved).unwrap()
+        ),
+        PLANNING_CODEC
+    );
+    store
+        .approve_planning_candidate(TENANT, PROJECT, A, candidate_id, digest, Some("agent"))
+        .await
+        .unwrap();
+    let published = store
+        .publish_planning_candidate(TENANT, PROJECT, A, candidate_id, digest)
+        .await
+        .unwrap();
+    store
+        .activate_planning_writeback(
+            TENANT,
+            PROJECT,
+            A,
+            &WritebackActivateRequest {
+                request_id: "legacy-policy-retention".into(),
+                publish_receipt_id: published["receipt_id"].as_str().unwrap().into(),
+                source_root: tmp.root.clone(),
+                ledger_relative_path: "ledger.yaml".into(),
+                impact_proven: true,
+                stopped_work_ids: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    let contract = activated_contract(&admin, "CLIENT-1").await;
+    assert_eq!(contract.completion_policy, POLICY);
+    assert_eq!(contract.dependency_acceptance, expected_modes);
+    assert_eq!(contract.codec, WorkContract::CODEC_V2);
+}
+
+async fn activated_contract(admin: &tokio_postgres::Client, key: &str) -> awr_team::WorkContract {
+    // Read only the active compiled contract in this process's isolated fixture.
+    // SourceStore::current is intentionally unavailable in scoped Team mode.
+    let row = admin
+        .query_one(
+            "SELECT c.contract_json,c.contract_hash
+         FROM awr_team.projects p JOIN awr_team.work_contracts c
+           ON c.tenant_id=p.tenant_id AND c.project_id=p.id AND c.snapshot_id=p.active_snapshot_id
+         WHERE p.tenant_id=$1 AND p.id=$2 AND c.work_id=$3",
+            &[&TENANT, &PROJECT, &key],
+        )
+        .await
+        .unwrap();
+    let contract: awr_team::WorkContract = serde_json::from_value(row.get(0)).unwrap();
+    assert_eq!(contract.hash().unwrap(), row.get::<_, String>(1));
+    contract
 }
 
 #[tokio::test]

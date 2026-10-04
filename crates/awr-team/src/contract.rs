@@ -61,7 +61,7 @@ struct WireContract {
     dependency_acceptance: Option<BTreeMap<String, DependencyAcceptanceMode>>,
 }
 
-fn present_modes<'de, D: serde::Deserializer<'de>>(
+pub(crate) fn present_modes<'de, D: serde::Deserializer<'de>>(
     d: D,
 ) -> Result<Option<BTreeMap<String, DependencyAcceptanceMode>>, D::Error> {
     struct Modes;

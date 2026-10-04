@@ -92,6 +92,7 @@ fn draft(id: &str) -> TaskDraft {
         acceptance: vec!["ok".into()],
         required_dependencies: vec![],
         completion_policy: "independent_review".into(),
+        dependency_acceptance: None,
         definition_state: DraftDefinitionState::Draft,
         workstream: None,
         split_from: None,

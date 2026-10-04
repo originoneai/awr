@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub const PLANNING_CODEC: &str = "awr-team-planning-v1";
+pub const PLANNING_CODEC_V2: &str = "awr-team-planning-v2";
 
 /// Suggestions never become claimable work and never enlarge the formal work
 /// denominator or mutate live deps/acceptance.
@@ -148,6 +149,14 @@ pub struct TaskDraft {
     pub acceptance: Vec<String>,
     pub required_dependencies: Vec<String>,
     pub completion_policy: String,
+    /// V2 only. Omission retains the source policy; a present map is an explicit
+    /// reviewed replacement, never an implicit acceptance or permission grant.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::contract::present_modes"
+    )]
+    pub dependency_acceptance: Option<BTreeMap<String, crate::DependencyAcceptanceMode>>,
     pub definition_state: DraftDefinitionState,
     /// Owning workstream external key. Required for CreateTask writeback so
     /// publish prep can bind the new task before authoritative source mutation.
@@ -178,6 +187,23 @@ impl TaskDraft {
             return Err(TeamError::InvalidInput(
                 "draft completion_policy required".into(),
             ));
+        }
+        if let Some(modes) = &self.dependency_acceptance {
+            if modes.is_empty()
+                || self
+                    .required_dependencies
+                    .iter()
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    != self.required_dependencies.len()
+                || modes
+                    .keys()
+                    .any(|key| key == &self.work_id || !self.required_dependencies.contains(key))
+            {
+                return Err(TeamError::InvalidInput(
+                    "dependency_acceptance requires a nonempty map and unique existing required predecessors".into(),
+                ));
+            }
         }
         if FORGE_COMPLETION_VIA_STATUS_ALLOWED {
             return Err(TeamError::InvalidInput(
@@ -281,7 +307,7 @@ pub struct PlanningCandidate {
 
 impl PlanningCandidate {
     pub fn validate_structure(&self) -> TeamResult<()> {
-        if self.codec != PLANNING_CODEC {
+        if self.codec != planning_codec_for_changes(&self.changes) {
             return Err(TeamError::InvalidInput("unsupported planning codec".into()));
         }
         if self.candidate_id.trim().is_empty()
@@ -311,6 +337,10 @@ impl PlanningCandidate {
         for change in &self.changes {
             if let Some(before) = &change.before {
                 before.validate()?;
+                ensure_independent_review_not_downgraded(
+                    &before.completion_policy,
+                    &change.after.completion_policy,
+                )?;
                 if before.work_id != change.after.work_id {
                     return Err(TeamError::InvalidInput(
                         "draft edits must preserve original work_id".into(),
@@ -630,6 +660,21 @@ pub fn build_candidate_diff(
                 });
             }
         }
+        let before_modes = change
+            .before
+            .as_ref()
+            .and_then(|b| b.dependency_acceptance.as_ref());
+        let after_modes = change.after.dependency_acceptance.as_ref();
+        // None means retain, rather than remove, an existing policy.
+        if after_modes.is_some() && before_modes != after_modes {
+            field_diffs.push(FieldDiff {
+                work_key: key,
+                field: "dependency_acceptance".into(),
+                before: before_modes.map(|m| json!(m)),
+                after: after_modes.map(|m| json!(m)),
+            });
+            review_requirements.insert("explicit_dependency_assurance_review".into());
+        }
         review_requirements.insert(change.after.completion_policy.clone());
         if change.after.definition_state == DraftDefinitionState::Cancelled
             || change.after.definition_state == DraftDefinitionState::Archived
@@ -818,12 +863,28 @@ pub fn edit_candidate(
             "cannot edit published or superseded candidate".into(),
         ));
     }
+    candidate.codec = planning_codec_for_changes(&changes).into();
     candidate.changes = changes;
     candidate.draft_revision = candidate.draft_revision.saturating_add(1).max(1);
     candidate.approval = None;
     candidate.state = CandidateState::Drafting;
     candidate.validate_structure()?;
     Ok(candidate)
+}
+
+/// Deterministic version selection lets stored V1 candidates keep their exact
+/// original digest without a schema migration or a reinterpretation of policy.
+pub fn planning_codec_for_changes(changes: &[DraftChange]) -> &'static str {
+    if changes.iter().any(|c| {
+        c.after.dependency_acceptance.is_some()
+            || c.before
+                .as_ref()
+                .is_some_and(|b| b.dependency_acceptance.is_some())
+    }) {
+        PLANNING_CODEC_V2
+    } else {
+        PLANNING_CODEC
+    }
 }
 
 #[cfg(test)]
@@ -841,6 +902,7 @@ mod tests {
             acceptance: vec!["tests pass".into()],
             required_dependencies: deps.iter().map(|s| (*s).into()).collect(),
             completion_policy: "independent_review".into(),
+            dependency_acceptance: None,
             definition_state: DraftDefinitionState::Draft,
             workstream: None,
             split_from: None,
@@ -875,6 +937,180 @@ mod tests {
             known_work_ids: ids.iter().copied().collect(),
             known_external_keys: ids.iter().copied().collect(),
         }
+    }
+
+    fn dependency_modes() -> BTreeMap<String, crate::DependencyAcceptanceMode> {
+        BTreeMap::from([(
+            "B".into(),
+            crate::DependencyAcceptanceMode::AgentReviewedCallerAssertedReconciled,
+        )])
+    }
+
+    #[test]
+    fn legacy_candidate_wire_and_digest_material_remain_unchanged() {
+        let legacy = json!({
+            "codec": "awr-team-planning-v1",
+            "candidate_id": "cand-1",
+            "project_id": "project-a",
+            "author_person_id": "person-maint",
+            "author_actor_id": "actor-maint",
+            "baseline_digest": "sha256:baseline",
+            "baseline_epoch": "1",
+            "draft_revision": 1,
+            "changes": [{
+                "op": "create_task",
+                "before": null,
+                "after": {
+                    "work_id": "A", "external_key": "A", "title": "Task A",
+                    "goals": ["delivery"], "scope_paths": ["specs/api.md"],
+                    "acceptance": ["tests pass"], "required_dependencies": [],
+                    "completion_policy": "independent_review", "definition_state": "draft"
+                }
+            }],
+            "state": "drafting",
+            "allowed_spec_roots": ["specs"],
+            "project_goal_keys": ["delivery"]
+        });
+        let loaded: PlanningCandidate = serde_json::from_value(legacy.clone()).unwrap();
+        loaded.validate_structure().unwrap();
+        assert_eq!(serde_json::to_value(&loaded).unwrap(), legacy);
+        let material = loaded.digest_material().unwrap();
+        assert!(
+            material["changes"][0]["after"]
+                .get("dependency_acceptance")
+                .is_none()
+        );
+        assert_eq!(
+            material,
+            json!({
+                "codec": legacy["codec"],
+                "candidate_id": legacy["candidate_id"],
+                "project_id": legacy["project_id"],
+                "baseline_digest": legacy["baseline_digest"],
+                "baseline_epoch": legacy["baseline_epoch"],
+                "draft_revision": legacy["draft_revision"],
+                "suggestion_ids": [],
+                "changes": legacy["changes"],
+                "allowed_spec_roots": legacy["allowed_spec_roots"],
+                "project_goal_keys": legacy["project_goal_keys"]
+            })
+        );
+    }
+
+    #[test]
+    fn explicit_dependency_policy_requires_v2_preview_and_new_approval() {
+        let changes = vec![DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(draft("A", &["B"])),
+            after: draft("A", &["B"]),
+        }];
+        let mut approved = candidate(changes.clone());
+        let legacy_digest = approved.candidate_digest().unwrap();
+        approved.state = CandidateState::Approved;
+        approved.approval = Some(PlanningApproval {
+            approval_id: "ap-legacy".into(),
+            candidate_digest: legacy_digest.clone(),
+            approver_person_id: "person-maint".into(),
+            approver_actor_id: "actor-maint".into(),
+            self_approved: true,
+        });
+        let mut changes = changes;
+        changes[0].after.dependency_acceptance = Some(dependency_modes());
+        let mut edited = edit_candidate(approved, changes).unwrap();
+        assert_eq!(edited.codec, PLANNING_CODEC_V2);
+        assert_eq!(edited.draft_revision, 2);
+        assert!(edited.approval.is_none());
+        assert_eq!(edited.state, CandidateState::Drafting);
+        assert_ne!(edited.candidate_digest().unwrap(), legacy_digest);
+        validate_candidate(&edited, &baseline(&["A", "B"])).unwrap();
+        let diff = build_candidate_diff(&edited, vec![]).unwrap();
+        assert!(diff.field_diffs.iter().any(|d| {
+            d.field == "dependency_acceptance"
+                && d.before.is_none()
+                && d.after == Some(json!(dependency_modes()))
+        }));
+        assert!(
+            diff.review_requirements
+                .iter()
+                .any(|r| r == "explicit_dependency_assurance_review")
+        );
+        edited.codec = PLANNING_CODEC.into();
+        assert!(
+            edited.validate_structure().is_err(),
+            "V1 must reject explicit V2 policy fields"
+        );
+    }
+
+    #[test]
+    fn dependency_policy_rejects_null_duplicates_unknown_modes_and_invalid_predecessors() {
+        let base = json!(draft("A", &["B"]));
+        for raw in [
+            Value::Null,
+            json!({"B": "unknown_assurance"}),
+            json!("invalid"),
+        ] {
+            let mut value = base.clone();
+            value["dependency_acceptance"] = raw;
+            assert!(serde_json::from_value::<TaskDraft>(value).is_err());
+        }
+        let duplicate = format!(
+            "{},\"dependency_acceptance\":{{\"B\":\"agent_reviewed_caller_asserted_reconciled\",\"B\":\"agent_reviewed_caller_asserted_reconciled\"}}}}",
+            serde_json::to_string(&base).unwrap().trim_end_matches('}')
+        );
+        assert!(
+            serde_json::from_str::<TaskDraft>(&duplicate)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate")
+        );
+        for raw in [
+            json!({}),
+            json!({"MISSING": "agent_reviewed_caller_asserted_reconciled"}),
+            json!({"A": "agent_reviewed_caller_asserted_reconciled"}),
+        ] {
+            let mut value = base.clone();
+            value["dependency_acceptance"] = raw;
+            assert!(
+                serde_json::from_value::<TaskDraft>(value)
+                    .unwrap()
+                    .validate()
+                    .is_err()
+            );
+        }
+        let mut repeated = draft("A", &["B", "B"]);
+        repeated.dependency_acceptance = Some(dependency_modes());
+        assert!(repeated.validate().is_err());
+        let mut dangling = draft("A", &["B"]);
+        dangling.dependency_acceptance = Some(dependency_modes());
+        let mut c = candidate(vec![DraftChange {
+            op: DraftOpKind::CreateTask,
+            before: None,
+            after: dangling,
+        }]);
+        c.codec = PLANNING_CODEC_V2.into();
+        assert!(
+            validate_candidate(&c, &baseline(&[]))
+                .unwrap_err()
+                .to_string()
+                .contains("dangling")
+        );
+    }
+
+    #[test]
+    fn candidate_cannot_downgrade_existing_independent_review() {
+        let mut after = draft("A", &[]);
+        after.completion_policy = "caller_managed_execution_and_agent_review".into();
+        let c = candidate(vec![DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(draft("A", &[])),
+            after,
+        }]);
+        assert!(
+            c.validate_structure()
+                .unwrap_err()
+                .to_string()
+                .contains("downgrade")
+        );
     }
 
     #[test]

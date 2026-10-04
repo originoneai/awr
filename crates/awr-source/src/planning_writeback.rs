@@ -20,6 +20,7 @@ pub const SOURCE_WRITABLE_FIELDS: &[&str] = &[
     "acceptance",
     "required_dependencies",
     "completion_policy",
+    "dependency_acceptance",
     "definition_state",
     "workstream",
     "split_from",
@@ -166,6 +167,10 @@ pub fn apply_planning_changes_to_ledger(
         .ok_or_else(|| Error::InvalidInput("ledger work_items required for writeback".into()))?;
 
     for change in changes {
+        change
+            .after
+            .validate()
+            .map_err(|e| Error::InvalidInput(e.to_string()))?;
         inspect_draft_for_runtime_fields(&change.after, &mut refused)?;
         match change.op {
             DraftOpKind::CreateTask => {
@@ -211,18 +216,55 @@ pub fn apply_planning_changes_to_ledger(
                 };
                 // Preserve identity and any runtime-looking keys that already
                 // exist only if they are true source vocabulary (e.g. status).
-                if let Some(modes) = row.get("dependency_acceptance") {
-                    let map: BTreeMap<String, awr_team::DependencyAcceptanceMode> =
-                        serde_json::from_value(modes.clone()).map_err(|_| {
+                let source_modes: Option<BTreeMap<String, awr_team::DependencyAcceptanceMode>> =
+                    row.get("dependency_acceptance")
+                        .map(|modes| serde_json::from_value(modes.clone()))
+                        .transpose()
+                        .map_err(|_| {
                             Error::InvalidInput("invalid source dependency_acceptance".into())
                         })?;
-                    if map
-                        .keys()
-                        .any(|id| !change.after.required_dependencies.contains(id))
+                let before_modes = change
+                    .before
+                    .as_ref()
+                    .and_then(|b| b.dependency_acceptance.as_ref());
+                // A V1 omission can retain an existing source policy. An
+                // explicit replacement or prior map must match the source,
+                // including absence, so an invented before-map cannot pass.
+                if (change.after.dependency_acceptance.is_some() || before_modes.is_some())
+                    && before_modes != source_modes.as_ref()
+                {
+                    return Err(Error::SourceConflict(
+                        "include the exact prior dependency_acceptance before replacing it".into(),
+                    ));
+                }
+                if let Some(map) = &source_modes {
+                    if change.after.dependency_acceptance.is_none()
+                        && map
+                            .keys()
+                            .any(|id| !change.after.required_dependencies.contains(id))
                     {
-                        return Err(Error::InvalidInput("planning V1 cannot orphan or change dependency_acceptance; use a reviewed source policy edit".into()));
+                        return Err(Error::InvalidInput("planning cannot orphan retained dependency_acceptance; use an explicit reviewed V2 policy edit".into()));
                     }
                 }
+                let policy = row
+                    .get("completion_policy")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or(crate::publish_prep::DEFAULT_COMPLETION_POLICY);
+                if change
+                    .before
+                    .as_ref()
+                    .is_some_and(|b| b.completion_policy != policy)
+                {
+                    return Err(Error::SourceConflict(
+                        "draft completion_policy does not match the authoritative source".into(),
+                    ));
+                }
+                awr_team::ensure_independent_review_not_downgraded(
+                    policy,
+                    &change.after.completion_policy,
+                )
+                .map_err(|e| Error::RuleViolation(e.to_string()))?;
                 apply_draft_fields(row, &change.after);
                 // Never copy runtime-only keys into the row.
                 for field in RUNTIME_ONLY_FIELDS {
@@ -279,6 +321,7 @@ fn draft_to_ledger_row(draft: &TaskDraft) -> Value {
         "acceptance": draft.acceptance,
         "paths": draft.scope_paths,
         "depends_on": draft.required_dependencies,
+        "completion_policy": draft.completion_policy,
         "status": match draft.definition_state {
             awr_team::DraftDefinitionState::Draft => "planned",
             awr_team::DraftDefinitionState::Enabled => "planned",
@@ -287,6 +330,9 @@ fn draft_to_ledger_row(draft: &TaskDraft) -> Value {
         },
     });
     if let Some(obj) = row.as_object_mut() {
+        if let Some(modes) = &draft.dependency_acceptance {
+            obj.insert("dependency_acceptance".into(), json!(modes));
+        }
         if let Some(ws) = draft
             .workstream
             .as_deref()
@@ -312,6 +358,10 @@ fn apply_draft_fields(row: &mut Value, draft: &TaskDraft) {
         obj.insert("acceptance".into(), json!(draft.acceptance));
         obj.insert("paths".into(), json!(draft.scope_paths));
         obj.insert("depends_on".into(), json!(draft.required_dependencies));
+        obj.insert("completion_policy".into(), json!(draft.completion_policy));
+        if let Some(modes) = &draft.dependency_acceptance {
+            obj.insert("dependency_acceptance".into(), json!(modes));
+        }
         // Preserve existing workstream ownership unless the draft explicitly
         // carries a non-empty workstream (CreateTask always does).
         if let Some(ws) = draft
@@ -368,6 +418,7 @@ mod tests {
             acceptance: vec!["ok".into()],
             required_dependencies: deps.iter().map(|s| (*s).into()).collect(),
             completion_policy: "independent_review".into(),
+            dependency_acceptance: None,
             definition_state: DraftDefinitionState::Enabled,
             workstream: None,
             split_from: None,
@@ -492,9 +543,128 @@ work_items:
                 .to_string()
                 .contains("cannot orphan")
         );
-        let mut unsupported = json!(draft("CLIENT-1", &["API-1"]));
-        unsupported["dependency_acceptance"] =
-            json!({"API-1":"agent_reviewed_caller_asserted_reconciled"});
-        assert!(serde_json::from_value::<TaskDraft>(unsupported).is_err());
+    }
+
+    fn modes(ids: &[&str]) -> BTreeMap<String, awr_team::DependencyAcceptanceMode> {
+        ids.iter()
+            .map(|id| {
+                (
+                    (*id).into(),
+                    awr_team::DependencyAcceptanceMode::AgentReviewedCallerAssertedReconciled,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn create_writes_reviewed_completion_and_dependency_policies() {
+        let mut task = draft("CLIENT-1", &["API-1"]);
+        task.workstream = Some("client".into());
+        task.completion_policy = "caller_managed_execution_and_agent_review".into();
+        task.dependency_acceptance = Some(modes(&["API-1"]));
+        let patch = apply_planning_changes_to_ledger(
+            b"work_items: []\n",
+            &[DraftChange {
+                op: DraftOpKind::CreateTask,
+                before: None,
+                after: task,
+            }],
+        )
+        .unwrap();
+        let parsed: Value = serde_yaml_ng::from_slice(&patch.after_bytes).unwrap();
+        assert_eq!(
+            parsed["work_items"][0]["completion_policy"],
+            "caller_managed_execution_and_agent_review"
+        );
+        assert_eq!(
+            parsed["work_items"][0]["dependency_acceptance"]["API-1"],
+            "agent_reviewed_caller_asserted_reconciled"
+        );
+        assert_eq!(parsed["work_items"][0]["status"], "planned");
+    }
+
+    #[test]
+    fn edits_retain_agent_review_and_require_exact_prior_dependency_map() {
+        let ledger = br#"work_items:
+  - id: CLIENT-1
+    status: planned
+    depends_on: [API-1]
+    completion_policy: caller_managed_execution_and_agent_review
+    dependency_acceptance:
+      API-1: agent_reviewed_caller_asserted_reconciled
+"#;
+        let mut before = draft("CLIENT-1", &["API-1"]);
+        before.completion_policy = "caller_managed_execution_and_agent_review".into();
+        before.dependency_acceptance = Some(modes(&["API-1"]));
+        let mut after = before.clone();
+        after.title = "Revised SDK".into();
+        after.required_dependencies = vec!["SHARED-1".into()];
+        after.dependency_acceptance = Some(modes(&["SHARED-1"]));
+        let change = DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(before),
+            after,
+        };
+        let patch = apply_planning_changes_to_ledger(ledger, &[change.clone()]).unwrap();
+        let parsed: Value = serde_yaml_ng::from_slice(&patch.after_bytes).unwrap();
+        assert_eq!(
+            parsed["work_items"][0]["completion_policy"],
+            "caller_managed_execution_and_agent_review"
+        );
+        assert_eq!(
+            parsed["work_items"][0]["dependency_acceptance"],
+            json!(modes(&["SHARED-1"]))
+        );
+        let mut stale = change;
+        stale.before.as_mut().unwrap().dependency_acceptance = None;
+        assert!(matches!(
+            apply_planning_changes_to_ledger(ledger, &[stale]),
+            Err(Error::SourceConflict(_))
+        ));
+    }
+
+    #[test]
+    fn invented_prior_dependency_policy_is_rejected_even_when_after_omits_it() {
+        let ledger = b"work_items:\n  - id: CLIENT-1\n    depends_on: [API-1]\n";
+        let mut before = draft("CLIENT-1", &["API-1"]);
+        before.dependency_acceptance = Some(modes(&["API-1"]));
+        let change = DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(before),
+            after: draft("CLIENT-1", &["API-1"]),
+        };
+        assert!(matches!(
+            apply_planning_changes_to_ledger(ledger, &[change]),
+            Err(Error::SourceConflict(_))
+        ));
+    }
+
+    #[test]
+    fn source_completion_policy_rejects_stale_before_and_independent_review_downgrade() {
+        // Blank and absent policies compile to the independent-review default.
+        for source_policy in [
+            "",
+            "    completion_policy: '  '\n",
+            "    completion_policy: independent_review\n",
+        ] {
+            let ledger = format!("work_items:\n  - id: CLIENT-1\n{source_policy}");
+            let mut after = draft("CLIENT-1", &[]);
+            after.completion_policy = "caller_managed_execution_and_agent_review".into();
+            let mut change = DraftChange {
+                op: DraftOpKind::EditFields,
+                before: Some(draft("CLIENT-1", &[])),
+                after,
+            };
+            assert!(matches!(
+                apply_planning_changes_to_ledger(ledger.as_bytes(), &[change.clone()]),
+                Err(Error::RuleViolation(_))
+            ));
+            change.before.as_mut().unwrap().completion_policy =
+                "caller_managed_execution_and_agent_review".into();
+            assert!(matches!(
+                apply_planning_changes_to_ledger(ledger.as_bytes(), &[change]),
+                Err(Error::SourceConflict(_))
+            ));
+        }
     }
 }
