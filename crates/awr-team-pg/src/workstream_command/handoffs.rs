@@ -295,10 +295,8 @@ pub(super) async fn apply(
         Action::Inspect(a) => {
             let before = load_for_update(tx, tenant, project, &a.handoff_id)
                 .await?
-                .ok_or_else(|| PgError::Protocol("handoff not found".into()))?;
-            if before.work_item_id != command.work_id {
-                return Err(PgError::Forbidden);
-            }
+                .filter(|h| h.work_item_id == command.work_id)
+                .ok_or_else(PgError::handoff_unavailable)?;
             require_person_match(&actor_person, &a.inspector_person_id)?;
             let req = InspectHandoffRequest {
                 request_key: command.request_id.clone(),
@@ -314,10 +312,8 @@ pub(super) async fn apply(
         Action::Accept(a) => {
             let before = load_for_update(tx, tenant, project, &a.handoff_id)
                 .await?
-                .ok_or_else(|| PgError::Protocol("handoff not found".into()))?;
-            if before.work_item_id != command.work_id {
-                return Err(PgError::Forbidden);
-            }
+                .filter(|h| h.work_item_id == command.work_id)
+                .ok_or_else(PgError::handoff_unavailable)?;
             let unknown: i64 = tx
                 .query_one(
                     "SELECT COUNT(*)::bigint FROM awr_team.executions
@@ -369,10 +365,8 @@ pub(super) async fn apply(
         Action::Reject(a) => {
             let before = load_for_update(tx, tenant, project, &a.handoff_id)
                 .await?
-                .ok_or_else(|| PgError::Protocol("handoff not found".into()))?;
-            if before.work_item_id != command.work_id {
-                return Err(PgError::Forbidden);
-            }
+                .filter(|h| h.work_item_id == command.work_id)
+                .ok_or_else(PgError::handoff_unavailable)?;
             require_person_match(&actor_person, &a.by_person_id)?;
             let req = RejectHandoffRequest {
                 request_key: command.request_id.clone(),
@@ -389,10 +383,8 @@ pub(super) async fn apply(
         Action::Cancel(a) => {
             let before = load_for_update(tx, tenant, project, &a.handoff_id)
                 .await?
-                .ok_or_else(|| PgError::Protocol("handoff not found".into()))?;
-            if before.work_item_id != command.work_id {
-                return Err(PgError::Forbidden);
-            }
+                .filter(|h| h.work_item_id == command.work_id)
+                .ok_or_else(PgError::handoff_unavailable)?;
             require_person_match(&actor_person, &a.by_person_id)?;
             let req = CancelHandoffRequest {
                 request_key: command.request_id.clone(),
@@ -409,10 +401,8 @@ pub(super) async fn apply(
         Action::Timeout(a) => {
             let before = load_for_update(tx, tenant, project, &a.handoff_id)
                 .await?
-                .ok_or_else(|| PgError::Protocol("handoff not found".into()))?;
-            if before.work_item_id != command.work_id {
-                return Err(PgError::Forbidden);
-            }
+                .filter(|h| h.work_item_id == command.work_id)
+                .ok_or_else(PgError::handoff_unavailable)?;
             let req = TimeoutHandoffRequest {
                 request_key: command.request_id.clone(),
                 handoff_id: a.handoff_id,
@@ -615,19 +605,23 @@ pub(crate) async fn inspect_query(
     tx: &Transaction<'_>,
     tenant: &str,
     project: &str,
+    work: &str,
     handoff_id: &str,
 ) -> PgResult<Value> {
     let row = tx
         .query_opt(
             "SELECT body_json FROM awr_team.team_handoffs
-             WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
-            &[&tenant, &project, &handoff_id],
+             WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND work_id=$4",
+            &[&tenant, &project, &handoff_id, &work],
         )
         .await?
-        .ok_or_else(|| PgError::Protocol("handoff not found".into()))?;
+        .ok_or_else(PgError::handoff_unavailable)?;
     let body: Value = row.get(0);
     let h: TeamHandoff =
         serde_json::from_value(body.clone()).map_err(|e| PgError::Protocol(e.to_string()))?;
+    if h.work_item_id != work {
+        return Err(PgError::handoff_unavailable());
+    }
     let duty = h.duty_at(h.updated_at_ms).map_err(map_core)?;
     Ok(json!({
         "handoff": body,

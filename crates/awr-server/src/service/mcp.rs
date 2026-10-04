@@ -809,6 +809,28 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
+    fn unavailable_handoff_has_bounded_guidance_without_private_details() {
+        let (status, response) = public_error(PgError::handoff_unavailable());
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(response["code"], "HandoffUnavailable");
+        assert!(
+            response["message"]
+                .as_str()
+                .unwrap()
+                .contains("selected work")
+        );
+        let next = response["next_step"].as_str().unwrap();
+        assert!(next.contains("handoff.id"));
+        assert!(next.contains("event, request or checkpoint ID"));
+        assert!(next.contains("only your own session"));
+        assert!(next.contains("authenticated person identity"));
+        assert!(serde_json::to_vec(&response).unwrap().len() < 1024);
+        let (_, unknown) = public_error(PgError::Protocol("private-handoff-record".into()));
+        assert_eq!(unknown["code"], "InvalidInput");
+        assert!(!unknown.to_string().contains("private-handoff-record"));
+    }
+
+    #[test]
     fn missing_handoff_fence_has_precise_bounded_recovery_guidance() {
         let (status, response) = public_error(PgError::missing_handoff_fence());
         assert_eq!(status, StatusCode::BAD_REQUEST);

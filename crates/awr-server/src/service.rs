@@ -886,6 +886,14 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
                 "next_step":"Retry session.start with args.conversation_id set to a stable, nonempty host conversation, thread, or session identifier of at most 128 characters."}),
         );
     }
+    if error.is_handoff_unavailable() {
+        return (
+            StatusCode::NOT_FOUND,
+            json!({"code":"HandoffUnavailable",
+                "message":"handoff is unavailable in the selected work",
+                "next_step":"Read handoff.id from the sender's proposal receipt; an event, request or checkpoint ID is not a handoff ID. Confirm the selected work and query handoff.inspect with that ID. Use only your own session; receiving still requires current context, versions, fence and your authenticated person identity."}),
+        );
+    }
     if error.is_missing_handoff_fence() {
         return (
             StatusCode::BAD_REQUEST,

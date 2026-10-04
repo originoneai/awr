@@ -150,6 +150,15 @@ impl PgError {
         "session.start requires conversation_id";
 
     const MISSING_HANDOFF_FENCE: &'static str = "handoff.accept requires the current runtime fence";
+    const HANDOFF_UNAVAILABLE: &'static str = "handoff unavailable in selected work";
+
+    pub fn handoff_unavailable() -> Self {
+        Self::Protocol(Self::HANDOFF_UNAVAILABLE.into())
+    }
+
+    pub fn is_handoff_unavailable(&self) -> bool {
+        matches!(self, Self::Protocol(message) if message == Self::HANDOFF_UNAVAILABLE)
+    }
 
     pub fn missing_handoff_fence() -> Self {
         Self::Protocol(Self::MISSING_HANDOFF_FENCE.into())
