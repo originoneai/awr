@@ -146,7 +146,18 @@ workstreams. `work.list`, `work.search` and `events.list` require a returned
 `workstream_id` when more than one readable workstream is available. An explicit
 selection uses a delegation covering that workstream; credential access alone
 does not disclose an undelegated stream. Scoped Agents cannot inspect
-project-wide planning outcome receipts.
+project-wide planning outcome receipts. A live `propose_planning` delegation
+does allow recovery of the same actor and client's own `planning.propose`
+receipt. One current delegation must cover every affected task, and the current
+task owners must remain readable. Separate task grants cannot be combined to
+recover a wider suggestion. An explicit project delegation retains project-wide
+inspection; ordinary scoped `inspect` grants do not gain it.
+
+HTTP, dedicated MCP outcome lookup and query `planning.outcome` use the same
+checks. Missing or still-reserved commands remain unknown and expose no reserved
+payload. Lookup neither resubmits a suggestion nor grants execution, approval or
+publication authority. Revoked or expired delegations, disabled person bindings,
+changed clients and lost access are checked again on every lookup.
 
 Navigation checks each task's actions against a covering delegation. A claim
 permission on one workstream never makes another read-only workstream claimable.

@@ -363,6 +363,27 @@ pub(crate) async fn authenticated_read(
     request: &WorkstreamQuery,
 ) -> PgResult<Value> {
     let mut auth = authenticate(tx, tenant, project, bearer).await?;
+    if request.op == "planning.outcome" {
+        request.validate()?;
+        let request_id = request.request_id.as_deref().ok_or(PgError::Forbidden)?;
+        let receipt = crate::source::planning_ops::read_planning_command_receipt(
+            tx, tenant, project, &mut auth, request_id,
+        )
+        .await?;
+        let data = receipt.unwrap_or_else(|| json!({
+            "protocol":"awr-team-planning-command-v1",
+            "request_id":request_id,
+            "already_recorded":false,
+            "result":null,
+            "next_step":"absent receipt is unknown — wait/retry inspect before submitting a new request_id"
+        }));
+        return Ok(json!({
+            "protocol_version":1, "scope_id":"main", "selection_basis":"project",
+            "coordinator_epoch":auth.epoch, "project_status":auth.project_status,
+            "source_snapshot_id":auth.snapshot, "project_revision":auth.revision.to_string(),
+            "data":data
+        }));
+    }
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -575,46 +596,6 @@ pub(crate) async fn read(
             Value::Null
         };
         return Ok(json!({"items":items,"total":visible.len(),"next_cursor":next}));
-    }
-    if q.op == "planning.outcome" {
-        let request_id = q.request_id.as_deref().ok_or(PgError::Forbidden)?;
-        let row = tx
-            .query_opt(
-                "SELECT op, request_hash, result_json, created_at::text
-                 FROM awr_team.planning_command_receipts
-                 WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
-                &[&tenant, &project, &request_id],
-            )
-            .await?;
-        let data = match row {
-            Some(r) => json!({
-                "protocol":"awr-team-planning-command-v1",
-                "request_id":request_id,
-                "op":r.get::<_,String>(0),
-                "request_hash":r.get::<_,String>(1),
-                "result":r.get::<_,Value>(2),
-                "created_at":r.get::<_,String>(3),
-                "already_recorded":true,
-                "next_step":"reuse this receipt; do not resubmit with a new request_id"
-            }),
-            None => json!({
-                "protocol":"awr-team-planning-command-v1",
-                "request_id":request_id,
-                "already_recorded":false,
-                "result":null,
-                "next_step":"absent receipt is unknown — wait/retry inspect before submitting a new request_id"
-            }),
-        };
-        return Ok(json!({
-            "protocol_version":1,
-            "scope_id":"main",
-            "selection_basis":"project",
-            "coordinator_epoch":auth.epoch,
-            "project_status":auth.project_status,
-            "source_snapshot_id":auth.snapshot,
-            "project_revision":auth.revision.to_string(),
-            "data":data
-        }));
     }
     if q.op == "source.content" {
         let path = q.source_path.as_deref().ok_or(PgError::Forbidden)?;
@@ -1010,38 +991,6 @@ pub(crate) async fn read(
                 q.max_context_bytes,
             )
             .await?
-        }
-        "planning.outcome" => {
-            // Receipt lookup uses the same auth gate as SourceStore; here we
-            // only expose the redacted receipt body already stored.
-            let request_id = q.request_id.as_deref().ok_or(PgError::Forbidden)?;
-            let row = tx
-                .query_opt(
-                    "SELECT op, request_hash, result_json, created_at::text
-                     FROM awr_team.planning_command_receipts
-                     WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
-                    &[&tenant, &project, &request_id],
-                )
-                .await?;
-            match row {
-                Some(r) => json!({
-                    "protocol":"awr-team-planning-command-v1",
-                    "request_id":request_id,
-                    "op":r.get::<_,String>(0),
-                    "request_hash":r.get::<_,String>(1),
-                    "result":r.get::<_,Value>(2),
-                    "created_at":r.get::<_,String>(3),
-                    "already_recorded":true,
-                    "next_step":"reuse this receipt; do not resubmit with a new request_id"
-                }),
-                None => json!({
-                    "protocol":"awr-team-planning-command-v1",
-                    "request_id":request_id,
-                    "already_recorded":false,
-                    "result":null,
-                    "next_step":"absent receipt is unknown — wait/retry inspect before submitting a new request_id"
-                }),
-            }
         }
         _ => return Err(PgError::Unsupported("workstream query operation".into())),
     };
