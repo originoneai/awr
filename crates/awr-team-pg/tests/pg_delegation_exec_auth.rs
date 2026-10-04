@@ -7,6 +7,7 @@ mod fixture;
 use awr_core::*;
 use awr_team_pg::{
     AuthorizationStore, PgError, PlanningSuggestRequest, SourceStore, SuggestionSubmit,
+    WorkstreamReadStore,
 };
 use fixture::*;
 use serde_json::json;
@@ -242,6 +243,320 @@ async fn issue_planning_grant(db: &str, grant: AgentAuthorization) {
         )
         .await
         .unwrap();
+}
+
+async fn outcome_both(
+    source: &SourceStore,
+    read: &WorkstreamReadStore,
+    token: &str,
+    request: &str,
+) -> Option<serde_json::Value> {
+    let receipt = source
+        .get_planning_command_receipt(TENANT, PROJECT, token, request)
+        .await
+        .unwrap();
+    let mut q = query("planning.outcome");
+    q.request_id = Some(request.into());
+    let generic = read.query(TENANT, PROJECT, token, q).await.unwrap();
+    if let Some(receipt) = &receipt {
+        assert_eq!(generic["data"], *receipt);
+    } else {
+        assert_eq!(generic["data"]["already_recorded"], false);
+        assert!(generic["data"]["result"].is_null());
+        assert!(generic["data"].get("request_hash").is_none());
+    }
+    receipt
+}
+
+async fn deny_outcome_both(
+    source: &SourceStore,
+    read: &WorkstreamReadStore,
+    token: &str,
+    request: &str,
+) {
+    assert!(matches!(
+        source
+            .get_planning_command_receipt(TENANT, PROJECT, token, request)
+            .await,
+        Err(PgError::Forbidden)
+    ));
+    let mut q = query("planning.outcome");
+    q.request_id = Some(request.into());
+    assert!(matches!(
+        read.query(TENANT, PROJECT, token, q).await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
+async fn scoped_proposer_recovers_only_own_receipt_on_both_read_paths() {
+    let (_guard, admin, db, read) = setup().await;
+    enable_writes(&admin).await;
+    flip_actor_to_agent(&admin).await;
+    issue_planning_grant(
+        &db,
+        planning_grant(
+            "proposal-reader",
+            AuthorizationScope::Workstream {
+                project_id: PROJECT.into(),
+                workstream_id: Id::from(1).to_string(),
+            },
+        ),
+    )
+    .await;
+    let source = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    assert!(
+        outcome_both(&source, &read, A, "missing-proposal")
+            .await
+            .is_none()
+    );
+    let req = suggestion("own-proposal", &["a", "c"]);
+    let submitted = source
+        .planning_suggest(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    let receipt = outcome_both(&source, &read, A, &req.request_id)
+        .await
+        .unwrap();
+    assert_eq!(receipt["result"], submitted);
+    assert_eq!(receipt["actor_id"], "agent");
+    assert_eq!(receipt["client_id"], "cli-a");
+    deny_outcome_both(&source, &read, B, &req.request_id).await;
+    for (id, actor, client, op) in [
+        ("other-actor", "reviewer", "cli-a", "planning.propose"),
+        ("other-client", "agent", "cli-b", "planning.propose"),
+        ("draft-outcome", "agent", "cli-a", "planning.edit_draft"),
+    ] {
+        admin
+            .execute(
+                "INSERT INTO awr_team.planning_command_receipts
+            (tenant_id,project_id,request_id,op,request_hash,actor_id,client_id,status,result_json)
+            SELECT tenant_id,project_id,$1,$2,request_hash,$3,$4,status,result_json
+            FROM awr_team.planning_command_receipts WHERE request_id=$5",
+                &[&id, &op, &actor, &client, &req.request_id],
+            )
+            .await
+            .unwrap();
+        deny_outcome_both(&source, &read, A, id).await;
+    }
+    let count: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.planning_suggestions", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 1, "recovery must not submit another suggestion");
+}
+
+#[tokio::test]
+async fn task_proposal_recovery_stays_unknown_until_completed_and_allows_paused_reads() {
+    let (_guard, admin, db, read) = setup().await;
+    enable_writes(&admin).await;
+    flip_actor_to_agent(&admin).await;
+    issue_planning_grant(
+        &db,
+        planning_grant(
+            "task-proposer",
+            AuthorizationScope::Task {
+                project_id: PROJECT.into(),
+                work_item_id: "a".into(),
+            },
+        ),
+    )
+    .await;
+    let source = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let req = suggestion("reserved-own-proposal", &["a"]);
+    let submitted = source
+        .planning_suggest(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    admin.execute("UPDATE awr_team.planning_command_receipts SET status='reserved',result_json=$1 WHERE request_id=$2",
+        &[&json!({"affected_work_keys":["a"],"domain_id":"private-reserved-payload"}), &req.request_id]).await.unwrap();
+    assert!(
+        outcome_both(&source, &read, A, &req.request_id)
+            .await
+            .is_none()
+    );
+    admin.execute("UPDATE awr_team.planning_command_receipts SET status='completed',result_json=$1 WHERE request_id=$2",
+        &[&submitted, &req.request_id]).await.unwrap();
+    admin.batch_execute("UPDATE awr_team.workstream_grants SET can_write=false WHERE client_id='cli-a';
+        UPDATE awr_team.workstream_catalogs SET catalog_json=jsonb_set(catalog_json,'{workstreams,0,state}','\"paused\"'::jsonb)").await.unwrap();
+    assert!(
+        outcome_both(&source, &read, A, &req.request_id)
+            .await
+            .is_some()
+    );
+    deny_both_suggestion_entries(&source, &suggestion("paused-write", &["a"])).await;
+    admin
+        .execute(
+            "UPDATE awr_team.planning_suggestions SET affected_work_keys='[]' WHERE id=$1",
+            &[&submitted["result"]["suggestion_id"].as_str().unwrap()],
+        )
+        .await
+        .unwrap();
+    deny_outcome_both(&source, &read, A, &req.request_id).await;
+}
+
+#[tokio::test]
+async fn proposal_recovery_rechecks_live_identity_access_and_delegation() {
+    let (_guard, admin, db, read) = setup().await;
+    enable_writes(&admin).await;
+    flip_actor_to_agent(&admin).await;
+    issue_planning_grant(
+        &db,
+        planning_grant(
+            "live-proposal-reader",
+            AuthorizationScope::Task {
+                project_id: PROJECT.into(),
+                work_item_id: "a".into(),
+            },
+        ),
+    )
+    .await;
+    let source = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let req = suggestion("live-proposal-outcome", &["a"]);
+    source
+        .planning_suggest(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    for (disable, restore) in [
+        (
+            "UPDATE awr_team.workstream_grants SET can_read=false,can_write=false WHERE client_id='cli-a'",
+            "UPDATE awr_team.workstream_grants SET can_read=true,can_write=true WHERE client_id='cli-a'",
+        ),
+        (
+            "UPDATE awr_team.project_memberships SET role='reader' WHERE actor_id='agent'",
+            "UPDATE awr_team.project_memberships SET role='admin' WHERE actor_id='agent'",
+        ),
+        (
+            "UPDATE awr_team.person_agent_bindings SET status='disabled' WHERE id='bind-agent'",
+            "UPDATE awr_team.person_agent_bindings SET status='active' WHERE id='bind-agent'",
+        ),
+        (
+            "UPDATE awr_team.persons SET status='disabled' WHERE id='alice'",
+            "UPDATE awr_team.persons SET status='active' WHERE id='alice'",
+        ),
+        (
+            "UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='reader-a'",
+            "UPDATE awr_team.credentials SET revoked_at=NULL WHERE id='reader-a'",
+        ),
+        (
+            "UPDATE awr_team.agent_authorizations SET status='revoked' WHERE id='live-proposal-reader'",
+            "UPDATE awr_team.agent_authorizations SET status='active' WHERE id='live-proposal-reader'",
+        ),
+        (
+            "UPDATE awr_team.agent_authorizations SET body_json=jsonb_set(body_json,'{expires_at_ms}','1001'::jsonb) WHERE id='live-proposal-reader'",
+            "UPDATE awr_team.agent_authorizations SET body_json=jsonb_set(body_json,'{expires_at_ms}','null'::jsonb) WHERE id='live-proposal-reader'",
+        ),
+    ] {
+        admin.batch_execute(disable).await.unwrap();
+        deny_outcome_both(&source, &read, A, &req.request_id).await;
+        admin.batch_execute(restore).await.unwrap();
+        assert!(
+            outcome_both(&source, &read, A, &req.request_id)
+                .await
+                .is_some()
+        );
+    }
+    admin.execute("UPDATE awr_team.workstream_ownership SET workstream_id=$1,ownership_version=ownership_version+1 WHERE work_id='a'",
+        &[&Id::from(2).to_string()]).await.unwrap();
+    deny_outcome_both(&source, &read, A, &req.request_id).await;
+}
+
+#[tokio::test]
+async fn proposal_recovery_never_unions_task_grants_or_revives_narrowed_parent() {
+    let (_guard, admin, db, read) = setup().await;
+    enable_writes(&admin).await;
+    flip_actor_to_agent(&admin).await;
+    let parent = planning_grant(
+        "outcome-parent",
+        AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: Id::from(1).to_string(),
+        },
+    );
+    issue_planning_grant(&db, parent.clone()).await;
+    let source = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let req = suggestion("two-task-outcome", &["a", "c"]);
+    source
+        .planning_suggest(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    assert!(
+        outcome_both(&source, &read, A, &req.request_id)
+            .await
+            .is_some()
+    );
+    for work in ["a", "c"] {
+        issue_planning_grant(
+            &db,
+            planning_grant(
+                &format!("outcome-task-{work}"),
+                AuthorizationScope::Task {
+                    project_id: PROJECT.into(),
+                    work_item_id: work.into(),
+                },
+            ),
+        )
+        .await;
+    }
+    admin
+        .batch_execute(
+            "UPDATE awr_team.agent_authorizations SET status='revoked' WHERE id='outcome-parent'",
+        )
+        .await
+        .unwrap();
+    deny_outcome_both(&source, &read, A, &req.request_id).await;
+    // Task scopes nest structurally beneath Project scopes. A Workstream
+    // parent cannot have a Task child without an ownership-aware delegation.
+    let project_parent = planning_grant(
+        "outcome-project-parent",
+        AuthorizationScope::Project {
+            project_id: PROJECT.into(),
+        },
+    );
+    issue_planning_grant(&db, project_parent.clone()).await;
+    let mut child = project_parent;
+    child.id = "outcome-narrowed".into();
+    child.parent_authorization_id = Some("outcome-project-parent".into());
+    child.scope = AuthorizationScope::Task {
+        project_id: PROJECT.into(),
+        work_item_id: "a".into(),
+    };
+    issue_planning_grant(&db, child).await;
+    deny_outcome_both(&source, &read, A, &req.request_id).await;
+}
+
+#[tokio::test]
+async fn project_inspection_preserves_human_and_explicit_project_reads() {
+    let (_guard, admin, db, read) = setup().await;
+    enable_writes(&admin).await;
+    let source = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let req = suggestion("project-readable-outcome", &["a"]);
+    source
+        .planning_suggest(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    assert!(
+        outcome_both(&source, &read, B, &req.request_id)
+            .await
+            .is_some()
+    );
+    flip_actor_to_agent(&admin).await;
+    let mut grant = work_grant(&PersonId::new("alice").unwrap());
+    grant.client_id = "cli-b".into();
+    issue_planning_grant(&db, grant).await;
+    assert!(
+        outcome_both(&source, &read, B, &req.request_id)
+            .await
+            .is_some()
+    );
+    admin.execute("UPDATE awr_team.planning_command_receipts SET status='reserved',result_json=$1 WHERE request_id=$2",
+        &[&json!({"domain_id":"private-reserved-payload"}), &req.request_id]).await.unwrap();
+    assert!(
+        outcome_both(&source, &read, B, &req.request_id)
+            .await
+            .is_none()
+    );
 }
 
 async fn deny_both_suggestion_entries(store: &SourceStore, request: &PlanningSuggestRequest) {

@@ -253,7 +253,7 @@ call SourceStore planning entrypoints only:
 | `POST .../planning/preview` / `awr_team_planning_preview` | read (propose/edit/approve/publish/work.read) | Exact diff + impact; no mutation. |
 | `POST .../planning/approve` / `awr_team_planning_approve` | `planning.approve` | Bound to current `candidate_digest`. |
 | `POST .../planning/publish` / `awr_team_planning_publish` | `planning.publish` | Optional `activate` uses the **registered** sole source only; client paths/URLs are refused. |
-| `POST .../planning/outcome` / `awr_team_planning_outcome` / query `planning.outcome` | work.read or planning.* | Idempotent receipt by original `request_id`. |
+| `POST .../planning/outcome` / `awr_team_planning_outcome` / query `planning.outcome` | work.read or planning.* | Original `request_id`; scoped Agents with `planning.propose` recover only their own suggestion under one live covering delegation. Reserved commands stay unknown. |
 
 Unsupported adapters (for example private management repo writeback), publish
 blocked by in-flight claims, and missing context return sanitized `code` /

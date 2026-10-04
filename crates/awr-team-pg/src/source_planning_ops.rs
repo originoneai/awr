@@ -168,6 +168,101 @@ impl SourceStore {
     }
 }
 
+/// Both planning transports and the generic query use the same live authority
+/// and completed-only receipt view. Reserved commands remain unknown.
+pub(crate) async fn read_planning_command_receipt(
+    tx: &tokio_postgres::Transaction<'_>,
+    tenant_id: &str,
+    project_id: &str,
+    auth: &mut crate::workstream_auth::ReaderAuthority,
+    request_id: &str,
+) -> PgResult<Option<Value>> {
+    require_request_id(request_id)?;
+    bind_workstream_scope(tx, tenant_id, project_id).await?;
+    let row = tx
+        .query_opt(
+            "SELECT op, request_hash, actor_id, client_id, result_json, created_at::text, status
+         FROM awr_team.planning_command_receipts
+         WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
+            &[&tenant_id, &project_id, &request_id],
+        )
+        .await?;
+    let identity = row.as_ref().map(|row| {
+        (
+            row.get::<_, String>(0),
+            row.get::<_, String>(2),
+            row.get::<_, String>(3),
+        )
+    });
+    let mut affected = None;
+    if let Some(row) = &row {
+        if row.get::<_, String>(0) == "planning.propose" {
+            let body: Value = row.get(4);
+            if row.get::<_, String>(6) == "completed" {
+                let suggestion = body
+                    .pointer("/result/suggestion_id")
+                    .and_then(Value::as_str);
+                if let Some(id) = suggestion {
+                    let suggestion = tx
+                        .query_opt(
+                            "SELECT affected_work_keys FROM awr_team.planning_suggestions
+                         WHERE tenant_id=$1 AND project_id=$2 AND id=$3
+                           AND author_actor_id=$4 AND author_client_id=$5",
+                            &[
+                                &tenant_id,
+                                &project_id,
+                                &id,
+                                &row.get::<_, String>(2),
+                                &row.get::<_, String>(3),
+                            ],
+                        )
+                        .await?;
+                    affected = suggestion
+                        .and_then(|r| serde_json::from_value::<Vec<String>>(r.get(0)).ok());
+                }
+            } else {
+                affected = body
+                    .get("affected_work_keys")
+                    .cloned()
+                    .and_then(|keys| serde_json::from_value::<Vec<String>>(keys).ok());
+            }
+        }
+    }
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    crate::delegation_auth::authorize_planning_outcome(
+        tx,
+        auth,
+        project_id,
+        identity
+            .as_ref()
+            .map(|(op, actor, client)| (op.as_str(), actor.as_str(), client.as_str())),
+        affected.as_deref(),
+        now_ms,
+    )
+    .await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    if row.get::<_, String>(6) != "completed" {
+        return Ok(None);
+    }
+    Ok(Some(json!({
+        "protocol": RECEIPT_PROTOCOL,
+        "request_id": request_id,
+        "op": row.get::<_, String>(0),
+        "request_hash": row.get::<_, String>(1),
+        "actor_id": row.get::<_, String>(2),
+        "client_id": row.get::<_, String>(3),
+        "result": row.get::<_, Value>(4),
+        "created_at": row.get::<_, String>(5),
+        "already_recorded": true,
+        "next_step": "reuse this receipt; do not resubmit with a new request_id"
+    })))
+}
+
 impl SourceStore {
     /// Lookup a prior planning mutation receipt (disconnect recovery).
     pub async fn get_planning_command_receipt(
@@ -181,53 +276,11 @@ impl SourceStore {
         let mut client = self.connect().await?;
         crate::check_schema(&client).await?;
         let tx = client.transaction().await?;
-        let auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
-        let scope = crate::workstream_auth::authority_scope(&auth, None, None);
-        let can = [
-            awr_team::Action::PlanningPropose,
-            awr_team::Action::PlanningEditDraft,
-            awr_team::Action::PlanningApprove,
-            awr_team::Action::PlanningPublish,
-            awr_team::Action::WorkRead,
-        ]
-        .iter()
-        .any(|a| scope.allowed_actions.contains(a));
-        if !can {
-            return Err(PgError::Forbidden);
-        }
-        bind_workstream_scope(&tx, tenant_id, project_id).await?;
-        let row = tx
-            .query_opt(
-                "SELECT op, request_hash, actor_id, client_id, result_json, created_at::text, status
-                 FROM awr_team.planning_command_receipts
-                 WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
-                &[&tenant_id, &project_id, &request_id],
-            )
+        let mut auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
+        let out = read_planning_command_receipt(&tx, tenant_id, project_id, &mut auth, request_id)
             .await?;
-        let Some(row) = row else {
-            tx.commit().await?;
-            return Ok(None);
-        };
-        let status: String = row.get(6);
-        if status != "completed" {
-            // Reserved/in-flight is not a usable outcome receipt.
-            tx.commit().await?;
-            return Ok(None);
-        }
-        let out = json!({
-            "protocol": RECEIPT_PROTOCOL,
-            "request_id": request_id,
-            "op": row.get::<_, String>(0),
-            "request_hash": row.get::<_, String>(1),
-            "actor_id": row.get::<_, String>(2),
-            "client_id": row.get::<_, String>(3),
-            "result": row.get::<_, Value>(4),
-            "created_at": row.get::<_, String>(5),
-            "already_recorded": true,
-            "next_step": "reuse this receipt; do not resubmit with a new request_id"
-        });
         tx.commit().await?;
-        Ok(Some(out))
+        Ok(out)
     }
 
     /// Reserve an idempotency slot before the domain mutation. A completed

@@ -129,6 +129,113 @@ fn install_delegation(auth: &mut ReaderAuthority, chosen: Option<&ReadDelegation
     );
 }
 
+/// Project inspection stays explicit. A scoped proposer may recover only its
+/// own suggestion receipt, under one current grant covering all affected work.
+pub(crate) async fn authorize_planning_outcome(
+    tx: &tokio_postgres::Transaction<'_>,
+    auth: &mut ReaderAuthority,
+    project_id: &str,
+    receipt_identity: Option<(&str, &str, &str)>,
+    affected_work_keys: Option<&[String]>,
+    now_ms: i64,
+) -> PgResult<()> {
+    let actions = [
+        Action::PlanningPropose,
+        Action::PlanningEditDraft,
+        Action::PlanningApprove,
+        Action::PlanningPublish,
+        Action::WorkRead,
+    ];
+    if !actor_requires_explicit_delegation(&auth.actor_kind) {
+        return actions
+            .iter()
+            .find_map(|action| {
+                crate::workstream_auth::authorize_domain_action(auth, *action, None, None).ok()
+            })
+            .ok_or(PgError::Forbidden);
+    }
+    let candidates = effective_delegations(tx, auth, project_id, None, now_ms).await?;
+    if let Some(candidate) = candidates.iter().find(|candidate| {
+        matches!(
+            candidate.grant.scope,
+            awr_core::AuthorizationScope::Project { .. }
+        ) && actions
+            .iter()
+            .any(|action| candidate.actions.contains(action))
+    }) {
+        install_delegation(auth, Some(candidate));
+        let action = actions
+            .iter()
+            .find(|action| candidate.actions.contains(action))
+            .unwrap();
+        return crate::workstream_auth::authorize_domain_action(auth, *action, None, None);
+    }
+    let mut tasks = Vec::new();
+    if let Some((op, actor, client)) = receipt_identity {
+        if op != "planning.propose" || actor != auth.actor_id || client != auth.client_id {
+            return Err(PgError::Forbidden);
+        }
+        let keys = affected_work_keys.ok_or(PgError::Forbidden)?;
+        if keys.is_empty() || keys.len() > 256 {
+            return Err(PgError::Forbidden);
+        }
+        for work in keys.iter().collect::<BTreeSet<_>>() {
+            let row = tx
+                .query_opt(
+                    "SELECT s.workstream_id FROM awr_team.workstream_snapshot_ownership s
+                 JOIN awr_team.workstream_ownership o
+                   ON o.tenant_id=s.tenant_id AND o.project_id=s.project_id
+                  AND o.work_id=s.work_id AND o.workstream_id=s.workstream_id
+                  AND o.ownership_version=s.ownership_version
+                 WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.snapshot_id=$3
+                   AND s.scope_id='main' AND s.work_id=$4 FOR SHARE OF o",
+                    &[&auth.tenant_id, &project_id, &auth.snapshot, &work.as_str()],
+                )
+                .await?
+                .ok_or(PgError::Forbidden)?;
+            let stream: awr_core::Id = row
+                .get::<_, String>(0)
+                .parse()
+                .map_err(|_| PgError::Forbidden)?;
+            auth.access
+                .authorize(&auth.catalog, stream, awr_core::WorkstreamAction::Read)
+                .map_err(|_| PgError::Forbidden)?;
+            tasks.push((work, stream));
+        }
+    }
+    let chosen = candidates
+        .iter()
+        .find(|candidate| {
+            candidate.actions.contains(&Action::PlanningPropose)
+                && tasks.iter().all(|(work, stream)| {
+                    candidate
+                        .grant
+                        .covers_task(project_id, work, Some(&stream.to_string()))
+                })
+        })
+        .ok_or(PgError::Forbidden)?;
+    install_delegation(auth, Some(chosen));
+    if tasks.is_empty() {
+        // A missing receipt is unknown, never permission to execute or to
+        // inspect another caller's request. No request body is exposed.
+        return crate::workstream_auth::authorize_domain_action(
+            auth,
+            Action::PlanningPropose,
+            None,
+            None,
+        );
+    }
+    for (work, stream) in tasks {
+        crate::workstream_auth::authorize_domain_action(
+            auth,
+            Action::PlanningPropose,
+            Some(stream),
+            Some(work),
+        )?;
+    }
+    Ok(())
+}
+
 /// Suggestions are inert, but an Agent must have one live delegation covering
 /// every affected published task. Separate grants cannot synthesize authority.
 pub(crate) async fn authorize_planning_suggestion(
