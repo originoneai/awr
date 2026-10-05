@@ -66,7 +66,7 @@ impl ProjectAccessStore {
                 bindings.push(state);
             }
             let a = tx.query_one(
-                "SELECT a.display_name,a.kind,m.role,m.independent_review,m.agent_review,m.business_roles FROM awr_team.actors a
+                "SELECT a.display_name,a.kind,m.role,m.independent_review,m.agent_review,m.business_roles,m.assignment_grant FROM awr_team.actors a
                  JOIN awr_team.project_memberships m ON m.tenant_id=a.tenant_id AND m.actor_id=a.id
                  WHERE a.tenant_id=$1 AND m.project_id=$2 AND a.id=$3",
                 &[&tenant,&project,&actor],
@@ -79,11 +79,14 @@ impl ProjectAccessStore {
             let mut item = json!({"actor_id":actor,"display_name":a.get::<_,String>(0),
                 "kind":kind,"role":role,
                 "membership_action_ceiling":crate::workstream_auth::membership_action_ceiling(
-                    &role,template,&kind,a.get(3),a.get(4),roles.as_ref()),
+                    &role,template,&kind,a.get(3),a.get(4),a.get(6),roles.as_ref()),
                 "independent_review":a.get::<_,bool>(3),"agent_review":a.get::<_,bool>(4),"clients":bindings,
                 "clients_truncated":clients.len()>100});
             if let Some(roles) = a.get::<_, Option<Value>>(5) {
                 item["business_roles"] = roles;
+            }
+            if a.get::<_, bool>(6) {
+                item["assignment_grant"] = json!(true);
             }
             items.push(item);
         }

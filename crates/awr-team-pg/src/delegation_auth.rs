@@ -46,6 +46,21 @@ pub fn tmcp_actions_for_authorized(action: AuthorizedAction) -> BTreeSet<Action>
         AuthorizedAction::ProposePlanning => {
             out.insert(PlanningPropose);
         }
+        AuthorizedAction::AssignWork => {
+            out.insert(WorkAssign);
+        }
+        AuthorizedAction::EditPlanning => {
+            out.insert(PlanningEditDraft);
+        }
+        AuthorizedAction::ApprovePlanning => {
+            out.insert(PlanningApprove);
+        }
+        AuthorizedAction::PublishPlanning => {
+            out.insert(PlanningPublish);
+        }
+        AuthorizedAction::FinalizeDelivery => {
+            out.insert(DeliveryFinalize);
+        }
         AuthorizedAction::ManageAuthorization => {}
     }
     out
@@ -108,7 +123,13 @@ pub(crate) async fn resolve_agent_delegation(
         None
     };
     let chosen = candidates.iter().find(|candidate| {
-        work_id.filter(|w| !w.is_empty()).is_none_or(|work| {
+        (!matches!(
+            requested_action,
+            Some(Action::PlanningEditDraft | Action::PlanningApprove | Action::PlanningPublish)
+        ) || matches!(
+            candidate.grant.scope,
+            awr_core::AuthorizationScope::Project { .. }
+        )) && work_id.filter(|w| !w.is_empty()).is_none_or(|work| {
             candidate
                 .grant
                 .covers_task(project_id, work, task_stream.as_deref())
@@ -118,6 +139,48 @@ pub(crate) async fn resolve_agent_delegation(
     });
     install_delegation(auth, chosen);
     Ok(())
+}
+
+/// Existing planning commands affect the project. Scoped task/workstream grants
+/// cannot be promoted to project authority by omitting a selector.
+pub(crate) async fn authorize_project_action(
+    tx: &tokio_postgres::Transaction<'_>,
+    auth: &mut ReaderAuthority,
+    project_id: &str,
+    action: Action,
+) -> PgResult<()> {
+    if actor_requires_explicit_delegation(&auth.actor_kind) {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let candidates = effective_delegations(tx, auth, project_id, None, now_ms).await?;
+        let chosen = candidates.iter().find(|candidate| {
+            matches!(
+                candidate.grant.scope,
+                awr_core::AuthorizationScope::Project { .. }
+            ) && candidate.actions.contains(&action)
+        });
+        install_delegation(auth, chosen);
+        if matches!(
+            action,
+            Action::PlanningEditDraft | Action::PlanningApprove | Action::PlanningPublish
+        ) {
+            // A project plan may add unowned work. A partial workstream writer
+            // cannot use that absence of ownership to escape its live scope.
+            for stream in auth
+                .catalog
+                .workstreams
+                .iter()
+                .filter(|s| s.state == awr_core::WorkstreamState::Active)
+            {
+                auth.access
+                    .authorize(&auth.catalog, stream.id, awr_core::WorkstreamAction::Write)
+                    .map_err(|_| PgError::Forbidden)?;
+            }
+        }
+    }
+    crate::workstream_auth::authorize_domain_action(auth, action, None, None)
 }
 
 fn install_delegation(auth: &mut ReaderAuthority, chosen: Option<&ReadDelegation>) {
@@ -356,13 +419,9 @@ async fn effective_delegations(
         }
 
         let mapped = tmcp_actions_for_authorized_set(&grant.actions);
-        let mut intersected = intersect_delegation_with_template(auth.role_template, &mapped);
-        // Review is not a role-template permission. It needs both the live
-        // membership grant and this covering delegation, never either alone.
-        if auth.agent_review && mapped.contains(&Action::ReviewDecide) {
-            intersected.insert(Action::ReviewDecide);
-        }
-        intersected = intersected
+        // Explicit membership grants and duty ceilings share the same policy
+        // as normal authorization; a template-only prefilter loses opt-in actions.
+        let intersected = mapped
             .intersection(&auth.membership_actions())
             .copied()
             .collect();
@@ -680,6 +739,44 @@ pub(crate) fn execution_side_effect_permitted(auth: &ReaderAuthority) -> bool {
 mod tests {
     use super::*;
     use awr_core::AuthorizationScope;
+
+    #[test]
+    fn supervisor_actions_are_explicit_separate_and_round_trip() {
+        for (authorized, product) in [
+            (AuthorizedAction::AssignWork, Action::WorkAssign),
+            (AuthorizedAction::EditPlanning, Action::PlanningEditDraft),
+            (AuthorizedAction::ApprovePlanning, Action::PlanningApprove),
+            (AuthorizedAction::PublishPlanning, Action::PlanningPublish),
+            (AuthorizedAction::FinalizeDelivery, Action::DeliveryFinalize),
+        ] {
+            assert_eq!(
+                tmcp_actions_for_authorized(authorized),
+                BTreeSet::from([product])
+            );
+            assert_eq!(
+                AuthorizedAction::parse(authorized.as_str()).unwrap(),
+                authorized
+            );
+            assert_eq!(
+                serde_json::from_value::<AuthorizedAction>(
+                    serde_json::to_value(authorized).unwrap()
+                )
+                .unwrap(),
+                authorized
+            );
+        }
+        for ordinary in [AuthorizedAction::StartWork, AuthorizedAction::Review] {
+            let mapped = tmcp_actions_for_authorized(ordinary);
+            assert!(!mapped.contains(&Action::WorkAssign));
+            assert!(!mapped.contains(&Action::DeliveryFinalize));
+        }
+        for role in RoleTemplate::all() {
+            assert!(
+                !intersect_delegation_with_template(role, &BTreeSet::from([Action::WorkAssign]))
+                    .contains(&Action::WorkAssign)
+            );
+        }
+    }
 
     #[test]
     fn planning_suggestion_is_explicit_and_never_plan_or_execution_power() {

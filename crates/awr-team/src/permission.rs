@@ -9,8 +9,8 @@ use crate::error::{TeamError, TeamResult};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub const PERMISSION_POLICY_ID: &str = "awr-team-mcp-permission-v1";
-pub const PERMISSION_POLICY_VERSION: u32 = 1;
+pub const PERMISSION_POLICY_ID: &str = "awr-team-mcp-permission-v2";
+pub const PERMISSION_POLICY_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -57,6 +57,8 @@ impl RoleTemplate {
 pub enum Action {
     #[serde(rename = "work.read")]
     WorkRead,
+    #[serde(rename = "work.assign")]
+    WorkAssign,
     #[serde(rename = "session.maintain_own")]
     SessionMaintainOwn,
     #[serde(rename = "claim.manage_own")]
@@ -87,6 +89,7 @@ impl Action {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::WorkRead => "work.read",
+            Self::WorkAssign => "work.assign",
             Self::SessionMaintainOwn => "session.maintain_own",
             Self::ClaimManageOwn => "claim.manage_own",
             Self::ExecutionRequestAndReportOwn => "execution.request_and_report_own",
@@ -105,6 +108,7 @@ impl Action {
     pub fn parse(name: &str) -> TeamResult<Self> {
         match name {
             "work.read" => Ok(Self::WorkRead),
+            "work.assign" => Ok(Self::WorkAssign),
             "session.maintain_own" => Ok(Self::SessionMaintainOwn),
             "claim.manage_own" => Ok(Self::ClaimManageOwn),
             "execution.request_and_report_own" => Ok(Self::ExecutionRequestAndReportOwn),
@@ -123,9 +127,10 @@ impl Action {
         }
     }
 
-    pub fn all() -> [Self; 13] {
+    pub fn all() -> [Self; 14] {
         [
             Self::WorkRead,
+            Self::WorkAssign,
             Self::SessionMaintainOwn,
             Self::ClaimManageOwn,
             Self::ExecutionRequestAndReportOwn,
@@ -141,8 +146,9 @@ impl Action {
         ]
     }
 
-    pub fn new_privileged_actions() -> [Self; 6] {
+    pub fn new_privileged_actions() -> [Self; 7] {
         [
+            Self::WorkAssign,
             Self::PlanningPropose,
             Self::PlanningEditDraft,
             Self::PlanningApprove,
@@ -312,6 +318,7 @@ impl BusinessRole {
             Self::Reviewer => BTreeSet::from([WorkRead, ReviewDecide]),
             Self::Supervisor => BTreeSet::from([
                 WorkRead,
+                WorkAssign,
                 PlanningPropose,
                 PlanningEditDraft,
                 PlanningApprove,
@@ -380,6 +387,7 @@ mod business_role_tests {
                 BusinessRole::Supervisor,
                 BTreeSet::from([
                     WorkRead,
+                    WorkAssign,
                     PlanningPropose,
                     PlanningEditDraft,
                     PlanningApprove,
@@ -460,7 +468,7 @@ fn scope_covers(
             return Err(TeamError::PermissionDenied("authority expired".into()));
         }
     }
-    if scope.policy_version != PERMISSION_POLICY_VERSION {
+    if !matches!(scope.policy_version, 1 | PERMISSION_POLICY_VERSION) {
         return Err(TeamError::PermissionDenied(
             "permission policy version mismatch".into(),
         ));
@@ -509,6 +517,11 @@ pub fn authorize_action(
     now_unix_ms: u64,
 ) -> TeamResult<()> {
     scope_covers(scope, resource, now_unix_ms)?;
+    if action == Action::WorkAssign && scope.policy_version < 2 {
+        return Err(TeamError::PermissionDenied(
+            "work.assign requires permission policy v2".into(),
+        ));
+    }
     if action == Action::ReviewDecide {
         if !(scope.independent_review_grant || scope.agent_review_grant)
             || !scope.allowed_actions.contains(&Action::ReviewDecide)

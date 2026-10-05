@@ -24,6 +24,94 @@ struct Digests {
 }
 
 #[tokio::test]
+async fn assignment_is_opt_in_preserves_omission_and_revokes_with_membership_version() {
+    let (_guard, mut admin, _, store) = setup().await;
+    let mut p = plan();
+    p.role = "maintainer".into();
+    p.grants[0].attest_execution = false;
+    p.business_roles = Some(std::collections::BTreeSet::from([
+        awr_team::BusinessRole::Supervisor,
+    ]));
+    let d = digests(&mut admin, &p).await;
+    OperatorAccess::apply(&mut admin, &p, "assignment-legacy", &d.state, &d.plan)
+        .await
+        .unwrap();
+    let caps = store
+        .query(TENANT, PROJECT, TOKEN, query("capabilities"))
+        .await
+        .unwrap();
+    assert!(
+        !caps["identity"]["membership_action_ceiling"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("work.assign"))
+    );
+    p.assignment_grant = Some(true);
+    let d = digests(&mut admin, &p).await;
+    OperatorAccess::apply(&mut admin, &p, "assignment-explicit", &d.state, &d.plan)
+        .await
+        .unwrap();
+    let caps = store
+        .query(TENANT, PROJECT, TOKEN, query("capabilities"))
+        .await
+        .unwrap();
+    assert!(
+        caps["identity"]["membership_action_ceiling"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("work.assign"))
+    );
+    let explicit = OperatorAccess::inspect(&mut admin, TENANT, PROJECT, &p.actor.id, &p.client_id)
+        .await
+        .unwrap();
+    assert_eq!(explicit["state"]["membership"]["assignment_grant"], true);
+    p.assignment_grant = None;
+    assert!(
+        serde_json::to_value(&p)
+            .unwrap()
+            .get("assignment_grant")
+            .is_none()
+    );
+    let d = digests(&mut admin, &p).await;
+    OperatorAccess::apply(&mut admin, &p, "assignment-omitted", &d.state, &d.plan)
+        .await
+        .unwrap();
+    let retained = OperatorAccess::inspect(&mut admin, TENANT, PROJECT, &p.actor.id, &p.client_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        retained["state"]["membership"],
+        explicit["state"]["membership"]
+    );
+    p.assignment_grant = Some(false);
+    let d = digests(&mut admin, &p).await;
+    OperatorAccess::apply(&mut admin, &p, "assignment-revoked", &d.state, &d.plan)
+        .await
+        .unwrap();
+    let revoked = OperatorAccess::inspect(&mut admin, TENANT, PROJECT, &p.actor.id, &p.client_id)
+        .await
+        .unwrap();
+    assert!(revoked["state"]["membership"]["assignment_grant"].is_null());
+    assert_ne!(
+        revoked["state"]["membership"]["version"],
+        explicit["state"]["membership"]["version"]
+    );
+    let caps = store
+        .query(TENANT, PROJECT, TOKEN, query("capabilities"))
+        .await
+        .unwrap();
+    assert!(
+        !caps["identity"]["membership_action_ceiling"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("work.assign"))
+    );
+    p.role = "developer".into();
+    p.assignment_grant = Some(true);
+    assert!(OperatorAccess::preview(&mut admin, &p).await.is_err());
+}
+
+#[tokio::test]
 async fn declared_duties_preserve_old_omission_and_replay_without_restoring_old_permissions() {
     use awr_team::BusinessRole;
     use std::collections::BTreeSet;

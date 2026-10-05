@@ -72,6 +72,102 @@ async fn apply(admin: &mut Client, p: &AgentProvisionPlan, request: &str) -> Val
     .unwrap()
 }
 
+#[tokio::test]
+async fn supervisor_project_provisioning_requires_explicit_membership_ceiling_and_all_streams() {
+    let (_guard, mut admin, _, _) = setup().await;
+    let mut access = access_plan();
+    access.role = "maintainer".into();
+    access.business_roles = Some(std::collections::BTreeSet::from([
+        awr_team::BusinessRole::Supervisor,
+        awr_team::BusinessRole::Deliverer,
+    ]));
+    let mut second = access.grants[0].clone();
+    second.workstream_id = Id::from(2);
+    access.grants.push(second);
+    let preview = OperatorAccess::preview(&mut admin, &access).await.unwrap();
+    OperatorAccess::apply(
+        &mut admin,
+        &access,
+        "supervisor-access",
+        preview["state_digest"].as_str().unwrap(),
+        preview["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    let mut p = plan(&admin).await;
+    p.authorization.scope = AuthorizationScope::Project {
+        project_id: PROJECT.into(),
+    };
+    p.authorization.actions = std::collections::BTreeSet::from([
+        AuthorizedAction::Inspect,
+        AuthorizedAction::AssignWork,
+        AuthorizedAction::EditPlanning,
+        AuthorizedAction::ApprovePlanning,
+        AuthorizedAction::PublishPlanning,
+        AuthorizedAction::FinalizeDelivery,
+    ]);
+    assert!(OperatorAgent::preview(&mut admin, &p).await.is_err());
+    access.assignment_grant = Some(true);
+    let preview = OperatorAccess::preview(&mut admin, &access).await.unwrap();
+    OperatorAccess::apply(
+        &mut admin,
+        &access,
+        "supervisor-assignment",
+        preview["state_digest"].as_str().unwrap(),
+        preview["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert!(OperatorAgent::preview(&mut admin, &p).await.is_ok());
+    access.grants[1].write = false;
+    let preview = OperatorAccess::preview(&mut admin, &access).await.unwrap();
+    OperatorAccess::apply(
+        &mut admin,
+        &access,
+        "supervisor-stream-narrow",
+        preview["state_digest"].as_str().unwrap(),
+        preview["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert!(OperatorAgent::preview(&mut admin, &p).await.is_err());
+    access.grants[1].write = true;
+    access.business_roles = Some(std::collections::BTreeSet::from([
+        awr_team::BusinessRole::Observer,
+    ]));
+    let preview = OperatorAccess::preview(&mut admin, &access).await.unwrap();
+    OperatorAccess::apply(
+        &mut admin,
+        &access,
+        "supervisor-duty-narrow",
+        preview["state_digest"].as_str().unwrap(),
+        preview["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert!(OperatorAgent::preview(&mut admin, &p).await.is_err());
+    access.business_roles = Some(std::collections::BTreeSet::from([
+        awr_team::BusinessRole::Supervisor,
+        awr_team::BusinessRole::Deliverer,
+    ]));
+    let preview = OperatorAccess::preview(&mut admin, &access).await.unwrap();
+    OperatorAccess::apply(
+        &mut admin,
+        &access,
+        "supervisor-duty-approved",
+        preview["state_digest"].as_str().unwrap(),
+        preview["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    apply(&mut admin, &p, "supervisor-provision").await;
+    assert_eq!(
+        OperatorAgent::inspect(&mut admin, &p).await.unwrap()["configuration_matches_plan"],
+        true
+    );
+    assert!(!p.authorization.actions.contains(&AuthorizedAction::Review));
+}
+
 async fn expired_renewal_plan(admin: &Client, provision: &AgentProvisionPlan) -> AgentRenewPlan {
     let now: i64 = admin
         .query_one(
@@ -324,6 +420,7 @@ async fn schema_upgrade_keeps_legacy_members_unspecified_and_validates_metadata_
         .batch_execute(
             "ALTER TABLE awr_team.persons DROP COLUMN member_identity;
              ALTER TABLE awr_team.project_memberships DROP COLUMN business_roles;
+             ALTER TABLE awr_team.project_memberships DROP COLUMN assignment_grant;
              UPDATE awr_team.schema_state SET version=36 WHERE component='awr_team';",
         )
         .await
