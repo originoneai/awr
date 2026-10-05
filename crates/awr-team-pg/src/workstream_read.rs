@@ -958,7 +958,14 @@ pub(crate) async fn read(
                 "checkpoint_id":r.get::<_,Option<String>>(3),"context_hash":r.get::<_,Option<String>>(4),"contract_hash":r.get::<_,Option<String>>(5),
                 "contract_matches_current":r.get::<_,Option<String>>(5).map(|hash| hash==current_contract),
                 "next_action":r.get::<_,Option<String>>(6),"open_loops":r.get::<_,Option<Value>>(7)})).collect();
-            json!({"items":items,"current_contract_hash":current_contract,"automatic_resume":false})
+            let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
+            let current =
+                observation::read(tx, tenant, project, auth, work, &stream, ownership, session)
+                    .await?;
+            // Checkpoints remain historical. Share the same current, scoped
+            // advice as work.observe without returning duplicate report bodies.
+            json!({"items":items,"current_contract_hash":current_contract,"automatic_resume":false,
+                "checkpoint_actions_are_historical":true,"guidance":current["guidance"]})
         }
         "source.content" => {
             let path = q.source_path.as_deref().ok_or(PgError::Forbidden)?;

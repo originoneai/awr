@@ -73,7 +73,7 @@ pub(super) fn select(data: &Value, context_complete: bool, owns_session: bool) -
             "a running execution has no live lease",
             "execution lease observation",
             "execution.inspect",
-            "Stop effects and inspect recovery before acquiring a fresh claim.",
+            "Stop effects. Expired leases cannot be renewed or resume an old run. Inspect the latest execution receipt and settle pending effects with an authorized operator before work.prepare, a fresh claim and a new execution.start.",
             "reconciliation or new claim",
         )
     } else if data["pr_deliveries"].as_array().is_some_and(|items| {
@@ -140,7 +140,7 @@ pub(super) fn select(data: &Value, context_complete: bool, owns_session: bool) -
             "the execution lease is no longer live",
             "lease expired or coordinator epoch changed",
             "claim.inspect",
-            "Stop effects and inspect execution/recovery; acquire a fresh claim only after unresolved effects are settled.",
+            "Stop effects and inspect execution/recovery. Expired leases cannot be renewed; settle pending effects before work.prepare and a fresh claim. Do not resume an old execution.",
             "reconciliation or new claim",
         )
     } else if data["waiting_user"] == true {
