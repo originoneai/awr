@@ -421,6 +421,18 @@ pub(super) async fn report(
     .await?;
     let effects_settled = settled.is_some();
     let terminal_reported = a.outcome != "unknown";
+    let attributable = !effects_settled
+        && recovery_cause::may_attribute(
+            tx,
+            tenant,
+            project,
+            auth,
+            &command.workstream_id,
+            &command.expected_contract_hash,
+            &r,
+            exceeded,
+        )
+        .await?;
     let id = crate::tx::new_id();
     let mut payload = json!({"outcome":a.outcome,"output_digest":a.output_digest,"observed_paths":a.observed_paths,
         "note":a.note,"client_id":auth.client_id,"session_id":a.session_id,
@@ -482,6 +494,9 @@ pub(super) async fn report(
              WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND execution_id=$4 AND state='reserved'",
             &[&tenant, &project, &command.work_id, &a.execution_id],
         ).await?;
+        if attributable {
+            recovery_cause::attribute(tx, tenant, project, &r, &id).await?;
+        }
     }
     let work_version = advance_work(tx, tenant, project, &command.work_id).await?;
     if let Some(settled) = &settled {

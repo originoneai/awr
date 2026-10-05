@@ -19,6 +19,17 @@ pub(super) fn select(data: &Value, context_complete: bool, owns_session: bool) -
             "Restore missing context before effects; use source.content or a larger context budget as needed.",
             "specification or dependency changes",
         )
+    } else if execution["state"] == "unknown"
+        && execution["controlled_confirmation_available"] == true
+    {
+        (
+            "confirm_controlled_execution",
+            "your admitted controlled run has an attributed report barrier",
+            "current grant, run and exact reserved paths still match",
+            "execution.attest",
+            "Inspect the latest receipt; attest only your controlled, stopped run with reviewed_receipt_id and facts.executor_stopped=true. Remaining effects keep recovery blocked.",
+            "receipt, grant, epoch, scope or recovery changes",
+        )
     } else if execution["state"] == "unknown" {
         (
             "reconcile_execution",
@@ -260,5 +271,18 @@ mod tests {
         }
         data["execution"]["state"] = json!("running");
         assert_eq!(select(&data, true, true)["code"], "refresh_execution");
+    }
+
+    #[test]
+    fn controlled_confirmation_is_conditional_and_stays_bounded() {
+        let mut data = active();
+        data["runtime"]["recovery_blocked"] = json!(true);
+        data["execution"] = json!({"state":"unknown","controlled_confirmation_available":true});
+        let hint = select(&data, true, true);
+        assert_eq!(hint["action"]["op"], "execution.attest");
+        assert!(hint.to_string().len() < 900);
+        assert_eq!(select(&data, false, true)["code"], "restore_context");
+        data["execution"]["controlled_confirmation_available"] = json!(false);
+        assert_eq!(select(&data, true, true)["code"], "reconcile_execution");
     }
 }

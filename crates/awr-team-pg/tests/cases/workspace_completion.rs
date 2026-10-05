@@ -3,6 +3,14 @@
 async fn workspace_completion_verifies_artifact_without_reconciliation_or_trust_upgrade() {
     let (_g, admin, db, store) = setup().await;
     let chain = caller_chain_in_workspace(&admin, &db, &store, Some("clone-author")).await;
+    let mut observation = query("execution.inspect");
+    observation.work_id = Some("a".into());
+    observation.execution_id = Some(chain["execution_id"].as_str().unwrap().into());
+    let before = store.query(TENANT, PROJECT, A, observation.clone()).await.unwrap();
+    assert_eq!(before["data"]["terminal_reported"], true);
+    assert_eq!(before["data"]["effects_settled"], true);
+    assert_eq!(before["data"]["artifact_verified"], false);
+    assert_eq!(before["data"]["settlement_basis"], "caller_asserted");
     // Review may outlive the old execution lease once effects are settled.
     admin
         .batch_execute(
@@ -27,6 +35,11 @@ async fn workspace_completion_verifies_artifact_without_reconciliation_or_trust_
     assert_eq!(complete["human_approval"], false);
     assert_eq!(complete["team_independent_acceptance"], false);
     assert_eq!(complete["author_self_report"], true);
+    let observed = store.query(TENANT, PROJECT, A, observation).await.unwrap();
+    assert_eq!(observed["data"]["artifact_verified"], true);
+    assert_eq!(observed["data"]["artifact_verification_basis"], "current_completion_readable_artifact_digest");
+    assert_eq!(observed["data"]["settlement_scope"], "admitted_workspace_paths");
+    assert_eq!(observed["data"]["settlement_basis"], "caller_asserted");
     let binding = &complete["caller_execution_binding"];
     assert_eq!(binding["caller_receipt_id"], chain["caller_receipt_id"]);
     assert_eq!(binding["workspace_id"], "clone-author");
@@ -43,6 +56,36 @@ async fn workspace_completion_verifies_artifact_without_reconciliation_or_trust_
     assert_eq!(row.get::<_, String>(0), "caller_asserted");
     let recovery: i64 = admin.query_one("SELECT count(*) FROM awr_team.execution_receipts WHERE receipt_kind<>'caller_asserted'", &[]).await.unwrap().get(0);
     assert_eq!(recovery, 0);
+}
+
+#[tokio::test]
+async fn workspace_artifact_observation_rechecks_bytes_and_current_completion_binding() {
+    for mutation in ["content", "missing", "state", "evidence", "completion", "selection", "contract"] {
+        let (_g, admin, db, store) = setup().await;
+        let chain = caller_chain_in_workspace(&admin, &db, &store, Some("clone-author")).await;
+        run(&store, RUNNER, "complete", "work.complete", completion_args(&chain)).await;
+        match mutation {
+            "content" => { admin.batch_execute("UPDATE awr_team.artifacts SET content=decode('00','hex')").await.unwrap(); }
+            "missing" => { admin.batch_execute("UPDATE awr_team.artifacts SET content=NULL").await.unwrap(); }
+            "state" => { admin.batch_execute("UPDATE awr_team.artifacts SET state='missing'").await.unwrap(); }
+            "evidence" => { admin.batch_execute("UPDATE awr_team.evidence SET payload_json=payload_json || '{\"altered\":true}'::jsonb").await.unwrap(); }
+            "completion" => { admin.batch_execute("UPDATE awr_team.completion_receipts SET evidence_bundle_hash=repeat('d',64)").await.unwrap(); }
+            "selection" => { admin.batch_execute("UPDATE awr_team.work_runtime SET selected_completion_id=NULL,state='in_progress'").await.unwrap(); }
+            _ => {
+                let mut contract = current_contract(&admin).await;
+                contract.hard_rules.push("changed acceptance constraint".into());
+                put_contract(&admin, &contract).await;
+            }
+        }
+        let mut q = query("execution.inspect");
+        q.work_id = Some("a".into());
+        q.execution_id = Some(chain["execution_id"].as_str().unwrap().into());
+        let observed = store.query(TENANT, PROJECT, A, q).await.unwrap();
+        assert_eq!(observed["data"]["artifact_verified"], false, "{mutation}");
+        assert!(observed["data"]["artifact_verification_basis"].is_null(), "{mutation}");
+        assert_eq!(observed["data"]["effects_settled"], true, "{mutation}");
+        assert_eq!(observed["data"]["settlement_basis"], "caller_asserted", "{mutation}");
+    }
 }
 
 #[tokio::test]
