@@ -56,6 +56,177 @@ async fn issue(server: &Server, credential: &str) -> String {
         .to_owned()
 }
 
+async fn sdk_client(
+    server: &Server,
+    access_token: &str,
+) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
+    let transport = StreamableHttpClientTransport::with_client(
+        http(),
+        StreamableHttpClientTransportConfig::with_uri(format!(
+            "{}/v1/projects/one/mcp",
+            server.url
+        ))
+        .auth_header(access_token),
+    );
+    ().serve(transport).await.unwrap()
+}
+
+async fn sdk_call(
+    client: &rmcp::service::RunningService<rmcp::RoleClient, ()>,
+    tool: &str,
+    input: Value,
+) -> Value {
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new(tool.to_owned())
+                .with_arguments(input.as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap();
+    assert!(!result.is_error.unwrap_or(false), "{result:?}");
+    result.structured_content.unwrap()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn oauth_restart_rotation_and_concurrent_reconnect_preserve_owned_work_without_duplicate_claims()
+ {
+    let (_guard, admin, db, store) = setup().await;
+    enable_writes(&admin).await;
+    let mut random = [0u8; 16];
+    getrandom::fill(&mut random).unwrap();
+    let directory = std::env::temp_dir().join(format!(
+        "awr-oauth-continuity-{:x}",
+        u128::from_be_bytes(random)
+    ));
+    let server = start_with_directory(store, true, Some(directory.clone())).await;
+    let (registration, original) = tokens(&server, A).await;
+    let client = sdk_client(&server, original["access_token"].as_str().unwrap()).await;
+    let prepare =
+        json!({"protocol_version":1,"op":"work.prepare","work_id":"a","session_id":"session-a"});
+    let before = sdk_call(&client, "awr_team_query", prepare.clone()).await;
+    let acquire = serde_json::to_value(command(
+        &before,
+        "continuity-acquire",
+        "claim.acquire",
+        json!({"session_id":"session-a","expected_session_version":"1",
+               "expected_work_version":"0","ttl_seconds":300}),
+    ))
+    .unwrap();
+    let taken = sdk_call(&client, "awr_team_command", acquire.clone()).await;
+    let prepared = sdk_call(&client, "awr_team_query", prepare.clone()).await;
+    let checkpoint = serde_json::to_value(command(
+        &prepared,
+        "continuity-checkpoint",
+        "session.checkpoint",
+        json!({"session_id":"session-a","expected_session_version":"1",
+               "context_hash":prepared["data"]["context_hash"],
+               "next_action":"Continue the existing implementation after reconnecting",
+               "open_loops":["Final integration verification remains unfinished"],
+               "client_info":{"product":"Continuity fixture","capabilities":{
+                   "model":"unsupported","usage":"unsupported","progress":"supported"}},
+               "progress":{"phase":"testing","summary":"Implementation is ready for integration verification"}}),
+    ))
+    .unwrap();
+    let saved = sdk_call(&client, "awr_team_command", checkpoint).await;
+    let counts = "SELECT (SELECT count(*) FROM awr_team.sessions),
+                         (SELECT count(*) FROM awr_team.claims),
+                         (SELECT count(*) FROM awr_team.operations)";
+    let baseline = admin.query_one(counts, &[]).await.unwrap();
+    client.cancel().await.unwrap();
+    server.shutdown().await;
+
+    let store =
+        awr_team_pg::WorkstreamReadStore::from_config(common::with_db(&common::test_config(), &db));
+    let server = start_with_directory(store, true, Some(directory.clone())).await;
+    assert_eq!(
+        initialize(&server, "one", original["access_token"].as_str().unwrap())
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    let rotated = exchange(
+        &server,
+        encode(&[
+            ("grant_type", "refresh_token"),
+            ("client_id", &registration),
+            ("refresh_token", original["refresh_token"].as_str().unwrap()),
+        ]),
+    )
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .json::<Value>()
+    .await
+    .unwrap();
+    assert_ne!(rotated["refresh_token"], original["refresh_token"]);
+    let access = rotated["access_token"].as_str().unwrap();
+    let (one, two) = tokio::join!(sdk_client(&server, access), sdk_client(&server, access));
+    let session = json!({"protocol_version":1,"op":"session.inspect","session_id":"session-a"});
+    let (resumed, parallel) = tokio::join!(
+        sdk_call(&one, "awr_team_query", session.clone()),
+        sdk_call(&two, "awr_team_query", session)
+    );
+    assert_eq!(resumed, parallel);
+    let session = &resumed["data"]["items"][0];
+    assert_eq!(session["session_id"], "session-a");
+    assert_eq!(session["session_version"], "2");
+    assert_eq!(
+        session["checkpoint_id"],
+        saved["receipt"]["data"]["checkpoint_id"]
+    );
+    assert_eq!(session["contract_matches_current"], true);
+    assert_eq!(
+        session["open_loops"],
+        json!(["Final integration verification remains unfinished"])
+    );
+    let claim = sdk_call(
+        &one,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"claim.inspect","session_id":"session-a",
+               "claim_id":taken["receipt"]["data"]["claim_id"]}),
+    )
+    .await;
+    assert_eq!(claim["data"]["lease_live"], true);
+    let observed = sdk_call(&one, "awr_team_query", prepare).await;
+    assert_eq!(observed["data"]["work_id"], "a");
+    assert_eq!(
+        observed["data"]["contract_hash"],
+        before["data"]["contract_hash"]
+    );
+    let outcome = sdk_call(
+        &two,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"command.inspect","work_id":"a","request_id":"continuity-acquire"}),
+    )
+    .await;
+    assert_eq!(outcome["data"]["receipt"], taken["receipt"]);
+    let replay = sdk_call(&two, "awr_team_command", acquire).await;
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(replay["receipt"], taken["receipt"]);
+    let after = admin.query_one(counts, &[]).await.unwrap();
+    for index in 0..3 {
+        assert_eq!(after.get::<_, i64>(index), baseline.get::<_, i64>(index));
+    }
+    let identity = admin
+        .query_one(
+            "SELECT actor_id,client_id FROM awr_team.sessions WHERE id='session-a'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(identity.get::<_, String>(0), "agent");
+    assert_eq!(identity.get::<_, String>(1), "cli-a");
+    one.cancel().await.unwrap();
+    two.cancel().await.unwrap();
+    server.shutdown().await;
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 #[tokio::test]
 async fn refresh_retains_live_permissions_and_rejects_revocation_expiry_and_replay() {
     let (_guard, admin, _, store) = setup().await;
