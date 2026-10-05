@@ -3,6 +3,76 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { mapObservation, pullRequestReference, createGithubObserver } = require('../team-progress');
 
+test('execution report, artifact, scoped settlement and recovery remain separate including legacy unknowns', () => {
+  const mapped = mapObservation({ runtime: { state: 'in_progress' }, execution: {
+    state: 'succeeded', terminal_reported: true, artifact_verified: false, effects_settled: true,
+    settlement_basis: 'caller_asserted', settlement_scope: 'admitted_workspace_paths',
+    recovery_blocked: true, recovery_cause: 'unattributed_or_other_execution', previous_epoch_review_required: true,
+  } });
+  assert.equal(mapped.status, 'in_progress');
+  assert.equal(mapped.execution.terminal_reported, true);
+  assert.equal(mapped.execution.artifact_verified, false);
+  assert.equal(mapped.execution.effects_settled, true);
+  assert.equal(mapped.execution.settlement_basis, 'caller_asserted');
+  assert.equal(mapped.execution.settlement_scope, 'admitted_workspace_paths');
+  assert.equal(mapped.execution.recovery_cause, 'unattributed_or_other_execution');
+  assert.equal(mapped.execution.previous_epoch_review_required, true);
+  assert.equal(mapped.attention, 'recovery_required');
+  for (const value of [undefined, 'true', 1]) {
+    const legacy = mapObservation({ execution: { state: 'succeeded', terminal_reported: value } }).execution;
+    assert.equal(legacy.terminal_reported, null);
+    assert.equal(legacy.artifact_verified, null);
+    assert.equal(legacy.effects_settled, null);
+  }
+});
+
+test('background repository reads return immediately, retain cached observation time and bound concurrency', async () => {
+  let release, clock = 1000, calls = 0, active = 0, maximum = 0;
+  let gate = new Promise(resolve => { release = resolve; });
+  const ref = n => ({ owner: 'example', repo: 'repo', number: n, url: `https://github.com/example/repo/pull/${n}` });
+  const observe = createGithubObserver(async (url, options) => {
+    calls++;
+    assert.equal(options.headers.authorization, undefined);
+    assert.equal(options.headers.cookie, undefined);
+    if (url.includes('/pulls/')) { active++; maximum = Math.max(maximum, active); await gate; active--; }
+    return { ok: true, json: async () => url.includes('/pulls/')
+      ? { html_url: ref(Number(url.split('/').pop())).url, head: { sha: 'a'.repeat(40) }, state: 'open' }
+      : url.includes('/check-runs?') ? { total_count: 0, check_runs: [] } : { total_count: 0, statuses: [] } };
+  }, () => clock);
+  for (let n = 1; n <= 4; n++) {
+    const pending = observe.background(ref(n));
+    assert.equal(pending.pending, true); assert.equal(pending.cached, false);
+    assert.equal(pending.observed_at_ms, null); assert.equal(pending.ci, undefined);
+  }
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 2);
+  release(); await Promise.all([1, 2, 3, 4].map(n => observe(ref(n))));
+  assert.equal(maximum, 2); assert.equal(calls, 12);
+  const first = observe.background(ref(1));
+  assert.equal(first.observed_at_ms, 1000); assert.equal(first.pending, false);
+  clock = 1001000;
+  gate = new Promise(resolve => { release = resolve; });
+  const old = observe.background(ref(1));
+  assert.equal(old.pending, true); assert.equal(old.cached, true); assert.equal(old.observed_at_ms, 1000);
+  release(); await observe(ref(1));
+  assert.equal(observe.background(ref(1)).observed_at_ms, clock);
+});
+
+test('background observation capacity cannot create an unbounded pending queue', async () => {
+  let release, calls = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const observe = createGithubObserver(async () => { calls++; await gate; return { ok: false, status: 500 }; });
+  const ref = n => ({ owner: 'example', repo: 'repo', number: n, url: `https://github.com/example/repo/pull/${n}` });
+  const retained = [];
+  for (let n = 1; n <= 220; n++) {
+    const result = observe.background(ref(n));
+    if (n <= 200) retained.push(observe(ref(n)));
+    else { assert.equal(result.reason, 'observation_capacity'); assert.equal(result.pending, false); }
+  }
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(calls, 2);
+  release(); await Promise.all(retained); assert.equal(calls, 200);
+});
+
 test('observation separates a claimant, responsible person, expired claim and unverified report', () => {
   const mapped = mapObservation({
     runtime: { state: 'claimed' }, session: { id: 's', actor_name: 'Member', client_id: 'client' },

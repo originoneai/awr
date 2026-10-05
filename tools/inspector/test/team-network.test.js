@@ -122,6 +122,49 @@ test('one failed detail read does not prevent healthy peers from receiving new r
   assert.doesNotMatch(node('teamDetail').textContent, /Not reported|No recorded usage/);
 });
 
+test('a selected task outside the batch renders before a stalled peer and background reads stay bounded', async () => {
+  live((url, works) => detail(works.find(w => w.key === new URL(url, 'http://test').searchParams.get('work'))), 65);
+  await ui.refresh(); await ui._selectWork('W-64');
+  let release, selectedReady, active = 0, maximum = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const ready = new Promise(resolve => { selectedReady = resolve; });
+  const order = [];
+  live(async (url, works) => {
+    const key = new URL(url, 'http://test').searchParams.get('work');
+    order.push(key); active++; maximum = Math.max(maximum, active);
+    if (key === 'W-0') await gate;
+    active--;
+    const result = { ok: true, work: { ...detail(works.find(w => w.key === key)).work, next_step: 'Fresh ' + key } };
+    if (key === 'W-64') selectedReady();
+    return result;
+  }, 65);
+  const polling = ui._refreshProgress();
+  await ready; await new Promise(resolve => setImmediate(resolve));
+  assert.equal(order[0], 'W-64'); assert.ok(maximum <= 4);
+  assert.equal(ui.state.refreshing, true);
+  assert.equal(ui._selectedWork().next_step, 'Fresh W-64');
+  assert.match(node('teamDetail').textContent, /Fresh W-64/);
+  assert.equal(ui.state.works.find(w => w.key === 'W-1').next_step, 'Fresh W-1');
+  release(); await polling;
+});
+
+test('revocation after a partial background render invalidates all concurrent observations', async () => {
+  live((url, works) => detail(works.find(w => w.key === new URL(url, 'http://test').searchParams.get('work'))), 2);
+  await ui.refresh();
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  live(async (url, works) => {
+    const key = new URL(url, 'http://test').searchParams.get('work');
+    if (key === 'W-1') { await gate; return { ok: false, error: { code: 'SessionExpired', message: 'Revoked fixture identity' } }; }
+    return { ok: true, work: { ...detail(works[0]).work, next_step: 'New scoped report' } };
+  }, 2);
+  const polling = ui._refreshProgress(); await new Promise(resolve => setImmediate(resolve));
+  assert.match(node('teamDetail').textContent, /New scoped report/);
+  release(); await polling;
+  assert.equal(ui.state.session, null); assert.deepEqual(ui.state.works, []);
+  assert.equal(ui.state.selected, null); assert.equal(node('rawTeamBody').textContent, '');
+});
+
 test('an unread task is not presented as an unreported Agent or missing usage', async () => {
   live((url, works) => detail(works.find(w => w.key === new URL(url, 'http://test').searchParams.get('work'))), 65);
   await ui.refresh();
@@ -375,4 +418,58 @@ test('unsupported collection and missing reports stay distinct', async () => {
   assert.match(text, /Supported by the client, but not reported/);
   assert.match(text, /has not declared whether it can report/);
   assert.doesNotMatch(text, /0 tokens|\$0/);
+});
+
+for (const locale of ['en', 'zh-CN']) {
+  test(`snapshot provenance and separate execution dimensions use plain labels in ${locale}`, async () => {
+    i18n.setLocale(locale);
+    live((_url, works) => ({ ok: true, work: { ...detail(works[0]).work,
+      snapshot: { consistency: 'repeatable_read', project_revision: '18', queried_at_unix_ms: 3000 },
+      progress_report: { phase: 'delivered', summary: 'Candidate submitted', recorded_project_revision: '17',
+        reported_contract_hash: 'current-requirements', checkpoint_id: 'report-reference', client_observed_at_unix_ms: null },
+      execution: { state: 'succeeded', terminal_reported: true, artifact_verified: false, effects_settled: true,
+        settlement_basis: 'caller_asserted', settlement_scope: 'admitted_workspace_paths',
+        recovery_cause: 'unattributed_or_other_execution', previous_epoch_review_required: true },
+      pr_reference: { url: 'https://github.com/example/repo/pull/1', registration: 'registered', expected_head: 'b'.repeat(40) },
+      github: { ci: 'passed', head_sha: 'a'.repeat(40), observed_at_ms: 1000, pending: true, cached: true },
+    } }), 1);
+    await ui.refresh();
+    const text = node('teamDetail').textContent;
+    assert.match(text, /Delivery reported|已报告交付/);
+    assert.match(text, /Artifact checkedNot verified yet|产物校验尚未校验/);
+    assert.match(text, /Declared by the executor|执行者声明/);
+    assert.match(text, /Other or unknown execution effects|其他或未知执行影响/);
+    assert.match(text, /Observed for another code version|来自另一代码版本/);
+    assert.match(text, /current-requirements/); assert.match(text, /report-reference/);
+    assert.match(text, /Progress registration version17|进度登记版本17/);
+    assert.match(text, /Queried ledger version18|本次读取的台账版本18/);
+    assert.match(node('teamOverview').textContent, /every 5 seconds|每 5 秒/);
+    assert.doesNotMatch(text, /feedback\.|ui\.network_|caller_asserted|unattributed_or_other_execution|\[object Object\]/);
+  });
+}
+
+for (const locale of ['en', 'zh-CN']) {
+  test(`a first pending repository read does not report a changed revision in ${locale}`, async () => {
+    i18n.setLocale(locale);
+    live((_url, works) => ({ ok: true, work: { ...detail(works[0]).work,
+      pr_reference: { url: 'https://github.com/example/repo/pull/1', registration: 'registered', expected_head: 'a'.repeat(40) },
+      github: { pending: true, cached: false, observed_at_ms: null },
+    } }), 1);
+    await ui.refresh();
+    const text = node('teamDetail').textContent;
+    assert.ok(text.includes(i18n.t('feedback.repository_pending')));
+    assert.ok(!text.includes(i18n.t('ui.team_progress_head_changed')));
+    assert.ok(!text.includes(i18n.t('feedback.other_revision')));
+  });
+}
+
+test('legacy unknown execution dimensions and unconfirmed consistency cannot become negative facts', async () => {
+  live((_url, works) => ({ ok: true, work: { ...detail(works[0]).work,
+    snapshot: { consistency: 'unconfirmed_legacy' }, execution: { state: 'succeeded' },
+  } }), 1);
+  await ui.refresh();
+  const text = node('teamDetail').textContent;
+  assert.match(text, /a single runtime snapshot cannot be confirmed/);
+  assert.ok((text.match(/Not supplied by this service/g) || []).length >= 3);
+  assert.doesNotMatch(text, /Not verified yet|Not settled yet/);
 });

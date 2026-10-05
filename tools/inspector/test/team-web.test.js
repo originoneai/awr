@@ -219,8 +219,8 @@ function startMockUpstream(handler) {
   });
 }
 
-function startLiveBridge(teamUrl) {
-  const bridge = createTeamBridge({ teamUrl, teamFixtureDir: FIXTURE_DIR, port: 0 });
+function startLiveBridge(teamUrl, options = {}) {
+  const bridge = createTeamBridge({ teamUrl, teamFixtureDir: FIXTURE_DIR, port: 0, ...options });
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     const key = `${req.method} ${url.pathname}`;
@@ -570,6 +570,11 @@ for (const scenario of ['detail', 'detail-no-guidance', 'changed', 'denied', 'ob
           response.end(JSON.stringify({ code: 'Forbidden', message: 'not authorized' }));
           return;
         }
+        if (query.op === 'work.snapshot') {
+          response.writeHead(400);
+          response.end(JSON.stringify({ code: 'Unsupported', message: 'Legacy query catalog' }));
+          return;
+        }
         if (query.op === 'work.observe') {
           response.end(JSON.stringify({ workstream_id: 'stream', data: {
             work_id: 'WORK', contract_hash: scenario === 'observe-changed' ? 'new' : 'current', observed_at_unix_ms: 1234,
@@ -593,8 +598,10 @@ for (const scenario of ['detail', 'detail-no-guidance', 'changed', 'denied', 'ob
     const bridge = await startLiveBridge(upstream.base);
     try {
       const result = await req(bridge.base, 'GET', '/api/team/work?project=demo&work=WORK&workstream=stream&contract=' + (scenario === 'changed' ? 'old' : 'current'));
-      assert.deepEqual(queries, (['detail', 'detail-no-guidance', 'observe-denied', 'observe-changed'].includes(scenario) ? ['work.prepare', 'work.observe'] : ['work.prepare'])
-        .map(op => ({ protocol_version: 1, op, work_id: 'WORK', workstream_id: 'stream' })));
+      const expectedOps = scenario === 'denied' ? ['work.snapshot'] : ['work.snapshot', 'work.prepare',
+        ...(['detail', 'detail-no-guidance', 'observe-denied', 'observe-changed'].includes(scenario) ? ['work.observe'] : [])];
+      assert.deepEqual(queries, expectedOps.map(op => ({ protocol_version: 1, op, work_id: 'WORK', workstream_id: 'stream',
+        ...(op === 'work.snapshot' ? { max_context_bytes: 262144 } : {}) })));
       if (!scenario.startsWith('detail')) {
         assert.equal(result.json.ok, false);
         assert.equal(result.json.error.code, scenario.endsWith('changed') ? 'SourceChanged' : 'Forbidden');
@@ -607,6 +614,7 @@ for (const scenario of ['detail', 'detail-no-guidance', 'changed', 'denied', 'ob
         assert.equal(result.json.work.claimant, null);
         assert.equal(result.json.work.last_participant, 'Developer');
         assert.equal(result.json.work.dependency_export_unavailable, true);
+        assert.equal(result.json.work.snapshot.consistency, 'unconfirmed_legacy');
         assert.deepEqual(result.json.work.acceptance, ['Contract criterion']);
         assert.deepEqual(result.json.work.depends_on, [{ key: 'VISIBLE', visible: true }]);
       }
@@ -617,6 +625,114 @@ for (const scenario of ['detail', 'detail-no-guidance', 'changed', 'denied', 'ob
   });
 }
 
+
+function atomicWorkFixture() {
+  const runtime = { state: 'in_progress', work_version: '7', last_fence: '3', recovery_blocked: false, selected_completion_id: null };
+  return { project_revision: '20', source_snapshot_id: 'source-snapshot', coordinator_epoch: 'epoch', workstream_id: 'stream', data: {
+    work_id: 'WORK', contract_hash: 'current', runtime: { ...runtime }, context_complete: true,
+    visible_contract: { acceptance: ['Check the result'], required_dependencies: [] },
+    snapshot: { version: 1, consistency: 'repeatable_read', project_revision: '20', source_snapshot_id: 'source-snapshot',
+      coordinator_epoch: 'epoch', queried_at_unix_ms: 1234 },
+    observation: { work_id: 'WORK', contract_hash: 'current', observed_at_unix_ms: 1234, runtime: { ...runtime },
+      session: { id: 'session', actor_name: 'Member', client_id: 'client' },
+      progress: { phase: 'delivered', summary: 'Implementation submitted', reported_at_unix_ms: 1000,
+        reported_contract_hash: 'current', recorded_project_revision: '19', client_observed_at_unix_ms: null, provenance: 'caller_declared' },
+      execution: { state: 'succeeded', terminal_reported: true, artifact_verified: false, effects_settled: true,
+        settlement_basis: 'caller_asserted', settlement_scope: 'admitted_workspace_paths' },
+      guidance: { code: 'inspect_delivery', action: { note: 'Inspect the current candidate' } }, pr_deliveries: [],
+    },
+  } };
+}
+
+for (const scenario of ['normal', 'incomplete', 'forbidden', 'context_error', 'budget_error', 'server_error',
+  'revision', 'source', 'epoch', 'query_time', 'runtime', 'empty_runtime', 'work', 'stream', 'version']) {
+  test(`atomic work detail handles ${scenario} without an implicit legacy fallback`, async () => {
+    const queries = [], fixture = atomicWorkFixture();
+    if (scenario === 'incomplete') { fixture.data.context_complete = false; fixture.data.next_step = 'Restore the source'; }
+    if (scenario === 'revision') fixture.data.snapshot.project_revision = '19';
+    if (scenario === 'source') fixture.data.snapshot.source_snapshot_id = 'other';
+    if (scenario === 'epoch') fixture.data.snapshot.coordinator_epoch = 'other';
+    if (scenario === 'query_time') fixture.data.snapshot.queried_at_unix_ms = 1233;
+    if (scenario === 'runtime') fixture.data.observation.runtime.work_version = '6';
+    if (scenario === 'empty_runtime') { fixture.data.runtime = {}; fixture.data.observation.runtime = {}; }
+    if (scenario === 'work') fixture.data.observation.work_id = 'OTHER';
+    if (scenario === 'stream') fixture.workstream_id = 'other';
+    if (scenario === 'version') fixture.data.snapshot.version = 2;
+    const codes = { forbidden: [403, 'Forbidden'], context_error: [409, 'ContextChanged'],
+      budget_error: [400, 'ContextIncomplete'], server_error: [500, 'DatabaseUnavailable'] };
+    const upstream = await startMockUpstream((request, response) => {
+      const chunks = []; request.on('data', chunk => chunks.push(chunk)); request.on('end', () => {
+        queries.push(JSON.parse(Buffer.concat(chunks).toString())); response.setHeader('content-type', 'application/json');
+        const error = codes[scenario];
+        response.writeHead(error ? error[0] : 200);
+        response.end(JSON.stringify(error ? { code: error[1], message: 'Synthetic read failure' } : fixture));
+      });
+    });
+    const bridge = await startLiveBridge(upstream.base);
+    try {
+      const result = await req(bridge.base, 'GET', '/api/team/work?project=demo&work=WORK&workstream=stream&contract=current');
+      assert.deepEqual(queries, [{ protocol_version: 1, op: 'work.snapshot', work_id: 'WORK', workstream_id: 'stream', max_context_bytes: 262144 }]);
+      if (['normal', 'incomplete'].includes(scenario)) {
+        const work = result.json.work;
+        assert.equal(work.snapshot.consistency, 'repeatable_read'); assert.equal(work.snapshot.project_revision, '20');
+        assert.equal(work.status, 'in_progress'); assert.equal(work.progress_report.phase, 'delivered');
+        assert.equal(work.progress_report.recorded_project_revision, '19');
+        assert.equal(work.progress_report.client_observed_at_unix_ms, null);
+        assert.equal(work.execution.terminal_reported, true); assert.equal(work.execution.artifact_verified, false);
+        assert.equal(work.execution.settlement_basis, 'caller_asserted');
+        if (scenario === 'incomplete') assert.equal(work.guidance.code, 'restore_context');
+      } else {
+        assert.equal(result.json.ok, false); assert.equal(result.json.work, undefined);
+        assert.equal(result.json.error.code, codes[scenario]?.[1] || 'BadGateway');
+      }
+    } finally { await bridge.close(); await upstream.close(); }
+  });
+}
+
+test('a stalled optional repository observation never delays the atomic AWR response', async () => {
+  let release, timer;
+  const gate = new Promise(resolve => { release = resolve; });
+  const fixture = atomicWorkFixture();
+  fixture.data.observation.pr_deliveries = [{ state: 'active', contract_matches_current: true,
+    url: 'https://github.com/example/repo/pull/1', head_sha: 'a'.repeat(40) }];
+  const upstream = await startMockUpstream((_request, response) => {
+    response.setHeader('content-type', 'application/json'); response.end(JSON.stringify(fixture));
+  });
+  const bridge = await startLiveBridge(upstream.base, { githubFetch: async () => { await gate; return { ok: false, status: 503 }; } });
+  try {
+    const result = await Promise.race([
+      req(bridge.base, 'GET', '/api/team/work?project=demo&work=WORK&workstream=stream&contract=current'),
+      new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error('AWR waited for the optional repository')), 1000); }),
+    ]);
+    assert.equal(result.json.ok, true); assert.equal(result.json.work.progress_report.summary, 'Implementation submitted');
+    assert.equal(result.json.work.github.pending, true); assert.equal(result.json.work.github.observed_at_ms, null);
+  } finally { clearTimeout(timer); release(); await bridge.close(); await upstream.close(); }
+});
+
+for (const legacy of [false, true]) {
+  test(`scoped detail deadline aborts the upstream read${legacy ? ' across legacy fallback' : ''} without retrying`, async () => {
+    const queries = [];
+    let aborted;
+    const stopped = new Promise(resolve => { aborted = resolve; });
+    const upstream = await startMockUpstream((request, response) => {
+      const chunks = []; request.on('data', chunk => chunks.push(chunk)); request.on('end', () => {
+        const query = JSON.parse(Buffer.concat(chunks).toString()); queries.push(query.op);
+        if (legacy && query.op === 'work.snapshot') {
+          response.writeHead(400, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({ code: 'Unsupported' }));
+        } else response.on('close', () => aborted(!response.writableEnded));
+      });
+    });
+    const bridge = await startLiveBridge(upstream.base);
+    try {
+      const result = await req(bridge.base, 'GET', '/api/team/work?project=demo&work=WORK&workstream=stream&contract=current');
+      assert.equal(result.json.ok, false); assert.equal(result.json.error.code, 'ReadTimeout');
+      assert.equal(result.json.work, undefined);
+      assert.equal(await stopped, true);
+      assert.deepEqual(queries, legacy ? ['work.snapshot', 'work.prepare'] : ['work.snapshot']);
+    } finally { await bridge.close(); await upstream.close(); }
+  });
+}
 
 test('member connection URL is configured independently of the private bridge URL', async () => {
   const upstream = await startMockUpstream(async (req, res) => {
