@@ -1,5 +1,10 @@
 // Included in agent_review_tests so the actual review/command fixtures are shared.
 async fn caller_chain(admin: &Client, db: &str, store: &WorkstreamReadStore) -> Value {
+    caller_chain_in_workspace(admin, db, store, None).await
+}
+
+async fn caller_chain_in_workspace(admin: &Client, db: &str, store: &WorkstreamReadStore, workspace: Option<&str>) -> Value {
+    use sha2::Digest;
     seed_agent_reviewer(admin, db).await;
     admin.batch_execute("UPDATE awr_team.actors SET kind='agent' WHERE id='agent';
         UPDATE awr_team.actors SET kind='human' WHERE id='runner';
@@ -36,7 +41,15 @@ async fn caller_chain(admin: &Client, db: &str, store: &WorkstreamReadStore) -> 
         .unwrap();
     let mut contract = current_contract(admin).await;
     contract.completion_policy = POLICY.into();
+    if let Some(workspace) = workspace {
+        contract.codec = WorkContract::CODEC_V3.into();
+        contract.execution_settlement = Some(awr_team::ExecutionSettlementPolicy {
+            mode: awr_team::ExecutionSettlementMode::IndependentWorkspaceV1,
+            workspace_id: workspace.into(),
+        });
+    }
     put_contract(admin, &contract).await;
+    let result = if workspace.is_some() { hex_encode(&sha2::Sha256::digest(b"caller artifact")) } else { RESULT.into() };
     let claim = run(
         store,
         A,
@@ -55,10 +68,17 @@ async fn caller_chain(admin: &Client, db: &str, store: &WorkstreamReadStore) -> 
         "execution_id":execution["execution_id"],"expected_execution_version":execution["execution_version"],
         "claim_id":claim["claim_id"],"expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
         "expected_work_version":p["data"]["runtime"]["work_version"],"execution_mode":"caller_managed"})).await;
-    let reported=run(store,A,"caller-report","execution.report",json!({"session_id":"session-a","expected_session_version":"1",
+    let mut report_args=json!({"session_id":"session-a","expected_session_version":"1",
         "execution_id":execution["execution_id"],"expected_execution_version":started["execution_version"],
-        "outcome":"succeeded","output_digest":RESULT,"observed_paths":["src/api/result.json"],"note":"Caller observed its own result."})).await;
-    assert_eq!(reported["state"], "unknown");
+        "outcome":"succeeded","output_digest":result,"observed_paths":["src/api/result.json"],"note":"Caller observed its own result."});
+    if let Some(workspace) = workspace {
+        report_args["workspace_settlement"] = json!({"workspace_id":workspace,"input_digest":INPUT,
+            "environment_digest":"c".repeat(64),"claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+            "expected_lease_version":claim["lease_version"],"executor_stopped":true,"no_external_effects":true});
+    }
+    let reported=run(store,A,"caller-report","execution.report",report_args).await;
+    assert_eq!(reported["state"], if workspace.is_some() {"succeeded"} else {"unknown"});
+    assert_eq!(reported["artifact_verified"],false);
     let mut evidence_args = submit_args(
         "session-a",
         execution["execution_id"].as_str().unwrap(),
@@ -66,6 +86,7 @@ async fn caller_chain(admin: &Client, db: &str, store: &WorkstreamReadStore) -> 
     );
     evidence_args.as_object_mut().unwrap().remove("artifact_hex");
     evidence_args["artifact_text"] = json!("caller artifact");
+    evidence_args["payload"]["output_digest"] = json!(result);
     let evidence = run(
         store,
         A,
@@ -84,6 +105,10 @@ async fn caller_chain(admin: &Client, db: &str, store: &WorkstreamReadStore) -> 
         args(&opened),
     )
     .await;
+    if workspace.is_some() {
+        return json!({"evidence_id":evidence["evidence_id"],"execution_id":execution["execution_id"],
+            "round_id":opened["round_id"],"caller_receipt_id":reported["receipt_id"],"result_digest":result});
+    }
     assert!(matches!(
         run_err(
             store,
@@ -181,25 +206,16 @@ async fn agent_completion_does_not_implicitly_release_a_required_dependency() {
         let prepared = prepare(store, RUNNER, "c").await;
         store.commands().execute(TENANT, PROJECT, RUNNER, command(&prepared, key, op, args)).await
     }
-    let claim = downstream_command(&store, "downstream-claim", "claim.acquire",
-        json!({"session_id":"session-c","expected_session_version":"1","expected_work_version":"0","ttl_seconds":600})).await.unwrap();
-    let claim = &claim["receipt"]["data"];
-    let prepared = prepare(&store, RUNNER, "c").await;
-    let intent = downstream_command(&store, "downstream-intent", "execution.prepare",
-        json!({"session_id":"session-c","expected_session_version":"1","claim_id":claim["claim_id"],
-            "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
-            "expected_work_version":prepared["data"]["runtime"]["work_version"],"input_digest":INPUT,"declared_scope":["src/integration"]})).await.unwrap();
-    let intent = &intent["receipt"]["data"];
-    let prepared = prepare(&store, RUNNER, "c").await;
-    let result = downstream_command(&store, "downstream-start", "execution.start",
-        json!({"session_id":"session-c","expected_session_version":"1","claim_id":claim["claim_id"],
-            "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
-            "execution_id":intent["execution_id"],"expected_execution_version":intent["execution_version"],
-            "expected_work_version":prepared["data"]["runtime"]["work_version"],"execution_mode":"caller_managed"})).await;
-    assert!(matches!(result, Err(PgError::BindingInvalid)));
-    let stored = admin.query_one("SELECT state FROM awr_team.executions WHERE id=$1",
-        &[&intent["execution_id"].as_str().unwrap()]).await.unwrap();
-    assert_eq!(stored.get::<_, String>(0), "prepared");
+    // Dual-intake protection now refuses unresolved dependency work before
+    // ownership/lease acquisition, rather than waiting until execution start.
+    let result = downstream_command(&store, "downstream-claim", "claim.acquire",
+        json!({"session_id":"session-c","expected_session_version":"1","expected_work_version":"0","ttl_seconds":600})).await;
+    assert!(matches!(result, Err(PgError::MissingDependency)));
+    let stored = admin.query_one("SELECT
+        (SELECT count(*) FROM awr_team.claims WHERE work_id='c'),
+        (SELECT count(*) FROM awr_team.executions WHERE work_id='c'),
+        (SELECT count(*) FROM awr_team.task_responsibilities WHERE work_id='c')", &[]).await.unwrap();
+    for column in 0..3 { assert_eq!(stored.get::<_, i64>(column), 0); }
 }
 
 #[tokio::test]

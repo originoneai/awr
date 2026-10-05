@@ -2,6 +2,7 @@
 //! Preparation never dispatches. Admission is not physical effect confinement.
 mod lifecycle;
 mod recovery;
+pub(super) mod settlement;
 use super::*;
 use tokio_postgres::Row;
 
@@ -248,7 +249,7 @@ pub(super) async fn apply(
             lifecycle::start(tx, tenant, project, auth, command, ownership, contract, a).await?
         }
         Action::Report(a) => {
-            lifecycle::report(tx, tenant, project, auth, command, ownership, a).await?
+            lifecycle::report(tx, tenant, project, auth, command, ownership, contract, a).await?
         }
         Action::Recovery(a) => {
             recovery::apply(tx, tenant, project, auth, command, ownership, a).await?
@@ -295,15 +296,19 @@ async fn prepare(
     .await?;
     require_clear_of_selective_blocks(tx, tenant, project, &command.work_id).await?;
     require_paths(contract, &a.declared_scope)?;
+    if contract.execution_settlement.is_some() {
+        settlement::normalized_scope(&a.declared_scope)?;
+    }
     let id = crate::tx::new_id();
     let declared = json!(a.declared_scope);
+    let settlement_policy = contract.execution_settlement.as_ref().map(|p| json!(p));
     tx.execute("INSERT INTO awr_team.executions(tenant_id,project_id,id,work_id,session_id,claim_id,fence,
         contract_hash,input_digest,executor_actor_id,state,effect_key,fencing_class,declared_scope_json,
-        scope_id,coordinator_epoch,workstream_id,ownership_version,executor_client_id)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'prepared',$3,'uncontrolled',$11,'main',$12,$13,$14,$15)",
+        scope_id,coordinator_epoch,workstream_id,ownership_version,executor_client_id,settlement_policy_json)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'prepared',$3,'uncontrolled',$11,'main',$12,$13,$14,$15,$16)",
         &[&tenant,&project,&id,&command.work_id,&a.session_id,&a.claim_id,&fence,
           &command.expected_contract_hash,&a.input_digest,&auth.actor_id,&declared,&auth.epoch,
-          &command.workstream_id.to_string(),&ownership,&auth.client_id]).await?;
+          &command.workstream_id.to_string(),&ownership,&auth.client_id,&settlement_policy]).await?;
     // No outbox row: an intent cannot be mistaken for an admitted dispatch.
     let work_version = advance_work(tx, tenant, project, &command.work_id).await?;
     Ok(
@@ -311,7 +316,8 @@ async fn prepare(
         "fence":fence.to_string(),"state":"prepared","effect_key":id,"input_digest":a.input_digest,
         "contract_hash":command.expected_contract_hash,"work_version":work_version.to_string(),
         "dispatched":false,"admission":"not_evaluated","fencing_class":"uncontrolled",
-        "exactly_once_supported":false,"scope_validation":"lexical_contract_only"}),
+        "exactly_once_supported":false,"scope_validation":"lexical_contract_only",
+        "settlement_policy":settlement_policy}),
     )
 }
 
@@ -502,7 +508,7 @@ async fn load(tx: &Transaction<'_>, tenant: &str, project: &str, id: &str) -> Pg
         s.work_id AS session_work,s.workstream_id AS session_stream,s.ownership_version AS session_ownership,
         c.work_id AS claim_work,c.session_id AS claim_session,c.actor_id AS claim_actor,
         c.workstream_id AS claim_stream,c.ownership_version AS claim_ownership,c.fence AS claim_fence,
-        c.coordinator_epoch AS claim_epoch,
+        c.coordinator_epoch AS claim_epoch,c.lease_version AS claim_lease_version,
         (c.state='active' AND c.expires_at>clock_timestamp() AND s.state='active' AND w.last_fence=e.fence) AS lease_live,
         w.recovery_blocked
         FROM awr_team.executions e

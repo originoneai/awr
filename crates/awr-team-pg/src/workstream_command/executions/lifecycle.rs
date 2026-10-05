@@ -1,5 +1,6 @@
 //! Caller-managed execution: a transactional admission decision, not a remote
-//! process supervisor. Unverified observations cannot settle external effects.
+//! process supervisor. Workspace settlement is an explicit caller agreement;
+//! it never settles untracked external effects or upgrades caller trust.
 use super::*;
 
 #[derive(Deserialize)]
@@ -54,6 +55,7 @@ pub(crate) struct Report {
     output_digest: Option<String>,
     observed_paths: Vec<String>,
     note: String,
+    workspace_settlement: Option<settlement::Declaration>,
 }
 impl Report {
     pub(super) fn parse(args: Value) -> PgResult<Self> {
@@ -73,6 +75,9 @@ impl Report {
             || a.note.contains('\0')
         {
             return Err(invalid());
+        }
+        if let Some(declaration) = &a.workspace_settlement {
+            declaration.validate()?;
         }
         Ok(a)
     }
@@ -157,6 +162,10 @@ pub(super) async fn start(
     {
         return Err(PgError::PreconditionsChanged);
     }
+    let settlement_policy = settlement::policy(&r)?;
+    if settlement_policy != contract.execution_settlement {
+        return Err(PgError::PreconditionsChanged);
+    }
     if r.get::<_, Option<String>>("claim_id").as_deref() != Some(&a.claim_id) {
         return Err(PgError::Forbidden);
     }
@@ -239,7 +248,17 @@ pub(super) async fn start(
             &[&tenant, &project],
         )
         .await?;
-    let worktree_id = String::new(); // caller-managed admission has no physical worktree yet
+    let worktree_id = if a.execution_mode == "caller_managed" {
+        settlement_policy
+            .as_ref()
+            .map(|p| p.workspace_id.clone())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    }; // an explicit lexical agreement, never proof of physical isolation
+    if settlement_policy.is_some() {
+        settlement::normalized_scope(&declared)?;
+    }
     if paths.iter().any(|p| {
         let candidate = crate::graph::ResourceBound {
             kind: "dir".into(),
@@ -315,12 +334,16 @@ pub(super) async fn start(
     let attestation_grant = auth
         .execution_access
         .get(&command.workstream_id)
-        .filter(|a| a.attest)
+        .filter(|access| {
+            access.attest
+                && (settlement_policy.is_none() || a.execution_mode == "reference_write_v1")
+        })
         .map(|_| auth.grant_versions[&command.workstream_id]);
     tx.execute(
-        "UPDATE awr_team.executions SET state='running',execution_version=execution_version+1,attestation_grant_version=$4
+        "UPDATE awr_team.executions SET state='running',execution_version=execution_version+1,attestation_grant_version=$4,
+         admission_mode=$5,admission_lease_version=$6
         WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
-        &[&tenant, &project, &a.execution_id, &attestation_grant],
+        &[&tenant, &project, &a.execution_id, &attestation_grant, &a.execution_mode, &lease_generation],
     )
     .await?;
     let work_version = advance_work(tx, tenant, project, &command.work_id).await?;
@@ -357,6 +380,7 @@ pub(super) async fn report(
     auth: &ReaderAuthority,
     command: &WorkstreamCommand,
     ownership: i64,
+    contract: &awr_team::WorkContract,
     a: Report,
 ) -> PgResult<Value> {
     let r = owned_execution(
@@ -381,44 +405,112 @@ pub(super) async fn report(
             .iter()
             .any(|s| canonical_path(s) && crate::graph::path_within_scope(s, p))
     });
+    let settled = settlement::evaluate(
+        tx,
+        tenant,
+        project,
+        auth,
+        command,
+        ownership,
+        &r,
+        contract,
+        a.workspace_settlement.as_ref(),
+        &a.outcome,
+        exceeded,
+    )
+    .await?;
+    let effects_settled = settled.is_some();
+    let terminal_reported = a.outcome != "unknown";
     let id = crate::tx::new_id();
-    let payload = json!({"outcome":a.outcome,"output_digest":a.output_digest,"observed_paths":a.observed_paths,
+    let mut payload = json!({"outcome":a.outcome,"output_digest":a.output_digest,"observed_paths":a.observed_paths,
         "note":a.note,"client_id":auth.client_id,"session_id":a.session_id,
         "workstream_id":command.workstream_id,"ownership_version":ownership.to_string(),
         "execution_version":a.expected_execution_version,"coordinator_epoch":auth.epoch,
         "contract_hash":r.get::<_,String>("contract_hash"),"scope_violation":exceeded});
+    if let Some(settled) = &settled {
+        settled.bind_payload(&mut payload, &r, &a.expected_session_version);
+    } else if a.workspace_settlement.is_some() {
+        payload["workspace_settlement"] = json!(a.workspace_settlement);
+        payload["terminal_reported"] = json!(terminal_reported);
+        payload["effects_settled"] = json!(false);
+        payload["artifact_verified"] = json!(false);
+    }
     let hash = awr_team::request_hash(&payload).map_err(|_| invalid())?;
     tx.execute("INSERT INTO awr_team.execution_receipts(tenant_id,project_id,id,execution_id,reporter_actor_id,receipt_kind,digest,payload_json)
         VALUES($1,$2,$3,$4,$5,'caller_asserted',$6,$7)",
         &[&tenant,&project,&id,&a.execution_id,&auth.actor_id,&hash,&payload]).await?;
-    // Even a claimed success/stop is unverified. Persist its original facts,
-    // including scope violations, without releasing effects or accepting work.
-    tx.execute(
-        "UPDATE awr_team.executions SET state='unknown',execution_version=execution_version+1,
-        unknown_reason='caller_report_requires_reconciliation'
-        WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
-        &[&tenant, &project, &a.execution_id],
-    )
-    .await?;
-    tx.execute(
-        "UPDATE awr_team.work_runtime SET recovery_blocked=true
-        WHERE tenant_id=$1 AND project_id=$2 AND scope_id='main' AND work_id=$3",
-        &[&tenant, &project, &command.work_id],
-    )
-    .await?;
-    tx.execute(
-        "UPDATE awr_team.resource_reservations SET state='unknown'
-        WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND execution_id=$4 AND state='reserved'",
-        &[&tenant, &project, &command.work_id, &a.execution_id],
-    )
-    .await?;
+    let next = if effects_settled {
+        a.outcome.as_str()
+    } else {
+        "unknown"
+    };
+    if let Some(settled) = &settled {
+        tx.execute(
+            "UPDATE awr_team.executions SET state=$4,execution_version=execution_version+1,
+             result_digest=$5,environment_digest=$6,observed_paths_json=$7,
+             terminal_reported=true,workspace_effects_settled=true,unknown_reason=NULL
+             WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+            &[
+                &tenant,
+                &project,
+                &a.execution_id,
+                &next,
+                &a.output_digest,
+                &settled.declaration.environment_digest,
+                &json!(a.observed_paths),
+            ],
+        )
+        .await?;
+        settlement::release(tx, tenant, project, &r, settled).await?;
+        // Preserve the existing false barrier; never blanket-clear work recovery.
+    } else {
+        tx.execute(
+            "UPDATE awr_team.executions SET state='unknown',execution_version=execution_version+1,
+             terminal_reported=$4,unknown_reason='caller_report_requires_reconciliation'
+             WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+            &[&tenant, &project, &a.execution_id, &terminal_reported],
+        )
+        .await?;
+        tx.execute(
+            "UPDATE awr_team.work_runtime SET recovery_blocked=true
+             WHERE tenant_id=$1 AND project_id=$2 AND scope_id='main' AND work_id=$3",
+            &[&tenant, &project, &command.work_id],
+        )
+        .await?;
+        tx.execute(
+            "UPDATE awr_team.resource_reservations SET state='unknown'
+             WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND execution_id=$4 AND state='reserved'",
+            &[&tenant, &project, &command.work_id, &a.execution_id],
+        ).await?;
+    }
     let work_version = advance_work(tx, tenant, project, &command.work_id).await?;
+    if let Some(settled) = &settled {
+        // The lease may expire while exact-resource and receipt checks execute.
+        claims::require_live(
+            tx,
+            tenant,
+            project,
+            auth,
+            command,
+            ownership,
+            &a.session_id,
+            &settled.declaration.claim_id,
+            &settled.declaration.expected_fence,
+            &settled.declaration.expected_lease_version,
+        )
+        .await?;
+    }
     Ok(
         json!({"execution_id":a.execution_id,"execution_version":(r.get::<_,i64>("execution_version")+1).to_string(),
-        "session_id":a.session_id,"state":"unknown","receipt_id":id,"receipt_kind":"caller_asserted",
-        "reported_outcome":a.outcome,"scope_violation":exceeded,"recovery_blocked":true,
-        "work_version":work_version.to_string(),"work_completed":false,"resource_release_performed":false,
+        "session_id":a.session_id,"state":next,"receipt_id":id,"receipt_kind":"caller_asserted",
+        "reported_outcome":a.outcome,"scope_violation":exceeded,"recovery_blocked":!effects_settled,
+        "terminal_reported":terminal_reported,"artifact_verified":false,"effects_settled":effects_settled,
+        "settlement_scope":if effects_settled {Some("admitted_workspace_paths")} else {None},
+        "work_version":work_version.to_string(),"work_completed":false,"resource_release_performed":effects_settled,
+        "resources_released":settled.as_ref().map_or(0,|s|s.resources.len()),
         "reconciliation_supported":true,
-        "next_action":"Have an authorized recovery operator inspect the receipt and reconcile actual effects. Do not retry or complete while recovery is blocked."}),
+        "next_action":if effects_settled && a.outcome == "succeeded" {"Refresh work context; submit the exact readable artifact for independent Agent review. Workspace settlement is a caller assertion, not external delivery or acceptance."}
+            else if effects_settled {"Refresh work context and assess a new attempt or handoff. Settled failure or cancellation is not task completion; do not replay the stopped execution."}
+            else {"Have an authorized recovery operator inspect the receipt and reconcile actual effects. Do not retry or complete while recovery is blocked."}}),
     )
 }

@@ -1000,7 +1000,9 @@ async fn complete(
             .query_opt(
                 "SELECT state, contract_hash, input_digest, executor_actor_id, scope_id, result_digest,
                         id, work_id, executor_client_id, session_id, workstream_id, ownership_version,
-                        environment_digest, observed_paths_json, coordinator_epoch, execution_version
+                        environment_digest, observed_paths_json, coordinator_epoch, execution_version,
+                        claim_id,fence,declared_scope_json,settlement_policy_json,admission_mode,
+                        admission_lease_version,terminal_reported,workspace_effects_settled
                  FROM awr_team.executions
                  WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
                 &[&tenant, &project, &execution_id],
@@ -1030,9 +1032,16 @@ async fn complete(
             return Err(PgError::EvidenceInvalid);
         }
         if agent_policy {
-            caller_execution_binding =
-                agent_completion::verify_execution(tx, tenant, project, auth, command, &exec)
-                    .await?;
+            caller_execution_binding = agent_completion::verify_execution(
+                tx,
+                tenant,
+                project,
+                auth,
+                command,
+                &exec,
+                output_digest.as_deref(),
+            )
+            .await?;
         }
         execution_success = true;
         verified_executor_actor = Some(exec_executor);
@@ -1169,11 +1178,14 @@ async fn complete(
     let team_independent_acceptance = independence_kind == "team_independent";
     let approval_basis = crate::review::approval_basis(&independence_kind);
     let execution_basis = if agent_policy {
-        "caller_asserted_reconciled"
+        caller_execution_binding["execution_basis"]
+            .as_str()
+            .ok_or(PgError::EvidenceInvalid)?
+            .to_owned()
     } else if execution_success {
-        "trusted_execution_receipt"
+        "trusted_execution_receipt".to_owned()
     } else {
-        "not_required"
+        "not_required".to_owned()
     };
     let human_approval = !agent_policy && review.approved;
     let submitter_person = resolve_person_id(tx, tenant, project, &auth.actor_id)

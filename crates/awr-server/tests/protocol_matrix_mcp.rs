@@ -424,7 +424,11 @@ async fn protocol_matrix_extra_review_and_executor_permissions_visible_in_caps()
         false,
     )
     .await;
-    assert_eq!(caps["permission_policy_id"], "awr-team-mcp-permission-v1");
+    let expected_policy: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/team-mcp/role_action_matrix_v2.json"
+    ))
+    .unwrap();
+    assert_eq!(caps["permission_policy_id"], expected_policy["policy_id"]);
     // Independent review is not a template default; capabilities must not claim otherwise.
     if let Some(review) = caps.get("independent_review") {
         assert_ne!(review.get("admin_bypass"), Some(&json!(true)));
@@ -445,5 +449,5 @@ async fn protocol_matrix_extra_review_and_executor_permissions_visible_in_caps()
         .or_else(|| http_caps.pointer("/data/permission_policy_id"))
         .cloned()
         .unwrap_or(json!(null));
-    assert_eq!(policy, json!("awr-team-mcp-permission-v1"));
+    assert_eq!(policy, expected_policy["policy_id"]);
 }

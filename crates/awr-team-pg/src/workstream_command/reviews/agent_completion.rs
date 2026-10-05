@@ -1,5 +1,5 @@
-//! Explicit caller-managed completion: reconciliation settles effects without
-//! changing caller evidence into a trusted executor attestation.
+//! Explicit caller-managed completion keeps exact workspace settlement and
+//! operator reconciliation distinct. Neither upgrades caller evidence to trust.
 use super::*;
 
 pub(super) async fn verify_execution(
@@ -9,6 +9,7 @@ pub(super) async fn verify_execution(
     auth: &ReaderAuthority,
     command: &WorkstreamCommand,
     exec: &tokio_postgres::Row,
+    artifact_digest: Option<&str>,
 ) -> PgResult<Value> {
     let id: String = exec.get("id");
     let client: String = exec
@@ -34,11 +35,35 @@ pub(super) async fn verify_execution(
         return Err(PgError::RecoveryBlocked);
     }
     let row = tx.query_opt(
-        "SELECT id,receipt_kind,digest,payload_json FROM awr_team.execution_receipts
+        "SELECT id,receipt_kind,digest,payload_json,reporter_actor_id FROM awr_team.execution_receipts
          WHERE tenant_id=$1 AND project_id=$2 AND execution_id=$3 ORDER BY created_at DESC,id DESC LIMIT 1",
         &[&tenant,&project,&id]).await?.ok_or(PgError::EvidenceInvalid)?;
     let receipt_id: String = row.get(0);
     let payload: Value = row.get(3);
+    if row.get::<_, String>(1) == "caller_asserted"
+        && exec.get::<_, bool>("workspace_effects_settled")
+    {
+        if row.get::<_, String>(4) != exec.get::<_, String>("executor_actor_id")
+            || awr_team::request_hash(&payload).map_err(|_| PgError::EvidenceInvalid)?
+                != row.get::<_, String>(2)
+        {
+            return Err(PgError::EvidenceInvalid);
+        }
+        let mut binding = executions::settlement::verify_receipt(
+            tx,
+            tenant,
+            project,
+            auth,
+            command,
+            exec,
+            &payload,
+            artifact_digest,
+        )
+        .await?;
+        binding["caller_receipt_id"] = json!(receipt_id);
+        binding["executor_client_id"] = json!(client);
+        return Ok(binding);
+    }
     if row.get::<_, String>(1) != "reconcile"
         || awr_team::request_hash(&payload).map_err(|_| PgError::EvidenceInvalid)?
             != row.get::<_, String>(2)

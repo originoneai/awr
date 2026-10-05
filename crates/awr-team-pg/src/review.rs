@@ -1664,6 +1664,22 @@ fn dependency_receipt_accepted(
 mod dependency_policy_tests {
     use super::*;
     #[test]
+    fn reconciled_only_dependency_mode_refuses_workspace_settlement_basis() {
+        let basis = json!({"approval_basis":"agent_review","execution_basis":"caller_asserted_workspace_settled",
+            "human_approval":false,"team_independent_acceptance":false});
+        for mode in [
+            None,
+            Some(awr_team::DependencyAcceptanceMode::AgentReviewedCallerAssertedReconciled),
+        ] {
+            assert!(!dependency_receipt_accepted(
+                mode,
+                Some("agent_review"),
+                AGENT_REVIEW_POLICY,
+                &basis
+            ));
+        }
+    }
+    #[test]
     fn unversioned_contracts_preserve_dependencies_without_v2_opt_in() {
         let (required, modes) = dependency_policy(&json!({
             "completion_policy":"independent_review", "acceptance":["verified"],
