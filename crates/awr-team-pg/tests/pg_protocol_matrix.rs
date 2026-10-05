@@ -39,6 +39,13 @@ fn catalog() -> Value {
     .unwrap()
 }
 
+fn current_permissions() -> Value {
+    serde_json::from_str(include_str!(
+        "../../../tests/fixtures/team-mcp/role_action_matrix_v2.json"
+    ))
+    .unwrap()
+}
+
 fn record(category: &str, assertion: &str, actual: Value) {
     // Versioned case record for ledger evidence / re-runs.
     let _ = (
@@ -190,6 +197,13 @@ async fn role_action_matrix() {
     // Service integration for selected cells runs through command path below.
     let mut allows = 0usize;
     let mut denies = 0usize;
+    let policy = current_permissions();
+    assert_eq!(policy["policy_version"], PERMISSION_POLICY_VERSION);
+    assert_eq!(
+        policy["role_templates"],
+        json!(RoleTemplate::all().map(RoleTemplate::as_str))
+    );
+    assert_eq!(policy["actions"], json!(Action::all().map(Action::as_str)));
     for role in RoleTemplate::all() {
         for action in Action::all() {
             let mut scope =
@@ -203,6 +217,12 @@ async fn role_action_matrix() {
                 work_id: Some("AWR-TMCP-010".into()),
             };
             let expect = action_allowed_for_template(role, action);
+            let declared = policy["action_role_matrix"][action.as_str()]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry == role.as_str());
+            assert_eq!(expect, declared, "{} / {}", role.as_str(), action.as_str());
             let result = authorize_action(&scope, action, &resource, 1_000_000);
             if expect {
                 result.expect("allow cell");
@@ -214,7 +234,11 @@ async fn role_action_matrix() {
         }
     }
     // review.decide never in templates without grant — all 4 are denies above.
-    assert_eq!(allows + denies, 52);
+    assert_eq!(
+        allows + denies,
+        policy["role_templates"].as_array().unwrap().len()
+            * policy["actions"].as_array().unwrap().len()
+    );
     assert!(allows >= 20);
     record(
         "role_action_matrix",
@@ -340,7 +364,10 @@ async fn cross_scope_identity() {
         .query(TENANT, PROJECT, A, query("capabilities"))
         .await
         .unwrap();
-    assert_eq!(caps["permission_policy_id"], "awr-team-mcp-permission-v1");
+    assert_eq!(
+        caps["permission_policy_id"],
+        current_permissions()["policy_id"]
+    );
     // Negative: cross-tenant project id via other-tenant seeded in fixture.
     let cross = store
         .query("other-tenant", PROJECT, A, query("work.list"))

@@ -1,0 +1,218 @@
+// Shares the established caller/evidence/independent Agent-review fixture.
+#[tokio::test]
+async fn workspace_completion_verifies_artifact_without_reconciliation_or_trust_upgrade() {
+    let (_g, admin, db, store) = setup().await;
+    let chain = caller_chain_in_workspace(&admin, &db, &store, Some("clone-author")).await;
+    // Review may outlive the old execution lease once effects are settled.
+    admin
+        .batch_execute(
+            "UPDATE awr_team.claims SET expires_at=clock_timestamp()-interval '1 second'",
+        )
+        .await
+        .unwrap();
+    let complete = run(
+        &store,
+        RUNNER,
+        "workspace-complete",
+        "work.complete",
+        completion_args(&chain),
+    )
+    .await;
+    assert_eq!(complete["task_complete"], true);
+    assert_eq!(
+        complete["execution_basis"],
+        "caller_asserted_workspace_settled"
+    );
+    assert_eq!(complete["approval_basis"], "agent_review");
+    assert_eq!(complete["human_approval"], false);
+    assert_eq!(complete["team_independent_acceptance"], false);
+    assert_eq!(complete["author_self_report"], true);
+    let binding = &complete["caller_execution_binding"];
+    assert_eq!(binding["caller_receipt_id"], chain["caller_receipt_id"]);
+    assert_eq!(binding["workspace_id"], "clone-author");
+    for flag in ["terminal_reported", "artifact_verified", "effects_settled"] {
+        assert_eq!(binding[flag], true);
+    }
+    let row = admin
+        .query_one(
+            "SELECT trust_basis FROM awr_team.evidence WHERE id=$1",
+            &[&chain["evidence_id"].as_str().unwrap()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, String>(0), "caller_asserted");
+    let recovery: i64 = admin.query_one("SELECT count(*) FROM awr_team.execution_receipts WHERE receipt_kind<>'caller_asserted'", &[]).await.unwrap().get(0);
+    assert_eq!(recovery, 0);
+}
+
+#[tokio::test]
+async fn workspace_completion_refuses_missing_corrupt_and_unrelated_artifact_bytes() {
+    for mutation in ["missing", "corrupt", "unrelated"] {
+        let (_g, admin, db, store) = setup().await;
+        let mut chain = caller_chain_in_workspace(&admin, &db, &store, Some("clone-author")).await;
+        match mutation {
+            "missing" => {
+                admin
+                    .batch_execute("UPDATE awr_team.artifacts SET content=NULL")
+                    .await
+                    .unwrap();
+            }
+            "corrupt" => {
+                admin
+                    .batch_execute("UPDATE awr_team.artifacts SET content=decode('00','hex')")
+                    .await
+                    .unwrap();
+            }
+            _ => {
+                // Submit valid, independently hashed but unrelated bytes via
+                // the real evidence entry; the bundle must still match this run.
+                let mut args =
+                    submit_args("session-a", chain["execution_id"].as_str().unwrap(), "");
+                args.as_object_mut().unwrap().remove("artifact_hex");
+                args["artifact_text"] = json!("unrelated artifact");
+                args["payload"]["output_digest"] = chain["result_digest"].clone();
+                let evidence = run(&store, A, "unrelated-artifact", "evidence.submit", args).await;
+                chain["evidence_id"] = evidence["evidence_id"].clone();
+            }
+        }
+        assert!(
+            matches!(
+                run_err(
+                    &store,
+                    RUNNER,
+                    mutation,
+                    "work.complete",
+                    completion_args(&chain)
+                )
+                .await,
+                PgError::EvidenceInvalid
+            ),
+            "{mutation}"
+        );
+        let completed: i64 = admin
+            .query_one("SELECT count(*) FROM awr_team.completion_receipts", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(completed, 0);
+    }
+}
+
+#[tokio::test]
+async fn workspace_completion_binds_closed_receipt_and_released_reservation_provenance() {
+    for field in [
+        "execution_id",
+        "workspace_id",
+        "input_digest",
+        "admission_lease_version",
+        "artifact_verified",
+        "extra_trust",
+        "resource_fence",
+        "outside_scope",
+        "noncanonical_scope",
+        "oversized_paths",
+    ] {
+        let (_g, admin, db, store) = setup().await;
+        let chain = caller_chain_in_workspace(&admin, &db, &store, Some("clone-author")).await;
+        let id = chain["caller_receipt_id"].as_str().unwrap();
+        let mut payload: Value = admin
+            .query_one(
+                "SELECT payload_json FROM awr_team.execution_receipts WHERE id=$1",
+                &[&id],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        match field {
+            "workspace_id" => {
+                payload["workspace_settlement"]["workspace_id"] = json!("other-clone")
+            }
+            "admission_lease_version" => payload[field] = json!("999"),
+            "artifact_verified" => payload[field] = json!(true),
+            "extra_trust" => payload["trusted_executor"] = json!(true),
+            "resource_fence" => payload["resource_proof"][0]["fence"] = json!("999"),
+            "input_digest" => payload[field] = json!("d".repeat(64)),
+            "outside_scope" | "noncanonical_scope" | "oversized_paths" => {
+                payload["observed_paths"] = match field {
+                    "outside_scope" => json!(["src/other/result.json"]),
+                    "noncanonical_scope" => json!(["src/api/../other/result.json"]),
+                    _ => json!(vec!["src/api/result.json"; 129]),
+                };
+                // Even matching persisted facts and recomputed receipt hashes
+                // cannot replace the admitted scope or closed wire bounds.
+                admin
+                    .execute(
+                        "UPDATE awr_team.executions SET observed_paths_json=$1 WHERE id=$2",
+                        &[
+                            &payload["observed_paths"],
+                            &chain["execution_id"].as_str().unwrap(),
+                        ],
+                    )
+                    .await
+                    .unwrap();
+            }
+            _ => payload[field] = json!("different-run"),
+        }
+        let digest = awr_team::request_hash(&payload).unwrap();
+        admin
+            .execute(
+                "UPDATE awr_team.execution_receipts SET payload_json=$1,digest=$2 WHERE id=$3",
+                &[&payload, &digest, &id],
+            )
+            .await
+            .unwrap();
+        assert!(
+            matches!(
+                run_err(
+                    &store,
+                    RUNNER,
+                    field,
+                    "work.complete",
+                    completion_args(&chain)
+                )
+                .await,
+                PgError::EvidenceInvalid
+            ),
+            "{field}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn workspace_completion_keeps_independent_review_and_current_contract_requirements() {
+    for mutation in ["review", "contract", "resource"] {
+        let (_g, admin, db, store) = setup().await;
+        let chain = caller_chain_in_workspace(&admin, &db, &store, Some("clone-author")).await;
+        match mutation {
+            "review" => {
+                admin
+                    .batch_execute("UPDATE awr_team.review_rounds SET state='invalidated'")
+                    .await
+                    .unwrap();
+            }
+            "contract" => {
+                let mut contract = current_contract(&admin).await;
+                contract.hard_rules.push("new required constraint".into());
+                put_contract(&admin, &contract).await;
+            }
+            _ => {
+                admin
+                    .batch_execute("UPDATE awr_team.resource_reservations SET fence=fence+1")
+                    .await
+                    .unwrap();
+            }
+        }
+        let error = run_err(
+            &store,
+            RUNNER,
+            mutation,
+            "work.complete",
+            completion_args(&chain),
+        )
+        .await;
+        assert!(
+            matches!(error, PgError::EvidenceInvalid | PgError::ReviewRequired),
+            "{mutation}: {error:?}"
+        );
+    }
+}

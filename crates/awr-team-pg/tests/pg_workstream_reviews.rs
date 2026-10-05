@@ -921,6 +921,7 @@ mod agent_review_tests {
     }
 
     include!("cases/agent_completion.rs");
+    include!("cases/workspace_completion.rs");
 
     #[tokio::test]
     async fn independent_delegations_cover_each_action_without_restoring_narrowed_parent() {

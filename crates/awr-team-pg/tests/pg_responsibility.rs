@@ -958,19 +958,60 @@ async fn schema39_upgrade_retains_history_without_guessing_request_hashes() {
         .assign(TENANT, PROJECT, "task", &request)
         .await
         .unwrap();
+    let mut historical = snapshot(&admin).await;
+    for receipt in historical["receipts"].as_array_mut().unwrap() {
+        receipt.as_object_mut().unwrap().remove("request_hash");
+    }
+    // Reconstruct actual schema39 under this fixture's existing exclusive guard;
+    // a metadata-only downgrade would leave schema41 columns behind.
+    admin
+        .batch_execute("DROP SCHEMA awr_team CASCADE")
+        .await
+        .unwrap();
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let mut files: Vec<_> = std::fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    files.sort();
+    for path in files {
+        let name = path.file_name().unwrap().to_str().unwrap();
+        let number: i32 = name.split_once('_').unwrap().0[8..].parse().unwrap();
+        if number > 39 {
+            break;
+        }
+        admin
+            .batch_execute(&std::fs::read_to_string(path).unwrap())
+            .await
+            .unwrap();
+    }
     admin
         .batch_execute(
-            "ALTER TABLE awr_team.responsibility_receipts DROP COLUMN request_hash;
-         UPDATE awr_team.schema_state SET version=39 WHERE component='awr_team';",
+            "INSERT INTO awr_team.tenants(id,name,status) VALUES('tenant-a','A','active');
+        INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+        VALUES('tenant-a','project-a','alpha','team','epoch-1','active')",
         )
         .await
         .unwrap();
-    let historical = snapshot(&admin).await;
+    for (key, table) in [
+        ("persons", "persons"),
+        ("tasks", "task_responsibilities"),
+        ("collaborators", "task_collaborators"),
+        ("events", "responsibility_events"),
+        ("receipts", "responsibility_receipts"),
+    ] {
+        admin.execute(&format!("INSERT INTO awr_team.{table} SELECT * FROM jsonb_populate_recordset(NULL::awr_team.{table},$1)"),
+            &[&historical[key]]).await.unwrap();
+    }
+    assert_eq!(snapshot(&admin).await, historical);
     assert!(matches!(
         awr_team_pg::check_schema(&admin).await,
         Err(PgError::SchemaIncompatible(_))
     ));
     awr_team_pg::migrate(&admin).await.unwrap();
+    awr_team_pg::Bootstrap::grant_app(&admin, "awr_app")
+        .await
+        .unwrap();
     awr_team_pg::check_schema(&admin).await.unwrap();
     let after = snapshot(&admin).await;
     let mut preserved = after.clone();
