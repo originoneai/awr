@@ -848,6 +848,11 @@
   "ui.team_progress_execution_prepared": "已准备",
   "ui.team_progress_execution_queued": "排队中",
   "ui.team_progress_execution_accepted": "执行器已接收",
+  "ui.team_detail_unread": "详情尚未读取，暂时无法判断 Agent 是否已报告。",
+  "ui.team_detail_read_failed_short": "详情读取失败",
+  "ui.team_detail_read_failed": "任务详情读取失败，不代表 Agent 未报告进度。",
+  "ui.team_detail_retry": "重新读取详情",
+  "ui.team_partial_details": "部分任务详情刷新失败，其他任务已显示本次获取的数据；选择受影响的任务可重试。",
   "ui.raw_json": "原始 JSON"
 };
   if (typeof module !== 'undefined' && module.exports) module.exports = messages;

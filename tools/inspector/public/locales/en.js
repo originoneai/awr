@@ -848,6 +848,11 @@
   "ui.team_progress_execution_prepared": "Prepared",
   "ui.team_progress_execution_queued": "Queued",
   "ui.team_progress_execution_accepted": "Executor accepted",
+  "ui.team_detail_unread": "Details have not been read. Agent reporting cannot be determined yet.",
+  "ui.team_detail_read_failed_short": "Details unavailable",
+  "ui.team_detail_read_failed": "Task details could not be read. This does not mean the Agent has not reported progress.",
+  "ui.team_detail_retry": "Retry reading details",
+  "ui.team_partial_details": "Some task details could not be refreshed. Other tasks show the latest retrieved data; select an affected task to retry.",
   "ui.raw_json": "Raw JSON"
 };
   if (typeof module !== 'undefined' && module.exports) module.exports = messages;
