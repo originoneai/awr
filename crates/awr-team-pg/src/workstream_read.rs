@@ -23,6 +23,7 @@ const QUERIES: &[&str] = &[
     "work.search",
     "work.next",
     "work.prepare",
+    "work.snapshot",
     "work.observe",
     "events.list",
     "session.inspect",
@@ -147,7 +148,7 @@ impl WorkstreamQuery {
             || self.max_context_bytes.is_some()
                 && !matches!(
                     self.op.as_str(),
-                    "work.prepare" | "source.content" | "artifact.content"
+                    "work.prepare" | "work.snapshot" | "source.content" | "artifact.content"
                 )
             || (!audit
                 && self.request_id.is_some()
@@ -199,6 +200,7 @@ impl WorkstreamQuery {
             || matches!(
                 self.op.as_str(),
                 "work.prepare"
+                    | "work.snapshot"
                     | "work.observe"
                     | "work.recovery"
                     | "command.inspect"
@@ -333,22 +335,43 @@ impl WorkstreamReadStore {
         }
         let mut client = self.pool.get().await?;
         crate::check_schema(&client).await?;
-        let tx = client
-            .build_transaction()
-            .isolation_level(IsolationLevel::RepeatableRead)
-            .start()
-            .await?;
-        let result = authenticated_read(&tx, tenant, project, bearer, &request).await?;
-        if serde_json::to_vec(&result)
-            .map_err(|_| PgError::SourceDivergence)?
-            .len()
-            > 1_048_576
-        {
-            return Err(PgError::ResponseTooLarge);
+        // Short write bursts can span several authentication reads. Back off
+        // exponentially, for at most eight complete attempts / 635ms of delay.
+        for attempt in 0..8 {
+            let result = async {
+                let tx = client
+                    .build_transaction()
+                    .isolation_level(IsolationLevel::RepeatableRead)
+                    .start()
+                    .await?;
+                let result = authenticated_read(&tx, tenant, project, bearer, &request).await?;
+                if serde_json::to_vec(&result)
+                    .map_err(|_| PgError::SourceDivergence)?
+                    .len()
+                    > 1_048_576
+                {
+                    return Err(PgError::ResponseTooLarge);
+                }
+                // No mutation or reusable authority escapes an attempt. A
+                // serialization retry starts a new snapshot and reauthenticates.
+                tx.commit().await?;
+                Ok(result)
+            }
+            .await;
+            match result {
+                Err(PgError::Db(ref error))
+                    if attempt < 7
+                        && error.code()
+                            == Some(
+                                &tokio_postgres::error::SqlState::T_R_SERIALIZATION_FAILURE,
+                            ) =>
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(5 << attempt)).await;
+                }
+                other => return other,
+            }
         }
-        // No mutation or reusable authority object escapes this transaction.
-        tx.commit().await?;
-        Ok(result)
+        unreachable!("the final read attempt always returns")
     }
 }
 
@@ -516,6 +539,8 @@ pub(crate) async fn read(
                 "version":1,"start_optional_fields":["client_info"],
                 "checkpoint_optional_fields":["client_info","progress","usage"],
                 "read":"work.observe","visibility":"work_read_business_summary",
+                "snapshot_read":"work.snapshot","snapshot_consistency":"repeatable_read",
+                "declared_phases":crate::feedback::PROGRESS_PHASES,
                 "provenance":"caller_declared","nonterminal":true,
                 "usage_scope":"host_session","usage_aggregation":"none",
                 "billing_collected":false,"stale_after_ms":crate::feedback::STALE_AFTER_MS
@@ -811,7 +836,7 @@ pub(crate) async fn read(
             };
             json!({"items":items,"total":count,"next_cursor":next})
         }
-        "work.prepare" => {
+        "work.prepare" | "work.snapshot" => {
             let work = resolved
                 .work_item_id
                 .as_ref()
@@ -895,7 +920,7 @@ pub(crate) async fn read(
             data["context_hash_protocol"] = json!("awr-team-workstream-context-v1");
             // Advice is not consumed context or execution admission. Preserve the
             // original context hash and fit optional advice inside the read budget.
-            let observed = observation::read(
+            let mut observed = observation::read(
                 tx,
                 tenant,
                 project,
@@ -912,13 +937,40 @@ pub(crate) async fn read(
             }
             hint = crate::workstream_command::task_intake::guidance(&observed, hint);
             let mut with_hint = data.clone();
-            with_hint["guidance"] = hint;
+            with_hint["guidance"] = hint.clone();
             if serde_json::to_vec(&with_hint)
                 .map_err(|_| PgError::SourceDivergence)?
                 .len()
                 <= q.max_context_bytes.unwrap_or(65536)
             {
                 data = with_hint;
+            }
+
+            if q.op == "work.snapshot" {
+                // Context and observations come from this same authenticated
+                // RepeatableRead transaction. Metadata and feedback never enter
+                // the consumed-context hash or grant execution authority.
+                // Full context completeness takes priority over a standalone
+                // observation's advice. Both sections must give the same action.
+                observed["guidance"] = hint;
+                data["snapshot"] = json!({
+                    "version":1,
+                    "consistency":"repeatable_read",
+                    "project_revision":auth.revision.to_string(),
+                    "source_snapshot_id":auth.snapshot,
+                    "coordinator_epoch":auth.epoch,
+                    "queried_at_unix_ms":observed["observed_at_unix_ms"]
+                });
+                data["observation"] = observed;
+                if serde_json::to_vec(&data)
+                    .map_err(|_| PgError::SourceDivergence)?
+                    .len()
+                    > q.max_context_bytes.unwrap_or(65536)
+                {
+                    // Keep the complete observation (and its guidance). Only
+                    // omit the optional duplicate hint outside that section.
+                    data.as_object_mut().unwrap().remove("guidance");
+                }
             }
 
             if serde_json::to_vec(&data)

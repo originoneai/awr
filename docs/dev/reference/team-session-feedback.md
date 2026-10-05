@@ -46,10 +46,16 @@ and `open_loops` remain required. For example, add:
 ```
 
 Phases: `starting`, `implementing`, `testing`, `waiting_user`, `blocked`,
-`ready_for_review`. Phase is descriptive; it does not change work status, create
+`ready_for_review`, `waiting_dependency`, `reviewing`, `reworking`, `integrating`
+and `delivered`. Check `capabilities.session_feedback.declared_phases` or the
+advertised command schema before using extensions with an older server.
+Every phase, including `delivered`, is descriptive; it does not change work status, create
 a user wait, renew a lease, settle execution or accept delivery. Use the existing
 operations for those transitions. `execution.report` remains a terminal outcome
-claim requiring reconciliation; do not use it as a progress heartbeat.
+claim; do not use it as a progress heartbeat. Effect settlement and artifact
+completion are separate. An explicit workspace contract may allow scoped
+caller-asserted settlement; unknown/shared effects retain authorized recovery.
+See [execution settlement](team-execution-settlement.md).
 
 Summary is at most 2,048 UTF-8 bytes. Each list has at most eight entries:
 completed/blocker text is at most 1,024 bytes; labels/test names 256 bytes;
@@ -104,6 +110,50 @@ time, not ingestion time. A contract mismatch or age beyond 15 minutes marks the
 report `stale`; this is an observation age, not proof the Agent stopped working.
 The response's `observed_at_unix_ms` is query time, never report time.
 
+`reported_contract_hash` and `recorded_project_revision` identify the stored
+report's contract and server audit revision at registration. That revision is
+not a claim about the client's last consumed cursor: unrelated audit changes
+may preserve its scoped context hash. Reports are selected by this monotonic
+recorded revision before receive time, so a receive-clock change does not make
+an older report replace a newer one. `report_order_basis` states that basis.
+`client_observed_at_unix_ms` retains the known usage measurement time; progress
+v1 has no client collection time, so that value stays null. Server receive,
+client measurement and current query times remain distinct.
+
 Missing reasons distinguish `no_session`, `client_capability_unknown`,
 `client_collection_unsupported` and `not_reported_by_client`. Old clients are
 unknown-capability clients; absence is not silently labeled a reporting failure.
+
+## Atomic context and observation
+
+Use `work.snapshot` when one response needs both current context and feedback:
+
+```json
+{"protocol_version":1,"op":"work.snapshot","work_id":"API-1","max_context_bytes":65536}
+```
+
+It accepts the same work/session selectors and context bounds as `work.prepare`.
+The context fields keep the existing hash protocol and can be consumed before
+checkpointing. `data.observation` contains the same scoped summaries as
+`work.observe`, including separate execution report, artifact verification,
+effect settlement and recovery dimensions. `data.snapshot` identifies the
+source snapshot, epoch, project revision and server query time. Both sections
+come from one authenticated PostgreSQL RepeatableRead transaction. Equal
+contract hashes from two separate queries do not prove this runtime consistency.
+
+The complete snapshot data must fit `max_context_bytes` (default 65,536;
+maximum 262,144). Required context and observations are not silently truncated;
+insufficient space returns `ContextIncomplete`. `work.prepare` and `work.observe`
+remain available with their existing hash/budget and permission boundaries.
+An optional duplicate context-level hint may be omitted to fit the budget;
+the observation and its guidance remain complete. Incomplete context always
+selects restoration guidance in both sections.
+Snapshot metadata, feedback and advice do not enter the context hash, admit
+execution, complete work or increase the raw-receipt visibility grant.
+
+Transient PostgreSQL serialization conflicts use at most eight complete read
+attempts with exponential backoff, totaling at most 635 ms of retry delay.
+Every attempt starts a fresh snapshot and authenticates again. Denial, invalid
+input, missing context and response-budget errors are not retried. No result or
+authority escapes an aborted attempt; persistent contention remains an error.
+This retry mechanism applies to scoped work queries, not commands or side effects.

@@ -602,6 +602,111 @@ async fn discovered_review_and_evidence_selectors_reach_scoped_records() {
 }
 
 #[tokio::test]
+async fn mcp_snapshot_is_discoverable_consumable_and_keeps_feedback_separate_from_authority() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let tools = client.list_all_tools().await.unwrap();
+    let query_schema = &tools
+        .iter()
+        .find(|t| t.name == "awr_team_query")
+        .unwrap()
+        .input_schema;
+    assert!(
+        query_schema["properties"]["op"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("work.snapshot"))
+    );
+    let caps = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"capabilities"}),
+        false,
+    )
+    .await;
+    let command_schema = &tools
+        .iter()
+        .find(|t| t.name == "awr_team_command")
+        .unwrap()
+        .input_schema;
+    assert_eq!(
+        command_schema["properties"]["args"]["properties"]["progress"]["properties"]["phase"]["enum"],
+        caps["session_feedback"]["declared_phases"]
+    );
+    let before = prepared(&client).await;
+    let snapshot = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.snapshot","session_id":"session-a"}),
+        false,
+    )
+    .await;
+    assert_eq!(
+        snapshot["data"]["context_hash"],
+        before["data"]["context_hash"]
+    );
+    assert_eq!(
+        snapshot["data"]["snapshot"]["project_revision"],
+        snapshot["project_revision"]
+    );
+    let input = serde_json::to_value(command(&snapshot, "snapshot-feedback", "session.checkpoint", json!({
+        "session_id":"session-a","expected_session_version":"1",
+        "context_hash":snapshot["data"]["context_hash"],"next_action":"Verify the revised result","open_loops":[],
+        "progress":{"phase":"reworking","summary":"Addressing independent review feedback."}
+    }))).unwrap();
+    let receipt = call(&client, "awr_team_command", input.clone(), false).await;
+    assert_eq!(
+        call(&client, "awr_team_command", input, false).await["receipt"],
+        receipt["receipt"]
+    );
+    let after = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.snapshot","work_id":"a"}),
+        false,
+    )
+    .await;
+    assert_eq!(
+        after["data"]["context_hash"],
+        before["data"]["context_hash"]
+    );
+    assert_eq!(
+        after["data"]["observation"]["progress"]["phase"],
+        "reworking"
+    );
+    assert_eq!(
+        after["data"]["observation"]["progress"]["provenance"],
+        "caller_declared"
+    );
+    assert!(after["data"]["observation"]["progress"]["client_observed_at_unix_ms"].is_null());
+    assert_eq!(after["data"]["observation"]["execution_authorized"], false);
+    assert_eq!(after["data"]["execution_admission"], "not_evaluated");
+    assert_eq!(
+        call(
+            &client,
+            "awr_team_query",
+            json!({"protocol_version":1,"op":"work.snapshot","work_id":"b-private"}),
+            true
+        )
+        .await["code"],
+        "Forbidden"
+    );
+    assert_eq!(
+        call(
+            &client,
+            "awr_team_query",
+            json!({"protocol_version":1,"op":"work.snapshot","work_id":"a","max_context_bytes":1}),
+            true
+        )
+        .await["code"],
+        "ContextIncomplete"
+    );
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn mcp_feedback_is_discoverable_nonterminal_and_does_not_change_consumed_context() {
     let (_guard, admin, _, store) = setup().await;
     enable_writes(&admin).await;

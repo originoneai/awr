@@ -7,6 +7,161 @@ use awr_team_pg::PgError;
 use fixture::*;
 
 #[tokio::test]
+async fn work_snapshot_preserves_context_hash_scope_and_total_byte_budget() {
+    let (_guard, _, _, store) = setup().await;
+    let prepared = prepare(&store, A, "a").await;
+    let mut q = query("work.snapshot");
+    q.work_id = Some("a".into());
+    let snapshot = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    let data = &snapshot["data"];
+    assert_eq!(data["context_hash"], prepared["data"]["context_hash"]);
+    assert_eq!(snapshot["project_revision"], prepared["project_revision"]);
+    assert_eq!(data["snapshot"]["consistency"], "repeatable_read");
+    assert_eq!(
+        data["snapshot"]["project_revision"],
+        snapshot["project_revision"]
+    );
+    assert_eq!(
+        data["snapshot"]["source_snapshot_id"],
+        snapshot["source_snapshot_id"]
+    );
+    assert_eq!(
+        data["snapshot"]["coordinator_epoch"],
+        snapshot["coordinator_epoch"]
+    );
+    assert_eq!(data["observation"]["contract_hash"], data["contract_hash"]);
+    assert_eq!(data["observation"]["execution_authorized"], false);
+    assert_eq!(
+        data["snapshot"]["queried_at_unix_ms"],
+        data["observation"]["observed_at_unix_ms"]
+    );
+    let mut original = data.clone();
+    original.as_object_mut().unwrap().remove("snapshot");
+    original.as_object_mut().unwrap().remove("observation");
+    assert_eq!(original, prepared["data"]);
+    assert!(!snapshot.to_string().contains("PRIVATE"));
+    let caps = store
+        .query(TENANT, PROJECT, A, query("capabilities"))
+        .await
+        .unwrap();
+    assert!(
+        caps["queries"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("work.snapshot"))
+    );
+    assert_eq!(caps["session_feedback"]["snapshot_read"], "work.snapshot");
+
+    // The opt-in operation cannot silently drop feedback to meet a context budget.
+    q.max_context_bytes = Some(serde_json::to_vec(&prepared["data"]).unwrap().len());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, q.clone()).await,
+        Err(PgError::ContextIncomplete)
+    ));
+    q.op = "work.prepare".into();
+    assert_eq!(
+        store.query(TENANT, PROJECT, A, q.clone()).await.unwrap()["data"]["context_hash"],
+        data["context_hash"]
+    );
+    q.op = "work.snapshot".into();
+    q.max_context_bytes = None;
+    for work in ["b-private", "missing"] {
+        q.work_id = Some(work.into());
+        assert!(matches!(
+            store.query(TENANT, PROJECT, A, q.clone()).await,
+            Err(PgError::Forbidden)
+        ));
+    }
+    q.work_id = Some("a".into());
+    assert!(matches!(
+        store.query("other-tenant", PROJECT, A, q.clone()).await,
+        Err(PgError::Forbidden)
+    ));
+    assert!(matches!(
+        store.query(TENANT, PROJECT, B, q.clone()).await,
+        Err(PgError::Forbidden)
+    ));
+    q.session_id = Some("session-b".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, q).await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
+async fn incomplete_snapshot_keeps_one_restoration_action_when_duplicate_advice_is_omitted() {
+    let (_guard, _, _, store) = setup_with_specs(vec![]).await;
+    let mut q = query("work.snapshot");
+    q.work_id = Some("a".into());
+    let full = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    let data = &full["data"];
+    assert_eq!(data["context_complete"], false);
+    assert_eq!(data["guidance"]["code"], "restore_context");
+    assert_eq!(data["guidance"], data["observation"]["guidance"]);
+    assert!(data["observation"]["guidance"].to_string().len() < 900);
+    let mut mandatory = data.clone();
+    mandatory.as_object_mut().unwrap().remove("guidance");
+    let budget = serde_json::to_vec(&mandatory).unwrap().len();
+    q.max_context_bytes = Some(budget);
+    let compact = store.query(TENANT, PROJECT, A, q).await.unwrap();
+    assert!(compact["data"].get("guidance").is_none());
+    assert_eq!(compact["data"]["observation"]["guidance"], data["guidance"]);
+    assert_eq!(compact["data"]["context_hash"], data["context_hash"]);
+    assert_eq!(
+        compact["data"]["completeness_reasons"],
+        data["completeness_reasons"]
+    );
+    assert_eq!(
+        compact["data"]["observation"]["execution_authorized"],
+        false
+    );
+    assert!(serde_json::to_vec(&compact["data"]).unwrap().len() <= budget);
+}
+
+#[tokio::test]
+async fn work_snapshot_does_not_mix_runtime_revisions_during_concurrent_writes() {
+    let (_guard, admin, db, store) = setup().await;
+    admin.execute("INSERT INTO awr_team.work_runtime(tenant_id,project_id,scope_id,work_id,state,work_version,last_fence)
+        VALUES($1,$2,'main','a','ready',3,3)", &[&TENANT,&PROJECT]).await.unwrap();
+    let mut writer = common::connect_config(&common::with_db(&common::test_config(), &db)).await;
+    let writing = tokio::spawn(async move {
+        for _ in 0..32 {
+            let tx = writer.transaction().await.unwrap();
+            tx.execute("UPDATE awr_team.work_runtime SET work_version=work_version+1,last_fence=last_fence+1
+                WHERE tenant_id=$1 AND project_id=$2 AND work_id='a'", &[&TENANT,&PROJECT]).await.unwrap();
+            tx.execute(
+                "UPDATE awr_team.projects SET project_revision=project_revision+1
+                WHERE tenant_id=$1 AND id=$2",
+                &[&TENANT, &PROJECT],
+            )
+            .await
+            .unwrap();
+            tx.commit().await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    });
+    for _ in 0..24 {
+        let mut q = query("work.snapshot");
+        q.work_id = Some("a".into());
+        let snapshot = store.query(TENANT, PROJECT, A, q).await.unwrap();
+        let data = &snapshot["data"];
+        assert_eq!(data["runtime"], data["observation"]["runtime"]);
+        assert_eq!(
+            data["runtime"]["work_version"],
+            snapshot["project_revision"]
+        );
+        assert_eq!(data["runtime"]["last_fence"], snapshot["project_revision"]);
+    }
+    writing.await.unwrap();
+    let mut q = query("work.snapshot");
+    q.work_id = Some("a".into());
+    assert_eq!(
+        store.query(TENANT, PROJECT, A, q).await.unwrap()["project_revision"],
+        "35"
+    );
+}
+
+#[tokio::test]
 async fn work_observation_is_scoped_current_and_does_not_change_context_or_authority() {
     let (_guard, admin, _, store) = setup().await;
     let prepared = prepare(&store, A, "a").await;
