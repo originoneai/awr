@@ -153,7 +153,7 @@
     function participant(w) {
       return w.owner_person || (w.claimant ? t(i18n, 'feedback.claimed_by', { name: w.claimant })
         : w.last_participant ? t(i18n, 'feedback.last_participant', { name: w.last_participant })
-          : t(i18n, 'ui.network_owner_unknown'));
+          : t(i18n, isLive() && !w.detail_loaded ? 'ui.network_unread' : 'ui.network_owner_unknown'));
     }
 
     function nextStep(w) {
@@ -191,6 +191,7 @@
       if (lane) people.appendChild(el('span', { class: 'node-lane' }, lane.name));
       body.appendChild(people);
       if (w.dependency_export_unavailable) body.appendChild(el('span', { class: 'node-note' }, t(i18n, 'ui.network_dependency_gap')));
+      if (w.detail_error) body.appendChild(el('span', { class: 'node-note' }, t(i18n, 'ui.team_detail_read_failed_short')));
       card.appendChild(body);
       card.addEventListener('click', () => selectWork(w.key));
       card.addEventListener('keydown', (event) => {
@@ -291,6 +292,8 @@
       if (state.lastRefreshedAt && isLive()) host.appendChild(el('p', { class: 'sub', role: 'status' },
         t(i18n, state.error ? 'ui.team_progress_refresh_failed' : 'ui.team_progress_refreshed',
           { time: new Date(state.lastRefreshedAt).toLocaleTimeString() })));
+      if (isLive() && state.works.some(w => w.detail_error)) host.appendChild(el('p', { class: 'team-error', role: 'status' },
+        t(i18n, 'ui.team_partial_details')));
 
       if (state.disconnect) {
         const banner = el('div', { class: 'banner' });
@@ -365,21 +368,32 @@
 
     async function readWork(work) {
       if (work.detail_loaded) return { ok: true, work };
-      if (pendingDetails.has(work.key)) return pendingDetails.get(work.key);
-      const current = generation;
+      const current = generation, project = state.projectKey;
+      const identity = JSON.stringify([current, project, work.workstream_id, work.key, work.contract_hash || null]);
       const params = new URLSearchParams({ project: state.projectKey, work: work.key, workstream: work.workstream_id });
       if (work.contract_hash) params.set('contract', work.contract_hash);
-      const pending = api('/api/team/work?' + params).then(body => {
-        if (current !== generation) return null;
-        if (!body || !body.ok || !body.work || body.work.key !== work.key || body.work.workstream_id !== work.workstream_id) {
-          failed(body && body.error ? body : null);
-          return null;
-        }
-        Object.assign(work, body.work);
-        return body;
-      }).finally(() => { if (current === generation) pendingDetails.delete(work.key); });
-      pendingDetails.set(work.key, pending);
-      return pending;
+      let pending = pendingDetails.get(identity);
+      if (!pending) {
+        pending = api('/api/team/work?' + params).finally(() => {
+          if (pendingDetails.get(identity) === pending) pendingDetails.delete(identity);
+        });
+        pendingDetails.set(identity, pending);
+      }
+      const body = await pending;
+      if (current !== generation || project !== state.projectKey) return null;
+      if (!body?.ok || !body.work || body.work.key !== work.key || body.work.workstream_id !== work.workstream_id
+        || (work.contract_hash && body.work.contract_hash !== work.contract_hash)) {
+        // Authentication and authorization still invalidate protected data.
+        // A local read failure must not block fresh reports for other tasks.
+        if (['Unauthenticated', 'SessionExpired', 'Forbidden'].includes(body?.error?.code)) failed(body);
+        else work.detail_error = { code: body?.error?.code || 'InvalidResponse' };
+        return null;
+      }
+      // A poll and foreground selection may await the same read with separate
+      // snapshot objects. Hydrate each caller's object, not only the first one.
+      Object.assign(work, body.work);
+      delete work.detail_error;
+      return body;
     }
 
     async function loadGraphDetails() {
@@ -614,6 +628,18 @@
       if (w.description) header.appendChild(el('p', null, w.description));
       host.appendChild(header);
       renderActions(host, w);
+      if (isLive() && !w.detail_loaded) {
+        host.appendChild(el('p', { class: w.detail_error ? 'team-error' : 'sub', role: 'status' },
+          t(i18n, state.detailLoading ? 'ui.team_detail_loading'
+            : w.detail_error ? 'ui.team_detail_read_failed' : 'ui.team_detail_unread')));
+        if (!state.detailLoading) {
+          const retry = el('button', { class: 'btn', type: 'button' }, t(i18n, 'ui.team_detail_retry'));
+          retry.addEventListener('click', () => w.detail_error?.code === 'SourceChanged'
+            ? refreshProgress() : selectWork(w.key));
+          host.appendChild(retry);
+        }
+        return;
+      }
       const unknown = t(i18n, 'ui.network_not_reported');
       const section = (title, rows, target = host) => {
         const group = el('section', { class: 'detail-section' });
@@ -703,11 +729,6 @@
           host.appendChild(el('p', { role: 'status' }, t(i18n, 'ui.team_detail_loading')));
           return;
         }
-        if (!w.detail_loaded) {
-          host.appendChild(el('p', { class: 'sub' }, t(i18n, 'ui.team_detail_unavailable')));
-          return;
-        }
-
         host.appendChild(el('h3', null, t(i18n, 'ui.acceptance_criteria')));
         const acceptance = el('ul', { class: 'loops' });
         for (const criterion of w.acceptance || []) acceptance.appendChild(el('li', null, criterion));

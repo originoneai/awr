@@ -102,6 +102,125 @@ test('failed background refresh keeps the last snapshot visibly stale', async ()
   assert.match(node('teamOverview').textContent, /Refresh failed/);
 });
 
+test('one failed detail read does not prevent healthy peers from receiving new reports', async () => {
+  let revision = 1;
+  live((url, works) => {
+    const item = works.find(w => w.key === new URL(url, 'http://test').searchParams.get('work'));
+    if (revision === 2 && item.key === 'W-1') return { ok: false, error: { code: 'SourceChanged', message: 'Refresh the contract' } };
+    return { ok: true, work: { ...detail(item).work, next_step: 'Revision ' + revision } };
+  }, 2);
+  await ui.refresh();
+  revision = 2;
+  await ui._refreshProgress();
+  assert.equal(ui.state.works[0].next_step, 'Revision 2');
+  assert.equal(ui.state.error, null);
+  assert.equal(ui.state.works[1].detail_loaded, undefined);
+  assert.equal(ui.state.works[1].detail_error.code, 'SourceChanged');
+  assert.match(node('teamOverview').textContent, /Some task details could not be refreshed/);
+  await ui._selectWork('W-1');
+  assert.match(node('teamDetail').textContent, /does not mean the Agent has not reported/);
+  assert.doesNotMatch(node('teamDetail').textContent, /Not reported|No recorded usage/);
+});
+
+test('an unread task is not presented as an unreported Agent or missing usage', async () => {
+  live((url, works) => detail(works.find(w => w.key === new URL(url, 'http://test').searchParams.get('work'))), 65);
+  await ui.refresh();
+  ui.state.selected = 'W-64';
+  ui.render();
+  assert.match(node('teamDetail').textContent, /Details have not been read/);
+  assert.doesNotMatch(node('teamDetail').textContent, /Not reported|No recorded usage|No execution recorded/);
+});
+
+test('foreground selection hydrates its own object when sharing a background detail request', async () => {
+  live((url, works) => detail(works.find(w => w.key === new URL(url, 'http://test').searchParams.get('work'))), 65);
+  await ui.refresh();
+  ui.state.selected = 'W-64';
+  let release, started;
+  const ready = new Promise(resolve => { started = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  let selectedReads = 0;
+  live(async (url, works) => {
+    const item = works.find(w => w.key === new URL(url, 'http://test').searchParams.get('work'));
+    if (item.key === 'W-64') { selectedReads++; started(); await gate; }
+    return { ok: true, work: { ...detail(item).work, next_step: 'Fresh foreground report' } };
+  }, 65);
+  const polling = ui._refreshProgress();
+  await ready;
+  const foreground = ui._selectWork('W-64');
+  release();
+  await Promise.all([polling, foreground]);
+  assert.equal(selectedReads, 1);
+  assert.equal(ui._selectedWork().detail_loaded, true);
+  assert.equal(ui._selectedWork().next_step, 'Fresh foreground report');
+  assert.match(node('teamDetail').textContent, /Fresh foreground report/);
+  assert.equal(ui.state.detailLoading, false);
+});
+
+test('a same-key detail from a different contract stays unread and can recover on a fresh read', async () => {
+  let stale = true;
+  live((_url, works) => ({ ok: true, work: { ...detail(works[0]).work,
+    contract_hash: stale ? 'older-contract' : 'current', next_step: 'Verified contract report' } }), 1);
+  await ui.refresh();
+  assert.ok(!ui._selectedWork().detail_loaded);
+  assert.equal(ui._selectedWork().detail_error.code, 'InvalidResponse');
+  assert.doesNotMatch(node('teamDetail').textContent, /Verified contract report/);
+  stale = false;
+  await node('teamDetail').find(el => el.tagName === 'BUTTON' && el.textContent === 'Retry reading details').click();
+  assert.equal(ui._selectedWork().detail_loaded, true);
+  assert.equal(ui._selectedWork().detail_error, undefined);
+  assert.match(node('teamDetail').textContent, /Verified contract report/);
+});
+
+test('retrying a changed source first reads the current contract instead of repeating the stale selector', async () => {
+  let changed = false;
+  let overviewReads = 0;
+  global.fetch = async url => ({ ok: true, json: async () => {
+    if (url.includes('/projects?')) return { ok: true, projects: [{ key: 'project' }], session: { session_id: 'test' } };
+    if (url.includes('/overview?')) {
+      overviewReads++;
+      return { ok: true, interaction_mode: 'mcp', workstreams: [{ id: 'stream' }],
+        works: [{ key: 'W-0', workstream_id: 'stream', contract_hash: changed ? 'new' : 'old' }] };
+    }
+    const hash = new URL(url, 'http://test').searchParams.get('contract');
+    if (hash !== 'new') return { ok: false, error: { code: 'SourceChanged' } };
+    return detail({ key: 'W-0', workstream_id: 'stream', contract_hash: 'new' });
+  } });
+  await ui.refresh();
+  assert.equal(ui._selectedWork().detail_error.code, 'SourceChanged');
+  changed = true;
+  await node('teamDetail').find(el => el.tagName === 'BUTTON' && el.textContent === 'Retry reading details').click();
+  assert.equal(overviewReads, 2);
+  assert.equal(ui._selectedWork().contract_hash, 'new');
+  assert.equal(ui._selectedWork().detail_loaded, true);
+  assert.equal(ui._selectedWork().detail_error, undefined);
+});
+
+for (const locale of ['en', 'zh-CN']) {
+  test(`unread participants stay unknown in both graph and list in ${locale}`, async () => {
+    i18n.setLocale(locale);
+    live(() => ({ ok: false, error: { code: 'BridgeUnreachable' } }), 1);
+    await ui.refresh();
+    for (const layout of ['cards', 'list']) {
+      ui.state.layout = layout;
+      ui.render();
+      const item = node('teamOverview').find(el => el.dataset.key === 'W-0');
+      assert.ok(item);
+      assert.doesNotMatch(item.textContent, /Owner not reported|负责人未报告/);
+      assert.match(item.textContent, /Not inspected|待读取/);
+    }
+  });
+
+  test(`detail read failure is localized and distinct from missing reports in ${locale}`, async () => {
+    i18n.setLocale(locale);
+    live(() => ({ ok: false, error: { code: 'BridgeUnreachable' } }), 1);
+    await ui.refresh();
+    assert.match(node('teamDetail').textContent, /does not mean the Agent has not reported|不代表 Agent 未报告/);
+    assert.doesNotMatch(node('teamDetail').textContent, /No recorded usage|无用量记录|ui\.team_/);
+    assert.equal(node('teamDetail').find(el => el.tagName === 'DL'), null);
+    assert.ok(node('teamDetail').find(el => el.tagName === 'BUTTON' && /Retry reading details|重新读取详情/.test(el.textContent)));
+  });
+}
+
 test('editing that starts during a poll prevents replacement of the visible snapshot', async () => {
   live(async (_url, works) => detail(works[0]), 1);
   await ui.refresh();
@@ -190,11 +309,13 @@ test('denied and mismatched details remain unread with visible errors', async ()
   live(() => ({ ok: false, error: { code: 'SourceChanged', message: 'refresh' } }), 1);
   await ui.refresh();
   assert.ok(!ui.state.works[0].detail_loaded);
-  assert.match(node('teamAuth').textContent, /SourceChanged/);
+  assert.equal(ui.state.works[0].detail_error.code, 'SourceChanged');
+  assert.match(node('teamDetail').textContent, /does not mean the Agent has not reported/);
   live((_url, works) => detail({ ...works[0], workstream_id: 'wrong' }), 1);
   await ui.refresh();
   assert.ok(!ui.state.works[0].detail_loaded);
-  assert.match(node('teamAuth').textContent, /InvalidResponse/);
+  assert.equal(ui.state.works[0].detail_error.code, 'InvalidResponse');
+  assert.match(node('teamDetail').textContent, /does not mean the Agent has not reported/);
 });
 
 test('project content is text and unknown fields never become synthetic claims', async () => {
