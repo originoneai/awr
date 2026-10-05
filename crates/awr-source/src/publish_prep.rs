@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Component, Path};
 
 /// First-round supported ledger adapter id for Team publish preparation.
@@ -30,6 +29,7 @@ pub const WORKSTREAMS_FILE: &str = "workstreams.json";
 pub const SOURCE_PROVENANCE_FILE: &str = "source_provenance.json";
 pub const PARSER_VERSION: &str = "awr-team-workstreams/1";
 pub const PARSER_VERSION_V2: &str = "awr-team-workstreams/2";
+pub const PARSER_VERSION_V3: &str = "awr-team-workstreams/3";
 
 const SUPPORTED_SPEC_EXTENSIONS: &[&str] = &["json", "md", "markdown"];
 
@@ -122,6 +122,8 @@ pub struct PublishPreview {
     pub dependency_diffs: Vec<FieldDiff>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependency_acceptance_diffs: Vec<FieldDiff>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub execution_settlement_diffs: Vec<FieldDiff>,
     pub acceptance_diffs: Vec<FieldDiff>,
     pub source_diffs: Vec<FieldDiff>,
     pub workstream_identity_added: Vec<String>,
@@ -236,17 +238,27 @@ pub fn prepare_publish_from_ledger_bytes(
         )));
     }
 
-    let document: Value = serde_yaml_ng::from_slice(ledger_bytes).map_err(|e| {
-        Error::InvalidInput(format!(
-            "unsupported or invalid YAML ledger for Team publish: {e}"
-        ))
-    })?;
+    // Preserve the YAML mapping's duplicate-key checks before converting to
+    // JSON. Deserializing directly into JSON Value silently overwrites keys,
+    // hiding ambiguous policies from subsequent strict contract validation.
+    let document = serde_yaml_ng::from_slice::<serde_yaml_ng::Value>(ledger_bytes)
+        .and_then(Value::deserialize)
+        .map_err(|e| {
+            Error::InvalidInput(format!(
+                "unsupported or invalid YAML ledger for Team publish: {e}"
+            ))
+        })?;
     reject_role_invention(&document)?;
 
     let (catalog, key_to_id) = map_catalog(&document, project_id)?;
     let (contracts, status_notes) = map_contracts(&document, &key_to_id, options)?;
     let bundle = WorkstreamBundle {
         codec: if contracts
+            .iter()
+            .any(|entry| entry.contract.codec == WorkContract::CODEC_V3)
+        {
+            WorkstreamBundle::CODEC_V3
+        } else if contracts
             .iter()
             .any(|entry| entry.contract.codec == WorkContract::CODEC_V2)
         {
@@ -320,10 +332,10 @@ pub fn prepare_publish_from_ledger_bytes(
         source_status_notes: status_notes,
         referenced_specs: referenced,
         files,
-        parser_version: if bundle.codec == WorkstreamBundle::CODEC_V2 {
-            PARSER_VERSION_V2
-        } else {
-            PARSER_VERSION
+        parser_version: match bundle.codec.as_str() {
+            WorkstreamBundle::CODEC_V3 => PARSER_VERSION_V3,
+            WorkstreamBundle::CODEC_V2 => PARSER_VERSION_V2,
+            _ => PARSER_VERSION,
         }
         .into(),
     })
@@ -507,6 +519,19 @@ fn map_contracts(
                 ))
             })?
             .unwrap_or_default();
+        let execution_settlement = item
+            .get("execution_settlement")
+            .map(|raw| serde_json::from_value(raw.clone()))
+            .transpose()
+            .map_err(|_| {
+                Error::InvalidInput(format!(
+                    "{pointer}/execution_settlement: invalid explicit settlement policy"
+                ))
+            })?;
+        if execution_settlement.is_some() && item.get("completion_policy").is_some() {
+            // A mapping default cannot conceal a malformed explicit V3 policy.
+            required_string(item, "completion_policy", &pointer)?;
+        }
         let item_policy = item
             .get("completion_policy")
             .and_then(Value::as_str)
@@ -525,7 +550,9 @@ fn map_contracts(
         let work_id = WorkId::new(&external_key)
             .map_err(|e| Error::InvalidInput(format!("{pointer}/id: {e}")))?;
         let contract = WorkContract {
-            codec: if item.get("dependency_acceptance").is_some() {
+            codec: if execution_settlement.is_some() {
+                WorkContract::CODEC_V3
+            } else if item.get("dependency_acceptance").is_some() {
                 WorkContract::CODEC_V2
             } else {
                 WorkContract::CODEC
@@ -541,6 +568,7 @@ fn map_contracts(
             completion_policy: item_policy,
             verification_requirements,
             dependency_acceptance,
+            execution_settlement,
         };
         contract
             .validate()
@@ -614,6 +642,24 @@ fn preview_against_baseline(
                 external_key: after.external_key.clone(),
                 before: before.map(|m| serde_json::json!(m)),
                 after: Some(serde_json::json!(after.dependency_acceptance)),
+            });
+        }
+        let before = baseline
+            .and_then(|bundle| {
+                bundle
+                    .contracts
+                    .iter()
+                    .find(|prior| prior.contract.external_key == after.external_key)
+            })
+            .and_then(|entry| entry.contract.execution_settlement.as_ref());
+        if before != after.execution_settlement.as_ref() {
+            preview.execution_settlement_diffs.push(FieldDiff {
+                external_key: after.external_key.clone(),
+                before: before.map(|policy| serde_json::json!(policy)),
+                after: after
+                    .execution_settlement
+                    .as_ref()
+                    .map(|policy| serde_json::json!(policy)),
             });
         }
     }
@@ -796,6 +842,7 @@ pub fn source_status_notes_are_completion_receipts() -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
     use std::path::PathBuf;
 
     fn fixture_root() -> PathBuf {
@@ -941,6 +988,229 @@ mod tests {
                 .to_string()
                 .contains("same workstream")
         );
+    }
+
+    #[test]
+    fn independent_workspace_policy_is_explicit_versioned_and_previewed() {
+        let root = fixture_root();
+        let original = fs::read(root.join("ledger.yaml")).unwrap();
+        let baseline = prepare_publish_from_server_directory(
+            &root,
+            "ledger.yaml",
+            "demo-project",
+            &PublishPrepOptions::default(),
+        )
+        .unwrap();
+        assert!(
+            json!(baseline.preview)
+                .get("execution_settlement_diffs")
+                .is_none()
+        );
+        let mut doc: Value = serde_yaml_ng::from_slice(&original).unwrap();
+        doc["work_items"][0]["completion_policy"] =
+            json!(awr_team::ExecutionSettlementPolicy::COMPLETION_POLICY);
+        doc["work_items"][0]["verification_requirements"] =
+            json!(["independently verify artifact bytes"]);
+        doc["work_items"][0]["execution_settlement"] =
+            json!({"mode":"independent_workspace_v1","workspace_id":"worker-a"});
+        let prepare = |doc: &Value, before: Option<WorkstreamBundle>| {
+            prepare_publish_from_ledger_bytes(
+                &baseline.source_location,
+                &root,
+                serde_yaml_ng::to_string(doc).unwrap().as_bytes(),
+                "demo-project",
+                &PublishPrepOptions {
+                    baseline: before,
+                    completion_policy: None,
+                },
+            )
+        };
+        let candidate = prepare(&doc, Some(baseline.bundle().unwrap())).unwrap();
+        let bundle = candidate.bundle().unwrap();
+        assert_eq!(candidate.parser_version, PARSER_VERSION_V3);
+        assert_eq!(bundle.codec, WorkstreamBundle::CODEC_V3);
+        assert_eq!(bundle.contracts[0].contract.codec, WorkContract::CODEC_V3);
+        assert_eq!(
+            bundle.contracts[1].contract,
+            baseline.bundle().unwrap().contracts[1].contract
+        );
+        assert_eq!(candidate.preview.execution_settlement_diffs.len(), 1);
+        let diff = &candidate.preview.execution_settlement_diffs[0];
+        assert_eq!(diff.external_key, "API-1");
+        assert_eq!(diff.before, None);
+        assert_eq!(
+            diff.after,
+            Some(doc["work_items"][0]["execution_settlement"].clone())
+        );
+        assert!(
+            prepare(&doc, Some(bundle.clone()))
+                .unwrap()
+                .preview
+                .execution_settlement_diffs
+                .is_empty()
+        );
+        assert_eq!(
+            prepare(&doc, None)
+                .unwrap()
+                .preview
+                .execution_settlement_diffs[0]
+                .after,
+            diff.after
+        );
+
+        let mut changed = doc.clone();
+        changed["work_items"][0]["execution_settlement"]["workspace_id"] = json!("worker-b");
+        let moved = prepare(&changed, Some(bundle.clone())).unwrap();
+        assert_ne!(moved.bundle_digest, candidate.bundle_digest);
+        assert_eq!(
+            moved.preview.execution_settlement_diffs[0].before,
+            diff.after
+        );
+        assert_ne!(
+            moved.preview.execution_settlement_diffs[0].after,
+            diff.after
+        );
+
+        doc["work_items"][1]["workstream"] = json!("api");
+        doc["work_items"][1]["dependency_acceptance"] =
+            json!({"API-1":"agent_reviewed_caller_asserted_reconciled"});
+        let mixed = prepare(&doc, None).unwrap();
+        assert_eq!(
+            mixed.bundle().unwrap().contracts[1].contract.codec,
+            WorkContract::CODEC_V2
+        );
+        assert_eq!(mixed.parser_version, PARSER_VERSION_V3);
+
+        let mut removed = changed.clone();
+        removed["work_items"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("execution_settlement");
+        let tightened = prepare(&removed, Some(moved.bundle().unwrap())).unwrap();
+        assert_eq!(tightened.parser_version, PARSER_VERSION);
+        assert!(
+            tightened.preview.execution_settlement_diffs[0]
+                .before
+                .is_some()
+        );
+        assert_eq!(tightened.preview.execution_settlement_diffs[0].after, None);
+        assert_eq!(fs::read(root.join("ledger.yaml")).unwrap(), original);
+    }
+
+    #[test]
+    fn invalid_source_settlement_requests_are_rejected_instead_of_dropped() {
+        let root = fixture_root();
+        let baseline = prepare_publish_from_server_directory(
+            &root,
+            "ledger.yaml",
+            "demo-project",
+            &PublishPrepOptions::default(),
+        )
+        .unwrap();
+        let mut doc: Value =
+            serde_yaml_ng::from_slice(&fs::read(root.join("ledger.yaml")).unwrap()).unwrap();
+        doc["work_items"][0]["completion_policy"] =
+            json!(awr_team::ExecutionSettlementPolicy::COMPLETION_POLICY);
+        doc["work_items"][0]["verification_requirements"] = json!(["verify artifact"]);
+        let prepare = |doc: &Value| {
+            prepare_publish_from_ledger_bytes(
+                &baseline.source_location,
+                &root,
+                serde_yaml_ng::to_string(doc).unwrap().as_bytes(),
+                "demo-project",
+                &PublishPrepOptions::default(),
+            )
+        };
+        for policy in [
+            Value::Null,
+            json!({}),
+            json!(false),
+            json!({"mode":"trusted_executor","workspace_id":"worker"}),
+            json!({"mode":"independent_workspace_v1","workspace_id":""}),
+            json!({"mode":"independent_workspace_v1","workspace_id":"../shared"}),
+            json!({"mode":"independent_workspace_v1","workspace_id":"worker","trusted_executor":true}),
+        ] {
+            doc["work_items"][0]["execution_settlement"] = policy;
+            assert!(prepare(&doc).is_err());
+        }
+        doc["work_items"][0]["execution_settlement"] =
+            json!({"mode":"independent_workspace_v1","workspace_id":"worker"});
+        prepare(&doc).unwrap();
+        let wire = doc.to_string();
+        for (before, after) in [
+            (
+                "\"workspace_id\":\"worker\"",
+                "\"workspace_id\":\"other\",\"workspace_id\":\"worker\"",
+            ),
+            (
+                "\"mode\":\"independent_workspace_v1\"",
+                "\"mode\":\"trusted_executor\",\"mode\":\"independent_workspace_v1\"",
+            ),
+            (
+                "\"execution_settlement\":",
+                "\"execution_settlement\":null,\"execution_settlement\":",
+            ),
+            (
+                "\"completion_policy\":",
+                "\"completion_policy\":\"ordinary_confirm\",\"completion_policy\":",
+            ),
+        ] {
+            let duplicate = wire.replace(before, after);
+            assert_ne!(duplicate, wire);
+            let err = prepare_publish_from_ledger_bytes(
+                &baseline.source_location,
+                &root,
+                duplicate.as_bytes(),
+                "demo-project",
+                &PublishPrepOptions::default(),
+            )
+            .unwrap_err();
+            assert!(err.to_string().contains("duplicate entry"), "{err}");
+        }
+        // Block-style YAML must retain the same strictness as JSON-as-YAML.
+        let yaml = serde_yaml_ng::to_string(&doc).unwrap();
+        let duplicate = yaml.replace(
+            "workspace_id: worker",
+            "workspace_id: other\n    workspace_id: worker",
+        );
+        assert_ne!(duplicate, yaml);
+        let err = prepare_publish_from_ledger_bytes(
+            &baseline.source_location,
+            &root,
+            duplicate.as_bytes(),
+            "demo-project",
+            &PublishPrepOptions::default(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("duplicate entry"), "{err}");
+        for invalid in [Value::Null, json!(false), json!(42), json!(""), json!({})] {
+            doc["work_items"][0]["completion_policy"] = invalid;
+            let options = PublishPrepOptions {
+                baseline: None,
+                completion_policy: Some(
+                    awr_team::ExecutionSettlementPolicy::COMPLETION_POLICY.into(),
+                ),
+            };
+            assert!(
+                prepare_publish_from_ledger_bytes(
+                    &baseline.source_location,
+                    &root,
+                    serde_yaml_ng::to_string(&doc).unwrap().as_bytes(),
+                    "demo-project",
+                    &options,
+                )
+                .is_err()
+            );
+        }
+        doc["work_items"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("completion_policy");
+        assert!(prepare(&doc).is_err());
+        doc["work_items"][0]["completion_policy"] =
+            json!(awr_team::ExecutionSettlementPolicy::COMPLETION_POLICY);
+        doc["work_items"][0]["verification_requirements"] = json!([]);
+        assert!(prepare(&doc).is_err());
     }
 
     #[test]

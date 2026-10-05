@@ -172,6 +172,7 @@ async fn setup_inner(
             workstream_id: Id::from(stream),
             contract: WorkContract {
                 dependency_acceptance: Default::default(),
+                execution_settlement: None,
                 codec: WorkContract::CODEC.into(),
                 work_id: WorkId::new(id).unwrap(),
                 external_key: id.into(),

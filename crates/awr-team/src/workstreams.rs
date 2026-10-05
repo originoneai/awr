@@ -24,10 +24,13 @@ pub struct WorkstreamBundle {
 impl WorkstreamBundle {
     pub const CODEC: &'static str = "awr-team-workstreams-v1";
     pub const CODEC_V2: &'static str = "awr-team-workstreams-v2";
+    pub const CODEC_V3: &'static str = "awr-team-workstreams-v3";
 
     pub fn validate(&self, project_id: &str) -> TeamResult<()> {
-        if !matches!(self.codec.as_str(), Self::CODEC | Self::CODEC_V2)
-            || self.catalog.project_id != project_id
+        if !matches!(
+            self.codec.as_str(),
+            Self::CODEC | Self::CODEC_V2 | Self::CODEC_V3
+        ) || self.catalog.project_id != project_id
         {
             return Err(TeamError::InvalidContract(
                 "workstream codec or project mismatch".into(),
@@ -43,7 +46,12 @@ impl WorkstreamBundle {
             entry.contract.validate()?;
             if self.codec == Self::CODEC && entry.contract.codec != WorkContract::CODEC {
                 return Err(TeamError::InvalidContract(
-                    "V2 contracts require workstreams V2".into(),
+                    "extended contracts require an explicit extended workstream codec".into(),
+                ));
+            }
+            if self.codec == Self::CODEC_V2 && entry.contract.codec == WorkContract::CODEC_V3 {
+                return Err(TeamError::InvalidContract(
+                    "V3 contracts require workstreams V3".into(),
                 ));
             }
             for upstream in entry.contract.dependency_acceptance.keys() {

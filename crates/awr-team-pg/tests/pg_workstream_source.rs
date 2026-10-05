@@ -56,6 +56,7 @@ fn bundle() -> WorkstreamBundle {
         workstream_id: Id::from(owner),
         contract: WorkContract {
             dependency_acceptance: Default::default(),
+            execution_settlement: None,
             codec: WorkContract::CODEC.into(),
             work_id: WorkId::new(key).unwrap(),
             external_key: key.into(),
@@ -136,6 +137,118 @@ async fn current_snapshot(admin: &Client) -> Option<String> {
         .await
         .unwrap()
         .get(0)
+}
+
+#[tokio::test]
+async fn explicit_v3_source_retains_policy_and_legacy_hash_without_execution_authority() {
+    use awr_team::{ExecutionSettlementMode, ExecutionSettlementPolicy};
+
+    let (_guard, admin, _, store) = setup().await;
+    let legacy = bundle();
+    let first = approved(&store, package(&legacy)).await;
+    let baseline = store
+        .activate_workstreams(TENANT, PROJECT, "author", &first.proposal_id, &plan(&first))
+        .await
+        .unwrap();
+    let mut value = legacy.clone();
+    value.codec = WorkstreamBundle::CODEC_V3.into();
+    let contract = &mut value.contracts[0].contract;
+    contract.codec = WorkContract::CODEC_V3.into();
+    contract.completion_policy = ExecutionSettlementPolicy::COMPLETION_POLICY.into();
+    contract.execution_settlement = Some(ExecutionSettlementPolicy {
+        mode: ExecutionSettlementMode::IndependentWorkspaceV1,
+        workspace_id: "worker-a".into(),
+    });
+    let mut request = package(&value);
+    request.parser_version = "awr-team-workstreams/3".into();
+    let candidate = approved(&store, request).await;
+    let active = store
+        .activate_workstreams(
+            TENANT,
+            PROJECT,
+            "author",
+            &candidate.proposal_id,
+            &plan(&candidate),
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        active.contract_hashes["interface"],
+        baseline.contract_hashes["interface"]
+    );
+    assert_eq!(active.projection_hash, value.hash().unwrap());
+    assert_eq!(
+        current_snapshot(&admin).await,
+        Some(candidate.snapshot_id.clone())
+    );
+    assert!(matches!(
+        store.current(TENANT, PROJECT, "interface").await,
+        Err(PgError::Unsupported(_))
+    ));
+    for entry in &value.contracts {
+        let expected = &entry.contract;
+        let hash = expected.hash().unwrap();
+        assert_eq!(active.contract_hashes[expected.work_id.as_str()], hash);
+        let row = admin
+            .query_one(
+                "SELECT c.contract_json, c.contract_hash, s.parser_version
+                 FROM awr_team.work_contracts c
+                 JOIN awr_team.source_snapshots s
+                 ON s.tenant_id=c.tenant_id AND s.project_id=c.project_id AND s.id=c.snapshot_id
+                 WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.snapshot_id=$3 AND c.work_id=$4",
+                &[
+                    &TENANT,
+                    &PROJECT,
+                    &candidate.snapshot_id,
+                    &expected.work_id.as_str(),
+                ],
+            )
+            .await
+            .unwrap();
+        let stored: serde_json::Value = row.get(0);
+        assert_eq!(
+            serde_json::from_value::<WorkContract>(stored).unwrap(),
+            *expected
+        );
+        assert_eq!(row.get::<_, String>(1), hash);
+        assert_eq!(row.get::<_, String>(2), "awr-team-workstreams/3");
+        if expected.work_id.as_str() != "interface" {
+            assert_eq!(hash, baseline.contract_hashes[expected.work_id.as_str()]);
+        }
+    }
+    let counts = admin
+        .query_one(
+            "SELECT
+         (SELECT count(*) FROM awr_team.executions),
+         (SELECT count(*) FROM awr_team.execution_receipts),
+         (SELECT count(*) FROM awr_team.completion_receipts),
+         (SELECT count(*) FROM awr_team.resource_reservations),
+         (SELECT count(*) FROM awr_team.workstream_grants)",
+            &[],
+        )
+        .await
+        .unwrap();
+    for index in 0..5 {
+        assert_eq!(
+            counts.get::<_, i64>(index),
+            0,
+            "source publication cannot invent runtime authority"
+        );
+    }
+    value.contracts[0].contract.execution_settlement = None;
+    let mut invalid = package(&value);
+    invalid.parser_version = "awr-team-workstreams/3".into();
+    assert!(matches!(
+        store.ingest(invalid).await,
+        Err(PgError::Protocol(_))
+    ));
+    assert_eq!(current_snapshot(&admin).await, Some(candidate.snapshot_id));
+    let snapshots: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.source_snapshots", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(snapshots, 2);
 }
 
 async fn wait_for_lock(admin: &Client, fragment: &str) {
