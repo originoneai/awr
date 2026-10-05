@@ -192,7 +192,7 @@ pub(super) async fn apply(
     }
 }
 
-async fn require_resolved_effects(
+pub(super) async fn require_resolved_effects(
     tx: &Transaction<'_>,
     tenant: &str,
     project: &str,
@@ -219,7 +219,8 @@ async fn acquire(
     ownership: i64,
     a: Acquire,
 ) -> PgResult<Applied> {
-    require_resolved_effects(tx, tenant, project, &command.work_id).await?;
+    super::task_intake::require_admissible(tx, tenant, project, auth, command).await?;
+    super::task_intake::require_executor(tx, tenant, project, auth, command).await?;
     let waiting: bool = tx
         .query_one(
             "SELECT EXISTS(SELECT 1 FROM awr_team.wait_items
@@ -287,6 +288,7 @@ async fn acquire(
         RETURNING expires_at::text",
         &[&tenant,&project,&id,&command.work_id,&a.session_id,&auth.actor_id,&(fence+1),&f64::from(a.ttl_seconds),
           &command.workstream_id.to_string(),&ownership,&auth.epoch]).await?;
+    super::task_intake::bind_claim(tx, tenant, project, auth, command, &id).await?;
     Ok(Applied {
         data: json!({"claim_id":id,"session_id":a.session_id,"fence":(fence+1).to_string(),
         "lease_version":"1","expires_at":r.get::<_,String>(0),"state":"active","work_version":(work_version+1).to_string()}),
@@ -356,6 +358,7 @@ async fn owned(
     if r.get::<_, String>(6) != "active" {
         return Err(PgError::LeaseExpired);
     }
+    super::task_intake::require_executor(tx, tenant, project, auth, command).await?;
     Ok(r)
 }
 

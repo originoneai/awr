@@ -384,6 +384,8 @@ fn membership_allows_manage(role: &str) -> bool {
 pub fn command_business_action(op: &str) -> Option<awr_team::Action> {
     use awr_team::Action::*;
     Some(match op {
+        "task.assign" => WorkAssign,
+        "task.accept_assignment" | "task.claim_available" => ClaimManageOwn,
         "session.start" | "session.checkpoint" | "session.end" => SessionMaintainOwn,
         "claim.acquire" | "claim.renew" | "claim.release" | "handoff.propose"
         | "handoff.accept" | "handoff.reject" | "handoff.cancel" | "handoff.timeout"
@@ -568,6 +570,9 @@ pub(crate) fn command_authority(op: &str) -> Option<DomainAuthority> {
         | "execution.report" | "handoff.reject" | "handoff.cancel" | "handoff.timeout"
         | "handoff.inspect" | "review.return" | "work.rework" => DomainAuthority::WritePreserve,
         "session.start"
+        | "task.assign"
+        | "task.accept_assignment"
+        | "task.claim_available"
         | "claim.acquire"
         | "claim.renew"
         | "execution.prepare"

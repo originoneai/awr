@@ -1,64 +1,131 @@
-# Team task responsibility and intake
+# Team task intake
 
-Task responsibility records the member accountable for a result. An execution
-instance identifies the person or explicitly bound Agent doing the work. A
-coordination lease is temporary. These are separate facts: releasing or expiring
-a lease does not put an owned task back into the available pool.
+Development on `main`. These commands are not part of the published 0.5.1 packages.
 
-## Responsibility persistence kernel
+Members connect their chosen Agent to the project's Team MCP service with their
+own credential. The Agent calls `work.next`, consumes `work.prepare`, and takes
+work within its current permissions. A manager can reserve work for a member;
+unassigned, ready work can also be claimed by a member's Agent. Both paths use
+the same responsibility, authentication and concurrency checks.
 
-The current Rust kernel provides `ResponsibilityStore::claim_available` and the
-pure `apply_claim_available` transition. The request contains `request_key`,
-`expected_version` and `claimant`. It takes sole ownership only when the current
-responsibility has **no owner, no pending reservation and no executor**. The
-claimant is removed from the collaborator list; other collaborators and the
-independent reviewer remain. The independent reviewer cannot become the owner.
-The transition creates neither an execution instance nor a coordination lease.
+| Command | Required action | Result |
+| --- | --- | --- |
+| `task.assign` | `work.assign` | Reserve responsibility for an eligible project member, awaiting acceptance. No execution session or lease is required for the supervisor. |
+| `task.accept_assignment` | `claim.manage_own` | The designated member accepts the current reservation and acquires a coordination lease in one transaction. |
+| `task.claim_available` | `claim.manage_own` | Take responsibility for an unassigned task and acquire a coordination lease in one transaction. |
 
-This kernel is not an authenticated MCP self-claim command. Its callers must
-separately enforce membership, current scoped authorization, source/contract
-availability, waits, accepted dependencies and execution admission. It must not
-be used to treat a supplied member name as proof of identity. Authenticated
-assignment, acceptance and self-claim entry points are a subsequent integration.
+Membership, duty ceilings, resource grants and one live covering Agent delegation
+must all permit the action. Acting identities come from the authenticated
+delegation's exact person/Agent binding. `assignee_person_id` is a dispatch target;
+it cannot change the acting member. Separate grants are not combined to invent
+command authority. A supervisor needs an explicit assignment grant and, when
+acting through an Agent, a matching assignment delegation.
 
-## Retry contract
+## Agent workflow
 
-Team PG responsibility operations bind a project-scoped request key to the complete
-canonical request: the protocol version, tenant, project, task, operation,
-attributed person, expected responsibility version and every supplied parameter.
-This covers assignment, acceptance, available ownership, execution claim/release,
-owner transfer, Agent swap and pending-state changes. Execution claim and Agent
-swap have different request discriminators even though they share an event type.
+1. Query `work.next` for current-client continuation and scoped tasks.
+2. Consume `work.prepare`; keep its contract, ownership and responsibility versions.
+3. Start your own AWR session when one does not exist.
+4. Accept your pending assignment, or claim a ready pool task. Continue owned
+   work through the existing claim path when a fresh lease is needed.
+5. Use the separate execution preparation/admission workflow before effects.
+   A responsibility or claim receipt alone never authorizes execution.
 
-| Request | Result |
+All three operations use the existing `awr_team_command` envelope. Obtain its
+workstream, epoch, authority, ownership and contract fields from current reads.
+Keep a stable request ID for an exact retry. The following are **args only**:
+
+```json
+{
+  "assignee_person_id": "member-reference",
+  "expected_responsibility_version": "0"
+}
+```
+
+Assignment may reserve work whose dependencies are not ready. Acceptance and
+self-claim recheck enabled work, current contracts, waits, unresolved effects and
+accepted dependency receipts. A completed upstream flag alone is insufficient.
+Current cross-workstream export/adoption limits still apply.
+
+```json
+{
+  "session_id": "owned-session-reference",
+  "expected_session_version": "1",
+  "expected_responsibility_version": "1",
+  "expected_work_version": "0",
+  "ttl_seconds": 60,
+  "assignment_request_key": "current-reservation-reference"
+}
+```
+
+For `task.accept_assignment`, copy the reservation reference from
+`responsibility.pending.transfer_request_key`. A responsibility handoff is a
+different operation. For `task.claim_available`, omit `assignment_request_key`.
+TTL is 1–3600 seconds. Versions are canonical decimal strings; the responsibility
+version is separate from the workstream ownership, work and lease versions.
+
+Assignment does not require a supervisor's execution session. If an optional
+`session_id` is supplied, its current `expected_session_version` must also be
+supplied, and the session must belong to that caller and task.
+
+## Continuation, conflicts and receipts
+
+Sole responsibility survives lease expiry and safe release. Another member,
+Agent or client cannot take over simply because a connection closed or a lease
+elapsed. A retained executor requires a controlled, accepted handoff; its current
+binding and client are checked again during claim renewal and execution admission.
+An accepted handoff by the successor client records the responsibility version
+used for continuation. It does not revive an old execution or resolve unknown effects.
+
+Two self-claims, or a dispatch racing a self-claim, cannot both own a pool task.
+On conflict, query current work and select the appropriate next action. Do not
+overwrite another member's reservation or generate new request IDs to hide an
+unknown outcome. Responsibility, claim, fence, events and operation receipts
+commit together; a failed transaction leaves none of those partial effects.
+
+An exact retry preserves the original immutable `receipt`. The response also
+returns `current_responsibility`, which may have changed since that receipt.
+Replay does not renew a lease, restore historical ownership or authorize effects.
+Current credentials and action permissions still gate replay. Use `claim.inspect`
+for current lease state and `command.inspect` for a recorded request outcome.
+
+Preparation and observation expose current responsibility, version, reservation
+and executor. Navigation distinguishes pool work, your assignment, owned work,
+another member's task and required handoff. One bounded guidance item supplies
+its condition, basis, next action and re-evaluation trigger. These reads neither
+reserve work nor create member records.
+
+Task intake does not depend on a repository provider. Implementation, review,
+merge and delivery remain separate facts with their own evidence contracts.
+
+## Responsibility kernel and historical receipts
+
+`ResponsibilityStore::claim_available` and the pure `apply_claim_available`
+transition remain persistence/domain APIs. They establish ownership only when
+there is no owner, reservation or executor, preserve other collaborators and the
+independent reviewer, and reject the reviewer becoming the owner. They do not
+authenticate a caller or create a lease. The authenticated commands reuse the
+kernel inside their own covering transaction.
+
+Kernel receipts bind the complete canonical request, including its operation,
+attributed member and expected version. Assignment, acceptance, pool ownership,
+execution claim/release, owner transfer, Agent swap and pending-state changes keep
+separate request discriminators. Request-key locking precedes task locking;
+first inserts and version CAS serialize competing writers.
+
+| Kernel request | Result |
 | --- | --- |
-| Same key and complete input | Original immutable receipt with `replayed: true`, plus the current responsibility projection. |
-| Same key with changed input, task or operation | `IdempotencyConflict`; no data changes. |
-| New key with a stale responsibility version | `PreconditionsChanged`; no data changes. |
-| Existing historical receipt without a verified request hash | `IdempotencyConflict`; historical data stays intact. |
+| Same key and complete input | Original receipt and current responsibility. |
+| Same key with changed input, task or operation | `IdempotencyConflict`, without writes. |
+| New key with stale responsibility version | `PreconditionsChanged`, without writes. |
+| Historical receipt without a verified request hash | `IdempotencyConflict`; retain the historical data. |
 
-Replaying an old assignment does not restore its old owner or executor. A receipt
-describes the original transition; the accompanying task describes the current
-state. Read that state before deciding whether any new action is needed. Do not
-blindly change the key to bypass an unknown result or unverifiable old receipt.
-
-Request-key locking precedes task locking, including requests for different
-tasks. First inserts and version changes serialize on the task. Projection,
-collaborators, immutable event and receipt commit in one transaction; failure in
-any write rolls all of them back. Competing available claims cannot both become
-owners.
-
-The SQLite event codec recognizes the additive available-claimed event. Existing
-local responsibility API behavior is unchanged by this Team PG retry contract.
-
-## PostgreSQL schema 40
-
-Migration 40 adds nullable `responsibility_receipts.request_hash`. New kernel
-operations write a canonical SHA-256 hash. Existing receipts remain null because
-their event payloads cannot reconstruct the complete original request. The
-migration does not rewrite tasks, events, member identities or old receipts.
-
-Stop old writers before upgrading; an older writer can still produce null hashes
-and cannot participate in the new replay contract. Use the normal schema-version
-check and retain a matching database/binary snapshot for rollback. This schema
-change does not announce a package release or certify native teamwork acceptance.
+Schema 40 adds nullable `responsibility_receipts.request_hash`. New operations
+write canonical SHA-256 hashes. Existing receipts remain null because partial
+event payloads cannot reconstruct their complete original requests. The
+migration does not rewrite tasks, events, identities or historical receipts.
+Stop old writers before upgrading; they can still produce unverifiable null
+hashes. Retain a matching database/binary snapshot for rollback. The additive
+SQLite event codec remains supported, and local responsibility API behavior is
+unchanged. Schema compatibility and regression success do not certify native
+teamwork acceptance or announce a package release.

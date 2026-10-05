@@ -816,7 +816,7 @@ pub(crate) async fn read(
                 .work_item_id
                 .as_ref()
                 .ok_or_else(|| PgError::Protocol("work required".into()))?;
-            let row=tx.query_one("SELECT contract_json,contract_hash FROM awr_team.work_contracts
+            let row=tx.query_one("SELECT contract_json,contract_hash,definition_state FROM awr_team.work_contracts
                 WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND scope_id='main' AND work_id=$4",
                 &[&tenant,&project,&auth.snapshot,&work]).await?;
             let mut contract: WorkContract =
@@ -841,6 +841,10 @@ pub(crate) async fn read(
                 .dependency_acceptance
                 .retain(|d, _| ids.contains(d));
             let mut reasons = Vec::new();
+            let definition_state: String = row.get(2);
+            if definition_state != "enabled" {
+                reasons.push("work_definition_inactive");
+            }
             if missing {
                 reasons.push("dependency_export_unavailable");
             }
@@ -863,11 +867,13 @@ pub(crate) async fn read(
             let mut data = json!({
                 "work_id":work,
                 "contract_hash":contract_hash,
+                "definition_state":definition_state,
                 "visible_contract":contract,
                 "published_contract":contract,
                 "required_specs":required_specs,
                 "authorized_readable_refs":readable_refs,
                 "runtime":runtime,
+                "responsibility":crate::workstream_command::task_intake::read_state(tx,tenant,project,auth,work,&stream,q.session_id.as_deref()).await?,
                 "ownership_version":ownership.to_string(),
                 "dependency_export_unavailable":missing,
                 "context_complete":reasons.is_empty(),
@@ -904,6 +910,7 @@ pub(crate) async fn read(
             if !reasons.is_empty() {
                 hint = guidance::select(&observed, false, false);
             }
+            hint = crate::workstream_command::task_intake::guidance(&observed, hint);
             let mut with_hint = data.clone();
             with_hint["guidance"] = hint;
             if serde_json::to_vec(&with_hint)

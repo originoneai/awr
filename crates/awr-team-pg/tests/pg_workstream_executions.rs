@@ -416,7 +416,36 @@ async fn required_dependencies_need_current_receipts_and_do_not_infer_cross_stre
         )
         .await
         .unwrap();
+    let before = snapshot(&admin).await;
+    assert!(matches!(
+        store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                command(
+                    &prepare(&store, A, "a").await,
+                    "blocked-claim",
+                    "claim.acquire",
+                    json!({"session_id":"session-a","expected_session_version":"1",
+                        "expected_work_version":"0","ttl_seconds":60})
+                )
+            )
+            .await,
+        Err(PgError::MissingDependency)
+    ));
+    assert_eq!(snapshot(&admin).await, before);
+    // Obtain the lease and intent under a valid dependency receipt. Then
+    // invalidate that receipt to test execution admission independently of
+    // the earlier claim guard; neither entry can rely on an upstream flag.
+    admin.batch_execute("INSERT INTO awr_team.completion_receipts(tenant_id,project_id,id,work_id,scope_id,contract_hash,result_digest,
+        dependency_binding_hash,evidence_bundle_hash,policy,approved_by_json)
+        SELECT tenant_id,project_id,'initially-accepted',work_id,scope_id,contract_hash,'result','dependencies','evidence','review','[\"reviewer\"]'
+        FROM awr_team.work_contracts WHERE work_id='c';
+        UPDATE awr_team.work_runtime SET state='completed',selected_completion_id='initially-accepted' WHERE work_id='c'").await.unwrap();
     let (c, e) = ready_intent(&store).await;
+    admin.batch_execute("UPDATE awr_team.work_runtime SET state='ready',selected_completion_id=NULL WHERE work_id='c'").await.unwrap();
     let before = snapshot(&admin).await;
     assert!(matches!(
         store

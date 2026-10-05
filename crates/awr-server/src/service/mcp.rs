@@ -335,6 +335,52 @@ fn catalog() -> Vec<Tool> {
         }
     ]);
     add_handoff_input_schema(&mut command);
+    command["properties"]["args"]["properties"]["assignee_person_id"] = json!({"type":"string","minLength":1,"maxLength":128,
+        "description":"task.assign: active eligible project member. This is a target, never the acting identity."});
+    command["properties"]["args"]["properties"]["expected_responsibility_version"] = json!({"type":"string","pattern":"^(0|[1-9][0-9]*)$",
+        "description":"Use work.prepare responsibility.version; distinct from source ownership and temporary lease versions."});
+    command["properties"]["args"]["properties"]["assignment_request_key"] = json!({"type":"string","minLength":1,"maxLength":128,
+        "description":"task.accept_assignment: current responsibility.pending.transfer_request_key. Not a handoff ID."});
+    command["properties"]["args"]["properties"]["ttl_seconds"] =
+        json!({"type":"integer","minimum":1,"maximum":3600});
+    let old_description = command["properties"]["args"]["description"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    command["properties"]["args"]["description"] = json!(format!(
+        "task.assign: assignee_person_id, expected_responsibility_version; no execution session required. An optional session_id must include expected_session_version. task.accept_assignment / task.claim_available: session_id, expected_session_version, expected_responsibility_version, expected_work_version, ttl_seconds; acceptance also requires assignment_request_key. Assignment may reserve blocked dependencies; taking work cannot bypass them. Ownership and the coordination lease commit atomically; execution.start remains separate. {old_description}"
+    ));
+    for (op, required) in [
+        (
+            "task.assign",
+            vec!["assignee_person_id", "expected_responsibility_version"],
+        ),
+        (
+            "task.accept_assignment",
+            vec![
+                "session_id",
+                "expected_session_version",
+                "expected_responsibility_version",
+                "expected_work_version",
+                "ttl_seconds",
+                "assignment_request_key",
+            ],
+        ),
+        (
+            "task.claim_available",
+            vec![
+                "session_id",
+                "expected_session_version",
+                "expected_responsibility_version",
+                "expected_work_version",
+                "ttl_seconds",
+            ],
+        ),
+    ] {
+        command["allOf"].as_array_mut().unwrap().push(json!({
+            "if":{"properties":{"op":{"const":op}},"required":["op"]},
+            "then":{"properties":{"args":{"required":required}}}}));
+    }
     let access_plan = json!({
         "type":"object","additionalProperties":false,
         "required":["protocol_version","subject","subject_client_id","role","grants"],
@@ -912,6 +958,58 @@ mod tests {
             1
         );
         assert_eq!(fields["now_ms"]["type"], "integer");
+    }
+
+    #[test]
+    fn task_intake_schema_keeps_supervisor_dispatch_separate_from_execution_sessions() {
+        let tool = catalog()
+            .into_iter()
+            .find(|t| t.name == "awr_team_command")
+            .unwrap();
+        let props = &tool.input_schema["properties"]["args"]["properties"];
+        assert_eq!(
+            props["expected_responsibility_version"]["pattern"],
+            "^(0|[1-9][0-9]*)$"
+        );
+        for op in [
+            "task.assign",
+            "task.accept_assignment",
+            "task.claim_available",
+        ] {
+            assert!(
+                tool.input_schema["properties"]["op"]["enum"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(op))
+            );
+            let condition = tool.input_schema["allOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["if"]["properties"]["op"]["const"] == op)
+                .unwrap();
+            let required = condition["then"]["properties"]["args"]["required"]
+                .as_array()
+                .unwrap();
+            assert!(required.contains(&json!("expected_responsibility_version")));
+            if op == "task.assign" {
+                assert!(required.contains(&json!("assignee_person_id")));
+                assert!(!required.contains(&json!("session_id")));
+            } else {
+                for key in [
+                    "session_id",
+                    "expected_session_version",
+                    "expected_work_version",
+                    "ttl_seconds",
+                ] {
+                    assert!(required.contains(&json!(key)));
+                }
+                assert_eq!(
+                    required.contains(&json!("assignment_request_key")),
+                    op == "task.accept_assignment"
+                );
+            }
+        }
     }
 
     #[test]

@@ -52,7 +52,7 @@ pub(super) async fn next(
     )?;
     let c = cursor(q, &binding)?;
     let limit = i64::from(q.limit.unwrap_or(20));
-    let rows = tx.query("SELECT c.work_id,c.title,c.contract_json,o.workstream_id,r.state,r.recovery_blocked,o.ownership_version
+    let rows = tx.query("SELECT c.work_id,c.title,c.contract_json,o.workstream_id,r.state,r.recovery_blocked,o.ownership_version,c.definition_state
         FROM awr_team.work_contracts c JOIN awr_team.workstream_snapshot_ownership o
           USING(tenant_id,project_id,snapshot_id,scope_id,work_id)
         LEFT JOIN awr_team.work_runtime r USING(tenant_id,project_id,scope_id,work_id)
@@ -86,25 +86,11 @@ pub(super) async fn next(
         let stream: String = row.get(3);
         let contract: WorkContract =
             serde_json::from_value(row.get(2)).map_err(|_| PgError::SourceDivergence)?;
-        let deps=tx.query("SELECT d.work_id,r.state,r.selected_completion_id,o.workstream_id FROM unnest($4::text[]) AS d(work_id)
-            LEFT JOIN awr_team.work_runtime r ON r.tenant_id=$1 AND r.project_id=$2 AND r.scope_id='main' AND r.work_id=d.work_id
-            LEFT JOIN awr_team.workstream_snapshot_ownership o ON o.tenant_id=$1 AND o.project_id=$2 AND o.snapshot_id=$3 AND o.work_id=d.work_id",
-            &[&tenant,&project,&auth.snapshot,&contract.required_dependencies]).await?;
-        let (covered, _) = crate::review::required_dependencies_covered(
-            tx,
-            tenant,
-            project,
-            &work,
-            "main",
-            &row.get::<_, Value>(2),
+        contract.validate().map_err(|_| PgError::SourceDivergence)?;
+        let blocked_deps = !crate::workstream_command::task_intake::dependencies_ready(
+            tx, tenant, project, auth, &work, &stream,
         )
         .await?;
-        let blocked_deps = !covered
-            || deps.iter().any(|d| {
-                d.get::<_, Option<String>>(1).as_deref() != Some("completed")
-                    || d.get::<_, Option<String>>(2).is_none()
-                    || d.get::<_, Option<String>>(3).as_deref() != Some(&stream)
-            });
         let claims=tx.query("SELECT c.expires_at>clock_timestamp(),c.actor_id,s.client_id FROM awr_team.claims c JOIN awr_team.sessions s ON s.tenant_id=c.tenant_id AND s.project_id=c.project_id AND s.id=c.session_id
             WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.work_id=$3 AND c.state='active'", &[&tenant,&project,&work]).await?;
         let held = claims.iter().any(|c| {
@@ -113,6 +99,22 @@ pub(super) async fn next(
                     || c.get::<_, String>(2) != auth.client_id)
         });
         let expired = claims.iter().any(|c| !c.get::<_, bool>(0));
+        let scoped = crate::delegation_auth::navigation_authority(
+            auth,
+            awr_team::Action::ClaimManageOwn,
+            stream.parse().map_err(|_| PgError::SourceDivergence)?,
+            &work,
+        );
+        let responsibility = crate::workstream_command::task_intake::read_state(
+            tx,
+            tenant,
+            project,
+            scoped.as_ref().unwrap_or(auth),
+            &work,
+            &stream,
+            None,
+        )
+        .await?;
         let writable = auth
             .access
             .authorize(
@@ -121,13 +123,7 @@ pub(super) async fn next(
                 WorkstreamAction::Write,
             )
             .is_ok()
-            && crate::delegation_auth::authorize_navigation_action(
-                auth,
-                awr_team::Action::ClaimManageOwn,
-                stream.parse().map_err(|_| PgError::SourceDivergence)?,
-                &work,
-            )
-            .is_ok();
+            && scoped.is_ok();
         let pending = tx.query_one("SELECT
             EXISTS(SELECT 1 FROM awr_team.wait_items WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND state='open'),
             (SELECT count(*) FROM (SELECT 1 FROM awr_team.executions WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND state NOT IN ('succeeded','failed','cancelled') LIMIT 2) unsettled),
@@ -144,10 +140,11 @@ pub(super) async fn next(
             )
             .is_ok();
         let resumable = if unsettled == 1
+            && row.get::<_, String>(7) == "enabled"
             && !pending.get::<_, bool>(0)
             && !unknown_resources
             && !recovery_blocked
-            && !expired
+            && (!expired || responsibility["current_executor_matches_client"] == true)
             && !held
             && !blocked_deps
             && can_continue
@@ -177,7 +174,19 @@ pub(super) async fn next(
         };
         let status = if resumable {
             "resume"
-        } else if recovery_blocked || expired || unsettled > 0 || unknown_resources {
+        } else if recovery_blocked || unsettled > 0 || unknown_resources {
+            "recovery_required"
+        } else if matches!(
+            responsibility["relation"].as_str(),
+            Some("handoff_required" | "responsibility_pending")
+        ) {
+            "handoff_required"
+        } else if matches!(
+            responsibility["relation"].as_str(),
+            Some("owned_by_other" | "assigned_to_other")
+        ) {
+            "held"
+        } else if expired && responsibility["current_executor_matches_client"] != true {
             "recovery_required"
         } else if held {
             "held"
@@ -185,13 +194,13 @@ pub(super) async fn next(
             "waiting_external"
         } else if blocked_deps {
             "waiting_dependency"
-        } else if !writable {
+        } else if !writable || row.get::<_, String>(7) != "enabled" {
             "observe"
         } else {
             "prepare"
         };
         items.push(json!({"work_id":work,"title":row.get::<_,String>(1),"workstream_id":stream,
-            "state":row.get::<_,Option<String>>(4),"navigation":status,
+            "state":row.get::<_,Option<String>>(4),"navigation":status,"responsibility":responsibility,
             "next_query":{"protocol_version":1,"op":if status=="resume" {"work.observe"} else if matches!(status,"recovery_required"|"waiting_external") {"work.recovery"} else {"work.prepare"},"work_id":work,"workstream_id":stream}}));
     }
     let next = if rows.len() > limit as usize {

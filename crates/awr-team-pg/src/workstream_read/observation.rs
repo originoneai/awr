@@ -13,14 +13,15 @@ pub(super) async fn read(
 ) -> PgResult<Value> {
     // The caller has resolved current snapshot ownership and WorkRead authority.
     // Do not change work.prepare's context hash or weaken receipt visibility.
-    let contract: String = tx
+    let contract_row = tx
         .query_one(
-            "SELECT contract_hash FROM awr_team.work_contracts
+            "SELECT contract_hash,definition_state FROM awr_team.work_contracts
         WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND scope_id='main' AND work_id=$4",
             &[&tenant, &project, &auth.snapshot, &work],
         )
-        .await?
-        .get(0);
+        .await?;
+    let contract: String = contract_row.get(0);
+    let definition_state: String = contract_row.get(1);
     let observed: i64 = tx
         .query_one(
             "SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint",
@@ -32,12 +33,32 @@ pub(super) async fn read(
         WHERE tenant_id=$1 AND project_id=$2 AND scope_id='main' AND work_id=$3",
         &[&tenant,&project,&work]).await?.map(|r| json!({"state":r.get::<_,String>(0),
             "recovery_blocked":r.get::<_,bool>(1),"selected_completion_id":r.get::<_,Option<String>>(2)}));
-    let responsibility = tx.query_opt("SELECT r.owner_person_id,p.display_name,r.executor_agent_id
-        FROM awr_team.task_responsibilities r LEFT JOIN awr_team.persons p
-          ON p.tenant_id=r.tenant_id AND p.project_id=r.project_id AND p.id=r.owner_person_id
-        WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.work_id=$3", &[&tenant,&project,&work]).await?
-        .map(|r|json!({"owner_person_id":r.get::<_,Option<String>>(0),"owner_name":r.get::<_,Option<String>>(1),
-            "executor_agent_id":r.get::<_,Option<String>>(2)}));
+    let mut responsibility = crate::workstream_command::task_intake::read_state(
+        tx,
+        tenant,
+        project,
+        auth,
+        work,
+        stream,
+        requested_session,
+    )
+    .await?;
+    // Preserve the Inspector's existing attribution fields while exposing the
+    // complete current responsibility/version and pending assignment.
+    responsibility["owner_person_id"] = responsibility["owner"].clone();
+    responsibility["executor_agent_id"] = responsibility["current_executor"]["agent_id"].clone();
+    responsibility["owner_name"] = tx
+        .query_opt(
+            "SELECT display_name FROM awr_team.persons
+        WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+            &[
+                &tenant,
+                &project,
+                &responsibility["owner_person_id"].as_str(),
+            ],
+        )
+        .await?
+        .map_or(Value::Null, |r| json!(r.get::<_, String>(0)));
     let session = tx.query_opt("SELECT s.id,s.actor_id,a.display_name,s.client_id,s.state,c.id,
           c.contract_hash,c.next_action,c.open_loops_json,(extract(epoch FROM c.created_at)*1000)::bigint
         FROM awr_team.sessions s LEFT JOIN awr_team.actors a ON a.tenant_id=s.tenant_id AND a.id=s.actor_id
@@ -52,6 +73,7 @@ pub(super) async fn read(
           c.created_at DESC NULLS LAST, s.id DESC LIMIT 1",
         &[&tenant,&project,&work,&stream,&ownership,&requested_session,&auth.epoch]).await?;
     let mut data = json!({"work_id":work,"contract_hash":contract,"observed_at_unix_ms":observed,
+        "definition_state":definition_state,
         "runtime":runtime,"responsibility":responsibility,"session":null,"checkpoint":null,"claim":null,
         "execution":null,"pr_deliveries":[],"client":null,"progress":null,"model":null,"usage":null,
         "missing":{"model":"no_session","usage":"no_session","progress":"no_session"},
@@ -117,6 +139,9 @@ pub(super) async fn read(
     );
     let owns_session = data["session"]["actor_id"] == auth.actor_id
         && data["session"]["client_id"] == auth.client_id;
-    data["guidance"] = super::guidance::select(&data, true, owns_session);
+    data["guidance"] = crate::workstream_command::task_intake::guidance(
+        &data,
+        super::guidance::select(&data, true, owns_session),
+    );
     Ok(data)
 }
