@@ -60,6 +60,129 @@ fn work_grant(person: &PersonId) -> AgentAuthorization {
 }
 
 #[tokio::test]
+async fn one_live_delegation_is_intersected_with_current_duties_for_navigation_and_commands() {
+    use awr_team::BusinessRole;
+    use awr_team_pg::{AccessPlan, OperatorAccess};
+    let (_guard, mut admin, db, store) = setup().await;
+    enable_writes(&admin).await;
+    flip_actor_to_agent(&admin).await;
+    let mut policy: AccessPlan = serde_json::from_value(json!({
+        "protocol_version":1,"tenant_id":TENANT,"project_id":PROJECT,
+        "actor":{"id":"agent","kind":"agent","display_name":"Worker"},
+        "client_id":"cli-a","role":"admin","business_roles":["observer"],
+        "grants":[{"workstream_id":Id::from(1),"authority_version":"1","read":true,"write":true,
+            "manage":false,"attest_execution":false,"reconcile_execution":false}],
+        "credential":null,"revoke_credentials":[]
+    }))
+    .unwrap();
+    let p = OperatorAccess::preview(&mut admin, &policy).await.unwrap();
+    OperatorAccess::apply(
+        &mut admin,
+        &policy,
+        "observer-ceiling",
+        p["state_digest"].as_str().unwrap(),
+        p["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    let authorizations =
+        AuthorizationStore::from_config(common::with_app_role(&common::test_config(), &db));
+    authorizations
+        .issue(
+            TENANT,
+            PROJECT,
+            &IssueAuthorizationRequest {
+                request_key: "one-live-work-grant".into(),
+                authorization: work_grant(&PersonId::new("alice").unwrap()),
+            },
+        )
+        .await
+        .unwrap();
+    let next = store
+        .query(TENANT, PROJECT, A, query("work.next"))
+        .await
+        .unwrap();
+    let task = next["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["work_id"] == "a")
+        .unwrap();
+    assert_eq!(task["navigation"], "observe");
+    let stale = prepare(&store, A, "a").await;
+    assert!(matches!(
+        store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                command(
+                    &stale,
+                    "observer-cannot-start",
+                    "session.start",
+                    json!({"conversation_id":"observer-agent"})
+                )
+            )
+            .await,
+        Err(PgError::Forbidden)
+    ));
+    let mut old_view = query("work.list");
+    old_view.limit = Some(1);
+    old_view.workstream_id = Some(Id::from(1));
+    let page = store
+        .query(TENANT, PROJECT, A, old_view.clone())
+        .await
+        .unwrap();
+    old_view.cursor = Some(page["data"]["next_cursor"].as_str().unwrap().into());
+    policy.business_roles = Some(BTreeSet::from([BusinessRole::Developer]));
+    let p = OperatorAccess::preview(&mut admin, &policy).await.unwrap();
+    OperatorAccess::apply(
+        &mut admin,
+        &policy,
+        "developer-ceiling",
+        p["state_digest"].as_str().unwrap(),
+        p["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        store.query(TENANT, PROJECT, A, old_view).await,
+        Err(PgError::CursorExpired)
+    ));
+    let next = store
+        .query(TENANT, PROJECT, A, query("work.next"))
+        .await
+        .unwrap();
+    let task = next["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["work_id"] == "a")
+        .unwrap();
+    assert_eq!(task["navigation"], "prepare");
+    let fresh = prepare(&store, A, "a").await;
+    assert_eq!(
+        store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                command(
+                    &fresh,
+                    "developer-can-start",
+                    "session.start",
+                    json!({"conversation_id":"developer-agent"})
+                )
+            )
+            .await
+            .unwrap()["replayed"],
+        false
+    );
+}
+
+#[tokio::test]
 async fn admin_membership_agent_without_delegation_is_forbidden() {
     let (_guard, admin, _db, store) = setup().await;
     enable_writes(&admin).await;

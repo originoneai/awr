@@ -66,15 +66,26 @@ impl ProjectAccessStore {
                 bindings.push(state);
             }
             let a = tx.query_one(
-                "SELECT a.display_name,a.kind,m.role,m.independent_review,m.agent_review FROM awr_team.actors a
+                "SELECT a.display_name,a.kind,m.role,m.independent_review,m.agent_review,m.business_roles FROM awr_team.actors a
                  JOIN awr_team.project_memberships m ON m.tenant_id=a.tenant_id AND m.actor_id=a.id
                  WHERE a.tenant_id=$1 AND m.project_id=$2 AND a.id=$3",
                 &[&tenant,&project,&actor],
             ).await?;
-            items.push(json!({"actor_id":actor,"display_name":a.get::<_,String>(0),
-                "kind":a.get::<_,String>(1),"role":a.get::<_,String>(2),
+            let role: String = a.get(2);
+            let kind: String = a.get(1);
+            let roles = crate::workstream_auth::decode_business_roles(a.get(5))?;
+            let template =
+                crate::workstream_auth::map_membership_role(&role).ok_or(PgError::Forbidden)?;
+            let mut item = json!({"actor_id":actor,"display_name":a.get::<_,String>(0),
+                "kind":kind,"role":role,
+                "membership_action_ceiling":crate::workstream_auth::membership_action_ceiling(
+                    &role,template,&kind,a.get(3),a.get(4),roles.as_ref()),
                 "independent_review":a.get::<_,bool>(3),"agent_review":a.get::<_,bool>(4),"clients":bindings,
-                "clients_truncated":clients.len()>100}));
+                "clients_truncated":clients.len()>100});
+            if let Some(roles) = a.get::<_, Option<Value>>(5) {
+                item["business_roles"] = roles;
+            }
+            items.push(item);
         }
         let next = if more {
             items.last().map(|x| x["actor_id"].clone())
@@ -134,15 +145,18 @@ pub(super) async fn validate_credentials(
             return Err(PgError::Forbidden);
         }
     }
+    let roles = effective_roles(plan, state)?;
     if state["membership"]["role"]
         .as_str()
-        .is_some_and(is_admin_role)
+        .is_some_and(|role| policy_can_manage(role, roles.as_ref()))
         && !plan.revoke_project_credentials.is_empty()
     {
         // A sole administrator must retain a usable credential during rotation.
-        let other: i64 = tx.query_one("SELECT count(*) FROM awr_team.project_memberships WHERE tenant_id=$1 AND project_id=$2 AND actor_id<>$3 AND role IN ('admin','project_admin')", &[&tenant,&project,&plan.subject.id]).await?.get(0);
+        let other =
+            other_live_manager_exists(tx, tenant, project, &plan.subject.id, &state["catalog"])
+                .await?;
         let remaining: i64 = tx.query_one("SELECT count(*) FROM awr_team.credentials WHERE tenant_id=$1 AND actor_id=$2 AND (project_id IS NULL OR project_id=$3) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) AND NOT(id=ANY($4)) AND EXISTS (SELECT 1 FROM awr_team.workstream_grants g WHERE g.tenant_id=credentials.tenant_id AND g.project_id=$3 AND g.actor_id=credentials.actor_id AND g.client_id=credentials.client_id AND g.active AND g.can_manage)", &[&tenant,&plan.subject.id,&project,&plan.revoke_project_credentials]).await?.get(0);
-        if other == 0
+        if !other
             && remaining == 0
             && !(plan.credential.is_some() && plan.grants.iter().any(|g| g.manage))
         {

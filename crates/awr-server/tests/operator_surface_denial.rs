@@ -272,7 +272,31 @@ async fn http_and_mcp_clients_cannot_reach_operator_only_surfaces() {
     assert!(names.contains(&"awr_team_query".into()));
     assert!(names.contains(&"awr_team_command".into()));
     assert!(names.contains(&"awr_team_access_preview".into()));
-    assert_eq!(tools.len(), 6);
+    // Public planning tools are project-scoped; they are not owner operations.
+    // Assert the approved surface, rather than a historical tool count.
+    let approved = [
+        "awr_team_query",
+        "awr_team_command",
+        "awr_team_access_inspect",
+        "awr_team_access_preview",
+        "awr_team_access_apply",
+        "awr_team_access_outcome",
+        "awr_team_planning_suggest",
+        "awr_team_planning_draft",
+        "awr_team_planning_preview",
+        "awr_team_planning_approve",
+        "awr_team_planning_publish",
+        "awr_team_planning_outcome",
+    ];
+    assert_eq!(
+        names
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        approved
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>()
+    );
     for tool in &tools {
         let enum_ops = tool.input_schema["properties"]["op"]["enum"]
             .as_array()

@@ -109,6 +109,112 @@ fn member_plan() -> AdminAccessPlan {
 }
 
 #[tokio::test]
+async fn declared_duties_roundtrip_through_http_and_mcp_with_matching_action_denials() {
+    use awr_team::BusinessRole;
+    use std::collections::BTreeSet;
+    let (_g, owner, _db, store) = setup().await;
+    enable_writes(&owner).await;
+    owner
+        .batch_execute(
+            "UPDATE awr_team.workstream_grants
+             SET can_manage=true, grant_version=grant_version+1 WHERE client_id='cli-a'",
+        )
+        .await
+        .unwrap();
+    let server = start(store).await;
+    let http = http();
+    let admin = mcp(&server.url, A).await;
+    let mut plan = member_plan();
+    plan.business_roles = Some(BTreeSet::from([BusinessRole::Observer]));
+    let preview = http
+        .post(format!("{}/one/access/preview", server.url))
+        .bearer_auth(A)
+        .json(&json!({"protocol_version":1,"plan":plan}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(preview.status(), reqwest::StatusCode::OK);
+    let preview: Value = preview.json().await.unwrap();
+    assert_eq!(preview["desired"]["business_roles"], json!(["observer"]));
+    let applied = admin
+        .call_tool(
+            CallToolRequestParams::new("awr_team_access_apply").with_arguments(
+                json!({"protocol_version":1,"request_id":"declare-observer",
+                    "expected_state":preview["state_digest"],
+                    "expected_plan":preview["plan_digest"],"plan":plan})
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert!(!applied.is_error.unwrap_or(false), "{applied:?}");
+    assert_eq!(
+        applied.structured_content.unwrap()["receipt"]["current_policy"]["membership"]["business_roles"],
+        json!(["observer"])
+    );
+    let token = "awr1.mcp-member.2222222222222222222222222222222222222222222222222222222222222222";
+    let member = mcp(&server.url, token).await;
+    let caps = member
+        .call_tool(
+            CallToolRequestParams::new("awr_team_query").with_arguments(
+                json!({"protocol_version":1,"op":"capabilities"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    assert_eq!(caps["identity"]["business_roles"], json!(["observer"]));
+    assert_eq!(
+        caps["identity"]["membership_action_ceiling"],
+        json!(["work.read"])
+    );
+    let prepared = member
+        .call_tool(
+            CallToolRequestParams::new("awr_team_query").with_arguments(
+                json!({"protocol_version":1,"op":"work.prepare","work_id":"a"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap()
+        .structured_content
+        .unwrap();
+    let body = serde_json::to_value(command(
+        &prepared,
+        "observer-cannot-start",
+        "session.start",
+        json!({"conversation_id":"observer"}),
+    ))
+    .unwrap();
+    let denied = http
+        .post(format!("{}/one/command", server.url))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), reqwest::StatusCode::FORBIDDEN);
+    let http_error: Value = denied.json().await.unwrap();
+    let denied = member
+        .call_tool(
+            CallToolRequestParams::new("awr_team_command")
+                .with_arguments(body.as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap();
+    assert!(denied.is_error.unwrap_or(false));
+    assert_eq!(denied.structured_content.unwrap(), http_error);
+}
+
+#[tokio::test]
 async fn admin_can_preview_apply_via_mcp_and_http_non_admin_denied_no_raw_secrets() {
     let (_g, owner, _db, store) = setup().await;
     owner

@@ -278,6 +278,175 @@ pub fn independent_review_eligible(role: RoleTemplate) -> bool {
     !matches!(role, RoleTemplate::Reader)
 }
 
+/// Business duties restrict existing grants; labels never create authority.
+/// Several duties may be explicitly approved for one membership. This union
+/// does not combine independent Agent delegations into synthetic authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BusinessRole {
+    Observer,
+    Developer,
+    Reviewer,
+    Supervisor,
+    Deliverer,
+    Administrator,
+}
+
+impl BusinessRole {
+    pub fn all() -> [Self; 6] {
+        [
+            Self::Observer,
+            Self::Developer,
+            Self::Reviewer,
+            Self::Supervisor,
+            Self::Deliverer,
+            Self::Administrator,
+        ]
+    }
+
+    pub fn action_ceiling(self) -> BTreeSet<Action> {
+        use Action::*;
+        match self {
+            Self::Observer => BTreeSet::from([WorkRead]),
+            Self::Developer => template_actions(RoleTemplate::Developer),
+            Self::Reviewer => BTreeSet::from([WorkRead, ReviewDecide]),
+            Self::Supervisor => BTreeSet::from([
+                WorkRead,
+                PlanningPropose,
+                PlanningEditDraft,
+                PlanningApprove,
+                PlanningPublish,
+                AuditReadProject,
+            ]),
+            Self::Deliverer => BTreeSet::from([WorkRead, DeliveryFinalize]),
+            Self::Administrator => {
+                BTreeSet::from([WorkRead, AccessManageProject, AuditReadProject])
+            }
+        }
+    }
+}
+
+pub fn validate_business_roles(roles: &BTreeSet<BusinessRole>) -> TeamResult<()> {
+    if roles.is_empty() {
+        return Err(TeamError::InvalidInput(
+            "business roles must not be empty".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// None preserves legacy policy. A declared set can only narrow the supplied
+/// actions (which already include any separately eligible review grant).
+pub fn constrain_actions_to_business_roles(
+    actions: &BTreeSet<Action>,
+    roles: Option<&BTreeSet<BusinessRole>>,
+) -> BTreeSet<Action> {
+    let Some(roles) = roles else {
+        return actions.clone();
+    };
+    let ceiling: BTreeSet<_> = roles
+        .iter()
+        .flat_map(|role| role.action_ceiling())
+        .collect();
+    actions.intersection(&ceiling).copied().collect()
+}
+
+#[cfg(test)]
+mod business_role_tests {
+    use super::*;
+
+    #[test]
+    fn all_six_duties_have_bounded_action_contracts() {
+        use Action::*;
+        let granted = Action::all().into_iter().collect();
+        let cases = [
+            (BusinessRole::Observer, BTreeSet::from([WorkRead])),
+            (
+                BusinessRole::Developer,
+                BTreeSet::from([
+                    WorkRead,
+                    SessionMaintainOwn,
+                    ClaimManageOwn,
+                    ExecutionRequestAndReportOwn,
+                    PlanningPropose,
+                    DeliverySubmitAndRequestReview,
+                ]),
+            ),
+            (
+                BusinessRole::Reviewer,
+                BTreeSet::from([WorkRead, ReviewDecide]),
+            ),
+            (
+                BusinessRole::Supervisor,
+                BTreeSet::from([
+                    WorkRead,
+                    PlanningPropose,
+                    PlanningEditDraft,
+                    PlanningApprove,
+                    PlanningPublish,
+                    AuditReadProject,
+                ]),
+            ),
+            (
+                BusinessRole::Deliverer,
+                BTreeSet::from([WorkRead, DeliveryFinalize]),
+            ),
+            (
+                BusinessRole::Administrator,
+                BTreeSet::from([WorkRead, AccessManageProject, AuditReadProject]),
+            ),
+        ];
+        for (role, expected) in cases {
+            assert_eq!(
+                constrain_actions_to_business_roles(&granted, Some(&BTreeSet::from([role]))),
+                expected
+            );
+        }
+        assert_eq!(constrain_actions_to_business_roles(&granted, None), granted);
+        assert!(constrain_actions_to_business_roles(&granted, Some(&BTreeSet::new())).is_empty());
+        assert!(validate_business_roles(&BTreeSet::new()).is_err());
+        assert!(serde_json::from_str::<BusinessRole>("\"owner\"").is_err());
+    }
+
+    #[test]
+    fn combined_duties_only_filter_existing_authority_and_review_needs_a_grant() {
+        let roles = BTreeSet::from([
+            BusinessRole::Developer,
+            BusinessRole::Reviewer,
+            BusinessRole::Deliverer,
+        ]);
+        let mut scope = authority_from_template(
+            RoleTemplate::Developer,
+            "tenant",
+            "project",
+            "person",
+            "client",
+        );
+        scope.allowed_actions =
+            constrain_actions_to_business_roles(&scope.allowed_actions, Some(&roles));
+        let resource = ResourceRef {
+            tenant_id: "tenant".into(),
+            project_id: "project".into(),
+            workstream_id: None,
+            work_id: None,
+        };
+        assert!(
+            authorize_action(&scope, Action::ExecutionRequestAndReportOwn, &resource, 0).is_ok()
+        );
+        assert!(authorize_action(&scope, Action::ReviewDecide, &resource, 0).is_err());
+        assert!(authorize_action(&scope, Action::DeliveryFinalize, &resource, 0).is_err());
+        let mut scope = with_independent_review(scope, RoleTemplate::Developer).unwrap();
+        scope.allowed_actions =
+            constrain_actions_to_business_roles(&scope.allowed_actions, Some(&roles));
+        assert!(authorize_action(&scope, Action::ReviewDecide, &resource, 0).is_ok());
+        let reader = template_actions(RoleTemplate::Reader);
+        assert_eq!(
+            constrain_actions_to_business_roles(&reader, Some(&roles)),
+            reader
+        );
+    }
+}
+
 fn scope_covers(
     scope: &AuthorityScope,
     resource: &ResourceRef,

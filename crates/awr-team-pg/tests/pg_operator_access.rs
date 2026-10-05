@@ -22,6 +22,157 @@ struct Digests {
     state: String,
     plan: String,
 }
+
+#[tokio::test]
+async fn declared_duties_preserve_old_omission_and_replay_without_restoring_old_permissions() {
+    use awr_team::BusinessRole;
+    use std::collections::BTreeSet;
+    let (_g, mut admin, _, store) = setup().await;
+    let mut p = plan();
+    p.business_roles = Some(BTreeSet::from([BusinessRole::Observer]));
+    let d = digests(&mut admin, &p).await;
+    let original = OperatorAccess::apply(&mut admin, &p, "declare-observer", &d.state, &d.plan)
+        .await
+        .unwrap();
+    let prepared = prepare(&store, TOKEN, "a").await;
+    assert!(matches!(
+        store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                TOKEN,
+                command(
+                    &prepared,
+                    "observer-denied",
+                    "session.start",
+                    json!({"conversation_id":"observer"})
+                )
+            )
+            .await,
+        Err(PgError::Forbidden)
+    ));
+    let caps = store
+        .query(TENANT, PROJECT, TOKEN, query("capabilities"))
+        .await
+        .unwrap();
+    assert_eq!(caps["identity"]["business_roles"], json!(["observer"]));
+    assert_eq!(
+        caps["identity"]["membership_action_ceiling"],
+        json!(["work.read"])
+    );
+
+    let mut old_client = p.clone();
+    old_client.business_roles = None;
+    assert!(
+        serde_json::to_value(&old_client)
+            .unwrap()
+            .get("business_roles")
+            .is_none()
+    );
+    let omitted = digests(&mut admin, &old_client).await;
+    OperatorAccess::apply(
+        &mut admin,
+        &old_client,
+        "old-client-update",
+        &omitted.state,
+        &omitted.plan,
+    )
+    .await
+    .unwrap();
+    let current = OperatorAccess::inspect(&mut admin, TENANT, PROJECT, &p.actor.id, &p.client_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        current["state"]["membership"]["business_roles"],
+        json!(["observer"])
+    );
+    assert_eq!(current["state"]["membership"]["version"], "1");
+
+    let mut old_view = query("work.list");
+    old_view.limit = Some(1);
+    let page = store
+        .query(TENANT, PROJECT, TOKEN, old_view.clone())
+        .await
+        .unwrap();
+    old_view.cursor = Some(page["data"]["next_cursor"].as_str().unwrap().into());
+    let mut developer = p.clone();
+    developer.business_roles = Some(BTreeSet::from([BusinessRole::Developer]));
+    let d2 = digests(&mut admin, &developer).await;
+    OperatorAccess::apply(
+        &mut admin,
+        &developer,
+        "explicit-developer",
+        &d2.state,
+        &d2.plan,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        store.query(TENANT, PROJECT, TOKEN, old_view).await,
+        Err(PgError::CursorExpired)
+    ));
+    let replay = OperatorAccess::apply(&mut admin, &p, "declare-observer", &d.state, &d.plan)
+        .await
+        .unwrap();
+    assert_eq!(replay["receipt"], original["receipt"]);
+    let current = OperatorAccess::inspect(&mut admin, TENANT, PROJECT, &p.actor.id, &p.client_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        current["state"]["membership"]["business_roles"],
+        json!(["developer"])
+    );
+    assert_eq!(current["state"]["membership"]["version"], "2");
+    let fresh = prepare(&store, TOKEN, "a").await;
+    assert_eq!(
+        store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                TOKEN,
+                command(
+                    &fresh,
+                    "developer-session",
+                    "session.start",
+                    json!({"conversation_id":"developer"})
+                )
+            )
+            .await
+            .unwrap()["replayed"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn duty_policy_rejects_empty_unknown_and_invalid_database_shapes_without_mutation() {
+    let (_g, mut admin, _, _) = setup().await;
+    let before = state(&admin).await;
+    let mut p = plan();
+    p.business_roles = Some(Default::default());
+    assert!(matches!(
+        OperatorAccess::preview(&mut admin, &p).await,
+        Err(PgError::Protocol(_))
+    ));
+    let mut raw = serde_json::to_value(plan()).unwrap();
+    raw["business_roles"] = json!(["owner"]);
+    assert!(serde_json::from_value::<AccessPlan>(raw).is_err());
+    for roles in [
+        json!([]),
+        json!(["owner"]),
+        json!([null]),
+        json!({"observer":true}),
+        json!("observer"),
+    ] {
+        let error=admin.execute("UPDATE awr_team.project_memberships SET business_roles=$1 WHERE tenant_id=$2 AND project_id=$3 AND actor_id='agent'",&[&roles,&TENANT,&PROJECT]).await.unwrap_err();
+        assert_eq!(
+            error.code(),
+            Some(&tokio_postgres::error::SqlState::CHECK_VIOLATION)
+        );
+    }
+    assert_eq!(state(&admin).await, before);
+}
 async fn digests(admin: &mut Client, p: &AccessPlan) -> Digests {
     let preview = OperatorAccess::preview(admin, p).await.unwrap();
     Digests {

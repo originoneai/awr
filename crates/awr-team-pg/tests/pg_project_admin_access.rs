@@ -169,6 +169,187 @@ fn admin_plan_member() -> AdminAccessPlan {
 }
 
 #[tokio::test]
+async fn duty_restricted_admin_is_not_a_handoff_manager_and_directory_matches_live_policy() {
+    use awr_team::BusinessRole;
+    use std::collections::BTreeSet;
+    let (_g, owner, db, store) = setup().await;
+    enable_admin_manage(&owner).await;
+    // Changing project-wide duties also affects this member's other client.
+    owner
+        .batch_execute(
+            "INSERT INTO awr_team.workstream_grants
+             (tenant_id, project_id, actor_id, client_id, workstream_id,
+              can_read, can_write, can_manage, authority_version, grant_version, active)
+             VALUES ('reader-tenant','reader-project','agent','cli-a',
+              '00000000000000000000000002',true,true,true,1,1,true)
+             ON CONFLICT (tenant_id,project_id,actor_id,client_id,workstream_id)
+             DO UPDATE SET can_manage=true,grant_version=awr_team.workstream_grants.grant_version+1",
+        )
+        .await
+        .unwrap();
+    let access =
+        ProjectAccessStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let mut other = admin_plan_member();
+    other.role = "project_admin".into();
+    other.business_roles = Some(BTreeSet::from([BusinessRole::Observer]));
+    other.grants[0].manage = true;
+    let p = access.preview(TENANT, PROJECT, A, &other).await.unwrap();
+    access
+        .apply(
+            TENANT,
+            PROJECT,
+            A,
+            &other,
+            "shadow-admin",
+            p["state_digest"].as_str().unwrap(),
+            p["plan_digest"].as_str().unwrap(),
+        )
+        .await
+        .unwrap();
+    let directory = access.members(TENANT, PROJECT, A, None, 100).await.unwrap();
+    let member = directory["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["actor_id"] == "new-human")
+        .unwrap();
+    assert_eq!(member["business_roles"], json!(["observer"]));
+    assert_eq!(member["membership_action_ceiling"], json!(["work.read"]));
+    assert!(matches!(
+        access.members(TENANT, PROJECT, NEW_TOKEN, None, 100).await,
+        Err(PgError::Forbidden)
+    ));
+
+    let demote: AdminAccessPlan = serde_json::from_value(json!({
+        "protocol_version":1,"subject":{"id":"agent","kind":"human","display_name":"Worker"},
+        "subject_client_id":"cli-a","role":"project_admin","business_roles":["observer"],
+        "grants":other.grants,"credential":null
+    }))
+    .unwrap();
+    assert!(matches!(
+        access.preview(TENANT, PROJECT, A, &demote).await,
+        Err(PgError::Forbidden)
+    ));
+    other.business_roles = Some(BTreeSet::from([BusinessRole::Administrator]));
+    let p = access.preview(TENANT, PROJECT, A, &other).await.unwrap();
+    access
+        .apply(
+            TENANT,
+            PROJECT,
+            A,
+            &other,
+            "usable-admin",
+            p["state_digest"].as_str().unwrap(),
+            p["plan_digest"].as_str().unwrap(),
+        )
+        .await
+        .unwrap();
+    let p = access.preview(TENANT, PROJECT, A, &demote).await.unwrap();
+    access
+        .apply(
+            TENANT,
+            PROJECT,
+            A,
+            &demote,
+            "handoff-duties",
+            p["state_digest"].as_str().unwrap(),
+            p["plan_digest"].as_str().unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        access.members(TENANT, PROJECT, A, None, 100).await,
+        Err(PgError::Forbidden)
+    ));
+    assert!(
+        access
+            .members(TENANT, PROJECT, NEW_TOKEN, None, 100)
+            .await
+            .is_ok()
+    );
+    let caps = store
+        .query(TENANT, PROJECT, NEW_TOKEN, query("capabilities"))
+        .await
+        .unwrap();
+    assert_eq!(caps["identity"]["can_manage_members"], true);
+    let fresh = prepare(&store, NEW_TOKEN, "a").await;
+    assert!(matches!(
+        store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                NEW_TOKEN,
+                command(
+                    &fresh,
+                    "admin-not-developer",
+                    "session.start",
+                    json!({"conversation_id":"no-implicit-development"})
+                )
+            )
+            .await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
+async fn changed_duties_check_the_actors_other_clients_but_omission_keeps_their_policy() {
+    use awr_team::BusinessRole;
+    use std::collections::BTreeSet;
+    let (_g, mut owner, db, _) = setup().await;
+    enable_admin_manage(&owner).await;
+    let access =
+        ProjectAccessStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let mut first = admin_plan_member();
+    first.business_roles = Some(BTreeSet::from([BusinessRole::Developer]));
+    let p = access.preview(TENANT, PROJECT, A, &first).await.unwrap();
+    access
+        .apply(
+            TENANT,
+            PROJECT,
+            A,
+            &first,
+            "client-one-duties",
+            p["state_digest"].as_str().unwrap(),
+            p["plan_digest"].as_str().unwrap(),
+        )
+        .await
+        .unwrap();
+    let second:awr_team_pg::AccessPlan=serde_json::from_value(json!({
+        "protocol_version":1,"tenant_id":TENANT,"project_id":PROJECT,
+        "actor":first.subject,"client_id":"other-client","role":"developer",
+        "grants":[{"workstream_id":awr_core::Id::from(2),"authority_version":"1","read":true,"write":true,
+            "manage":false,"attest_execution":false,"reconcile_execution":false}],
+        "credential":null,"revoke_credentials":[]
+    })).unwrap();
+    let p = OperatorAccess::preview(&mut owner, &second).await.unwrap();
+    OperatorAccess::apply(
+        &mut owner,
+        &second,
+        "second-client-scope",
+        p["state_digest"].as_str().unwrap(),
+        p["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    first.business_roles = None;
+    assert!(access.preview(TENANT, PROJECT, A, &first).await.is_ok());
+    first.business_roles = Some(BTreeSet::from([BusinessRole::Observer]));
+    assert!(matches!(
+        access.preview(TENANT, PROJECT, A, &first).await,
+        Err(PgError::Forbidden)
+    ));
+    let after = OperatorAccess::inspect(&mut owner, TENANT, PROJECT, "new-human", "other-client")
+        .await
+        .unwrap();
+    assert_eq!(
+        after["state"]["membership"]["business_roles"],
+        json!(["developer"])
+    );
+    assert_eq!(after["state"]["grants"][0]["active"], true);
+}
+
+#[tokio::test]
 async fn project_admin_mcp_path_preview_apply_outcome_and_denies_non_admin() {
     let (_g, owner, db, store) = setup().await;
     enable_admin_manage(&owner).await;
@@ -401,7 +582,11 @@ async fn tenant_credential_revoke_refused_project_revoke_preserves_other_project
             "read":true,"write":true,"manage":true,
             "attest_execution":false,"reconcile_execution":false
         }],
-        "credential":null,
+        "credential":{
+            "id":"handoff-reviewer",
+            "secret_hash":workstream_credential_hash("awr1.handoff-reviewer.2222222222222222222222222222222222222222222222222222222222222222").unwrap(),
+            "expires_at_unix_ms":null
+        },
         "remove_membership":false,
         "revoke_tenant_credentials":[]
     }))
@@ -447,7 +632,7 @@ async fn tenant_credential_revoke_refused_project_revoke_preserves_other_project
         .unwrap();
 
     // Last remaining admin (reviewer) cannot remove self.
-    // Need a credential for reviewer — create via owner OperatorAccess.
+    // Register another reviewer credential via the owner path for rotation checks.
     let reviewer_token =
         "awr1.reviewer-admin.1111111111111111111111111111111111111111111111111111111111111111";
     let owner_plan: awr_team_pg::AccessPlan = serde_json::from_value(json!({

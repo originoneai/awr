@@ -7,9 +7,14 @@ pub(super) fn identity(auth: &ReaderAuthority) -> Value {
             .authorize(&auth.catalog, g.workstream_id, WorkstreamAction::Manage)
             .is_ok()
     });
-    json!({"actor_id":auth.actor_id,"client_id":auth.client_id,"role":auth.role,
+    let mut identity = json!({"actor_id":auth.actor_id,"client_id":auth.client_id,"role":auth.role,
+        "membership_action_ceiling":auth.membership_actions(),
         "can_manage_members":manages && authorize_domain_action(auth, awr_team::Action::AccessManageProject,None,None).is_ok(),
-        "can_read_project_audit":authorize_domain_action(auth, awr_team::Action::AuditReadProject,None,None).is_ok()})
+        "can_read_project_audit":authorize_domain_action(auth, awr_team::Action::AuditReadProject,None,None).is_ok()});
+    if let Some(roles) = &auth.business_roles {
+        identity["business_roles"] = json!(roles);
+    }
+    identity
 }
 
 pub(super) fn visible_streams(auth: &ReaderAuthority) -> Vec<String> {

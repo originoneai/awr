@@ -106,7 +106,50 @@ Fixtures: `tests/fixtures/team-mcp/role_action_matrix.json`.
 | `access.manage_project` | — | — | — | yes |
 | `audit.read_project` | — | — | — | yes |
 
-### Authority scope
+### Explicit business duties
+
+Project membership plans optionally declare `business_roles`, a nonempty set of
+six business duties. Several duties can be explicitly approved together:
+
+| Duty | Action ceiling |
+| --- | --- |
+| `observer` | Read authorized work |
+| `developer` | Maintain own work, claim, execute/report, propose planning and submit delivery |
+| `reviewer` | Read and decide review, with the existing separate review grant |
+| `supervisor` | Read, propose/edit/approve/publish planning and read project audit |
+| `deliverer` | Read and finalize accepted delivery |
+| `administrator` | Read, manage project access and read project audit |
+
+The live policy is **existing membership grants intersect the declared duty
+ceiling, then intersect one live covering Agent delegation**. Duties do not
+create grants, combine separate delegations, or bypass task/workstream scope.
+For example, `administrator` alone does not authorize development or review;
+declare additional duties explicitly when the member needs them. Supervisor
+assignment and Agent approval/finalization require their separate action grants.
+
+`review.decide` still needs the eligible independent-review or Agent-review
+grant and the review policy's independence checks. Special execution attestation
+and reconciliation retain their explicit actor/grant gates, and declared duties
+must permit the corresponding execution/management actions. Duties confer no
+schema, filesystem, database-owner or cross-project authority.
+
+Schema 38 stores the nullable declaration. Absent legacy declarations retain
+the previous policy. Omission or `null` in an update **preserves** a stored
+declaration; an old client cannot erase a restriction by omitting the new field.
+Changed declarations increment membership version, invalidate stale bindings,
+and affect every client of that actor in this project. Project-admin updates
+therefore check their full scope across those clients. Another project is
+unaffected. Administrator handoff requires a live, active manager with a usable
+credential and an explicit current manage grant, not only an admin label.
+
+Capabilities and member directories expose `business_roles` and the computed
+`membership_action_ceiling`. These are policy metadata; the selected resource
+and current delegation must still authorize each action. All HTTP/MCP/store
+paths use the same calculation. Legacy template names and omitted request
+serialization remain compatible. Deployments must migrate through the owner
+path before a schema-38 service is started.
+
+### Resource-bound authority
 
 An allow decision requires an `AuthorityScope` that binds all of:
 

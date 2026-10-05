@@ -51,6 +51,8 @@ pub struct AccessPlan {
     pub actor: AccessActor,
     pub client_id: String,
     pub role: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub business_roles: Option<BTreeSet<awr_team::BusinessRole>>,
     pub grants: Vec<AccessGrant>,
     pub credential: Option<AccessCredential>,
     pub revoke_credentials: Vec<String>,
@@ -87,6 +89,9 @@ fn hash(v: &Value) -> PgResult<String> {
 }
 impl AccessPlan {
     fn validate(&self) -> PgResult<()> {
+        if let Some(roles) = &self.business_roles {
+            awr_team::validate_business_roles(roles).map_err(|_| invalid())?;
+        }
         if self.protocol_version != 1
             || ![
                 &self.tenant_id,
@@ -389,8 +394,14 @@ pub(crate) async fn snapshot(
         .get(0);
     let a=tx.query_opt("SELECT kind,display_name,status FROM awr_team.actors WHERE tenant_id=$1 AND id=$2 FOR SHARE",&[&tenant,&actor]).await?
         .map(|r|json!({"kind":r.get::<_,String>(0),"display_name":r.get::<_,String>(1),"status":r.get::<_,String>(2)}));
-    let member=tx.query_opt("SELECT role,membership_version,independent_review,agent_review FROM awr_team.project_memberships WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3 FOR SHARE",
-        &[&tenant,&project,&actor]).await?.map(|r|json!({"role":r.get::<_,String>(0),"version":r.get::<_,i64>(1).to_string(),"independent_review":r.get::<_,bool>(2),"agent_review":r.get::<_,bool>(3)}));
+    let member=tx.query_opt("SELECT role,membership_version,independent_review,agent_review,business_roles FROM awr_team.project_memberships WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3 FOR SHARE",
+        &[&tenant,&project,&actor]).await?.map(|r| {
+            let mut membership = json!({"role":r.get::<_,String>(0),"version":r.get::<_,i64>(1).to_string(),"independent_review":r.get::<_,bool>(2),"agent_review":r.get::<_,bool>(3)});
+            if let Some(roles) = r.get::<_,Option<Value>>(4) {
+                membership["business_roles"] = roles;
+            }
+            membership
+        });
     let grants=tx.query("SELECT workstream_id,authority_version,can_read,can_write,can_manage,can_attest_execution,can_reconcile_execution,active,grant_version
         FROM awr_team.workstream_grants WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3 AND client_id=$4 ORDER BY workstream_id FOR SHARE",
         &[&tenant,&project,&actor,&caller]).await?.iter().map(|r|json!({"workstream_id":r.get::<_,String>(0),"authority_version":r.get::<_,i64>(1).to_string(),
@@ -484,16 +495,19 @@ fn policy(state: &Value) -> Value {
 async fn apply_policy(tx: &Transaction<'_>, p: &AccessPlan) -> PgResult<()> {
     tx.execute("INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status) VALUES($1,$2,$3,$4,'active') ON CONFLICT DO NOTHING",
         &[&p.tenant_id,&p.actor.id,&p.actor.kind,&p.actor.display_name]).await?;
-    tx.execute("INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role,independent_review,agent_review) VALUES($1,$2,$3,$4,$5,$6)
+    let roles = p.business_roles.as_ref().map(|roles| json!(roles));
+    tx.execute("INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role,independent_review,agent_review,business_roles) VALUES($1,$2,$3,$4,$5,$6,$7)
         ON CONFLICT(tenant_id,project_id,actor_id) DO UPDATE SET
             role=EXCLUDED.role,
             independent_review=EXCLUDED.independent_review,
             agent_review=EXCLUDED.agent_review,
+            business_roles=COALESCE(EXCLUDED.business_roles,awr_team.project_memberships.business_roles),
             membership_version=awr_team.project_memberships.membership_version+1
         WHERE awr_team.project_memberships.role IS DISTINCT FROM EXCLUDED.role
            OR awr_team.project_memberships.independent_review IS DISTINCT FROM EXCLUDED.independent_review
-           OR awr_team.project_memberships.agent_review IS DISTINCT FROM EXCLUDED.agent_review",
-        &[&p.tenant_id,&p.project_id,&p.actor.id,&p.role,&p.independent_review,&p.agent_review]).await?;
+           OR awr_team.project_memberships.agent_review IS DISTINCT FROM EXCLUDED.agent_review
+           OR awr_team.project_memberships.business_roles IS DISTINCT FROM COALESCE(EXCLUDED.business_roles,awr_team.project_memberships.business_roles)",
+        &[&p.tenant_id,&p.project_id,&p.actor.id,&p.role,&p.independent_review,&p.agent_review,&roles]).await?;
     let ids = p
         .grants
         .iter()
@@ -540,6 +554,8 @@ pub struct AdminAccessPlan {
     pub subject: AccessActor,
     pub subject_client_id: String,
     pub role: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub business_roles: Option<BTreeSet<awr_team::BusinessRole>>,
     pub grants: Vec<AccessGrant>,
     pub credential: Option<AccessCredential>,
     /// Explicit review.decide grant (TMCP-031). Never implied by role template.
@@ -568,6 +584,9 @@ fn is_false(value: &bool) -> bool {
 
 impl AdminAccessPlan {
     fn validate_admin_bounds(&self) -> PgResult<()> {
+        if let Some(roles) = &self.business_roles {
+            awr_team::validate_business_roles(roles).map_err(|_| invalid())?;
+        }
         if self.protocol_version != 1
             || !identity(&self.subject.id)
             || !identity(&self.subject_client_id)
@@ -652,6 +671,7 @@ impl AdminAccessPlan {
             actor: self.subject.clone(),
             client_id: self.subject_client_id.clone(),
             role: self.role.clone(),
+            business_roles: self.business_roles.clone(),
             grants: self.grants.clone(),
             credential: self.credential.clone(),
             revoke_credentials: vec![],
@@ -871,6 +891,7 @@ impl ProjectAccessStore {
             || state["membership"]["role"] != plan.role
             || state["membership"]["independent_review"] != plan.independent_review
             || state["membership"]["agent_review"] != plan.agent_review
+            || business_roles_changed(plan, &state)
         {
             actor_active_grant_streams(&tx, tenant, project, &plan.subject.id).await?
         } else {
@@ -1027,6 +1048,7 @@ impl ProjectAccessStore {
             || before["membership"]["role"] != plan.role
             || before["membership"]["independent_review"] != plan.independent_review
             || before["membership"]["agent_review"] != plan.agent_review
+            || business_roles_changed(plan, &before)
         {
             actor_active_grant_streams(&tx, tenant, project, &plan.subject.id).await?
         } else {
@@ -1166,7 +1188,8 @@ impl ProjectAccessStore {
         // Concurrent membership revoke of the caller must not commit. Intentional
         // self-demotion / last-admin handoff is allowed when another admin remains.
         let self_demotion = plan.subject.id == auth.actor_id
-            && (plan.remove_membership || !is_admin_role(&plan.role));
+            && (plan.remove_membership
+                || !policy_can_manage(&plan.role, effective_roles(plan, &before)?.as_ref()));
         if !self_demotion {
             let live = authenticate(&tx, tenant, project, bearer).await?;
             authorize_domain_action(&live, awr_team::Action::AccessManageProject, None, None)?;
@@ -1241,24 +1264,100 @@ async fn ensure_last_admin_safe(
         .get("membership")
         .and_then(|m| m.get("role"))
         .and_then(|r| r.as_str());
-    let currently_admin = current_role.is_some_and(is_admin_role);
-    let will_be_admin = !plan.remove_membership && is_admin_role(&plan.role);
+    let old_roles = crate::workstream_auth::decode_business_roles(
+        state["membership"].get("business_roles").cloned(),
+    )?;
+    let currently_admin =
+        current_role.is_some_and(|role| policy_can_manage(role, old_roles.as_ref()));
+    let will_be_admin = !plan.remove_membership
+        && policy_can_manage(&plan.role, effective_roles(plan, state)?.as_ref());
     if currently_admin && !will_be_admin {
-        let admins: i64 = tx
-            .query_one(
-                "SELECT COUNT(*)::bigint FROM awr_team.project_memberships
-                 WHERE tenant_id=$1 AND project_id=$2
-                   AND role IN ('admin','project_admin')
-                   AND actor_id <> $3",
-                &[&tenant, &project, &plan.subject.id],
-            )
+        if !other_live_manager_exists(tx, tenant, project, &plan.subject.id, &state["catalog"])
             .await?
-            .get(0);
-        if admins < 1 {
+        {
             return Err(PgError::Forbidden);
         }
     }
     Ok(())
+}
+
+fn business_roles_changed(plan: &AdminAccessPlan, state: &Value) -> bool {
+    plan.business_roles
+        .as_ref()
+        .is_some_and(|roles| state["membership"]["business_roles"] != json!(roles))
+}
+
+fn effective_roles(
+    plan: &AdminAccessPlan,
+    state: &Value,
+) -> PgResult<Option<BTreeSet<awr_team::BusinessRole>>> {
+    if let Some(roles) = &plan.business_roles {
+        return Ok(Some(roles.clone()));
+    }
+    crate::workstream_auth::decode_business_roles(
+        state["membership"].get("business_roles").cloned(),
+    )
+}
+
+fn policy_can_manage(role: &str, roles: Option<&BTreeSet<awr_team::BusinessRole>>) -> bool {
+    is_admin_role(role)
+        && crate::workstream_auth::role_ceiling_allows(roles, awr_team::Action::AccessManageProject)
+}
+
+/// A label-only, inactive or client-unscoped administrator cannot take over.
+async fn other_live_manager_exists(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    excluded: &str,
+    catalog: &Value,
+) -> PgResult<bool> {
+    let catalog: WorkstreamCatalog =
+        serde_json::from_value(catalog.clone()).map_err(|_| PgError::SourceDivergence)?;
+    let rows = tx.query("SELECT m.role,m.business_roles,g.workstream_id,g.authority_version,g.can_read,g.can_write
+        FROM awr_team.project_memberships m
+        JOIN awr_team.actors a ON a.tenant_id=m.tenant_id AND a.id=m.actor_id
+        JOIN awr_team.workstream_grants g ON g.tenant_id=m.tenant_id AND g.project_id=m.project_id AND g.actor_id=m.actor_id
+        WHERE m.tenant_id=$1 AND m.project_id=$2 AND m.actor_id<>$3 AND m.role IN ('admin','project_admin')
+          AND a.status='active' AND a.kind IN ('human','system') AND g.active AND g.can_manage
+          AND EXISTS (SELECT 1 FROM awr_team.credentials c WHERE c.tenant_id=m.tenant_id AND c.actor_id=m.actor_id
+            AND c.client_id=g.client_id AND (c.project_id IS NULL OR c.project_id=m.project_id)
+            AND c.revoked_at IS NULL AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp()))",
+        &[&tenant,&project,&excluded]).await?;
+    for row in rows {
+        let roles = crate::workstream_auth::decode_business_roles(row.get(1))?;
+        if !policy_can_manage(&row.get::<_, String>(0), roles.as_ref()) {
+            continue;
+        }
+        let access = awr_core::WorkstreamAccess {
+            project_id: project.into(),
+            subject: "verified-management-handoff".into(),
+            grants: vec![awr_core::WorkstreamGrant {
+                workstream_id: row
+                    .get::<_, String>(2)
+                    .parse()
+                    .map_err(|_| PgError::Forbidden)?,
+                authority_version: row
+                    .get::<_, i64>(3)
+                    .try_into()
+                    .map_err(|_| PgError::Forbidden)?,
+                read: row.get(4),
+                write: row.get(5),
+                manage: true,
+            }],
+        };
+        if access
+            .authorize(
+                &catalog,
+                access.grants[0].workstream_id,
+                WorkstreamAction::Manage,
+            )
+            .is_ok()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 async fn impact_report(

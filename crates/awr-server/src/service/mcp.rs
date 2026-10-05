@@ -366,6 +366,9 @@ fn catalog() -> Vec<Tool> {
                     "expires_at_unix_ms":{"type":["integer","null"]}
                 }},
             "independent_review":{"type":"boolean","default":false},
+            "business_roles":{"type":["array","null"],"minItems":1,"maxItems":6,"uniqueItems":true,
+                "items":{"type":"string","enum":["observer","developer","reviewer","supervisor","deliverer","administrator"]},
+                "description":"Explicit combined duty ceilings intersect existing grants. Omission/null on update preserves the current declaration; names alone grant no authority."},
             "agent_review":{"type":"boolean","default":false},
             "credential_project_scoped":{"type":"boolean","default":false},
             "revoke_project_credentials":{"type":"array","maxItems":256,"items":{"type":"string","maxLength":128}},
