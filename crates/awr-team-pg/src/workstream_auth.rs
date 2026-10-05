@@ -46,6 +46,7 @@ pub(crate) struct ReaderAuthority {
     /// Raw project_memberships.role (legacy or TMCP template name).
     pub role: String,
     pub role_template: awr_team::RoleTemplate,
+    pub business_roles: Option<std::collections::BTreeSet<awr_team::BusinessRole>>,
     pub membership_version: i64,
     /// Explicit independent review.decide grant (never implied by role template).
     pub independent_review: bool,
@@ -70,6 +71,64 @@ pub(crate) struct ReaderAuthority {
     pub read_delegations: Option<Vec<crate::delegation_auth::ReadDelegation>>,
     /// Exact selector-free work.next visibility; never reusable command authority.
     pub navigation_read_scope: Option<NavigationReadScope>,
+}
+
+impl ReaderAuthority {
+    /// One live membership policy, before intersection with one delegation.
+    pub(crate) fn membership_actions(&self) -> std::collections::BTreeSet<awr_team::Action> {
+        membership_action_ceiling(
+            &self.role,
+            self.role_template,
+            &self.actor_kind,
+            self.independent_review,
+            self.agent_review,
+            self.business_roles.as_ref(),
+        )
+    }
+}
+
+pub(crate) fn membership_action_ceiling(
+    role: &str,
+    template: awr_team::RoleTemplate,
+    actor_kind: &str,
+    independent_review: bool,
+    agent_review: bool,
+    business_roles: Option<&std::collections::BTreeSet<awr_team::BusinessRole>>,
+) -> std::collections::BTreeSet<awr_team::Action> {
+    let mut actions = awr_team::template_actions(template);
+    let review = if actor_kind == "agent" {
+        agent_review
+    } else {
+        role == "reviewer"
+            || (independent_review && awr_team::independent_review_eligible(template))
+    };
+    if review {
+        actions.insert(awr_team::Action::ReviewDecide);
+    }
+    awr_team::constrain_actions_to_business_roles(&actions, business_roles)
+}
+
+pub(crate) fn decode_business_roles(
+    value: Option<serde_json::Value>,
+) -> PgResult<Option<std::collections::BTreeSet<awr_team::BusinessRole>>> {
+    value
+        .map(|value| {
+            let roles = serde_json::from_value(value).map_err(|_| PgError::Forbidden)?;
+            awr_team::validate_business_roles(&roles).map_err(|_| PgError::Forbidden)?;
+            Ok(roles)
+        })
+        .transpose()
+}
+
+pub(crate) fn role_ceiling_allows(
+    roles: Option<&std::collections::BTreeSet<awr_team::BusinessRole>>,
+    action: awr_team::Action,
+) -> bool {
+    awr_team::constrain_actions_to_business_roles(
+        &std::collections::BTreeSet::from([action]),
+        roles,
+    )
+    .contains(&action)
 }
 
 #[derive(Clone, Default, serde::Serialize)]
@@ -157,7 +216,7 @@ async fn authenticate_inner(
         .query_opt(project_query, &[&tenant, &project])
         .await?
         .ok_or(PgError::Forbidden)?;
-    let identity = tx.query_opt("SELECT c.actor_id,c.client_id,m.membership_version,m.role,a.kind,m.independent_review,m.agent_review
+    let identity = tx.query_opt("SELECT c.actor_id,c.client_id,m.membership_version,m.role,a.kind,m.independent_review,m.agent_review,m.business_roles
         FROM awr_team.credentials c
         JOIN awr_team.tenants t ON t.id=c.tenant_id
         JOIN awr_team.actors a ON a.tenant_id=c.tenant_id AND a.id=c.actor_id
@@ -179,6 +238,7 @@ async fn authenticate_inner(
     let actor_kind: String = identity.get(4);
     let independent_review: bool = identity.get(5);
     let agent_review: bool = identity.get(6);
+    let business_roles = decode_business_roles(identity.get(7))?;
     let snapshot: String = p
         .get::<_, Option<String>>(0)
         .ok_or(PgError::InactiveCandidate)?;
@@ -210,13 +270,23 @@ async fn authenticate_inner(
             .map_err(|_| PgError::Forbidden)?;
         let authority: i64 = row.get(1);
         let write = row.get::<_, bool>(3) && membership_allows_write(&role);
-        let manage = row.get::<_, bool>(4) && membership_allows_manage(&role);
+        let manage = row.get::<_, bool>(4)
+            && membership_allows_manage(&role)
+            && role_ceiling_allows(
+                business_roles.as_ref(),
+                awr_team::Action::AccessManageProject,
+            );
+        let execution = role_ceiling_allows(
+            business_roles.as_ref(),
+            awr_team::Action::ExecutionRequestAndReportOwn,
+        );
         execution_access.insert(
             id,
             ExecutionAccess {
-                attest: write && actor_kind == "system" && row.get::<_, bool>(6),
+                attest: write && execution && actor_kind == "system" && row.get::<_, bool>(6),
                 reconcile: write
                     && manage
+                    && execution
                     && matches!(actor_kind.as_str(), "system" | "human")
                     && row.get::<_, bool>(7),
             },
@@ -230,11 +300,12 @@ async fn authenticate_inner(
         });
         grant_versions.insert(id, row.get(5));
     }
-    let binding = awr_team::request_hash(
-        &json!({"tenant":tenant,"project":project,"credential":credential_id,
-        "actor":actor,"client":client,"actor_kind":actor_kind,"membership":membership,"role":role}),
-    )
-    .map_err(|_| PgError::Forbidden)?;
+    let mut binding_facts = json!({"tenant":tenant,"project":project,"credential":credential_id,
+        "actor":actor,"client":client,"actor_kind":actor_kind,"membership":membership,"role":role});
+    if let Some(roles) = &business_roles {
+        binding_facts["business_roles"] = json!(roles);
+    }
+    let binding = awr_team::request_hash(&binding_facts).map_err(|_| PgError::Forbidden)?;
     let access = WorkstreamAccess {
         project_id: project.into(),
         subject: binding.clone(),
@@ -250,6 +321,7 @@ async fn authenticate_inner(
         actor_kind,
         role,
         role_template,
+        business_roles,
         membership_version: membership,
         independent_review,
         agent_review,
@@ -388,18 +460,27 @@ pub(crate) fn authority_scope(
         }
     }
     scope.execution_identity = Some(auth.actor_id.clone());
+    scope.allowed_actions = auth.membership_actions();
     if let Some(actions) = &auth.delegated_actions {
         // Agents: never inherit the full membership template (TMCP-030).
-        scope.allowed_actions = actions.clone();
+        scope.allowed_actions = scope
+            .allowed_actions
+            .intersection(actions)
+            .copied()
+            .collect();
         // Delegation alone never confers independent review.
         scope.independent_review_grant = false;
         scope.agent_review_grant = auth.actor_kind == "agent"
             && auth.agent_review
-            && actions.contains(&awr_team::Action::ReviewDecide);
-    } else if auth.independent_review && awr_team::independent_review_eligible(auth.role_template) {
+            && scope
+                .allowed_actions
+                .contains(&awr_team::Action::ReviewDecide);
+    } else if scope
+        .allowed_actions
+        .contains(&awr_team::Action::ReviewDecide)
+    {
         // Explicit membership grant on an eligible template (TMCP-031).
         scope.independent_review_grant = true;
-        scope.allowed_actions.insert(awr_team::Action::ReviewDecide);
     }
     scope.policy_version = awr_team::PERMISSION_POLICY_VERSION;
     scope.revoked = false;
@@ -427,17 +508,7 @@ pub(crate) fn authorize_domain_action(
     if live != auth.role_template || auth.membership_version < 1 {
         return Err(PgError::Forbidden);
     }
-    let mut scope = authority_scope(auth, stream, work_id);
-    // `validate_reviewer` already treats membership role `reviewer` as the
-    // approval-capable label. Do not grant this to readers, workers, or admins:
-    // `review.decide` stays a separate grant for every other template.
-    if action == awr_team::Action::ReviewDecide
-        && auth.role == "reviewer"
-        && auth.actor_kind != "agent"
-    {
-        scope.independent_review_grant = true;
-        scope.allowed_actions.insert(awr_team::Action::ReviewDecide);
-    }
+    let scope = authority_scope(auth, stream, work_id);
     let resource = awr_team::ResourceRef {
         tenant_id: auth.tenant_id.clone(),
         project_id: auth.access.project_id.clone(),
@@ -540,6 +611,20 @@ pub(crate) fn authorize_command(
         return Err(PgError::Forbidden);
     }
     if !has_write(auth, stream) {
+        return Err(PgError::Forbidden);
+    }
+    if matches!(
+        required,
+        DomainAuthority::Attest | DomainAuthority::Reconcile
+    ) && (!role_ceiling_allows(
+        auth.business_roles.as_ref(),
+        awr_team::Action::ExecutionRequestAndReportOwn,
+    ) || required == DomainAuthority::Reconcile
+        && !role_ceiling_allows(
+            auth.business_roles.as_ref(),
+            awr_team::Action::AccessManageProject,
+        ))
+    {
         return Err(PgError::Forbidden);
     }
     if phase == CommandAuthPhase::Admission {
@@ -694,6 +779,7 @@ mod tests {
             role: role.into(),
             role_template,
             membership_version: 1,
+            business_roles: None,
             independent_review: false,
             agent_review: false,
             execution_access,
@@ -720,6 +806,99 @@ mod tests {
             read_delegations: None,
             navigation_read_scope: None,
         }
+    }
+
+    #[test]
+    fn business_ceiling_is_applied_after_legacy_and_explicit_review_grants() {
+        use awr_team::{Action, BusinessRole};
+        use std::collections::BTreeSet;
+        let mut auth = authority_with_role(
+            "reviewer",
+            true,
+            false,
+            false,
+            false,
+            WorkstreamState::Active,
+        );
+        assert!(
+            authorize_domain_action(&auth, Action::ReviewDecide, Some(id(1)), Some("work")).is_ok()
+        );
+        auth.business_roles = Some(BTreeSet::from([BusinessRole::Observer]));
+        assert!(
+            authorize_domain_action(&auth, Action::ReviewDecide, Some(id(1)), Some("work"))
+                .is_err()
+        );
+        auth.business_roles = Some(BTreeSet::from([BusinessRole::Reviewer]));
+        assert!(
+            authorize_domain_action(&auth, Action::ReviewDecide, Some(id(1)), Some("work")).is_ok()
+        );
+        auth.role = "project_admin".into();
+        auth.role_template = awr_team::RoleTemplate::ProjectAdmin;
+        assert!(
+            authorize_domain_action(&auth, Action::ReviewDecide, Some(id(1)), Some("work"))
+                .is_err()
+        );
+        auth.independent_review = true;
+        assert!(
+            authorize_domain_action(&auth, Action::ReviewDecide, Some(id(1)), Some("work")).is_ok()
+        );
+        auth.business_roles = Some(BTreeSet::from([BusinessRole::Supervisor]));
+        assert!(
+            authorize_domain_action(&auth, Action::ReviewDecide, Some(id(1)), Some("work"))
+                .is_err()
+        );
+        auth.actor_kind = "agent".into();
+        auth.agent_review = true;
+        auth.delegated_actions = Some(BTreeSet::from([Action::WorkRead, Action::ReviewDecide]));
+        assert!(
+            authorize_domain_action(&auth, Action::ReviewDecide, Some(id(1)), Some("work"))
+                .is_err()
+        );
+        auth.business_roles = Some(BTreeSet::from([BusinessRole::Reviewer]));
+        assert!(
+            authorize_domain_action(&auth, Action::ReviewDecide, Some(id(1)), Some("work")).is_ok()
+        );
+    }
+
+    #[test]
+    fn business_duties_never_create_or_bypass_special_execution_authority() {
+        use awr_team::BusinessRole;
+        use std::collections::BTreeSet;
+        let mut auth = authority_with_role(
+            "project_admin",
+            true,
+            true,
+            true,
+            true,
+            WorkstreamState::Active,
+        );
+        for phase in [CommandAuthPhase::Admission, CommandAuthPhase::Effect] {
+            assert!(authorize_command(&auth, id(1), "work", "execution.attest", phase).is_ok());
+            auth.business_roles = Some(BTreeSet::from([BusinessRole::Observer]));
+            assert!(authorize_command(&auth, id(1), "work", "execution.attest", phase).is_err());
+            assert!(authorize_command(&auth, id(1), "work", "execution.reconcile", phase).is_err());
+            assert!(!crate::delegation_auth::execution_side_effect_permitted(
+                &auth
+            ));
+            auth.business_roles = Some(BTreeSet::from([
+                BusinessRole::Developer,
+                BusinessRole::Administrator,
+            ]));
+            assert!(authorize_command(&auth, id(1), "work", "execution.reconcile", phase).is_ok());
+            auth.business_roles = None;
+        }
+        auth.execution_access.get_mut(&id(1)).unwrap().attest = false;
+        auth.business_roles = Some(BTreeSet::from([BusinessRole::Developer]));
+        assert!(
+            authorize_command(
+                &auth,
+                id(1),
+                "work",
+                "execution.attest",
+                CommandAuthPhase::Effect
+            )
+            .is_err()
+        );
     }
 
     #[test]

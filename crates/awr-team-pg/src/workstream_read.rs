@@ -562,6 +562,11 @@ pub(crate) async fn read(
             "legacy_human_review_aliases":["review.accept","review.return"]
         });
         caps["identity"] = navigation::identity(auth);
+        caps["business_role_presets"] = json!({
+            "roles":awr_team::BusinessRole::all(), "explicit_combined_duties":true,
+            "semantics":"membership_grants_intersect_declared_ceiling_then_one_live_delegation",
+            "omitted_on_update":"preserve_existing_declaration", "role_names_grant_authority":false
+        });
         caps["project_entry"] = json!("work.next");
         // WS-014: explicit scope=main / old-client / local-file boundaries.
         if let Some(obj) = caps.as_object_mut() {

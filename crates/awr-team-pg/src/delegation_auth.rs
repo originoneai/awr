@@ -362,6 +362,10 @@ async fn effective_delegations(
         if auth.agent_review && mapped.contains(&Action::ReviewDecide) {
             intersected.insert(Action::ReviewDecide);
         }
+        intersected = intersected
+            .intersection(&auth.membership_actions())
+            .copied()
+            .collect();
         candidates.push(ReadDelegation {
             grant,
             actions: intersected,
@@ -658,6 +662,12 @@ async fn live_person_binding_covers(
 
 /// Side-effecting execution requires StartWork-mapped TMCP execution permission.
 pub(crate) fn execution_side_effect_permitted(auth: &ReaderAuthority) -> bool {
+    if !auth
+        .membership_actions()
+        .contains(&Action::ExecutionRequestAndReportOwn)
+    {
+        return false;
+    }
     match &auth.delegated_actions {
         Some(actions) => actions.contains(&Action::ExecutionRequestAndReportOwn),
         None => {

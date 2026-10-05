@@ -28,12 +28,12 @@ pub use contract::{DependencyAcceptanceMode, WorkContract, WorkDefinitionState};
 pub use error::{TeamError, TeamResult};
 pub use ids::{ActorId, ProjectId, RequestId, ScopeId, SessionId, TenantId, WorkId};
 pub use permission::{
-    Action, AuthorityScope, LegacyGrant, LegacyRole, MigrationPreview, PERMISSION_POLICY_ID,
-    PERMISSION_POLICY_VERSION, PersonLinkStatus, ResourceRef, RoleTemplate, SpecialAuthority,
-    action_allowed_for_template, authority_from_template, authorize_action,
-    deny_model_self_report_only, deny_role_name_only, deny_tool_visibility_only,
-    independent_review_eligible, preview_legacy_migration, template_actions,
-    template_grants_special, with_independent_review,
+    Action, AuthorityScope, BusinessRole, LegacyGrant, LegacyRole, MigrationPreview,
+    PERMISSION_POLICY_ID, PERMISSION_POLICY_VERSION, PersonLinkStatus, ResourceRef, RoleTemplate,
+    SpecialAuthority, action_allowed_for_template, authority_from_template, authorize_action,
+    constrain_actions_to_business_roles, deny_model_self_report_only, deny_role_name_only,
+    deny_tool_visibility_only, independent_review_eligible, preview_legacy_migration,
+    template_actions, template_grants_special, validate_business_roles, with_independent_review,
 };
 pub use planning::{
     AffectedTaskImpact, BaselineView, CandidateDiff, CandidateState, DraftChange,
