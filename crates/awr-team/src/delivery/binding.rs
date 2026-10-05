@@ -1,5 +1,6 @@
 use crate::{
-    ProjectId, RequestId, TeamError, TeamResult, TenantId, WorkId, decode_u64, request_hash,
+    ProjectId, RequestId, ScopeId, TeamError, TeamResult, TenantId, WorkId, decode_u64,
+    request_hash,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -181,6 +182,8 @@ impl ArtifactManifest {
 pub struct CandidateBinding {
     pub tenant_id: TenantId,
     pub project_id: ProjectId,
+    pub scope_id: ScopeId,
+    pub workstream_id: String,
     pub work_id: WorkId,
     pub candidate_id: RequestId,
     pub candidate_version: String,
@@ -196,11 +199,13 @@ impl CandidateBinding {
         for id in [
             self.tenant_id.as_str(),
             self.project_id.as_str(),
+            self.scope_id.as_str(),
             self.work_id.as_str(),
             self.candidate_id.as_str(),
         ] {
             text(id, 128, "binding identity")?;
         }
+        text(&self.workstream_id, 128, "binding workstream")?;
         if decode_u64(&self.candidate_version)
             .map_err(|_| TeamError::InvalidInput("invalid delivery candidate version".into()))?
             == 0

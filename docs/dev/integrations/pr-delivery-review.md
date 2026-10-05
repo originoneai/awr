@@ -18,7 +18,7 @@ delivery without a change request are valid.
 | `IntegrationObservation` | Separate observed outcome, resulting target revision and candidate manifest. |
 | `AdapterCapabilities` | Mechanical support; never an authenticated permission grant. |
 
-Every candidate binding contains tenant/project/work identity, candidate ID and
+Every candidate binding contains tenant/project/scope/workstream/work identity, candidate ID and
 decimal-string version, source contract hash, complete manifest digest, optional
 source revision, required check set and target precondition. Targets require an
 explicit absence or exact revision expectation. Changes to any bound fact require

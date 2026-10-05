@@ -1,5 +1,5 @@
 use awr_team::delivery::*;
-use awr_team::{ActorId, ProjectId, RequestId, TeamError, TenantId, WorkId};
+use awr_team::{ActorId, ProjectId, RequestId, ScopeId, TeamError, TenantId, WorkId};
 use serde_json::{Value, json};
 
 fn artifact() -> ArtifactEntry {
@@ -19,6 +19,8 @@ fn candidate() -> DeliveryCandidate {
         binding: CandidateBinding {
             tenant_id: TenantId::new("example-tenant").unwrap(),
             project_id: ProjectId::new("example-project").unwrap(),
+            scope_id: ScopeId::new("main").unwrap(),
+            workstream_id: "example-workstream".into(),
             work_id: WorkId::new("example-work").unwrap(),
             candidate_id: RequestId::new("example-candidate").unwrap(),
             candidate_version: "1".into(),
@@ -211,6 +213,8 @@ fn every_identity_version_contract_artifact_requirement_and_target_change_requir
     let changes: Vec<(&str, Value)> = vec![
         ("tenant_id", json!("other-tenant")),
         ("project_id", json!("other-project")),
+        ("scope_id", json!("other-scope")),
+        ("workstream_id", json!("other-workstream")),
         ("work_id", json!("other-work")),
         ("candidate_id", json!("other-candidate")),
         ("candidate_version", json!("2")),
