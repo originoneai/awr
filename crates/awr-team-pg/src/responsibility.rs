@@ -4,11 +4,12 @@
 use crate::error::{PgError, PgResult};
 use crate::tx::{bind_workstream_scope, new_id};
 use awr_core::{
-    AcceptResponsibilityRequest, AssignResponsibilityRequest, BindingStatus, ClaimExecutionRequest,
-    ExecutionInstance, PersonAgentBinding, PersonId, ResponsibilityEventType,
-    ResponsibilityPending, ResponsibilityPendingKind, ResponsibilityReceipt, TaskResponsibility,
-    TransferOwnerRequest, apply_accept, apply_agent_swap_for_person, apply_assign,
-    apply_claim_execution, apply_mark_pending, apply_release_execution, apply_transfer_propose,
+    AcceptResponsibilityRequest, AssignResponsibilityRequest, BindingStatus, ClaimAvailableRequest,
+    ClaimExecutionRequest, ExecutionInstance, PersonAgentBinding, PersonId,
+    ResponsibilityEventType, ResponsibilityPending, ResponsibilityPendingKind,
+    ResponsibilityReceipt, TaskResponsibility, TransferOwnerRequest, apply_accept,
+    apply_agent_swap_for_person, apply_assign, apply_claim_available, apply_claim_execution,
+    apply_mark_pending, apply_release_execution, apply_transfer_propose,
 };
 use serde_json::{Value, json};
 use tokio_postgres::Transaction;
@@ -32,6 +33,7 @@ fn event_type_str(op: ResponsibilityEventType) -> &'static str {
     match op {
         ResponsibilityEventType::Assigned => "assigned",
         ResponsibilityEventType::Accepted => "accepted",
+        ResponsibilityEventType::AvailableClaimed => "available_claimed",
         ResponsibilityEventType::ExecutionClaimed => "execution_claimed",
         ResponsibilityEventType::ExecutionReleased => "execution_released",
         ResponsibilityEventType::OwnerTransferProposed => "owner_transfer_proposed",
@@ -53,6 +55,26 @@ fn pending_kind_str(kind: ResponsibilityPendingKind) -> &'static str {
         ResponsibilityPendingKind::NoAcceptor => "no_acceptor",
         ResponsibilityPendingKind::LegacyIdentityMigration => "legacy_identity_migration",
     }
+}
+
+fn request_hash(
+    tenant: &str,
+    project: &str,
+    work_id: &str,
+    operation: &str,
+    actor: Option<&str>,
+    input: Value,
+) -> PgResult<String> {
+    awr_team::request_hash(&json!({
+        "protocol": "awr.responsibility.request.v1",
+        "tenant": tenant,
+        "project": project,
+        "work": work_id,
+        "operation": operation,
+        "actor": actor,
+        "input": input,
+    }))
+    .map_err(|error| PgError::Protocol(error.to_string()))
 }
 
 pub struct ResponsibilityStore {
@@ -161,6 +183,14 @@ impl ResponsibilityStore {
             work_id,
             &req.request_key,
             ResponsibilityEventType::Assigned,
+            request_hash(
+                tenant,
+                project,
+                work_id,
+                "assign",
+                Some(req.authorized_by.as_str()),
+                json!(req),
+            )?,
             |before, bindings| {
                 let _ = bindings;
                 apply_assign(before, req).map_err(map_core)
@@ -184,9 +214,46 @@ impl ResponsibilityStore {
             work_id,
             &req.request_key,
             ResponsibilityEventType::Accepted,
+            request_hash(
+                tenant,
+                project,
+                work_id,
+                "accept",
+                Some(req.acceptor.as_str()),
+                json!(req),
+            )?,
             |before, _| apply_accept(before, req).map_err(map_core),
             Some(req.acceptor.as_str()),
             json!({"acceptor": req.acceptor.as_str()}),
+        )
+        .await
+    }
+
+    /// Persistence kernel only: authenticated task admission and leases are separate.
+    pub async fn claim_available(
+        &self,
+        tenant: &str,
+        project: &str,
+        work_id: &str,
+        req: &ClaimAvailableRequest,
+    ) -> PgResult<(TaskResponsibility, ResponsibilityReceipt)> {
+        self.apply(
+            tenant,
+            project,
+            work_id,
+            &req.request_key,
+            ResponsibilityEventType::AvailableClaimed,
+            request_hash(
+                tenant,
+                project,
+                work_id,
+                "claim_available",
+                Some(req.claimant.as_str()),
+                json!(req),
+            )?,
+            |before, _| apply_claim_available(before, req).map_err(map_core),
+            Some(req.claimant.as_str()),
+            json!({"claimant": req.claimant, "execution_unchanged": true}),
         )
         .await
     }
@@ -204,6 +271,14 @@ impl ResponsibilityStore {
             work_id,
             &req.request_key,
             ResponsibilityEventType::ExecutionClaimed,
+            request_hash(
+                tenant,
+                project,
+                work_id,
+                "claim_execution",
+                Some(req.executor.person_id().as_str()),
+                json!(req),
+            )?,
             |before, bindings| apply_claim_execution(before, req, bindings).map_err(map_core),
             Some(req.executor.person_id().as_str()),
             json!({
@@ -229,6 +304,8 @@ impl ResponsibilityStore {
             work_id,
             request_key,
             ResponsibilityEventType::ExecutionReleased,
+            request_hash(tenant, project, work_id, "release_execution", Some(by_person.as_str()),
+                json!({"request_key": request_key, "expected_version": expected_version, "by_person": by_person}))?,
             |before, _| {
                 apply_release_execution(before, request_key, expected_version, by_person)
                     .map_err(map_core)
@@ -252,6 +329,14 @@ impl ResponsibilityStore {
             work_id,
             &req.request_key,
             ResponsibilityEventType::OwnerTransferProposed,
+            request_hash(
+                tenant,
+                project,
+                work_id,
+                "transfer_owner",
+                Some(req.authorized_by.as_str()),
+                json!(req),
+            )?,
             |before, _| apply_transfer_propose(before, req).map_err(map_core),
             Some(req.authorized_by.as_str()),
             json!({
@@ -278,6 +363,15 @@ impl ResponsibilityStore {
             work_id,
             request_key,
             ResponsibilityEventType::ExecutionClaimed,
+            request_hash(
+                tenant,
+                project,
+                work_id,
+                "swap_agent",
+                Some(person_id.as_str()),
+                json!({"request_key": request_key, "expected_version": expected_version,
+                    "person_id": person_id, "new_executor": new_executor}),
+            )?,
             move |before, bindings| {
                 apply_agent_swap_for_person(
                     before,
@@ -312,6 +406,8 @@ impl ResponsibilityStore {
             work_id,
             request_key,
             ResponsibilityEventType::PendingMarked,
+            request_hash(tenant, project, work_id, "mark_pending", actor.as_deref(),
+                json!({"request_key": request_key, "expected_version": expected_version, "pending": pending}))?,
             move |before, _| {
                 apply_mark_pending(before, request_key, expected_version, pending).map_err(map_core)
             },
@@ -328,6 +424,7 @@ impl ResponsibilityStore {
         work_id: &str,
         request_key: &str,
         op: ResponsibilityEventType,
+        request_hash: String,
         transition: F,
         actor: Option<&str>,
         payload: Value,
@@ -338,6 +435,17 @@ impl ResponsibilityStore {
         let mut client = self.connect().await?;
         let tx = client.transaction().await?;
         bind_workstream_scope(&tx, tenant, project).await?;
+        // Receipt keys are project-wide, including requests for different tasks.
+        // Lock the request before the task so key reuse produces a domain conflict,
+        // rather than a late unique violation after writing a task projection.
+        let request_lock =
+            serde_json::to_string(&("responsibility.request", tenant, project, request_key))
+                .map_err(|error| PgError::Protocol(error.to_string()))?;
+        tx.execute(
+            "SELECT pg_advisory_xact_lock(hashtext('awr.responsibility.request.v1'), hashtext($1))",
+            &[&request_lock],
+        )
+        .await?;
         // Serialize first-insert races. FOR UPDATE cannot lock a missing row, so two
         // creators would otherwise both observe "unassigned" and the later upsert
         // would erase the earlier owner.
@@ -347,7 +455,9 @@ impl ResponsibilityStore {
             &[&lock_key],
         )
         .await?;
-        if let Some(receipt) = load_receipt(&tx, tenant, project, request_key, op).await? {
+        if let Some(receipt) =
+            load_receipt(&tx, tenant, project, request_key, op, &request_hash).await?
+        {
             if receipt.work_item_id != work_id {
                 return Err(PgError::IdempotencyConflict);
             }
@@ -370,6 +480,7 @@ impl ResponsibilityStore {
             &after,
             op,
             request_key,
+            &request_hash,
             actor,
             payload,
         )
@@ -671,10 +782,11 @@ async fn load_receipt(
     project: &str,
     request_key: &str,
     op: ResponsibilityEventType,
+    request_hash: &str,
 ) -> PgResult<Option<ResponsibilityReceipt>> {
     let row = tx
         .query_opt(
-            "SELECT event_id, work_id, op, version_before, version_after
+            "SELECT event_id, work_id, op, version_before, version_after, request_hash
              FROM awr_team.responsibility_receipts
              WHERE tenant_id=$1 AND project_id=$2 AND request_key=$3",
             &[&tenant, &project, &request_key],
@@ -684,7 +796,8 @@ async fn load_receipt(
         return Ok(None);
     };
     let existing_op: String = row.get(2);
-    if existing_op != event_type_str(op) {
+    let existing_hash: Option<String> = row.get(5);
+    if existing_op != event_type_str(op) || existing_hash.as_deref() != Some(request_hash) {
         return Err(PgError::IdempotencyConflict);
     }
     let event_id: String = row.get(0);
@@ -710,6 +823,7 @@ async fn record_change(
     after: &TaskResponsibility,
     op: ResponsibilityEventType,
     request_key: &str,
+    request_hash: &str,
     actor: Option<&str>,
     payload: Value,
 ) -> PgResult<ResponsibilityReceipt> {
@@ -736,8 +850,8 @@ async fn record_change(
     .await?;
     tx.execute(
         "INSERT INTO awr_team.responsibility_receipts(
-            tenant_id,project_id,request_key,event_id,work_id,op,version_before,version_after)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+            tenant_id,project_id,request_key,event_id,work_id,op,version_before,version_after,request_hash)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
         &[
             &tenant,
             &after.project_id,
@@ -747,6 +861,7 @@ async fn record_change(
             &op_s,
             &vb,
             &va,
+            &request_hash,
         ],
     )
     .await?;

@@ -39,6 +39,7 @@ fn event_type_str(op: ResponsibilityEventType) -> &'static str {
     match op {
         ResponsibilityEventType::Assigned => "assigned",
         ResponsibilityEventType::Accepted => "accepted",
+        ResponsibilityEventType::AvailableClaimed => "available_claimed",
         ResponsibilityEventType::ExecutionClaimed => "execution_claimed",
         ResponsibilityEventType::ExecutionReleased => "execution_released",
         ResponsibilityEventType::OwnerTransferProposed => "owner_transfer_proposed",
@@ -822,6 +823,7 @@ fn parse_event_type(value: &str) -> Result<ResponsibilityEventType> {
     Ok(match value {
         "assigned" => ResponsibilityEventType::Assigned,
         "accepted" => ResponsibilityEventType::Accepted,
+        "available_claimed" => ResponsibilityEventType::AvailableClaimed,
         "execution_claimed" => ResponsibilityEventType::ExecutionClaimed,
         "execution_released" => ResponsibilityEventType::ExecutionReleased,
         "owner_transfer_proposed" => ResponsibilityEventType::OwnerTransferProposed,
