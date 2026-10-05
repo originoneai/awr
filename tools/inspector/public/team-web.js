@@ -10,6 +10,8 @@
   'use strict';
 
   const GUARD = 'X-AWR-Inspector';
+  const PROGRESS_REFRESH_MS = 5000;
+  const DETAIL_TIMEOUT_MS = 5000;
 
   function el(tag, attrs, text) {
     const node = document.createElement(tag);
@@ -67,6 +69,8 @@
     let loginInput = null;
     let net = null;
     let pendingDetails = new Map();
+    const detailReadOrder = new WeakMap();
+    let detailSequence = 0;
     let refreshTimer = null;
     const adminModule = root.AWR_TEAM_ADMIN || (typeof require === 'function' ? require('./team-admin') : null);
     const admin = adminModule && adminModule.createTeamAdmin({ $, i18n, api, onAuthError: failed });
@@ -291,7 +295,7 @@
       host.appendChild(header);
       if (state.lastRefreshedAt && isLive()) host.appendChild(el('p', { class: 'sub', role: 'status' },
         t(i18n, state.error ? 'ui.team_progress_refresh_failed' : 'ui.team_progress_refreshed',
-          { time: new Date(state.lastRefreshedAt).toLocaleTimeString() })));
+          { time: new Date(state.lastRefreshedAt).toLocaleTimeString(), seconds: PROGRESS_REFRESH_MS / 1000 })));
       if (isLive() && state.works.some(w => w.detail_error)) host.appendChild(el('p', { class: 'team-error', role: 'status' },
         t(i18n, 'ui.team_partial_details')));
 
@@ -374,12 +378,16 @@
       if (work.contract_hash) params.set('contract', work.contract_hash);
       let pending = pendingDetails.get(identity);
       if (!pending) {
-        pending = api('/api/team/work?' + params).finally(() => {
+        const response = api('/api/team/work?' + params, {
+          signal: typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+            ? AbortSignal.timeout(DETAIL_TIMEOUT_MS) : undefined,
+        }).finally(() => {
           if (pendingDetails.get(identity) === pending) pendingDetails.delete(identity);
         });
+        pending = { response, order: ++detailSequence };
         pendingDetails.set(identity, pending);
       }
-      const body = await pending;
+      const body = await pending.response;
       if (current !== generation || project !== state.projectKey) return null;
       if (!body?.ok || !body.work || body.work.key !== work.key || body.work.workstream_id !== work.workstream_id
         || (work.contract_hash && body.work.contract_hash !== work.contract_hash)) {
@@ -392,6 +400,7 @@
       // A poll and foreground selection may await the same read with separate
       // snapshot objects. Hydrate each caller's object, not only the first one.
       Object.assign(work, body.work);
+      detailReadOrder.set(work, pending.order);
       delete work.detail_error;
       return body;
     }
@@ -400,12 +409,21 @@
       if (!isLive() || state.graphLoading) return;
       const current = generation;
       const queue = state.works.filter(w => !w.detail_loaded).slice(0, 60);
+      const selected = selectedWork();
+      if (selected && !selected.detail_loaded) {
+        const position = queue.indexOf(selected);
+        if (position >= 0) queue.splice(position, 1);
+        queue.unshift(selected);
+      }
       state.graphLoading = true;
       render();
       // Bound concurrent reads and total work per batch; large projects stay navigable.
       let index = 0;
       await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
-        while (current === generation && index < queue.length) await readWork(queue[index++]);
+        while (current === generation && index < queue.length) {
+          await readWork(queue[index++]);
+          if (current === generation && !$('teamWorkspaceGrid')?.hidden && !editing() && !state.detailLoading) render();
+        }
       }));
       if (current !== generation) return;
       state.graphLoading = false;
@@ -685,19 +703,39 @@
         if (usage.stale) group.appendChild(el('p', { class: 'team-error' }, t(i18n, 'feedback.stale')));
       } else section('usage', [['tokens', missing(w, 'usage', 'ui.team_progress_usage_missing')]]);
       section('related', [['pr', w.pr_reference?.url],
-        ['ci', w.github ? t(i18n, 'ui.team_progress_ci_' + (w.github.ci || 'unavailable')) : null]]);
+        ['ci', w.github ? w.pr_reference?.expected_head && w.github.head_sha
+          && w.pr_reference.expected_head !== w.github.head_sha ? t(i18n, 'feedback.other_revision')
+          : w.github.pending && !w.github.ci ? t(i18n, 'feedback.repository_pending')
+            : t(i18n, 'ui.team_progress_ci_' + (w.github.ci || 'unavailable')) : null]]);
       if (w.pr_reference) {
         host.appendChild(el('a', { href: w.pr_reference.url, target: '_blank', rel: 'noopener noreferrer', class: 'linkish' }, t(i18n, 'ui.team_progress_open_pr')));
         host.appendChild(el('p', { class: 'sub' }, t(i18n, 'ui.team_progress_pr_' + w.pr_reference.registration)));
       }
       if (w.github && !w.github.unavailable) {
-        host.appendChild(el('p', { class: 'sub' }, t(i18n, 'ui.team_progress_github_basis', {
+        if (w.github.head_sha && Number.isFinite(w.github.observed_at_ms)) host.appendChild(el('p', { class: 'sub' }, t(i18n, 'ui.team_progress_github_basis', {
           head: w.github.head_sha.slice(0, 8), time: new Date(w.github.observed_at_ms).toLocaleString(),
         })));
-        if (w.pr_reference?.expected_head && w.pr_reference.expected_head !== w.github.head_sha)
+        if (w.github.pending) host.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.repository_pending')));
+        if (w.pr_reference?.expected_head && w.github.head_sha && w.pr_reference.expected_head !== w.github.head_sha)
           host.appendChild(el('p', { class: 'team-error' }, t(i18n, 'ui.team_progress_head_changed')));
       }
-      if (w.execution) section('execution', [['execution_state', t(i18n, 'ui.team_progress_execution_' + w.execution.state)]]);
+      if (w.execution) {
+        const execution = w.execution;
+        const dimension = key => t(i18n, execution[key] == null ? 'feedback.dimension_unknown'
+          : 'feedback.' + key + (execution[key] ? '_yes' : '_no'));
+        const known = (prefix, value) => {
+          const key = 'feedback.' + prefix + value, translated = t(i18n, key);
+          return translated === key ? t(i18n, 'ui.network_not_reported') : translated;
+        };
+        const group = section('execution', [['execution_state', t(i18n, 'ui.team_progress_execution_' + execution.state)],
+          ['terminal_reported', dimension('terminal_reported')], ['artifact_verified', dimension('artifact_verified')],
+          ['effects_settled', dimension('effects_settled')], ['settlement_basis', known('settlement_', execution.settlement_basis)],
+          ['settlement_scope', known('scope_', execution.settlement_scope)],
+          ['recovery', known('recovery_', execution.recovery_cause)],
+          ['previous_epoch', execution.previous_epoch_review_required == null ? t(i18n, 'feedback.dimension_unknown')
+            : t(i18n, execution.previous_epoch_review_required ? 'feedback.epoch_review_required' : 'feedback.epoch_review_not_required')]]);
+        group.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.execution_dimensions')));
+      }
       if (w.checkpoint) {
         const history = el('details', { class: 'feedback-history' });
         history.appendChild(el('summary', null, t(i18n, 'feedback.handoff_history')));
@@ -720,7 +758,16 @@
         ['delegated_agent', w.delegated_agent], ['client_version', w.client_info?.version],
         ['model_source', w.model_info?.source ? t(i18n, 'feedback.' + w.model_info.source) : null],
         ['reported_at', time(w.reporting?.client_reported_at_unix_ms)],
+        ['recorded_revision', w.progress_report?.recorded_project_revision],
+        ['reported_contract', w.progress_report?.reported_contract_hash],
+        ['report_checkpoint', w.progress_report?.checkpoint_id],
+        ['client_observed_at', time(w.progress_report?.client_observed_at_unix_ms)],
+        ['usage_recorded_revision', w.usage?.recorded_project_revision],
+        ['query_revision', w.snapshot?.project_revision],
+        ['queried_at', time(w.snapshot?.queried_at_unix_ms ?? w.observed_at_ms)],
         ['usage_source', w.usage ? [w.usage.source, w.usage.source_ref, w.usage.counter_id].join(' · ') : null]], provenance);
+      if (w.snapshot?.consistency === 'unconfirmed_legacy')
+        provenance.appendChild(el('p', { class: 'team-error' }, t(i18n, 'feedback.legacy_consistency')));
       if (w.reporting?.client_stale) provenance.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.stale')));
       host.appendChild(provenance);
       if (w.observation_available === false) host.appendChild(el('p', { class: 'team-error' }, t(i18n, 'ui.team_progress_unavailable')));
@@ -952,6 +999,7 @@
       render();
       if (isLive()) {
         if (state.streams.length) {
+          if (!state.selected && state.works.length) state.selected = state.works[0].key;
           await loadGraphDetails();
           if (current !== generation) return;
           if (!state.selected && state.works.length) state.selected = state.works[0].key;
@@ -977,12 +1025,16 @@
         && !editing();
     }
 
-    function scheduleRefresh() {
+    function scheduleRefresh(delay = PROGRESS_REFRESH_MS) {
       if (typeof root.addEventListener !== 'function') return;
       clearTimeout(refreshTimer);
       if (state.session) refreshTimer = setTimeout(async () => {
-        try { await refreshProgress(); } finally { scheduleRefresh(); }
-      }, 15000);
+        const started = performance.now();
+        try { await refreshProgress(); } finally {
+          // Maintain the cadence without tight retry loops after a slow read.
+          scheduleRefresh(Math.max(1000, PROGRESS_REFRESH_MS - (performance.now() - started)));
+        }
+      }, delay);
     }
 
     async function refreshProgress() {
@@ -998,21 +1050,48 @@
         const works = overview.works.map(work => ({ ...work }));
         const queue = works.slice(0, 60);
         const selected = works.find(w => w.key === state.selected);
-        if (selected && !queue.includes(selected)) queue.push(selected);
+        if (selected) {
+          const position = queue.indexOf(selected);
+          if (position >= 0) queue.splice(position, 1);
+          queue.unshift(selected);
+        }
+        let redrawPending = false;
+        const publish = () => {
+          if (current !== generation || state.error || $('teamWorkspaceGrid')?.hidden || editing()) return;
+          const foreground = selectedWork();
+          state.works = works.map(work => {
+            if (selection !== detailGeneration && foreground?.key === work.key
+              && foreground.workstream_id === work.workstream_id && foreground.contract_hash === work.contract_hash
+              && foreground.detail_loaded && (!work.detail_loaded
+                || (detailReadOrder.get(foreground) || 0) > (detailReadOrder.get(work) || 0))) return foreground;
+            return work;
+          });
+          state.streams = overview.workstreams || [];
+          state.raw = overview;
+          state.session = overview.session || state.session;
+          state.disconnect = false;
+          if (!selectedWork()) state.selected = works[0]?.key || null;
+          state.detailResponse = selectedWork()?.detail_loaded ? { ok: true, work: selectedWork() } : null;
+          if (!state.detailLoading && !redrawPending) {
+            const redraw = () => {
+              redrawPending = false;
+              if (current === generation && !state.detailLoading && !$('teamWorkspaceGrid')?.hidden && !editing()) render();
+            };
+            if (typeof root.requestAnimationFrame === 'function') { redrawPending = true; root.requestAnimationFrame(redraw); }
+            else redraw();
+          }
+        };
         let index = 0;
         await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
-          while (current === generation && index < queue.length) await readWork(queue[index++]);
+          while (current === generation && index < queue.length) {
+            await readWork(queue[index++]);
+            publish();
+          }
         }));
         // A new selection may be outside this bounded batch. Keep its foreground
         // detail rather than replacing it with an unread object from the poll.
-        if (current !== generation || selection !== detailGeneration || state.error || $('teamWorkspaceGrid')?.hidden || editing()) return;
-        state.works = works;
-        state.streams = overview.workstreams || [];
-        state.raw = overview;
-        state.session = overview.session || state.session;
-        state.disconnect = false;
-        if (!selectedWork()) state.selected = works[0]?.key || null;
-        state.detailResponse = selectedWork() ? { ok: true, work: selectedWork() } : null;
+        if (current !== generation || state.error || $('teamWorkspaceGrid')?.hidden || editing()) return;
+        publish();
         state.lastRefreshedAt = Date.now();
       } finally {
         state.refreshing = false;
@@ -1046,7 +1125,7 @@
     };
   }
 
-  const api = { createTeamWeb };
+  const api = { createTeamWeb, PROGRESS_REFRESH_MS, DETAIL_TIMEOUT_MS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.AWR_TEAM_WEB = api;
 })(typeof window !== 'undefined' ? window : globalThis);

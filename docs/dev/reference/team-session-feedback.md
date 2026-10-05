@@ -157,3 +157,39 @@ Every attempt starts a fresh snapshot and authenticates again. Denial, invalid
 input, missing context and response-budget errors are not retried. No result or
 authority escapes an aborted attempt; persistent contention remains an error.
 This retry mechanism applies to scoped work queries, not commands or side effects.
+
+## Inspector observations and refresh
+
+Inspector prefers `work.snapshot` and validates its work/stream, contract,
+revision, source snapshot, epoch, query time and runtime fields. It uses the
+legacy `work.prepare`/`work.observe` pair only after an explicit Unsupported
+response. Legacy runtime consistency is labeled unconfirmed; denial, context
+errors, malformed snapshots and read failures never trigger a downgrade.
+
+The detail view keeps execution outcome reporting, artifact verification,
+scoped effect settlement and recovery separate. Missing legacy booleans remain
+unknown. Caller-asserted workspace settlement retains its declared basis and
+does not become repository integration or task acceptance. Expanded sources
+show report/checkpoint and recorded audit versions, supplied measurement time,
+receive time and current query time without inferring a client-consumed cursor.
+
+Visible idle workspaces refresh on a five-second cadence. The selected task is
+read first, followed by a batch of up to 60 tasks with four concurrent reads.
+Healthy responses render incrementally; a slow or failed peer does not hold all
+feedback. Scoped bridge detail reads have a four-second total deadline, including
+legacy fallback; supported browser detail fetches also have a five-second bound.
+Mutating commands do not inherit these read deadlines or automatic retries.
+Selection, form focus, in-flight deduplication and generation/auth invalidation
+remain protected. Hidden pages and active editing pause automatic refresh.
+
+The normal-network p95 target is ten seconds from feedback registration to
+render for this bounded visible-page scale, with scoped HTTP responses within
+250 ms. Larger projects, legacy multi-query reads, editing pauses or degraded
+networks need a separately measured envelope. Synthetic browser/protocol latency
+checks do not count as complete native collaboration acceptance.
+
+Optional anonymous GitHub observations run independently with two concurrent
+background lookups and a bounded public metadata cache. They never delay AWR
+feedback or grant authority. Cached observations retain their original time;
+pending/unavailable reads and another-head CI are explicit. Repository delivery
+and AWR acceptance remain separate from these presentation observations.

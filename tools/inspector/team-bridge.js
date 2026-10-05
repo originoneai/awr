@@ -99,7 +99,7 @@ function createTeamBridge(opts) {
     return session;
   }
 
-  async function proxyTeam(reqPath, req, body, methodOverride) {
+  async function proxyTeam(reqPath, req, body, methodOverride, signal) {
     if (!TEAM.url) return null;
     const method = methodOverride || req.method || 'GET';
     const headers = {
@@ -118,6 +118,7 @@ function createTeamBridge(opts) {
       method,
       headers,
       body: payload,
+      signal,
     });
     const text = await res.text();
     let json;
@@ -311,9 +312,24 @@ function createTeamBridge(opts) {
       const work = url.searchParams.get('work');
       const stream = url.searchParams.get('workstream');
       if (!project || !work || !stream) return { ok: false, error: { code: 'InvalidInput', message: 'project, work and workstream required' } };
-      const upstream = await proxyTeam(`/v1/web/projects/${encodeURIComponent(project)}/query`, req, {
-        protocol_version: 1, op: 'work.prepare', work_id: work, workstream_id: stream,
-      }, 'POST');
+      // Bound the entire detail read, including legacy fallback. This signal
+      // is never applied to mutating commands with possibly unknown outcomes.
+      const readSignal = AbortSignal.timeout(4000);
+      const query = async op => {
+        try { return await proxyTeam(`/v1/web/projects/${encodeURIComponent(project)}/query`, req, {
+        protocol_version: 1, op, work_id: work, workstream_id: stream,
+        ...(op === 'work.snapshot' ? { max_context_bytes: 262144 } : {}),
+        }, 'POST', readSignal); } catch (error) {
+          if (!readSignal.aborted) throw error;
+          return { status: 504, json: { code: 'ReadTimeout', message: 'Scoped work detail timed out; retry this read' } };
+        }
+      };
+      const unsupported = reply => [400, 501].includes(reply?.status)
+        && (reply.json?.code === 'Unsupported' || reply.json?.error?.code === 'Unsupported');
+      let upstream = await query('work.snapshot');
+      applyProxiedCookies(res, upstream?.setCookie);
+      const legacy = unsupported(upstream);
+      if (legacy) upstream = await query('work.prepare');
       if (!upstream || upstream.status >= 400) return liveError(upstream);
       applyProxiedCookies(res, upstream.setCookie);
       const data = upstream.json && upstream.json.data;
@@ -324,22 +340,46 @@ function createTeamBridge(opts) {
       if (expected && expected !== data.contract_hash) {
         return { ok: false, error: { code: 'SourceChanged', message: 'Work contract changed; refresh the overview' } };
       }
-      const observed = await proxyTeam(`/v1/web/projects/${encodeURIComponent(project)}/query`, req, {
-        protocol_version: 1, op: 'work.observe', work_id: work, workstream_id: stream,
-      }, 'POST');
+      const observed = legacy ? await query('work.observe') : upstream;
       if (!observed) return liveError(observed);
-      applyProxiedCookies(res, observed.setCookie);
+      if (legacy) applyProxiedCookies(res, observed.setCookie);
       let progress = { observation_available: false, observation_error: 'unsupported' };
+      let snapshot = { consistency: 'unconfirmed_legacy' };
       if (observed.status >= 400) {
-        if (observed.json?.code !== 'Unsupported') return liveError(observed);
+        if (!legacy || !unsupported(observed)) return liveError(observed);
       } else {
-        const observation = observed.json?.data;
+        const observation = legacy ? observed.json?.data : data.observation;
         if (!observation || observation.work_id !== work || observed.json.workstream_id !== stream
           || observation.contract_hash !== data.contract_hash || !Number.isFinite(observation.observed_at_unix_ms)) {
-          return { ok: false, error: { code: 'SourceChanged', message: 'Observation changed; refresh the project' } };
+          return { ok: false, error: { code: legacy ? 'SourceChanged' : 'BadGateway', message: 'Invalid scoped observation; refresh the project' } };
+        }
+        if (!legacy) {
+          const meta = data.snapshot, envelope = upstream.json;
+          const fields = ['state', 'work_version', 'last_fence', 'recovery_blocked', 'selected_completion_id'];
+          const validRuntime = value => value && !Array.isArray(value)
+            && typeof value.state === 'string' && value.state
+            && typeof value.work_version === 'string' && /^\d+$/.test(value.work_version)
+            && typeof value.last_fence === 'string' && /^\d+$/.test(value.last_fence)
+            && typeof value.recovery_blocked === 'boolean'
+            && (value.selected_completion_id === null || typeof value.selected_completion_id === 'string');
+          const runtimeMatches = data.runtime === null && observation.runtime === null
+            || validRuntime(data.runtime) && validRuntime(observation.runtime)
+              && fields.every(k => data.runtime[k] === observation.runtime[k]);
+          if (meta?.version !== 1 || meta.consistency !== 'repeatable_read'
+            || typeof meta.project_revision !== 'string' || !/^\d+$/.test(meta.project_revision)
+            || meta.project_revision !== envelope.project_revision
+            || typeof meta.source_snapshot_id !== 'string' || !meta.source_snapshot_id
+            || meta.source_snapshot_id !== envelope.source_snapshot_id
+            || typeof meta.coordinator_epoch !== 'string' || !meta.coordinator_epoch
+            || meta.coordinator_epoch !== envelope.coordinator_epoch
+            || meta.queried_at_unix_ms !== observation.observed_at_unix_ms
+            || typeof data.context_complete !== 'boolean' || !runtimeMatches) {
+            return { ok: false, error: { code: 'BadGateway', message: 'Invalid atomic Team snapshot' } };
+          }
+          snapshot = meta;
         }
         progress = mapObservation(observation);
-        progress.github = await observeGithub(progress.pr_reference);
+        progress.github = observeGithub.background(progress.pr_reference);
       }
       // prepare may omit its optional hint to respect the caller's byte budget.
       // Its required completeness fact still takes priority over observe advice.
@@ -362,6 +402,7 @@ function createTeamBridge(opts) {
         next_step: data.next_step || null,
         execution_admission: data.execution_admission || 'not_evaluated',
         ...progress,
+        snapshot,
       } };
     },
 

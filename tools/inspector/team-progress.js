@@ -40,6 +40,15 @@ function mapObservation(data) {
       state: execution.state, id: execution.execution_id,
       contract_matches_current: execution.contract_matches_current,
       lease_live: execution.lease_live, receipt_details_available: execution.receipt_details_available,
+      terminal_reported: booleanOrUnknown(execution.terminal_reported),
+      artifact_verified: booleanOrUnknown(execution.artifact_verified),
+      artifact_verification_basis: execution.artifact_verification_basis || null,
+      effects_settled: booleanOrUnknown(execution.effects_settled),
+      settlement_basis: execution.settlement_basis || null,
+      settlement_scope: execution.settlement_scope || null,
+      recovery_blocked: booleanOrUnknown(execution.recovery_blocked),
+      recovery_cause: execution.recovery_cause || null,
+      previous_epoch_review_required: booleanOrUnknown(execution.previous_epoch_review_required),
       receipt_missing: data.missing?.execution_receipt || null,
       report: execution.latest_receipt ? {
         kind: execution.latest_receipt.receipt_kind,
@@ -55,9 +64,25 @@ function mapObservation(data) {
   };
 }
 
+function booleanOrUnknown(value) {
+  return typeof value === 'boolean' ? value : null;
+}
+
 function createGithubObserver(fetchImpl = fetch, now = Date.now) {
   const cache = new Map();
   let blockedUntil = 0;
+  let running = 0;
+  const queue = [];
+  function pump() {
+    while (running < 2 && queue.length) {
+      const { task, resolve, reject } = queue.shift();
+      running++;
+      Promise.resolve().then(task).then(resolve, reject).finally(() => { running--; pump(); });
+    }
+  }
+  function schedule(task) {
+    return new Promise((resolve, reject) => { queue.push({ task, resolve, reject }); pump(); });
+  }
   async function read(path) {
     if (now() < blockedUntil) throw new Error('GitHub observation rate limited');
     const response = await fetchImpl('https://api.github.com' + path, {
@@ -75,17 +100,22 @@ function createGithubObserver(fetchImpl = fetch, now = Date.now) {
     if (!response.ok) throw new Error('GitHub observation unavailable');
     return response.json();
   }
-  return async function observe(reference) {
+  async function observe(reference) {
     if (!reference) return null;
     const key = reference.url, hit = cache.get(key);
     // Three anonymous requests per PR. Scale retention with the observed set
     // to stay below 60 requests/hour (45/hour with four-minute PR headroom).
     const successTtl = Math.max(300000, cache.size * 240000);
-    if (hit && now() < (hit.failed ? hit.expiresAt : hit.at + successTtl)) return hit.promise;
+    if (hit && (hit.pending || now() < (hit.failed ? hit.expiresAt : hit.at + successTtl))) return hit.promise;
     // The cache contains public response metadata only, and stays bounded.
-    if (cache.size >= 200) cache.delete(cache.keys().next().value);
-    const entry = { at: now(), failed: false, expiresAt: now() + 300000 };
-    entry.promise = (async () => {
+    if (cache.size >= 200) {
+      const finished = [...cache].find(([, value]) => !value.pending);
+      if (!finished) return { source: 'github_public_api', observed_at_ms: null, unavailable: true,
+        reason: 'observation_capacity' };
+      cache.delete(finished[0]);
+    }
+    const entry = { at: now(), failed: false, pending: true, value: hit?.value || null, expiresAt: now() + 300000 };
+    entry.promise = schedule(async () => {
       try {
         const base = `/repos/${encodeURIComponent(reference.owner)}/${encodeURIComponent(reference.repo)}`;
         const pr = await read(`${base}/pulls/${reference.number}`);
@@ -110,12 +140,24 @@ function createGithubObserver(fetchImpl = fetch, now = Date.now) {
       } catch (_) {
         entry.failed = true;
         entry.expiresAt = Math.max(now() + 60000, blockedUntil);
-        return { source: 'github_public_api', observed_at_ms: now(), unavailable: true };
+        return { source: 'github_public_api', observed_at_ms: null, attempted_at_ms: now(), unavailable: true };
       }
-    })();
+    }).then(value => { entry.value = value; entry.pending = false; return value; });
     cache.set(key, entry);
     return entry.promise;
   };
+  // AWR reads never await optional repository APIs. Public cached facts retain
+  // their own time while a refresh runs independently; a first lookup has none.
+  observe.background = reference => {
+    if (!reference) return null;
+    void observe(reference);
+    const entry = cache.get(reference.url);
+    if (!entry) return { source: 'github_public_api', observed_at_ms: null, unavailable: true,
+      reason: 'observation_capacity', pending: false, cached: false };
+    return { ...(entry.value || { source: 'github_public_api', url: reference.url, observed_at_ms: null }),
+      pending: entry.pending, cached: Boolean(entry.value) };
+  };
+  return observe;
 }
 
 module.exports = { mapObservation, pullRequestReference, createGithubObserver };
