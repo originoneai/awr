@@ -421,6 +421,7 @@ async fn schema_upgrade_keeps_legacy_members_unspecified_and_validates_metadata_
             "ALTER TABLE awr_team.persons DROP COLUMN member_identity;
              ALTER TABLE awr_team.project_memberships DROP COLUMN business_roles;
              ALTER TABLE awr_team.project_memberships DROP COLUMN assignment_grant;
+             ALTER TABLE awr_team.responsibility_receipts DROP COLUMN request_hash;
              UPDATE awr_team.schema_state SET version=36 WHERE component='awr_team';",
         )
         .await

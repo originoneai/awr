@@ -252,6 +252,7 @@ impl TaskResponsibility {
 pub enum ResponsibilityEventType {
     Assigned,
     Accepted,
+    AvailableClaimed,
     ExecutionClaimed,
     ExecutionReleased,
     OwnerTransferProposed,
@@ -315,6 +316,15 @@ pub struct AcceptResponsibilityRequest {
     pub acceptor: PersonId,
     /// Must match the pending assignment / transfer target.
     pub as_owner: bool,
+}
+
+/// Claim sole responsibility from the available pool, without starting execution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimAvailableRequest {
+    pub request_key: String,
+    pub expected_version: u64,
+    pub claimant: PersonId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -456,6 +466,42 @@ pub fn apply_accept(
     ) {
         next.pending = None;
     }
+    next.validate_structure()?;
+    Ok(next)
+}
+
+/// Take ownership only when no owner, reservation or executor exists.
+/// Authentication, dependency admission and coordination leases are separate.
+pub fn apply_claim_available(
+    current: &TaskResponsibility,
+    req: &ClaimAvailableRequest,
+) -> Result<TaskResponsibility> {
+    validate_request_key(&req.request_key)?;
+    validate_id(req.claimant.as_str(), "claimant")?;
+    current.validate_structure()?;
+    if current.version != req.expected_version {
+        return Err(Error::RevisionConflict {
+            expected: req.expected_version,
+            actual: current.version,
+        });
+    }
+    if current.owner.is_some() || current.pending.is_some() || current.current_executor.is_some() {
+        return Err(Error::ClaimConflict(
+            "available ownership requires no owner, pending responsibility or executor".into(),
+        ));
+    }
+    if current.independent_reviewer.as_ref() == Some(&req.claimant) {
+        return Err(Error::RuleViolation(
+            "the independent reviewer cannot claim ownership of this task".into(),
+        ));
+    }
+    let mut next = current.clone();
+    next.owner = Some(req.claimant.clone());
+    next.collaborators.retain(|person| person != &req.claimant);
+    next.version = current
+        .version
+        .checked_add(1)
+        .ok_or_else(|| Error::InvalidInput("responsibility version overflow".into()))?;
     next.validate_structure()?;
     Ok(next)
 }
@@ -994,6 +1040,128 @@ mod tests {
                     acceptor: person("alice"),
                     as_owner: true,
                 },
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn available_claim_preserves_roles_without_starting_execution() {
+        let mut current = task();
+        current.collaborators = vec![person("alice"), person("bob")];
+        current.independent_reviewer = Some(person("carol"));
+        let before = current.clone();
+        let next = apply_claim_available(
+            &current,
+            &ClaimAvailableRequest {
+                request_key: "pool-claim".into(),
+                expected_version: 0,
+                claimant: person("alice"),
+            },
+        )
+        .unwrap();
+        assert_eq!(current, before);
+        assert_eq!(next.owner, Some(person("alice")));
+        assert_eq!(next.collaborators, vec![person("bob")]);
+        assert_eq!(next.independent_reviewer, Some(person("carol")));
+        assert_eq!(next.version, 1);
+        assert!(next.current_executor.is_none());
+        assert!(next.pending.is_none());
+    }
+
+    #[test]
+    fn available_claim_refuses_owned_reserved_or_executing_tasks() {
+        let request = ClaimAvailableRequest {
+            request_key: "pool-claim".into(),
+            expected_version: 0,
+            claimant: person("alice"),
+        };
+        let mut owned = task();
+        owned.owner = Some(person("bob"));
+        let mut executing = task();
+        executing.current_executor = Some(ExecutionInstance::Person {
+            person_id: person("bob"),
+        });
+        let mut states = vec![owned, executing];
+        for kind in [
+            ResponsibilityPendingKind::NoAcceptor,
+            ResponsibilityPendingKind::Departure,
+            ResponsibilityPendingKind::Disabled,
+            ResponsibilityPendingKind::LegacyIdentityMigration,
+        ] {
+            let mut reserved = task();
+            reserved.pending = Some(ResponsibilityPending {
+                kind,
+                person_id: Some(person("bob")),
+                legacy_ref: None,
+                transfer_request_key: Some("reservation".into()),
+                detail: "awaiting explicit resolution".into(),
+            });
+            states.push(reserved);
+        }
+        for state in states {
+            let before = state.clone();
+            assert!(matches!(
+                apply_claim_available(&state, &request),
+                Err(Error::ClaimConflict(_))
+            ));
+            assert_eq!(state, before);
+        }
+    }
+
+    #[test]
+    fn available_claim_enforces_version_and_reviewer_independence() {
+        let mut current = task();
+        current.independent_reviewer = Some(person("alice"));
+        let mut request = ClaimAvailableRequest {
+            request_key: "pool-claim".into(),
+            expected_version: 0,
+            claimant: person("alice"),
+        };
+        assert!(matches!(
+            apply_claim_available(&current, &request),
+            Err(Error::RuleViolation(_))
+        ));
+        request.claimant = person("bob");
+        request.expected_version = 1;
+        assert!(matches!(
+            apply_claim_available(&current, &request),
+            Err(Error::RevisionConflict {
+                expected: 1,
+                actual: 0
+            })
+        ));
+        current.version = u64::MAX;
+        request.expected_version = u64::MAX;
+        assert!(matches!(
+            apply_claim_available(&current, &request),
+            Err(Error::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn available_claim_validates_deserialized_identities_and_request_keys() {
+        let current = task();
+        for (key, claimant) in [("", "alice"), ("pool", ""), ("pool", "line\nbreak")] {
+            let request: ClaimAvailableRequest = serde_json::from_value(serde_json::json!({
+                "request_key": key, "expected_version": 0, "claimant": claimant
+            }))
+            .unwrap();
+            assert!(matches!(
+                apply_claim_available(&current, &request),
+                Err(Error::InvalidInput(_))
+            ));
+        }
+        let mut invalid_task = current.clone();
+        invalid_task.collaborators = vec![person("bob"), person("bob")];
+        assert!(
+            apply_claim_available(
+                &invalid_task,
+                &ClaimAvailableRequest {
+                    request_key: "pool".into(),
+                    expected_version: 0,
+                    claimant: person("alice"),
+                }
             )
             .is_err()
         );
