@@ -4,6 +4,71 @@ use awr_team_pg::{EXPECTED_SCHEMA_VERSION, check_schema, migrate};
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn schema41_recovery_upgrade_does_not_infer_old_causes_and_rolls_back_atomically() {
+    let (_g, admin, _) = common::historical_team_schema(41).await;
+    admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('upgrade-tenant','Upgrade','active');
+        INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+        VALUES('upgrade-tenant','upgrade-project','upgrade','team','old-epoch','active');
+        INSERT INTO awr_team.work_items(tenant_id,project_id,id,external_key)
+        VALUES('upgrade-tenant','upgrade-project','legacy-work','legacy-work');
+        INSERT INTO awr_team.work_scopes(tenant_id,project_id,id,name,status)
+        VALUES('upgrade-tenant','upgrade-project','main','Main','active');
+        INSERT INTO awr_team.work_runtime(tenant_id,project_id,scope_id,work_id,state,recovery_blocked)
+        VALUES('upgrade-tenant','upgrade-project','main','legacy-work','in_progress',true)").await.unwrap();
+    let before: Value = admin
+        .query_one("SELECT to_jsonb(w) FROM awr_team.work_runtime w", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let ddl = include_str!("../migrations/20261005000042_execution_recovery_cause.sql");
+    assert!(
+        admin
+            .batch_execute(&ddl.replace(
+                "UPDATE awr_team.schema_state",
+                "SELECT 1/0; UPDATE awr_team.schema_state"
+            ))
+            .await
+            .is_err()
+    );
+    admin.batch_execute("ROLLBACK").await.unwrap();
+    assert_eq!(
+        admin
+            .query_one("SELECT version FROM awr_team.schema_state", &[])
+            .await
+            .unwrap()
+            .get::<_, i32>(0),
+        41
+    );
+    let unchanged: Value = admin
+        .query_one("SELECT to_jsonb(w) FROM awr_team.work_runtime w", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(unchanged, before);
+    migrate(&admin).await.unwrap();
+    check_schema(&admin).await.unwrap();
+    let after: Value = admin
+        .query_one("SELECT to_jsonb(w) FROM awr_team.work_runtime w", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let mut preserved = after.clone();
+    for field in ["recovery_execution_id", "recovery_receipt_id"] {
+        assert!(preserved[field].is_null());
+        preserved.as_object_mut().unwrap().remove(field);
+    }
+    assert_eq!(preserved, before);
+    migrate(&admin).await.unwrap();
+    let repeated: Value = admin
+        .query_one("SELECT to_jsonb(w) FROM awr_team.work_runtime w", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(repeated, after);
+    assert!(admin.batch_execute("UPDATE awr_team.work_runtime SET recovery_execution_id='unbound' WHERE work_id='legacy-work'").await.is_err());
+}
+
+#[tokio::test]
 async fn schema40_upgrade_preserves_legacy_provenance_and_is_atomic_and_repeatable() {
     let (_g, admin, _) = common::historical_team_schema(40).await;
     admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('upgrade-tenant','Upgrade','active');
@@ -47,7 +112,7 @@ async fn schema40_upgrade_preserves_legacy_provenance_and_is_atomic_and_repeatab
     assert_eq!(before, unchanged);
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 41);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 42);
     let after: Value = admin
         .query_one(
             "SELECT to_jsonb(e) FROM awr_team.executions e WHERE id='legacy-run'",

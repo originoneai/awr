@@ -131,6 +131,379 @@ async fn trusted_runner(admin: &Client) {
         UPDATE awr_team.workstream_grants SET can_attest_execution=true,grant_version=grant_version+1 WHERE client_id='cli-a'").await.unwrap();
 }
 
+async fn controlled_start(store: &WorkstreamReadStore, claim: &Value) -> Value {
+    let p = prepare(store, A, "a").await;
+    let intent = store.commands().execute(TENANT,PROJECT,A,command(&p,"controlled-prepare","execution.prepare",
+        json!({"session_id":"session-a","expected_session_version":"1","claim_id":claim["claim_id"],
+            "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
+            "expected_work_version":p["data"]["runtime"]["work_version"],"input_digest":"a".repeat(64),"declared_scope":["src/api"]})))
+        .await.unwrap()["receipt"]["data"].clone();
+    let p = prepare(store, A, "a").await;
+    store.commands().execute(TENANT,PROJECT,A,command(&p,"controlled-start","execution.start",
+        json!({"session_id":"session-a","expected_session_version":"1","execution_id":intent["execution_id"],
+            "expected_execution_version":intent["execution_version"],"claim_id":claim["claim_id"],
+            "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
+            "expected_work_version":p["data"]["runtime"]["work_version"],"execution_mode":"reference_write_v1",
+            "expected_input_digest":"a".repeat(64)}))).await.unwrap()["receipt"]["data"].clone()
+}
+
+async fn confirm(
+    store: &WorkstreamReadStore,
+    execution: &Value,
+    name: &str,
+    outcome: &str,
+) -> WorkstreamCommand {
+    let observed = inspect(store, A, execution).await;
+    let mut cmd = attest(store, &observed, name, outcome).await;
+    cmd.args["reviewed_receipt_id"] = observed["latest_receipt"]["receipt_id"].clone();
+    cmd.args["facts"]["executor_stopped"] = json!(true);
+    cmd
+}
+
+#[tokio::test]
+async fn controlled_report_confirmation_clears_only_its_cause_and_replays_without_effects() {
+    for outcome in ["succeeded", "failed", "cancelled"] {
+        let (_g, admin, _, store) = setup().await;
+        enable_writes(&admin).await;
+        trusted_runner(&admin).await;
+        let claim = take(&store).await;
+        let execution = controlled_start(&store, &claim).await;
+        let reported = report(&store, &execution, "report").await;
+        let observed = inspect(&store, A, &reported).await;
+        assert_eq!(observed["terminal_reported"], true);
+        assert_eq!(observed["artifact_verified"], false);
+        assert_eq!(observed["effects_settled"], false);
+        assert_eq!(observed["controlled_confirmation_available"], true);
+        let mut q = query("work.observe");
+        q.work_id = Some("a".into());
+        assert_eq!(
+            store.query(TENANT, PROJECT, A, q).await.unwrap()["data"]["guidance"]["action"]["op"],
+            "execution.attest"
+        );
+        let cmd = confirm(&store, &reported, "confirm", outcome).await;
+        let receipt = store
+            .commands()
+            .execute(TENANT, PROJECT, A, cmd.clone())
+            .await
+            .unwrap();
+        let data = &receipt["receipt"]["data"];
+        assert_eq!(data["state"], outcome);
+        assert_eq!(data["controlled_recovery_cleared"], true);
+        assert_eq!(data["recovery_blocked"], false);
+        assert_eq!(data["artifact_verified"], false);
+        let before = snapshot(&admin).await;
+        let replay = store
+            .commands()
+            .execute(TENANT, PROJECT, A, cmd)
+            .await
+            .unwrap();
+        assert_eq!(replay["receipt"]["data"], receipt["receipt"]["data"]);
+        assert_eq!(snapshot(&admin).await, before);
+        let observed = inspect(&store, A, &reported).await;
+        assert_eq!(observed["effects_settled"], true);
+        assert_eq!(observed["artifact_verified"], false);
+        assert_eq!(observed["recovery_cause"], "none");
+    }
+}
+
+#[tokio::test]
+async fn controlled_confirmation_requires_the_original_current_grant_version() {
+    let (_g, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    trusted_runner(&admin).await;
+    let c = take(&store).await;
+    let e = controlled_start(&store, &c).await;
+    let e = report(&store, &e, "report").await;
+    admin.batch_execute("UPDATE awr_team.workstream_grants SET grant_version=grant_version+1 WHERE client_id='cli-a'").await.unwrap();
+    let observed = inspect(&store, A, &e).await;
+    assert_eq!(observed["attestation_authority"], false);
+    assert_eq!(observed["controlled_confirmation_available"], false);
+    let cmd = confirm(&store, &e, "changed-grant", "succeeded").await;
+    let before = snapshot(&admin).await;
+    assert!(matches!(
+        store.commands().execute(TENANT, PROJECT, A, cmd).await,
+        Err(PgError::Forbidden)
+    ));
+    assert_eq!(snapshot(&admin).await, before);
+}
+
+#[tokio::test]
+async fn incomplete_or_unknown_controlled_confirmation_preserves_the_barrier() {
+    for mutation in [
+        "missing_receipt",
+        "old_receipt",
+        "missing_stop",
+        "false_stop",
+        "unknown",
+    ] {
+        let (_g, admin, _, store) = setup().await;
+        enable_writes(&admin).await;
+        trusted_runner(&admin).await;
+        let c = take(&store).await;
+        let e = controlled_start(&store, &c).await;
+        let first = report(&store, &e, "report").await;
+        let e = report(&store, &first, "new-report").await;
+        let mut cmd = confirm(&store, &e, "confirm", "succeeded").await;
+        match mutation {
+            "missing_receipt" => {
+                cmd.args
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("reviewed_receipt_id");
+            }
+            "old_receipt" => cmd.args["reviewed_receipt_id"] = first["receipt_id"].clone(),
+            "missing_stop" => {
+                cmd.args["facts"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("executor_stopped");
+            }
+            "false_stop" => cmd.args["facts"]["executor_stopped"] = json!(false),
+            _ => cmd.args["facts"]["outcome"] = json!("unknown"),
+        }
+        let r = store
+            .commands()
+            .execute(TENANT, PROJECT, A, cmd)
+            .await
+            .unwrap();
+        let r = &r["receipt"]["data"];
+        assert_eq!(r["controlled_recovery_cleared"], false, "{mutation}");
+        assert_eq!(r["recovery_blocked"], true, "{mutation}");
+        assert_eq!(
+            r["effects_settled"],
+            !matches!(mutation, "unknown" | "false_stop"),
+            "{mutation}"
+        );
+        if matches!(mutation, "unknown" | "false_stop") {
+            assert_eq!(r["state"], "unknown");
+            assert_eq!(r["resources_released"], 0);
+        }
+        assert_eq!(inspect(&store, A, &e).await["artifact_verified"], false);
+    }
+}
+
+#[tokio::test]
+async fn controlled_confirmation_cannot_clear_changed_fences_or_other_effects() {
+    for mutation in ["fence", "outside_scope", "outbox", "other_run"] {
+        let (_g, admin, _, store) = setup().await;
+        enable_writes(&admin).await;
+        trusted_runner(&admin).await;
+        let c = take(&store).await;
+        let e = controlled_start(&store, &c).await;
+        let e = report(&store, &e, "report").await;
+        match mutation {
+            "fence" => {
+                admin.batch_execute("UPDATE awr_team.work_runtime SET last_fence=last_fence+1 WHERE work_id='a'").await.unwrap();
+            }
+            "outbox" => {
+                admin.execute("INSERT INTO awr_team.outbox(tenant_id,project_id,id,state,payload_json,aggregate_id)
+                VALUES($1,$2,'external-effect','pending','{}',$3)", &[&TENANT,&PROJECT,&e["execution_id"].as_str().unwrap()]).await.unwrap();
+            }
+            "other_run" => {
+                admin.batch_execute("INSERT INTO awr_team.executions(tenant_id,project_id,id,work_id,fence,contract_hash,executor_actor_id,state)
+                VALUES('reader-tenant','reader-project','other-unknown','a',0,'old','old-runner','unknown')").await.unwrap();
+            }
+            _ => {}
+        }
+        let mut cmd = confirm(&store, &e, "confirm", "failed").await;
+        if mutation == "outside_scope" {
+            cmd.args["facts"]["observed_paths"] = json!(["src/elsewhere/result.json"]);
+        } else {
+            assert_eq!(
+                inspect(&store, A, &e).await["controlled_confirmation_available"],
+                false,
+                "{mutation}"
+            );
+        }
+        let r = store
+            .commands()
+            .execute(TENANT, PROJECT, A, cmd)
+            .await
+            .unwrap();
+        assert_eq!(r["receipt"]["data"]["recovery_blocked"], true, "{mutation}");
+        assert_eq!(
+            r["receipt"]["data"]["controlled_recovery_cleared"], false,
+            "{mutation}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn controlled_report_and_confirmation_roll_back_with_their_events() {
+    let (_g, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    trusted_runner(&admin).await;
+    let c = take(&store).await;
+    let e = controlled_start(&store, &c).await;
+    admin.batch_execute("CREATE FUNCTION awr_team.reject_controlled_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+        IF NEW.event_type IN ('execution.report','execution.attest') THEN RAISE EXCEPTION 'synthetic failure'; END IF; RETURN NEW; END $$;
+        CREATE TRIGGER reject_controlled_event BEFORE INSERT ON awr_team.events FOR EACH ROW EXECUTE FUNCTION awr_team.reject_controlled_event()").await.unwrap();
+    let mut report_cmd = attest(&store, &e, "report", "succeeded").await;
+    report_cmd.op = "execution.report".into();
+    report_cmd.args = json!({"session_id":"session-a","expected_session_version":"1","execution_id":e["execution_id"],
+        "expected_execution_version":e["execution_version"],"outcome":"succeeded","output_digest":"b".repeat(64),
+        "observed_paths":["src/api/result.json"],"note":"Stopped under controlled admission."});
+    let before = snapshot(&admin).await;
+    assert!(
+        store
+            .commands()
+            .execute(TENANT, PROJECT, A, report_cmd.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(snapshot(&admin).await, before);
+    admin
+        .batch_execute("DROP TRIGGER reject_controlled_event ON awr_team.events")
+        .await
+        .unwrap();
+    let e = store
+        .commands()
+        .execute(TENANT, PROJECT, A, report_cmd)
+        .await
+        .unwrap()["receipt"]["data"]
+        .clone();
+    admin.batch_execute("CREATE TRIGGER reject_controlled_event BEFORE INSERT ON awr_team.events FOR EACH ROW EXECUTE FUNCTION awr_team.reject_controlled_event()").await.unwrap();
+    let cmd = confirm(&store, &e, "confirm", "succeeded").await;
+    let before = snapshot(&admin).await;
+    assert!(
+        store
+            .commands()
+            .execute(TENANT, PROJECT, A, cmd.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(snapshot(&admin).await, before);
+    admin.batch_execute("DROP TRIGGER reject_controlled_event ON awr_team.events; DROP FUNCTION awr_team.reject_controlled_event()").await.unwrap();
+    let commands = store.commands();
+    let (a, b) = tokio::join!(
+        commands.execute(TENANT, PROJECT, A, cmd.clone()),
+        commands.execute(TENANT, PROJECT, A, cmd)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    assert_eq!(a["receipt"], b["receipt"]);
+    assert_ne!(a["replayed"], b["replayed"]);
+    assert_eq!(a["receipt"]["data"]["controlled_recovery_cleared"], true);
+}
+
+#[tokio::test]
+async fn controlled_confirmation_refuses_an_old_epoch_without_mutation() {
+    let (_g, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    trusted_runner(&admin).await;
+    let c = take(&store).await;
+    let e = controlled_start(&store, &c).await;
+    let e = report(&store, &e, "report").await;
+    let cmd = confirm(&store, &e, "confirm", "succeeded").await;
+    admin
+        .batch_execute(
+            "UPDATE awr_team.executions SET coordinator_epoch='older-epoch';
+            UPDATE awr_team.claims SET coordinator_epoch='older-epoch'",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        inspect(&store, A, &e).await["controlled_confirmation_available"],
+        false
+    );
+    let before = snapshot(&admin).await;
+    assert!(matches!(
+        store.commands().execute(TENANT, PROJECT, A, cmd).await,
+        Err(PgError::EpochChanged)
+    ));
+    assert_eq!(snapshot(&admin).await, before);
+}
+
+#[tokio::test]
+async fn another_barrier_write_and_residual_resources_prevent_automatic_clear() {
+    for mutation in [
+        "same_boolean_write",
+        "residual_resource",
+        "corrupt_receipt",
+        "late_report",
+    ] {
+        let (_g, admin, _, store) = setup().await;
+        enable_writes(&admin).await;
+        trusted_runner(&admin).await;
+        let c = take(&store).await;
+        let e = controlled_start(&store, &c).await;
+        if mutation == "late_report" {
+            admin
+                .batch_execute(
+                    "UPDATE awr_team.claims SET expires_at=clock_timestamp()-interval '1 second'",
+                )
+                .await
+                .unwrap();
+        }
+        let e = report(&store, &e, "report").await;
+        match mutation {
+            "same_boolean_write" => {
+                admin
+                    .batch_execute(
+                        "UPDATE awr_team.work_runtime SET recovery_blocked=true WHERE work_id='a'",
+                    )
+                    .await
+                    .unwrap();
+            }
+            "residual_resource" => {
+                admin.batch_execute("INSERT INTO awr_team.resource_reservations(tenant_id,project_id,id,work_id,resource_kind,canonical_key,state)
+                VALUES('reader-tenant','reader-project','residual','a','named','shared-effect','unknown')").await.unwrap();
+            }
+            "corrupt_receipt" => {
+                admin
+                    .batch_execute("UPDATE awr_team.execution_receipts SET digest=repeat('d',64)")
+                    .await
+                    .unwrap();
+            }
+            _ => {}
+        }
+        let observed = inspect(&store, A, &e).await;
+        assert_eq!(
+            observed["controlled_confirmation_available"], false,
+            "{mutation}"
+        );
+        let cmd = confirm(&store, &e, "confirm", "failed").await;
+        let result = store
+            .commands()
+            .execute(TENANT, PROJECT, A, cmd)
+            .await
+            .unwrap();
+        assert_eq!(
+            result["receipt"]["data"]["controlled_recovery_cleared"], false,
+            "{mutation}"
+        );
+        assert_eq!(
+            result["receipt"]["data"]["recovery_blocked"], true,
+            "{mutation}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn repeated_controlled_reports_bind_the_latest_receipt_without_admitting_more_work() {
+    let (_g, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    trusted_runner(&admin).await;
+    let c = take(&store).await;
+    let e = controlled_start(&store, &c).await;
+    let first = report(&store, &e, "first-report").await;
+    let second = report(&store, &first, "second-report").await;
+    assert_ne!(first["receipt_id"], second["receipt_id"]);
+    assert_eq!(
+        inspect(&store, A, &second).await["controlled_confirmation_available"],
+        true
+    );
+    let cmd = confirm(&store, &second, "confirm", "succeeded").await;
+    let result = store
+        .commands()
+        .execute(TENANT, PROJECT, A, cmd)
+        .await
+        .unwrap();
+    assert_eq!(
+        result["receipt"]["data"]["controlled_recovery_cleared"],
+        true
+    );
+}
+
 #[tokio::test]
 async fn trusted_executor_requires_both_operator_grant_and_exact_system_client() {
     let (_g, admin, _, store) = setup().await;
@@ -177,7 +550,15 @@ async fn trusted_executor_requires_both_operator_grant_and_exact_system_client()
             .await,
         Err(PgError::Forbidden)
     ));
-    trusted_runner(&admin).await;
+    // Restore the same fixture grant. A reissued grant version cannot attest
+    // this admission and is covered separately above.
+    admin
+        .batch_execute(
+            "UPDATE awr_team.actors SET kind='system' WHERE id='agent';
+        UPDATE awr_team.workstream_grants SET can_attest_execution=true WHERE client_id='cli-a'",
+        )
+        .await
+        .unwrap();
     admin.execute("INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,can_write,can_attest_execution)
         VALUES($1,$2,'agent','cli-b',$3,1,true,true,true)",&[&TENANT,&PROJECT,&awr_core::Id::from(1).to_string()]).await.unwrap();
     assert!(matches!(

@@ -11,6 +11,7 @@ struct Facts {
     environment_digest: String,
     observed_paths: Vec<String>,
     note: String,
+    executor_stopped: Option<bool>,
 }
 impl Facts {
     fn validate(&self) -> PgResult<()> {
@@ -39,6 +40,7 @@ pub(crate) struct Attest {
     expected_session_version: String,
     execution_id: String,
     expected_execution_version: String,
+    reviewed_receipt_id: Option<String>,
     facts: Facts,
 }
 #[derive(Deserialize)]
@@ -81,6 +83,11 @@ impl Action {
             return Err(invalid());
         }
         facts.validate()?;
+        if let Self::Attest(a) = &a {
+            if a.reviewed_receipt_id.as_ref().is_some_and(|s| !identity(s)) {
+                return Err(invalid());
+            }
+        }
         if let Self::Reconcile(r) = &a {
             if version(&r.expected_work_version)? == 0
                 || r.reviewed_receipt_id.as_ref().is_some_and(|s| !identity(s))
@@ -151,10 +158,7 @@ pub(super) async fn apply(
     }
     let (id, expected_version, facts) = action.execution();
     let r = load(tx, tenant, project, id).await?;
-    if !reconcile
-        && r.get::<_, Option<i64>>("attestation_grant_version")
-            .is_none()
-    {
+    if !reconcile && !recovery_cause::grant_matches(&r, auth, &command.workstream_id) {
         return Err(PgError::Forbidden);
     }
     require_binding(
@@ -241,7 +245,32 @@ pub(super) async fn apply(
     if reconcile && exceeded && facts.outcome == "succeeded" {
         return Err(PgError::ScopeExceeded);
     }
-    let settled = facts.outcome != "unknown" && (reconcile || !exceeded);
+    // Absence preserves the legacy privileged settlement contract. An explicit
+    // observation that the executor is still running cannot release resources.
+    let settled = facts.outcome != "unknown"
+        && facts.executor_stopped != Some(false)
+        && (reconcile || !exceeded);
+    let latest = latest_receipt(tx, tenant, project, id).await?;
+    let controlled_clear = if let Action::Attest(a) = &action {
+        settled
+            && facts.executor_stopped == Some(true)
+            && a.reviewed_receipt_id.is_some()
+            && a.reviewed_receipt_id.as_deref()
+                == latest.as_ref().and_then(|v| v["receipt_id"].as_str())
+            && recovery_cause::available(
+                tx,
+                tenant,
+                project,
+                auth,
+                &command.workstream_id,
+                &command.expected_contract_hash,
+                &r,
+                latest.as_ref(),
+            )
+            .await?
+    } else {
+        false
+    };
     let next = if settled {
         facts.outcome.as_str()
     } else {
@@ -253,7 +282,7 @@ pub(super) async fn apply(
         "trusted_executor"
     };
     let receipt_id = crate::tx::new_id();
-    let payload = json!({"outcome":facts.outcome,"input_digest":facts.input_digest,"output_digest":facts.output_digest,
+    let mut payload = json!({"outcome":facts.outcome,"input_digest":facts.input_digest,"output_digest":facts.output_digest,
         "environment_digest":facts.environment_digest,"observed_paths":facts.observed_paths,"note":facts.note,
         "scope_violation":exceeded,"effects_settled":settled,"client_id":auth.client_id,"actor_kind":auth.actor_kind,
         "session_id":action.session().0,"execution_session_id":r.get::<_,Option<String>>("session_id"),
@@ -263,20 +292,29 @@ pub(super) async fn apply(
         "recovery_review_basis":if epoch_review.is_some() {Some("authorized_operator_assertion")} else {None},
         "grant_version":auth.grant_versions[&command.workstream_id].to_string(),
         "admission_attestation_grant_version":r.get::<_,Option<i64>>("attestation_grant_version").map(|v|v.to_string()),
-        "reviewed_receipt_id":match &action { Action::Reconcile(a)=>a.reviewed_receipt_id.as_deref(), _=>None }});
+        "reviewed_receipt_id":match &action { Action::Reconcile(a)=>a.reviewed_receipt_id.as_deref(), Action::Attest(a)=>a.reviewed_receipt_id.as_deref() }});
+    if let Some(stopped) = facts.executor_stopped {
+        payload["executor_stopped"] = json!(stopped);
+    }
+    if controlled_clear {
+        payload["recovery_clear_basis"] = json!("controlled_run_report_receipt");
+    }
     let hash = awr_team::request_hash(&payload).map_err(|_| invalid())?;
     tx.execute("INSERT INTO awr_team.execution_receipts(tenant_id,project_id,id,execution_id,reporter_actor_id,receipt_kind,digest,payload_json)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8)", &[&tenant,&project,&receipt_id,&id,&auth.actor_id,&kind,&hash,&payload]).await?;
     let reason = if settled {
         None
+    } else if facts.executor_stopped == Some(false) {
+        Some("executor_not_stopped")
     } else if exceeded {
         Some("scope_violation_requires_reconciliation")
     } else {
         Some("executor_effects_unknown")
     };
     tx.execute("UPDATE awr_team.executions SET state=$4,result_digest=$5,environment_digest=$6,observed_paths_json=$7,
-        unknown_reason=$8,execution_version=execution_version+1 WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
-        &[&tenant,&project,&id,&next,&facts.output_digest,&facts.environment_digest,&json!(facts.observed_paths),&reason]).await?;
+        unknown_reason=$8,execution_version=execution_version+1,terminal_reported=terminal_reported OR $9
+        WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+        &[&tenant,&project,&id,&next,&facts.output_digest,&facts.environment_digest,&json!(facts.observed_paths),&reason,&(facts.outcome!="unknown")]).await?;
     let resource_state = if settled { "released" } else { "unknown" };
     let affected = tx.execute("UPDATE awr_team.resource_reservations SET state=$5
         WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND execution_id=$4 AND state IN ('reserved','unknown')",
@@ -295,7 +333,7 @@ pub(super) async fn apply(
             &[&tenant, &project, &command.work_id],
         )
         .await?;
-    } else if clear {
+    } else if clear || controlled_clear {
         tx.execute(
             "UPDATE awr_team.work_runtime SET recovery_blocked=false
             WHERE tenant_id=$1 AND project_id=$2 AND scope_id='main' AND work_id=$3",
@@ -316,6 +354,8 @@ pub(super) async fn apply(
         json!({"execution_id":id,"execution_version":(ev+1).to_string(),"work_version":wv.to_string(),
         "receipt_id":receipt_id,"receipt_kind":kind,"state":next,"effects_settled":settled,"scope_violation":exceeded,
         "resources_released":if settled {affected} else {0},"recovery_blocked":blocked,
+        "terminal_reported":r.get::<_,bool>("terminal_reported") || facts.outcome!="unknown",
+        "artifact_verified":false,"controlled_recovery_cleared":controlled_clear && !blocked,
         "recovery_clear_requested":clear,"unresolved_work_effects":remaining,"work_completed":false,
         "execution_coordinator_epoch":execution_epoch,"reporting_coordinator_epoch":auth.epoch,
         "previous_epoch_reconciled":epoch_review.is_some(),

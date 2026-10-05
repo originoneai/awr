@@ -50,6 +50,17 @@ Claim acquire/renew/release state machines stay in `workstream_command/claims.rs
    `actor_kind == system` plus an explicit attest bit; agents cannot attest.
    Product roles never auto-upgrade to `trusted_executor`.
 
+   Attestation also requires the original admission's exact grant version;
+   changing or reissuing the grant cannot upgrade that run. An admitted
+   `reference_write_v1` system client can confirm its own stopped execution and
+   latest attributed caller receipt through optional `reviewed_receipt_id` and
+   `facts.executor_stopped`. Automatic recovery clearing remains bound to the
+   exact run, epoch, contract, fence and resources. Aggregate or overwritten
+   recovery barriers require the recovery operator. Legacy privileged
+   attestation without those confirmation fields can settle its run while
+   leaving the work barrier in place. See
+   [execution settlement](../reference/team-execution-settlement.md#confirm-a-controlled-execution).
+
 ## Command / query wiring
 
 - `workstream_command` and `workstream_read` call `resolve_agent_delegation` after

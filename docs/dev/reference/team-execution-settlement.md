@@ -154,6 +154,54 @@ request. A replay returns the committed receipt and does not authorize another
 physical execution. Do not invent a new request or rerun work to resolve an
 unknown outcome.
 
+## Confirm a controlled execution
+
+An explicitly admitted `reference_write_v1` run has a separate confirmation
+path. It requires a system client with the exact attestation grant version
+recorded at admission. A mode name, business role, CI result or later grant does
+not establish that authority. Ordinary agents continue to report at their
+original caller trust level.
+
+A caller report may attribute its recovery barrier to that run and receipt only
+while the lease, contract, epoch, fence and exact admitted directory reservations
+match. Scope violations, another unresolved run, additional resources, outbox
+exposure and preexisting or subsequently rewritten barriers remain operator
+recovery cases. A repeated valid report may bind its new receipt; old receipts
+cannot clear the current barrier.
+
+The controlled client first inspects `execution.inspect`. If
+`controlled_confirmation_available` is true, it checks the actual executor and
+the latest receipt, then submits `execution.attest` with its ordinary facts and:
+
+```json
+{
+  "reviewed_receipt_id": "latest-inspected-caller-receipt",
+  "facts": {
+    "executor_stopped": true
+  }
+}
+```
+
+These fields supplement the required attestation arguments; this fragment is
+not a complete command. The transaction rechecks all bindings, records the
+confirmation and releases only that run's resources. It clears recovery only
+when the outcome is terminal and no other effects remain. An unknown outcome
+or explicit `executor_stopped: false` keeps resources and recovery blocked.
+Omitting either confirmation field preserves legacy
+privileged settlement, without automatically clearing the work barrier.
+
+Reads expose `terminal_reported`, `artifact_verified`, `effects_settled`,
+`settlement_basis`, `settlement_scope` and `recovery_blocked` independently.
+Artifact verification requires the current selected completion's bound evidence
+and readable finalized bytes with matching digests. A report or attestation
+alone cannot mark it verified. Altered bytes or a changed completion/contract
+remove that observation; historical receipts remain available.
+
+Migration 42 stores nullable run/receipt attribution and invalidates it on
+every explicit recovery-barrier update, including `true` to `true`. Historical
+barriers stay unattributed. This prevents a controlled client from clearing a
+second writer's recovery cause.
+
 ## Workspace effects and repository delivery
 
 Workspace settlement does not settle a repository push, external review, merge,

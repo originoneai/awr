@@ -2,6 +2,7 @@
 //! Preparation never dispatches. Admission is not physical effect confinement.
 mod lifecycle;
 mod recovery;
+mod recovery_cause;
 pub(super) mod settlement;
 use super::*;
 use tokio_postgres::Row;
@@ -510,7 +511,7 @@ async fn load(tx: &Transaction<'_>, tenant: &str, project: &str, id: &str) -> Pg
         c.workstream_id AS claim_stream,c.ownership_version AS claim_ownership,c.fence AS claim_fence,
         c.coordinator_epoch AS claim_epoch,c.lease_version AS claim_lease_version,
         (c.state='active' AND c.expires_at>clock_timestamp() AND s.state='active' AND w.last_fence=e.fence) AS lease_live,
-        w.recovery_blocked
+        w.recovery_blocked,w.recovery_execution_id,w.recovery_receipt_id,w.last_fence AS work_last_fence
         FROM awr_team.executions e
         JOIN awr_team.sessions s ON s.tenant_id=e.tenant_id AND s.project_id=e.project_id AND s.id=e.session_id AND s.scope_id=e.scope_id
         JOIN awr_team.claims c ON c.tenant_id=e.tenant_id AND c.project_id=e.project_id AND c.id=e.claim_id AND c.scope_id=e.scope_id
@@ -580,8 +581,37 @@ pub(crate) async fn inspect(
         .copied()
         .unwrap_or_default();
     let receipt_visible = owned || authority.reconcile;
-    let latest = if receipt_visible {
-        recovery::latest_receipt(tx, tenant, project, id).await?
+    let latest = recovery::latest_receipt(tx, tenant, project, id).await?;
+    let controlled_confirmation_available = recovery_cause::available(
+        tx,
+        tenant,
+        project,
+        auth,
+        &stream_id,
+        &current_hash,
+        &r,
+        latest.as_ref(),
+    )
+    .await?;
+    let terminal = matches!(
+        r.get::<_, String>("state").as_str(),
+        "succeeded" | "failed" | "cancelled"
+    );
+    let valid_receipt = latest.as_ref().is_some_and(|v| {
+        awr_team::request_hash(&v["payload"]).ok().as_deref() == v["digest"].as_str()
+    });
+    let workspace_settled = terminal && r.get::<_, bool>("workspace_effects_settled");
+    let confirmed_settled = terminal
+        && valid_receipt
+        && latest.as_ref().is_some_and(|v| {
+            matches!(
+                v["receipt_kind"].as_str(),
+                Some("trusted_executor" | "reconcile")
+            ) && v["payload"]["effects_settled"] == true
+        });
+    let artifact_verified = accepted_artifact(tx, tenant, project, work, id, &current_hash).await?;
+    let visible_latest = if receipt_visible {
+        latest.as_ref()
     } else {
         None
     };
@@ -593,12 +623,63 @@ pub(crate) async fn inspect(
         "contract_matches_current":r.get::<_,String>("contract_hash")==current_hash,
         "epoch_matches_current":epoch_matches,"lease_live":r.get::<_,bool>("lease_live")&&epoch_matches,
         "execution_coordinator_epoch":r.get::<_,Option<String>>("coordinator_epoch"),
-        "owned_by_client":owned,"attestation_authority":authority.attest && owned && epoch_matches && r.get::<_,Option<i64>>("attestation_grant_version").is_some(),
+        "owned_by_client":owned,"attestation_authority":authority.attest && owned && epoch_matches && recovery_cause::grant_matches(&r,auth,&stream_id),
         "reconciliation_authority":authority.reconcile,"receipt_details_available":receipt_visible,
         "previous_epoch_review_required":!epoch_matches,
         "previous_epoch_recovery_available":!epoch_matches && authority.reconcile && r.get::<_,Option<String>>("coordinator_epoch").is_some(),
-        "latest_receipt":latest,
+        "latest_receipt":visible_latest,
+        "terminal_reported":r.get::<_,bool>("terminal_reported"),"artifact_verified":artifact_verified,
+        "artifact_verification_basis":if artifact_verified {Some("current_completion_readable_artifact_digest")} else {None},
+        "effects_settled":workspace_settled || confirmed_settled,
+        "settlement_scope":if workspace_settled {Some("admitted_workspace_paths")} else if confirmed_settled {Some("authorized_bound_resources")} else {None},
+        "settlement_basis":if workspace_settled {Some("caller_asserted")} else if confirmed_settled {latest.as_ref().and_then(|v|v["receipt_kind"].as_str())} else {None},
+        "controlled_confirmation_available":controlled_confirmation_available,
+        "recovery_cause":if !r.get::<_,bool>("recovery_blocked") {"none"} else if r.get::<_,Option<String>>("recovery_execution_id").as_deref()==Some(id) {"attributed_execution_report"} else {"unattributed_or_other_execution"},
         "recovery_blocked":r.get::<_,bool>("recovery_blocked"),
         "execution_authorized":false,"automatic_resume":false}),
     )
+}
+
+/// Verification is a current accepted artifact binding, not a terminal report.
+async fn accepted_artifact(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    work: &str,
+    execution: &str,
+    contract: &str,
+) -> PgResult<bool> {
+    let row = tx.query_opt("SELECT e.digest,e.input_digest,e.output_digest,e.execution_result_digest,
+          e.payload_json,a.sha256,a.content,a.state
+        FROM awr_team.work_runtime w JOIN awr_team.completion_receipts c
+          ON c.tenant_id=w.tenant_id AND c.project_id=w.project_id AND c.id=w.selected_completion_id
+        JOIN awr_team.evidence e ON e.tenant_id=c.tenant_id AND e.project_id=c.project_id AND e.id=c.evidence_id
+        JOIN awr_team.artifacts a ON a.tenant_id=e.tenant_id AND a.project_id=e.project_id AND a.id=e.artifact_id
+        WHERE w.tenant_id=$1 AND w.project_id=$2 AND w.scope_id='main' AND w.work_id=$3 AND w.state='completed'
+          AND c.work_id=$3 AND c.execution_id=$4 AND e.execution_id=$4 AND e.work_id=$3
+          AND c.contract_hash=$5 AND e.contract_hash=$5
+          AND c.result_digest=e.digest AND c.evidence_bundle_hash=e.digest", &[&tenant,&project,&work,&execution,&contract]).await?;
+    let Some(row) = row else {
+        return Ok(false);
+    };
+    let Some(content) = row.get::<_, Option<Vec<u8>>>(6) else {
+        return Ok(false);
+    };
+    let input: Option<String> = row.get(1);
+    let output: Option<String> = row.get(2);
+    let result: Option<String> = row.get(3);
+    let recomputed = crate::review::evidence_digest(
+        work,
+        contract,
+        input.as_deref(),
+        output.as_deref(),
+        result.as_deref(),
+        &row.get(4),
+    )?;
+    use sha2::{Digest, Sha256};
+    let digest = format!("{:x}", Sha256::digest(&content));
+    Ok(row.get::<_, String>(7) == "finalized"
+        && row.get::<_, String>(5) == digest
+        && row.get::<_, String>(0) == recomputed
+        && output.as_deref() == Some(&digest))
 }
