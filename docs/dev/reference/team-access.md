@@ -88,11 +88,15 @@ no bypass.
 Unknown actions default to **deny**. Action names are proposed business semantics;
 they are not necessarily current CLI/MCP command names.
 
-Fixtures: `tests/fixtures/team-mcp/role_action_matrix.json`.
+Policy v2: `tests/fixtures/team-mcp/role_action_matrix_v2.json`. The original
+`role_action_matrix.json` remains the frozen v1 contract; all template powers
+remain unchanged. V1 authority continues to work for its existing actions and
+cannot authorize the new `work.assign` action.
 
 | Action | reader | developer | maintainer | project_admin |
 | --- | :---: | :---: | :---: | :---: |
 | `work.read` | yes | yes | yes | yes |
+| `work.assign` | — | — | — | — |
 | `session.maintain_own` | — | yes | yes | yes |
 | `claim.manage_own` | — | yes | yes | yes |
 | `execution.request_and_report_own` | — | yes | yes | yes |
@@ -147,7 +151,35 @@ Capabilities and member directories expose `business_roles` and the computed
 and current delegation must still authorize each action. All HTTP/MCP/store
 paths use the same calculation. Legacy template names and omitted request
 serialization remain compatible. Deployments must migrate through the owner
-path before a schema-38 service is started.
+path before a schema-39 service is started.
+
+### Explicit supervisor and delivery grants
+
+Assignment requires the opt-in `assignment_grant: true` membership declaration
+on `maintainer` or `project_admin`, current resource write access and, for an
+Agent, one covering `assign_work` delegation. The supervisor business duty
+ceiling permits assignment but does not grant it. Existing memberships default
+to false. An omitted or null access-plan field preserves the current grant;
+explicit false revokes it and advances the membership version. Updates affect
+every client of that member and retain the full-scope administrator checks.
+
+Agent delegation actions `edit_planning`, `approve_planning`, `publish_planning`
+and `finalize_delivery` map independently to the corresponding product action.
+`start_work` and `review` grant neither assignment nor finalization. Delivery
+still needs current contract, artifact, verification and review evidence;
+delegation is authorization, not proof of completion.
+
+Current planning mutations operate on the project plan. Agents need a project
+grant for the exact action and current write access to every active workstream.
+Project-level candidate inspection requires `inspect` in a project grant.
+Task and workstream grants remain usable for their covered work, but cannot
+become project planning authority by omitting a selector. All replay and
+recovery paths recheck the current action and scope. Provisioning accepts a
+project grant only with matching access to all active workstreams and refuses
+Agent manage, executor-attestation and reconciliation grants.
+
+`work.assign` is an authorization contract; the assignment command and complete
+delivery flow must be advertised separately when those entry points ship.
 
 ### Resource-bound authority
 

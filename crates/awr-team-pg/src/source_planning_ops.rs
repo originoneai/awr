@@ -8,7 +8,7 @@ use super::planning::{DraftCandidateCreate, SuggestionSubmit};
 use super::writeback::WritebackActivateRequest;
 use super::{PgError, PgResult, SoleSourceBinding, SoleSourceKind, SourceStore};
 use crate::tx::bind_workstream_scope;
-use crate::workstream_auth::{authenticate, authorize_domain_action};
+use crate::workstream_auth::authenticate;
 use awr_team::DraftChange;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -322,7 +322,8 @@ impl SourceStore {
             )
             .await?;
         } else {
-            authorize_domain_action(&auth, action, None, None)?;
+            crate::delegation_auth::authorize_project_action(&tx, &mut auth, project_id, action)
+                .await?;
         }
         bind_workstream_scope(&tx, tenant_id, project_id).await?;
         let existing = tx
@@ -958,8 +959,14 @@ impl SourceStore {
         let mut client = self.connect().await?;
         crate::check_schema(&client).await?;
         let tx = client.transaction().await?;
-        let auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
-        authorize_domain_action(&auth, awr_team::Action::PlanningEditDraft, None, None)?;
+        let mut auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
+        crate::delegation_auth::authorize_project_action(
+            &tx,
+            &mut auth,
+            project_id,
+            awr_team::Action::PlanningEditDraft,
+        )
+        .await?;
         bind_workstream_scope(&tx, tenant_id, project_id).await?;
         let row = tx
             .query_opt(
@@ -999,8 +1006,14 @@ impl SourceStore {
         let mut client = self.connect().await?;
         crate::check_schema(&client).await?;
         let tx = client.transaction().await?;
-        let auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
-        authorize_domain_action(&auth, awr_team::Action::PlanningEditDraft, None, None)?;
+        let mut auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
+        crate::delegation_auth::authorize_project_action(
+            &tx,
+            &mut auth,
+            project_id,
+            awr_team::Action::PlanningEditDraft,
+        )
+        .await?;
         bind_workstream_scope(&tx, tenant_id, project_id).await?;
         let row = tx
             .query_opt(
@@ -1045,8 +1058,14 @@ impl SourceStore {
         let mut client = self.connect().await?;
         crate::check_schema(&client).await?;
         let tx = client.transaction().await?;
-        let auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
-        authorize_domain_action(&auth, awr_team::Action::PlanningApprove, None, None)?;
+        let mut auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
+        crate::delegation_auth::authorize_project_action(
+            &tx,
+            &mut auth,
+            project_id,
+            awr_team::Action::PlanningApprove,
+        )
+        .await?;
         bind_workstream_scope(&tx, tenant_id, project_id).await?;
         let row = tx
             .query_opt(
@@ -1127,8 +1146,14 @@ impl SourceStore {
         let mut client = self.connect().await?;
         crate::check_schema(&client).await?;
         let tx = client.transaction().await?;
-        let auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
-        authorize_domain_action(&auth, awr_team::Action::PlanningPublish, None, None)?;
+        let mut auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
+        crate::delegation_auth::authorize_project_action(
+            &tx,
+            &mut auth,
+            project_id,
+            awr_team::Action::PlanningPublish,
+        )
+        .await?;
         bind_workstream_scope(&tx, tenant_id, project_id).await?;
         let row = tx
             .query_opt(
@@ -1171,8 +1196,14 @@ impl SourceStore {
         let mut client = self.connect().await?;
         crate::check_schema(&client).await?;
         let tx = client.transaction().await?;
-        let auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
-        authorize_domain_action(&auth, awr_team::Action::PlanningPublish, None, None)?;
+        let mut auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
+        crate::delegation_auth::authorize_project_action(
+            &tx,
+            &mut auth,
+            project_id,
+            awr_team::Action::PlanningPublish,
+        )
+        .await?;
         let row = tx
             .query_opt(
                 "SELECT s.source_ref_json

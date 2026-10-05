@@ -16,7 +16,7 @@ fn fixture(name: &str) -> Value {
 
 #[test]
 fn role_action_matrix_matches_frozen_contract() {
-    let doc = fixture("role_action_matrix.json");
+    let doc = fixture("role_action_matrix_v2.json");
     assert_eq!(doc["policy_id"], PERMISSION_POLICY_ID);
     assert_eq!(doc["policy_version"], PERMISSION_POLICY_VERSION);
     let matrix = doc["action_role_matrix"].as_object().unwrap();
@@ -130,6 +130,40 @@ fn migration_preview_fixture_cases() {
             }
         }
     }
+}
+
+#[test]
+fn v1_matrix_remains_frozen_and_cannot_authorize_assignment() {
+    let legacy = fixture("role_action_matrix.json");
+    assert_eq!(legacy["policy_id"], "awr-team-mcp-permission-v1");
+    assert_eq!(legacy["policy_version"], 1);
+    let matrix = legacy["action_role_matrix"].as_object().unwrap();
+    assert!(matrix.get("work.assign").is_none());
+    for (name, roles) in matrix {
+        let action = Action::parse(name).unwrap();
+        for role in RoleTemplate::all() {
+            assert_eq!(
+                template_actions(role).contains(&action),
+                roles.as_array().unwrap().iter().any(|v| v == role.as_str())
+            );
+        }
+    }
+    let mut scope =
+        authority_from_template(RoleTemplate::ProjectAdmin, "t", "p", "member", "client");
+    scope.policy_version = 1;
+    let resource = ResourceRef {
+        tenant_id: "t".into(),
+        project_id: "p".into(),
+        workstream_id: None,
+        work_id: None,
+    };
+    assert!(authorize_action(&scope, Action::WorkRead, &resource, 0).is_ok());
+    scope.allowed_actions.insert(Action::WorkAssign);
+    assert!(authorize_action(&scope, Action::WorkAssign, &resource, 0).is_err());
+    scope.policy_version = PERMISSION_POLICY_VERSION;
+    assert!(authorize_action(&scope, Action::WorkAssign, &resource, 0).is_ok());
+    scope.policy_version += 1;
+    assert!(authorize_action(&scope, Action::WorkRead, &resource, 0).is_err());
 }
 
 #[test]
@@ -288,8 +322,10 @@ fn exhaustive_role_action_cells_present() {
         cells.insert((role.to_string(), action.to_string()));
     }
     assert_eq!(cells.len(), 52, "expected 4 roles x 13 actions");
+    let legacy = fixture("role_action_matrix.json");
     for role in RoleTemplate::all() {
-        for action in Action::all() {
+        for name in legacy["actions"].as_array().unwrap() {
+            let action = Action::parse(name.as_str().unwrap()).unwrap();
             assert!(
                 cells.contains(&(role.as_str().to_string(), action.as_str().to_string())),
                 "missing cell {} x {}",
@@ -297,6 +333,7 @@ fn exhaustive_role_action_cells_present() {
                 action.as_str()
             );
         }
+        assert!(!template_actions(role).contains(&Action::WorkAssign));
     }
 }
 

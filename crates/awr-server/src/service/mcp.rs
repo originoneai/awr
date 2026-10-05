@@ -369,6 +369,7 @@ fn catalog() -> Vec<Tool> {
             "business_roles":{"type":["array","null"],"minItems":1,"maxItems":6,"uniqueItems":true,
                 "items":{"type":"string","enum":["observer","developer","reviewer","supervisor","deliverer","administrator"]},
                 "description":"Explicit combined duty ceilings intersect existing grants. Omission/null on update preserves the current declaration; names alone grant no authority."},
+            "assignment_grant":{"type":["boolean","null"],"description":"Explicit work.assign membership grant; omission preserves the current grant. Requires maintainer or project_admin and a matching Agent delegation."},
             "agent_review":{"type":"boolean","default":false},
             "credential_project_scoped":{"type":"boolean","default":false},
             "revoke_project_credentials":{"type":"array","maxItems":256,"items":{"type":"string","maxLength":128}},

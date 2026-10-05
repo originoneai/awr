@@ -40,6 +40,13 @@ pub enum AuthorizedAction {
     StartWork,
     /// Submit inert suggestions for explicitly covered work; no plan mutation.
     ProposePlanning,
+    /// Assign responsibility; never starts execution or edits the plan.
+    AssignWork,
+    EditPlanning,
+    ApprovePlanning,
+    PublishPlanning,
+    /// Finalize an independently accepted delivery; never grants review.
+    FinalizeDelivery,
     Review,
     ManageAuthorization,
 }
@@ -53,6 +60,11 @@ impl AuthorizedAction {
             Self::ClaimCoordination => "claim_coordination",
             Self::StartWork => "start_work",
             Self::ProposePlanning => "propose_planning",
+            Self::AssignWork => "assign_work",
+            Self::EditPlanning => "edit_planning",
+            Self::ApprovePlanning => "approve_planning",
+            Self::PublishPlanning => "publish_planning",
+            Self::FinalizeDelivery => "finalize_delivery",
             Self::Review => "review",
             Self::ManageAuthorization => "manage_authorization",
         }
@@ -66,6 +78,11 @@ impl AuthorizedAction {
             "claim_coordination" => Ok(Self::ClaimCoordination),
             "start_work" => Ok(Self::StartWork),
             "propose_planning" => Ok(Self::ProposePlanning),
+            "assign_work" => Ok(Self::AssignWork),
+            "edit_planning" => Ok(Self::EditPlanning),
+            "approve_planning" => Ok(Self::ApprovePlanning),
+            "publish_planning" => Ok(Self::PublishPlanning),
+            "finalize_delivery" => Ok(Self::FinalizeDelivery),
             "review" => Ok(Self::Review),
             "manage_authorization" => Ok(Self::ManageAuthorization),
             _ => Err(Error::InvalidInput(format!(

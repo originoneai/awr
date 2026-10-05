@@ -1,0 +1,110 @@
+{
+  "policy_id": "awr-team-mcp-permission-v2",
+  "policy_version": 2,
+  "role_templates": [
+    "reader",
+    "developer",
+    "maintainer",
+    "project_admin"
+  ],
+  "actions": [
+    "work.read",
+    "work.assign",
+    "session.maintain_own",
+    "claim.manage_own",
+    "execution.request_and_report_own",
+    "planning.propose",
+    "planning.edit_draft",
+    "planning.approve",
+    "planning.publish",
+    "delivery.submit_and_request_review",
+    "review.decide",
+    "delivery.finalize",
+    "access.manage_project",
+    "audit.read_project"
+  ],
+  "action_role_matrix": {
+    "work.read": [
+      "reader",
+      "developer",
+      "maintainer",
+      "project_admin"
+    ],
+    "session.maintain_own": [
+      "developer",
+      "maintainer",
+      "project_admin"
+    ],
+    "claim.manage_own": [
+      "developer",
+      "maintainer",
+      "project_admin"
+    ],
+    "execution.request_and_report_own": [
+      "developer",
+      "maintainer",
+      "project_admin"
+    ],
+    "planning.propose": [
+      "developer",
+      "maintainer",
+      "project_admin"
+    ],
+    "planning.edit_draft": [
+      "maintainer",
+      "project_admin"
+    ],
+    "planning.approve": [
+      "maintainer",
+      "project_admin"
+    ],
+    "planning.publish": [
+      "maintainer",
+      "project_admin"
+    ],
+    "delivery.submit_and_request_review": [
+      "developer",
+      "maintainer",
+      "project_admin"
+    ],
+    "review.decide": [],
+    "delivery.finalize": [
+      "maintainer",
+      "project_admin"
+    ],
+    "access.manage_project": [
+      "project_admin"
+    ],
+    "audit.read_project": [
+      "project_admin"
+    ],
+    "work.assign": []
+  },
+  "unknown_action_default": "deny",
+  "independent_review": {
+    "additional_grant_required": true,
+    "eligible_roles": [
+      "developer",
+      "maintainer",
+      "project_admin"
+    ],
+    "admin_bypass": false
+  },
+  "special_authorities_not_in_templates": [
+    "database_owner",
+    "schema_migration",
+    "arbitrary_source_filesystem",
+    "trusted_executor_attestation",
+    "execution_reconciliation",
+    "cross_project_or_tenant_administration"
+  ],
+  "explicit_assignment": {
+    "membership_grant_required": true,
+    "eligible_roles": [
+      "maintainer",
+      "project_admin"
+    ],
+    "agent_delegation_required": true,
+    "legacy_default": false
+  }
+}

@@ -8,7 +8,7 @@
 use super::{IngestRequest, PgError, PgResult, SourceFile, SourceStore};
 use crate::lock_order::lock_works_sorted;
 use crate::tx::{bind_workstream_scope, lock_active_project, new_id};
-use crate::workstream_auth::{authenticate, authenticate_writer, authorize_domain_action};
+use crate::workstream_auth::{authenticate, authenticate_writer};
 #[allow(unused_imports)]
 use awr_source::SOURCE_BINDING_FILE;
 use awr_source::{
@@ -92,15 +92,13 @@ impl SourceStore {
             .start()
             .await?;
         let mut auth = authenticate_writer(&tx, tenant_id, project_id, bearer).await?;
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        crate::delegation_auth::resolve_agent_delegation(
-            &tx, &mut auth, project_id, None, None, None, now_ms,
+        crate::delegation_auth::authorize_project_action(
+            &tx,
+            &mut auth,
+            project_id,
+            awr_team::Action::PlanningPublish,
         )
         .await?;
-        authorize_domain_action(&auth, awr_team::Action::PlanningPublish, None, None)?;
 
         // Lock order (WS-023): project barrier → sorted affected works → receipts.
         bind_workstream_scope(&tx, tenant_id, project_id).await?;
@@ -391,15 +389,13 @@ impl SourceStore {
             .start()
             .await?;
         let mut auth = authenticate_writer(&tx, tenant_id, project_id, bearer).await?;
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        crate::delegation_auth::resolve_agent_delegation(
-            &tx, &mut auth, project_id, None, None, None, now_ms,
+        crate::delegation_auth::authorize_project_action(
+            &tx,
+            &mut auth,
+            project_id,
+            awr_team::Action::PlanningPublish,
         )
         .await?;
-        authorize_domain_action(&auth, awr_team::Action::PlanningPublish, None, None)?;
         bind_workstream_scope(&tx, tenant_id, project_id).await?;
         lock_active_project(&tx, tenant_id, project_id).await?;
         lock_works_sorted(&tx, tenant_id, project_id, "main", &affected_vec).await?;
@@ -711,9 +707,23 @@ impl SourceStore {
         let mut client = self.connect().await?;
         crate::check_schema(&client).await?;
         let tx = client.transaction().await?;
-        let auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
-        if authorize_domain_action(&auth, awr_team::Action::PlanningPublish, None, None).is_err() {
-            authorize_domain_action(&auth, awr_team::Action::WorkRead, None, None)?;
+        let mut auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
+        if crate::delegation_auth::authorize_project_action(
+            &tx,
+            &mut auth,
+            project_id,
+            awr_team::Action::PlanningPublish,
+        )
+        .await
+        .is_err()
+        {
+            crate::delegation_auth::authorize_project_action(
+                &tx,
+                &mut auth,
+                project_id,
+                awr_team::Action::WorkRead,
+            )
+            .await?;
         }
         let row = tx
             .query_opt(

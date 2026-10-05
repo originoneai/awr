@@ -47,6 +47,7 @@ pub(crate) struct ReaderAuthority {
     pub role: String,
     pub role_template: awr_team::RoleTemplate,
     pub business_roles: Option<std::collections::BTreeSet<awr_team::BusinessRole>>,
+    pub assignment_grant: bool,
     pub membership_version: i64,
     /// Explicit independent review.decide grant (never implied by role template).
     pub independent_review: bool,
@@ -82,6 +83,7 @@ impl ReaderAuthority {
             &self.actor_kind,
             self.independent_review,
             self.agent_review,
+            self.assignment_grant,
             self.business_roles.as_ref(),
         )
     }
@@ -93,6 +95,7 @@ pub(crate) fn membership_action_ceiling(
     actor_kind: &str,
     independent_review: bool,
     agent_review: bool,
+    assignment_grant: bool,
     business_roles: Option<&std::collections::BTreeSet<awr_team::BusinessRole>>,
 ) -> std::collections::BTreeSet<awr_team::Action> {
     let mut actions = awr_team::template_actions(template);
@@ -104,6 +107,14 @@ pub(crate) fn membership_action_ceiling(
     };
     if review {
         actions.insert(awr_team::Action::ReviewDecide);
+    }
+    if assignment_grant
+        && matches!(
+            template,
+            awr_team::RoleTemplate::Maintainer | awr_team::RoleTemplate::ProjectAdmin
+        )
+    {
+        actions.insert(awr_team::Action::WorkAssign);
     }
     awr_team::constrain_actions_to_business_roles(&actions, business_roles)
 }
@@ -216,7 +227,7 @@ async fn authenticate_inner(
         .query_opt(project_query, &[&tenant, &project])
         .await?
         .ok_or(PgError::Forbidden)?;
-    let identity = tx.query_opt("SELECT c.actor_id,c.client_id,m.membership_version,m.role,a.kind,m.independent_review,m.agent_review,m.business_roles
+    let identity = tx.query_opt("SELECT c.actor_id,c.client_id,m.membership_version,m.role,a.kind,m.independent_review,m.agent_review,m.business_roles,m.assignment_grant
         FROM awr_team.credentials c
         JOIN awr_team.tenants t ON t.id=c.tenant_id
         JOIN awr_team.actors a ON a.tenant_id=c.tenant_id AND a.id=c.actor_id
@@ -239,6 +250,7 @@ async fn authenticate_inner(
     let independent_review: bool = identity.get(5);
     let agent_review: bool = identity.get(6);
     let business_roles = decode_business_roles(identity.get(7))?;
+    let assignment_grant: bool = identity.get(8);
     let snapshot: String = p
         .get::<_, Option<String>>(0)
         .ok_or(PgError::InactiveCandidate)?;
@@ -305,6 +317,9 @@ async fn authenticate_inner(
     if let Some(roles) = &business_roles {
         binding_facts["business_roles"] = json!(roles);
     }
+    if assignment_grant {
+        binding_facts["assignment_grant"] = json!(true);
+    }
     let binding = awr_team::request_hash(&binding_facts).map_err(|_| PgError::Forbidden)?;
     let access = WorkstreamAccess {
         project_id: project.into(),
@@ -322,6 +337,7 @@ async fn authenticate_inner(
         role,
         role_template,
         business_roles,
+        assignment_grant,
         membership_version: membership,
         independent_review,
         agent_review,
@@ -780,6 +796,7 @@ mod tests {
             role_template,
             membership_version: 1,
             business_roles: None,
+            assignment_grant: false,
             independent_review: false,
             agent_review: false,
             execution_access,

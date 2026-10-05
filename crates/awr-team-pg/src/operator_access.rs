@@ -53,6 +53,9 @@ pub struct AccessPlan {
     pub role: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub business_roles: Option<BTreeSet<awr_team::BusinessRole>>,
+    /// Omission preserves the grant; explicit false revokes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignment_grant: Option<bool>,
     pub grants: Vec<AccessGrant>,
     pub credential: Option<AccessCredential>,
     pub revoke_credentials: Vec<String>,
@@ -103,6 +106,8 @@ impl AccessPlan {
             .all(|s| identity(s))
             || !matches!(self.actor.kind.as_str(), "human" | "agent" | "system")
             || (self.agent_review && self.actor.kind != "agent")
+            || (self.assignment_grant == Some(true)
+                && !matches!(self.role.as_str(), "maintainer" | "admin" | "project_admin"))
             || self.actor.display_name.trim().is_empty()
             || self.actor.display_name.len() > 512
             || self.actor.display_name.chars().any(char::is_control)
@@ -394,11 +399,14 @@ pub(crate) async fn snapshot(
         .get(0);
     let a=tx.query_opt("SELECT kind,display_name,status FROM awr_team.actors WHERE tenant_id=$1 AND id=$2 FOR SHARE",&[&tenant,&actor]).await?
         .map(|r|json!({"kind":r.get::<_,String>(0),"display_name":r.get::<_,String>(1),"status":r.get::<_,String>(2)}));
-    let member=tx.query_opt("SELECT role,membership_version,independent_review,agent_review,business_roles FROM awr_team.project_memberships WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3 FOR SHARE",
+    let member=tx.query_opt("SELECT role,membership_version,independent_review,agent_review,business_roles,assignment_grant FROM awr_team.project_memberships WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3 FOR SHARE",
         &[&tenant,&project,&actor]).await?.map(|r| {
             let mut membership = json!({"role":r.get::<_,String>(0),"version":r.get::<_,i64>(1).to_string(),"independent_review":r.get::<_,bool>(2),"agent_review":r.get::<_,bool>(3)});
             if let Some(roles) = r.get::<_,Option<Value>>(4) {
                 membership["business_roles"] = roles;
+            }
+            if r.get::<_,bool>(5) {
+                membership["assignment_grant"] = json!(true);
             }
             membership
         });
@@ -496,18 +504,20 @@ async fn apply_policy(tx: &Transaction<'_>, p: &AccessPlan) -> PgResult<()> {
     tx.execute("INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status) VALUES($1,$2,$3,$4,'active') ON CONFLICT DO NOTHING",
         &[&p.tenant_id,&p.actor.id,&p.actor.kind,&p.actor.display_name]).await?;
     let roles = p.business_roles.as_ref().map(|roles| json!(roles));
-    tx.execute("INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role,independent_review,agent_review,business_roles) VALUES($1,$2,$3,$4,$5,$6,$7)
+    tx.execute("INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role,independent_review,agent_review,business_roles,assignment_grant) VALUES($1,$2,$3,$4,$5,$6,$7,COALESCE($8,FALSE))
         ON CONFLICT(tenant_id,project_id,actor_id) DO UPDATE SET
             role=EXCLUDED.role,
             independent_review=EXCLUDED.independent_review,
             agent_review=EXCLUDED.agent_review,
             business_roles=COALESCE(EXCLUDED.business_roles,awr_team.project_memberships.business_roles),
+            assignment_grant=COALESCE($8,awr_team.project_memberships.assignment_grant),
             membership_version=awr_team.project_memberships.membership_version+1
         WHERE awr_team.project_memberships.role IS DISTINCT FROM EXCLUDED.role
            OR awr_team.project_memberships.independent_review IS DISTINCT FROM EXCLUDED.independent_review
            OR awr_team.project_memberships.agent_review IS DISTINCT FROM EXCLUDED.agent_review
-           OR awr_team.project_memberships.business_roles IS DISTINCT FROM COALESCE(EXCLUDED.business_roles,awr_team.project_memberships.business_roles)",
-        &[&p.tenant_id,&p.project_id,&p.actor.id,&p.role,&p.independent_review,&p.agent_review,&roles]).await?;
+           OR awr_team.project_memberships.business_roles IS DISTINCT FROM COALESCE(EXCLUDED.business_roles,awr_team.project_memberships.business_roles)
+           OR awr_team.project_memberships.assignment_grant IS DISTINCT FROM COALESCE($8,awr_team.project_memberships.assignment_grant)",
+        &[&p.tenant_id,&p.project_id,&p.actor.id,&p.role,&p.independent_review,&p.agent_review,&roles,&p.assignment_grant]).await?;
     let ids = p
         .grants
         .iter()
@@ -556,6 +566,9 @@ pub struct AdminAccessPlan {
     pub role: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub business_roles: Option<BTreeSet<awr_team::BusinessRole>>,
+    /// Omission preserves the grant; explicit false revokes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignment_grant: Option<bool>,
     pub grants: Vec<AccessGrant>,
     pub credential: Option<AccessCredential>,
     /// Explicit review.decide grant (TMCP-031). Never implied by role template.
@@ -592,6 +605,8 @@ impl AdminAccessPlan {
             || !identity(&self.subject_client_id)
             || !matches!(self.subject.kind.as_str(), "human" | "agent" | "system")
             || (self.agent_review && self.subject.kind != "agent")
+            || (self.assignment_grant == Some(true)
+                && !matches!(self.role.as_str(), "maintainer" | "admin" | "project_admin"))
             || self.subject.display_name.trim().is_empty()
             || self.subject.display_name.len() > 512
             || self.subject.display_name.chars().any(char::is_control)
@@ -672,6 +687,7 @@ impl AdminAccessPlan {
             client_id: self.subject_client_id.clone(),
             role: self.role.clone(),
             business_roles: self.business_roles.clone(),
+            assignment_grant: self.assignment_grant,
             grants: self.grants.clone(),
             credential: self.credential.clone(),
             revoke_credentials: vec![],
@@ -1282,7 +1298,13 @@ async fn ensure_last_admin_safe(
 }
 
 fn business_roles_changed(plan: &AdminAccessPlan, state: &Value) -> bool {
-    plan.business_roles
+    plan.assignment_grant.is_some_and(|grant| {
+        state["membership"]["assignment_grant"]
+            .as_bool()
+            .unwrap_or(false)
+            != grant
+    }) || plan
+        .business_roles
         .as_ref()
         .is_some_and(|roles| state["membership"]["business_roles"] != json!(roles))
 }

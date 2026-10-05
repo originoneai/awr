@@ -220,6 +220,133 @@ fn create_req(request_id: &str, work_id: &str) -> PlanningDraftRequest {
     }
 }
 
+#[tokio::test]
+async fn supervisor_planning_selects_exact_project_grant_and_rechecks_scope_on_replay() {
+    use awr_core::{AgentAuthorization, IssueAuthorizationRequest};
+    use awr_team_pg::AuthorizationStore;
+    let (_guard, admin, db, _) = setup().await;
+    elev_maintainer(&admin).await;
+    admin.batch_execute(
+        "UPDATE awr_team.actors SET kind='agent' WHERE tenant_id='reader-tenant' AND id='agent';
+         INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+           VALUES('reader-tenant','reader-project','supervisor-member','Supervisor','active');
+         INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status)
+           VALUES('reader-tenant','reader-project','supervisor-binding','supervisor-member','agent','active');",
+    ).await.unwrap();
+    let config = common::with_app_role(&common::test_config(), &db);
+    let auths = AuthorizationStore::from_config(config.clone());
+    let store = SourceStore::from_config(config);
+    let grant = |id: &str,
+                 scope: serde_json::Value,
+                 actions: serde_json::Value|
+     -> AgentAuthorization {
+        serde_json::from_value(json!({
+            "id":id,"authorizer_person_id":"supervisor-member","responsible_person_id":"supervisor-member",
+            "subject_kind":"agent","subject_id":"agent","client_id":"cli-a","scope":scope,
+            "actions":actions,"status":"active","verifiable_capabilities":[],"self_reported_skill_hints":[],
+            "created_at_ms":1000,"binding_id":"supervisor-binding"
+        })).unwrap()
+    };
+    let project = json!({"kind":"project","project_id":PROJECT});
+    auths
+        .issue(
+            TENANT,
+            PROJECT,
+            &IssueAuthorizationRequest {
+                request_key: "supervisor-inspect-first".into(),
+                authorization: grant("aaa-inspect", project.clone(), json!(["inspect"])),
+            },
+        )
+        .await
+        .unwrap();
+    let scoped = grant(
+        "bbb-task-edit",
+        json!({"kind":"task","project_id":PROJECT,"work_item_id":"a"}),
+        json!(["inspect", "edit_planning"]),
+    );
+    auths
+        .issue(
+            TENANT,
+            PROJECT,
+            &IssueAuthorizationRequest {
+                request_key: "supervisor-task-grant".into(),
+                authorization: scoped,
+            },
+        )
+        .await
+        .unwrap();
+    let req = create_req("supervisor-create", "supervisor-draft");
+    assert!(matches!(
+        store.planning_draft(TENANT, PROJECT, A, &req).await,
+        Err(PgError::Forbidden)
+    ));
+    let mut live = grant(
+        "ccc-project-edit",
+        project,
+        json!(["inspect", "edit_planning"]),
+    );
+    auths
+        .issue(
+            TENANT,
+            PROJECT,
+            &IssueAuthorizationRequest {
+                request_key: "supervisor-project-grant".into(),
+                authorization: live.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    // The grant covers the project, but current client scope is still partial.
+    assert!(matches!(
+        store.planning_draft(TENANT, PROJECT, A, &req).await,
+        Err(PgError::Forbidden)
+    ));
+    admin.batch_execute(
+        "INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,can_write,active)
+         VALUES('reader-tenant','reader-project','agent','cli-a','00000000000000000000000002',1,true,true,true)
+         ON CONFLICT(tenant_id,project_id,actor_id,client_id,workstream_id)
+         DO UPDATE SET can_read=true,can_write=true,active=true,grant_version=awr_team.workstream_grants.grant_version+1;",
+    ).await.unwrap();
+    let first = store
+        .planning_draft(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    let replay = store
+        .planning_draft(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    assert_eq!(
+        replay["result"]["candidate_id"],
+        first["result"]["candidate_id"]
+    );
+    assert_eq!(replay["already_recorded"], true);
+    let candidate = first["result"]["candidate_id"].as_str().unwrap();
+    assert!(
+        store
+            .preview_planning_candidate(TENANT, PROJECT, A, candidate)
+            .await
+            .is_ok()
+    );
+    // Fixture-only failure injection; native business acceptance is separate.
+    live.status = awr_core::AuthorizationStatus::Revoked;
+    admin.execute("UPDATE awr_team.agent_authorizations SET status='revoked',body_json=$1 WHERE id='ccc-project-edit'", &[&json!(live)]).await.unwrap();
+    assert!(matches!(
+        store.planning_draft(TENANT, PROJECT, A, &req).await,
+        Err(PgError::Forbidden)
+    ));
+    assert!(matches!(
+        store
+            .planning_draft(
+                TENANT,
+                PROJECT,
+                A,
+                &create_req("supervisor-next", "supervisor-next-draft")
+            )
+            .await,
+        Err(PgError::Forbidden)
+    ));
+}
+
 async fn rewind_receipt(
     admin: &tokio_postgres::Client,
     request_id: &str,

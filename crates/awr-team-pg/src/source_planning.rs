@@ -367,15 +367,13 @@ impl SourceStore {
             .start()
             .await?;
         let mut auth = authenticate_writer(&tx, tenant_id, project_id, bearer).await?;
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        crate::delegation_auth::resolve_agent_delegation(
-            &tx, &mut auth, project_id, None, None, None, now_ms,
+        crate::delegation_auth::authorize_project_action(
+            &tx,
+            &mut auth,
+            project_id,
+            awr_team::Action::PlanningEditDraft,
         )
         .await?;
-        authorize_domain_action(&auth, awr_team::Action::PlanningEditDraft, None, None)?;
         let (baseline_digest, baseline_epoch) =
             current_baseline(&tx, tenant_id, project_id).await?;
         let known = known_work(&tx, tenant_id, project_id).await?;
@@ -550,15 +548,13 @@ impl SourceStore {
             .start()
             .await?;
         let mut auth = authenticate_writer(&tx, tenant_id, project_id, bearer).await?;
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        crate::delegation_auth::resolve_agent_delegation(
-            &tx, &mut auth, project_id, None, None, None, now_ms,
+        crate::delegation_auth::authorize_project_action(
+            &tx,
+            &mut auth,
+            project_id,
+            awr_team::Action::PlanningEditDraft,
         )
         .await?;
-        authorize_domain_action(&auth, awr_team::Action::PlanningEditDraft, None, None)?;
         lock_candidate(&tx, tenant_id, project_id, candidate_id).await?;
         let mut candidate = load_candidate(&tx, tenant_id, project_id, candidate_id).await?;
         let (baseline_digest, baseline_epoch) =
@@ -654,21 +650,14 @@ impl SourceStore {
             .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
             .start()
             .await?;
-        let auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
-        // Preview requires at least propose or edit or approve/publish or work.read.
-        let scope = crate::workstream_auth::authority_scope(&auth, None, None);
-        let can = [
-            awr_team::Action::PlanningPropose,
-            awr_team::Action::PlanningEditDraft,
-            awr_team::Action::PlanningApprove,
-            awr_team::Action::PlanningPublish,
+        let mut auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
+        crate::delegation_auth::authorize_project_action(
+            &tx,
+            &mut auth,
+            project_id,
             awr_team::Action::WorkRead,
-        ]
-        .iter()
-        .any(|a| scope.allowed_actions.contains(a));
-        if !can {
-            return Err(PgError::Forbidden);
-        }
+        )
+        .await?;
         let candidate = load_candidate(&tx, tenant_id, project_id, candidate_id).await?;
         // Membership WorkRead is not enough: confine contents to client readable scope.
         authorize_candidate_readable_scope(&tx, &auth, tenant_id, project_id, &candidate).await?;
@@ -708,15 +697,13 @@ impl SourceStore {
             .start()
             .await?;
         let mut auth = authenticate_writer(&tx, tenant_id, project_id, bearer).await?;
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        crate::delegation_auth::resolve_agent_delegation(
-            &tx, &mut auth, project_id, None, None, None, now_ms,
+        crate::delegation_auth::authorize_project_action(
+            &tx,
+            &mut auth,
+            project_id,
+            awr_team::Action::PlanningApprove,
         )
         .await?;
-        authorize_domain_action(&auth, awr_team::Action::PlanningApprove, None, None)?;
         let row = tx
             .query_one(
                 "SELECT self_approve_policy_json, delivery_completion_policy
@@ -835,15 +822,13 @@ impl SourceStore {
             .start()
             .await?;
         let mut auth = authenticate_writer(&tx, tenant_id, project_id, bearer).await?;
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        crate::delegation_auth::resolve_agent_delegation(
-            &tx, &mut auth, project_id, None, None, None, now_ms,
+        crate::delegation_auth::authorize_project_action(
+            &tx,
+            &mut auth,
+            project_id,
+            awr_team::Action::PlanningPublish,
         )
         .await?;
-        authorize_domain_action(&auth, awr_team::Action::PlanningPublish, None, None)?;
         lock_candidate(&tx, tenant_id, project_id, candidate_id).await?;
         let mut candidate = load_candidate(&tx, tenant_id, project_id, candidate_id).await?;
         let (live_digest, live_epoch) = current_baseline(&tx, tenant_id, project_id).await?;

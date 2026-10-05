@@ -100,13 +100,20 @@ impl AgentProvisionPlan {
                         | AuthorizedAction::ClaimCoordination
                         | AuthorizedAction::StartWork
                         | AuthorizedAction::ProposePlanning
+                        | AuthorizedAction::AssignWork
+                        | AuthorizedAction::EditPlanning
+                        | AuthorizedAction::ApprovePlanning
+                        | AuthorizedAction::PublishPlanning
+                        | AuthorizedAction::FinalizeDelivery
                         | AuthorizedAction::Review
                 )
             })
             || a.scope.project_id() != self.project_id
             || !matches!(
                 a.scope,
-                AuthorizationScope::Workstream { .. } | AuthorizationScope::Task { .. }
+                AuthorizationScope::Project { .. }
+                    | AuthorizationScope::Workstream { .. }
+                    | AuthorizationScope::Task { .. }
             )
             || serde_json::to_vec(self).map_err(|_| invalid())?.len() > 65536
         {
@@ -1079,8 +1086,20 @@ fn access_reason(p: &AgentProvisionPlan, s: &Value, now: i64) -> Option<&'static
     }) {
         return Some("credential_unusable");
     }
-    let stream = match &a.scope {
-        AuthorizationScope::Workstream { workstream_id, .. } => workstream_id.as_str(),
+    let Ok(catalog) = serde_json::from_value::<WorkstreamCatalog>(access["catalog"].clone()) else {
+        return Some("scope_stale");
+    };
+    if catalog.project_id != p.project_id {
+        return Some("scope_stale");
+    }
+    let streams: Vec<String> = match &a.scope {
+        AuthorizationScope::Project { .. } => catalog
+            .workstreams
+            .iter()
+            .filter(|w| w.state == awr_core::WorkstreamState::Active)
+            .map(|w| w.id.to_string())
+            .collect(),
+        AuthorizationScope::Workstream { workstream_id, .. } => vec![workstream_id.clone()],
         AuthorizationScope::Task { .. } => {
             let o = &s["task_ownership"];
             if o["definition_state"] != "enabled"
@@ -1090,52 +1109,64 @@ fn access_reason(p: &AgentProvisionPlan, s: &Value, now: i64) -> Option<&'static
                 return Some("scope_stale");
             }
             match o["workstream_id"].as_str() {
-                Some(v) => v,
+                Some(v) => vec![v.to_owned()],
                 None => return Some("scope_stale"),
             }
         }
         _ => return Some("scope_unsupported"),
     };
-    let Ok(catalog) = serde_json::from_value::<WorkstreamCatalog>(access["catalog"].clone()) else {
+    if streams.is_empty() {
         return Some("scope_stale");
-    };
-    let Some(definition) = catalog
-        .workstreams
-        .iter()
-        .find(|w| w.id.to_string() == stream)
-    else {
-        return Some("scope_stale");
-    };
-    if catalog.project_id != p.project_id || definition.state != awr_core::WorkstreamState::Active {
-        return Some("workstream_inactive");
     }
-    let Some(grant) = access["grants"].as_array().and_then(|gs| {
-        gs.iter().find(|g| {
-            g["workstream_id"] == stream
-                && g["active"] == true
-                && g["read"] == true
-                && g["authority_version"] == definition.authority_version.to_string()
-        })
-    }) else {
-        return Some("grant_stale");
+    let roles = match crate::workstream_auth::decode_business_roles(
+        access["membership"].get("business_roles").cloned(),
+    ) {
+        Ok(roles) => roles,
+        Err(_) => return Some("membership_policy_invalid"),
     };
-    if ["manage", "attest_execution", "reconcile_execution"]
-        .iter()
-        .any(|k| grant[k] == true)
-    {
-        return Some("grant_elevated");
-    }
     let mapped = crate::tmcp_actions_for_authorized_set(&a.actions);
-    let mut allowed = crate::intersect_delegation_with_template(role, &mapped);
-    if access["membership"]["agent_review"] == true
-        && mapped.contains(&awr_team::Action::ReviewDecide)
-    {
-        allowed.insert(awr_team::Action::ReviewDecide);
-    }
-    if !mapped.is_subset(&allowed)
-        || (mapped.iter().any(|x| *x != awr_team::Action::WorkRead) && grant["write"] != true)
-    {
+    let membership = crate::workstream_auth::membership_action_ceiling(
+        access["membership"]["role"].as_str()?,
+        role,
+        "agent",
+        false,
+        access["membership"]["agent_review"] == true,
+        access["membership"]["assignment_grant"] == true,
+        roles.as_ref(),
+    );
+    if !mapped.is_subset(&membership) {
         return Some("action_not_effective");
+    }
+    for stream in streams {
+        let Some(definition) = catalog
+            .workstreams
+            .iter()
+            .find(|w| w.id.to_string() == stream)
+        else {
+            return Some("scope_stale");
+        };
+        if definition.state != awr_core::WorkstreamState::Active {
+            return Some("workstream_inactive");
+        }
+        let Some(grant) = access["grants"].as_array().and_then(|gs| {
+            gs.iter().find(|g| {
+                g["workstream_id"] == stream
+                    && g["active"] == true
+                    && g["read"] == true
+                    && g["authority_version"] == definition.authority_version.to_string()
+            })
+        }) else {
+            return Some("grant_stale");
+        };
+        if ["manage", "attest_execution", "reconcile_execution"]
+            .iter()
+            .any(|k| grant[k] == true)
+        {
+            return Some("grant_elevated");
+        }
+        if mapped.iter().any(|x| *x != awr_team::Action::WorkRead) && grant["write"] != true {
+            return Some("action_not_effective");
+        }
     }
     None
 }
