@@ -8,6 +8,7 @@ pub(crate) mod claims;
 pub(crate) mod executions;
 pub(crate) mod handoffs;
 pub(crate) mod reviews;
+pub(crate) mod task_intake;
 
 use crate::workstream_auth::{
     CommandAuthPhase, ReaderAuthority, authenticate_writer, authorize_command,
@@ -21,6 +22,9 @@ use std::sync::Arc;
 use tokio_postgres::Transaction;
 
 pub(crate) const COMMANDS: &[&str] = &[
+    "task.assign",
+    "task.accept_assignment",
+    "task.claim_available",
     "session.start",
     "session.checkpoint",
     "session.end",
@@ -101,6 +105,7 @@ enum Action {
     Execution(executions::Action),
     Handoff(handoffs::Action),
     Review(reviews::Action),
+    Intake(task_intake::Action),
 }
 
 struct Applied {
@@ -145,6 +150,9 @@ impl WorkstreamCommand {
         }
         version(&self.expected_project_revision)?;
         match self.op.as_str() {
+            "task.assign" | "task.accept_assignment" | "task.claim_available" => Ok(
+                Action::Intake(task_intake::Action::parse(&self.op, self.args.clone())?),
+            ),
             "execution.prepare"
             | "execution.cancel"
             | "execution.start"
@@ -370,8 +378,13 @@ impl WorkstreamCommandStore {
                 &stream.to_string(),
                 ownership,
             )?;
+            let responsibility = task_intake::view(
+                &crate::responsibility::current(&tx, tenant, project, &command.work_id).await?,
+            );
             tx.commit().await?;
-            return Ok(json!({"replayed":true,"receipt":result,"execution_authorized":false}));
+            return Ok(
+                json!({"replayed":true,"receipt":result,"current_responsibility":responsibility,"execution_authorized":false}),
+            );
         }
         if auth.project_status != "active" {
             return Err(PgError::ProjectNotAvailable);
@@ -406,7 +419,16 @@ impl WorkstreamCommandStore {
         if contract_hash != command.expected_contract_hash {
             return Err(PgError::PreconditionsChanged);
         }
+        if ["task.", "claim.", "execution.", "handoff."]
+            .iter()
+            .any(|prefix| command.op.starts_with(prefix))
+        {
+            task_intake::lock_task(&tx, tenant, project, &auth, &command).await?;
+        }
         let applied = match action {
+            Action::Intake(a) => {
+                task_intake::apply(&tx, tenant, project, &auth, &command, ownership, a).await?
+            }
             Action::Execution(a) => {
                 executions::apply(
                     &tx, tenant, project, &auth, &command, ownership, &contract, a,
@@ -431,6 +453,9 @@ impl WorkstreamCommandStore {
             },
         };
         let mut data = applied.data;
+        if command.op.starts_with("task.") {
+            data["responsibility_state_basis"] = json!("at_commit");
+        }
         if command.op.starts_with("claim.") {
             data["lease_state_basis"] = json!("at_commit");
         }
@@ -484,11 +509,14 @@ impl WorkstreamCommandStore {
         // path), not only ReviewStore entrypoints — TMCP-040 CR on PR #134.
         record_command_delivery_ops_audit(&tx, tenant, project, &auth, &command, stream, &data)
             .await?;
+        let responsibility = task_intake::view(
+            &crate::responsibility::current(&tx, tenant, project, &command.work_id).await?,
+        );
         tx.commit().await?;
         // Only the original committed start response permits one caller-managed
         // execution. Stored/replayed receipts are historical, never a new grant.
         Ok(
-            json!({"replayed":false,"receipt":receipt,"execution_authorized":command.op == "execution.start"}),
+            json!({"replayed":false,"receipt":receipt,"current_responsibility":responsibility,"execution_authorized":command.op == "execution.start"}),
         )
     }
 }
@@ -578,9 +606,11 @@ async fn apply(
     action: Action,
 ) -> PgResult<Value> {
     match action {
-        Action::Claim(_) | Action::Execution(_) | Action::Handoff(_) | Action::Review(_) => {
-            Err(invalid())
-        } // Same outer transaction.
+        Action::Claim(_)
+        | Action::Execution(_)
+        | Action::Handoff(_)
+        | Action::Review(_)
+        | Action::Intake(_) => Err(invalid()), // Same outer transaction.
         Action::Start(a) => {
             let active: bool = tx.query_one("SELECT EXISTS(SELECT 1 FROM awr_team.sessions
                 WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3 AND client_id=$4 AND conversation_id=$5 AND work_id=$6 AND state='active')",

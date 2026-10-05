@@ -607,13 +607,20 @@ pub(crate) fn authorize_navigation_action(
     stream: awr_core::Id,
     work: &str,
 ) -> PgResult<()> {
+    navigation_authority(auth, action, stream, work).map(|_| ())
+}
+
+/// Use the same single covering delegation for an advisory action and its
+/// attributed member. Callers must not reconstruct or union discovery grants.
+pub(crate) fn navigation_authority(
+    auth: &ReaderAuthority,
+    action: Action,
+    stream: awr_core::Id,
+    work: &str,
+) -> PgResult<ReaderAuthority> {
     let Some(candidates) = &auth.read_delegations else {
-        return crate::workstream_auth::authorize_domain_action(
-            auth,
-            action,
-            Some(stream),
-            Some(work),
-        );
+        crate::workstream_auth::authorize_domain_action(auth, action, Some(stream), Some(work))?;
+        return Ok(auth.clone());
     };
     let chosen = candidates
         .iter()
@@ -628,7 +635,8 @@ pub(crate) fn authorize_navigation_action(
         .ok_or(PgError::Forbidden)?;
     let mut scoped = auth.clone();
     install_delegation(&mut scoped, Some(chosen));
-    crate::workstream_auth::authorize_domain_action(&scoped, action, Some(stream), Some(work))
+    crate::workstream_auth::authorize_domain_action(&scoped, action, Some(stream), Some(work))?;
+    Ok(scoped)
 }
 
 /// Keep selector-free discovery inside the selected delegation, not merely

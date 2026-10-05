@@ -187,7 +187,7 @@ async fn revoked_credential_cannot_mutate_and_search_stays_scoped() {
         .await
         .unwrap();
     assert_eq!(caps["action_authorization"], "tmcp_010_shared_decision");
-    assert_eq!(caps["permission_policy_id"], "awr-team-mcp-permission-v1");
+    assert_eq!(caps["permission_policy_id"], "awr-team-mcp-permission-v2");
 }
 
 #[tokio::test]

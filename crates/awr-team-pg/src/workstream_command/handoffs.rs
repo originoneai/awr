@@ -415,12 +415,15 @@ pub(super) async fn apply(
         }
     };
     let duty = handoff.duty_at(handoff.updated_at_ms).map_err(map_core)?;
+    let responsibility =
+        crate::responsibility::current(tx, tenant, project, &command.work_id).await?;
     Ok(Applied {
         data: json!({
             "handoff_id": handoff.id,
             "kind": kind_str(handoff.kind),
             "status": status_str(handoff.status),
             "version": handoff.version.to_string(),
+            "responsibility_version": responsibility.version.to_string(),
             "duty": duty,
             "context_requires_refresh": duty.context_requires_refresh,
             "successor_may_execute": duty.successor_may_execute,
@@ -453,40 +456,12 @@ async fn resolve_authenticated_person(
     project: &str,
     auth: &ReaderAuthority,
 ) -> PgResult<PersonId> {
-    let bindings = tx
-        .query(
-            "SELECT person_id FROM awr_team.person_agent_bindings
-             WHERE tenant_id=$1 AND project_id=$2 AND agent_id=$3 AND status='active'
-             ORDER BY id",
-            &[&tenant, &project, &auth.actor_id],
-        )
-        .await?;
-    if bindings.len() > 1 {
-        return Err(PgError::Protocol(
-            "multiple active person↔agent bindings for actor; refuse ambiguous handoff identity"
-                .into(),
-        ));
-    }
-    if let Some(row) = bindings.first() {
-        let person_id: String = row.get(0);
-        return person(&person_id);
-    }
-    let person_row = tx
-        .query_opt(
-            "SELECT id FROM awr_team.persons
-             WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND status='active'",
-            &[&tenant, &project, &auth.actor_id],
-        )
-        .await?;
-    if person_row.is_some() {
-        return person(&auth.actor_id);
-    }
-    // Human/system actors may still use actor_id as person key when the person row
-    // is created on first propose; agent actors must have an explicit binding.
-    if auth.actor_kind == "agent" {
-        return Err(PgError::Forbidden);
-    }
-    person(&auth.actor_id)
+    Ok(
+        super::task_intake::actor_instance(tx, tenant, project, auth)
+            .await?
+            .person_id()
+            .clone(),
+    )
 }
 
 async fn ensure_person(

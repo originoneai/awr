@@ -57,7 +57,10 @@ async fn feedback_preserves_identity_context_and_independently_timed_observation
     let data = observe(&store, A).await;
     assert_eq!(data["session"]["actor_id"], "agent");
     assert_eq!(data["session"]["client_id"], "cli-a");
-    assert!(data["responsibility"].is_null());
+    assert_eq!(data["responsibility"]["version"], "0");
+    assert_eq!(data["responsibility"]["relation"], "pool");
+    assert!(data["responsibility"]["owner_person_id"].is_null());
+    assert!(data["responsibility"]["current_executor"].is_null());
     assert_eq!(data["client"]["product"], "Example Agent");
     assert_eq!(data["model"]["id"], "example-model");
     assert_eq!(data["progress"]["phase"], "testing");

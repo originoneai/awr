@@ -18,7 +18,7 @@ fn invalid() -> PgError {
     PgError::Protocol("invalid responsibility request".into())
 }
 
-fn map_core(err: awr_core::Error) -> PgError {
+pub(crate) fn map_core(err: awr_core::Error) -> PgError {
     match err {
         awr_core::Error::RevisionConflict { .. } => PgError::PreconditionsChanged,
         awr_core::Error::ClaimConflict(_) => PgError::ClaimHeld,
@@ -163,9 +163,7 @@ impl ResponsibilityStore {
         let mut client = self.connect().await?;
         let tx = client.transaction().await?;
         bind_workstream_scope(&tx, tenant, project).await?;
-        let task = load_task_tx(&tx, tenant, project, work_id)
-            .await?
-            .unwrap_or_else(|| TaskResponsibility::unassigned(project, work_id));
+        let task = current(&tx, tenant, project, work_id).await?;
         tx.commit().await?;
         Ok(task)
     }
@@ -435,9 +433,83 @@ impl ResponsibilityStore {
         let mut client = self.connect().await?;
         let tx = client.transaction().await?;
         bind_workstream_scope(&tx, tenant, project).await?;
-        // Receipt keys are project-wide, including requests for different tasks.
-        // Lock the request before the task so key reuse produces a domain conflict,
-        // rather than a late unique violation after writing a task projection.
+        let result = apply_in_transaction(
+            &tx,
+            tenant,
+            project,
+            work_id,
+            request_key,
+            op,
+            request_hash,
+            transition,
+            actor,
+            payload,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+}
+
+/// Reuse the caller's authenticated transaction so responsibility and leases
+/// either commit together or roll back together.
+pub(crate) async fn apply_in_transaction<F>(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    work_id: &str,
+    request_key: &str,
+    op: ResponsibilityEventType,
+    request_hash: String,
+    transition: F,
+    actor: Option<&str>,
+    payload: Value,
+) -> PgResult<(TaskResponsibility, ResponsibilityReceipt)>
+where
+    F: FnOnce(&TaskResponsibility, &[PersonAgentBinding]) -> PgResult<TaskResponsibility>,
+{
+    lock_transition_keys(tx, tenant, project, work_id, &[request_key.to_owned()]).await?;
+    if let Some(receipt) =
+        load_receipt(&tx, tenant, project, request_key, op, &request_hash).await?
+    {
+        if receipt.work_item_id != work_id {
+            return Err(PgError::IdempotencyConflict);
+        }
+        let after = current(tx, tenant, project, work_id).await?;
+        return Ok((after, receipt));
+    }
+    let before = current(tx, tenant, project, work_id).await?;
+    let bindings = load_bindings_tx(&tx, tenant, project).await?;
+    let after = transition(&before, &bindings)?;
+    persist_task(&tx, tenant, project, &after).await?;
+    let receipt = record_change(
+        &tx,
+        tenant,
+        &before,
+        &after,
+        op,
+        request_key,
+        &request_hash,
+        actor,
+        payload,
+    )
+    .await?;
+    Ok((after, receipt))
+}
+
+/// Acquire all request locks before the task lock, including when a caller needs
+/// several responsibility transitions inside one authenticated transaction.
+pub(crate) async fn lock_transition_keys(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    work_id: &str,
+    request_keys: &[String],
+) -> PgResult<()> {
+    // Receipt keys are project-wide, including requests for different tasks.
+    // Lock the request before the task so key reuse produces a domain conflict,
+    // rather than a late unique violation after writing a task projection.
+    for request_key in request_keys {
         let request_lock =
             serde_json::to_string(&("responsibility.request", tenant, project, request_key))
                 .map_err(|error| PgError::Protocol(error.to_string()))?;
@@ -446,48 +518,17 @@ impl ResponsibilityStore {
             &[&request_lock],
         )
         .await?;
-        // Serialize first-insert races. FOR UPDATE cannot lock a missing row, so two
-        // creators would otherwise both observe "unassigned" and the later upsert
-        // would erase the earlier owner.
-        let lock_key = format!("{tenant}\u{1f}{project}\u{1f}{work_id}");
-        tx.execute(
-            "SELECT pg_advisory_xact_lock(hashtext($1)::bigint)",
-            &[&lock_key],
-        )
-        .await?;
-        if let Some(receipt) =
-            load_receipt(&tx, tenant, project, request_key, op, &request_hash).await?
-        {
-            if receipt.work_item_id != work_id {
-                return Err(PgError::IdempotencyConflict);
-            }
-            let after = load_task_tx(&tx, tenant, project, work_id)
-                .await?
-                .unwrap_or_else(|| TaskResponsibility::unassigned(project, work_id));
-            tx.commit().await?;
-            return Ok((after, receipt));
-        }
-        let before = load_task_tx(&tx, tenant, project, work_id)
-            .await?
-            .unwrap_or_else(|| TaskResponsibility::unassigned(project, work_id));
-        let bindings = load_bindings_tx(&tx, tenant, project).await?;
-        let after = transition(&before, &bindings)?;
-        persist_task(&tx, tenant, project, &after).await?;
-        let receipt = record_change(
-            &tx,
-            tenant,
-            &before,
-            &after,
-            op,
-            request_key,
-            &request_hash,
-            actor,
-            payload,
-        )
-        .await?;
-        tx.commit().await?;
-        Ok((after, receipt))
     }
+    // Serialize first-insert races. FOR UPDATE cannot lock a missing row, so two
+    // creators would otherwise both observe "unassigned" and the later upsert
+    // would erase the earlier owner.
+    let lock_key = format!("{tenant}\u{1f}{project}\u{1f}{work_id}");
+    tx.execute(
+        "SELECT pg_advisory_xact_lock(hashtext($1)::bigint)",
+        &[&lock_key],
+    )
+    .await?;
+    Ok(())
 }
 
 async fn load_bindings_tx(
@@ -520,22 +561,31 @@ async fn load_bindings_tx(
     Ok(out)
 }
 
-async fn load_task_tx(
+/// An absent projection is the pool state. Reads do not create a person or
+/// responsibility row and do not acquire mutation row locks.
+pub(crate) async fn current(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    work_id: &str,
+) -> PgResult<TaskResponsibility> {
+    Ok(load_task(tx, tenant, project, work_id)
+        .await?
+        .unwrap_or_else(|| TaskResponsibility::unassigned(project, work_id)))
+}
+
+async fn load_task(
     tx: &Transaction<'_>,
     tenant: &str,
     project: &str,
     work_id: &str,
 ) -> PgResult<Option<TaskResponsibility>> {
-    let row = tx
-        .query_opt(
-            "SELECT owner_person_id, independent_reviewer_person_id, executor_kind, executor_person_id,
+    let query = "SELECT owner_person_id, independent_reviewer_person_id, executor_kind, executor_person_id,
                     executor_agent_id, executor_binding_id, version, pending_kind, pending_person_id,
                     pending_legacy_ref, pending_transfer_request_key, pending_detail, personal_mode_default
              FROM awr_team.task_responsibilities
-             WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 FOR UPDATE",
-            &[&tenant, &project, &work_id],
-        )
-        .await?;
+             WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3";
+    let row = tx.query_opt(query, &[&tenant, &project, &work_id]).await?;
     let Some(row) = row else {
         return Ok(None);
     };

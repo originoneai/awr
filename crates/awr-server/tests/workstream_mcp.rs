@@ -109,6 +109,85 @@ fn raw(server: &Server, token: &str) -> reqwest::RequestBuilder {
 }
 
 #[tokio::test]
+async fn task_assignment_acceptance_and_replay_share_http_mcp_responsibility() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    admin
+        .batch_execute(
+            "UPDATE awr_team.project_memberships SET assignment_grant=true WHERE actor_id='agent'",
+        )
+        .await
+        .unwrap();
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let tools = client.list_all_tools().await.unwrap();
+    let command_tool = tools.iter().find(|t| t.name == "awr_team_command").unwrap();
+    for op in [
+        "task.assign",
+        "task.accept_assignment",
+        "task.claim_available",
+    ] {
+        assert!(
+            command_tool.input_schema["properties"]["op"]["enum"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(op))
+        );
+    }
+    let p = prepared(&client).await;
+    let reservation = call(&client,"awr_team_command",serde_json::to_value(command(&p,"dispatch","task.assign",json!({
+        "assignee_person_id":"agent","expected_responsibility_version":p["data"]["responsibility"]["version"]}))).unwrap(),false).await;
+    assert_eq!(
+        reservation["receipt"]["data"]["coordination_claim_acquired"],
+        false
+    );
+    let p = prepared(&client).await;
+    let request = serde_json::to_value(command(&p,"accept","task.accept_assignment",json!({
+        "session_id":"session-a","expected_session_version":"1","expected_work_version":"0","ttl_seconds":60,
+        "expected_responsibility_version":p["data"]["responsibility"]["version"],
+        "assignment_request_key":p["data"]["responsibility"]["pending"]["transfer_request_key"]}))).unwrap();
+    let response = http()
+        .post(format!("{}/one/command", server.url))
+        .bearer_auth(A)
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let accepted: Value = response.json().await.unwrap();
+    assert_eq!(accepted["current_responsibility"]["owner"], "agent");
+    assert!(accepted["current_responsibility"]["pending"].is_null());
+    assert_eq!(accepted["execution_authorized"], false);
+    let replay = call(&client, "awr_team_command", request, false).await;
+    assert_eq!(replay["receipt"], accepted["receipt"]);
+    assert_eq!(replay["replayed"], true);
+    let count: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.claims", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 1);
+    client.cancel().await.unwrap();
+    let resumed = connect(&server, "one", A).await.unwrap();
+    let observed = call(
+        &resumed,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.observe","work_id":"a"}),
+        false,
+    )
+    .await;
+    assert_eq!(
+        observed["data"]["responsibility"]["owner_person_id"],
+        "agent"
+    );
+    assert_eq!(
+        observed["data"]["responsibility"]["relation"],
+        "owned_by_me"
+    );
+    resumed.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn rejected_completion_has_http_mcp_parity_and_never_completes_work() {
     let (_guard, admin, _db, store) = setup().await;
     enable_writes(&admin).await;
