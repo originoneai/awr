@@ -1,5 +1,59 @@
 # PR delivery ∩ authorized review & completion (AWR-TMCP-031)
 
+## Provider-neutral delivery protocol
+
+`awr_team::delivery` defines `awr-delivery` version 1 records without network
+access, a database driver or repository effects. GitHub URLs and PR numbers
+are optional provider locators. `RevisionRef` explicitly distinguishes Git
+SHA-1, Git SHA-256 and opaque artifact revisions; artifact-only delivery and
+delivery without a change request are valid.
+
+| Record | Meaning and binding |
+| --- | --- |
+| `DeliveryCandidate` | Inspectable artifact manifest and exact candidate binding. |
+| `ChangeRequest` | Optional provider resource associated with that candidate. |
+| `VerificationRun` | Candidate-bound outcome, result artifact and original source. |
+| `ReviewDecision` | Reference to an existing AWR review round, decision and evidence bundle. |
+| `IntegrationRequest` | Stable intent ID, operation, expected target and review/check references. |
+| `IntegrationObservation` | Separate observed outcome, resulting target revision and candidate manifest. |
+| `AdapterCapabilities` | Mechanical support; never an authenticated permission grant. |
+
+Every candidate binding contains tenant/project/work identity, candidate ID and
+decimal-string version, source contract hash, complete manifest digest, optional
+source revision, required check set and target precondition. Targets require an
+explicit absence or exact revision expectation. Changes to any bound fact require
+reevaluation of checks and review; `validate_against` verifies equality, not trust.
+Manifest digests use the existing canonical hash codec with a delivery-specific
+domain. Artifact locators are inspectable references; validation does not open or
+rehash their contents. The authenticated storage/adapter layer must do that.
+
+`parse_delivery_record` enforces the protocol/version, strict fields and a 64 KiB
+record limit. Manifests contain 1–128 unique artifact identities; check sets have
+at most 64 unique names. Counters use canonical decimal strings. Known observation
+and recording times are distinct; an absent observation time remains null.
+Malformed-input errors do not echo source values.
+
+Observations retain caller-declared, operator-recorded or adapter-observed origins.
+An authenticated ingress must derive/confirm those origins and assign recording
+time; a parsed enum or a capability declaration cannot upgrade trust. A passed
+verification describes an inspectable result, not proof that a trusted runner ran
+it. A review reference must resolve to the existing AWR round, evidence and
+authorized decision. An external repository approval never substitutes for that
+decision. Human approval, dependency assurance and fencing policies are unchanged.
+
+Integration intent, observed repository success and authoritative source writeback
+are separate. An applied observation identifies both the actual target revision
+and exact manifest; an unknown outcome remains unknown. Before retrying a mutation
+with an uncertain result, reconcile its stable request and target. Webhooks may
+wake a current-resource inspection; polling/reconciliation must recover missed
+notifications. Neither receiving an event nor validating a record finalizes work.
+
+This module provides pure record validation. Durable ingestion, actual provider
+adapters, version-bound finalization and source-writeback confirmation are separate
+integration layers; this protocol alone does not claim an operational delivery
+pipeline. Existing PR operations below retain their compatibility and permission
+boundaries.
+
 ## Purpose
 
 Reuse the WS-018 evidence / review / rework / complete domain flow on the same
