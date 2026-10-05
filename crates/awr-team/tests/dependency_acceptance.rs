@@ -51,6 +51,11 @@ fn v1_wire_and_hashes_remain_unchanged_and_reject_v2_fields() {
 #[test]
 fn v2_hash_binds_exact_dependency_policy_and_ignores_map_order() {
     let a = opted_in();
+    // Pre-V3 golden value: extending the domain must not reinterpret V2 receipts.
+    assert_eq!(
+        a.hash().unwrap(),
+        "3ecee8564ce67b26a396b2af0936f6ee84610c5d4a74cda5310acbe5dc3d68b6"
+    );
     let mut b = a.clone();
     b.required_dependencies.push("API-2".into());
     b.dependency_acceptance.insert(

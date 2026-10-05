@@ -13,6 +13,42 @@ pub enum DependencyAcceptanceMode {
     AgentReviewedCallerAssertedReconciled,
 }
 
+/// An explicit agreement about workspace-local caller-managed effects. This
+/// does not attest to process termination, OS isolation or artifact quality.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionSettlementMode {
+    IndependentWorkspaceV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionSettlementPolicy {
+    pub mode: ExecutionSettlementMode,
+    /// Stable opaque workspace identity; never a path or an authority grant.
+    pub workspace_id: String,
+}
+
+impl ExecutionSettlementPolicy {
+    pub const COMPLETION_POLICY: &'static str = "caller_managed_execution_and_agent_review";
+
+    pub fn validate(&self) -> TeamResult<()> {
+        let id = self.workspace_id.as_bytes();
+        if id.is_empty()
+            || id.len() > 128
+            || !id[0].is_ascii_alphanumeric()
+            || !id
+                .iter()
+                .all(|c| c.is_ascii_alphanumeric() || b"_.:-".contains(c))
+        {
+            return Err(TeamError::InvalidContract(
+                "workspace_id must be a stable opaque identity of 1..128 ASCII bytes".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkDefinitionState {
@@ -41,6 +77,8 @@ pub struct WorkContract {
     pub verification_requirements: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub dependency_acceptance: BTreeMap<String, DependencyAcceptanceMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_settlement: Option<ExecutionSettlementPolicy>,
 }
 
 // V1 remains a closed wire contract, including rejection of an empty V2 field.
@@ -59,6 +97,16 @@ struct WireContract {
     verification_requirements: Vec<String>,
     #[serde(default, deserialize_with = "present_modes")]
     dependency_acceptance: Option<BTreeMap<String, DependencyAcceptanceMode>>,
+    #[serde(default, deserialize_with = "present_settlement")]
+    execution_settlement: Option<ExecutionSettlementPolicy>,
+}
+
+fn present_settlement<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<ExecutionSettlementPolicy>, D::Error> {
+    // A present null is invalid, not an omitted opt-in. Old codecs must never
+    // silently ignore a requested settlement policy.
+    ExecutionSettlementPolicy::deserialize(d).map(Some)
 }
 
 pub(crate) fn present_modes<'de, D: serde::Deserializer<'de>>(
@@ -97,6 +145,11 @@ impl TryFrom<WireContract> for WorkContract {
                 "dependency_acceptance requires contract V2".into(),
             ));
         }
+        if wire.codec != Self::CODEC_V3 && wire.execution_settlement.is_some() {
+            return Err(TeamError::InvalidContract(
+                "execution_settlement requires contract V3".into(),
+            ));
+        }
         let dependency_acceptance = wire.dependency_acceptance.unwrap_or_default();
         let contract = Self {
             codec: wire.codec,
@@ -110,6 +163,7 @@ impl TryFrom<WireContract> for WorkContract {
             completion_policy: wire.completion_policy,
             verification_requirements: wire.verification_requirements,
             dependency_acceptance,
+            execution_settlement: wire.execution_settlement,
         };
         contract.validate()?;
         Ok(contract)
@@ -119,29 +173,57 @@ impl TryFrom<WireContract> for WorkContract {
 impl WorkContract {
     pub const CODEC: &'static str = "awr-team-contract-v1";
     pub const CODEC_V2: &'static str = "awr-team-contract-v2";
+    pub const CODEC_V3: &'static str = "awr-team-contract-v3";
 
     pub fn validate(&self) -> TeamResult<()> {
-        if !matches!(self.codec.as_str(), Self::CODEC | Self::CODEC_V2) {
+        if !matches!(
+            self.codec.as_str(),
+            Self::CODEC | Self::CODEC_V2 | Self::CODEC_V3
+        ) {
             return Err(TeamError::InvalidContract(
                 "unsupported contract codec".into(),
             ));
         }
         if (self.codec == Self::CODEC && !self.dependency_acceptance.is_empty())
-            || (self.codec == Self::CODEC_V2
-                && (self.dependency_acceptance.is_empty()
-                    || self
-                        .required_dependencies
-                        .iter()
-                        .collect::<std::collections::BTreeSet<_>>()
-                        .len()
-                        != self.required_dependencies.len()))
+            || (self.codec == Self::CODEC_V2 && self.dependency_acceptance.is_empty())
+            || (matches!(self.codec.as_str(), Self::CODEC_V2 | Self::CODEC_V3)
+                && self
+                    .required_dependencies
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    != self.required_dependencies.len())
             || self.dependency_acceptance.keys().any(|upstream| {
                 upstream == self.work_id.as_str() || !self.required_dependencies.contains(upstream)
             })
         {
             return Err(TeamError::InvalidContract(
-                "dependency_acceptance requires V2, a nonempty map and unique existing required predecessors".into(),
+                "dependency_acceptance requires V2/V3 and unique existing required predecessors; V2 requires a nonempty map".into(),
             ));
+        }
+        match (&self.execution_settlement, self.codec.as_str()) {
+            (Some(policy), Self::CODEC_V3) => {
+                policy.validate()?;
+                if self.completion_policy != ExecutionSettlementPolicy::COMPLETION_POLICY
+                    || self.scope_paths.is_empty()
+                    || self.scope_paths.iter().any(|p| p.trim().is_empty())
+                    || self.verification_requirements.is_empty()
+                    || self
+                        .verification_requirements
+                        .iter()
+                        .any(|v| v.trim().is_empty())
+                {
+                    return Err(TeamError::InvalidContract(
+                        "independent workspace settlement requires scoped paths, verification requirements and independent Agent artifact review".into(),
+                    ));
+                }
+            }
+            (None, Self::CODEC | Self::CODEC_V2) => {}
+            _ => {
+                return Err(TeamError::InvalidContract(
+                    "execution_settlement is required for V3 and forbidden in V1/V2".into(),
+                ));
+            }
         }
         if self.external_key.trim().is_empty() {
             return Err(TeamError::InvalidContract("external_key required".into()));
@@ -187,8 +269,11 @@ impl WorkContract {
             "completion_policy": self.completion_policy,
             "verification_requirements": verification_requirements,
         });
-        if self.codec == Self::CODEC_V2 {
+        if matches!(self.codec.as_str(), Self::CODEC_V2 | Self::CODEC_V3) {
             value["dependency_acceptance"] = json!(self.dependency_acceptance);
+        }
+        if self.codec == Self::CODEC_V3 {
+            value["execution_settlement"] = json!(self.execution_settlement);
         }
         let _ = canonical_json(&value)?;
         Ok(value)

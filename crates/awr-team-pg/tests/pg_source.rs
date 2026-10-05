@@ -16,7 +16,8 @@ const TENANT: &str = "tenant-a";
 const PROJECT: &str = "project-a";
 const AUTHOR: &str = "actor-a";
 const REVIEWER: &str = "actor-b";
-const WORKER: &str = "actor-c";
+const READER: &str = "actor-c";
+const WORKER: &str = "actor-e";
 const DISABLED: &str = "actor-d";
 const PARSER_V1: &str = "awr-team-source/1";
 const PARSER_V2: &str = "awr-team-source/2";
@@ -30,13 +31,15 @@ async fn setup() -> (MutexGuard<'static, ()>, Client, SourceStore) {
                 ('tenant-a','actor-a','agent','A','active'),
                 ('tenant-a','actor-b','human','B','active'),
                 ('tenant-a','actor-c','human','C','active'),
-                ('tenant-a','actor-d','human','D','disabled');
+                ('tenant-a','actor-d','human','D','disabled'),
+                ('tenant-a','actor-e','human','E','active');
              INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
                 VALUES ('tenant-a','project-a','alpha','team','epoch-1','active');
              INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role) VALUES
                 ('tenant-a','project-a','actor-b','reviewer'),
-                ('tenant-a','project-a','actor-c','worker'),
-                ('tenant-a','project-a','actor-d','reviewer');
+                ('tenant-a','project-a','actor-c','reader'),
+                ('tenant-a','project-a','actor-d','reviewer'),
+                ('tenant-a','project-a','actor-e','worker');
              INSERT INTO awr_team.work_scopes(tenant_id,project_id,id,name,status)
                 VALUES ('tenant-a','project-a','main','main','active');
              INSERT INTO awr_team.work_items(tenant_id,project_id,id,external_key)
@@ -51,6 +54,7 @@ async fn setup() -> (MutexGuard<'static, ()>, Client, SourceStore) {
 fn contract_bytes(acceptance: &str) -> Vec<u8> {
     let contract = WorkContract {
         dependency_acceptance: Default::default(),
+        execution_settlement: None,
         codec: WorkContract::CODEC.into(),
         work_id: WorkId::new("work-a").unwrap(),
         external_key: "W".into(),
@@ -276,14 +280,15 @@ async fn author_cannot_approve_own_candidate_and_unsafe_paths_never_land() {
 
 // CR #37 P2-1: reviewer identity is enforced — nonexistent accounts,
 // disabled accounts and members without an approval role are all rejected;
-// a valid independent reviewer succeeds.
+// source-approval memberships succeed. This trusted operator source API is
+// distinct from authenticated independent review.decide authority.
 #[tokio::test]
 async fn reviewer_identity_is_enforced() {
     let (_lock, _, store) = setup().await;
     for (reviewer, why) in [
         ("ghost-reviewer", "nonexistent account"),
         (DISABLED, "disabled account"),
-        (WORKER, "membership without approval role"),
+        (READER, "membership without source approval role"),
     ] {
         let candidate = store.ingest(package(PARSER_V1, "a")).await.unwrap();
         let err = store
@@ -298,17 +303,19 @@ async fn reviewer_identity_is_enforced() {
             .unwrap_err();
         assert!(matches!(err, PgError::Forbidden), "{why}: got {err}");
     }
-    let candidate = store.ingest(package(PARSER_V1, "a")).await.unwrap();
-    store
-        .approve(
-            TENANT,
-            PROJECT,
-            &candidate.proposal_id,
-            REVIEWER,
-            &candidate.manifest_digest,
-        )
-        .await
-        .expect("valid independent reviewer must succeed");
+    for reviewer in [REVIEWER, WORKER] {
+        let candidate = store.ingest(package(PARSER_V1, "a")).await.unwrap();
+        store
+            .approve(
+                TENANT,
+                PROJECT,
+                &candidate.proposal_id,
+                reviewer,
+                &candidate.manifest_digest,
+            )
+            .await
+            .expect("valid independent source approval membership must succeed");
+    }
 }
 
 // CR #37 P2-2: A and B are generated from the same baseline and both
