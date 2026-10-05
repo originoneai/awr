@@ -40,6 +40,163 @@ async fn observe(store: &WorkstreamReadStore, token: &str) -> Value {
 }
 
 #[tokio::test]
+async fn lifecycle_phases_are_declared_feedback_with_explicit_revision_and_time_provenance() {
+    let (_g, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let phases = [
+        "waiting_dependency",
+        "reviewing",
+        "reworking",
+        "integrating",
+        "delivered",
+    ];
+    let caps = store
+        .query(TENANT, PROJECT, A, query("capabilities"))
+        .await
+        .unwrap();
+    let original_runtime = observe(&store, A).await["runtime"].clone();
+    for (index, phase) in phases.into_iter().enumerate() {
+        assert!(
+            caps["session_feedback"]["declared_phases"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(phase))
+        );
+        let mut cmd = cp(
+            &store,
+            &format!("lifecycle-{index}"),
+            &(index + 1).to_string(),
+        )
+        .await;
+        let expected_revision = cmd.expected_project_revision.to_string();
+        let expected_contract = cmd.expected_contract_hash.clone();
+        cmd.args["progress"] =
+            json!({"phase":phase,"summary":"A concise description of the current activity."});
+        let result = store
+            .commands()
+            .execute(TENANT, PROJECT, A, cmd.clone())
+            .await
+            .unwrap();
+        let data = observe(&store, A).await;
+        assert_eq!(data["runtime"], original_runtime);
+        assert_eq!(data["execution_authorized"], false);
+        assert_eq!(data["progress"]["phase"], phase);
+        assert_eq!(data["progress"]["provenance"], "caller_declared");
+        assert_eq!(
+            data["progress"]["reported_contract_hash"],
+            expected_contract
+        );
+        assert_eq!(
+            data["progress"]["recorded_project_revision"],
+            expected_revision
+        );
+        assert!(data["progress"]["client_observed_at_unix_ms"].is_null());
+        assert_eq!(
+            data["progress"]["report_order_basis"],
+            "recorded_project_revision"
+        );
+        assert_eq!(
+            data["progress"]["checkpoint_id"],
+            result["receipt"]["data"]["checkpoint_id"]
+        );
+        let replay = store
+            .commands()
+            .execute(TENANT, PROJECT, A, cmd)
+            .await
+            .unwrap();
+        assert_eq!(replay["receipt"], result["receipt"]);
+    }
+}
+
+#[tokio::test]
+async fn feedback_order_uses_recorded_revision_instead_of_receive_clock() {
+    let (_g, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let mut first = cp(&store, "ordered-first", "1").await;
+    first.args["progress"] = progress();
+    first.args["usage"] = usage();
+    let old = store
+        .commands()
+        .execute(TENANT, PROJECT, A, first)
+        .await
+        .unwrap();
+    let mut second = cp(&store, "ordered-second", "2").await;
+    second.args["progress"] =
+        json!({"phase":"reviewing","summary":"Review the latest storage result."});
+    second.args["usage"] = usage();
+    second.args["usage"]["observed_at_unix_ms"] = json!(1_700_000_000_001_i64);
+    second.args["usage"]["input_tokens"] = json!(4500);
+    let latest = store
+        .commands()
+        .execute(TENANT, PROJECT, A, second)
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "UPDATE awr_team.checkpoints SET created_at=clock_timestamp()+interval '1 hour'
+        WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+            &[
+                &TENANT,
+                &PROJECT,
+                &old["receipt"]["data"]["checkpoint_id"].as_str().unwrap(),
+            ],
+        )
+        .await
+        .unwrap();
+    let data = observe(&store, A).await;
+    assert_eq!(data["progress"]["phase"], "reviewing");
+    assert_eq!(
+        data["progress"]["checkpoint_id"],
+        latest["receipt"]["data"]["checkpoint_id"]
+    );
+    assert_eq!(data["usage"]["input_tokens"], 4500);
+    assert_eq!(
+        data["usage"]["client_observed_at_unix_ms"],
+        1_700_000_000_001_i64
+    );
+    assert_ne!(
+        data["usage"]["client_observed_at_unix_ms"],
+        data["usage"]["reported_at_unix_ms"]
+    );
+    let mut delayed = cp(&store, "delayed-counter", "3").await;
+    delayed.args["usage"] = usage();
+    assert!(matches!(
+        store.commands().execute(TENANT, PROJECT, A, delayed).await,
+        Err(PgError::Protocol(_))
+    ));
+}
+
+#[tokio::test]
+async fn recorded_feedback_revision_is_not_the_callers_stale_audit_cursor() {
+    let (_g, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let mut cmd = cp(&store, "stale-audit-provenance", "1").await;
+    let old_revision: i64 = cmd.expected_project_revision.parse().unwrap();
+    cmd.args["progress"] = progress();
+    // Unrelated audit churn need not invalidate unchanged consumed context.
+    admin
+        .execute(
+            "UPDATE awr_team.projects SET project_revision=project_revision+4
+        WHERE tenant_id=$1 AND id=$2",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap();
+    store
+        .commands()
+        .execute(TENANT, PROJECT, A, cmd)
+        .await
+        .unwrap();
+    let data = observe(&store, A).await;
+    assert_eq!(
+        data["progress"]["recorded_project_revision"],
+        (old_revision + 4).to_string()
+    );
+    assert!(data["progress"]["client_observed_at_unix_ms"].is_null());
+    assert!(data["progress"].get("consumed_project_revision").is_none());
+}
+
+#[tokio::test]
 async fn feedback_preserves_identity_context_and_independently_timed_observations() {
     let (_g, admin, _, store) = setup().await;
     enable_writes(&admin).await;

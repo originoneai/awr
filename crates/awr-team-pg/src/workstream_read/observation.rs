@@ -29,10 +29,11 @@ pub(super) async fn read(
         )
         .await?
         .get(0);
-    let runtime = tx.query_opt("SELECT state,recovery_blocked,selected_completion_id FROM awr_team.work_runtime
+    let runtime = tx.query_opt("SELECT state,recovery_blocked,selected_completion_id,work_version,last_fence FROM awr_team.work_runtime
         WHERE tenant_id=$1 AND project_id=$2 AND scope_id='main' AND work_id=$3",
         &[&tenant,&project,&work]).await?.map(|r| json!({"state":r.get::<_,String>(0),
-            "recovery_blocked":r.get::<_,bool>(1),"selected_completion_id":r.get::<_,Option<String>>(2)}));
+            "recovery_blocked":r.get::<_,bool>(1),"selected_completion_id":r.get::<_,Option<String>>(2),
+            "work_version":r.get::<_,i64>(3).to_string(),"last_fence":r.get::<_,i64>(4).to_string()}));
     let mut responsibility = crate::workstream_command::task_intake::read_state(
         tx,
         tenant,

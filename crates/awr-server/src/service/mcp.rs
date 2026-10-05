@@ -294,7 +294,7 @@ fn catalog() -> Vec<Tool> {
                 "progress":{"enum":["supported","unsupported","unknown"]}}}
         }},
         "progress":{"type":["object","null"],"additionalProperties":false,"required":["phase","summary"],"properties":{
-            "phase":{"enum":["starting","implementing","testing","waiting_user","blocked","ready_for_review"]},
+            "phase":{"enum":["starting","implementing","testing","waiting_user","blocked","ready_for_review","waiting_dependency","reviewing","reworking","integrating","delivered"]},
             "summary":{"type":"string","maxLength":2048},
             "completed":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":1024}},
             "blockers":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":1024}},
@@ -521,7 +521,7 @@ fn catalog() -> Vec<Tool> {
     });
     vec![
         Tool::new("awr_team_query",
-            "Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). Consume work.prepare before any claim or execution. work.observe reads current scoped session/checkpoint, lease, execution and registered PR facts without changing context or authorizing execution; receipt payloads retain their original access gate, and missing model/usage remains explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission.",
+            "Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. work.observe reads current scoped session/checkpoint, lease, execution and registered PR facts without changing context or authorizing execution; receipt payloads retain their original access gate, and missing model/usage remains explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission.",
             query.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_command",

@@ -5,6 +5,19 @@ use serde_json::{Value, json};
 use tokio_postgres::Transaction;
 
 pub(crate) const STALE_AFTER_MS: i64 = 15 * 60 * 1000;
+pub(crate) const PROGRESS_PHASES: &[&str] = &[
+    "starting",
+    "implementing",
+    "testing",
+    "waiting_user",
+    "blocked",
+    "ready_for_review",
+    "waiting_dependency",
+    "reviewing",
+    "reworking",
+    "integrating",
+    "delivered",
+];
 
 #[derive(Default, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -60,6 +73,11 @@ enum Phase {
     WaitingUser,
     Blocked,
     ReadyForReview,
+    WaitingDependency,
+    Reviewing,
+    Reworking,
+    Integrating,
+    Delivered,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -227,7 +245,7 @@ impl Usage {
             .query_opt(
                 "SELECT usage_json FROM awr_team.checkpoints
             WHERE tenant_id=$1 AND project_id=$2 AND session_id=$3 AND usage_json IS NOT NULL
-            ORDER BY created_at DESC,id DESC LIMIT 1",
+            ORDER BY observed_revision DESC,created_at DESC,id DESC LIMIT 1",
                 &[&tenant, &project, &session],
             )
             .await?;
@@ -344,9 +362,9 @@ pub(crate) async fn observe(
             .query_opt(
                 &format!(
                     "SELECT id,{column},contract_hash,next_action,
-            (extract(epoch FROM created_at)*1000)::bigint FROM awr_team.checkpoints
+            (extract(epoch FROM created_at)*1000)::bigint,observed_revision FROM awr_team.checkpoints
             WHERE tenant_id=$1 AND project_id=$2 AND session_id=$3 AND {column} IS NOT NULL
-            ORDER BY created_at DESC,id DESC LIMIT 1"
+            ORDER BY observed_revision DESC,created_at DESC,id DESC LIMIT 1"
                 ),
                 &[&tenant, &project, &session],
             )
@@ -358,6 +376,12 @@ pub(crate) async fn observe(
             let measured = value["observed_at_unix_ms"].as_i64().unwrap_or(reported);
             value["checkpoint_id"] = json!(row.get::<_, String>(0));
             value["reported_at_unix_ms"] = json!(reported);
+            value["reported_contract_hash"] = json!(row.get::<_, String>(2));
+            value["recorded_project_revision"] = json!(row.get::<_, i64>(5).to_string());
+            // A server receive time is not a client observation. Progress v1
+            // does not collect that time; usage preserves its supplied host time.
+            value["client_observed_at_unix_ms"] = value["observed_at_unix_ms"].clone();
+            value["report_order_basis"] = json!("recorded_project_revision");
             value["contract_matches_current"] = json!(current);
             value["stale"] = json!(!current || observed.saturating_sub(measured) > STALE_AFTER_MS);
             value["provenance"] = json!("caller_declared");
