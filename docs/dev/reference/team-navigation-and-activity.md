@@ -18,6 +18,14 @@ recovery needs without exposing private dependency names. Follow the returned
 `next_query`; consume `work.prepare` before claiming or executing. Navigation
 grants no execution authority and does not certify dependency acceptance.
 
+Own-session continuation links use `work.observe`. A single current, live run
+owned by this client is marked `resume`; expired leases, changed execution
+bindings and unresolved effects still require recovery. `session.inspect` and
+`work.recovery` retain historical checkpoint actions and include the same bounded
+current `guidance` as observation. Follow that guidance rather than replaying the
+checkpoint action. Expired leases cannot be renewed or revive an old execution;
+settle pending effects before preparing a fresh claim and a new admitted run.
+
 Repeat `work.next` after progress, a resolved wait, claim conflicts, source or
 permission changes. Commands retain stable request IDs and recheck current
 authority; inspect unknown outcomes before retrying. The connected Agent performs

@@ -47,7 +47,7 @@ pub(super) async fn next(
     )?;
     let c = cursor(q, &binding)?;
     let limit = i64::from(q.limit.unwrap_or(20));
-    let rows = tx.query("SELECT c.work_id,c.title,c.contract_json,o.workstream_id,r.state,r.recovery_blocked
+    let rows = tx.query("SELECT c.work_id,c.title,c.contract_json,o.workstream_id,r.state,r.recovery_blocked,o.ownership_version
         FROM awr_team.work_contracts c JOIN awr_team.workstream_snapshot_ownership o
           USING(tenant_id,project_id,snapshot_id,scope_id,work_id)
         LEFT JOIN awr_team.work_runtime r USING(tenant_id,project_id,scope_id,work_id)
@@ -71,7 +71,7 @@ pub(super) async fn next(
         .map(|s| {
             json!({"session_id":s.get::<_,String>(0),"work_id":s.get::<_,String>(1),
         "workstream_id":s.get::<_,String>(2),"session_version":s.get::<_,i64>(3).to_string(),
-        "next_query":{"protocol_version":1,"op":"session.inspect","session_id":s.get::<_,String>(0),
+        "next_query":{"protocol_version":1,"op":"work.observe","session_id":s.get::<_,String>(0),
             "work_id":s.get::<_,String>(1),"workstream_id":s.get::<_,String>(2)}})
         })
         .collect();
@@ -125,12 +125,54 @@ pub(super) async fn next(
             .is_ok();
         let pending = tx.query_one("SELECT
             EXISTS(SELECT 1 FROM awr_team.wait_items WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND state='open'),
-            EXISTS(SELECT 1 FROM awr_team.executions WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND state NOT IN ('succeeded','failed','cancelled')) OR
+            (SELECT count(*) FROM (SELECT 1 FROM awr_team.executions WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND state NOT IN ('succeeded','failed','cancelled') LIMIT 2) unsettled),
             EXISTS(SELECT 1 FROM awr_team.resource_reservations WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND state='unknown')", &[&tenant,&project,&work]).await?;
-        let status = if row.get::<_, Option<bool>>(5).unwrap_or(false)
-            || expired
-            || pending.get::<_, bool>(1)
+        let recovery_blocked = row.get::<_, Option<bool>>(5).unwrap_or(false);
+        let unsettled: i64 = pending.get(1);
+        let unknown_resources: bool = pending.get(2);
+        let can_continue = writable
+            && crate::delegation_auth::authorize_navigation_action(
+                auth,
+                awr_team::Action::ExecutionRequestAndReportOwn,
+                stream.parse().map_err(|_| PgError::SourceDivergence)?,
+                &work,
+            )
+            .is_ok();
+        let resumable = if unsettled == 1
+            && !pending.get::<_, bool>(0)
+            && !unknown_resources
+            && !recovery_blocked
+            && !expired
+            && !held
+            && !blocked_deps
+            && can_continue
         {
+            // Reuse the current observation's binding and lease checks. A
+            // live run owned by this client is not an unresolved recovery.
+            let current = super::observation::read(
+                tx,
+                tenant,
+                project,
+                auth,
+                &work,
+                &stream,
+                row.get(6),
+                None,
+            )
+            .await?;
+            let execution = &current["execution"];
+            execution["state"] == "running"
+                && execution["owned_by_client"] == true
+                && execution["lease_live"] == true
+                && execution["epoch_matches_current"] == true
+                && execution["contract_matches_current"] == true
+                && execution["cancel_requested"] == false
+        } else {
+            false
+        };
+        let status = if resumable {
+            "resume"
+        } else if recovery_blocked || expired || unsettled > 0 || unknown_resources {
             "recovery_required"
         } else if held {
             "held"
@@ -145,7 +187,7 @@ pub(super) async fn next(
         };
         items.push(json!({"work_id":work,"title":row.get::<_,String>(1),"workstream_id":stream,
             "state":row.get::<_,Option<String>>(4),"navigation":status,
-            "next_query":{"protocol_version":1,"op":if matches!(status,"recovery_required"|"waiting_external") {"work.recovery"} else {"work.prepare"},"work_id":work,"workstream_id":stream}}));
+            "next_query":{"protocol_version":1,"op":if status=="resume" {"work.observe"} else if matches!(status,"recovery_required"|"waiting_external") {"work.recovery"} else {"work.prepare"},"work_id":work,"workstream_id":stream}}));
     }
     let next = if rows.len() > limit as usize {
         next_cursor(
