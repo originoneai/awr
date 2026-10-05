@@ -4,7 +4,7 @@ use crate::operator_access::{require_owner_project, snapshot};
 use crate::{PgError, PgResult};
 use awr_core::{
     AgentAuthorization, AuthorizationScope, AuthorizationStatus, AuthorizedAction,
-    ExecutionSubjectKind, IssueAuthorizationRequest, WorkstreamCatalog,
+    ExecutionSubjectKind, IssueAuthorizationRequest, MemberIdentityMetadata, WorkstreamCatalog,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -23,6 +23,8 @@ pub struct AgentProvisionPlan {
     pub tenant_id: String,
     pub project_id: String,
     pub authorization: AgentAuthorization,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_identity: Option<MemberIdentityMetadata>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +35,8 @@ pub struct AgentRenewPlan {
     pub project_id: String,
     pub previous_authorization_id: String,
     pub authorization: AgentAuthorization,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_identity: Option<MemberIdentityMetadata>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +46,8 @@ pub struct AgentAuthorizationIssuePlan {
     pub tenant_id: String,
     pub project_id: String,
     pub authorization: AgentAuthorization,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_identity: Option<MemberIdentityMetadata>,
 }
 
 fn invalid() -> PgError {
@@ -73,6 +79,9 @@ async fn clock(tx: &Transaction<'_>) -> PgResult<i64> {
 
 impl AgentProvisionPlan {
     fn validate(&self) -> PgResult<()> {
+        if let Some(metadata) = &self.member_identity {
+            metadata.validate().map_err(|_| invalid())?;
+        }
         let a = &self.authorization;
         if self.protocol_version != 1
             || !identity(&self.tenant_id)
@@ -118,6 +127,7 @@ impl AgentRenewPlan {
             tenant_id: self.tenant_id.clone(),
             project_id: self.project_id.clone(),
             authorization: self.authorization.clone(),
+            member_identity: self.member_identity.clone(),
         }
     }
 
@@ -139,6 +149,7 @@ impl AgentAuthorizationIssuePlan {
             tenant_id: self.tenant_id.clone(),
             project_id: self.project_id.clone(),
             authorization: self.authorization.clone(),
+            member_identity: self.member_identity.clone(),
         }
     }
 
@@ -187,7 +198,7 @@ impl OperatorAgent {
         validate_initial(plan, &state, clock(&tx).await?)?;
         let result = json!({"protocol":PROTOCOL,"applied":false,"state_digest":hash(&state)?,
             "plan_digest":hash(&json!(plan))?,"current":state,"desired":plan,
-            "person_creation":"selected active human project-member identity; no historical rewrite",
+            "person_creation":"explicit member provenance; legacy unspecified metadata is not inferred; no historical rewrite",
             "maximum_issue_age_ms":MAX_ISSUE_AGE_MS,"execution_authorized":false});
         tx.commit().await?;
         Ok(result)
@@ -586,7 +597,14 @@ impl OperatorAgent {
         let name = before["human_actor"]["display_name"]
             .as_str()
             .ok_or_else(invalid)?;
-        tx.execute("INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status) VALUES($1,$2,$3,$4,'active') ON CONFLICT DO NOTHING",&[&plan.tenant_id,&plan.project_id,&a.responsible_person_id.as_str(),&name]).await?;
+        let member_identity = plan
+            .member_identity
+            .as_ref()
+            .map(|metadata| json!(metadata));
+        tx.execute("INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status,member_identity) VALUES($1,$2,$3,$4,'active',$5)
+            ON CONFLICT(tenant_id,project_id,id) DO UPDATE
+            SET member_identity=COALESCE(awr_team.persons.member_identity,EXCLUDED.member_identity)",
+            &[&plan.tenant_id,&plan.project_id,&a.responsible_person_id.as_str(),&name,&member_identity]).await?;
         let binding = a.binding_id.as_deref().ok_or_else(invalid)?;
         tx.execute("INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status) VALUES($1,$2,$3,$4,$5,'active')",
             &[&plan.tenant_id,&plan.project_id,&binding,&a.responsible_person_id.as_str(),&a.subject_id]).await?;
@@ -615,6 +633,7 @@ impl OperatorAgent {
             "authorization_id":a.id,"authorization_request_key":issued.request_key,"binding_id":binding,"person_id":a.responsible_person_id,
             "before_digest":expected_state,"after_digest":hash(&after)?,"event_id":issued.event_id,"plan_digest":expected_plan,
             "project_revision":revision.to_string(),"state_basis":"at_commit","execution_authorized":false,
+            "member_identity":after["person"]["member_identity"],
             "historical_identities_rewritten":false,"human_approval":false,"team_independent_acceptance":false});
         tx.execute("INSERT INTO awr_team.access_changes(tenant_id,project_id,request_id,request_hash,operator_role,result_json) VALUES($1,$2,$3,$4,$5,$6)",&[&plan.tenant_id,&plan.project_id,&request,&intent,&operator,&receipt]).await?;
         let summary = json!({"plan_digest":expected_plan,"request_id":request,"authorization_id":a.id,"binding_id":binding,
@@ -720,6 +739,7 @@ fn validate_authorization_issue(
     if state["access"]["membership"].is_null()
         || access_reason(&provision, state, now).is_some()
         || state["person"].is_null()
+        || p.member_identity.is_some() && state["person"]["member_identity"].is_null()
     {
         return Err(PgError::Forbidden);
     }
@@ -819,7 +839,9 @@ fn validate_renewal(
     if s["access"]["membership"].is_null() || access_reason(&provision, s, now).is_some() {
         return Err(PgError::Forbidden);
     }
-    if s["person"].is_null() {
+    if s["person"].is_null()
+        || p.member_identity.is_some() && s["person"]["member_identity"].is_null()
+    {
         return Err(PgError::Forbidden);
     }
     let a = &p.authorization;
@@ -922,8 +944,8 @@ async fn state(tx: &Transaction<'_>, p: &AgentProvisionPlan) -> PgResult<Value> 
         .await?;
     let human=tx.query_opt("SELECT a.kind,a.display_name,a.status,m.role,m.membership_version FROM awr_team.actors a JOIN awr_team.project_memberships m ON m.tenant_id=a.tenant_id AND m.actor_id=a.id WHERE a.tenant_id=$1 AND m.project_id=$2 AND a.id=$3 FOR SHARE OF a,m",&[&p.tenant_id,&p.project_id,&a.responsible_person_id.as_str()]).await?
         .map(|r|json!({"kind":r.get::<_,String>(0),"display_name":r.get::<_,String>(1),"status":r.get::<_,String>(2),"role":r.get::<_,String>(3),"membership_version":r.get::<_,i64>(4).to_string()}));
-    let person=tx.query_opt("SELECT display_name,status FROM awr_team.persons WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR SHARE",&[&p.tenant_id,&p.project_id,&a.responsible_person_id.as_str()]).await?
-        .map(|r|json!({"display_name":r.get::<_,String>(0),"status":r.get::<_,String>(1)}));
+    let person=tx.query_opt("SELECT display_name,status,member_identity FROM awr_team.persons WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR SHARE",&[&p.tenant_id,&p.project_id,&a.responsible_person_id.as_str()]).await?
+        .map(|r|json!({"display_name":r.get::<_,String>(0),"status":r.get::<_,String>(1),"member_identity":r.get::<_,Option<Value>>(2)}));
     let bindings=tx.query("SELECT id,person_id,agent_id,status FROM awr_team.person_agent_bindings WHERE tenant_id=$1 AND project_id=$2 AND (agent_id=$3 OR id=$4) ORDER BY id FOR SHARE",&[&p.tenant_id,&p.project_id,&a.subject_id,&a.binding_id]).await?.into_iter()
         .map(|r|json!({"id":r.get::<_,String>(0),"person_id":r.get::<_,String>(1),"agent_id":r.get::<_,String>(2),"status":r.get::<_,String>(3)})).collect::<Vec<_>>();
     let auths=tx.query("SELECT body_json FROM awr_team.agent_authorizations WHERE tenant_id=$1 AND project_id=$2 AND (id=$3 OR (subject_id=$4 AND client_id=$5)) ORDER BY id FOR SHARE",&[&p.tenant_id,&p.project_id,&a.id,&a.subject_id,&a.client_id]).await?.into_iter().map(|r|r.get::<_,Value>(0)).collect::<Vec<_>>();
@@ -1001,19 +1023,51 @@ fn access_reason(p: &AgentProvisionPlan, s: &Value, now: i64) -> Option<&'static
     if access["membership"]["independent_review"] == true {
         return Some("agent_cannot_be_human_reviewer");
     }
-    let human = &s["human_actor"];
-    if human["kind"] != "human"
-        || human["status"] != "active"
-        || human["role"]
+    let member = &s["human_actor"]; // Legacy response key; actual kind is checked below.
+    let stored_identity = &s["person"]["member_identity"];
+    let identity = match (&p.member_identity, stored_identity.is_null()) {
+        (Some(metadata), false) if json!(metadata) != *stored_identity => {
+            return Some("member_identity_mismatch");
+        }
+        (Some(metadata), _) => Some(metadata.clone()),
+        (None, false) => {
+            match serde_json::from_value::<MemberIdentityMetadata>(stored_identity.clone()) {
+                Ok(metadata) if metadata.validate().is_ok() => Some(metadata),
+                _ => return Some("member_identity_invalid"),
+            }
+        }
+        (None, true) => None,
+    };
+    let member_kind_matches = identity
+        .as_ref()
+        .map_or(member["kind"] == "human", |metadata| {
+            member["kind"]
+                .as_str()
+                .is_some_and(|kind| metadata.matches_member_actor_kind(kind))
+        });
+    if !member_kind_matches
+        || member["status"] != "active"
+        || member["role"]
             .as_str()
             .and_then(crate::workstream_auth::map_membership_role)
             .is_none()
     {
-        return Some("person_not_active_human_member");
+        return Some(if identity.is_some() {
+            "member_not_active_or_kind_mismatch"
+        } else {
+            "person_not_active_human_member"
+        });
+    }
+    if identity
+        .as_ref()
+        .is_some_and(|metadata| metadata.kind == awr_core::MemberIdentityKind::SimulatedMember)
+        && a.responsible_person_id.as_str() == a.subject_id
+    {
+        return Some("simulated_member_requires_distinct_agent_binding");
     }
     if !s["person"].is_null()
         && (s["person"]["status"] != "active"
-            || s["person"]["display_name"] != human["display_name"])
+            || s["person"]["display_name"] != member["display_name"])
     {
         return Some("person_mismatch");
     }

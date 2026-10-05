@@ -33,6 +33,42 @@ impl std::fmt::Display for PersonId {
     }
 }
 
+/// Declared member provenance. It never changes responsibility or grants trust.
+/// Absence of metadata on a legacy person means unspecified, not human.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemberIdentityKind {
+    Human,
+    SimulatedMember,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemberIdentityMetadata {
+    pub kind: MemberIdentityKind,
+    /// Optional opaque experiment attribution, never a credential or permission.
+    /// Multiple simulated members may have the same controller reference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_ref: Option<String>,
+}
+
+impl MemberIdentityMetadata {
+    pub fn validate(&self) -> Result<()> {
+        if let Some(reference) = &self.controller_ref {
+            validate_id(reference, "controller_ref")?;
+        }
+        Ok(())
+    }
+
+    /// A simulation anchor must remain non-human and cannot use system authority.
+    pub fn matches_member_actor_kind(&self, actor_kind: &str) -> bool {
+        matches!(
+            (self.kind, actor_kind),
+            (MemberIdentityKind::Human, "human") | (MemberIdentityKind::SimulatedMember, "agent")
+        )
+    }
+}
+
 /// Explicit person↔agent binding. Never derived from `actor.kind`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -662,6 +698,41 @@ pub fn refuse_infer_person_from_actor_kind(actor_kind: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn member_provenance_is_explicit_and_cannot_confer_human_or_system_authority() {
+        let simulated: MemberIdentityMetadata = serde_json::from_str(
+            r#"{"kind":"simulated_member","controller_ref":"shared-controller"}"#,
+        )
+        .unwrap();
+        simulated.validate().unwrap();
+        assert!(simulated.matches_member_actor_kind("agent"));
+        assert!(!simulated.matches_member_actor_kind("human"));
+        assert!(!simulated.matches_member_actor_kind("system"));
+        let human = MemberIdentityMetadata {
+            kind: MemberIdentityKind::Human,
+            controller_ref: None,
+        };
+        assert!(human.matches_member_actor_kind("human"));
+        assert!(!human.matches_member_actor_kind("agent"));
+        for invalid in [
+            r#"{"controller_ref":"shared-controller"}"#,
+            r#"{"kind":"model"}"#,
+            r#"{"kind":"simulated_member","credential":"test-only"}"#,
+        ] {
+            assert!(serde_json::from_str::<MemberIdentityMetadata>(invalid).is_err());
+        }
+        for reference in [String::new(), "x".repeat(129), "control\ncharacter".into()] {
+            assert!(
+                MemberIdentityMetadata {
+                    kind: MemberIdentityKind::SimulatedMember,
+                    controller_ref: Some(reference),
+                }
+                .validate()
+                .is_err()
+            );
+        }
+    }
 
     fn person(s: &str) -> PersonId {
         PersonId::new(s).unwrap()
