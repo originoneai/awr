@@ -4,7 +4,8 @@ mod common;
 mod fixture;
 use awr_core::{
     AgentAuthorization, AuthorizationScope, AuthorizationStatus, AuthorizedAction, Id,
-    IssueAuthorizationRequest, RevokeAuthorizationRequest,
+    IssueAuthorizationRequest, MemberIdentityKind, MemberIdentityMetadata, PersonId,
+    RevokeAuthorizationRequest,
 };
 use awr_team_pg::{
     AccessPlan, AgentAuthorizationIssuePlan, AgentProvisionPlan, AgentRenewPlan,
@@ -107,6 +108,7 @@ async fn expired_renewal_plan(admin: &Client, provision: &AgentProvisionPlan) ->
         project_id: PROJECT.into(),
         previous_authorization_id: previous.id,
         authorization: successor,
+        member_identity: provision.member_identity.clone(),
     }
 }
 
@@ -133,6 +135,7 @@ async fn authorization_issue_plan(
         tenant_id: TENANT.into(),
         project_id: PROJECT.into(),
         authorization,
+        member_identity: None,
     }
 }
 
@@ -157,6 +160,440 @@ async fn snapshot(admin: &Client) -> Value {
         'audit',(SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM awr_team.ops_audit_records t),
         'projects',(SELECT jsonb_agg(to_jsonb(t) ORDER BY tenant_id,id) FROM awr_team.projects t),
         'actors',(SELECT jsonb_agg(to_jsonb(t) ORDER BY tenant_id,id) FROM awr_team.actors t))",&[]).await.unwrap().get(0)
+}
+
+async fn simulated_plan(admin: &mut Client, name: &str) -> (AgentProvisionPlan, String) {
+    let member = format!("{name}-member");
+    let actor = format!("{name}-agent");
+    let client = format!("{name}-client");
+    let token = format!(
+        "awr1.{actor}.{}",
+        awr_team::request_hash(&json!({"synthetic_credential_seed":name})).unwrap()
+    );
+    for is_member in [true, false] {
+        let mut access = access_plan();
+        access.actor.id = if is_member { &member } else { &actor }.clone();
+        access.actor.display_name = access.actor.id.clone();
+        access.client_id = if is_member {
+            format!("{name}-member-client")
+        } else {
+            client.clone()
+        };
+        access.role = if is_member { "reader" } else { "developer" }.into();
+        access.grants[0].write = !is_member;
+        access.credential = if is_member {
+            None
+        } else {
+            let mut credential = access.credential.unwrap();
+            credential.id = actor.clone();
+            credential.secret_hash = workstream_credential_hash(&token).unwrap();
+            Some(credential)
+        };
+        let preview = OperatorAccess::preview(admin, &access).await.unwrap();
+        OperatorAccess::apply(
+            admin,
+            &access,
+            &format!("{name}-access-{is_member}"),
+            preview["state_digest"].as_str().unwrap(),
+            preview["plan_digest"].as_str().unwrap(),
+        )
+        .await
+        .unwrap();
+    }
+    let mut provision = plan(admin).await;
+    let authorization = &mut provision.authorization;
+    authorization.id = format!("{name}-authorization");
+    authorization.authorizer_person_id = PersonId::new(&member).unwrap();
+    authorization.responsible_person_id = PersonId::new(&member).unwrap();
+    authorization.subject_id = actor;
+    authorization.client_id = client;
+    authorization.scope = AuthorizationScope::Workstream {
+        project_id: PROJECT.into(),
+        workstream_id: Id::from(1).to_string(),
+    };
+    authorization.binding_id = Some(format!("{name}-binding"));
+    provision.member_identity = Some(MemberIdentityMetadata {
+        kind: MemberIdentityKind::SimulatedMember,
+        controller_ref: Some("shared-experiment-controller".into()),
+    });
+    (provision, token)
+}
+
+#[tokio::test]
+async fn simulated_members_share_a_controller_without_sharing_identity_or_credentials() {
+    let (_guard, mut admin, _, store) = setup().await;
+    let (first, first_token) = simulated_plan(&mut admin, "alpha").await;
+    let (second, second_token) = simulated_plan(&mut admin, "beta").await;
+    let mut receipts = Vec::new();
+    for (plan, token) in [(&first, &first_token), (&second, &second_token)] {
+        let receipt = apply(&mut admin, plan, &plan.authorization.id).await;
+        assert_eq!(
+            receipt["receipt"]["member_identity"],
+            json!(plan.member_identity)
+        );
+        assert_eq!(receipt["receipt"]["human_approval"], false);
+        assert_eq!(receipt["receipt"]["team_independent_acceptance"], false);
+        let current = OperatorAgent::inspect(&mut admin, plan).await.unwrap();
+        assert_eq!(current["configuration_matches_plan"], true);
+        assert_eq!(current["state"]["human_actor"]["kind"], "agent");
+        let caps = store
+            .query(TENANT, PROJECT, token, query("capabilities"))
+            .await
+            .unwrap();
+        assert_eq!(caps["identity"]["actor_id"], plan.authorization.subject_id);
+        assert_eq!(caps["identity"]["client_id"], plan.authorization.client_id);
+        assert_eq!(caps["identity"]["can_manage_members"], false);
+        let prepared = prepare(&store, token, "a").await;
+        assert_eq!(prepared["data"]["work_id"], "a");
+        let mut sibling = query("work.prepare");
+        sibling.work_id = Some("b-private".into());
+        assert!(matches!(
+            store.query(TENANT, PROJECT, token, sibling).await,
+            Err(PgError::Forbidden)
+        ));
+        assert!(matches!(
+            store
+                .query("other-tenant", PROJECT, token, query("capabilities"))
+                .await,
+            Err(PgError::Forbidden)
+        ));
+        receipts.push(receipt);
+    }
+    assert_ne!(
+        first.authorization.responsible_person_id,
+        second.authorization.responsible_person_id
+    );
+    assert_ne!(
+        first.authorization.subject_id,
+        second.authorization.subject_id
+    );
+    assert_ne!(
+        first.authorization.client_id,
+        second.authorization.client_id
+    );
+    assert_ne!(
+        first.authorization.binding_id,
+        second.authorization.binding_id
+    );
+    assert_ne!(first_token, second_token);
+    let rows = admin
+        .query(
+            "SELECT id,member_identity FROM awr_team.persons WHERE id=ANY($1) ORDER BY id",
+            &[&vec![
+                first.authorization.responsible_person_id.to_string(),
+                second.authorization.responsible_person_id.to_string(),
+            ]],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].get::<_, Value>(1), rows[1].get::<_, Value>(1));
+    let before = snapshot(&admin).await;
+    let original = &receipts[0]["receipt"];
+    let replay = OperatorAgent::apply(
+        &mut admin,
+        &first,
+        &first.authorization.id,
+        original["before_digest"].as_str().unwrap(),
+        original["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(snapshot(&admin).await, before);
+    let mut changed = first.clone();
+    changed.member_identity.as_mut().unwrap().controller_ref = Some("different-controller".into());
+    assert!(matches!(
+        OperatorAgent::apply(
+            &mut admin,
+            &changed,
+            &first.authorization.id,
+            original["before_digest"].as_str().unwrap(),
+            original["plan_digest"].as_str().unwrap()
+        )
+        .await,
+        Err(PgError::IdempotencyConflict)
+    ));
+    assert_eq!(snapshot(&admin).await, before);
+}
+
+#[tokio::test]
+async fn schema_upgrade_keeps_legacy_members_unspecified_and_validates_metadata_shape() {
+    let (_guard, admin, _, _) = setup().await;
+    admin
+        .batch_execute(
+            "ALTER TABLE awr_team.persons DROP COLUMN member_identity;
+             UPDATE awr_team.schema_state SET version=36 WHERE component='awr_team';",
+        )
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+             VALUES($1,$2,'legacy-member','Legacy member','active')",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap();
+    let before: Value = admin
+        .query_one(
+            "SELECT to_jsonb(p) FROM awr_team.persons p WHERE id='legacy-member'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    awr_team_pg::migrate(&admin).await.unwrap();
+    awr_team_pg::check_schema(&admin).await.unwrap();
+    let row = admin
+        .query_one(
+            "SELECT to_jsonb(p)-'member_identity',member_identity FROM awr_team.persons p WHERE id='legacy-member'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, Value>(0), before);
+    assert_eq!(row.get::<_, Option<Value>>(1), None);
+    for metadata in [
+        json!({"kind":"simulated_member","controller_ref":"shared-controller"}),
+        json!({"kind":"human"}),
+    ] {
+        admin
+            .execute(
+                "UPDATE awr_team.persons SET member_identity=$1 WHERE id='legacy-member'",
+                &[&metadata],
+            )
+            .await
+            .unwrap();
+    }
+    for metadata in [
+        json!({}),
+        json!({"kind":null}),
+        json!({"kind":"model"}),
+        json!({"kind":"human","permission":"admin"}),
+        json!({"kind":"simulated_member","controller_ref":""}),
+        json!({"kind":"simulated_member","controller_ref":"界".repeat(43)}),
+        json!({"kind":"simulated_member","controller_ref":"control\ncharacter"}),
+    ] {
+        assert!(
+            admin
+                .execute(
+                    "UPDATE awr_team.persons SET member_identity=$1 WHERE id='legacy-member'",
+                    &[&metadata]
+                )
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[tokio::test]
+async fn declared_human_metadata_and_unspecified_legacy_metadata_remain_distinct() {
+    for declared in [false, true] {
+        let (_guard, mut admin, _, _) = setup().await;
+        stage(&mut admin).await;
+        let mut provision = plan(&admin).await;
+        if declared {
+            provision.member_identity = Some(MemberIdentityMetadata {
+                kind: MemberIdentityKind::Human,
+                controller_ref: None,
+            });
+        }
+        apply(&mut admin, &provision, "explicit-or-legacy").await;
+        let current = OperatorAgent::inspect(&mut admin, &provision)
+            .await
+            .unwrap();
+        assert_eq!(
+            current["state"]["person"]["member_identity"],
+            json!(provision.member_identity)
+        );
+        assert_eq!(current["human_approval"], false);
+        let serialized = serde_json::to_value(&provision).unwrap();
+        assert_eq!(serialized.get("member_identity").is_some(), declared);
+        let mut renewal = expired_renewal_plan(&admin, &provision).await;
+        if !declared {
+            renewal.member_identity = Some(MemberIdentityMetadata {
+                kind: MemberIdentityKind::Human,
+                controller_ref: None,
+            });
+            assert!(matches!(
+                OperatorAgent::renew_preview(&mut admin, &renewal).await,
+                Err(PgError::Forbidden)
+            ));
+        }
+    }
+}
+
+#[tokio::test]
+async fn simulated_registration_cannot_relabel_a_human_system_or_existing_binding() {
+    let (_guard, mut admin, _, _) = setup().await;
+    stage(&mut admin).await;
+    let mut invalid_human = plan(&admin).await;
+    invalid_human.member_identity = Some(MemberIdentityMetadata {
+        kind: MemberIdentityKind::SimulatedMember,
+        controller_ref: None,
+    });
+    let before = snapshot(&admin).await;
+    assert!(matches!(
+        OperatorAgent::preview(&mut admin, &invalid_human).await,
+        Err(PgError::Forbidden)
+    ));
+    assert_eq!(snapshot(&admin).await, before);
+    let (provision, _) = simulated_plan(&mut admin, "alpha").await;
+    let before = snapshot(&admin).await;
+    let mut declared_human = provision.clone();
+    declared_human.member_identity.as_mut().unwrap().kind = MemberIdentityKind::Human;
+    assert!(matches!(
+        OperatorAgent::preview(&mut admin, &declared_human).await,
+        Err(PgError::Forbidden)
+    ));
+    assert_eq!(snapshot(&admin).await, before);
+    admin
+        .execute(
+            "UPDATE awr_team.actors SET kind='system' WHERE id=$1",
+            &[&provision.authorization.responsible_person_id.as_str()],
+        )
+        .await
+        .unwrap();
+    let before = snapshot(&admin).await;
+    assert!(matches!(
+        OperatorAgent::preview(&mut admin, &provision).await,
+        Err(PgError::Forbidden)
+    ));
+    assert_eq!(snapshot(&admin).await, before);
+    admin
+        .execute(
+            "UPDATE awr_team.actors SET kind='agent' WHERE id=$1",
+            &[&provision.authorization.responsible_person_id.as_str()],
+        )
+        .await
+        .unwrap();
+    apply(&mut admin, &provision, "simulated-provision").await;
+    let before = snapshot(&admin).await;
+    let mut moved = provision.clone();
+    moved.authorization.authorizer_person_id = PersonId::new("agent").unwrap();
+    moved.authorization.responsible_person_id = PersonId::new("agent").unwrap();
+    moved.member_identity = None;
+    assert!(matches!(
+        OperatorAgent::preview(&mut admin, &moved).await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    assert_eq!(snapshot(&admin).await, before);
+    let mut inspection = provision.clone();
+    inspection.member_identity = None;
+    let current = OperatorAgent::inspect(&mut admin, &inspection)
+        .await
+        .unwrap();
+    assert_eq!(current["configuration_matches_plan"], true);
+    assert_eq!(
+        current["state"]["person"]["member_identity"]["kind"],
+        "simulated_member"
+    );
+}
+
+#[tokio::test]
+async fn simulated_member_credentials_and_delegations_recheck_expiry_and_revocation() {
+    let (_guard, mut admin, _, store) = setup().await;
+    let (first, first_token) = simulated_plan(&mut admin, "alpha").await;
+    let (second, second_token) = simulated_plan(&mut admin, "beta").await;
+    apply(&mut admin, &first, "first-member").await;
+    apply(&mut admin, &second, "second-member").await;
+    for (deny, restore) in [
+        (
+            "UPDATE awr_team.credentials SET expires_at=clock_timestamp()-interval '1 second' WHERE id='alpha-agent'",
+            "UPDATE awr_team.credentials SET expires_at=NULL WHERE id='alpha-agent'",
+        ),
+        (
+            "UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='alpha-agent'",
+            "UPDATE awr_team.credentials SET revoked_at=NULL WHERE id='alpha-agent'",
+        ),
+        (
+            "UPDATE awr_team.person_agent_bindings SET status='disabled' WHERE id='alpha-binding'",
+            "UPDATE awr_team.person_agent_bindings SET status='active' WHERE id='alpha-binding'",
+        ),
+    ] {
+        admin.batch_execute(deny).await.unwrap();
+        let mut own = query("work.prepare");
+        own.work_id = Some("a".into());
+        assert!(matches!(
+            store.query(TENANT, PROJECT, &first_token, own).await,
+            Err(PgError::Forbidden)
+        ));
+        prepare(&store, &second_token, "a").await;
+        assert_eq!(
+            OperatorAgent::inspect(&mut admin, &first).await.unwrap()["configuration_matches_plan"],
+            false
+        );
+        admin.batch_execute(restore).await.unwrap();
+        prepare(&store, &first_token, "a").await;
+    }
+    let mut expired = first.authorization.clone();
+    expired.expires_at_ms = Some(expired.created_at_ms);
+    admin
+        .execute(
+            "UPDATE awr_team.agent_authorizations SET expires_at_ms=$1,body_json=$2 WHERE id=$3",
+            &[&expired.expires_at_ms, &json!(expired), &expired.id],
+        )
+        .await
+        .unwrap();
+    let mut own = query("work.prepare");
+    own.work_id = Some("a".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, &first_token, own).await,
+        Err(PgError::Forbidden)
+    ));
+    prepare(&store, &second_token, "a").await;
+    admin
+        .execute(
+            "UPDATE awr_team.agent_authorizations SET expires_at_ms=$1,body_json=$2 WHERE id=$3",
+            &[
+                &first.authorization.expires_at_ms,
+                &json!(first.authorization),
+                &first.authorization.id,
+            ],
+        )
+        .await
+        .unwrap();
+    let renewal = expired_renewal_plan(&admin, &first).await;
+    let before = snapshot(&admin).await;
+    let mut changed = renewal.clone();
+    changed.member_identity.as_mut().unwrap().controller_ref = Some("changed-controller".into());
+    assert!(matches!(
+        OperatorAgent::renew_preview(&mut admin, &changed).await,
+        Err(PgError::Forbidden)
+    ));
+    assert_eq!(snapshot(&admin).await, before);
+    let preview = OperatorAgent::renew_preview(&mut admin, &renewal)
+        .await
+        .unwrap();
+    OperatorAgent::renew_apply(
+        &mut admin,
+        &renewal,
+        "simulated-renewal",
+        preview["state_digest"].as_str().unwrap(),
+        preview["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    prepare(&store, &first_token, "a").await;
+    let mut revoked = renewal.authorization.clone();
+    revoked.status = AuthorizationStatus::Revoked;
+    revoked.revoked_at_ms = Some(revoked.created_at_ms + 1);
+    revoked.revoked_by = Some(revoked.authorizer_person_id.clone());
+    admin
+        .execute(
+            "UPDATE awr_team.agent_authorizations SET status='revoked',body_json=$1 WHERE id=$2",
+            &[&json!(revoked), &revoked.id],
+        )
+        .await
+        .unwrap();
+    let mut own = query("work.prepare");
+    own.work_id = Some("a".into());
+    assert!(matches!(
+        store.query(TENANT, PROJECT, &first_token, own).await,
+        Err(PgError::Forbidden)
+    ));
+    prepare(&store, &second_token, "a").await;
 }
 
 #[tokio::test]
@@ -998,6 +1435,7 @@ async fn expired_authorization_gets_immutable_digest_gated_successor_and_replays
         tenant_id: renewal.tenant_id.clone(),
         project_id: renewal.project_id.clone(),
         authorization: renewal.authorization.clone(),
+        member_identity: renewal.member_identity.clone(),
     };
     assert_eq!(
         OperatorAgent::inspect(&mut admin, &successor_plan)

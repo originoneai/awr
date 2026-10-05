@@ -40,7 +40,8 @@ struct ClaimExplainDocument {
 
 #[derive(Subcommand)]
 pub enum AccessCommand {
-    /// Preview an initial person-Agent binding and scoped delegation (owner only).
+    /// Preview an initial member-Agent binding and scoped delegation (owner only).
+    /// Optional member_identity declares human or simulated-member provenance.
     AgentPreview {
         #[arg(long)]
         input: PathBuf,
