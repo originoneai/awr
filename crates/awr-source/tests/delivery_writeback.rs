@@ -267,6 +267,34 @@ fn independent_guards_and_alternate_roots_share_the_same_lock() {
 }
 
 #[test]
+fn read_only_observation_preserves_live_locks_and_does_not_repair_missing_identity() {
+    let f = Fixture::new();
+    let guard = f.open();
+    let identity = guard.identity().clone();
+    assert_eq!(
+        LockedSourceFile::observe(&f.root, "ledger.yaml", &identity).unwrap(),
+        LEDGER.as_bytes()
+    );
+    assert!(matches!(
+        LockedSourceFile::open(&f.root, "ledger.yaml"),
+        Err(Error::SourceConflict(_))
+    ));
+    drop(guard);
+    let lock = fs::read_dir(&f.root)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.file_name().unwrap().to_string_lossy().ends_with(".lock"))
+        .unwrap();
+    fs::rename(&lock, lock.with_extension("retained")).unwrap();
+    assert!(LockedSourceFile::observe(&f.root, "ledger.yaml", &identity).is_err());
+    assert!(!lock.exists());
+    assert_eq!(
+        fs::read(f.root.join("ledger.yaml")).unwrap(),
+        LEDGER.as_bytes()
+    );
+}
+
+#[test]
 fn external_edit_is_preserved_and_read_only_source_refuses_replacement() {
     let f = Fixture::new();
     let guard = f.open();
