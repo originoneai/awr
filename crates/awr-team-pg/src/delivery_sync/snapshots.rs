@@ -237,15 +237,27 @@ impl DeliverySyncStore {
                 .unwrap_or(0),
         )
         .await?;
+        let result = Self::inspect_in_tx(&tx, tenant, project, &auth, work).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub(crate) async fn inspect_in_tx(
+        tx: &Transaction<'_>,
+        tenant: &str,
+        project: &str,
+        auth: &crate::workstream_auth::ReaderAuthority,
+        work: &str,
+    ) -> PgResult<Value> {
         let (binding, ownership) =
-            crate::workstream_read::work_binding(&tx, tenant, project, &auth, work).await?;
+            crate::workstream_read::work_binding(tx, tenant, project, auth, work).await?;
         crate::workstream_auth::authorize_domain_action(
-            &auth,
+            auth,
             Action::WorkRead,
             Some(binding.workstream_id),
             Some(work),
         )?;
-        let selected = selection(&tx, tenant, project, work).await?;
+        let selected = selection(tx, tenant, project, work).await?;
         let current_contract: String = tx.query_one("SELECT contract_hash FROM awr_team.work_contracts
             WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND scope_id='main' AND work_id=$4",
             &[&tenant,&project,&auth.snapshot,&work]).await?.get(0);
@@ -298,7 +310,6 @@ impl DeliverySyncStore {
         if serde_json::to_vec(&result).map_err(|_| invalid())?.len() > 262144 {
             return Err(PgError::ResponseTooLarge);
         }
-        tx.commit().await?;
         Ok(result)
     }
 }

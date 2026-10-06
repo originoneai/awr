@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use tokio_postgres::{IsolationLevel, Transaction};
 
 mod activity;
+mod delivery;
 mod guidance;
 mod navigation;
 mod observation;
@@ -36,6 +37,9 @@ const QUERIES: &[&str] = &[
     "review.inspect",
     "completion.inspect",
     "delivery.inspect",
+    "delivery.neutral.inspect",
+    "delivery.neutral.outcome",
+    "delivery.source.status",
     "source.content",
     "artifact.content",
     "planning.outcome",
@@ -152,7 +156,10 @@ impl WorkstreamQuery {
                 )
             || (!audit
                 && self.request_id.is_some()
-                    != matches!(self.op.as_str(), "command.inspect" | "planning.outcome"))
+                    != matches!(
+                        self.op.as_str(),
+                        "command.inspect" | "planning.outcome" | "delivery.neutral.outcome"
+                    ))
             || (self.change_id.is_some()
                 || self.member_actor_id.is_some()
                 || self.category.is_some()
@@ -197,6 +204,10 @@ impl WorkstreamQuery {
             || self.op == "session.inspect" && self.session_id.is_none()
             || self.op == "planning.outcome"
                 && (self.work_id.is_some() || self.session_id.is_some())
+            || matches!(
+                self.op.as_str(),
+                "delivery.neutral.inspect" | "delivery.neutral.outcome" | "delivery.source.status"
+            ) && (self.work_id.is_none() || self.session_id.is_some())
             || matches!(
                 self.op.as_str(),
                 "work.prepare"
@@ -575,6 +586,17 @@ pub(crate) async fn read(
                 "non_repudiation": "not_claimed_against_db_owner"
             }
         });
+        caps["neutral_delivery"] = json!({
+            "protocol":"awr-delivery-sync-v1",
+            "facts_query":"delivery.neutral.inspect",
+            "outcome_query":"delivery.neutral.outcome",
+            "source_status_query":"delivery.source.status",
+            "command_source_snapshot":"args.source_snapshot_id",
+            "outcome_identity":"current_actor_client_and_actual_work",
+            "management":"eligible_human_or_system_with_explicit_scope",
+            "background_scheduling":false,"repository_effects":false,
+            "domain_finalization":false,"read_consistency":"repeatable_read"
+        });
         caps["agent_review"] = json!({
             "command":"review.decide", "policy":crate::review::AGENT_REVIEW_POLICY,
             "requires":["agent_actor","agent_review_membership_grant","live_review_delegation","distinct_author_actor_and_client"],
@@ -699,6 +721,10 @@ pub(crate) async fn read(
     let c = cursor(q, &binding)?;
     let limit = i64::from(q.limit.unwrap_or(50));
     let data = match q.op.as_str() {
+        "delivery.neutral.inspect" | "delivery.neutral.outcome" | "delivery.source.status" => {
+            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+            delivery::read(tx, tenant, project, auth, q, work).await?
+        }
         "work.observe" => {
             let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
             let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
