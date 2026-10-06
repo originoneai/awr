@@ -733,6 +733,7 @@ async fn decide(
     } else {
         "rejected"
     };
+    let decision_id = crate::tx::new_id();
     tx.execute(
         "INSERT INTO awr_team.review_decisions(
             tenant_id, project_id, id, review_round_id, work_id, bundle_hash,
@@ -742,7 +743,7 @@ async fn decide(
         &[
             &tenant,
             &project,
-            &crate::tx::new_id(),
+            &decision_id,
             &a.round_id,
             &work_id,
             &bundle_hash,
@@ -767,6 +768,7 @@ async fn decide(
     Ok(Applied {
         data: json!({
             "round_id": a.round_id,
+            "decision_id": decision_id,
             "round_index": round_index,
             "state": next,
             "decision": decision,
@@ -787,6 +789,7 @@ async fn decide(
             "review.decided",
             json!({
                 "round_id": a.round_id,
+                "decision_id": decision_id,
                 "decision": decision,
                 "independence_kind": independence_kind,
                 "approval_basis": approval_basis,
@@ -1742,7 +1745,7 @@ pub(crate) async fn inspect_review(
     let decisions = tx
         .query(
             "SELECT decision, reviewer_actor_id, reviewer_person_id, independence_kind, reason,
-                    approval_basis, reviewer_client_id
+                    approval_basis, reviewer_client_id, id
              FROM awr_team.review_decisions
              WHERE tenant_id=$1 AND project_id=$2 AND review_round_id=$3
              ORDER BY created_at ASC",
@@ -1771,6 +1774,7 @@ pub(crate) async fn inspect_review(
             "reason": d.get::<_,String>(4),
             "approval_basis": d.get::<_,String>(5),
             "reviewer_client_id": d.get::<_,Option<String>>(6),
+            "decision_id": d.get::<_,String>(7),
             "human_approval": matches!(d.get::<_,String>(5).as_str(), "human_independent_review" | "human_author_self_review") && d.get::<_,String>(0)=="approve",
             "team_independent_acceptance": d.get::<_,String>(3)=="team_independent" && d.get::<_,String>(0)=="approve",
         })).collect::<Vec<_>>(),

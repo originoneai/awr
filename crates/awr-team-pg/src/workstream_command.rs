@@ -64,6 +64,8 @@ pub(crate) const COMMANDS: &[&str] = &[
     "delivery.source.write",
     "delivery.source.confirm",
     "delivery.source.abandon",
+    "delivery.integration.prepare",
+    "delivery.integration.reject_prepared",
 ];
 const RECEIPT_PROTOCOL: &str = "awr-team-workstream-command-v1";
 

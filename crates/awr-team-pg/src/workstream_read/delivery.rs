@@ -18,6 +18,11 @@ pub(super) async fn read(
             DeliverySyncStore::source_publication_status_in_tx(tx, tenant, project, auth, work)
                 .await?
         }
+        "delivery.integration.inspect" => {
+            let id = q.request_id.as_deref().ok_or(PgError::Forbidden)?;
+            DeliverySyncStore::inspect_integration_in_tx(tx, tenant, project, auth, work, id)
+                .await?
+        }
         "delivery.neutral.outcome" => {
             let _ = work_binding(tx, tenant, project, auth, work).await?;
             let request_id = q.request_id.as_deref().ok_or(PgError::Forbidden)?;

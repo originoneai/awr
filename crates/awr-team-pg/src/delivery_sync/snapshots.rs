@@ -342,10 +342,28 @@ impl DeliverySyncStore {
             &[&tenant,&project,&work]).await?;
         let history_truncated = rows.len() > 32;
         let history: Vec<Value> = rows.into_iter().take(32).map(|r| r.get(0)).collect();
+        // Work-scoped descriptions let supervisors obtain integration preconditions.
+        // They reveal no credential or principal and grant no worker capability.
+        let rows = tx
+            .query(
+                "SELECT id,version,provider,resource,fact_source,enabled,coordinator_epoch
+            FROM awr_team.delivery_connectors WHERE tenant_id=$1 AND project_id=$2
+              AND work_id=$3 AND workstream_id=$4 ORDER BY id LIMIT 33",
+                &[&tenant, &project, &work, &binding.workstream_id.to_string()],
+            )
+            .await?;
+        let connectors_truncated = rows.len() > 32;
+        let connectors: Vec<Value> = rows.into_iter().take(32).map(|r| json!({
+            "connector_id":r.get::<_,String>(0),"connector_version":r.get::<_,i64>(1).to_string(),
+            "provider":r.get::<_,String>(2),"resource":r.get::<_,String>(3),
+            "fact_source":r.get::<_,String>(4),"enabled":r.get::<_,bool>(5),
+            "current_epoch":r.get::<_,String>(6)==auth.epoch
+        })).collect();
         let result = json!({"work_id":work,"workstream_id":binding.workstream_id,"source_snapshot_id":auth.snapshot,
             "coordinator_epoch":auth.epoch,"project_revision":auth.revision.to_string(),"selected_current":selected_current,
             "selection_version":selected.as_ref().map(|s|s.5.to_string()),"candidate":selected.map(|s|s.0),"facts":facts,"history":history,
             "facts_truncated":facts_truncated,"history_truncated":history_truncated,
+            "connectors":connectors,"connectors_truncated":connectors_truncated,
             "acceptance_ready":false,"execution_authorized":false,"source_synchronized":false});
         if serde_json::to_vec(&result).map_err(|_| invalid())?.len() > 262144 {
             return Err(PgError::ResponseTooLarge);

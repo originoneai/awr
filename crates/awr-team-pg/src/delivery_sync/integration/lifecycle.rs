@@ -798,7 +798,11 @@ impl DeliverySyncStore {
         identity(id)?;
         let mut client = self.pool.get().await?;
         crate::check_schema(&client).await?;
-        let tx = client.transaction().await?;
+        let tx = client
+            .build_transaction()
+            .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
+            .start()
+            .await?;
         let mut auth = crate::workstream_auth::authenticate(&tx, tenant, project, bearer).await?;
         crate::delegation_auth::resolve_agent_delegation(
             &tx,
@@ -810,10 +814,25 @@ impl DeliverySyncStore {
             now_ms(),
         )
         .await?;
+        let result = Self::inspect_integration_in_tx(&tx, tenant, project, &auth, work, id).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub(crate) async fn inspect_integration_in_tx(
+        tx: &Transaction<'_>,
+        tenant: &str,
+        project: &str,
+        auth: &ReaderAuthority,
+        work: &str,
+        id: &str,
+    ) -> PgResult<Value> {
+        identity(work)?;
+        identity(id)?;
         let (binding, _) =
-            crate::workstream_read::work_binding(&tx, tenant, project, &auth, work).await?;
+            crate::workstream_read::work_binding(tx, tenant, project, auth, work).await?;
         crate::workstream_auth::authorize_domain_action(
-            &auth,
+            auth,
             Action::WorkRead,
             Some(binding.workstream_id),
             Some(work),
@@ -833,17 +852,31 @@ impl DeliverySyncStore {
             )
             .await?
             .get(0);
-        let receipt = json!({"integration_id":id,"state":row.get::<_,String>(0),"integration_request":stored["request"],
+        let state: String = row.get(0);
+        let action = match state.as_str() {
+            "prepared" | "leased" => {
+                "Await the configured integrator; inspect this original request for its outcome"
+            }
+            "dispatched" | "unknown" => {
+                "Await original-attempt reconciliation; preserve this request and do not redispatch"
+            }
+            _ => "Read current neutral facts and source status before any acceptance action",
+        };
+        let receipt = json!({"integration_id":id,"state":state,"integration_request":stored["request"],
             "eligibility_digest":row.get::<_,String>(2),"lease_id":row.get::<_,Option<String>>(3),"lease_expires_at":row.get::<_,Option<String>>(4),
             "dispatched_at":row.get::<_,Option<String>>(5),"dispatch_receipt":row.get::<_,Option<Value>>(6),
             "confirmation_fact_id":row.get::<_,Option<String>>(7),"confirmation_current":row.get::<_,Option<bool>>(8),
             "candidate":candidate,"original_read_set":prepare.read_set,
             "connector_id":prepare.connector_id,"connector_version":prepare.connector_version,
-            "execution_authorized":false,"acceptance_ready":false,"source_synchronized":false});
+            "execution_authorized":false,"acceptance_ready":false,"source_synchronized":false,
+            "request_binding":"original_candidate_and_read_set",
+            "next_query":{"protocol_version":1,"op":"delivery.integration.inspect","work_id":work,"request_id":id},
+            "guidance":{"when":"An integration request exists",
+                "because":"Intent state describes the original requested version; it does not authorize repository effects or acceptance",
+                "action":action,"recheck_on":"Intent, approval, source or permission changes"}});
         if serde_json::to_vec(&receipt).map_err(|_| invalid())?.len() > 262144 {
             return Err(PgError::ResponseTooLarge);
         }
-        tx.commit().await?;
         Ok(receipt)
     }
 }

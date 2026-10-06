@@ -36,6 +36,8 @@ caller identity or filesystem path in `args`. The complete command must fit
 | `delivery.source.write` | `publication_id`, `fence` |
 | `delivery.source.confirm` | `publication_id`, `fence` |
 | `delivery.source.abandon` | `publication_id`, `fence` |
+| `delivery.integration.prepare` | `connector_id`, `connector_version`, `candidate_digest`, `selection_version`, `evidence_id`, `review_round_id`, `review_decision_id`, `operation: "fast_forward"` |
+| `delivery.integration.reject_prepared` | `integration_id`, nonblank `reason` (at most 1,024 UTF-8 bytes) |
 
 Candidates contain the strict `binding` and `manifest` objects from
 [the neutral delivery protocol](pr-delivery-review.md). Records are typed
@@ -45,6 +47,12 @@ describe the managed observer; they cannot change the caller's identity or
 grant access. Source renewal uses the flat fields above, not a nested `step`.
 Connector configuration and all source mutation operations still require an
 eligible human/system operator with explicit current management scope.
+Integration preparation and withdrawal require current `delivery.finalize` and
+write scope; Agent callers also need a live corresponding delegation. They
+reserve or withdraw an approved intent and do not execute a repository operation.
+Worker lease, dispatch and confirmation are not exposed as Team commands. See
+[durable integration authority](delivery-integration.md#supervisor-workflow-over-http-or-mcp)
+for approval discovery, permissions and recovery.
 
 Dispatch reuses the original neutral transaction, journal and audit event. It
 returns `{replayed, receipt, execution_authorized: false}`; `receipt.protocol`
@@ -56,9 +64,10 @@ Use `awr_team_query` or `POST /v1/projects/{key}/query` for these reads:
 
 | Operation | Selectors and meaning |
 | --- | --- |
-| `delivery.neutral.inspect` | Explicit `work_id`; current selected candidate, compact fact/history summaries and truncation flags |
-| `delivery.neutral.outcome` | Explicit `work_id` and original `request_id`; current caller actor/client's neutral request receipt |
+| `delivery.neutral.inspect` | Explicit `work_id`; current selected candidate, compact fact/history and scoped connector versions; each list has explicit truncation flags |
+| `delivery.neutral.outcome` | Explicit `work_id` and original **client command retry** `request_id`; current caller actor/client's neutral request receipt |
 | `delivery.source.status` | Explicit `work_id`; current physical/source validity, publication phases and synchronization status |
+| `delivery.integration.inspect` | Explicit `work_id` and generated **`IntegrationRequest.request_id`** (`receipt.data.integration_id`); immutable original candidate/read set and current intent state |
 
 These reads use one authenticated `RepeatableRead` transaction and do not
 accept a session selector. Outcome lookup rechecks current read permission for
@@ -75,7 +84,7 @@ source writers remain explicit `Unsupported` results.
 
 Legacy `command.inspect`, PR-oriented `delivery.inspect` and existing review
 operations retain their original meanings. Use `delivery.neutral.outcome` for
-the nine neutral operations; generic `command.inspect` does not query their
+neutral operations above; generic `command.inspect` does not query their
 journal. Discovery describes operation-specific fields and the capability
 response explicitly reports no background scheduling, repository effects or
 neutral finalization at this layer. Historical, current, synchronized and
