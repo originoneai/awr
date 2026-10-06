@@ -146,16 +146,42 @@ mod tests {
 
     #[test]
     fn strict_documents_reject_implicit_effect_mode_and_unknown_fields() {
-        for text in [
-            EXAMPLE.replace("integration_enabled = false\n", ""),
-            format!("token = 'synthetic'\n{EXAMPLE}"),
-            EXAMPLE.replace("project = \"team\"", "project = \"team\"\nrole = \"admin\""),
-            EXAMPLE.replace(
-                "[workers.repository]",
-                "[workers.repository]\nremote_url = \"https://example.invalid/repo\"",
-            ),
-        ] {
-            assert!(toml::from_str::<LocalGitWorkerConfig>(&text).is_err());
+        let normalized = EXAMPLE.replace("\r\n", "\n");
+        for newline in ["\n", "\r\n"] {
+            let example = normalized.replace('\n', newline);
+            assert!(toml::from_str::<LocalGitWorkerConfig>(&example).is_ok());
+            for (case, text) in [
+                (
+                    "missing effect mode",
+                    example.replace("integration_enabled = false", ""),
+                ),
+                (
+                    "unknown top-level field",
+                    format!("token = 'synthetic'{newline}{example}"),
+                ),
+                (
+                    "unknown worker field",
+                    example.replace(
+                        "project = \"team\"",
+                        &format!("project = \"team\"{newline}role = \"admin\""),
+                    ),
+                ),
+                (
+                    "unknown repository field",
+                    example.replace(
+                        "[workers.repository]",
+                        &format!(
+                            "[workers.repository]{newline}remote_url = \"https://example.invalid/repo\""
+                        ),
+                    ),
+                ),
+            ] {
+                assert_ne!(text, example, "fixture mutation did not apply: {case}");
+                assert!(
+                    toml::from_str::<LocalGitWorkerConfig>(&text).is_err(),
+                    "accepted {case} with {newline:?} line endings"
+                );
+            }
         }
     }
 
