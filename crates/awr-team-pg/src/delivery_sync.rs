@@ -4,11 +4,13 @@ mod auth;
 mod connectors;
 mod inbox;
 mod publisher;
+mod pump;
 mod snapshots;
 
 pub use publisher::{
     DeliveryPublicationStep, PrepareDeliverySourcePublication, RenewDeliveryPublicationLease,
 };
+pub use pump::{ClaimDeliverySyncIntent, DeliverySyncLease};
 
 use crate::{PgError, PgPool, PgResult};
 use awr_core::Id;
