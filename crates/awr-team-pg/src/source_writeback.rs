@@ -12,15 +12,15 @@ use crate::workstream_auth::{authenticate, authenticate_writer};
 #[allow(unused_imports)]
 use awr_source::SOURCE_BINDING_FILE;
 use awr_source::{
-    PublishPrepOptions, SoleSourceLocation, apply_planning_changes_to_ledger, fingerprint,
-    prepare_publish_from_ledger_bytes, refuse_external_overwrite,
+    LockedSourceFile, PublishPrepOptions, SoleSourceLocation, apply_planning_changes_to_ledger,
+    fingerprint, prepare_publish_from_ledger_bytes, refuse_external_overwrite,
     refuse_runtime_field_in_source_write, source_status_notes_are_completion_receipts,
 };
 use awr_team::{DraftChange, SourceActivationPlan};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio_postgres::Transaction;
 
 /// Proven impact set supplied to activation. When `impact_proven` is false the
@@ -232,10 +232,13 @@ impl SourceStore {
         // write and before `source_written` must not apply the patch again.
         // Resume source_written / pg_activating / validated without re-applying
         // CreateTask. ---
-        let ledger_path = req.source_root.join(&req.ledger_relative_path);
         let location =
             SoleSourceLocation::server_directory(&req.source_root, &req.ledger_relative_path)
                 .map_err(|e| PgError::Protocol(e.to_string()))?;
+        // Shared with delivery metadata publication. Nonblocking acquisition
+        // avoids waiting on a filesystem lock while holding the project barrier.
+        let source_guard = LockedSourceFile::open(&req.source_root, &req.ledger_relative_path)
+            .map_err(source_write_error)?;
 
         let prior = load_journal_row(&tx, tenant_id, project_id, &req.request_id).await?;
         let prior_phase = prior.as_ref().map(|j| j.phase.as_str()).unwrap_or("");
@@ -246,8 +249,7 @@ impl SourceStore {
                 "validated" | "source_written" | "pg_activating"
             ) {
                 let journal = prior.expect("phase implies journal row");
-                let disk =
-                    std::fs::read(&ledger_path).map_err(PgError::source_storage_unavailable)?;
+                let disk = source_guard.read().map_err(source_write_error)?;
                 let disk_fp = fingerprint(&disk);
                 if disk_fp == journal.after_fingerprint {
                     // Source write landed; resume activation without re-applying creates.
@@ -299,8 +301,7 @@ impl SourceStore {
             } else {
                 // Fresh / planned / refused-retry: plan patch and validate fully
                 // before the first authoritative source mutation.
-                let before_bytes =
-                    std::fs::read(&ledger_path).map_err(PgError::source_storage_unavailable)?;
+                let before_bytes = source_guard.read().map_err(source_write_error)?;
                 let observed_fp = fingerprint(&before_bytes);
                 let patch = apply_planning_changes_to_ledger(&before_bytes, &changes)
                     .map_err(|e| PgError::Protocol(e.to_string()))?;
@@ -374,12 +375,18 @@ impl SourceStore {
 
         if !source_already_written {
             // Fingerprint re-check immediately before write (external race).
-            let recheck =
-                std::fs::read(&ledger_path).map_err(PgError::source_storage_unavailable)?;
+            let recheck = source_guard.read().map_err(source_write_error)?;
             refuse_external_overwrite(&before_fingerprint, &fingerprint(&recheck))
                 .map_err(|e| PgError::Protocol(e.to_string()))?;
-            atomic_write(&ledger_path, &after_bytes)?;
+            source_guard
+                .replace(&before_fingerprint, &after_bytes)
+                .map_err(source_write_error)?;
         }
+        refuse_external_overwrite(
+            &after_fingerprint,
+            &fingerprint(&source_guard.read().map_err(source_write_error)?),
+        )
+        .map_err(|e| PgError::Protocol(e.to_string()))?;
 
         // Re-enter PG for activation.
         let mut client = self.connect().await?;
@@ -1026,17 +1033,15 @@ async fn load_activation_receipt(
     }))
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> PgResult<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let tmp = parent.join(format!(
-        ".{}.tmcp022.tmp",
-        path.file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("ledger")
-    ));
-    std::fs::write(&tmp, bytes).map_err(PgError::source_storage_unavailable)?;
-    std::fs::rename(&tmp, path).map_err(PgError::source_storage_unavailable)?;
-    Ok(())
+fn source_write_error(error: awr_source::Error) -> PgError {
+    match error {
+        awr_source::Error::Io(error) => PgError::source_storage_unavailable(error),
+        awr_source::Error::SourceUnavailable(_) => PgError::source_storage_unavailable(
+            std::io::Error::other("exact source storage unavailable"),
+        ),
+        awr_source::Error::SourceConflict(message) => PgError::WritebackRefused(message),
+        _ => PgError::Protocol("invalid or unsupported bound source writer".into()),
+    }
 }
 
 #[cfg(test)]
@@ -1047,30 +1052,29 @@ mod tests {
     fn atomic_replacement_failure_is_classified_without_exposing_the_path() {
         let root = std::env::temp_dir().join(format!("awr-writeback-{}", ulid::Ulid::new()));
         std::fs::create_dir(&root).unwrap();
+        let root = std::fs::canonicalize(root).unwrap();
         let target = root.join("private-ledger");
-        // A file cannot replace a nonempty directory, on any supported platform.
-        std::fs::create_dir(&target).unwrap();
-        std::fs::write(target.join("existing"), b"preserved").unwrap();
-        let error = atomic_write(&target, b"replacement").unwrap_err();
-        // Windows reports this failed replacement as PermissionDenied, while
-        // Unix typically reports a different I/O error. Both must retain the
-        // bounded classification and omit private paths and raw OS messages.
+        std::fs::write(&target, b"preserved").unwrap();
+        let permissions = std::fs::metadata(&target).unwrap().permissions();
+        let mut readonly = permissions.clone();
+        readonly.set_readonly(true);
+        std::fs::set_permissions(&target, readonly).unwrap();
+        let guard = LockedSourceFile::open(&root, "private-ledger").unwrap();
+        let error = guard
+            .replace(&fingerprint(b"preserved"), b"replacement")
+            .map_err(source_write_error)
+            .unwrap_err();
+        // All supported platforms retain bounded storage classification without
+        // disclosing the private source path or raw OS message.
         let expected_message = match error.source_storage_reason() {
             Some("permission_denied") => "authoritative source storage permission denied",
             Some("io_error") => "authoritative source storage is unavailable",
             other => panic!("unexpected source-storage classification: {other:?}"),
         };
         assert_eq!(error.to_string(), expected_message);
-        assert_eq!(
-            std::fs::read(target.join("existing")).unwrap(),
-            b"preserved"
-        );
-        // A failed rename may leave a temporary file: diagnostics must not claim
-        // that there were no effects or tell callers to use a new request ID.
-        assert_eq!(
-            std::fs::read(root.join(".private-ledger.tmcp022.tmp")).unwrap(),
-            b"replacement"
-        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"preserved");
+        std::fs::set_permissions(&target, permissions).unwrap();
+        drop(guard);
         std::fs::remove_dir_all(root).unwrap();
     }
 }
