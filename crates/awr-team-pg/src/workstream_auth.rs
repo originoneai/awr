@@ -15,6 +15,19 @@ pub fn workstream_credential_hash(token: &str) -> PgResult<String> {
     ))
 }
 
+/// Private queued authority reference; never a caller DTO or raw bearer.
+pub(crate) struct CredentialReference {
+    pub(crate) credential_id: String,
+    pub(crate) secret_hash: String,
+}
+
+pub(crate) fn credential_reference(token: &str) -> PgResult<CredentialReference> {
+    Ok(CredentialReference {
+        credential_id: token_id(token)?.into(),
+        secret_hash: workstream_credential_hash(token)?,
+    })
+}
+
 fn token_id(token: &str) -> PgResult<&str> {
     if token.len() > 199 {
         return Err(PgError::Forbidden);
@@ -184,6 +197,24 @@ pub(crate) async fn authenticate_writer(
     authenticate_inner(tx, tenant, project, token, true, ProjectLockMode::Exclusive).await
 }
 
+/// Recheck queued authority through the same live credential and policy path.
+pub(crate) async fn authenticate_writer_reference(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    reference: &CredentialReference,
+) -> PgResult<ReaderAuthority> {
+    authenticate_reference(
+        tx,
+        tenant,
+        project,
+        reference,
+        true,
+        ProjectLockMode::Exclusive,
+    )
+    .await
+}
+
 #[allow(dead_code)]
 pub(crate) async fn authenticate_task_writer(
     tx: &Transaction<'_>,
@@ -202,8 +233,20 @@ async fn authenticate_inner(
     write: bool,
     lock: ProjectLockMode,
 ) -> PgResult<ReaderAuthority> {
-    let credential_id = token_id(token)?;
-    let hash = workstream_credential_hash(token)?;
+    let reference = credential_reference(token)?;
+    authenticate_reference(tx, tenant, project, &reference, write, lock).await
+}
+
+async fn authenticate_reference(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    reference: &CredentialReference,
+    write: bool,
+    lock: ProjectLockMode,
+) -> PgResult<ReaderAuthority> {
+    let credential_id = reference.credential_id.as_str();
+    let hash = reference.secret_hash.as_str();
     crate::tx::bind_workstream_scope(tx, tenant, project).await?;
     let mode = tx
         .query_opt(

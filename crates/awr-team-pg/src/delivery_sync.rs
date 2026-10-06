@@ -3,10 +3,16 @@
 mod auth;
 mod connectors;
 mod inbox;
+mod integration;
 mod publisher;
 mod pump;
 mod snapshots;
 
+pub use integration::{
+    ConfirmDeliveryIntegration, DeliveryIntegrationDispatch, DeliveryIntegrationPermit,
+    DispatchDeliveryIntegration, LeaseDeliveryIntegration, PrepareDeliveryIntegration,
+    RejectPreparedDeliveryIntegration,
+};
 pub use publisher::{
     DeliveryPublicationStep, PrepareDeliverySourcePublication, RenewDeliveryPublicationLease,
 };

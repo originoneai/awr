@@ -1,5 +1,6 @@
 //! Mainline evidence / review / rework / complete commands (WS-018).
 mod agent_completion;
+pub(crate) use agent_completion::verify_execution as verify_integration_execution;
 mod artifact_input;
 
 use super::*;

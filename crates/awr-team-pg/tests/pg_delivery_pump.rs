@@ -717,7 +717,8 @@ async fn schema44_pending_notifications_backfill_exact_historical_bindings_atomi
         .await
         .unwrap()
         .get(0);
-    f.admin.batch_execute("DROP TABLE awr_team.delivery_sync_intents; UPDATE awr_team.schema_state SET version=44").await.unwrap();
+    f.admin.batch_execute("DROP TABLE awr_team.delivery_integration_target_guards,awr_team.delivery_integration_intents,awr_team.delivery_sync_intents;
+        UPDATE awr_team.schema_state SET version=44").await.unwrap();
     let ddl = include_str!("../migrations/20261006000045_delivery_sync_pump.sql");
     assert!(
         f.admin
