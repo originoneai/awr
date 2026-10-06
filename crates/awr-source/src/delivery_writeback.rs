@@ -269,8 +269,9 @@ impl LockedSourceFile {
             .write(true)
             .create(true)
             .follow(FollowSymlinks::No);
-        let lock = parent.open_with(&lock_name, &options)?.into_std();
-        let metadata = lock.metadata()?;
+        let cap_lock = parent.open_with(&lock_name, &options)?;
+        let metadata = cap_lock.metadata()?;
+        let lock = cap_lock.into_std();
         if !metadata.is_file() || metadata.nlink() != 1 {
             return Err(conflict());
         }
