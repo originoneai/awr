@@ -6,6 +6,7 @@ mod access;
 mod canonical;
 mod completion;
 mod contract;
+pub mod delivery;
 mod error;
 mod ids;
 mod permission;
