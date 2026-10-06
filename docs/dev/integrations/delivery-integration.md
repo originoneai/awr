@@ -68,6 +68,14 @@ cloned or deserialized. A replay returns the receipt with `permit: None`, even
 after store reconstruction or under a different request key. A described receipt
 does not grant permission to execute. An integrator must consume the permit.
 
+The [local Git integrator](local-git-delivery.md#opt-in-fast-forward-integration)
+consumes that permit for one configured fast-forward CAS. After repository
+preflight it uses `recheck_integration` to revalidate live authority, eligibility
+and the dispatch lease immediately before launch. This method accepts the sealed
+permit and returns no new capability. Its successful check cannot make a replay
+executable. The library boundary still exposes no new public transport route or
+default background service.
+
 ## Resolve effects without blind retries
 
 | State | Meaning | Recovery |
@@ -97,6 +105,17 @@ connector can record a historical result when the original issuer or eligibility
 changed. The confirmation's `current` describes eligibility at that confirmation;
 it is not a finalization grant and must be rechecked before acceptance.
 `inspect_integration` exposes descriptions without private authority references.
+It includes the immutable original candidate, read set and connector description
+so recovery does not accidentally query a replacement selection.
+
+`reserve_integration_inspection` requires a currently authenticated configured
+system connector and current read set. It reserves the original dispatched
+candidate/source/ownership/selection through the existing neutral inbox even when
+ordinary `reserve_inspection` correctly rejects that candidate as stale. This
+grants observation only. Old bindings remain historical; currently revoked or
+unmapped connectors cannot ingest them, and facts from an inspection begun before
+dispatch still cannot resolve the intent.
+
 Integration confirmations never create completion receipts, mark work complete,
 or silently update authoritative source status.
 

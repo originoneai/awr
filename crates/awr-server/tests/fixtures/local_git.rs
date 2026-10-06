@@ -145,6 +145,7 @@ impl GitFixture {
         self.run_at(&self.config.repository, args)
     }
     pub fn commit(&self, path: &str, bytes: &[u8]) {
+        fs::create_dir_all(self.work.join(path).parent().unwrap()).unwrap();
         fs::write(self.work.join(path), bytes).unwrap();
         self.git(&["add", "--", path]);
         self.git(&["commit", "-m", "Synthetic delivery revision"]);
@@ -176,6 +177,38 @@ impl GitFixture {
             "required_checks":["local_git.manifest","unit-tests"],"target":{"resource":self.config.resource,"reference":self.config.target_reference,
                 "precondition":{"kind":"exact","revision":{"resource":self.config.resource,"format":self.format,"value":self.base}}}
         },"manifest":manifest})).unwrap()
+    }
+
+    /// Actual bytes matching the independent review/evidence PG fixture.
+    pub fn integration(sha256: bool) -> Self {
+        let mut fixture = Self::new(sha256);
+        fixture.config.tenant_id = "reader-tenant".into();
+        fixture.config.project_id = "reader-project".into();
+        fixture.config.connector_id = "git".into();
+        fixture.config.resource = "fixture://integration-repository".into();
+        fixture.commit("src/api/result.json", b"Reviewed package bytes");
+        fixture.source = fixture.git(&["rev-parse", "HEAD"]);
+        fixture.git(&[
+            "push",
+            fixture.config.repository.to_str().unwrap(),
+            "HEAD:refs/heads/candidate",
+        ]);
+        fixture
+    }
+
+    pub fn integration_candidate(&self) -> DeliveryCandidate {
+        let mut candidate = self.candidate();
+        candidate.manifest = ArtifactManifest {
+            entries: vec![ArtifactEntry {
+                artifact_id: "package".into(),
+                sha256: sha(b"Reviewed package bytes"),
+                byte_length: "22".into(),
+                locator: "git-blob:src/api/result.json".into(),
+            }],
+        };
+        candidate.binding.required_checks = vec!["report".into()];
+        rebind(&mut candidate);
+        candidate
     }
 }
 

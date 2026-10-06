@@ -440,6 +440,181 @@ impl DeliverySyncStore {
         })
     }
 
+    /// Recheck a sealed first-dispatch permit after adapter preflight, immediately
+    /// before launching its command. Descriptions and replays cannot call this.
+    pub async fn recheck_integration(
+        &self,
+        tenant: &str,
+        project: &str,
+        bearer: &str,
+        permit: &DeliveryIntegrationPermit,
+    ) -> PgResult<()> {
+        let set = &permit.read_set;
+        let mut client = self.pool.get().await?;
+        crate::check_schema(&client).await?;
+        let tx = client.transaction().await?;
+        let auth = auth::admit(
+            &tx,
+            tenant,
+            project,
+            bearer,
+            set,
+            Action::DeliveryFinalize,
+            None,
+        )
+        .await?;
+        let id = permit.request.request_id.as_str();
+        let intent = load(&tx, tenant, project, id, &set.work_id).await?;
+        worker(&tx, tenant, project, &auth, set, &intent).await?;
+        if intent.state != "dispatched"
+            || intent.request != permit.request
+            || json!(intent.prepare.read_set) != json!(permit.read_set)
+            || intent.prepare.connector_id != permit.connector_id
+            || intent.prepare.connector_version != permit.connector_version
+            || intent.eligibility_digest != permit.eligibility_digest
+        {
+            return Err(PgError::PreconditionsChanged);
+        }
+        if intent.lease_actor.as_deref() != Some(auth.actor_id.as_str())
+            || intent.lease_client.as_deref() != Some(auth.client_id.as_str())
+            || intent.lease_binding.as_deref()
+                != Some(
+                    worker_binding(&tx, tenant, project, &auth, set, bearer)
+                        .await?
+                        .as_str(),
+                )
+        {
+            return Err(PgError::Forbidden);
+        }
+        let eligible = revalidate(&tx, tenant, project, &intent).await?;
+        if eligible.candidate != permit.candidate {
+            return Err(PgError::PreconditionsChanged);
+        }
+        // Resolving bytes can consume time. Authentication and the durable lease
+        // deadline must still hold at the last admission boundary.
+        auth::admit_reference(
+            &tx,
+            tenant,
+            project,
+            &intent.issuer,
+            set,
+            Action::DeliveryFinalize,
+            None,
+        )
+        .await?;
+        auth::admit(
+            &tx,
+            tenant,
+            project,
+            bearer,
+            set,
+            Action::DeliveryFinalize,
+            None,
+        )
+        .await?;
+        let live: bool = tx.query_one("SELECT lease_expires_at>clock_timestamp() FROM awr_team.delivery_integration_intents
+            WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND state='dispatched'", &[&tenant,&project,&id]).await?.get(0);
+        if !live {
+            return Err(PgError::LeaseExpired);
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Observe the immutable original dispatch even after selection/source
+    /// changes. Current connector authority is required; no permit is issued.
+    pub async fn reserve_integration_inspection(
+        &self,
+        tenant: &str,
+        project: &str,
+        bearer: &str,
+        integration_id: &str,
+        request: ReserveDeliveryInspection,
+    ) -> PgResult<Value> {
+        bounded(&request)?;
+        identity(integration_id)?;
+        digest(&request.candidate_digest)?;
+        if !(5..=300).contains(&request.lease_seconds) {
+            return Err(invalid());
+        }
+        let set = &request.read_set;
+        let mut client = self.pool.get().await?;
+        crate::check_schema(&client).await?;
+        let tx = client.transaction().await?;
+        let auth = auth::admit(
+            &tx,
+            tenant,
+            project,
+            bearer,
+            set,
+            Action::DeliverySubmitAndRequestReview,
+            None,
+        )
+        .await?;
+        let intent = load(&tx, tenant, project, integration_id, &set.work_id).await?;
+        if auth.actor_kind != "system" {
+            return Err(PgError::Forbidden);
+        }
+        if !matches!(
+            intent.state.as_str(),
+            "dispatched" | "unknown" | "confirmed" | "rejected"
+        ) || intent.dispatch_receipt.is_none()
+        {
+            return Err(PgError::RecoveryBlocked);
+        }
+        let connector =
+            connectors::load(&tx, tenant, project, &auth, set, &request.connector_id).await?;
+        if connector.source != FactSource::AdapterObservation
+            || connector.version != version(&request.connector_version)?
+            || request.connector_id != intent.prepare.connector_id
+            || request.candidate_digest != intent.prepare.candidate_digest
+            || connector.resource != intent.request.binding.target.resource
+            || set.workstream_id != intent.prepare.read_set.workstream_id
+        {
+            return Err(PgError::PreconditionsChanged);
+        }
+        auth::bind_candidate(
+            tenant,
+            project,
+            &intent.prepare.read_set,
+            &intent.request.binding,
+        )?;
+        let op = "delivery.integration.inspection.reserve";
+        let (request_hash, replay) = auth::replay(
+            &tx,
+            tenant,
+            project,
+            &auth,
+            op,
+            &request.request_id,
+            &json!({"integration_id":integration_id,"request":request}),
+        )
+        .await?;
+        if let Some(receipt) = replay {
+            tx.commit().await?;
+            return Ok(receipt);
+        }
+        let result = snapshots::reserve_bound(
+            &tx,
+            tenant,
+            project,
+            &auth,
+            &request,
+            &connector,
+            snapshots::InspectionBinding {
+                candidate_digest: &intent.prepare.candidate_digest,
+                snapshot: &intent.prepare.read_set.source_snapshot_id,
+                ownership: version(&intent.prepare.read_set.ownership_version)?,
+                selection_version: version(&intent.prepare.selection_version)?,
+            },
+            op,
+            &request_hash,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
     /// A bound neutral adapter fact resolves an effect, never completes the task.
     pub async fn confirm_integration(
         &self,
@@ -648,11 +823,26 @@ impl DeliverySyncStore {
             WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND work_id=$4",
             &[&tenant,&project,&id,&work]).await?.ok_or(PgError::Forbidden)?;
         let stored: Value = row.get(1);
+        let prepare: PrepareDeliveryIntegration = serde_json::from_value(stored["prepare"].clone())
+            .map_err(|_| PgError::SourceDivergence)?;
+        let candidate: Value = tx
+            .query_one(
+                "SELECT body_json FROM awr_team.delivery_candidates
+            WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND binding_digest=$4",
+                &[&tenant, &project, &work, &prepare.candidate_digest],
+            )
+            .await?
+            .get(0);
         let receipt = json!({"integration_id":id,"state":row.get::<_,String>(0),"integration_request":stored["request"],
             "eligibility_digest":row.get::<_,String>(2),"lease_id":row.get::<_,Option<String>>(3),"lease_expires_at":row.get::<_,Option<String>>(4),
             "dispatched_at":row.get::<_,Option<String>>(5),"dispatch_receipt":row.get::<_,Option<Value>>(6),
             "confirmation_fact_id":row.get::<_,Option<String>>(7),"confirmation_current":row.get::<_,Option<bool>>(8),
+            "candidate":candidate,"original_read_set":prepare.read_set,
+            "connector_id":prepare.connector_id,"connector_version":prepare.connector_version,
             "execution_authorized":false,"acceptance_ready":false,"source_synchronized":false});
+        if serde_json::to_vec(&receipt).map_err(|_| invalid())?.len() > 262144 {
+            return Err(PgError::ResponseTooLarge);
+        }
         tx.commit().await?;
         Ok(receipt)
     }
