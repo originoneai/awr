@@ -1,11 +1,12 @@
-# Local Git delivery observations
+# Local Git delivery
 
 The optional `awr_server::delivery_adapter::LocalGitAdapter` observes an
 operator-configured bare repository using the same `awr-delivery` protocol and
 authenticated delivery inbox as other providers. It has no GitHub dependency.
 This first adapter boundary is a library entry point; server configuration,
-background polling, authorized integration and final task acceptance are separate
-capabilities. There is no new anonymous endpoint or caller-selected repository.
+background polling and final task acceptance are separate capabilities. A separate
+opt-in library integrator performs authorized fast-forward effects as described
+below. There is no new anonymous endpoint or caller-selected repository.
 
 ## Configuration and scope
 
@@ -25,7 +26,7 @@ The verified repository stays the fixed process directory. Git receives
 `--git-dir=.` so Windows verbatim canonical paths never need argument rewriting.
 
 The adapter uses fixed Git subcommands with validated arguments, clears ambient
-Git/credential environment values, disables replacement objects, prompts and
+Git/credential environment values, disables replacement objects, grafts, hooks, prompts and
 lazy fetches, and refuses promisor/partial-clone repositories. Command time,
 total inspection time, stdout/stderr and blob sizes are bounded. Git stderr and
 file contents are never returned. Inspection performs no repository mutation,
@@ -55,6 +56,63 @@ AWR requested or approved it; `request_id` remains absent.
 
 Capabilities advertise observation and polling, with integration requests,
 change requests and notifications disabled. These flags never grant permission.
+
+## Opt-in fast-forward integration
+
+`LocalGitIntegrator::open(LocalGitIntegrationConfig { enabled: true,
+repository: config })` enables mechanical integration support using the same
+explicit `LocalGitConfig`. `LocalGitAdapter` remains read-only. The integrator
+advertises integration support; the configured service principal still needs
+actual scoped delivery permission and an approved
+[durable integration intent](delivery-integration.md). Disabled configuration
+refuses to open the integrator.
+
+`execute(store, credential, DispatchDeliveryIntegration)` validates the original
+configured candidate and calls the store's live dispatch. Only its first sealed
+`DeliveryIntegrationPermit` can launch a command. `execute_permit` is also
+available to a trusted in-process worker that already holds that unique permit.
+Serialized requests, reports and receipts cannot substitute for it.
+
+Before launch, the integrator verifies the actual bare repository/object format,
+literal regular blob bytes, exact target precondition and fast-forward ancestry.
+The total byte budget must cover both source and target verification. It then
+rechecks the original issuer, worker credential, dispatch lease, review, required
+checks and candidate eligibility through the store. A single fixed
+`update-ref --no-deref <configured-ref> <exact-source> <expected-old>` uses Git's
+compare-and-swap. Missing targets use an all-zero old revision. Hooks, grafts,
+replacement objects, lazy fetches and ambient credential settings are disabled;
+reference fsync is explicitly enabled. No shell, network push/helper, checkout,
+merge, squash, rebase or GitHub operation is part of this adapter.
+
+Before preflight/launch, a complete immutable attempt marker is published and
+synced. Only its creator can launch, and the unique permit is consumed. Command
+results are recorded separately using finite diagnostics without stderr or
+credential values. A dispatch replay, missing response, timeout, cancelled future
+or reconstructed store never launches another command for that intent.
+
+`query(store, credential, integration_id, inspection_id)` observes the original
+request without obtaining a lease or permit. Application requires a stable actual
+target that includes the original source and exact manifest bytes. A recorded
+pre-command rejection can establish no effect. A failed/launched command, missing
+result or unchanged target remains **unknown** unless application can be proven;
+absence of a change is not permission to retry. Unknown results retain the store's
+target guard. Operator-owned repository/report configuration must stay available
+for recovery; changed or conflicting markers/configuration fail explicitly.
+
+Integration reports are immutable and addressed by SHA-256 through the integrator's
+`report_bytes` method and `awr-local-git-integration:` locator. The same inspection
+ID reuses its original report; a new ID requests a new observation. Missing or
+corrupt archived reports fail exact replay. A new inspection may recover actual
+repository facts without recreating the missing history or repeating the effect.
+
+`reconcile(store, credential, LocalGitIntegrationPollRequest)` reserves a current
+system connector inspection for the immutable original dispatch, ingests its
+request-bound neutral observation, and confirms that effect. Its read set and
+connector version describe **current admission**. Source, selection or ownership
+changes preserve the old candidate's historical binding; they cannot promote it
+to acceptance of the new work version. The same poll ID recovers the durable
+receipt after restart. Confirmation, task acceptance and authoritative source
+publication remain separate; this entry point never completes a task.
 
 ## Reports, retry and current facts
 
@@ -99,3 +157,11 @@ bounded inspection, report recovery and concurrent retries.
 current facts, durable replay, revocation and out-of-order generations in an
 isolated PostgreSQL fixture. These are mechanism regressions, not native team
 business acceptance, human approval, deployment or an authorized merge test.
+
+`local_git_integration` checks opt-in configuration and the unchanged read-only
+observer. `local_git_integration_pg` uses actual independent Git repositories and
+real PG execution/evidence/review records to exercise CAS, both object formats,
+conflicts, revoked authority, historical recovery, cancellation, timeout and
+durable replay. These are isolated mechanism tests, with no native business,
+human approval or deployment credit. Service lifecycle and end-to-end native
+collaboration acceptance remain separate delivery work.

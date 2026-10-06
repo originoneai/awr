@@ -98,6 +98,16 @@ impl GitProcess {
             // Git refuses as an argument; a fixed relative Git directory keeps
             // the same scope without rewriting or weakening the validated path.
             .arg("--git-dir=.")
+            .arg("-c")
+            .arg(if cfg!(windows) {
+                "core.hooksPath=NUL"
+            } else {
+                "core.hooksPath=/dev/null"
+            })
+            .arg("-c")
+            .arg("core.fsync=reference")
+            .arg("-c")
+            .arg("core.fsyncMethod=fsync")
             .args(args)
             .current_dir(&self.repository)
             .env_clear()
@@ -107,6 +117,10 @@ impl GitProcess {
                 if cfg!(windows) { "NUL" } else { "/dev/null" },
             )
             .env("GIT_NO_REPLACE_OBJECTS", "1")
+            .env(
+                "GIT_GRAFT_FILE",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            )
             .env("GIT_NO_LAZY_FETCH", "1")
             .env("GIT_OPTIONAL_LOCKS", "0")
             .env("GIT_TERMINAL_PROMPT", "0")

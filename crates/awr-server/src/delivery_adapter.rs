@@ -1,8 +1,13 @@
 //! Optional provider adapters. Observation is neither approval nor completion.
 mod git_process;
 pub mod local_git;
+pub mod local_git_integration;
 
 pub use local_git::{LocalGitAdapter, LocalGitConfig, LocalGitReport, LocalGitSnapshot};
+pub use local_git_integration::{
+    LocalGitIntegrationConfig, LocalGitIntegrationPollRequest, LocalGitIntegrationReport,
+    LocalGitIntegrationSnapshot, LocalGitIntegrator,
+};
 
 use awr_team_pg::{
     DeliveryReadSet, DeliverySyncStore, IngestDeliveryFacts, PgError, ReserveDeliveryInspection,
@@ -19,7 +24,8 @@ use std::{
 const REPORT_LIMIT: usize = 65536;
 
 /// Finite diagnostics deliberately exclude provider stderr, repository contents and credentials.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LocalGitError {
     InvalidConfiguration,
     BindingMismatch,
@@ -103,6 +109,11 @@ pub(super) fn read_file(path: &Path) -> Result<Option<Vec<u8>>, LocalGitError> {
 
 /// Publish a complete immutable file without replacing a concurrent winner.
 pub(super) fn publish(path: &Path, bytes: &[u8]) -> Result<(), LocalGitError> {
+    publish_once(path, bytes).map(|_| ())
+}
+
+/// Only the creator may initiate an effect. An identical existing file is a replay.
+pub(super) fn publish_once(path: &Path, bytes: &[u8]) -> Result<bool, LocalGitError> {
     if bytes.len() > REPORT_LIMIT {
         return Err(LocalGitError::OutputLimit);
     }
@@ -127,11 +138,11 @@ pub(super) fn publish(path: &Path, bytes: &[u8]) -> Result<(), LocalGitError> {
                 fs::File::open(path.parent().ok_or(LocalGitError::ReportUnavailable)?)
                     .and_then(|directory| directory.sync_all())
                     .map_err(|_| LocalGitError::ReportUnavailable)?;
-                Ok(())
+                Ok(true)
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 if read_file(path)?.as_deref() == Some(bytes) {
-                    Ok(())
+                    Ok(false)
                 } else {
                     Err(LocalGitError::ReportConflict)
                 }
@@ -222,5 +233,44 @@ impl LocalGitAdapter {
             )
             .await
             .map_err(domain_error)
+    }
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+
+    #[test]
+    fn identical_concurrent_marker_publication_has_exactly_one_creator() {
+        let directory = std::env::temp_dir().join(format!("awr-attempt-{}", awr_core::Id::new()));
+        fs::create_dir(&directory).unwrap();
+        let marker = directory.join("attempt.json");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let mut callers = Vec::new();
+        for _ in 0..8 {
+            let barrier = barrier.clone();
+            let marker = marker.clone();
+            callers.push(std::thread::spawn(move || {
+                barrier.wait();
+                publish_once(&marker, b"immutable complete attempt").unwrap()
+            }));
+        }
+        let creators = callers
+            .into_iter()
+            .map(|t| t.join().unwrap())
+            .filter(|created| *created)
+            .count();
+        assert_eq!(creators, 1);
+        assert!(!publish_once(&marker, b"immutable complete attempt").unwrap());
+        assert_eq!(
+            publish_once(&marker, b"different attempt"),
+            Err(LocalGitError::ReportConflict)
+        );
+        publish(&marker, b"immutable complete attempt").unwrap();
+        assert_eq!(
+            read_file(&marker).unwrap().unwrap(),
+            b"immutable complete attempt"
+        );
+        fs::remove_dir_all(directory).unwrap();
     }
 }

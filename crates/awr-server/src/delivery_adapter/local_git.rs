@@ -92,9 +92,9 @@ struct InspectionIndex {
 
 pub struct LocalGitAdapter {
     pub(super) config: LocalGitConfig,
-    git: GitProcess,
-    format: RevisionFormat,
-    config_digest: String,
+    pub(super) git: GitProcess,
+    pub(super) format: RevisionFormat,
+    pub(super) config_digest: String,
 }
 
 fn valid_ref(value: &str) -> bool {
@@ -545,12 +545,32 @@ impl LocalGitAdapter {
         Ok(observed)
     }
 
-    async fn observe(
+    pub(super) async fn observe(
         &self,
         candidate: &DeliveryCandidate,
         inspection_id: &str,
         binding_digest: String,
     ) -> Result<LocalGitReport, LocalGitError> {
+        let expected_format = if self.format == RevisionFormat::GitSha1 {
+            "sha1"
+        } else {
+            "sha256"
+        };
+        if self
+            .git
+            .text(&["rev-parse", "--is-bare-repository"])
+            .await?
+            .as_deref()
+            != Some("true")
+            || self
+                .git
+                .text(&["rev-parse", "--show-object-format"])
+                .await?
+                .as_deref()
+                != Some(expected_format)
+        {
+            return Err(LocalGitError::RepositoryUnavailable);
+        }
         let partial = self
             .git
             .run(

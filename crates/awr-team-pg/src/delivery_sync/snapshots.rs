@@ -3,6 +3,44 @@ use awr_team::{Action, delivery::DeliveryRecord};
 use serde_json::json;
 use tokio_postgres::Transaction;
 
+pub(super) struct InspectionBinding<'a> {
+    pub candidate_digest: &'a str,
+    pub snapshot: &'a str,
+    pub ownership: i64,
+    pub selection_version: i64,
+}
+
+/// Current selection and historical dispatched intents share the same inbox.
+/// Admission stays with the caller; this helper grants no effect capability.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn reserve_bound(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    auth: &crate::workstream_auth::ReaderAuthority,
+    request: &ReserveDeliveryInspection,
+    connector: &connectors::Connector,
+    binding: InspectionBinding<'_>,
+    op: &str,
+    request_hash: &str,
+) -> PgResult<Value> {
+    let generation = connector
+        .generation
+        .checked_add(1)
+        .ok_or(PgError::PreconditionsChanged)?;
+    tx.execute("UPDATE awr_team.delivery_connectors SET inspection_generation=$4 WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+        &[&tenant,&project,&request.connector_id,&generation]).await?;
+    let id = crate::tx::new_id();
+    let row = tx.query_one("INSERT INTO awr_team.delivery_inspections(tenant_id,project_id,id,connector_id,connector_version,
+        generation,binding_digest,source_snapshot_id,ownership_version,coordinator_epoch,actor_id,client_id,authority_binding,expires_at,selection_version)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,clock_timestamp()+make_interval(secs=>$14::integer),$15) RETURNING expires_at::text",
+        &[&tenant,&project,&id,&request.connector_id,&connector.version,&generation,&binding.candidate_digest,&binding.snapshot,
+          &binding.ownership,&auth.epoch,&auth.actor_id,&auth.client_id,&auth::authority_binding(auth,&request.read_set)?,&request.lease_seconds,&binding.selection_version]).await?;
+    auth::finish(tx,tenant,project,auth,&request.read_set,op,&request.request_id,request_hash,
+        json!({"inspection_id":id,"generation":generation.to_string(),"connector_version":connector.version.to_string(),
+            "candidate_digest":binding.candidate_digest,"expires_at":row.get::<_,String>(0),"state":"pending"})).await
+}
+
 pub(super) async fn selection(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -192,21 +230,23 @@ impl DeliverySyncStore {
         {
             return Err(PgError::PreconditionsChanged);
         }
-        let generation = connector
-            .generation
-            .checked_add(1)
-            .ok_or(PgError::PreconditionsChanged)?;
-        tx.execute("UPDATE awr_team.delivery_connectors SET inspection_generation=$4 WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
-            &[&tenant,&project,&request.connector_id,&generation]).await?;
-        let id = crate::tx::new_id();
-        let row = tx.query_one("INSERT INTO awr_team.delivery_inspections(tenant_id,project_id,id,connector_id,connector_version,
-            generation,binding_digest,source_snapshot_id,ownership_version,coordinator_epoch,actor_id,client_id,authority_binding,expires_at,selection_version)
-            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,clock_timestamp()+make_interval(secs=>$14::integer),$15) RETURNING expires_at::text",
-            &[&tenant,&project,&id,&request.connector_id,&connector.version,&generation,&selected,&auth.snapshot,
-              &ownership,&auth.epoch,&auth.actor_id,&auth.client_id,&auth::authority_binding(&auth,set)?,&request.lease_seconds,&selection_version]).await?;
-        let result = auth::finish(&tx,tenant,project,&auth,set,op,&request.request_id,&hash,
-            json!({"inspection_id":id,"generation":generation.to_string(),"connector_version":connector.version.to_string(),
-                "candidate_digest":selected,"expires_at":row.get::<_,String>(0),"state":"pending"})).await?;
+        let result = reserve_bound(
+            &tx,
+            tenant,
+            project,
+            &auth,
+            &request,
+            &connector,
+            InspectionBinding {
+                candidate_digest: &selected,
+                snapshot: &auth.snapshot,
+                ownership,
+                selection_version,
+            },
+            op,
+            &hash,
+        )
+        .await?;
         tx.commit().await?;
         Ok(result)
     }

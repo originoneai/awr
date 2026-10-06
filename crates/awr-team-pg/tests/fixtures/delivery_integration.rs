@@ -57,6 +57,11 @@ pub fn set(p: &Value) -> DeliveryReadSet {
 }
 
 pub async fn setup_integration() -> Fixture {
+    setup_integration_with_candidate(None).await
+}
+
+/// Bind an actual repository candidate before submitting evidence or approval.
+pub async fn setup_integration_with_candidate(actual: Option<DeliveryCandidate>) -> Fixture {
     let (guard, admin, db, reads) = setup().await;
     let config = common::with_app_role(&common::test_config(), &db);
     admin.batch_execute("UPDATE awr_team.actors SET kind='agent' WHERE id IN ('agent','reviewer');
@@ -196,11 +201,21 @@ pub async fn setup_integration() -> Fixture {
             locator: "git-path:src/api/result.json".into(),
         }],
     };
-    let candidate: DeliveryCandidate = serde_json::from_value(json!({"binding":{
+    let mut candidate: DeliveryCandidate = serde_json::from_value(json!({"binding":{
         "tenant_id":TENANT,"project_id":PROJECT,"scope_id":"main","workstream_id":set.workstream_id,"work_id":"a",
         "candidate_id":"candidate-a","candidate_version":"1","contract_hash":set.contract_hash,
         "manifest_digest":manifest.digest().unwrap(),"source_revision":{"resource":RESOURCE,"format":"git_sha256","value":"a".repeat(64)},
         "required_checks":["report"],"target":{"resource":RESOURCE,"reference":"main","precondition":{"kind":"missing"}}},"manifest":manifest})).unwrap();
+    if let Some(mut supplied) = actual {
+        supplied.binding.tenant_id = awr_team::TenantId::new(TENANT).unwrap();
+        supplied.binding.project_id = awr_team::ProjectId::new(PROJECT).unwrap();
+        supplied.binding.scope_id = awr_team::ScopeId::new("main").unwrap();
+        supplied.binding.work_id = awr_team::WorkId::new("a").unwrap();
+        supplied.binding.workstream_id = set.workstream_id.to_string();
+        supplied.binding.contract_hash = set.contract_hash.clone();
+        supplied.binding.required_checks = contract.verification_requirements.clone();
+        candidate = supplied;
+    }
     let selection = SelectDeliveryCandidate {
         request_id: "select".into(),
         read_set: set.clone(),
@@ -229,7 +244,7 @@ pub async fn setup_integration() -> Fixture {
                 mapping: DeliveryConnectorMapping {
                     connector_id: "git".into(),
                     provider: "reference".into(),
-                    resource: RESOURCE.into(),
+                    resource: selection.candidate.binding.target.resource.clone(),
                     principal_actor_id: "integrator".into(),
                     principal_client_id: "cli-worker".into(),
                     fact_source: FactSource::AdapterObservation,
