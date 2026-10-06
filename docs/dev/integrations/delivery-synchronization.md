@@ -1,14 +1,16 @@
-# Durable provider-neutral delivery observations
+# Durable provider-neutral delivery and source publication
 
 The delivery coordination store persists the neutral records described in
 [the delivery contract](pr-delivery-review.md). It does not require a GitHub
 repository, a pull request, SHA-1 revisions or a webhook. An artifact delivery
 and a local Git delivery use the same candidate and observation boundaries.
 
-This layer stores facts and notification intent. It does **not** execute a
-repository operation, resolve review references as approvals, accept a task,
-write the authoritative source, or count as native business acceptance.
-Source publishing, authenticated MCP operations and adapter execution are
+The observation path stores facts and notification intent. It does **not**
+execute a repository operation, resolve review references as approvals or
+accept a task. A separate authenticated publisher can write bounded delivery
+references to the project's configured authoritative source. These store APIs
+do not establish deployed integration or native business acceptance;
+authenticated MCP operations, background scheduling and adapter execution are
 separate integration layers.
 
 ## Configuration and identity
@@ -85,8 +87,9 @@ historical retries.
 Notification intent is separate from execution dispatch. `pending` means a
 fact notification awaits a consumer, not that source writeback or integration
 is complete. Superseded observations retain a superseded notification record.
-There are no network or filesystem effects in these transactions. Restart or
-response loss recovers through the durable request/inbox receipts.
+The observation transactions have no network or filesystem effects. Restart or
+response loss recovers through the durable request/inbox receipts. Source-byte
+effects use the separate publication journal below.
 
 ## Read and verification boundaries
 
@@ -109,6 +112,7 @@ server ordering, late/expired results, candidate and executor protection,
 source-contract changes, revocation, provenance, row-level isolation and
 rollback/restart. These checks do not establish native-client acceptance or
 operational adapter support.
+
 ## Cooperative source writes
 
 The source library provides `LockedSourceFile` for exact, server-held source
@@ -135,6 +139,84 @@ flag. A completion reference describes a receipt ID; this library does not
 verify it, complete work or overwrite a source status. An authenticated domain
 publisher must resolve every referenced fact and receipt before using it.
 
-These are filesystem/library mechanisms. They do not yet provide a durable
-delivery publication journal, a synchronization endpoint or native business
-acceptance. Successful patching alone must not set `source_synchronized`.
+`LockedSourceFile::observe` checks the recorded directory/lock identity without
+acquiring a writer lock, creating a missing lock or repairing the source. A
+currentness query must not report a historical confirmation as current merely
+because replacement source bytes happen to match. Successful patching alone
+must not set `source_synchronized`.
+
+## Recoverable source publication
+
+Publication resolves the sole-source binding from the active source snapshot.
+It accepts no caller-supplied path. The first supported writer is
+`server_directory` with a YAML ledger; other source writers return explicit
+`Unsupported`. Existing project-management authority, a current workstream
+management grant and an eligible human/system operator are required. A
+developer Agent cannot grant itself source-writing authority.
+
+The immutable active contract snapshot and the physical metadata revision are
+different versions. Publication reparses the actual source, validates the
+whole publish package and compares the contract, graph, work identities and
+referenced specifications. A delivery reference does not create source approval,
+activate a changed contract, overwrite runtime ownership or finalize work.
+Changed contracts/specifications continue through source planning, review and
+activation. Unrelated YAML fields and source status remain unchanged.
+
+The store provides these stages:
+
+| Operation | Required observation and effect |
+| --- | --- |
+| `prepare_source_publication` | Check the selected candidate, current domain references and exact source fingerprint. Persist before/after bytes, directory/lock identity, authority, metadata version, short lease and monotonic fence. Source bytes stay unchanged. |
+| `write_source_publication` | Observe the real file first. Exact before bytes can be replaced once; exact after bytes mean the effect already landed; any other bytes remain a conflict. |
+| `confirm_source_publication` | Reindex actual after bytes and recheck current authority, candidate, references and lease before confirming the metadata cursor. It cannot apply an unwritten intent. |
+| `renew_source_publication` | Recheck the same intent and owner, then allocate a new fence. An old worker cannot use its previous fence. |
+| `abandon_source_publication` | Withdraw only an exact unwritten before image with no known landing. Keep the journal; never discard an unknown or observed source effect. |
+| `source_publication_status` | Read bounded history and present physical/current-domain validity without changing source bytes, claims, approvals or locks. |
+
+Leases are bounded to 5–300 seconds. One pending publication slot serializes
+cooperating source publications across works. A new request cannot steal an
+expired or unknown intent. Planning uses the same source guard. File-sync and
+confined atomic replacement preserve the platform durability limits described
+above; noncooperating writers can still race a rename, so observation and
+fingerprint checks remain necessary.
+
+Journal phases are `pending`, `source_written`, `confirmed`, `conflict` and
+`failed`. A known landing is retained even if later reindexing fails. Rolling
+back the file externally cannot turn that known effect into an unwritten intent.
+Database failure after a filesystem effect leaves a queryable durable intent;
+recovery observes the actual bytes rather than blindly repeating the write.
+Revoked identity, changed authority or source drift stays explicitly unresolved.
+
+Mutation receipts describe facts **at commit**. A replay returns its historical
+receipt; it does not certify present source validity. Use
+`source_publication_status.source_synchronized` for the current work. History
+separates `source_synchronized_at_commit` from `source_current`. A confirmed
+metadata update for another work preserves an unchanged current note, while
+changed candidates, observations, contracts or filesystem identities invalidate
+the affected note. The query does not recreate a missing lock to obtain success.
+
+Confirmation proofs contain digests and counts, not source/specification bodies
+or private paths. History is limited to 32 entries with explicit truncation and
+a 256 KiB serialized response ceiling. Fact origin, a publication confirmation
+and domain acceptance remain separate facts.
+
+An optional completion reference must resolve to the actually selected current
+domain completion receipt, bound to the exact candidate and current contract.
+The publisher checks its canonical evidence digest and finalized artifact bytes
+against the candidate manifest. An external `approved`/`merged` flag, a caller
+verification field or a legacy unbound completion receipt cannot create a
+completion reference. Publication neither supplies missing domain approval nor
+changes the source status into a completed state.
+
+Schema 44 adds the publication cursor/journal and a nullable candidate binding
+on completion receipts. The atomic migration preserves legacy receipts as
+unbound, creates no inferred publications and retains tenant/project row-level
+isolation. Stop writers and retain matching source/database/binary backups for
+an upgrade; older binaries still require their matching schema.
+
+Synthetic filesystem and isolated PostgreSQL regressions cover concurrent
+slots, replay/conflict, lease/fence renewal, multi-work currentness, authority
+rejection, missing/stale references, read-only failures, identity replacement,
+database failure before/after file effects and migration rollback. Domain
+completion fixture rows test reference validation; they do not constitute a
+native review, merge or business-acceptance result.

@@ -1,8 +1,14 @@
-//! Durable neutral delivery observations. No repository, approval or source effects.
+//! Durable neutral observations and recoverable, confined source metadata writes.
+//! Repository effects, approval and domain finalization remain separate.
 mod auth;
 mod connectors;
 mod inbox;
+mod publisher;
 mod snapshots;
+
+pub use publisher::{
+    DeliveryPublicationStep, PrepareDeliverySourcePublication, RenewDeliveryPublicationLease,
+};
 
 use crate::{PgError, PgPool, PgResult};
 use awr_core::Id;

@@ -238,19 +238,24 @@ fn conflict() -> Error {
     Error::SourceConflict("bound source directory or cooperative writer lock changed".into())
 }
 
+fn validate_source_relative(relative: &str) -> Result<()> {
+    if relative.is_empty()
+        || relative.contains(['\\', '\0'])
+        || relative
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+        || Path::new(relative)
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
 impl LockedSourceFile {
     pub fn open(root: &Path, relative: &str) -> Result<Self> {
-        if relative.is_empty()
-            || relative.contains(['\\', '\0'])
-            || relative
-                .split('/')
-                .any(|part| part.is_empty() || part == "." || part == "..")
-            || Path::new(relative)
-                .components()
-                .any(|c| !matches!(c, Component::Normal(_)))
-        {
-            return Err(invalid());
-        }
+        validate_source_relative(relative)?;
         let root_dir = open_dir_exact(root)?;
         let path = root.join(relative);
         let parent_path = path.parent().ok_or_else(invalid)?.to_path_buf();
@@ -302,6 +307,36 @@ impl LockedSourceFile {
         };
         guard.check_identity()?;
         Ok(guard)
+    }
+
+    /// Nonlocking, read-only observation against a persisted writer identity.
+    /// Missing or replaced locks are refused without creating or repairing them.
+    pub fn observe(root: &Path, relative: &str, expected: &SourceFileIdentity) -> Result<Vec<u8>> {
+        validate_source_relative(relative)?;
+        let path = root.join(relative);
+        let parent_path = path.parent().ok_or_else(invalid)?.to_path_buf();
+        let leaf = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .ok_or_else(invalid)?
+            .to_owned();
+        let parent = open_dir_exact(&parent_path)?;
+        let lock_name = format!(".awr-source-{}.lock", &fingerprint(leaf.as_bytes())[7..]);
+        let mut options = OpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        let lock = parent.open_with(&lock_name, &options)?.into_std();
+        // This private guard performs the same before/after identity checks,
+        // but is never returned as a locked writer and cannot perform effects.
+        Self {
+            root_path: root.into(),
+            parent_path,
+            parent,
+            leaf,
+            lock_name,
+            _lock: lock,
+            identity: expected.clone(),
+        }
+        .read()
     }
 
     pub fn identity(&self) -> &SourceFileIdentity {
