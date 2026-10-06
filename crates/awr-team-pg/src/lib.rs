@@ -43,9 +43,10 @@ pub use delegation_auth::{
 };
 pub use delivery_adoption::DeliveryAdoptionStore;
 pub use delivery_sync::{
-    ConfigureDeliveryConnector, DeliveryConnectorMapping, DeliveryPublicationStep, DeliveryReadSet,
-    DeliverySyncStore, IngestDeliveryFacts, PrepareDeliverySourcePublication,
-    RenewDeliveryPublicationLease, ReserveDeliveryInspection, SelectDeliveryCandidate,
+    ClaimDeliverySyncIntent, ConfigureDeliveryConnector, DeliveryConnectorMapping,
+    DeliveryPublicationStep, DeliveryReadSet, DeliverySyncLease, DeliverySyncStore,
+    IngestDeliveryFacts, PrepareDeliverySourcePublication, RenewDeliveryPublicationLease,
+    ReserveDeliveryInspection, SelectDeliveryCandidate,
 };
 pub use error::{PgError, PgResult};
 pub use execution::{
@@ -142,6 +143,6 @@ mod tests {
     #[test]
     fn schema_contract_is_stable() {
         assert_eq!(SCHEMA, "awr_team");
-        assert_eq!(EXPECTED_SCHEMA_VERSION, 44);
+        assert_eq!(EXPECTED_SCHEMA_VERSION, 45);
     }
 }

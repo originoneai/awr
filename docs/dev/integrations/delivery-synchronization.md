@@ -287,3 +287,80 @@ rejection, missing/stale references, read-only failures, identity replacement,
 database failure before/after file effects and migration rollback. Domain
 completion fixture rows test reference validation; they do not constitute a
 native review, merge or business-acceptance result.
+
+## Durable synchronization workers
+
+The PG library now provides a bounded processing pump. Each applied observation
+creates two durable intents in the same transaction as its notification:
+
+| Intent | Successful result |
+| --- | --- |
+| `refresh` | A refresh request is available to the consumer; notification state becomes `delivered`. |
+| `source` | The existing source journal is physically observed, written if needed, reindexed and confirmed; the source intent settles in that confirmation transaction. |
+
+Processing a refresh never proves source synchronization. Neither intent creates
+approval, task completion, repository integration or an execution grant. These
+operations are library entry points for explicitly configured server workers;
+this change does not install a scheduler or expose a deserializable worker
+capability through MCP. Server lifecycle configuration and repository adapters
+remain separate layers.
+
+`sync_intents` reads one explicitly authorized workstream in an authenticated
+`RepeatableRead` transaction. Its page limit is 1–64, with `has_more` and
+`next_after`. It reports original bindings, state, worker fence, lease liveness,
+retry eligibility, publication reference and current binding validity. The
+cursor must belong to the visible stream. It neither allocates a lease nor
+changes files; the serialized response is bounded to 256 KiB.
+
+`claim_sync_intent` requires the original read set, intent ID, stable request
+ID, configured worker ID, expected fence and a 5–300 second lease. The caller
+must be an eligible human/system principal with current project and workstream
+management authority. Credentials are private function/configuration inputs,
+never queue, source or audit fields. An Agent's developer delegation cannot
+acquire this management capability. A worker ID alone grants nothing.
+
+The claim allocates a monotonic fence and returns an opaque `DeliverySyncLease`.
+Concurrent requests cannot acquire the same effective lease. Identical claim
+retries can recover only the same still-current capability; a historical claim
+receipt cannot revive an expired or replaced worker. Every processing step
+rechecks the actual credential, grants, scope, source snapshot, ownership,
+contract, epoch, connector version/generation, candidate selection and current
+execution fence. A stale intent without a publication may be superseded. An
+intent with a publication retains that journal for investigation or recovery.
+
+`process_sync_intent` performs one bounded operation. Source processing first
+associates the publication with its intent before any file effect. Preparation,
+lease renewal, write, confirmation and notification acknowledgement use the
+same domain transactions and existing journal. Worker liveness is checked
+inside effect transactions, immediately before replacement and after source
+observation/reindexing. Pump-owned publications cannot be renewed, written, abandoned or
+confirmed through direct APIs that omit their opaque worker guard. Existing
+manual publications retain their original authenticated path.
+
+After a timeout or restart, inspect the queue and source status first. A
+`succeeded` intent is a persisted outcome, not a fresh execution permission. For
+an unresolved associated publication, the same configured actor/client can
+acquire the next worker fence, renew the existing publication fence and observe
+physical bytes. Exact after bytes are not written again. A previous worker
+cannot acknowledge or confirm, even if its publication lease has not expired.
+Revoked authority or changed bindings remain unresolved rather than silently
+transferring publication authority to another principal.
+
+`defer_sync_intent` records a bounded failure code and a 1–3,600 second retry
+delay. Accepted codes are `source_conflict`, `source_unavailable`, `source_failed`
+and `preconditions_changed`; raw errors, paths and secrets are not accepted.
+Backoff preserves an associated publication. Conflict resolution never
+discards an unknown source effect to obtain a new write slot.
+
+Schema 45 adds forced tenant/project RLS, scoped foreign keys and the intent
+queue. Its atomic migration backfills pending applied notifications using
+their immutable inspection, source, contract and catalog bindings. It invents
+no current grant, worker identity, approval or completion. Retain matched
+database/source/binary backups and stop writers for upgrades; exact schema
+version checks continue to reject mismatched binaries.
+
+Synthetic PG/filesystem regressions cover normal processing, concurrent and
+stable claims, worker/publication interleaving, expiry within transactions,
+revocation, changed bindings, scoped pagination, backoff, RLS, migration
+rollback and restart after an actual file effect followed by a database
+failure. They do not replace complete natural-client business acceptance.

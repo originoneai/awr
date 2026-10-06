@@ -240,6 +240,20 @@ impl DeliverySyncStore {
         }
         tx.execute("INSERT INTO awr_team.delivery_notifications(tenant_id,project_id,id,inbox_id,work_id,state) VALUES($1,$2,$3,$4,$5,$6)",
             &[&tenant,&project,&notification_id,&inbox_id,&set.work_id,&if current {"pending"} else {"superseded"}]).await?;
+        if current {
+            pump::enqueue(
+                &tx,
+                tenant,
+                project,
+                &notification_id,
+                &request,
+                connector.version,
+                generation,
+                &binding_digest,
+                selection_version,
+            )
+            .await?;
+        }
         let result = auth::finish(
             &tx,
             tenant,

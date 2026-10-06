@@ -512,6 +512,30 @@ impl DeliverySyncStore {
         bearer: &str,
         request: PrepareDeliverySourcePublication,
     ) -> PgResult<Value> {
+        self.prepare_source_publication_inner(tenant, project, bearer, request, None)
+            .await
+    }
+
+    pub(super) async fn prepare_source_publication_guarded(
+        &self,
+        tenant: &str,
+        project: &str,
+        bearer: &str,
+        request: PrepareDeliverySourcePublication,
+        worker: &DeliverySyncLease,
+    ) -> PgResult<Value> {
+        self.prepare_source_publication_inner(tenant, project, bearer, request, Some(worker))
+            .await
+    }
+
+    async fn prepare_source_publication_inner(
+        &self,
+        tenant: &str,
+        project: &str,
+        bearer: &str,
+        request: PrepareDeliverySourcePublication,
+        worker: Option<&DeliverySyncLease>,
+    ) -> PgResult<Value> {
         bounded(&request)?;
         digest(&request.candidate_digest)?;
         source_fingerprint(&request.expected_source_fingerprint)?;
@@ -536,6 +560,9 @@ impl DeliverySyncStore {
         )
         .await?;
         let op = "delivery.source.prepare";
+        if let Some(worker) = worker {
+            pump::require(&tx, tenant, project, &auth, worker, None).await?;
+        }
         let (hash, replayed) = auth::replay(
             &tx,
             tenant,
@@ -611,6 +638,9 @@ impl DeliverySyncStore {
         )
         .await?;
         let data = Journal::load(&tx, tenant, project, &id).await?.summary();
+        if let Some(worker) = worker {
+            pump::bind_publication(&tx, tenant, project, &auth, worker, &id).await?;
+        }
         let result = auth::finish(
             &tx,
             tenant,
@@ -635,6 +665,30 @@ impl DeliverySyncStore {
         bearer: &str,
         request: RenewDeliveryPublicationLease,
     ) -> PgResult<Value> {
+        self.renew_source_publication_inner(tenant, project, bearer, request, None)
+            .await
+    }
+
+    pub(super) async fn renew_source_publication_guarded(
+        &self,
+        tenant: &str,
+        project: &str,
+        bearer: &str,
+        request: RenewDeliveryPublicationLease,
+        worker: &DeliverySyncLease,
+    ) -> PgResult<Value> {
+        self.renew_source_publication_inner(tenant, project, bearer, request, Some(worker))
+            .await
+    }
+
+    async fn renew_source_publication_inner(
+        &self,
+        tenant: &str,
+        project: &str,
+        bearer: &str,
+        request: RenewDeliveryPublicationLease,
+        worker: Option<&DeliverySyncLease>,
+    ) -> PgResult<Value> {
         bounded(&request)?;
         lease(request.lease_seconds)?;
         let step = &request.step;
@@ -653,6 +707,7 @@ impl DeliverySyncStore {
         )
         .await?;
         let op = "delivery.source.renew";
+        pump::publication_guard(&tx, tenant, project, &auth, &step.publication_id, worker).await?;
         let (hash, replayed) =
             auth::replay(&tx, tenant, project, &auth, op, &step.request_id, &request).await?;
         if let Some(result) = replayed {
@@ -697,7 +752,7 @@ impl DeliverySyncStore {
         bearer: &str,
         request: DeliveryPublicationStep,
     ) -> PgResult<Value> {
-        self.publication_step(tenant, project, bearer, request, false)
+        self.publication_step(tenant, project, bearer, request, false, None)
             .await
     }
 
@@ -710,7 +765,20 @@ impl DeliverySyncStore {
         bearer: &str,
         request: DeliveryPublicationStep,
     ) -> PgResult<Value> {
-        self.publication_step(tenant, project, bearer, request, true)
+        self.publication_step(tenant, project, bearer, request, true, None)
+            .await
+    }
+
+    pub(super) async fn publication_step_guarded(
+        &self,
+        tenant: &str,
+        project: &str,
+        bearer: &str,
+        request: DeliveryPublicationStep,
+        confirm: bool,
+        worker: &DeliverySyncLease,
+    ) -> PgResult<Value> {
+        self.publication_step(tenant, project, bearer, request, confirm, Some(worker))
             .await
     }
 
@@ -721,6 +789,7 @@ impl DeliverySyncStore {
         bearer: &str,
         request: DeliveryPublicationStep,
         confirm: bool,
+        worker: Option<&DeliverySyncLease>,
     ) -> PgResult<Value> {
         bounded(&request)?;
         identity(&request.publication_id)?;
@@ -743,6 +812,8 @@ impl DeliverySyncStore {
         } else {
             "delivery.source.write"
         };
+        pump::publication_guard(&tx, tenant, project, &auth, &request.publication_id, worker)
+            .await?;
         let (hash, replayed) = auth::replay(
             &tx,
             tenant,
@@ -770,8 +841,10 @@ impl DeliverySyncStore {
                 ("conflict", Some("source_identity_changed"), None, None)
             }
             Ok(guard) => {
-                self.apply_observed_source(&tx, tenant, project, &auth, &bound, &guard, &j, confirm)
-                    .await?
+                self.apply_observed_source(
+                    &tx, tenant, project, &auth, &bound, &guard, &j, confirm, worker,
+                )
+                .await?
             }
         };
         mark(
@@ -786,6 +859,18 @@ impl DeliverySyncStore {
         )
         .await?;
         if phase == "confirmed" {
+            if let Some(worker) = worker {
+                pump::finish_source(
+                    &tx,
+                    tenant,
+                    project,
+                    &auth,
+                    worker,
+                    &j.id,
+                    confirmation.as_ref().ok_or(PgError::SourceDivergence)?,
+                )
+                .await?;
+            }
             tx.execute("UPDATE awr_team.delivery_source_cursors SET metadata_revision=$4,confirmed_fingerprint=$5,pending_publication_id=NULL
                 WHERE tenant_id=$1 AND project_id=$2 AND source_snapshot_id=$3 AND pending_publication_id=$6 AND last_fence=$7",
                 &[&tenant,&project,&auth.snapshot,&version(&j.note.metadata_revision)?,&j.after_fingerprint,&j.id,&j.fence]).await?;
@@ -820,6 +905,7 @@ impl DeliverySyncStore {
         guard: &LockedSourceFile,
         j: &Journal,
         confirm: bool,
+        worker: Option<&DeliverySyncLease>,
     ) -> PgResult<(
         &'static str,
         Option<&'static str>,
@@ -842,6 +928,9 @@ impl DeliverySyncStore {
             }
             if bound.reindex(project, &actual).is_err() {
                 return Ok(("conflict", Some("projection_changed"), Some(observed), None));
+            }
+            if let Some(worker) = worker {
+                pump::publication_guard(tx, tenant, project, auth, &j.id, Some(worker)).await?;
             }
             if guard.replace(&j.before_fingerprint, &j.after).is_err() {
                 let observed = guard.read().ok().map(|b| fingerprint(&b));
@@ -887,6 +976,9 @@ impl DeliverySyncStore {
                 None,
             ));
         }
+        if let Some(worker) = worker {
+            pump::publication_guard(tx, tenant, project, auth, &j.id, Some(worker)).await?;
+        }
         if !confirm {
             return Ok(("source_written", None, Some(observed), None));
         }
@@ -917,6 +1009,9 @@ impl DeliverySyncStore {
                 Some(observed),
                 None,
             ));
+        }
+        if let Some(worker) = worker {
+            pump::publication_guard(tx, tenant, project, auth, &j.id, Some(worker)).await?;
         }
         Ok((
             "confirmed",
@@ -957,6 +1052,7 @@ impl DeliverySyncStore {
         )
         .await?;
         let op = "delivery.source.abandon";
+        pump::publication_guard(&tx, tenant, project, &auth, &request.publication_id, None).await?;
         let (hash, replayed) = auth::replay(
             &tx,
             tenant,
