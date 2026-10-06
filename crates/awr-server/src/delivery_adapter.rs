@@ -38,6 +38,7 @@ pub enum LocalGitError {
     AuthorizationUnavailable,
     PreconditionsChanged,
     IdempotencyConflict,
+    Contention,
     StoreUnavailable,
     DomainRejected,
     InvalidStoreResponse,
@@ -58,6 +59,7 @@ fn domain_error(error: PgError) -> LocalGitError {
         | PgError::LeaseExpired
         | PgError::SchemaIncompatible(_)
         | PgError::Workstream(_) => LocalGitError::PreconditionsChanged,
+        PgError::ResourceConflict | PgError::ClaimHeld => LocalGitError::Contention,
         PgError::IdempotencyConflict => LocalGitError::IdempotencyConflict,
         PgError::BindingInvalid | PgError::Protocol(_) => LocalGitError::DomainRejected,
         _ => LocalGitError::StoreUnavailable,
@@ -240,6 +242,23 @@ impl LocalGitAdapter {
 #[cfg(test)]
 mod publication_tests {
     use super::*;
+
+    #[test]
+    fn publication_coordination_is_contention_not_database_failure() {
+        assert_eq!(
+            domain_error(PgError::ResourceConflict),
+            LocalGitError::Contention
+        );
+        assert_eq!(domain_error(PgError::ClaimHeld), LocalGitError::Contention);
+        assert_eq!(
+            domain_error(PgError::PreconditionsChanged),
+            LocalGitError::PreconditionsChanged
+        );
+        assert_eq!(
+            domain_error(PgError::Forbidden),
+            LocalGitError::AuthorizationUnavailable
+        );
+    }
 
     #[test]
     fn identical_concurrent_marker_publication_has_exactly_one_creator() {
