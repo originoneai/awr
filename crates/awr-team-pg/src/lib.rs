@@ -45,8 +45,8 @@ pub use delivery_adoption::DeliveryAdoptionStore;
 pub use delivery_sync::{
     ClaimDeliverySyncIntent, ConfigureDeliveryConnector, ConfirmDeliveryIntegration,
     DeliveryConnectorMapping, DeliveryIntegrationDispatch, DeliveryIntegrationPermit,
-    DeliveryPublicationStep, DeliveryReadSet, DeliverySyncLease, DeliverySyncStore,
-    DispatchDeliveryIntegration, IngestDeliveryFacts, LeaseDeliveryIntegration,
+    DeliveryPublicationStep, DeliveryReadSet, DeliveryScheduleQuery, DeliverySyncLease,
+    DeliverySyncStore, DispatchDeliveryIntegration, IngestDeliveryFacts, LeaseDeliveryIntegration,
     PrepareDeliveryIntegration, PrepareDeliverySourcePublication,
     RejectPreparedDeliveryIntegration, RenewDeliveryPublicationLease, ReserveDeliveryInspection,
     SelectDeliveryCandidate,

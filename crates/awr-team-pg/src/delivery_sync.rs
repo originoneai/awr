@@ -6,6 +6,7 @@ mod inbox;
 mod integration;
 mod publisher;
 mod pump;
+mod scheduling;
 mod snapshots;
 
 pub use integration::{
@@ -17,6 +18,7 @@ pub use publisher::{
     DeliveryPublicationStep, PrepareDeliverySourcePublication, RenewDeliveryPublicationLease,
 };
 pub use pump::{ClaimDeliverySyncIntent, DeliverySyncLease};
+pub use scheduling::DeliveryScheduleQuery;
 
 use crate::{PgError, PgPool, PgResult};
 use awr_core::Id;
