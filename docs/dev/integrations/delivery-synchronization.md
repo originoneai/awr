@@ -124,6 +124,47 @@ Observers cannot select a candidate or claim its task. They can reserve an
 inspection for the already selected candidate and their exact configured
 resource. Both source and target resource references must fit that mapping.
 
+## Provider-neutral worker scheduling
+
+`DeliverySyncStore::schedule` is a read-only library entry point for an optional
+configured provider worker. `DeliveryScheduleQuery` accepts only `work_id`,
+`connector_id`, `limit` (1–32), and an optional returned `cursor`. It accepts no
+read set, caller identity, approval flag, credential reference or repository path.
+It does not add an HTTP/MCP route or start a background worker.
+
+Each poll authenticates the live system principal, membership and actual read
+grant, then checks the enabled `adapter_observation` mapping's actor/client,
+work, workstream and coordinator epoch. It derives `read_set` from the active
+source contract, catalog authority and ownership. A missing mapping, different
+client, revoked credential, unavailable project or old connector epoch is
+refused. Reading the schedule grants no write or integration authority.
+
+The result distinguishes the current selection (`missing`, `current` or
+`stale`) from original integration intents. Selection currentness checks the
+source, contract, ownership, execution fence and mapped source/target resource.
+An old intent retains its original candidate, read set, request and connector
+version even when a new source has been activated. Current admission to the
+same mapped resource is still required. Remapping to a different resource does
+not schedule the previous resource's effects; those need explicit operator
+reconciliation. Original issuer credentials and private authority are omitted.
+
+`query_original: true` means dispatch occurred and the original operation must
+be observed rather than submitted again. It is not retry permission. Prepared
+requests still require the separate live lease/dispatch eligibility checks;
+terminal records remain historical. Every response sets `execution_authorized`,
+`acceptance_ready` and `source_synchronized` to false.
+
+Pages follow persisted creation time and ID, with an upper anchor fixed by the
+first page. New intents appear on the next fresh scan. Continuations are bound
+to the current principal/grants, work/source/ownership/authority/contract,
+connector mapping and selection version. Changes expire a cursor; reauthenticate
+and start a new scan. Both anchors must exist inside the admitted scope.
+Responses contain at most 32 records and 256 KiB; a byte-limited page returns a
+continuation without dropping remaining records. State is observed at each
+read, not frozen across pages. The read creates no lease, inspection, receipt,
+audit event, source write or repository effect. It makes no deployment or native
+business-acceptance claim and requires neither GitHub nor a webhook.
+
 ## Inspection, inbox and notification outbox
 
 1. `reserve_inspection` transactionally allocates a server generation and a
