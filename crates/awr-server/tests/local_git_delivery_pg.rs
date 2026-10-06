@@ -364,3 +364,404 @@ async fn old_repository_query_is_superseded_by_new_inspection_generation() {
     );
     assert_eq!(view["acceptance_ready"], false);
 }
+
+async fn current_facts(f: &Fixture) -> Value {
+    f.store
+        .inspect(TENANT, PROJECT, OBSERVER, "a")
+        .await
+        .unwrap()
+}
+
+fn fact<'a>(view: &'a Value, kind: &str) -> &'a Value {
+    view["facts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["observation"]["kind"] == kind)
+        .unwrap()
+}
+
+async fn observation_counts(f: &Fixture) -> Vec<i64> {
+    let row = f
+        .admin
+        .query_one(
+            "SELECT (SELECT count(*) FROM awr_team.delivery_inspections),
+            (SELECT count(*) FROM awr_team.delivery_inbox),
+            (SELECT count(*) FROM awr_team.delivery_facts),
+            (SELECT count(*) FROM awr_team.delivery_notifications),
+            (SELECT count(*) FROM awr_team.delivery_sync_intents)",
+            &[],
+        )
+        .await
+        .unwrap();
+    (0..5).map(|i| row.get(i)).collect()
+}
+
+#[tokio::test]
+async fn scheduled_poll_and_reconstructed_observer_preserve_facts_without_churn() {
+    let f = setup_local().await;
+    let first = f
+        .adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    assert_eq!(first["unchanged"], false);
+    let view = current_facts(&f).await;
+    let counts = observation_counts(&f).await;
+    let files = std::fs::read_dir(&f.git.config.report_directory)
+        .unwrap()
+        .count();
+    for _ in 0..3 {
+        let poll = f
+            .adapter
+            .reconcile_current(&f.store, OBSERVER)
+            .await
+            .unwrap();
+        assert_eq!(poll["unchanged"], true);
+        assert_eq!(poll["read_only"], true);
+        for key in [
+            "acceptance_ready",
+            "execution_authorized",
+            "source_synchronized",
+        ] {
+            assert_eq!(poll[key], false);
+        }
+    }
+    let store = DeliverySyncStore::from_config(f.database.clone());
+    let adapter = f.git.adapter().await;
+    assert_eq!(
+        adapter.reconcile_current(&store, OBSERVER).await.unwrap()["unchanged"],
+        true
+    );
+    assert_eq!(observation_counts(&f).await, counts);
+    assert_eq!(
+        std::fs::read_dir(&f.git.config.report_directory)
+            .unwrap()
+            .count(),
+        files
+    );
+    assert_eq!(current_facts(&f).await["facts"], view["facts"]);
+}
+
+#[tokio::test]
+async fn target_application_and_rollback_keep_original_source_verification() {
+    let f = setup_local().await;
+    f.adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    let before = current_facts(&f).await;
+    let verification = fact(&before, "verification").clone();
+    let old_integration = fact(&before, "integration_observation")["fact_id"].clone();
+    f.git.push_main();
+    let result = f
+        .adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    assert_eq!(result["changed_slots"], json!(["integration_observation"]));
+    let applied = current_facts(&f).await;
+    assert_eq!(fact(&applied, "verification"), &verification);
+    assert_ne!(
+        fact(&applied, "integration_observation")["fact_id"],
+        old_integration
+    );
+    assert_eq!(
+        fact(&applied, "integration_observation")["observation"]["outcome"],
+        "applied"
+    );
+    assert_eq!(
+        fact(&applied, "integration_observation")["observation"]["result_revision"]["value"],
+        f.git.source
+    );
+    f.git
+        .bare(&["update-ref", "refs/heads/main", &f.git.base, &f.git.source]);
+    let result = f
+        .adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    assert_eq!(result["changed_slots"], json!(["integration_observation"]));
+    let restored = current_facts(&f).await;
+    assert_eq!(fact(&restored, "verification"), &verification);
+    assert_eq!(
+        fact(&restored, "integration_observation")["observation"]["outcome"],
+        "pending"
+    );
+    assert_eq!(observation_counts(&f).await, vec![3, 3, 4, 3, 6]);
+}
+
+#[tokio::test]
+async fn concurrent_scheduled_observers_share_one_publication() {
+    let f = setup_local().await;
+    let other = f.git.adapter().await;
+    let store = DeliverySyncStore::from_config(f.database.clone());
+    let (a, b) = tokio::join!(
+        f.adapter.reconcile_current(&f.store, OBSERVER),
+        other.reconcile_current(&store, OBSERVER)
+    );
+    a.unwrap();
+    b.unwrap();
+    assert_eq!(observation_counts(&f).await, vec![1, 1, 2, 1, 2]);
+    assert_eq!(
+        f.adapter
+            .reconcile_current(&f.store, OBSERVER)
+            .await
+            .unwrap()["unchanged"],
+        true
+    );
+}
+
+#[tokio::test]
+async fn missing_and_corrupt_proof_require_new_actual_verification() {
+    let f = setup_local().await;
+    f.adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    for corrupt in [false, true] {
+        let before = current_facts(&f).await;
+        let source = fact(&before, "verification");
+        let locator = source["observation"]["provenance"]["reference"]
+            .as_str()
+            .unwrap();
+        let hash = locator.rsplit(':').next().unwrap();
+        let path = f
+            .git
+            .config
+            .report_directory
+            .join(format!("report-{hash}.json"));
+        if corrupt {
+            std::fs::write(&path, b"synthetic corrupt proof").unwrap();
+        } else {
+            std::fs::remove_file(&path).unwrap();
+        }
+        let poll = f
+            .adapter
+            .reconcile_current(&f.store, OBSERVER)
+            .await
+            .unwrap();
+        assert_eq!(poll["unchanged"], false);
+        let after = current_facts(&f).await;
+        assert_ne!(fact(&after, "verification")["fact_id"], source["fact_id"]);
+        assert_eq!(
+            fact(&after, "verification")["observation"]["outcome"],
+            "passed"
+        );
+        assert_eq!(
+            f.adapter
+                .reconcile_current(&f.store, OBSERVER)
+                .await
+                .unwrap()["unchanged"],
+            true
+        );
+    }
+    assert_eq!(observation_counts(&f).await, vec![3, 3, 6, 3, 6]);
+}
+
+#[tokio::test]
+async fn abandoned_expired_observation_recovers_without_replaying_an_effect() {
+    let f = setup_local().await;
+    let reports = &f.git.config.report_directory;
+    let parked = reports.with_extension("parked");
+    std::fs::rename(reports, &parked).unwrap();
+    let failed = f.adapter.reconcile_current(&f.store, OBSERVER).await;
+    std::fs::rename(&parked, reports).unwrap();
+    assert!(matches!(failed, Err(LocalGitError::ReportUnavailable)));
+    assert_eq!(observation_counts(&f).await, vec![1, 0, 0, 0, 0]);
+    // Fault injection models the abandoned lease, without a two-minute test wait.
+    f.admin
+        .batch_execute(
+            "UPDATE awr_team.delivery_inspections
+        SET expires_at=clock_timestamp()-interval '1 second'",
+        )
+        .await
+        .unwrap();
+    let recovered = f
+        .adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    assert_eq!(recovered["unchanged"], false);
+    assert_eq!(observation_counts(&f).await, vec![2, 1, 2, 1, 2]);
+    assert_eq!(f.git.bare(&["rev-parse", "refs/heads/main"]), f.git.base);
+}
+
+#[tokio::test]
+async fn revoked_observer_and_stale_selection_do_not_create_reports_or_facts() {
+    let f = setup_local().await;
+    f.adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    let counts = observation_counts(&f).await;
+    let files = std::fs::read_dir(&f.git.config.report_directory)
+        .unwrap()
+        .count();
+    assert!(matches!(
+        f.adapter.reconcile_current(&f.store, A).await,
+        Err(LocalGitError::AuthorizationUnavailable)
+    ));
+    f.admin
+        .batch_execute(
+            "UPDATE awr_team.delivery_selections SET ownership_version=ownership_version+1",
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.adapter.reconcile_current(&f.store, OBSERVER).await,
+        Err(LocalGitError::PreconditionsChanged)
+    ));
+    f.admin
+        .batch_execute(
+            "UPDATE awr_team.delivery_selections SET ownership_version=ownership_version-1;
+        UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='local-observer'",
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.adapter.reconcile_current(&f.store, OBSERVER).await,
+        Err(LocalGitError::AuthorizationUnavailable)
+    ));
+    assert_eq!(observation_counts(&f).await, counts);
+    assert_eq!(
+        std::fs::read_dir(&f.git.config.report_directory)
+            .unwrap()
+            .count(),
+        files
+    );
+}
+
+#[tokio::test]
+async fn replaced_connector_requires_new_bound_proof_and_disabled_mapping_stops_polling() {
+    let f = setup_local().await;
+    f.adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    let original = current_facts(&f).await;
+    let counts = observation_counts(&f).await;
+    let files = std::fs::read_dir(&f.git.config.report_directory)
+        .unwrap()
+        .count();
+    let reads = WorkstreamReadStore::from_config(f.database.clone());
+    for (enabled, expected, key) in [
+        (false, "1", "disable-observer"),
+        (true, "2", "restore-observer"),
+    ] {
+        let prepared = prepare(&reads, A, "a").await;
+        f.store
+            .configure_connector(
+                TENANT,
+                PROJECT,
+                A,
+                ConfigureDeliveryConnector {
+                    request_id: key.into(),
+                    read_set: read_set(&prepared),
+                    expected_connector_version: expected.into(),
+                    mapping: DeliveryConnectorMapping {
+                        connector_id: f.git.config.connector_id.clone(),
+                        provider: "local_git".into(),
+                        resource: f.git.config.resource.clone(),
+                        principal_actor_id: "local-observer".into(),
+                        principal_client_id: "cli-local-observer".into(),
+                        fact_source: FactSource::AdapterObservation,
+                        enabled,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        if !enabled {
+            assert!(matches!(
+                f.adapter.reconcile_current(&f.store, OBSERVER).await,
+                Err(LocalGitError::AuthorizationUnavailable)
+            ));
+            assert_eq!(observation_counts(&f).await, counts);
+            assert_eq!(
+                std::fs::read_dir(&f.git.config.report_directory)
+                    .unwrap()
+                    .count(),
+                files
+            );
+        }
+    }
+    let restored = f
+        .adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    assert_eq!(
+        restored["changed_slots"],
+        json!(["verification", "integration_observation"])
+    );
+    let view = current_facts(&f).await;
+    assert_ne!(
+        fact(&view, "verification")["fact_id"],
+        fact(&original, "verification")["fact_id"]
+    );
+    assert_eq!(
+        f.adapter
+            .reconcile_current(&f.store, OBSERVER)
+            .await
+            .unwrap()["unchanged"],
+        true
+    );
+}
+
+#[tokio::test]
+async fn newly_unavailable_source_cannot_reuse_a_passed_verification() {
+    let f = setup_local().await;
+    f.adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    let original = current_facts(&f).await;
+    f.git.bare(&["update-ref", "-d", "refs/heads/candidate"]);
+    f.git.bare(&["prune", "--expire=now"]);
+    let poll = f
+        .adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    assert!(
+        poll["changed_slots"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("verification"))
+    );
+    let missing = current_facts(&f).await;
+    assert_ne!(
+        fact(&missing, "verification")["fact_id"],
+        fact(&original, "verification")["fact_id"]
+    );
+    assert_eq!(
+        fact(&missing, "verification")["observation"]["outcome"],
+        "unknown"
+    );
+    f.git.git(&[
+        "push",
+        f.git.config.repository.to_str().unwrap(),
+        "HEAD:refs/heads/candidate",
+    ]);
+    f.adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    let restored = current_facts(&f).await;
+    assert_ne!(
+        fact(&restored, "verification")["fact_id"],
+        fact(&missing, "verification")["fact_id"]
+    );
+    assert_eq!(
+        fact(&restored, "verification")["observation"]["outcome"],
+        "passed"
+    );
+    assert_eq!(
+        f.adapter
+            .reconcile_current(&f.store, OBSERVER)
+            .await
+            .unwrap()["unchanged"],
+        true
+    );
+}

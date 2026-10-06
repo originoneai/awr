@@ -66,6 +66,27 @@ pub(super) async fn selection(
     .transpose()
 }
 
+/// Fresh scheduling metadata is outside the immutable original domain receipt.
+/// It is not a publish permit; ingest independently rechecks the lease and binding.
+async fn with_inspection_lease(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    mut result: Value,
+) -> PgResult<Value> {
+    let id = result["data"]["inspection_id"].as_str().ok_or(invalid())?;
+    let live: bool = tx
+        .query_one(
+            "SELECT expires_at>clock_timestamp() FROM awr_team.delivery_inspections
+        WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+            &[&tenant, &project, &id],
+        )
+        .await?
+        .get(0);
+    result["inspection_lease"] = json!({"state_basis":"at_read","live":live});
+    Ok(result)
+}
+
 impl DeliverySyncStore {
     pub async fn select_candidate(
         &self,
@@ -209,6 +230,7 @@ impl DeliverySyncStore {
         )
         .await?;
         if let Some(result) = replayed {
+            let result = with_inspection_lease(&tx, tenant, project, result).await?;
             tx.commit().await?;
             return Ok(result);
         }
@@ -247,6 +269,7 @@ impl DeliverySyncStore {
             &hash,
         )
         .await?;
+        let result = with_inspection_lease(&tx, tenant, project, result).await?;
         tx.commit().await?;
         Ok(result)
     }
@@ -262,7 +285,11 @@ impl DeliverySyncStore {
         identity(work)?;
         let mut client = self.pool.get().await?;
         crate::check_schema(&client).await?;
-        let tx = client.transaction().await?;
+        let tx = client
+            .build_transaction()
+            .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
+            .start()
+            .await?;
         let mut auth = crate::workstream_auth::authenticate(&tx, tenant, project, bearer).await?;
         crate::delegation_auth::resolve_agent_delegation(
             &tx,

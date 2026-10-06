@@ -262,6 +262,24 @@ impl LocalGitAdapter {
         Ok(())
     }
 
+    /// A bounded fresh probe without publishing a report or index.
+    pub(super) async fn probe(
+        &self,
+        candidate: &DeliveryCandidate,
+    ) -> Result<LocalGitReport, LocalGitError> {
+        self.validate_candidate(candidate)?;
+        let binding = candidate
+            .binding
+            .digest()
+            .map_err(|_| LocalGitError::BindingMismatch)?;
+        tokio::time::timeout(
+            Duration::from_millis(self.config.inspection_timeout_ms),
+            self.observe(candidate, "scheduled-probe", binding),
+        )
+        .await
+        .map_err(|_| LocalGitError::TimedOut)?
+    }
+
     /// Repeating the same inspection returns its immutable original observation.
     /// A new inspection ID is required to observe a changed repository.
     pub async fn inspect(
