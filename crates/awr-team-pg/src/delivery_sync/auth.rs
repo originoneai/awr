@@ -1,6 +1,7 @@
 use super::*;
 use crate::workstream_auth::{
-    CommandAuthPhase, ReaderAuthority, authenticate_writer, authorize_command,
+    CommandAuthPhase, CredentialReference, ReaderAuthority, authenticate_writer,
+    authenticate_writer_reference, authorize_command,
 };
 use awr_core::WorkstreamAction;
 use awr_team::{Action, delivery::CandidateBinding};
@@ -21,7 +22,37 @@ pub(super) async fn admit(
     identity(&set.coordinator_epoch)?;
     identity(&set.source_snapshot_id)?;
     digest(&set.contract_hash)?;
-    let mut auth = authenticate_writer(tx, tenant, project, bearer).await?;
+    let auth = authenticate_writer(tx, tenant, project, bearer).await?;
+    admit_authority(tx, tenant, project, auth, set, action, session).await
+}
+
+pub(super) async fn admit_reference(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    reference: &CredentialReference,
+    set: &DeliveryReadSet,
+    action: Action,
+    session: Option<&str>,
+) -> PgResult<ReaderAuthority> {
+    bounded(set)?;
+    identity(&set.work_id)?;
+    identity(&set.coordinator_epoch)?;
+    identity(&set.source_snapshot_id)?;
+    digest(&set.contract_hash)?;
+    let auth = authenticate_writer_reference(tx, tenant, project, reference).await?;
+    admit_authority(tx, tenant, project, auth, set, action, session).await
+}
+
+async fn admit_authority(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    mut auth: ReaderAuthority,
+    set: &DeliveryReadSet,
+    action: Action,
+    session: Option<&str>,
+) -> PgResult<ReaderAuthority> {
     if action == Action::AccessManageProject {
         if !matches!(auth.actor_kind.as_str(), "human" | "system") {
             return Err(PgError::Forbidden);
@@ -30,6 +61,11 @@ pub(super) async fn admit(
         auth.access
             .authorize(&auth.catalog, set.workstream_id, WorkstreamAction::Manage)?;
     } else {
+        let op = match action {
+            Action::DeliverySubmitAndRequestReview => "delivery.register_pr",
+            Action::DeliveryFinalize => "delivery.finalize",
+            _ => return Err(PgError::Forbidden),
+        };
         crate::delegation_auth::resolve_agent_delegation(
             tx,
             &mut auth,
@@ -44,7 +80,7 @@ pub(super) async fn admit(
             &auth,
             set.workstream_id,
             &set.work_id,
-            "delivery.register_pr",
+            op,
             CommandAuthPhase::Effect,
         )?;
     }

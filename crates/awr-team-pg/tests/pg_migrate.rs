@@ -4,6 +4,65 @@ use awr_team_pg::{EXPECTED_SCHEMA_VERSION, check_schema, migrate};
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn schema45_integration_upgrade_is_atomic_and_preserves_delivery_records() {
+    let (_g, admin, _) = common::historical_team_schema(45).await;
+    admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('upgrade-tenant','Upgrade','active');
+        INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+        VALUES('upgrade-tenant','upgrade-project','upgrade','team','old-epoch','active');
+        INSERT INTO awr_team.work_items(tenant_id,project_id,id,external_key) VALUES('upgrade-tenant','upgrade-project','legacy-work','legacy-work');
+        INSERT INTO awr_team.delivery_candidates(tenant_id,project_id,binding_digest,work_id,candidate_id,candidate_version,body_json)
+        VALUES('upgrade-tenant','upgrade-project',repeat('a',64),'legacy-work','legacy-candidate','1','{\"legacy_fixture\":true}')").await.unwrap();
+    let original: Value = admin
+        .query_one(
+            "SELECT to_jsonb(c) FROM awr_team.delivery_candidates c",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let ddl = include_str!("../migrations/20261006000046_delivery_integration.sql");
+    assert!(
+        admin
+            .batch_execute(&ddl.replace(
+                "UPDATE awr_team.schema_state",
+                "SELECT 1/0; UPDATE awr_team.schema_state"
+            ))
+            .await
+            .is_err()
+    );
+    admin.batch_execute("ROLLBACK").await.unwrap();
+    let before=admin.query_one("SELECT (SELECT version FROM awr_team.schema_state),to_regclass('awr_team.delivery_integration_intents')::text,
+        to_regclass('awr_team.delivery_integration_target_guards')::text",&[]).await.unwrap();
+    assert_eq!(before.get::<_, i32>(0), 45);
+    assert!(before.get::<_, Option<String>>(1).is_none());
+    assert!(before.get::<_, Option<String>>(2).is_none());
+    migrate(&admin).await.unwrap();
+    check_schema(&admin).await.unwrap();
+    migrate(&admin).await.unwrap();
+    let after = admin
+        .query_one(
+            "SELECT (SELECT version FROM awr_team.schema_state),
+        (SELECT count(*) FROM awr_team.delivery_integration_intents),
+        (SELECT count(*) FROM awr_team.delivery_integration_target_guards)",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(after.get::<_, i32>(0), EXPECTED_SCHEMA_VERSION);
+    assert_eq!(after.get::<_, i64>(1), 0);
+    assert_eq!(after.get::<_, i64>(2), 0);
+    let preserved: Value = admin
+        .query_one(
+            "SELECT to_jsonb(c) FROM awr_team.delivery_candidates c",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(preserved, original);
+}
+
+#[tokio::test]
 async fn schema43_source_publication_upgrade_is_atomic_and_leaves_legacy_receipts_unbound() {
     let (_g, admin, _) = common::historical_team_schema(43).await;
     admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('upgrade-tenant','Upgrade','active');
@@ -293,7 +352,7 @@ async fn schema40_upgrade_preserves_legacy_provenance_and_is_atomic_and_repeatab
     assert_eq!(before, unchanged);
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 45);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 46);
     let after: Value = admin
         .query_one(
             "SELECT to_jsonb(e) FROM awr_team.executions e WHERE id='legacy-run'",

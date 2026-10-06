@@ -2,7 +2,7 @@
 //! operator reconciliation distinct. Neither upgrades caller evidence to trust.
 use super::*;
 
-pub(super) async fn verify_execution(
+pub(crate) async fn verify_execution(
     tx: &Transaction<'_>,
     tenant: &str,
     project: &str,
