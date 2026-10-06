@@ -1,5 +1,6 @@
 use crate::error::{PgError, PgResult};
 use crate::tx::{bind_scope, new_id};
+use awr_team::delivery::LegacyPrSnapshot;
 use awr_team::{CompletionView, EvidenceBundle, EvidenceGrade, ReviewPolicy, current_completion};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -61,6 +62,27 @@ pub struct PrDelivery {
     pub fact_source: String,
     pub observed_at: String,
     pub state: String,
+}
+
+/// Shared mapping for the two legacy delivery reads. Both SELECTs use named
+/// columns, so an additive projection cannot silently shift field positions.
+pub(crate) fn legacy_pr_snapshot(row: &tokio_postgres::Row) -> LegacyPrSnapshot {
+    LegacyPrSnapshot {
+        delivery_id: row.get("id"),
+        repository: row.get("repository"),
+        pr_number: row.get("pr_number"),
+        pr_url: row.get("pr_url"),
+        head_sha: row.get("head_sha"),
+        merge_sha: row.get("merge_sha"),
+        submitted: row.get("gh_submitted"),
+        approved: row.get("gh_approved"),
+        merged: row.get("gh_merged"),
+        fact_source: row.get("fact_source"),
+        observed_at: row.get("observed_at"),
+        contract_hash: row.get("contract_hash"),
+        state: row.get("state"),
+        test_evidence_id: row.get("test_evidence_id"),
+    }
 }
 
 pub struct ReviewStore {
@@ -1329,28 +1351,15 @@ impl ReviewStore {
         let awr_complete = runtime
             .as_ref()
             .is_some_and(|(s, cid)| s == "completed" && cid.is_some());
+        let pr = pr.as_ref().map(legacy_pr_snapshot);
         let status = json!({
             "work_id": work_id,
-            "pr": pr.as_ref().map(|r| json!({
-                "delivery_id": r.get::<_,String>(0),
-                "repository": r.get::<_,String>(1),
-                "pr_number": r.get::<_,i32>(2),
-                "pr_url": r.get::<_,String>(3),
-                "head_sha": r.get::<_,String>(4),
-                "merge_sha": r.get::<_,Option<String>>(5),
-                "submitted": r.get::<_,bool>(6),
-                "approved": r.get::<_,bool>(7),
-                "merged": r.get::<_,bool>(8),
-                "fact_source": r.get::<_,String>(9),
-                "observed_at": r.get::<_,String>(10),
-                "contract_hash": r.get::<_,String>(11),
-                "state": r.get::<_,String>(12),
-                "test_evidence_id": r.get::<_,Option<String>>(13),
-            })),
+            "pr": pr,
+            "neutral_observation": pr.as_ref().map(LegacyPrSnapshot::incomplete_observation),
             "github": {
-                "submitted": pr.as_ref().map(|r| r.get::<_,bool>(6)).unwrap_or(false),
-                "approved": pr.as_ref().map(|r| r.get::<_,bool>(7)).unwrap_or(false),
-                "merged": pr.as_ref().map(|r| r.get::<_,bool>(8)).unwrap_or(false),
+                "submitted": pr.as_ref().is_some_and(|r| r.submitted),
+                "approved": pr.as_ref().is_some_and(|r| r.approved),
+                "merged": pr.as_ref().is_some_and(|r| r.merged),
             },
             "awr_acceptance": {
                 "complete": awr_complete,
