@@ -134,6 +134,42 @@ updates observations for its already-bound head.
 - `cannot_skip_acceptance_via`: `pr_url_alone`, `green_ci`, `admin_role`, `already_merged`
 - `webhook_auto_sync: false`
 
+Both `delivery.inspect` and the legacy `ReviewStore::delivery_status` retain
+every existing PR field and add `neutral_observation`. This compact
+`awr-legacy-delivery-observation-v1` view preserves the recorded source, original
+timestamp string/offset and external submitted/approved/merged assertions. It
+lists the missing candidate identity/version, full scope binding, manifest,
+target precondition, required checks, version-bound verification, AWR decision
+and integration content proof. `acceptance_ready` is always false; existing AWR
+runtime acceptance remains a separate block. No active PR yields null on both
+surfaces, including after head invalidation.
+The legacy store remains available only in legacy project mode; enabling
+workstreams still requires the authenticated scoped query. Compatibility does
+not bypass that admission rule.
+
+Historical PR revisions support SHA-1 only. Invalid or unsupported data stays
+readable in the old fields; the additive view leaves its reported revision
+missing and emits a value-safe issue. A source name containing `human` or
+`trusted`, a test evidence ID, or an approved/merged flag supplies no missing
+proof. The view is deliberately not a `DeliveryRecord` and cannot be ingested
+as a review decision or applied integration.
+
+`LegacyPrSnapshot::change_request` can associate an existing provider locator
+only when supplied with a complete current candidate/manifest and explicit
+provenance. It reuses the neutral binding and envelope validators and rejects
+different source revisions, contracts, targets, scopes, versions or check sets.
+It never creates verification, approval or content-integration evidence.
+
+The public `delivery-facts-v1.json` corpus covers the pure reference wire and
+historical hosted PR shape. SHA-256 and no-PR/artifact-only candidates are valid
+neutral cases; the old hosted shape explicitly reports unsupported/absent cases
+instead of inventing a SHA-1 or PR. These are conformance boundaries, not live
+repository adapters. Durable ingestion/source writeback, optional GitHub
+query/poll/webhook support, local Git/artifact effects and version-bound
+finalization are subsequent integration work. Webhook delivery is not required
+for correctness. Pure conformance and SQL regressions do not count as complete
+native-client business acceptance.
+
 ## Independence & attribution
 
 Independence follows WS-015/018 person relations: two agents of the same person

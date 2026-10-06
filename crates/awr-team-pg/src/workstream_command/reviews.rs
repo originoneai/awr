@@ -4,7 +4,8 @@ mod artifact_input;
 
 use super::*;
 use crate::review::{
-    evidence_digest, required_dependencies_covered, resolve_person_id, self_review_permitted,
+    evidence_digest, legacy_pr_snapshot, required_dependencies_covered, resolve_person_id,
+    self_review_permitted,
 };
 use awr_team::{CompletionView, EvidenceBundle, EvidenceGrade, ReviewPolicy, current_completion};
 use sha2::{Digest, Sha256};
@@ -1668,29 +1669,16 @@ pub(crate) async fn inspect_delivery(
     let awr_complete = runtime.as_ref().is_some_and(|r| {
         r.get::<_, String>(0) == "completed" && r.get::<_, Option<String>>(1).is_some()
     });
+    let pr = pr.as_ref().map(legacy_pr_snapshot);
     Ok(json!({
         "delivery": {
             "work_id": work_id,
-            "pr": pr.as_ref().map(|r| json!({
-                "delivery_id": r.get::<_,String>(0),
-                "repository": r.get::<_,String>(1),
-                "pr_number": r.get::<_,i32>(2),
-                "pr_url": r.get::<_,String>(3),
-                "head_sha": r.get::<_,String>(4),
-                "merge_sha": r.get::<_,Option<String>>(5),
-                "submitted": r.get::<_,bool>(6),
-                "approved": r.get::<_,bool>(7),
-                "merged": r.get::<_,bool>(8),
-                "fact_source": r.get::<_,String>(9),
-                "observed_at": r.get::<_,String>(10),
-                "contract_hash": r.get::<_,String>(11),
-                "state": r.get::<_,String>(12),
-                "test_evidence_id": r.get::<_,Option<String>>(13),
-            })),
+            "pr": pr,
+            "neutral_observation": pr.as_ref().map(|r| r.incomplete_observation()),
             "github": {
-                "submitted": pr.as_ref().map(|r| r.get::<_,bool>(6)).unwrap_or(false),
-                "approved": pr.as_ref().map(|r| r.get::<_,bool>(7)).unwrap_or(false),
-                "merged": pr.as_ref().map(|r| r.get::<_,bool>(8)).unwrap_or(false),
+                "submitted": pr.as_ref().is_some_and(|r| r.submitted),
+                "approved": pr.as_ref().is_some_and(|r| r.approved),
+                "merged": pr.as_ref().is_some_and(|r| r.merged),
             },
             "awr_acceptance": {
                 "complete": awr_complete,

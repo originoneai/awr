@@ -1,0 +1,15 @@
+{
+  "codec": "awr-delivery-conformance-v1",
+  "cases": [
+    {"name":"sha1-pr","format":"git_sha1","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pr":true,"change":null,"reference":"accepted","legacy":"accepted"},
+    {"name":"sha256-pr","format":"git_sha256","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pr":true,"change":null,"reference":"accepted","legacy":"unsupported"},
+    {"name":"sha256-without-pr","format":"git_sha256","value":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","pr":false,"change":null,"reference":"accepted","legacy":"absent"},
+    {"name":"artifacts-without-repository","format":null,"value":null,"pr":false,"change":null,"reference":"accepted","legacy":"absent"},
+    {"name":"candidate-version-changed","format":"git_sha1","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pr":true,"change":"version","reference":"rejected","legacy":"rejected"},
+    {"name":"target-changed","format":"git_sha1","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pr":true,"change":"target","reference":"rejected","legacy":"rejected"},
+    {"name":"same-length-source-changed","format":"git_sha1","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pr":true,"change":"source","reference":"rejected","legacy":"rejected"},
+    {"name":"scope-changed","format":"git_sha1","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pr":true,"change":"scope","reference":"rejected","legacy":"rejected"},
+    {"name":"checks-changed","format":"git_sha1","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pr":true,"change":"checks","reference":"rejected","legacy":"rejected"},
+    {"name":"merged-with-unknown-integration","format":"git_sha1","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","pr":true,"change":null,"reference":"accepted","legacy":"accepted"}
+  ]
+}
