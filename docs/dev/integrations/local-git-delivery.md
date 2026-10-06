@@ -3,10 +3,11 @@
 The optional `awr_server::delivery_adapter::LocalGitAdapter` observes an
 operator-configured bare repository using the same `awr-delivery` protocol and
 authenticated delivery inbox as other providers. It has no GitHub dependency.
-This first adapter boundary is a library entry point; server configuration,
-background polling and final task acceptance are separate capabilities. A separate
-opt-in library integrator performs authorized fast-forward effects as described
-below. There is no new anonymous endpoint or caller-selected repository.
+The library entry points also power an optional Team server worker. It observes
+current candidates and, when explicitly enabled, processes approved integration
+intents. Final task acceptance remains separate. The opt-in integrator performs
+authorized fast-forward effects as described below. There is no new anonymous
+endpoint or caller-selected repository.
 
 ## Configuration and scope
 
@@ -56,6 +57,69 @@ AWR requested or approved it; `request_id` remains absent.
 
 Capabilities advertise observation and polling, with integration requests,
 change requests and notifications disabled. These flags never grant permission.
+
+## Optional Team server worker
+
+Set `AWR_TEAM_LOCAL_GIT_WORKER_CONFIG` to a separate strict TOML file based on
+[the worker example](../../../examples/local-git-delivery/worker.toml), then start
+the existing `awr-server serve --config /absolute/path/service.toml` entry point.
+The service project key must already map to the repository's tenant/project.
+An unset variable or empty worker list reads no credential, repository or PG
+state for this group. It creates no principal, grant, connector or task.
+
+Each entry requires an explicit worker ID, a **credential environment-variable
+name**, a fixed `LocalGitConfig` under `repository`, and `integration_enabled`.
+Provision the credential privately through existing access management. The
+principal must be the enabled `local_git` / `adapter_observation` connector's
+actual system actor/client and have current read and observation-submit scope.
+When integration is enabled it also needs current `delivery.finalize` scope.
+A readable schedule alone does not establish either mutation permission.
+
+`integration_enabled = false` observes the current selection; it never prepares
+or executes an intent and does not settle original dispatches. With `true`, the
+worker additionally traverses the original-intent queue. A supervisor must first
+prepare each intent through the existing
+[version-bound admission](delivery-integration.md#supervisor-workflow-over-http-or-mcp).
+Configuration and successful observation cannot substitute for actual evidence
+and independent review. Worker operations are not new public HTTP/MCP commands.
+
+The group supports at most 16 workers with unique IDs and unique
+project/work/connector scopes. Separate processes can compete for the same
+scope under PG fencing. Each worker polls at 100–60,000 ms with a 5–300 second
+dispatch lease, a 100–60,000 ms operation timeout shorter than that lease,
+and capped backoff between its poll interval and 300,000 ms. Repository
+inspection timeout cannot exceed operation timeout. Pages contain 1–32 intents;
+each poll visits at most 1–16 pages and 1–64 intents. Page size shrinks to the
+remaining job budget so no returned row is skipped by advancing its cursor.
+Terminal history cannot permanently hide the queue tail; retired cursors reset
+to a fresh authenticated scan. Missing/stale current selection does not hide
+historical dispatched requests on the same configured resource.
+
+The Git group and optional
+[source-publication group](delivery-synchronization.md#optional-server-worker-lifecycle)
+share one store/pool and an all-or-none admission boundary. Both complete their
+current identity/scope and fixed-resource checks before either spawns any task,
+within a 30-second overall startup limit. Invalid Git admission cannot start an
+otherwise valid source worker. An absent source group leaves source publication
+pending; Git confirmation alone never sets `source_synchronized`.
+
+Prepared and expired **undispatched** requests may acquire a fresh fenced lease
+and the domain's first sealed dispatch capability. Live leases are left alone.
+Dispatched or unknown requests are only queried through their original identity;
+they never receive another Git effect. Confirmation/rejection history remains
+terminal. Every domain action rechecks current authority, and explicit credential
+rotation requires a service restart. Reopening the service keeps persisted
+target guards, reports and request identity; unknown never means safe to retry.
+
+Ctrl-C, Unix SIGTERM, HTTP termination, stop and runtime drop cancel both groups.
+Joining workers has a five-second ceiling. A cancellation/timeout or missing
+reply retains durable uncertainty even if a physical Git effect already landed.
+Restart probes the original request and real target before recording its result.
+`LocalGitWorkerRuntime::monitor()` returns finite state/failure codes and
+saturating counters per configured worker. State-change logs contain configured
+project/worker IDs and finite codes only, without raw errors, repository contents,
+private paths, credentials or environment-variable names. These observations
+are not approval, completion or delivery receipts.
 
 ## Opt-in fast-forward integration
 
@@ -153,8 +217,8 @@ terminates an execution or marks a task complete.
 `reconcile_current(store, credential)` is a service-owned polling entry point.
 It derives admission from the authenticated schedule and requires the configured
 `local_git` system connector, resource and current selected candidate. It accepts
-no caller identity, path, approval or read set. Server lifecycle configuration
-remains separate. Explicit retries of a published poll still use `reconcile`.
+no caller identity, path, approval or read set. The optional server worker uses
+this entry point. Explicit retries of a published poll still use `reconcile`.
 
 Every poll probes the actual bounded Git state. It compares source verification
 and target integration separately with current facts from that connector and
@@ -186,6 +250,22 @@ The result identifies `changed_slots` and an optional real ingest receipt. An
 execution authority or source synchronization. Credential/mapping revocation
 and selection changes remain checked on every poll and domain write.
 
+`LocalGitIntegrator::reconcile_original_current(store, credential, integration_id)`
+separately queries the authenticated original dispatch. Its confirmation snapshot
+contains the exact fact envelope, observation receipt and inspection/connector
+binding. The worker verifies immutable report bytes and the complete original
+record, accounting for the server-owned recording time separately from Git's
+observation time. It then compares a fresh bounded Git probe, excluding only
+report timestamps and inspection IDs. Attempt/result state, candidate, measured
+contents and integration outcome remain significant.
+
+An unchanged unknown query publishes no inspection, fact or confirmation, even
+after reconstruction. Missing/corrupt proof requires a fresh reserved observation
+without overwriting its archive. If PG confirms an abandoned observation lease
+expired, at most one fresh observation reservation is attempted per call. This
+never renews an execution permit. A superseded fact can settle only its original
+historical intent and cannot accept a current replacement candidate.
+
 ## Validation boundary
 
 `local_git_delivery` exercises independent bare SHA-1/SHA-256 repositories,
@@ -204,5 +284,12 @@ observer. `local_git_integration_pg` uses actual independent Git repositories an
 real PG execution/evidence/review records to exercise CAS, both object formats,
 conflicts, revoked authority, historical recovery, cancellation, timeout and
 durable replay. These are isolated mechanism tests, with no native business,
-human approval or deployment credit. Service lifecycle and end-to-end native
-collaboration acceptance remain separate delivery work.
+human approval or deployment credit. Confirmation snapshot and reservation replay
+checks preserve exact historical data while reporting current lease liveness.
+
+`local_git_worker` covers opt-in/empty configuration, observation-only behavior,
+normal integration, competition, small job budgets, revoked/rotated credentials,
+missing selections, cancellation/restart, stable unknown queries, damaged proof
+and abandoned observation recovery. `delivery_worker` covers combined admission
+failure without source effects. Physical source-first closure and end-to-end
+native collaboration acceptance remain separate delivery work.

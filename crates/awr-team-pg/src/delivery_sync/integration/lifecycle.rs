@@ -161,6 +161,57 @@ async fn release_guard(
 }
 
 impl DeliverySyncStore {
+    /// Read-only startup admission for a mapped observation worker. An optional
+    /// finalizer check grants no intent, lease, receipt or dispatch capability.
+    pub async fn check_worker_access(
+        &self,
+        tenant: &str,
+        project: &str,
+        bearer: &str,
+        set: &DeliveryReadSet,
+        connector_id: &str,
+        integration_enabled: bool,
+    ) -> PgResult<Value> {
+        identity(connector_id)?;
+        let mut client = self.pool.get().await?;
+        crate::check_schema(&client).await?;
+        let tx = client.transaction().await?;
+        let auth = auth::admit(
+            &tx,
+            tenant,
+            project,
+            bearer,
+            set,
+            Action::DeliverySubmitAndRequestReview,
+            None,
+        )
+        .await?;
+        if auth.actor_kind != "system" {
+            return Err(PgError::Forbidden);
+        }
+        let connector = connectors::load(&tx, tenant, project, &auth, set, connector_id).await?;
+        if connector.source != FactSource::AdapterObservation {
+            return Err(PgError::Forbidden);
+        }
+        if integration_enabled {
+            auth::admit(
+                &tx,
+                tenant,
+                project,
+                bearer,
+                set,
+                Action::DeliveryFinalize,
+                None,
+            )
+            .await?;
+        }
+        let result = json!({"read_only":true,"state_basis":"at_read",
+            "connector_id":connector_id,"connector_version":connector.version.to_string(),
+            "resource":connector.resource,"execution_authorized":false});
+        tx.commit().await?;
+        Ok(result)
+    }
+
     /// Prepare one exact approved candidate. This reserves a target, not an effect.
     pub async fn prepare_integration(
         &self,
@@ -591,6 +642,7 @@ impl DeliverySyncStore {
         )
         .await?;
         if let Some(receipt) = replay {
+            let receipt = inspection_lease(&tx, tenant, project, receipt).await?;
             tx.commit().await?;
             return Ok(receipt);
         }
@@ -611,6 +663,7 @@ impl DeliverySyncStore {
             &request_hash,
         )
         .await?;
+        let result = inspection_lease(&tx, tenant, project, result).await?;
         tx.commit().await?;
         Ok(result)
     }
@@ -853,6 +906,21 @@ impl DeliverySyncStore {
             .await?
             .get(0);
         let state: String = row.get(0);
+        let confirmation = if let Some(fact) = row.get::<_, Option<String>>(7) {
+            let proof = tx.query_opt("SELECT f.envelope_json,i.receipt_json,x.connector_version,
+                x.binding_digest,x.id FROM awr_team.delivery_facts f
+                JOIN awr_team.delivery_inbox i ON i.tenant_id=f.tenant_id AND i.project_id=f.project_id AND i.id=f.inbox_id
+                JOIN awr_team.delivery_inspections x ON x.tenant_id=i.tenant_id AND x.project_id=i.project_id AND x.id=i.inspection_id
+                JOIN awr_team.delivery_candidates c ON c.tenant_id=x.tenant_id AND c.project_id=x.project_id AND c.binding_digest=x.binding_digest
+                WHERE f.tenant_id=$1 AND f.project_id=$2 AND f.id=$3 AND i.connector_id=$4 AND c.work_id=$5",
+                &[&tenant, &project, &fact, &prepare.connector_id, &work]).await?
+                .ok_or(PgError::SourceDivergence)?;
+            json!({"fact_id":fact,"envelope":proof.get::<_,Value>(0),
+                "receipt":proof.get::<_,Value>(1),"connector_version":proof.get::<_,i64>(2).to_string(),
+                "candidate_digest":proof.get::<_,String>(3),"inspection_id":proof.get::<_,String>(4)})
+        } else {
+            Value::Null
+        };
         let action = match state.as_str() {
             "prepared" | "leased" => {
                 "Await the configured integrator; inspect this original request for its outcome"
@@ -866,6 +934,7 @@ impl DeliverySyncStore {
             "eligibility_digest":row.get::<_,String>(2),"lease_id":row.get::<_,Option<String>>(3),"lease_expires_at":row.get::<_,Option<String>>(4),
             "dispatched_at":row.get::<_,Option<String>>(5),"dispatch_receipt":row.get::<_,Option<Value>>(6),
             "confirmation_fact_id":row.get::<_,Option<String>>(7),"confirmation_current":row.get::<_,Option<bool>>(8),
+            "confirmation":confirmation,
             "candidate":candidate,"original_read_set":prepare.read_set,
             "connector_id":prepare.connector_id,"connector_version":prepare.connector_version,
             "execution_authorized":false,"acceptance_ready":false,"source_synchronized":false,
@@ -879,6 +948,26 @@ impl DeliverySyncStore {
         }
         Ok(receipt)
     }
+}
+
+/// Fresh liveness stays outside the immutable original reservation receipt.
+async fn inspection_lease(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    mut receipt: Value,
+) -> PgResult<Value> {
+    let id = receipt["data"]["inspection_id"].as_str().ok_or(invalid())?;
+    let live: bool = tx
+        .query_one(
+            "SELECT expires_at>clock_timestamp() FROM awr_team.delivery_inspections
+        WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+            &[&tenant, &project, &id],
+        )
+        .await?
+        .get(0);
+    receipt["inspection_lease"] = json!({"state_basis":"at_read","live":live});
+    Ok(receipt)
 }
 
 fn now_ms() -> i64 {

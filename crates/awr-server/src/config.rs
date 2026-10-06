@@ -1,4 +1,7 @@
 //! Optional server-owned delivery workers. Credentials and source paths are not configuration data.
+mod local_git_worker;
+pub use local_git_worker::{LOCAL_GIT_WORKER_CONFIG_ENV, LocalGitWorkerConfig, LocalGitWorkerSpec};
+
 use crate::service::ServiceConfig;
 use awr_core::Id;
 use serde::Deserialize;

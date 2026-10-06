@@ -1,0 +1,37 @@
+# Synthetic optional Team service configuration. Existing operator-owned paths.
+# Set AWR_TEAM_LOCAL_GIT_WORKER_CONFIG to this file after replacing its scopes.
+# Provision the referenced credential privately; this file creates no grants.
+version = 1
+
+[[workers]]
+project = "team"
+worker_id = "local-repository-worker"
+credential_env = "AWR_LOCAL_GIT_WORKER_CREDENTIAL"
+# Observation alone is the default operating choice. Enable only when the
+# existing principal has delivery.finalize and may execute prepared intents.
+integration_enabled = false
+poll_interval_ms = 1000
+lease_seconds = 60
+operation_timeout_ms = 15000
+max_backoff_ms = 60000
+page_size = 16
+max_pages_per_poll = 4
+max_jobs_per_poll = 16
+
+[workers.repository]
+version = 1
+adapter_id = "local-repository-observer"
+connector_id = "local-repository-connector"
+tenant_id = "example-tenant"
+project_id = "example-project"
+workstream_id = "00000000000000000000000001"
+work_id = "example-work"
+resource = "local-repository:example"
+repository = "/srv/example-repository.git"
+git_executable = "/usr/bin/git"
+target_reference = "refs/heads/main"
+report_directory = "/var/lib/awr/local-git-reports"
+command_timeout_ms = 3000
+inspection_timeout_ms = 12000
+max_blob_bytes = 1048576
+max_total_blob_bytes = 4194304

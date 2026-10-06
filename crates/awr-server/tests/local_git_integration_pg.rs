@@ -728,6 +728,119 @@ async fn same_poll_retry_returns_the_durable_confirm_receipt_after_reconstructio
 }
 
 #[tokio::test]
+async fn original_confirmation_snapshot_binds_the_exact_observation_and_server_recording_time() {
+    let repo = git::GitFixture::integration(false);
+    let candidate = repo.integration_candidate();
+    let (repo, f, integrator) = setup_local(repo, candidate).await;
+    let (id, lease) = ready(&f).await;
+    let dispatch = f.dispatched(&id, &lease).await;
+    drop(dispatch); // Lose the first capability without fabricating an effect.
+    let receipt = integrator
+        .reconcile(&f.store, WORKER, poll(&f, &id, "snapshot-confirm"))
+        .await
+        .unwrap();
+    let events: i64 = f
+        .admin
+        .query_one("SELECT count(*) FROM awr_team.events", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let view = f
+        .store
+        .inspect_integration(TENANT, PROJECT, WORKER, "a", &id)
+        .await
+        .unwrap();
+    let proof = &view["confirmation"];
+    let observation = &receipt["observation"]["data"]["observation_receipt"];
+    assert_eq!(view["state"], "unknown");
+    assert_eq!(proof["fact_id"], observation["fact_ids"][0]);
+    assert_eq!(proof["receipt"], *observation);
+    assert_eq!(proof["inspection_id"], observation["inspection_id"]);
+    assert_eq!(proof["candidate_digest"], f.request.candidate_digest);
+    assert_eq!(proof["connector_version"], "1");
+    let envelope: DeliveryEnvelope = serde_json::from_value(proof["envelope"].clone()).unwrap();
+    envelope.validate().unwrap();
+    let DeliveryRecord::IntegrationObservation(record) = envelope.record else {
+        panic!("wrong confirmation kind");
+    };
+    assert_eq!(record.request_id.unwrap().as_str(), id);
+    assert_eq!(record.binding, f.selection.candidate.binding);
+    assert_eq!(record.outcome, IntegrationOutcome::Unknown);
+    assert_eq!(
+        record.provenance.recorded_at_unix_ms,
+        observation["recorded_at_unix_ms"].as_u64().unwrap()
+    );
+    let hash = record.provenance.reference.rsplit(':').next().unwrap();
+    let report: awr_server::delivery_adapter::local_git_integration::LocalGitIntegrationReport =
+        serde_json::from_slice(&integrator.report_bytes(hash).unwrap()).unwrap();
+    assert_eq!(
+        record.provenance.observed_at_unix_ms,
+        Some(report.observed_at_unix_ms)
+    );
+    assert_eq!(report.integration_id, id);
+    assert_eq!(report.inspection_id, proof["inspection_id"]);
+    assert_eq!(
+        f.admin
+            .query_one("SELECT count(*) FROM awr_team.events", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        events
+    );
+    assert_eq!(repo.bare(&["rev-parse", "refs/heads/main"]), repo.base);
+    assert_eq!(f.guards().await, 1);
+    no_completion(&f).await;
+}
+
+#[tokio::test]
+async fn expired_original_inspection_replay_changes_only_live_metadata_and_grants_no_effect() {
+    let repo = git::GitFixture::integration(false);
+    let candidate = repo.integration_candidate();
+    let (repo, f, _integrator) = setup_local(repo, candidate).await;
+    let (id, lease) = ready(&f).await;
+    drop(f.dispatched(&id, &lease).await);
+    let request = ReserveDeliveryInspection {
+        request_id: "original-inspection-liveness".into(),
+        read_set: f.set.clone(),
+        connector_id: "git".into(),
+        connector_version: "1".into(),
+        candidate_digest: f.request.candidate_digest.clone(),
+        lease_seconds: 5,
+    };
+    let original = f
+        .store
+        .reserve_integration_inspection(TENANT, PROJECT, WORKER, &id, request.clone())
+        .await
+        .unwrap();
+    assert_eq!(original["inspection_lease"]["live"], true);
+    let inspection = original["data"]["inspection_id"].as_str().unwrap();
+    // Scoped fault injection, never delivery prerequisite construction.
+    f.admin.execute("UPDATE awr_team.delivery_inspections SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", &[&inspection]).await.unwrap();
+    let store = DeliverySyncStore::from_config(f.config.clone());
+    let replay = store
+        .reserve_integration_inspection(TENANT, PROJECT, WORKER, &id, request)
+        .await
+        .unwrap();
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(replay["data"], original["data"]);
+    assert_eq!(
+        replay["committed_project_revision"],
+        original["committed_project_revision"]
+    );
+    assert_eq!(replay["inspection_lease"]["live"], false);
+    assert_eq!(replay["inspection_lease"]["state_basis"], "at_read");
+    let view = store
+        .inspect_integration(TENANT, PROJECT, WORKER, "a", &id)
+        .await
+        .unwrap();
+    assert_eq!(view["state"], "dispatched");
+    assert_eq!(view["confirmation"], Value::Null);
+    assert_eq!(repo.bare(&["rev-parse", "refs/heads/main"]), repo.base);
+    assert_eq!(f.guards().await, 1);
+    no_completion(&f).await;
+}
+
+#[tokio::test]
 async fn changed_selection_recovers_original_applied_fact_as_history_only() {
     let repo = git::GitFixture::integration(false);
     let candidate = repo.integration_candidate();

@@ -2,6 +2,8 @@
 //! inside PostgreSQL; tenant/actor/client/grants are never taken from its JSON.
 mod action_auth;
 pub mod delivery_sync;
+pub mod delivery_workers;
+pub mod local_git_worker;
 mod mcp;
 mod oauth;
 mod web;
@@ -1063,6 +1065,7 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
 pub async fn serve(path: &FilePath) -> Result<(), String> {
     let config = ServiceConfig::read(path)?;
     let workers = crate::config::DeliveryWorkerConfig::from_environment(&config)?;
+    let git_workers = crate::config::LocalGitWorkerConfig::from_environment(&config)?;
     let url = std::env::var("AWR_TEAM_DATABASE_URL")
         .map_err(|_| "AWR_TEAM_DATABASE_URL is required".to_string())?;
     let delivery = awr_team_pg::DeliverySyncStore::new(url.clone());
@@ -1081,10 +1084,11 @@ pub async fn serve(path: &FilePath) -> Result<(), String> {
         .map_err(|_| "could not inspect listener".to_string())?;
     // Build all routes before any worker starts. Router/config failures cannot leave workers.
     let router = router(config.clone(), actual, store)?;
-    let workers = delivery_sync::DeliveryWorkerRuntime::start(&config, workers, delivery, |name| {
-        std::env::var(name).ok()
-    })
-    .await?;
+    let workers =
+        delivery_workers::DeliveryWorkers::start(&config, workers, git_workers, delivery, |name| {
+            std::env::var(name).ok()
+        })
+        .await?;
     println!(
         "{}",
         json!({"service":"awr-team-workstream","listen":actual.to_string(),"protocol_version":1})
@@ -1097,9 +1101,10 @@ pub async fn serve(path: &FilePath) -> Result<(), String> {
 pub async fn serve_router_with_delivery_workers(
     listener: tokio::net::TcpListener,
     router: Router,
-    workers: delivery_sync::DeliveryWorkerRuntime,
+    workers: impl Into<delivery_workers::DeliveryWorkers>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), String> {
+    let workers = workers.into();
     let (stop, mut stopping) = tokio::sync::watch::channel(false);
     let http = axum::serve(listener, router)
         .with_graceful_shutdown(async move {
