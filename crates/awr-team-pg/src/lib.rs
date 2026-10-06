@@ -4,6 +4,7 @@ mod agent_authorization;
 mod bootstrap;
 mod delegation_auth;
 mod delivery_adoption;
+mod delivery_sync;
 mod error;
 mod execution;
 mod graph;
@@ -41,6 +42,10 @@ pub use delegation_auth::{
     tmcp_actions_for_authorized, tmcp_actions_for_authorized_set,
 };
 pub use delivery_adoption::DeliveryAdoptionStore;
+pub use delivery_sync::{
+    ConfigureDeliveryConnector, DeliveryConnectorMapping, DeliveryReadSet, DeliverySyncStore,
+    IngestDeliveryFacts, ReserveDeliveryInspection, SelectDeliveryCandidate,
+};
 pub use error::{PgError, PgResult};
 pub use execution::{
     ExecutionRecord, ExecutionStore, OutboxDelivery, admit_live_fence, exactly_once_supported,
@@ -136,6 +141,6 @@ mod tests {
     #[test]
     fn schema_contract_is_stable() {
         assert_eq!(SCHEMA, "awr_team");
-        assert_eq!(EXPECTED_SCHEMA_VERSION, 42);
+        assert_eq!(EXPECTED_SCHEMA_VERSION, 43);
     }
 }
