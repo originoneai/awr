@@ -216,34 +216,40 @@ fn bounded_unique_references_and_explicit_versions_are_required() {
 
 #[test]
 fn confined_replace_checks_before_bytes_and_recovers_by_observing_after_bytes() {
-    let f = Fixture::new();
-    let guard = f.open();
-    let identity = guard.identity().clone();
-    let patch = prepare_delivery_source_note(&guard.read().unwrap(), &note()).unwrap();
-    guard
-        .replace(&patch.before_fingerprint, &patch.after_bytes)
-        .unwrap();
-    assert_eq!(guard.read().unwrap(), patch.after_bytes);
-    assert!(
+    for relative in ["ledger.yaml", "nested/ledger.yaml"] {
+        let f = Fixture::new();
+        let source = f.root.join(relative);
+        let parent = source.parent().unwrap();
+        fs::create_dir_all(parent).unwrap();
+        fs::write(&source, LEDGER).unwrap();
+        let guard = LockedSourceFile::open(&f.root, relative).unwrap();
+        let identity = guard.identity().clone();
+        let patch = prepare_delivery_source_note(&guard.read().unwrap(), &note()).unwrap();
         guard
-            .replace(&patch.before_fingerprint, LEDGER.as_bytes())
-            .is_err()
-    );
-    drop(guard);
-    let resumed = f.open();
-    resumed.verify_identity(&identity).unwrap();
-    assert_eq!(
-        fingerprint(&resumed.read().unwrap()),
-        patch.after_fingerprint
-    );
-    assert_eq!(
-        fs::read_dir(&f.root)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
-            .count(),
-        0
-    );
+            .replace(&patch.before_fingerprint, &patch.after_bytes)
+            .unwrap();
+        assert_eq!(guard.read().unwrap(), patch.after_bytes);
+        assert!(
+            guard
+                .replace(&patch.before_fingerprint, LEDGER.as_bytes())
+                .is_err()
+        );
+        drop(guard);
+        let resumed = LockedSourceFile::open(&f.root, relative).unwrap();
+        resumed.verify_identity(&identity).unwrap();
+        assert_eq!(
+            fingerprint(&resumed.read().unwrap()),
+            patch.after_fingerprint
+        );
+        assert_eq!(
+            fs::read_dir(parent)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
+                .count(),
+            0
+        );
+    }
 }
 
 #[test]

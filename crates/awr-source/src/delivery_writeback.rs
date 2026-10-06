@@ -400,7 +400,9 @@ impl LockedSourceFile {
             }
             self.parent.rename(&temporary, &self.parent, &self.leaf)?;
             #[cfg(unix)]
-            self.parent.try_clone()?.into_std_file().sync_all()?;
+            // Directory capabilities may use O_PATH on Linux. Reopen the same
+            // confined directory for reading so its descriptor supports fsync.
+            self.parent.open(".")?.sync_all()?;
             self.check_identity()?;
             Ok(())
         })();
