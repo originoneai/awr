@@ -421,7 +421,10 @@ failure. They do not replace complete natural-client business acceptance.
 The Team server can schedule the durable pump while serving its existing HTTP
 and MCP routes. Unset `AWR_TEAM_DELIVERY_WORKER_CONFIG` means **no workers**.
 The existing service TOML and `ServiceConfig` fields remain compatible. Enabling
-workers does not install repository adapters, approve work or create an administrator.
+this source group does not approve work, create an administrator or enable a
+repository worker. The optional fixed-repository Git group is configured
+separately with `AWR_TEAM_LOCAL_GIT_WORKER_CONFIG`; see
+[Local Git service workers](local-git-delivery.md#optional-team-server-worker).
 
 Set `AWR_TEAM_DELIVERY_WORKER_CONFIG` to a separate bounded TOML file:
 
@@ -459,9 +462,13 @@ size and jobs per poll are 1–64; pages per poll are 1–16. Workers may share 
 scope; PostgreSQL still fences their cross-process competition.
 
 The server validates its schema, configuration and routes before starting
-workers. All worker credentials/scopes undergo current PG admission before
-**any** worker starts; the whole sequence has a 30-second ceiling. Missing or
-invalid credentials fail startup without partial workers or implicit grants.
+workers. `DeliveryWorkers::start` owns the shared store and both sealed group
+admissions. All source and Git worker credentials/scopes, plus Git's fixed
+repository checks, finish before **either** group starts; the whole sequence has
+a 30-second ceiling. Missing or invalid credentials fail startup without partial
+workers or implicit grants. Absent/empty groups perform no credential, resource
+or PG access of their own. A denied Git group cannot leave an already admitted
+source group running.
 Runtime credentials stay in zeroizing memory and do not enter queue/source,
 audit, status or error bodies. Credential rotation requires an explicit server
 restart. Keeping the configured actor/client stable allows the original
@@ -484,9 +491,10 @@ prerequisites use bounded persisted deferral codes; database errors/timeouts
 after a possible effect never count as successful synchronization. Failure
 backoff is capped and a successful authorized clean poll resets the loop delay.
 
-Ctrl-C, Unix SIGTERM, HTTP termination and runtime drop stop polling and cancel
+Ctrl-C, Unix SIGTERM, HTTP termination and runtime drop stop both groups and cancel
 in-flight asynchronous work. Graceful HTTP shutdown and worker joining each
-have a five-second ceiling; remaining worker tasks are aborted. Cancellation
+have a five-second ceiling; groups join concurrently and remaining worker tasks
+are aborted. Cancellation
 does not acknowledge an intent or erase an unknown physical effect. Restart
 uses the durable queue/journal and respects any still-live lease.
 

@@ -103,23 +103,39 @@ pub struct DeliveryWorkerRuntime {
     monitor: DeliveryWorkerMonitor,
 }
 
+/// Validated workers and their actual store stay together until spawning.
+pub(super) struct DeliveryWorkerAdmission {
+    workers: Vec<Worker>,
+    store: Arc<DeliverySyncStore>,
+}
+
 impl DeliveryWorkerRuntime {
     /// Validate every configured worker before starting any. No implicit identity or grant.
     pub async fn start(
         service: &ServiceConfig,
         config: Option<DeliveryWorkerConfig>,
         store: DeliverySyncStore,
-        mut credential_lookup: impl FnMut(&str) -> Option<String>,
+        credential_lookup: impl FnMut(&str) -> Option<String>,
     ) -> Result<Self, String> {
+        Ok(
+            Self::admit(service, config, Arc::new(store), credential_lookup)
+                .await?
+                .spawn(),
+        )
+    }
+
+    pub(super) async fn admit(
+        service: &ServiceConfig,
+        config: Option<DeliveryWorkerConfig>,
+        store: Arc<DeliverySyncStore>,
+        mut credential_lookup: impl FnMut(&str) -> Option<String>,
+    ) -> Result<DeliveryWorkerAdmission, String> {
         service.validate()?;
-        let (stop, receiver) = watch::channel(false);
-        let mut runtime = Self {
-            stop,
-            tasks: Vec::new(),
-            monitor: DeliveryWorkerMonitor { snapshots: vec![] },
-        };
         let Some(config) = config else {
-            return Ok(runtime);
+            return Ok(DeliveryWorkerAdmission {
+                workers: vec![],
+                store,
+            });
         };
         config.validate(service)?;
         let mut workers = Vec::new();
@@ -193,20 +209,7 @@ impl DeliveryWorkerRuntime {
         })
         .await
         .map_err(|_| "delivery worker startup checks timed out".to_string())??;
-        let store = Arc::new(store);
-        for worker in workers {
-            runtime.monitor.snapshots.push(worker.snapshot.clone());
-            // Capture the observation before spawning, including cancellation before the
-            // first poll. Constructing it inside an async fn would miss that case.
-            let observation = StopObservation(worker.snapshot.clone());
-            let store = store.clone();
-            let receiver = receiver.clone();
-            runtime.tasks.push(tokio::spawn(async move {
-                let _on_stop = observation;
-                run_worker(worker, store, receiver).await;
-            }));
-        }
-        Ok(runtime)
+        Ok(DeliveryWorkerAdmission { workers, store })
     }
 
     pub fn monitor(&self) -> DeliveryWorkerMonitor {
@@ -226,6 +229,29 @@ impl DeliveryWorkerRuntime {
                 let _ = task.await;
             }
         }
+    }
+}
+
+impl DeliveryWorkerAdmission {
+    pub(super) fn spawn(self) -> DeliveryWorkerRuntime {
+        let (stop, receiver) = watch::channel(false);
+        let mut runtime = DeliveryWorkerRuntime {
+            stop,
+            tasks: vec![],
+            monitor: DeliveryWorkerMonitor { snapshots: vec![] },
+        };
+        for worker in self.workers {
+            runtime.monitor.snapshots.push(worker.snapshot.clone());
+            // Capture before spawning, including cancellation before the first poll.
+            let observation = StopObservation(worker.snapshot.clone());
+            let store = self.store.clone();
+            let receiver = receiver.clone();
+            runtime.tasks.push(tokio::spawn(async move {
+                let _on_stop = observation;
+                run_worker(worker, store, receiver).await;
+            }));
+        }
+        runtime
     }
 }
 

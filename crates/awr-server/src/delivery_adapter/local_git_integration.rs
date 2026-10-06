@@ -5,8 +5,8 @@ use super::{
 };
 use awr_team::delivery::*;
 use awr_team_pg::{
-    ConfirmDeliveryIntegration, DeliveryIntegrationPermit, DeliveryReadSet, DeliverySyncStore,
-    DispatchDeliveryIntegration, IngestDeliveryFacts, ReserveDeliveryInspection,
+    ConfirmDeliveryIntegration, DeliveryIntegrationPermit, DeliveryReadSet, DeliveryScheduleQuery,
+    DeliverySyncStore, DispatchDeliveryIntegration, IngestDeliveryFacts, ReserveDeliveryInspection,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -63,7 +63,7 @@ pub struct LocalGitIntegrationSnapshot {
     pub records: Vec<DeliveryEnvelope>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Attempt {
     version: u32,
@@ -419,8 +419,16 @@ impl LocalGitIntegrator {
             return Err(LocalGitError::BindingMismatch);
         }
         self.directories()?;
-        let encoded = bytes(attempt)?;
-        let request_digest = digest(&encoded);
+        let request_digest = digest(&bytes(attempt)?);
+        let index = self.report_index(attempt, inspection_id);
+        if let Some(snapshot) = self.cached(&index, attempt, inspection_id, &request_digest)? {
+            return Ok(snapshot);
+        }
+        let report = self.probe_attempt(attempt, inspection_id).await?;
+        self.publish_probe(attempt, report, inspection_id)
+    }
+
+    fn report_index(&self, attempt: &Attempt, inspection_id: &str) -> PathBuf {
         let key = digest(
             &serde_json::to_vec(&(
                 attempt.request.request_id.as_str(),
@@ -429,14 +437,21 @@ impl LocalGitIntegrator {
             ))
             .unwrap(),
         );
-        let index = self
-            .observer
+        self.observer
             .config
             .report_directory
-            .join(format!("integration-inspection-{key}.json"));
-        if let Some(snapshot) = self.cached(&index, attempt, inspection_id, &request_digest)? {
-            return Ok(snapshot);
-        }
+            .join(format!("integration-inspection-{key}.json"))
+    }
+
+    /// Fresh bounded reads without publishing an observation or effect marker.
+    async fn probe_attempt(
+        &self,
+        attempt: &Attempt,
+        inspection_id: &str,
+    ) -> Result<LocalGitIntegrationReport, LocalGitError> {
+        self.directories()?;
+        let encoded = bytes(attempt)?;
+        let request_digest = digest(&encoded);
         let (marker, result) = self.paths(attempt.request.request_id.as_str());
         let recorded = read_file(&marker)?;
         if recorded.as_ref().is_some_and(|b| *b != encoded) {
@@ -481,7 +496,7 @@ impl LocalGitIntegrator {
             // not establish no effect. Keep the durable target guard unresolved.
             IntegrationOutcome::Unknown
         };
-        let report = LocalGitIntegrationReport {
+        Ok(LocalGitIntegrationReport {
             version: 1,
             config_digest: self.observer.config_digest.clone(),
             candidate_digest: attempt.candidate.binding.digest().unwrap(),
@@ -497,7 +512,24 @@ impl LocalGitIntegrator {
             observation: observed,
             diagnostic,
             outcome: terminal,
-        };
+        })
+    }
+
+    fn publish_probe(
+        &self,
+        attempt: &Attempt,
+        mut report: LocalGitIntegrationReport,
+        inspection_id: &str,
+    ) -> Result<LocalGitIntegrationSnapshot, LocalGitError> {
+        if !text(inspection_id, 128) {
+            return Err(LocalGitError::BindingMismatch);
+        }
+        report.inspection_id = inspection_id.into();
+        if let Some(observation) = &mut report.observation {
+            observation.inspection_id = inspection_id.into();
+        }
+        let request_digest = digest(&bytes(attempt)?);
+        let index = self.report_index(attempt, inspection_id);
         let encoded = bytes(&report)?;
         let report_sha256 = digest(&encoded);
         publish(
@@ -641,13 +673,26 @@ impl LocalGitIntegrator {
                     request_id: format!("{}:reserve", request.request_id),
                     read_set: request.read_set.clone(),
                     connector_id: config.connector_id.clone(),
-                    connector_version: request.connector_version,
+                    connector_version: request.connector_version.clone(),
                     candidate_digest: original.candidate.binding.digest().unwrap(),
                     lease_seconds: 120,
                 },
             )
             .await
             .map_err(domain_error)?;
+        self.reconcile_reserved(store, credential, request, original, &reserved)
+            .await
+    }
+
+    async fn reconcile_reserved(
+        &self,
+        store: &DeliverySyncStore,
+        credential: &str,
+        request: LocalGitIntegrationPollRequest,
+        original: Attempt,
+        reserved: &Value,
+    ) -> Result<Value, LocalGitError> {
+        let config = &self.observer.config;
         let inspection = reserved["data"]["inspection_id"]
             .as_str()
             .ok_or(LocalGitError::InvalidStoreResponse)?;
@@ -706,9 +751,214 @@ impl LocalGitIntegrator {
             Err(error) => return Err(domain_error(error)),
         };
         Ok(
-            json!({"observation":ingested,"integration":confirmed,"acceptance_ready":false,"source_synchronized":false}),
+            json!({"observation":ingested,"integration":confirmed,"unchanged":false,
+                "read_only":false,"execution_authorized":false,"acceptance_ready":false,"source_synchronized":false}),
         )
     }
+
+    fn previous_original_report(
+        &self,
+        attempt: &Attempt,
+        view: &Value,
+        connector_version: &Value,
+    ) -> Option<LocalGitIntegrationReport> {
+        let proof = &view["confirmation"];
+        if proof["connector_version"] != *connector_version
+            || proof["candidate_digest"] != attempt.candidate.binding.digest().ok()?
+            || proof["receipt"]["connector_id"] != self.observer.config.connector_id
+            || !matches!(
+                proof["receipt"]["state"].as_str(),
+                Some("applied" | "superseded")
+            )
+        {
+            return None;
+        }
+        let envelope: DeliveryEnvelope = serde_json::from_value(proof["envelope"].clone()).ok()?;
+        envelope.validate().ok()?;
+        let DeliveryRecord::IntegrationObservation(observation) = &envelope.record else {
+            return None;
+        };
+        let prefix = format!(
+            "awr-local-git-integration:{}:",
+            self.observer.config.adapter_id
+        );
+        let hash = observation.provenance.reference.strip_prefix(&prefix)?;
+        let report: LocalGitIntegrationReport =
+            serde_json::from_slice(&self.report_bytes(hash).ok()?).ok()?;
+        let snapshot = self
+            .cached(
+                &self.report_index(attempt, &report.inspection_id),
+                attempt,
+                &report.inspection_id,
+                &digest(&bytes(attempt).ok()?),
+            )
+            .ok()??;
+        // Ingest owns the recording time. Normalize the locally reconstructed
+        // envelope to that exact receipt value before comparing every field.
+        // Observation time and all request/report bindings remain unchanged.
+        let mut expected = snapshot.records.first()?.clone();
+        let DeliveryRecord::IntegrationObservation(observation) = &mut expected.record else {
+            return None;
+        };
+        observation.provenance.recorded_at_unix_ms =
+            proof["receipt"]["recorded_at_unix_ms"].as_u64()?;
+        if snapshot.report_artifact.sha256 != hash
+            || proof["inspection_id"] != report.inspection_id
+            || json!(expected) != json!(envelope)
+        {
+            return None;
+        }
+        Some(snapshot.report)
+    }
+
+    /// Fresh service polling of the original request, independent of the current
+    /// selection. An unchanged verified query publishes no fact or confirmation.
+    pub async fn reconcile_original_current(
+        &self,
+        store: &DeliverySyncStore,
+        credential: &str,
+        integration_id: &str,
+    ) -> Result<Value, LocalGitError> {
+        let config = &self.observer.config;
+        let schedule = store
+            .schedule(
+                &config.tenant_id,
+                &config.project_id,
+                credential,
+                DeliveryScheduleQuery {
+                    work_id: config.work_id.clone(),
+                    connector_id: config.connector_id.clone(),
+                    cursor: None,
+                    limit: 1,
+                },
+            )
+            .await
+            .map_err(domain_error)?;
+        if schedule["connector"]["provider"] != "local_git"
+            || schedule["connector"]["resource"] != config.resource
+        {
+            return Err(LocalGitError::BindingMismatch);
+        }
+        let (original, view) = self.original(store, credential, integration_id).await?;
+        if matches!(view["state"].as_str(), Some("confirmed" | "rejected")) {
+            return Ok(
+                json!({"unchanged":true,"terminal":true,"read_only":true,"state_basis":"at_read", "integration":view,
+                "observation":null,"execution_authorized":false,"acceptance_ready":false,"source_synchronized":false}),
+            );
+        }
+        if view["dispatched_at"].is_null() {
+            return Err(LocalGitError::PreconditionsChanged);
+        }
+        let set: DeliveryReadSet = serde_json::from_value(schedule["read_set"].clone())
+            .map_err(|_| LocalGitError::InvalidStoreResponse)?;
+        let previous = self.previous_original_report(
+            &original,
+            &view,
+            &schedule["connector"]["connector_version"],
+        );
+        let probe = self.probe_attempt(&original, "scheduled-probe").await?;
+        if previous
+            .as_ref()
+            .is_some_and(|p| original_semantics(p) == original_semantics(&probe))
+        {
+            return Ok(
+                json!({"unchanged":true,"terminal":false,"read_only":true,"state_basis":"at_read", "integration":view,
+                "observation":null,"execution_authorized":false,"acceptance_ready":false,"source_synchronized":false}),
+            );
+        }
+        let key = digest(&bytes(&json!([
+            "local-git-original-v1",
+            self.observer.config_digest,
+            set,
+            schedule["connector"]["connector_version"],
+            original.request,
+            view["confirmation_fact_id"],
+            original_semantics(&probe)
+        ]))?);
+        let mut prefix = format!("original:{key}");
+        for retry in 0..2 {
+            let request = LocalGitIntegrationPollRequest {
+                request_id: prefix.clone(),
+                integration_id: integration_id.into(),
+                read_set: set.clone(),
+                connector_version: schedule["connector"]["connector_version"]
+                    .as_str()
+                    .ok_or(LocalGitError::InvalidStoreResponse)?
+                    .into(),
+            };
+            let reserved = store
+                .reserve_integration_inspection(
+                    &config.tenant_id,
+                    &config.project_id,
+                    credential,
+                    integration_id,
+                    ReserveDeliveryInspection {
+                        request_id: format!("{prefix}:reserve"),
+                        read_set: set.clone(),
+                        connector_id: config.connector_id.clone(),
+                        connector_version: request.connector_version.clone(),
+                        candidate_digest: original.candidate.binding.digest().unwrap(),
+                        lease_seconds: 120,
+                    },
+                )
+                .await
+                .map_err(domain_error)?;
+            if reserved["inspection_lease"]["live"] != true {
+                if retry == 0 {
+                    prefix = format!("renew:{}", awr_core::Id::new());
+                    continue;
+                }
+                return Err(LocalGitError::PreconditionsChanged);
+            }
+            // Reobserve after domain admission; the preliminary probe is never ingested.
+            match self
+                .reconcile_reserved(store, credential, request, original.clone(), &reserved)
+                .await
+            {
+                Ok(result) => return Ok(result),
+                Err(LocalGitError::PreconditionsChanged) if retry == 0 => {
+                    // Renew only after PG proves this observation reservation expired.
+                    let replay = store
+                        .reserve_integration_inspection(
+                            &config.tenant_id,
+                            &config.project_id,
+                            credential,
+                            integration_id,
+                            ReserveDeliveryInspection {
+                                request_id: format!("{prefix}:reserve"),
+                                read_set: set.clone(),
+                                connector_id: config.connector_id.clone(),
+                                connector_version: schedule["connector"]["connector_version"]
+                                    .as_str()
+                                    .unwrap()
+                                    .into(),
+                                candidate_digest: original.candidate.binding.digest().unwrap(),
+                                lease_seconds: 120,
+                            },
+                        )
+                        .await
+                        .map_err(domain_error)?;
+                    if replay["inspection_lease"]["live"] == true {
+                        return Err(LocalGitError::PreconditionsChanged);
+                    }
+                    prefix = format!("renew:{}", awr_core::Id::new());
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(LocalGitError::PreconditionsChanged)
+    }
+}
+
+fn original_semantics(report: &LocalGitIntegrationReport) -> Value {
+    let mut value = json!(report);
+    for name in ["inspection_id", "observed_at_unix_ms"] {
+        value.as_object_mut().unwrap().remove(name);
+        if let Some(observation) = value["observation"].as_object_mut() {
+            observation.remove(name);
+        }
+    }
+    value
 }
 
 fn now_ms() -> u64 {

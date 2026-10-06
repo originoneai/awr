@@ -4,15 +4,18 @@
 mod common;
 #[path = "../../awr-team-pg/tests/fixtures/workstream_access.rs"]
 mod fixture;
+#[path = "fixtures/local_git.rs"]
+mod git;
 #[path = "../../awr-team-pg/tests/fixtures/delivery_publication.rs"]
 mod publication;
 
 use awr_core::Id;
 use awr_server::{
-    config::DeliveryWorkerConfig,
+    config::{DeliveryWorkerConfig, LocalGitWorkerConfig, LocalGitWorkerSpec},
     service::{
         ProjectBinding, ServiceConfig,
         delivery_sync::{DeliveryWorkerMonitor, DeliveryWorkerRuntime, WorkerFailure, WorkerState},
+        delivery_workers::DeliveryWorkers,
     },
 };
 use awr_team_pg::{ClaimDeliverySyncIntent, DeliverySyncLease, DeliverySyncStore};
@@ -209,6 +212,86 @@ async fn complete_startup_admission_creates_no_grant_and_starts_no_partial_worke
         count(
             &f,
             "SELECT count(*) FROM awr_team.workstream_grants WHERE can_manage"
+        )
+        .await,
+        0
+    );
+}
+
+#[tokio::test]
+async fn denied_git_group_cannot_start_an_already_admitted_source_group() {
+    let f = setup_publisher().await;
+    let repo = git::GitFixture::integration(false);
+    let mut repository = repo.config.clone();
+    repository.inspection_timeout_ms = 3000;
+    let git = LocalGitWorkerConfig {
+        version: 1,
+        workers: vec![LocalGitWorkerSpec {
+            project: "one".into(),
+            worker_id: "denied-git".into(),
+            credential_env: "DENIED_GIT_CREDENTIAL".into(),
+            integration_enabled: true,
+            repository,
+            poll_interval_ms: 100,
+            lease_seconds: 10,
+            operation_timeout_ms: 5000,
+            max_backoff_ms: 800,
+            page_size: 1,
+            max_pages_per_poll: 1,
+            max_jobs_per_poll: 1,
+        }],
+    };
+    git.validate(&service()).unwrap();
+    let before = f.bytes();
+    let mut lookups = Vec::new();
+    let result = DeliveryWorkers::start(
+        &service(),
+        Some(config("admitted-source")),
+        Some(git),
+        f.restarted(),
+        |name| {
+            lookups.push(name.to_owned());
+            Some(
+                if name == "DENIED_GIT_CREDENTIAL" {
+                    B
+                } else {
+                    A
+                }
+                .into(),
+            )
+        },
+    )
+    .await;
+    assert_eq!(
+        lookups,
+        ["SYNTHETIC_WORKER_CREDENTIAL", "DENIED_GIT_CREDENTIAL"]
+    );
+    assert!(result.is_err());
+    no_secret(result.err().unwrap());
+    // Source admission completed; its task must never have been spawned.
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert_eq!(f.bytes(), before);
+    assert_eq!(repo.bare(&["rev-parse", "refs/heads/main"]), repo.base);
+    assert_eq!(
+        count(
+            &f,
+            "SELECT sum(attempts)::bigint FROM awr_team.delivery_sync_intents"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(
+            &f,
+            "SELECT count(*) FROM awr_team.delivery_source_publications"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(
+            &f,
+            "SELECT count(*) FROM awr_team.delivery_integration_intents"
         )
         .await,
         0
