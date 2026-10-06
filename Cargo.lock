@@ -208,6 +208,7 @@ version = "0.4.0"
 dependencies = [
  "awr-core",
  "awr-runtime",
+ "awr-source",
  "awr-team",
  "awr-team-pg",
  "axum",

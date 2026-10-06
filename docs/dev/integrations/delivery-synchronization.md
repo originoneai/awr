@@ -11,8 +11,9 @@ accept a task. A separate authenticated publisher can write bounded delivery
 references to the project's configured authoritative source. Development on
 `main` exposes these operations through the existing Team HTTP/MCP entry points.
 This does not establish deployed integration or native business acceptance.
-Background scheduling, repository adapters and neutral finalization remain
-separate implementation layers.
+Background scheduling is optional, explicitly configured server behavior as
+described below. Repository adapters and neutral finalization remain separate
+implementation layers.
 
 ## Authenticated HTTP/MCP operations
 
@@ -300,10 +301,10 @@ creates two durable intents in the same transaction as its notification:
 
 Processing a refresh never proves source synchronization. Neither intent creates
 approval, task completion, repository integration or an execution grant. These
-operations are library entry points for explicitly configured server workers;
-this change does not install a scheduler or expose a deserializable worker
-capability through MCP. Server lifecycle configuration and repository adapters
-remain separate layers.
+operations are library entry points used by explicitly configured server workers.
+The library does not install a scheduler or expose a deserializable worker
+capability through MCP. Server lifecycle configuration is described below;
+repository adapters remain a separate layer.
 
 `sync_intents` reads one explicitly authorized workstream in an authenticated
 `RepeatableRead` transaction. Its page limit is 1–64, with `has_more` and
@@ -364,3 +365,95 @@ stable claims, worker/publication interleaving, expiry within transactions,
 revocation, changed bindings, scoped pagination, backoff, RLS, migration
 rollback and restart after an actual file effect followed by a database
 failure. They do not replace complete natural-client business acceptance.
+
+## Optional server worker lifecycle
+
+The Team server can schedule the durable pump while serving its existing HTTP
+and MCP routes. Unset `AWR_TEAM_DELIVERY_WORKER_CONFIG` means **no workers**.
+The existing service TOML and `ServiceConfig` fields remain compatible. Enabling
+workers does not install repository adapters, approve work or create an administrator.
+
+Set `AWR_TEAM_DELIVERY_WORKER_CONFIG` to a separate bounded TOML file:
+
+```toml
+version = 1
+
+[[workers]]
+project = "team"                       # An existing service project key.
+worker_id = "delivery-team"             # A stable, unique configured worker ID.
+workstreams = ["00000000000000000000000001"] # Replace with actual authorized IDs.
+credential_env = "AWR_DELIVERY_WORKER_CREDENTIAL" # Name only; never a token.
+poll_interval_ms = 1000
+lease_seconds = 60
+operation_timeout_ms = 15000
+max_backoff_ms = 60000
+page_size = 16
+max_pages_per_poll = 4
+max_jobs_per_poll = 16
+```
+
+Provision the referenced credential through the existing access-management
+process, outside this file. Its current principal must be an eligible human or
+system identity with project-management authority and explicit management/read
+grants for **every** configured workstream. An ordinary delegated developer
+Agent's token is insufficient. The worker ID does not identify or impersonate
+a member. The file accepts no role override, raw token, new tenant/project
+mapping, source path or repository URL.
+
+Configuration rejects unknown fields, unknown service project keys, duplicate
+worker IDs, duplicate scopes within a worker and excessive limits. It supports
+at most 16 workers and 32 workstreams per worker. Polling is 100–60,000 ms,
+operation timeout is 100–60,000 ms and must be shorter than the 5–300 second
+lease, and maximum backoff is between the poll interval and 300,000 ms. Page
+size and jobs per poll are 1–64; pages per poll are 1–16. Workers may share a
+scope; PostgreSQL still fences their cross-process competition.
+
+The server validates its schema, configuration and routes before starting
+workers. All worker credentials/scopes undergo current PG admission before
+**any** worker starts; the whole sequence has a 30-second ceiling. Missing or
+invalid credentials fail startup without partial workers or implicit grants.
+Runtime credentials stay in zeroizing memory and do not enter queue/source,
+audit, status or error bodies. Credential rotation requires an explicit server
+restart. Keeping the configured actor/client stable allows the original
+publication to be recovered; a different or revoked principal cannot take it over.
+
+Workers share one delivery store and pool, separate from HTTP handling. Each
+worker has at most one operation in progress. Polls visit workstreams in turn,
+advance bounded page cursors and resume partial pages after the last visited
+item. Completed history does not permanently hide a pending intent. Pending,
+due blocked and expired leased intents are eligible; a live lease is observed
+and left alone. Retired cursors are reset for a fresh authenticated scope read.
+
+Each actual fence acquisition has a fresh request ID. A missing claim or effect
+response stays unknown: the next poll inspects durable state rather than
+fabricating a handle or claiming a committed live lease again. After lease
+expiry, the same current principal obtains a new fence and recovers the
+associated source journal. Exact landed bytes are not rewritten. Changed
+bindings retain their unresolved publication. Known source failures and changed
+prerequisites use bounded persisted deferral codes; database errors/timeouts
+after a possible effect never count as successful synchronization. Failure
+backoff is capped and a successful authorized clean poll resets the loop delay.
+
+Ctrl-C, Unix SIGTERM, HTTP termination and runtime drop stop polling and cancel
+in-flight asynchronous work. Graceful HTTP shutdown and worker joining each
+have a five-second ceiling; remaining worker tasks are aborted. Cancellation
+does not acknowledge an intent or erase an unknown physical effect. Restart
+uses the durable queue/journal and respects any still-live lease.
+
+`DeliveryWorkerRuntime::monitor()` exposes at most one snapshot per configured
+worker: configured project/worker, finite state/failure code, bounded counters,
+retry delay and server observation time. State-change logs include only the
+configured identity and finite codes; raw PG/filesystem/provider errors,
+credential values and environment names are omitted. Snapshots are runtime
+observations, not delivery receipts. There is no new anonymous management
+endpoint; authenticated Inspector aggregation remains a separate integration.
+The generic library/MCP capability flags describe their own layer and do not
+certify an operator's worker configuration or liveness.
+
+Synthetic isolated server/PG regressions cover all-or-none admission, normal
+refresh/source processing, backlog/partial-page/scope traversal, contention,
+credential revocation/expiry, source drift, retained stale publications,
+actual file effects followed by database failure or timeout, recovery without
+rewriting, cancellation during effects, runtime drop and complete loopback
+HTTP startup/shutdown. These mechanism tests do not constitute native team
+business acceptance or a deployment.
