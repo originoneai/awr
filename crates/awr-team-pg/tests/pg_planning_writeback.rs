@@ -246,6 +246,7 @@ fn tempfile_ledger() -> TmpLedger {
             .as_nanos()
     ));
     std::fs::create_dir_all(&root).unwrap();
+    let root = std::fs::canonicalize(root).unwrap();
     // Workstream ids/keys must retain the fixture catalog (Id::from(1/2)).
     let ledger = r#"workstreams:
   version: 1
@@ -824,10 +825,12 @@ async fn writeback_storage_failure_retains_journal_and_resumes_the_same_request(
     let tmp = tempfile_ledger();
     let path = tmp.root.join("ledger.yaml");
     let before = std::fs::read(&path).unwrap();
-    // Deterministic filesystem failure, including when tests run as root.
-    // The source remains readable, but the atomic replacement cannot be written.
-    let obstruction = tmp.root.join(".ledger.yaml.tmcp022.tmp");
-    std::fs::create_dir(&obstruction).unwrap();
+    // Explicit read-only source protection is deterministic even when tests run
+    // as root and retains the intent before the replacement is attempted.
+    let permissions = std::fs::metadata(&path).unwrap().permissions();
+    let mut readonly = permissions.clone();
+    readonly.set_readonly(true);
+    std::fs::set_permissions(&path, readonly).unwrap();
     let req = WritebackActivateRequest {
         request_id: "req-storage-recovery".into(),
         publish_receipt_id: receipt_id,
@@ -863,7 +866,7 @@ async fn writeback_storage_failure_retains_journal_and_resumes_the_same_request(
         "the request retains a recoverable journal"
     );
 
-    std::fs::remove_dir(&obstruction).unwrap();
+    std::fs::set_permissions(&path, permissions).unwrap();
     let resumed = store
         .activate_planning_writeback(TENANT, PROJECT, A, &req)
         .await
@@ -897,6 +900,124 @@ async fn unreadable_writeback_source_is_storage_failure_not_invalid_input() {
         .await
         .unwrap_err();
     assert!(error.source_storage_reason().is_some(), "{error:?}");
+}
+
+#[tokio::test]
+async fn cooperative_source_writer_blocks_planning_until_the_same_guard_is_released() {
+    let (_g, admin, _db, store) = store_and_roles().await;
+    let (_cid, _digest, receipt_id) = publish_candidate_with_workstream(&store, "alpha").await;
+    let tmp = tempfile_ledger();
+    let guard = awr_source::LockedSourceFile::open(&tmp.root, "ledger.yaml").unwrap();
+    let before = guard.read().unwrap();
+    let req = WritebackActivateRequest {
+        request_id: "req-shared-source-lock".into(),
+        publish_receipt_id: receipt_id,
+        source_root: tmp.root.clone(),
+        ledger_relative_path: "ledger.yaml".into(),
+        impact_proven: true,
+        stopped_work_ids: vec![],
+    };
+    assert!(matches!(
+        store
+            .activate_planning_writeback(TENANT, PROJECT, A, &req)
+            .await,
+        Err(PgError::WritebackRefused(_))
+    ));
+    assert_eq!(guard.read().unwrap(), before);
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT count(*) FROM awr_team.planning_activation_receipts WHERE request_id=$1",
+                &[&req.request_id]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+    drop(guard);
+    store
+        .activate_planning_writeback(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(tmp.root.join("ledger.yaml"))
+            .unwrap()
+            .matches("id: SHARED-1")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn planning_preserves_existing_delivery_reference_notes_in_the_sole_source() {
+    use awr_source::{DeliverySourceNote, LockedSourceFile, prepare_delivery_source_note};
+    let (_g, _admin, _db, store) = store_and_roles().await;
+    let (_cid, _digest, receipt_id) = publish_candidate_with_workstream(&store, "alpha").await;
+    let tmp = tempfile_ledger();
+    // A synthetic source metadata reference, not a domain completion receipt.
+    let note = DeliverySourceNote {
+        version: 1,
+        publication_id: "synthetic-publication".into(),
+        work_external_key: "a".into(),
+        contract_snapshot_id: "synthetic-snapshot".into(),
+        candidate_id: "candidate-a".into(),
+        candidate_version: "1".into(),
+        candidate_digest: "a".repeat(64),
+        selection_version: "1".into(),
+        metadata_revision: "1".into(),
+        observation_receipt_ids: vec!["synthetic-observation".into()],
+        fact_ids: vec!["synthetic-fact".into()],
+        completion_reference: None,
+    };
+    let guard = LockedSourceFile::open(&tmp.root, "ledger.yaml").unwrap();
+    let patch = prepare_delivery_source_note(&guard.read().unwrap(), &note).unwrap();
+    guard
+        .replace(&patch.before_fingerprint, &patch.after_bytes)
+        .unwrap();
+    drop(guard);
+    store
+        .activate_planning_writeback(
+            TENANT,
+            PROJECT,
+            A,
+            &WritebackActivateRequest {
+                request_id: "req-preserve-delivery-note".into(),
+                publish_receipt_id: receipt_id,
+                source_root: tmp.root.clone(),
+                ledger_relative_path: "ledger.yaml".into(),
+                impact_proven: true,
+                stopped_work_ids: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    let after = std::fs::read(tmp.root.join("ledger.yaml")).unwrap();
+    let check = prepare_delivery_source_note(&after, &note).unwrap();
+    assert!(
+        check.changed_external_keys.is_empty(),
+        "the exact typed note is still present"
+    );
+    assert_eq!(check.after_bytes, after);
+    let location =
+        awr_source::SoleSourceLocation::server_directory(&tmp.root, "ledger.yaml").unwrap();
+    let package = awr_source::prepare_publish_from_ledger_bytes(
+        &location,
+        &tmp.root,
+        &after,
+        PROJECT,
+        &awr_source::PublishPrepOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        package
+            .source_status_notes
+            .iter()
+            .find(|n| n.work_external_key == "a")
+            .unwrap()
+            .raw_status,
+        "planned"
+    );
 }
 
 #[tokio::test]

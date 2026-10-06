@@ -109,3 +109,32 @@ server ordering, late/expired results, candidate and executor protection,
 source-contract changes, revocation, provenance, row-level isolation and
 rollback/restart. These checks do not establish native-client acceptance or
 operational adapter support.
+## Cooperative source writes
+
+The source library provides `LockedSourceFile` for exact, server-held source
+paths. Planning writeback now uses the same stable advisory lock as delivery
+metadata writers. Acquisition is nonblocking, so a writer does not wait on a
+filesystem lock while holding the PostgreSQL project barrier. The lock is keyed
+by the target leaf under its exact parent; different authorized root spellings
+for that same file cannot obtain different locks.
+
+The guard refuses traversal, replacement links, nonregular or multiply linked
+source/lock files, changed directory/lock identities and stale fingerprints.
+Replacement preserves permissions, syncs a uniquely created temporary file and
+renames through the held parent. Unix also syncs that parent. Windows retains
+the durability limit of its file-sync/rename primitives. A read-only source is
+refused explicitly. Storage failures keep the existing bounded planning error
+classification and recoverable request rather than exposing private paths.
+
+`prepare_delivery_source_note` patches only the matching work's typed
+`delivery_sync` reference note. It preserves status, unrelated fields, comments
+and other work records. References are bounded, unique and versioned; identical
+notes preserve exact bytes, and older metadata/selection revisions conflict.
+The note contains no raw provider payload, credential, approval or verification
+flag. A completion reference describes a receipt ID; this library does not
+verify it, complete work or overwrite a source status. An authenticated domain
+publisher must resolve every referenced fact and receipt before using it.
+
+These are filesystem/library mechanisms. They do not yet provide a durable
+delivery publication journal, a synchronization endpoint or native business
+acceptance. Successful patching alone must not set `source_synchronized`.

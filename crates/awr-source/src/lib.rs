@@ -1,5 +1,6 @@
 //! Authoritative project source configuration and adapter contracts.
 mod adapter;
+mod delivery_writeback;
 mod directory;
 mod document;
 mod file_inventory;
@@ -26,6 +27,10 @@ mod yaml_mutation;
 
 pub use adapter::{ParseContext, ProjectionBatch, SourceAdapter};
 pub use awr_core::{Error, Result};
+pub use delivery_writeback::{
+    DeliveryCompletionReference, DeliverySourceNote, LockedSourceFile, SourceFileIdentity,
+    prepare_delivery_source_note,
+};
 pub use directory::{DirectoryDelta, DirectoryInventory, MarkdownDirectoryAdapter};
 pub use document::{
     DocumentAction, DocumentEdit, PreparedDocument, document_path_registration,
