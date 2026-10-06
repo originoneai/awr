@@ -1,0 +1,18 @@
+# Synthetic operator configuration for the LocalGitAdapter library API.
+# Existing private paths; no token, default grant or public endpoint.
+version = 1
+adapter_id = "local-repository-observer"
+connector_id = "local-repository-connector"
+tenant_id = "example-tenant"
+project_id = "example-project"
+workstream_id = "00000000000000000000000001"
+work_id = "example-work"
+resource = "local-repository:example"
+repository = "/srv/example-repository.git"
+git_executable = "/usr/bin/git"
+target_reference = "refs/heads/main"
+report_directory = "/var/lib/awr/local-git-reports"
+command_timeout_ms = 3000
+inspection_timeout_ms = 30000
+max_blob_bytes = 1048576
+max_total_blob_bytes = 4194304

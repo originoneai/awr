@@ -24,7 +24,7 @@ sha2.workspace = true
 url.workspace = true
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 rmcp = { version = "3.2.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time", "process", "io-util"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
