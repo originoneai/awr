@@ -447,7 +447,10 @@ pub fn command_business_action(op: &str) -> Option<awr_team::Action> {
         "review.accept" | "review.return" | "review.decide" => ReviewDecide,
         // Rework is author/executor acknowledgment of a return — not independent review.
         "work.rework" => DeliverySubmitAndRequestReview,
-        "work.complete" | "delivery.finalize" => DeliveryFinalize,
+        "work.complete"
+        | "delivery.finalize"
+        | "delivery.integration.prepare"
+        | "delivery.integration.reject_prepared" => DeliveryFinalize,
         "planning.propose" => PlanningPropose,
         "planning.edit_draft" => PlanningEditDraft,
         "planning.approve" => PlanningApprove,
@@ -493,6 +496,7 @@ pub fn query_business_action(op: &str) -> Option<awr_team::Action> {
         "delivery.neutral.inspect",
         "delivery.neutral.outcome",
         "delivery.source.status",
+        "delivery.integration.inspect",
         "source.content",
         "artifact.content",
         "planning.outcome",
@@ -643,6 +647,8 @@ pub(crate) fn command_authority(op: &str) -> Option<DomainAuthority> {
         | "review.decide"
         | "work.complete"
         | "delivery.finalize"
+        | "delivery.integration.prepare"
+        | "delivery.integration.reject_prepared"
         | "delivery.submit_and_request_review"
         | "delivery.register_pr"
         | "delivery.observe_pr"

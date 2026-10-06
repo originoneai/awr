@@ -40,6 +40,7 @@ const QUERIES: &[&str] = &[
     "delivery.neutral.inspect",
     "delivery.neutral.outcome",
     "delivery.source.status",
+    "delivery.integration.inspect",
     "source.content",
     "artifact.content",
     "planning.outcome",
@@ -158,7 +159,10 @@ impl WorkstreamQuery {
                 && self.request_id.is_some()
                     != matches!(
                         self.op.as_str(),
-                        "command.inspect" | "planning.outcome" | "delivery.neutral.outcome"
+                        "command.inspect"
+                            | "planning.outcome"
+                            | "delivery.neutral.outcome"
+                            | "delivery.integration.inspect"
                     ))
             || (self.change_id.is_some()
                 || self.member_actor_id.is_some()
@@ -206,7 +210,10 @@ impl WorkstreamQuery {
                 && (self.work_id.is_some() || self.session_id.is_some())
             || matches!(
                 self.op.as_str(),
-                "delivery.neutral.inspect" | "delivery.neutral.outcome" | "delivery.source.status"
+                "delivery.neutral.inspect"
+                    | "delivery.neutral.outcome"
+                    | "delivery.source.status"
+                    | "delivery.integration.inspect"
             ) && (self.work_id.is_none() || self.session_id.is_some())
             || matches!(
                 self.op.as_str(),
@@ -597,6 +604,15 @@ pub(crate) async fn read(
             "background_scheduling":false,"repository_effects":false,
             "domain_finalization":false,"read_consistency":"repeatable_read"
         });
+        caps["neutral_delivery"]["integration"] = json!({
+            "commands":["delivery.integration.prepare","delivery.integration.reject_prepared"],
+            "query":"delivery.integration.inspect","action":"delivery.finalize",
+            "query_request_id":"IntegrationRequest.request_id; also returned as data.integration_id",
+            "retry_outcome":"delivery.neutral.outcome with the original client command request_id",
+            "worker_dispatch_exposed":false,"preparation_executes_repository":false,
+            "decision_id":"review.decide receipt or review.inspect decisions",
+            "connector_versions":"delivery.neutral.inspect connectors"
+        });
         caps["agent_review"] = json!({
             "command":"review.decide", "policy":crate::review::AGENT_REVIEW_POLICY,
             "requires":["agent_actor","agent_review_membership_grant","live_review_delegation","distinct_author_actor_and_client"],
@@ -721,7 +737,10 @@ pub(crate) async fn read(
     let c = cursor(q, &binding)?;
     let limit = i64::from(q.limit.unwrap_or(50));
     let data = match q.op.as_str() {
-        "delivery.neutral.inspect" | "delivery.neutral.outcome" | "delivery.source.status" => {
+        "delivery.neutral.inspect"
+        | "delivery.neutral.outcome"
+        | "delivery.source.status"
+        | "delivery.integration.inspect" => {
             let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
             delivery::read(tx, tenant, project, auth, q, work).await?
         }

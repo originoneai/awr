@@ -240,6 +240,9 @@ fn add_neutral_delivery_schema(command: &mut Value) {
             "description":"Strict DeliveryCandidate: binding and manifest. Bind actual tenant/project/main/workstream/work, contract, artifact manifest digest, required checks and target; these fields cannot grant authority."},
         "fence":version,"lease_version":version,
         "connector_id":identity,"connector_version":version,"candidate_digest":digest,
+        "selection_version":version,"review_decision_id":identity,"integration_id":identity,
+        "operation":{"type":"string","enum":["fast_forward"],
+            "description":"Version-bound integration.prepare reserves an intent; only the configured server integrator may execute it."},
         "lease_seconds":{"type":"integer","minimum":5,"maximum":300},
         "inspection_id":identity,"event_id":identity,
         "records":{"type":"array","minItems":1,"maxItems":32,
@@ -297,12 +300,34 @@ fn add_neutral_delivery_schema(command: &mut Value) {
         ("delivery.source.write", vec!["publication_id", "fence"]),
         ("delivery.source.confirm", vec!["publication_id", "fence"]),
         ("delivery.source.abandon", vec!["publication_id", "fence"]),
+        (
+            "delivery.integration.prepare",
+            vec![
+                "connector_id",
+                "connector_version",
+                "candidate_digest",
+                "selection_version",
+                "evidence_id",
+                "review_round_id",
+                "review_decision_id",
+                "operation",
+            ],
+        ),
+        (
+            "delivery.integration.reject_prepared",
+            vec!["integration_id", "reason"],
+        ),
     ] {
         let mut required = vec!["source_snapshot_id"];
         required.extend(fields);
+        let mut args = json!({"required":required});
+        if op == "delivery.integration.reject_prepared" {
+            args["properties"] = json!({"reason":{"type":"string","minLength":1,"maxLength":1024,
+                "description":"A nonblank reason of at most 1,024 UTF-8 bytes."}});
+        }
         command["allOf"].as_array_mut().unwrap().push(json!({
             "if":{"properties":{"op":{"const":op}},"required":["op"]},
-            "then":{"properties":{"args":{"required":required}}}
+            "then":{"properties":{"args":args}}
         }));
     }
 }
@@ -314,7 +339,8 @@ fn catalog() -> Vec<Tool> {
         "op":{"type":"string","enum":WorkstreamQuery::OPERATIONS},
         "workstream_id":{"type":"string","description":"Omit for work.next; follow its returned next_query to select work."},
         "work_id":{"type":"string","description":"Omit for work.next."},
-        "session_id":{"type":"string","description":"Omit for work.next; session.inspect requires this selector."},"request_id":{"type":"string"},"claim_id":{"type":"string"},
+        "session_id":{"type":"string","description":"Omit for work.next; session.inspect requires this selector."},
+        "request_id":{"type":"string","description":"For delivery.integration.inspect, use IntegrationRequest.request_id (receipt data.integration_id). For delivery.neutral.outcome, use the original client command retry ID."},"claim_id":{"type":"string"},
         "execution_id":{"type":"string"},"handoff_id":{"type":"string","description":"Actual handoff.id from a proposal receipt or handoff.inspect; events.list item IDs identify events, not handoffs. Read the exact handoff before receiving it."},
         "evidence_id":{"type":"string","minLength":1,"maxLength":128,
             "description":"Required for evidence.inspect; omit for other operations."},
@@ -336,9 +362,9 @@ fn catalog() -> Vec<Tool> {
         "expected_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}
     }});
     query["allOf"] = json!([
-        {"if":{"properties":{"op":{"enum":["delivery.neutral.inspect","delivery.neutral.outcome","delivery.source.status"]}},"required":["op"]},
+        {"if":{"properties":{"op":{"enum":["delivery.neutral.inspect","delivery.neutral.outcome","delivery.source.status","delivery.integration.inspect"]}},"required":["op"]},
             "then":{"required":["work_id"],"not":{"required":["session_id"]}}},
-        {"if":{"properties":{"op":{"const":"delivery.neutral.outcome"}},"required":["op"]},
+        {"if":{"properties":{"op":{"enum":["delivery.neutral.outcome","delivery.integration.inspect"]}},"required":["op"]},
             "then":{"required":["request_id"]}}
     ]);
     let mut command = json!({"type":"object","additionalProperties":false,
@@ -617,11 +643,11 @@ fn catalog() -> Vec<Tool> {
     });
     vec![
         Tool::new("awr_team_query",
-            "Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. work.observe reads current scoped session/checkpoint, lease, execution and registered PR facts without changing context or authorizing execution; receipt payloads retain their original access gate, and missing model/usage remains explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission. Neutral facts: delivery.neutral.inspect. Current source synchronization: delivery.source.status. Missing neutral command response: delivery.neutral.outcome with actual work_id and original request_id; historical receipt is not current authority.",
+            "Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. work.observe reads current scoped session/checkpoint, lease, execution and registered PR facts without changing context or authorizing execution; receipt payloads retain their original access gate, and missing model/usage remains explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission. Neutral facts: delivery.neutral.inspect. Current source synchronization: delivery.source.status. Missing neutral command response: delivery.neutral.outcome with actual work_id and original client retry ID. delivery.integration.inspect uses the generated IntegrationRequest.request_id (data.integration_id), preserving the original candidate. Neutral inspection includes scoped connector versions; review.inspect includes decision IDs. Descriptions grant no authority.",
             query.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_command",
-            "Durable sessions, claims, confirmed handoffs and caller-managed execution under the shared TMCP action gate. Use work.prepare preconditions and a stable request_id. Readers cannot claim or write. Developers may maintain own session/execution on authorized work but cannot edit/publish plans or grant permissions. Only a fresh execution.start response with execution_authorized=true permits one run under the live lease. Exact replay reuses the original receipt; changed intent or expired/revoked authority is refused. Body fields cannot forge identity. Preparation, inspection and replay grant no execution rights. On unknown outcome use delivery.neutral.outcome for neutral delivery commands and command.inspect for legacy commands before an exact retry; never repeat effects from a receipt. Refresh after conflicts or lease/contract changes. Cancellation is a request after start. Reports remain caller_asserted. Attestation requires operator-issued system authority at admission and now. For unknown effects, execution.inspect then operator execution.reconcile; confirm current versions and latest receipt. Recheck on permission, receipt or work changes. Settlement is not work completion. Evidence/review/rework/complete reuse WS-018 under explicit review.decide and delivery.finalize permissions on the same MCP plane: evidence.submit, review.open, delivery.submit_and_request_review, review.accept, review.return, review.decide, work.rework, work.complete, delivery.finalize, plus delivery.register_pr / delivery.observe_pr for versioned PR bindings. Neutral candidate/inspection/facts/source operations use args.source_snapshot_id and the common header; eligible human/system management is required for connector and source publication. They store observations or source metadata, never approve, merge or finalize. Author, owner, executor, reviewer and final-submitter are attributed separately on completion. GitHub submitted/approved/merged are distinct from AWR acceptance; URL, green CI, admin role or already-merged cannot skip acceptance. Head/contract/artifact mismatch invalidates approvals. Independence is by person; a second agent of the same person is not team-independent. Explicit caller_managed_execution_and_agent_review contracts allow review.decide with both agent_review membership and live Review delegation, a distinct author actor/client, and false human/team-acceptance flags; completion additionally requires artifact bytes, matching input/output bindings and a successful caller report reconciled by an authorized operator. Its evidence stays caller_asserted. Agent-reviewed receipts require explicit V2 dependency_acceptance on the same-stream consumer; unmapped dependencies remain blocked and WS-030 cross-stream adoption remains human-independent-only. PR facts require fact_source+observed_at: Agent verification uses operator_recorded_observation; authorized_human_github_verification requires an actual human observation. No webhook auto-sync claim. Completion receipts are for WS-030 adoption and omit provider-private sessions.",
+            "Durable sessions, claims, confirmed handoffs and caller-managed execution under the shared TMCP action gate. Use work.prepare preconditions and a stable request_id. Readers cannot claim or write. Developers may maintain own session/execution on authorized work but cannot edit/publish plans or grant permissions. Only a fresh execution.start response with execution_authorized=true permits one run under the live lease. Exact replay reuses the original receipt; changed intent or expired/revoked authority is refused. Body fields cannot forge identity. Preparation, inspection and replay grant no execution rights. On unknown outcome use delivery.neutral.outcome for neutral delivery commands and command.inspect for legacy commands before an exact retry; never repeat effects from a receipt. Refresh after conflicts or lease/contract changes. Cancellation is a request after start. Reports remain caller_asserted. Attestation requires operator-issued system authority at admission and now. For unknown effects, execution.inspect then operator execution.reconcile; confirm current versions and latest receipt. Recheck on permission, receipt or work changes. Settlement is not work completion. Evidence/review/rework/complete reuse WS-018 under explicit review.decide and delivery.finalize permissions on the same MCP plane: evidence.submit, review.open, delivery.submit_and_request_review, review.accept, review.return, review.decide, work.rework, work.complete, delivery.finalize, plus delivery.register_pr / delivery.observe_pr for versioned PR bindings. Neutral candidate/inspection/facts/source operations use args.source_snapshot_id and the common header; eligible human/system management is required for connector and source publication. They store observations or source metadata. delivery.integration.prepare requires current delivery.finalize permission plus exact connector, selection, evidence and review IDs; it reserves an intent. delivery.integration.reject_prepared only rejects before dispatch. Neither exposes a worker permit or executes Git; inspect the generated integration_id through delivery.integration.inspect. No implicit approval or finalization. Author, owner, executor, reviewer and final-submitter are attributed separately on completion. GitHub submitted/approved/merged are distinct from AWR acceptance; URL, green CI, admin role or already-merged cannot skip acceptance. Head/contract/artifact mismatch invalidates approvals. Independence is by person; a second agent of the same person is not team-independent. Explicit caller_managed_execution_and_agent_review contracts allow review.decide with both agent_review membership and live Review delegation, a distinct author actor/client, and false human/team-acceptance flags; completion additionally requires artifact bytes, matching input/output bindings and a successful caller report reconciled by an authorized operator. Its evidence stays caller_asserted. Agent-reviewed receipts require explicit V2 dependency_acceptance on the same-stream consumer; unmapped dependencies remain blocked and WS-030 cross-stream adoption remains human-independent-only. PR facts require fact_source+observed_at: Agent verification uses operator_recorded_observation; authorized_human_github_verification requires an actual human observation. No webhook auto-sync claim. Completion receipts are for WS-030 adoption and omit provider-private sessions.",
             command.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_access_inspect",

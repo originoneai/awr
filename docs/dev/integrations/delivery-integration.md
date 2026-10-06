@@ -5,10 +5,60 @@ from observation that a repository changed. It uses the neutral
 `IntegrationRequest` and `IntegrationObservation` records. GitHub, pull requests
 and webhooks are not required.
 
-This library prepares and dispatches authority, and records adapter outcomes. It
-does **not** execute Git, expose new MCP/server routes, or complete a task.
-Repository effects require an explicitly configured integrator. Final acceptance
-and source publication remain separate operations.
+This library prepares and dispatches authority, and records adapter outcomes.
+Supervisor preparation, inspection and withdrawal are available through the
+existing authenticated Team HTTP/MCP command and query entry points. These
+operations do not execute Git or complete a task. Repository effects require an
+explicitly configured integrator; worker lease and dispatch are library-only.
+Final acceptance and source publication remain separate operations.
+
+## Supervisor workflow over HTTP or MCP
+
+Use `awr_team_query` / `POST /v1/projects/{key}/query` and
+`awr_team_command` / `POST /v1/projects/{key}/command` under the same current
+scoped permissions. Preparation and withdrawal require `delivery.finalize` and
+workstream write access. Inspection requires current work read access.
+
+1. Read `work.prepare` for the current command header and source snapshot.
+2. Read `delivery.neutral.inspect` for the selected candidate, selection version
+   and scoped connector descriptions. Connector lists contain at most 32 entries;
+   `connectors_truncated` makes omitted entries explicit. Match the configured
+   resource and current enabled connector. Descriptions reveal no principal or
+   credential and do not grant execution rights.
+3. Use the submitting member's actual `review.open` receipt for its round ID,
+   then read `review.inspect` for the evidence and decision IDs. A new
+   `review.decide` receipt also contains its actual `decision_id`. Referencing a
+   decision never replaces validation of its approval and pinned versions.
+4. Send `delivery.integration.prepare` with a stable client retry `request_id`.
+   Its args contain `source_snapshot_id`, `connector_id`, `connector_version`,
+   `candidate_digest`, `selection_version`, `evidence_id`, `review_round_id`,
+   `review_decision_id` and `operation: "fast_forward"`.
+5. Inspect the returned original integration request. Await the configured
+   integrator and recheck when the intent, approval, source or permission changes.
+   Preparation is an intent reservation; it is not an executable receipt.
+
+Two request identifiers serve different purposes:
+
+| Query | `request_id` |
+| --- | --- |
+| `delivery.neutral.outcome` | The original **client command retry ID**. Use it when a command response is missing. Only the original authenticated actor/client can retrieve that receipt. |
+| `delivery.integration.inspect` | The generated **`IntegrationRequest.request_id`**, returned as `receipt.data.integration_id`. Use it to inspect that exact durable attempt. |
+
+Both queries require explicit `work_id` and refuse a session selector. A
+historical outcome receipt describes its original commit. Integration inspection
+preserves the original candidate and read set alongside the current intent state,
+even after selection or ownership changes. Both use one authenticated
+`RepeatableRead` snapshot and return no executable permit or acceptance grant.
+An absent receipt is not proof that a concurrent command cannot commit.
+
+To withdraw an undispatched intent, send
+`delivery.integration.reject_prepared` with `source_snapshot_id`,
+`integration_id` and a nonblank `reason` of at most 1,024 UTF-8 bytes. This operation requires current
+authority and the original issuer or configured worker scope. It releases only a
+`prepared` or `leased` target. `dispatched` and `unknown` attempts require original
+attempt reconciliation; they cannot be cancelled or blindly repeated. Exact
+retries return the original withdrawal receipt after current access checks.
+There is one domain journal and audit event, not a second transport journal.
 
 ## Prepare an exact candidate
 
@@ -73,8 +123,9 @@ consumes that permit for one configured fast-forward CAS. After repository
 preflight it uses `recheck_integration` to revalidate live authority, eligibility
 and the dispatch lease immediately before launch. This method accepts the sealed
 permit and returns no new capability. Its successful check cannot make a replay
-executable. The library boundary still exposes no new public transport route or
-default background service.
+executable. Public Team transport exposes preparation, withdrawal and inspection;
+it does not expose worker lease, dispatch, confirmation or raw repository paths.
+Starting the HTTP/MCP service alone does not enable a Git execution loop.
 
 ## Resolve effects without blind retries
 
@@ -131,4 +182,8 @@ review commands under distinct simulated members, concurrent preparation and
 dispatch, stale fences, original identity revocation/rotation, changing records,
 lost replies, reconstructed stores, historical observations, target contention
 and atomic upgrade. These checks establish mechanism behavior. They do not claim
-native client, deployed Team or complete business acceptance.
+native client, deployed Team or complete business acceptance. SDK/loopback HTTP
+regressions additionally obtain integration prerequisites through public queries
+and verify transport parity, strict fields, permission denial, reconnect, service
+reconstruction and unknown-attempt recovery. They do not substitute for native
+business scenarios.

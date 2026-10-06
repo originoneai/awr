@@ -17,6 +17,8 @@ pub(super) const OPERATIONS: &[&str] = &[
     "delivery.source.write",
     "delivery.source.confirm",
     "delivery.source.abandon",
+    "delivery.integration.prepare",
+    "delivery.integration.reject_prepared",
 ];
 
 pub(super) enum Action {
@@ -29,6 +31,8 @@ pub(super) enum Action {
     Write(DeliveryPublicationStep),
     Confirm(DeliveryPublicationStep),
     Abandon(DeliveryPublicationStep),
+    PrepareIntegration(PrepareDeliveryIntegration),
+    RejectIntegration(RejectPreparedDeliveryIntegration),
 }
 
 fn invalid() -> PgError {
@@ -83,6 +87,8 @@ impl Action {
             "delivery.source.write" => Self::Write(decode(value)?),
             "delivery.source.confirm" => Self::Confirm(decode(value)?),
             "delivery.source.abandon" => Self::Abandon(decode(value)?),
+            "delivery.integration.prepare" => Self::PrepareIntegration(decode(value)?),
+            "delivery.integration.reject_prepared" => Self::RejectIntegration(decode(value)?),
             _ => return Err(invalid()),
         })
     }
@@ -122,6 +128,14 @@ impl Action {
             Self::Abandon(r) => {
                 store
                     .abandon_source_publication(tenant, project, bearer, r)
+                    .await
+            }
+            Self::PrepareIntegration(r) => {
+                store.prepare_integration(tenant, project, bearer, r).await
+            }
+            Self::RejectIntegration(r) => {
+                store
+                    .reject_prepared_integration(tenant, project, bearer, r)
                     .await
             }
         }?;
