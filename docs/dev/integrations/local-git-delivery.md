@@ -148,6 +148,44 @@ resulting durable intents when configured; without its confirmation, source
 synchronization is pending. No observation establishes independent approval,
 terminates an execution or marks a task complete.
 
+## Stable scheduled observations
+
+`reconcile_current(store, credential)` is a service-owned polling entry point.
+It derives admission from the authenticated schedule and requires the configured
+`local_git` system connector, resource and current selected candidate. It accepts
+no caller identity, path, approval or read set. Server lifecycle configuration
+remains separate. Explicit retries of a published poll still use `reconcile`.
+
+Every poll probes the actual bounded Git state. It compares source verification
+and target integration separately with current facts from that connector and
+SHA-verified immutable reports. Report timestamps and inspection IDs are excluded
+from comparison. Source revisions, measured artifact hashes/lengths, outcomes,
+unsupported checks, target contents/ancestry and stability remain significant.
+When the preliminary probe matches current proof, it publishes no report,
+inspection, fact or notification. Restart
+uses the same persisted proof and actual Git probe, without an in-memory cache.
+
+Target-only changes publish only integration observations and preserve the
+original source verification run and fact. A missing, corrupt, stale or mismatched
+proof requires a fresh reserved observation. A truncated snapshot that omits a
+needed slot is an explicit bounded-response error, not proof of absence.
+Changed observations share deterministic reservation identities based on actual
+admission, semantic probe and predecessor facts, then reobserve after reservation
+and ingest only changed slots through the existing domain. If an abandoned
+observation lease is confirmed expired by PG, one fresh reservation may recover;
+this does not renew, repeat or authorize a Git integration effect.
+
+The reservation's `inspection_lease` describes its live status at read time,
+outside the immutable original receipt. It cannot substitute for ingest's own
+authority and lease checks. If state changes between the preliminary and reserved
+observations, the result can be `unchanged` with `read_only: false`: a reservation
+and report exist, but no new fact was published.
+
+The result identifies `changed_slots` and an optional real ingest receipt. An
+`unchanged` result is an observation at read time; it grants no acceptance,
+execution authority or source synchronization. Credential/mapping revocation
+and selection changes remain checked on every poll and domain write.
+
 ## Validation boundary
 
 `local_git_delivery` exercises independent bare SHA-1/SHA-256 repositories,
@@ -155,7 +193,10 @@ actual fixture pushes, content drift, unavailable objects, unsupported paths,
 bounded inspection, report recovery and concurrent retries.
 `local_git_delivery_pg` additionally exercises system connector provenance,
 current facts, durable replay, revocation and out-of-order generations in an
-isolated PostgreSQL fixture. These are mechanism regressions, not native team
+isolated PostgreSQL fixture. Scheduled polling also covers unchanged/restarted
+observers, target application/rollback with preserved source verification,
+concurrent publication, damaged proof, expired abandoned observations and live
+revocation/stale selection. These are mechanism regressions, not native team
 business acceptance, human approval, deployment or an authorized merge test.
 
 `local_git_integration` checks opt-in configuration and the unchanged read-only

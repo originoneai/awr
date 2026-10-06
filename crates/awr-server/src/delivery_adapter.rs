@@ -2,6 +2,7 @@
 mod git_process;
 pub mod local_git;
 pub mod local_git_integration;
+mod local_git_poll;
 
 pub use local_git::{LocalGitAdapter, LocalGitConfig, LocalGitReport, LocalGitSnapshot};
 pub use local_git_integration::{
