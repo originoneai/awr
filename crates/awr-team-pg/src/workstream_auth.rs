@@ -397,7 +397,10 @@ pub fn command_business_action(op: &str) -> Option<awr_team::Action> {
         | "review.open"
         | "delivery.submit_and_request_review"
         | "delivery.register_pr"
-        | "delivery.observe_pr" => DeliverySubmitAndRequestReview,
+        | "delivery.observe_pr"
+        | "delivery.candidate.select"
+        | "delivery.inspection.reserve"
+        | "delivery.facts.ingest" => DeliverySubmitAndRequestReview,
         "review.accept" | "review.return" | "review.decide" => ReviewDecide,
         // Rework is author/executor acknowledgment of a return — not independent review.
         "work.rework" => DeliverySubmitAndRequestReview,
@@ -406,7 +409,13 @@ pub fn command_business_action(op: &str) -> Option<awr_team::Action> {
         "planning.edit_draft" => PlanningEditDraft,
         "planning.approve" => PlanningApprove,
         "planning.publish" => PlanningPublish,
-        "access.manage_project" => AccessManageProject,
+        "access.manage_project"
+        | "delivery.connector.configure"
+        | "delivery.source.prepare"
+        | "delivery.source.renew"
+        | "delivery.source.write"
+        | "delivery.source.confirm"
+        | "delivery.source.abandon" => AccessManageProject,
         "audit.read_project" => AuditReadProject,
         "execution.attest" | "execution.reconcile" => return None,
         _ => return None,
@@ -438,6 +447,9 @@ pub fn query_business_action(op: &str) -> Option<awr_team::Action> {
         "review.inspect",
         "completion.inspect",
         "delivery.inspect",
+        "delivery.neutral.inspect",
+        "delivery.neutral.outcome",
+        "delivery.source.status",
         "source.content",
         "artifact.content",
         "planning.outcome",
@@ -548,6 +560,8 @@ pub(crate) enum DomainAuthority {
     WritePreserve,
     /// Explicit write grant on an active workstream (ordinary mutations).
     WriteActive,
+    /// Explicit human/system project-management and workstream management scope.
+    ManageProject,
     /// Trusted executor attestation (system actor + explicit grant).
     Attest,
     /// Operator reconciliation (manage + explicit reconcile grant).
@@ -588,7 +602,16 @@ pub(crate) fn command_authority(op: &str) -> Option<DomainAuthority> {
         | "delivery.finalize"
         | "delivery.submit_and_request_review"
         | "delivery.register_pr"
-        | "delivery.observe_pr" => DomainAuthority::WriteActive,
+        | "delivery.observe_pr"
+        | "delivery.candidate.select"
+        | "delivery.inspection.reserve"
+        | "delivery.facts.ingest" => DomainAuthority::WriteActive,
+        "delivery.connector.configure"
+        | "delivery.source.prepare"
+        | "delivery.source.renew"
+        | "delivery.source.write"
+        | "delivery.source.confirm"
+        | "delivery.source.abandon" => DomainAuthority::ManageProject,
         "execution.attest" => DomainAuthority::Attest,
         "execution.reconcile" => DomainAuthority::Reconcile,
         _ => return None,
@@ -605,9 +628,10 @@ fn has_write(auth: &ReaderAuthority, stream: Id) -> bool {
 /// Shared authorization used by Team PG command dispatch (HTTP/MCP call the same
 /// store). Request bodies, tool names and reconnects never supply grants.
 ///
-/// Admission always requires a current read grant, an explicit write bit, and the
-/// matching TMCP-010 business action so readers cannot mutate through any variant
-/// and developers cannot exercise planning/access privileges. Effect adds
+/// Admission requires a current read grant and the matching TMCP-010 business
+/// action. Ordinary/special commands also require an explicit write bit; neutral
+/// management instead requires eligible identity and explicit management scope.
+/// Readers cannot mutate and developers cannot exercise access privileges. Effect adds
 /// active-stream or attest/reconcile checks after idempotent replay so historical
 /// receipts remain replayable for the original client even if the stream later
 /// pauses or a special grant is revoked. Auth failure returns before business writes.
@@ -632,6 +656,16 @@ pub(crate) fn authorize_command(
     ) {
         return Err(PgError::Forbidden);
     }
+    // Neutral source/connector management follows its existing domain boundary:
+    // management is not an ordinary developer write bit, including on replay.
+    if required == DomainAuthority::ManageProject {
+        if !matches!(auth.actor_kind.as_str(), "human" | "system") {
+            return Err(PgError::Forbidden);
+        }
+        auth.access
+            .authorize(&auth.catalog, stream, WorkstreamAction::Manage)?;
+        return Ok(());
+    }
     if !has_write(auth, stream) {
         return Err(PgError::Forbidden);
     }
@@ -653,6 +687,7 @@ pub(crate) fn authorize_command(
         return Ok(());
     }
     match required {
+        DomainAuthority::ManageProject => unreachable!("management was checked before replay"),
         DomainAuthority::WritePreserve => Ok(()),
         DomainAuthority::WriteActive => {
             auth.access
@@ -934,6 +969,53 @@ mod tests {
         }
         assert_eq!(command_authority("planning.publish"), None);
         assert_eq!(command_authority("work.claim"), None);
+    }
+
+    #[test]
+    fn neutral_management_requires_management_scope_and_eligible_identity_on_replay() {
+        for op in [
+            "delivery.connector.configure",
+            "delivery.source.prepare",
+            "delivery.source.renew",
+            "delivery.source.write",
+            "delivery.source.confirm",
+            "delivery.source.abandon",
+        ] {
+            assert_eq!(command_authority(op), Some(DomainAuthority::ManageProject));
+            assert_eq!(
+                command_business_action(op),
+                Some(awr_team::Action::AccessManageProject)
+            );
+            for phase in [CommandAuthPhase::Admission, CommandAuthPhase::Effect] {
+                let developer = authority(true, false, false, false, WorkstreamState::Active);
+                assert!(authorize_command(&developer, id(1), "work", op, phase).is_err());
+                let mut manager = authority(false, true, false, false, WorkstreamState::Active);
+                assert!(authorize_command(&manager, id(1), "work", op, phase).is_ok());
+                manager.actor_kind = "agent".into();
+                manager.delegated_actions = Some(std::collections::BTreeSet::from([
+                    awr_team::Action::AccessManageProject,
+                ]));
+                assert!(authorize_command(&manager, id(1), "work", op, phase).is_err());
+            }
+        }
+        for op in [
+            "delivery.candidate.select",
+            "delivery.inspection.reserve",
+            "delivery.facts.ingest",
+        ] {
+            assert_eq!(command_authority(op), Some(DomainAuthority::WriteActive));
+            assert_eq!(
+                command_business_action(op),
+                Some(awr_team::Action::DeliverySubmitAndRequestReview)
+            );
+        }
+        for op in [
+            "delivery.neutral.inspect",
+            "delivery.neutral.outcome",
+            "delivery.source.status",
+        ] {
+            assert_eq!(query_business_action(op), Some(awr_team::Action::WorkRead));
+        }
     }
 
     #[test]

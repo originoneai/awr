@@ -1043,10 +1043,23 @@ impl DeliverySyncStore {
                 .unwrap_or(0),
         )
         .await?;
+        let result =
+            Self::source_publication_status_in_tx(&tx, tenant, project, &auth, work).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub(crate) async fn source_publication_status_in_tx(
+        tx: &Transaction<'_>,
+        tenant: &str,
+        project: &str,
+        auth: &ReaderAuthority,
+        work: &str,
+    ) -> PgResult<Value> {
         let (binding, ownership) =
-            crate::workstream_read::work_binding(&tx, tenant, project, &auth, work).await?;
+            crate::workstream_read::work_binding(tx, tenant, project, auth, work).await?;
         crate::workstream_auth::authorize_domain_action(
-            &auth,
+            auth,
             Action::WorkRead,
             Some(binding.workstream_id),
             Some(work),
@@ -1067,7 +1080,7 @@ impl DeliverySyncStore {
             ownership_version: ownership.to_string(),
             contract_hash: contract,
         };
-        let bound = BoundSource::load(&tx, tenant, project, &auth.snapshot).await?;
+        let bound = BoundSource::load(tx, tenant, project, &auth.snapshot).await?;
         let cursor=tx.query_opt("SELECT metadata_revision,confirmed_fingerprint,pending_publication_id
             FROM awr_team.delivery_source_cursors WHERE tenant_id=$1 AND project_id=$2 AND source_snapshot_id=$3",
             &[&tenant,&project,&auth.snapshot]).await?;
@@ -1107,7 +1120,7 @@ impl DeliverySyncStore {
                     &j.identity,
                 )
                 .is_ok_and(|bytes| physical.as_ref() == Some(&bytes))
-                && j.require_note(&tx, tenant, project, &auth).await.is_ok();
+                && j.require_note(tx, tenant, project, auth).await.is_ok();
             let mut item = j.summary();
             item["source_current"] = json!(current);
             item["failure_code"] = json!(row.get::<_, Option<String>>("failure_code"));
@@ -1123,7 +1136,6 @@ impl DeliverySyncStore {
         if serde_json::to_vec(&result).map_err(|_| invalid())?.len() > 262144 {
             return Err(PgError::ResponseTooLarge);
         }
-        tx.commit().await?;
         Ok(result)
     }
 }

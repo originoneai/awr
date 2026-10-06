@@ -218,8 +218,97 @@ fn add_handoff_input_schema(command: &mut Value) {
     }
 }
 
+fn add_neutral_delivery_schema(command: &mut Value) {
+    let identity = json!({"type":"string","minLength":1,"maxLength":128});
+    let version = json!({"type":"string","pattern":"^(0|[1-9][0-9]*)$"});
+    let digest = json!({"type":"string","pattern":"^[0-9a-f]{64}$"});
+    let fields = command["properties"]["args"]["properties"]
+        .as_object_mut()
+        .unwrap();
+    fields.extend(json!({
+        "source_snapshot_id":identity,
+        "expected_connector_version":version,
+        "mapping":{"type":"object","additionalProperties":false,
+            "required":["connector_id","provider","resource","principal_actor_id","principal_client_id","fact_source","enabled"],
+            "properties":{"connector_id":identity,"provider":{"type":"string","maxLength":128},
+                "resource":{"type":"string","maxLength":1024},"principal_actor_id":identity,
+                "principal_client_id":identity,"fact_source":{"enum":["caller_declared","adapter_observation","operator_recorded"]},
+                "enabled":{"type":"boolean"}}},
+        "expected_selected_digest":{"anyOf":[digest,{"type":"null"}]},
+        "candidate":{"type":"object","additionalProperties":false,"required":["binding","manifest"],
+            "properties":{"binding":{"type":"object"},"manifest":{"type":"object"}},
+            "description":"Strict DeliveryCandidate: binding and manifest. Bind actual tenant/project/main/workstream/work, contract, artifact manifest digest, required checks and target; these fields cannot grant authority."},
+        "fence":version,"lease_version":version,
+        "connector_id":identity,"connector_version":version,"candidate_digest":digest,
+        "lease_seconds":{"type":"integer","minimum":5,"maximum":300},
+        "inspection_id":identity,"event_id":identity,
+        "records":{"type":"array","minItems":1,"maxItems":32,
+            "items":{"type":"object","additionalProperties":false,"required":["protocol","protocol_version","record"],
+                "properties":{"protocol":{"const":awr_team::delivery::DELIVERY_PROTOCOL},"protocol_version":{"const":awr_team::delivery::DELIVERY_PROTOCOL_VERSION},
+                    "record":{"type":"object","additionalProperties":false,"required":["kind","data"],
+                        "properties":{"kind":{"enum":["candidate","change_request","verification","review_decision","integration_request","integration_observation","adapter_capabilities"]},"data":{"type":"object"}}}}},
+            "description":"Strict neutral DeliveryEnvelope records; no raw provider payload or credentials."},
+        "expected_selection_version":version,"expected_metadata_revision":version,
+        "expected_source_fingerprint":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},
+        "completion_receipt_id":{"anyOf":[identity,{"type":"null"}]},"publication_id":identity
+    }).as_object().unwrap().clone());
+    for (op, fields) in [
+        (
+            "delivery.connector.configure",
+            vec!["expected_connector_version", "mapping"],
+        ),
+        (
+            "delivery.candidate.select",
+            vec![
+                "session_id",
+                "claim_id",
+                "fence",
+                "lease_version",
+                "candidate",
+            ],
+        ),
+        (
+            "delivery.inspection.reserve",
+            vec![
+                "connector_id",
+                "connector_version",
+                "candidate_digest",
+                "lease_seconds",
+            ],
+        ),
+        (
+            "delivery.facts.ingest",
+            vec!["connector_id", "inspection_id", "event_id", "records"],
+        ),
+        (
+            "delivery.source.prepare",
+            vec![
+                "candidate_digest",
+                "expected_selection_version",
+                "expected_metadata_revision",
+                "expected_source_fingerprint",
+                "lease_seconds",
+            ],
+        ),
+        (
+            "delivery.source.renew",
+            vec!["publication_id", "fence", "lease_seconds"],
+        ),
+        ("delivery.source.write", vec!["publication_id", "fence"]),
+        ("delivery.source.confirm", vec!["publication_id", "fence"]),
+        ("delivery.source.abandon", vec!["publication_id", "fence"]),
+    ] {
+        let mut required = vec!["source_snapshot_id"];
+        required.extend(fields);
+        command["allOf"].as_array_mut().unwrap().push(json!({
+            "if":{"properties":{"op":{"const":op}},"required":["op"]},
+            "then":{"properties":{"args":{"required":required}}}
+        }));
+    }
+}
+
 fn catalog() -> Vec<Tool> {
-    let query = json!({"type":"object","additionalProperties":false,
+    let mut query = json!({"type":"object","additionalProperties":false,
     "required":["protocol_version","op"],"properties":{
         "protocol_version":{"type":"integer","const":1},
         "op":{"type":"string","enum":WorkstreamQuery::OPERATIONS},
@@ -246,6 +335,12 @@ fn catalog() -> Vec<Tool> {
         "artifact_id":{"type":"string","maxLength":128},
         "expected_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}
     }});
+    query["allOf"] = json!([
+        {"if":{"properties":{"op":{"enum":["delivery.neutral.inspect","delivery.neutral.outcome","delivery.source.status"]}},"required":["op"]},
+            "then":{"required":["work_id"],"not":{"required":["session_id"]}}},
+        {"if":{"properties":{"op":{"const":"delivery.neutral.outcome"}},"required":["op"]},
+            "then":{"required":["request_id"]}}
+    ]);
     let mut command = json!({"type":"object","additionalProperties":false,
     "required":["protocol_version","request_id","op","workstream_id","work_id","coordinator_epoch","expected_project_revision","expected_authority_version","expected_ownership_version","expected_contract_hash","args"],
     "properties":{
@@ -335,6 +430,7 @@ fn catalog() -> Vec<Tool> {
         }
     ]);
     add_handoff_input_schema(&mut command);
+    add_neutral_delivery_schema(&mut command);
     command["properties"]["args"]["properties"]["assignee_person_id"] = json!({"type":"string","minLength":1,"maxLength":128,
         "description":"task.assign: active eligible project member. This is a target, never the acting identity."});
     command["properties"]["args"]["properties"]["expected_responsibility_version"] = json!({"type":"string","pattern":"^(0|[1-9][0-9]*)$",
@@ -521,11 +617,11 @@ fn catalog() -> Vec<Tool> {
     });
     vec![
         Tool::new("awr_team_query",
-            "Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. work.observe reads current scoped session/checkpoint, lease, execution and registered PR facts without changing context or authorizing execution; receipt payloads retain their original access gate, and missing model/usage remains explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission.",
+            "Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. work.observe reads current scoped session/checkpoint, lease, execution and registered PR facts without changing context or authorizing execution; receipt payloads retain their original access gate, and missing model/usage remains explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission. Neutral facts: delivery.neutral.inspect. Current source synchronization: delivery.source.status. Missing neutral command response: delivery.neutral.outcome with actual work_id and original request_id; historical receipt is not current authority.",
             query.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_command",
-            "Durable sessions, claims, confirmed handoffs and caller-managed execution under the shared TMCP action gate. Use work.prepare preconditions and a stable request_id. Readers cannot claim or write. Developers may maintain own session/execution on authorized work but cannot edit/publish plans or grant permissions. Only a fresh execution.start response with execution_authorized=true permits one run under the live lease. Exact replay reuses the original receipt; changed intent or expired/revoked authority is refused. Body fields cannot forge identity. Preparation, inspection and replay grant no execution rights. On unknown outcome inspect command.inspect before an exact retry; never repeat effects from a receipt. Refresh after conflicts or lease/contract changes. Cancellation is a request after start. Reports remain caller_asserted. Attestation requires operator-issued system authority at admission and now. For unknown effects, execution.inspect then operator execution.reconcile; confirm current versions and latest receipt. Recheck on permission, receipt or work changes. Settlement is not work completion. Evidence/review/rework/complete reuse WS-018 under explicit review.decide and delivery.finalize permissions on the same MCP plane: evidence.submit, review.open, delivery.submit_and_request_review, review.accept, review.return, review.decide, work.rework, work.complete, delivery.finalize, plus delivery.register_pr / delivery.observe_pr for versioned PR bindings. Author, owner, executor, reviewer and final-submitter are attributed separately on completion. GitHub submitted/approved/merged are distinct from AWR acceptance; URL, green CI, admin role or already-merged cannot skip acceptance. Head/contract/artifact mismatch invalidates approvals. Independence is by person; a second agent of the same person is not team-independent. Explicit caller_managed_execution_and_agent_review contracts allow review.decide with both agent_review membership and live Review delegation, a distinct author actor/client, and false human/team-acceptance flags; completion additionally requires artifact bytes, matching input/output bindings and a successful caller report reconciled by an authorized operator. Its evidence stays caller_asserted. Agent-reviewed receipts require explicit V2 dependency_acceptance on the same-stream consumer; unmapped dependencies remain blocked and WS-030 cross-stream adoption remains human-independent-only. PR facts require fact_source+observed_at: Agent verification uses operator_recorded_observation; authorized_human_github_verification requires an actual human observation. No webhook auto-sync claim. Completion receipts are for WS-030 adoption and omit provider-private sessions.",
+            "Durable sessions, claims, confirmed handoffs and caller-managed execution under the shared TMCP action gate. Use work.prepare preconditions and a stable request_id. Readers cannot claim or write. Developers may maintain own session/execution on authorized work but cannot edit/publish plans or grant permissions. Only a fresh execution.start response with execution_authorized=true permits one run under the live lease. Exact replay reuses the original receipt; changed intent or expired/revoked authority is refused. Body fields cannot forge identity. Preparation, inspection and replay grant no execution rights. On unknown outcome use delivery.neutral.outcome for neutral delivery commands and command.inspect for legacy commands before an exact retry; never repeat effects from a receipt. Refresh after conflicts or lease/contract changes. Cancellation is a request after start. Reports remain caller_asserted. Attestation requires operator-issued system authority at admission and now. For unknown effects, execution.inspect then operator execution.reconcile; confirm current versions and latest receipt. Recheck on permission, receipt or work changes. Settlement is not work completion. Evidence/review/rework/complete reuse WS-018 under explicit review.decide and delivery.finalize permissions on the same MCP plane: evidence.submit, review.open, delivery.submit_and_request_review, review.accept, review.return, review.decide, work.rework, work.complete, delivery.finalize, plus delivery.register_pr / delivery.observe_pr for versioned PR bindings. Neutral candidate/inspection/facts/source operations use args.source_snapshot_id and the common header; eligible human/system management is required for connector and source publication. They store observations or source metadata, never approve, merge or finalize. Author, owner, executor, reviewer and final-submitter are attributed separately on completion. GitHub submitted/approved/merged are distinct from AWR acceptance; URL, green CI, admin role or already-merged cannot skip acceptance. Head/contract/artifact mismatch invalidates approvals. Independence is by person; a second agent of the same person is not team-independent. Explicit caller_managed_execution_and_agent_review contracts allow review.decide with both agent_review membership and live Review delegation, a distinct author actor/client, and false human/team-acceptance flags; completion additionally requires artifact bytes, matching input/output bindings and a successful caller report reconciled by an authorized operator. Its evidence stays caller_asserted. Agent-reviewed receipts require explicit V2 dependency_acceptance on the same-stream consumer; unmapped dependencies remain blocked and WS-030 cross-stream adoption remains human-independent-only. PR facts require fact_source+observed_at: Agent verification uses operator_recorded_observation; authorized_human_github_verification requires an actual human observation. No webhook auto-sync claim. Completion receipts are for WS-030 adoption and omit provider-private sessions.",
             command.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_access_inspect",
@@ -575,7 +671,7 @@ impl ServerHandler for Endpoint {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("awr-team-mcp", env!("CARGO_PKG_VERSION")))
-            .with_instructions("The URL binds one operator-registered project; bearer credentials are checked on every request. Begin with awr_team_query capabilities, then work.next to resume own work or discover scoped candidates without manual task selection. Project admins manage members via awr_team_access_* tools after local owner bootstrap of the first admin. Raw credentials are never accepted or returned over MCP — generate them through protected Inspector issuance or awr-server access token and register only secret_hash. Work/session selectors bind a workstream; missing permissions never mean satisfied dependencies. Consume work.prepare before checkpointing. Follow its single guidance item (when/because/action/recheck_on); it grants no authority. Report client_info from known host metadata at session start or next checkpoint. Batch progress at phase/test completion, blocker, user wait or delivery boundaries; no per-tool reporting loop. Only submit usage with known host counter scope. Routine progress uses session.checkpoint; execution.report is for terminal outcomes. Session journals and claims grant no execution rights. Claim replay is a historical receipt; use claim.inspect for current lease state. If a command outcome is unknown, inspect its original request_id before an exact retry. Planning mutations use awr_team_planning_* with stable request_id; on disconnect call awr_team_planning_outcome or planning.outcome before any new ID. Controlled source/artifact content uses source.content / artifact.content — never path/URL/history bypass. Ops history uses audit.history/export/count within authorized scope. Recheck context and permission after relevant changes. MCP connection closure never closes a durable work session.")
+            .with_instructions("The URL binds one operator-registered project; bearer credentials are checked on every request. Begin with awr_team_query capabilities, then work.next to resume own work or discover scoped candidates without manual task selection. Project admins manage members via awr_team_access_* tools after local owner bootstrap of the first admin. Raw credentials are never accepted or returned over MCP — generate them through protected Inspector issuance or awr-server access token and register only secret_hash. Work/session selectors bind a workstream; missing permissions never mean satisfied dependencies. Consume work.prepare before checkpointing. Follow its single guidance item (when/because/action/recheck_on); it grants no authority. Report client_info from known host metadata at session start or next checkpoint. Batch progress at phase/test completion, blocker, user wait or delivery boundaries; no per-tool reporting loop. Only submit usage with known host counter scope. Routine progress uses session.checkpoint; execution.report is for terminal outcomes. Session journals and claims grant no execution rights. Claim replay is a historical receipt; use claim.inspect for current lease state. If a command outcome is unknown, inspect its original request_id before an exact retry: delivery.neutral.outcome for neutral operations, command.inspect for legacy coordination. Check delivery.neutral.inspect and delivery.source.status for current state. Planning mutations use awr_team_planning_* with stable request_id; on disconnect call awr_team_planning_outcome or planning.outcome before any new ID. Controlled source/artifact content uses source.content / artifact.content — never path/URL/history bypass. Ops history uses audit.history/export/count within authorized scope. Recheck context and permission after relevant changes. MCP connection closure never closes a durable work session.")
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {

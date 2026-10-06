@@ -5,6 +5,7 @@
 //! a semantic refresh. Writers still serialize on the project admission lock.
 pub(crate) mod action_auth;
 pub(crate) mod claims;
+mod delivery;
 pub(crate) mod executions;
 pub(crate) mod handoffs;
 pub(crate) mod reviews;
@@ -54,6 +55,15 @@ pub(crate) const COMMANDS: &[&str] = &[
     "delivery.register_pr",
     "delivery.observe_pr",
     "delivery.finalize",
+    "delivery.connector.configure",
+    "delivery.candidate.select",
+    "delivery.inspection.reserve",
+    "delivery.facts.ingest",
+    "delivery.source.prepare",
+    "delivery.source.renew",
+    "delivery.source.write",
+    "delivery.source.confirm",
+    "delivery.source.abandon",
 ];
 const RECEIPT_PROTOCOL: &str = "awr-team-workstream-command-v1";
 
@@ -106,6 +116,7 @@ enum Action {
     Handoff(handoffs::Action),
     Review(reviews::Action),
     Intake(task_intake::Action),
+    Delivery(delivery::Action),
 }
 
 struct Applied {
@@ -149,6 +160,9 @@ impl WorkstreamCommand {
             return Err(invalid());
         }
         version(&self.expected_project_revision)?;
+        if delivery::OPERATIONS.contains(&self.op.as_str()) {
+            return Ok(Action::Delivery(delivery::Action::parse(self)?));
+        }
         match self.op.as_str() {
             "task.assign" | "task.accept_assignment" | "task.claim_available" => Ok(
                 Action::Intake(task_intake::Action::parse(&self.op, self.args.clone())?),
@@ -318,6 +332,19 @@ impl WorkstreamCommandStore {
         if serde_json::to_vec(&command).map_err(|_| invalid())?.len() > 65536 {
             return Err(invalid());
         }
+        let action = match action {
+            Action::Delivery(action) => {
+                return action
+                    .execute(
+                        crate::DeliverySyncStore::from_pool(self.pool.clone()),
+                        tenant,
+                        project,
+                        bearer,
+                    )
+                    .await;
+            }
+            other => other,
+        };
         let mut client = self.pool.get().await?;
         crate::check_schema(&client).await?;
         let tx = client.transaction().await?;
@@ -426,6 +453,9 @@ impl WorkstreamCommandStore {
             task_intake::lock_task(&tx, tenant, project, &auth, &command).await?;
         }
         let applied = match action {
+            Action::Delivery(_) => {
+                unreachable!("neutral dispatch precedes the generic transaction")
+            }
             Action::Intake(a) => {
                 task_intake::apply(&tx, tenant, project, &auth, &command, ownership, a).await?
             }
@@ -610,7 +640,8 @@ async fn apply(
         | Action::Execution(_)
         | Action::Handoff(_)
         | Action::Review(_)
-        | Action::Intake(_) => Err(invalid()), // Same outer transaction.
+        | Action::Intake(_)
+        | Action::Delivery(_) => Err(invalid()), // Specialized dispatch only.
         Action::Start(a) => {
             let active: bool = tx.query_one("SELECT EXISTS(SELECT 1 FROM awr_team.sessions
                 WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3 AND client_id=$4 AND conversation_id=$5 AND work_id=$6 AND state='active')",

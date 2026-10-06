@@ -8,10 +8,77 @@ and a local Git delivery use the same candidate and observation boundaries.
 The observation path stores facts and notification intent. It does **not**
 execute a repository operation, resolve review references as approvals or
 accept a task. A separate authenticated publisher can write bounded delivery
-references to the project's configured authoritative source. These store APIs
-do not establish deployed integration or native business acceptance;
-authenticated MCP operations, background scheduling and adapter execution are
-separate integration layers.
+references to the project's configured authoritative source. Development on
+`main` exposes these operations through the existing Team HTTP/MCP entry points.
+This does not establish deployed integration or native business acceptance.
+Background scheduling, repository adapters and neutral finalization remain
+separate implementation layers.
+
+## Authenticated HTTP/MCP operations
+
+Use `awr_team_command` or `POST /v1/projects/{key}/command`. The existing
+command header supplies the stable `request_id`, actual work/workstream, epoch,
+authority and ownership versions, contract hash and project audit cursor.
+Every neutral operation additionally requires `args.source_snapshot_id` from
+the current preparation. Do not supply another `read_set`, request identity,
+caller identity or filesystem path in `args`. The complete command must fit
+65,536 bytes, including its header.
+
+| Operation | Additional `args` |
+| --- | --- |
+| `delivery.connector.configure` | `expected_connector_version`, `mapping` (connector, provider, resource, subject actor/client, fact origin, enabled) |
+| `delivery.candidate.select` | `expected_selected_digest` (or null), owned `session_id`, `claim_id`, `fence`, `lease_version`, typed `candidate` |
+| `delivery.inspection.reserve` | `connector_id`, `connector_version`, `candidate_digest`, `lease_seconds` |
+| `delivery.facts.ingest` | `connector_id`, `inspection_id`, `event_id`, typed `records` |
+| `delivery.source.prepare` | `candidate_digest`, `expected_selection_version`, `expected_metadata_revision`, `expected_source_fingerprint`, optional `completion_receipt_id`, `lease_seconds` |
+| `delivery.source.renew` | `publication_id`, `fence`, `lease_seconds` |
+| `delivery.source.write` | `publication_id`, `fence` |
+| `delivery.source.confirm` | `publication_id`, `fence` |
+| `delivery.source.abandon` | `publication_id`, `fence` |
+
+Candidates contain the strict `binding` and `manifest` objects from
+[the neutral delivery protocol](pr-delivery-review.md). Records are typed
+`DeliveryEnvelope` values: `protocol: "awr-delivery"`, `protocol_version: 1`,
+and `record: {kind, data}`. Unknown fields are refused. Connector subject fields
+describe the managed observer; they cannot change the caller's identity or
+grant access. Source renewal uses the flat fields above, not a nested `step`.
+Connector configuration and all source mutation operations still require an
+eligible human/system operator with explicit current management scope.
+
+Dispatch reuses the original neutral transaction, journal and audit event. It
+returns `{replayed, receipt, execution_authorized: false}`; `receipt.protocol`
+is `awr-delivery-sync-v1`. There is no second generic command journal. Identical
+retries reuse the historical receipt; changed substantive requests conflict.
+The project revision is a validated audit cursor, not a global business CAS.
+
+Use `awr_team_query` or `POST /v1/projects/{key}/query` for these reads:
+
+| Operation | Selectors and meaning |
+| --- | --- |
+| `delivery.neutral.inspect` | Explicit `work_id`; current selected candidate, compact fact/history summaries and truncation flags |
+| `delivery.neutral.outcome` | Explicit `work_id` and original `request_id`; current caller actor/client's neutral request receipt |
+| `delivery.source.status` | Explicit `work_id`; current physical/source validity, publication phases and synchronization status |
+
+These reads use one authenticated `RepeatableRead` transaction and do not
+accept a session selector. Outcome lookup rechecks current read permission for
+the actual work. Another actor/client cannot retrieve the receipt; a request
+bound to a different work is refused. Missing receipts return `outcome: unknown`,
+which does not exclude a concurrent or late commit. A committed result remains
+`state_basis: at_commit` and never authorizes execution or certifies currentness.
+
+After a missing response, query the original request first. Compare current
+neutral facts and source status before recovery; keep the original request
+identity and payload. Recheck when the receipt, candidate, source or authority
+changes. Source-status reads never create locks or repair files. Unsupported
+source writers remain explicit `Unsupported` results.
+
+Legacy `command.inspect`, PR-oriented `delivery.inspect` and existing review
+operations retain their original meanings. Use `delivery.neutral.outcome` for
+the nine neutral operations; generic `command.inspect` does not query their
+journal. Discovery describes operation-specific fields and the capability
+response explicitly reports no background scheduling, repository effects or
+neutral finalization at this layer. Historical, current, synchronized and
+accepted are separate facts.
 
 ## Configuration and identity
 
