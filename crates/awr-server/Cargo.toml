@@ -35,6 +35,7 @@ pg-tests = ["awr-team-pg/pg-tests"]
 tls = ["awr-team-pg/tls"]
 
 [dev-dependencies]
+awr-source.workspace = true
 awr-core.workspace = true
 awr-team = { path = "../awr-team" }
 serde_json.workspace = true

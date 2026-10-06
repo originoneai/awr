@@ -1,6 +1,7 @@
 //! Operator-bound multi-project HTTP/MCP service. Every request authenticates
 //! inside PostgreSQL; tenant/actor/client/grants are never taken from its JSON.
 mod action_auth;
+pub mod delivery_sync;
 mod mcp;
 mod oauth;
 mod web;
@@ -30,7 +31,12 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap, net::SocketAddr, path::Path as FilePath, sync::Arc, time::Duration,
+    collections::BTreeMap,
+    future::{Future, IntoFuture},
+    net::SocketAddr,
+    path::Path as FilePath,
+    sync::Arc,
+    time::Duration,
 };
 
 #[derive(Clone, Deserialize)]
@@ -41,7 +47,7 @@ pub struct ProjectBinding {
     pub project_id: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceConfig {
     pub version: u32,
@@ -1056,8 +1062,10 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
 
 pub async fn serve(path: &FilePath) -> Result<(), String> {
     let config = ServiceConfig::read(path)?;
+    let workers = crate::config::DeliveryWorkerConfig::from_environment(&config)?;
     let url = std::env::var("AWR_TEAM_DATABASE_URL")
         .map_err(|_| "AWR_TEAM_DATABASE_URL is required".to_string())?;
+    let delivery = awr_team_pg::DeliverySyncStore::new(url.clone());
     let store = WorkstreamReadStore::new(url);
     store.check_schema().await.map_err(|error| match error {
         PgError::SchemaIncompatible(_) => {
@@ -1071,15 +1079,63 @@ pub async fn serve(path: &FilePath) -> Result<(), String> {
     let actual = listener
         .local_addr()
         .map_err(|_| "could not inspect listener".to_string())?;
-    let router = router(config, actual, store)?;
+    // Build all routes before any worker starts. Router/config failures cannot leave workers.
+    let router = router(config.clone(), actual, store)?;
+    let workers = delivery_sync::DeliveryWorkerRuntime::start(&config, workers, delivery, |name| {
+        std::env::var(name).ok()
+    })
+    .await?;
     println!(
         "{}",
         json!({"service":"awr-team-workstream","listen":actual.to_string(),"protocol_version":1})
     );
-    axum::serve(listener, router)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+    serve_router_with_delivery_workers(listener, router, workers, shutdown_signal()).await
+}
+
+/// The HTTP listener and its optional workers share one cancellation/drop boundary.
+/// Supplying a router does not grant worker authority; `start` has already checked it in PG.
+pub async fn serve_router_with_delivery_workers(
+    listener: tokio::net::TcpListener,
+    router: Router,
+    workers: delivery_sync::DeliveryWorkerRuntime,
+    shutdown: impl Future<Output = ()>,
+) -> Result<(), String> {
+    let (stop, mut stopping) = tokio::sync::watch::channel(false);
+    let http = axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            while !*stopping.borrow() {
+                if stopping.changed().await.is_err() {
+                    break;
+                }
+            }
         })
-        .await
-        .map_err(|_| "Team HTTP service stopped with an error".into())
+        .into_future();
+    tokio::pin!(http, shutdown);
+    let result = tokio::select! {
+        biased;
+        result = &mut http => result.map_err(|_| "Team HTTP service stopped with an error".to_string()),
+        _ = &mut shutdown => {
+            workers.request_stop();
+            let _ = stop.send(true);
+            tokio::time::timeout(Duration::from_secs(5), &mut http).await
+                .map_err(|_| "Team HTTP shutdown exceeded its limit".to_string())
+                .and_then(|result| result.map_err(|_| "Team HTTP service stopped with an error".to_string()))
+        }
+    };
+    workers.shutdown().await;
+    result
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    if let Ok(mut terminate) =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = terminate.recv() => {},
+        }
+        return;
+    }
+    let _ = tokio::signal::ctrl_c().await;
 }

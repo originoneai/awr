@@ -94,7 +94,7 @@ async fn native_operator_cli_provisions_and_revokes_a_client_using_the_native_se
     let bearer = std::fs::read_to_string(&token_path).unwrap();
     let bearer = bearer.trim();
     let mut plan = json!({"protocol_version":1,"tenant_id":TENANT,"project_id":PROJECT,
-        "actor":{"id":"native","kind":"agent","display_name":"Native client"},"client_id":"native-cli","role":"worker",
+        "actor":{"id":"native","kind":"human","display_name":"Native member"},"client_id":"native-cli","role":"worker",
         "grants":[{"workstream_id":awr_core::Id::from(1),"authority_version":"1","read":true,"write":true,"manage":false,"attest_execution":false,"reconcile_execution":false}],
         "credential":{"id":"native-client","secret_hash":token["secret_hash"],"expires_at_unix_ms":null},"revoke_credentials":[]});
     let input = dir.join("plan.json");
@@ -179,6 +179,70 @@ async fn native_operator_cli_provisions_and_revokes_a_client_using_the_native_se
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .unwrap();
+    // Static member grants do not constitute an Agent execution delegation.
+    let agent_token_path = dir.join("agent-credential");
+    let agent_token = cli(
+        &owner,
+        &[
+            "access",
+            "token",
+            "--credential-id",
+            "native-agent",
+            "--output",
+            agent_token_path.to_str().unwrap(),
+        ],
+    );
+    let agent_bearer = std::fs::read_to_string(&agent_token_path).unwrap();
+    let mut agent_plan = plan.clone();
+    agent_plan["actor"] = json!({"id":"native-agent","kind":"agent","display_name":"Native Agent"});
+    agent_plan["client_id"] = json!("native-agent-cli");
+    agent_plan["credential"] = json!({
+        "id":"native-agent",
+        "secret_hash":agent_token["secret_hash"],
+        "expires_at_unix_ms":null
+    });
+    let agent_input = dir.join("agent-plan.json");
+    std::fs::write(&agent_input, serde_json::to_vec(&agent_plan).unwrap()).unwrap();
+    let agent_preview = cli(
+        &owner,
+        &[
+            "access",
+            "preview",
+            "--input",
+            agent_input.to_str().unwrap(),
+        ],
+    );
+    let agent_registered = cli(
+        &owner,
+        &[
+            "access",
+            "apply",
+            "--input",
+            agent_input.to_str().unwrap(),
+            "--request-id",
+            "register-native-agent",
+            "--expected-state",
+            agent_preview["state_digest"].as_str().unwrap(),
+            "--expected-plan",
+            agent_preview["plan_digest"].as_str().unwrap(),
+        ],
+    );
+    assert_eq!(
+        http.post(&endpoint)
+            .bearer_auth(agent_bearer.trim())
+            .json(&json!({"protocol_version":1,"op":"work.prepare","work_id":"a"}))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::FORBIDDEN
+    );
+    assert!(!agent_registered.to_string().contains(agent_bearer.trim()));
+    assert!(
+        !agent_registered
+            .to_string()
+            .contains(agent_token["secret_hash"].as_str().unwrap())
+    );
     for (work, expected) in [("a", 200), ("b-private", 403)] {
         let response = http
             .post(&endpoint)
