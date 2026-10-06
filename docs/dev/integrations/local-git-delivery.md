@@ -21,6 +21,9 @@ references remain distinct from damaged references and repository read errors.
 An unsupported probe or damaged configured target refuses admission; a later
 query error cannot become a successful pending observation.
 
+The verified repository stays the fixed process directory. Git receives
+`--git-dir=.` so Windows verbatim canonical paths never need argument rewriting.
+
 The adapter uses fixed Git subcommands with validated arguments, clears ambient
 Git/credential environment values, disables replacement objects, prompts and
 lazy fetches, and refuses promisor/partial-clone repositories. Command time,

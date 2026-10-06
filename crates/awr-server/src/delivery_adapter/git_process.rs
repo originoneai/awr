@@ -93,7 +93,11 @@ impl GitProcess {
         command
             .arg("--no-replace-objects")
             .arg("--literal-pathspecs")
-            .arg(format!("--git-dir={}", self.repository.display()))
+            // The process cwd is the already canonicalized, operator-bound bare
+            // repository. Windows canonical paths use a verbatim prefix that
+            // Git refuses as an argument; a fixed relative Git directory keeps
+            // the same scope without rewriting or weakening the validated path.
+            .arg("--git-dir=.")
             .args(args)
             .current_dir(&self.repository)
             .env_clear()

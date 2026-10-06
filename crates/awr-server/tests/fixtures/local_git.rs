@@ -31,7 +31,8 @@ impl Drop for GitFixture {
 
 impl GitFixture {
     pub fn new(sha256: bool) -> Self {
-        let root = std::env::temp_dir().join(format!("awr-local-git-{}", awr_core::Id::new()));
+        // Exercise the real command boundary with spaces and Unicode on every OS.
+        let root = std::env::temp_dir().join(format!("awr local Git 测试-{}", awr_core::Id::new()));
         fs::create_dir(&root).unwrap();
         let work = root.join("author");
         let repository = root.join("remote.git");
@@ -156,88 +157,7 @@ impl GitFixture {
         ]);
     }
     pub async fn adapter(&self) -> LocalGitAdapter {
-        match LocalGitAdapter::open(self.config.clone()).await {
-            Ok(adapter) => adapter,
-            Err(error) => {
-                #[cfg(windows)]
-                panic!(
-                    "Local Git admission failed: {error:?}; fixed synthetic probe results: {:?}",
-                    self.windows_admission_probes()
-                );
-                #[cfg(not(windows))]
-                panic!("Local Git admission failed: {error:?}");
-            }
-        }
-    }
-
-    /// Diagnostic codes only, never command stderr, environment values or arbitrary output.
-    #[cfg(windows)]
-    fn windows_admission_probes(&self) -> Vec<(bool, bool, Vec<(Option<i32>, bool)>)> {
-        let mut results = Vec::new();
-        for canonical in [false, true] {
-            for platform_environment in [false, true] {
-                let repository = if canonical {
-                    fs::canonicalize(&self.config.repository).unwrap()
-                } else {
-                    self.config.repository.clone()
-                };
-                let mut codes = Vec::new();
-                for (args, expected) in [
-                    (vec!["rev-parse", "--is-bare-repository"], Some("true")),
-                    (vec!["show-ref", "--exists", "refs/heads/main"], None),
-                    (vec!["symbolic-ref", "-q", "refs/heads/main"], None),
-                    (
-                        vec![
-                            "config",
-                            "--local",
-                            "--includes",
-                            "--get-regexp",
-                            "^(extensions[.]partialclone|remote[.].*[.]promisor)$",
-                        ],
-                        None,
-                    ),
-                    (
-                        vec!["rev-parse", "--show-object-format"],
-                        Some(if self.format == RevisionFormat::GitSha256 {
-                            "sha256"
-                        } else {
-                            "sha1"
-                        }),
-                    ),
-                ] {
-                    let mut command = Command::new(&self.config.git_executable);
-                    command
-                        .args(["--no-replace-objects", "--literal-pathspecs"])
-                        .arg(format!("--git-dir={}", repository.display()))
-                        .args(args)
-                        .current_dir(&repository)
-                        .env_clear()
-                        .env("PATH", std::env::var_os("PATH").unwrap())
-                        .env("GIT_CONFIG_NOSYSTEM", "1")
-                        .env("GIT_CONFIG_GLOBAL", "NUL")
-                        .env("GIT_NO_REPLACE_OBJECTS", "1")
-                        .env("GIT_NO_LAZY_FETCH", "1")
-                        .env("GIT_OPTIONAL_LOCKS", "0")
-                        .env("GIT_TERMINAL_PROMPT", "0")
-                        .env("LC_ALL", "C")
-                        .env("LANG", "C");
-                    if platform_environment {
-                        if let Some(value) = std::env::var_os("SystemRoot") {
-                            command.env("SystemRoot", value);
-                        }
-                    }
-                    let output = command.output().unwrap();
-                    codes.push((
-                        output.status.code(),
-                        expected.is_some_and(|value| {
-                            String::from_utf8_lossy(&output.stdout).trim_end() == value
-                        }),
-                    ));
-                }
-                results.push((canonical, platform_environment, codes));
-            }
-        }
-        results
+        LocalGitAdapter::open(self.config.clone()).await.unwrap()
     }
 
     pub fn candidate(&self) -> DeliveryCandidate {
