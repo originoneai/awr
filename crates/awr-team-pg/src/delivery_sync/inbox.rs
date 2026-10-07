@@ -14,6 +14,9 @@ fn slot(record: &DeliveryRecord) -> PgResult<String> {
         DeliveryRecord::IntegrationObservation(r) => {
             json!(["integration_observation", r.external_reference])
         }
+        DeliveryRecord::IntegrationContentProof(r) => {
+            json!(["integration_content_proof", r.observation_reference])
+        }
         _ => return Err(invalid()),
     })
 }
@@ -27,6 +30,7 @@ fn normalize(
         DeliveryRecord::ChangeRequest(r) => Some(&mut r.provenance),
         DeliveryRecord::Verification(r) => Some(&mut r.provenance),
         DeliveryRecord::IntegrationObservation(r) => Some(&mut r.provenance),
+        DeliveryRecord::IntegrationContentProof(r) => Some(&mut r.provenance),
         DeliveryRecord::ReviewDecision(_) | DeliveryRecord::IntegrationRequest(_) => None,
         _ => return Err(invalid()),
     };
@@ -59,6 +63,11 @@ pub(super) fn summary(envelope: &DeliveryEnvelope) -> Value {
         DeliveryRecord::IntegrationObservation(r) => {
             json!({"kind":"integration_observation","external_reference":r.external_reference,
             "outcome":r.outcome,"result_revision":r.result_revision,"provenance":r.provenance})
+        }
+        DeliveryRecord::IntegrationContentProof(r) => {
+            json!({"kind":"integration_content_proof","observation_reference":r.observation_reference,
+                "request_id":r.request_id,"result_revision":r.result_revision,
+                "witness_kind":r.witness.kind(),"provenance":r.provenance})
         }
         _ => json!({"kind":"unsupported"}),
     }

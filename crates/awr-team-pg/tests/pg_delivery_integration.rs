@@ -13,6 +13,445 @@ use integration_fixture::*;
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn applied_different_revision_requires_complete_content_proof() {
+    let f = setup_integration().await;
+    let prepared = f.prepared().await;
+    let id = prepared["integration_id"].as_str().unwrap();
+    let lease = f.leased(id).await;
+    f.dispatched(id, lease["lease_id"].as_str().unwrap()).await;
+    let mut record = f.observation(id, IntegrationOutcome::Applied);
+    let DeliveryRecord::IntegrationObservation(observation) = &mut record else {
+        unreachable!()
+    };
+    observation.result_revision.as_mut().unwrap().value = "e".repeat(64);
+    let fact = f.ingest_record("subset-only", record).await;
+    assert!(matches!(
+        f.store
+            .confirm_integration(
+                TENANT,
+                PROJECT,
+                WORKER,
+                f.confirm_request("confirm-subset-only", id, &fact),
+            )
+            .await,
+        Err(PgError::EvidenceInvalid)
+    ));
+    assert_eq!(f.guards().await, 1);
+}
+
+#[tokio::test]
+async fn complete_same_batch_proof_resolves_unknown_attempt_once_and_preserves_approval() {
+    let f = setup_content_integration().await;
+    let prepared = f.prepared().await;
+    let id = prepared["integration_id"].as_str().unwrap();
+    let lease = f.leased(id).await;
+    f.dispatched(id, lease["lease_id"].as_str().unwrap()).await;
+    let unknown = f
+        .ingest_record(
+            "unknown-content",
+            f.observation(id, IntegrationOutcome::Unknown),
+        )
+        .await;
+    f.store
+        .confirm_integration(
+            TENANT,
+            PROJECT,
+            WORKER,
+            f.confirm_request("confirm-unknown-content", id, &unknown),
+        )
+        .await
+        .unwrap();
+    assert_eq!(f.guards().await, 1);
+    assert!(
+        f.dispatched(id, lease["lease_id"].as_str().unwrap())
+            .await
+            .permit
+            .is_none()
+    );
+    let facts = f
+        .ingest_records("complete-content", f.rewritten_records(id))
+        .await;
+    let request = f.confirm_request("confirm-complete-content", id, &facts[0]);
+    let rebuilt = DeliverySyncStore::from_config(f.config.clone());
+    let (a, b) = tokio::join!(
+        f.store
+            .confirm_integration(TENANT, PROJECT, WORKER, request.clone()),
+        rebuilt.confirm_integration(TENANT, PROJECT, WORKER, request),
+    );
+    let a = a.unwrap();
+    let b = b.unwrap();
+    assert_eq!(a["data"], b["data"]);
+    assert_eq!(a["data"]["state"], "confirmed");
+    assert_eq!(a["data"]["current"], true);
+    assert_eq!(
+        a["data"]["content_proof"],
+        json!({"basis":"matching_complete_snapshots","fact_id":facts[1]})
+    );
+    assert_eq!(
+        usize::from(a["replayed"] == true) + usize::from(b["replayed"] == true),
+        1
+    );
+    assert_eq!(f.guards().await, 0);
+    let view = f
+        .store
+        .inspect_integration(TENANT, PROJECT, SUPERVISOR, "a", id)
+        .await
+        .unwrap();
+    assert_eq!(
+        view["integration_request"]["review_decision_id"],
+        f.request.review_decision_id
+    );
+    assert_eq!(
+        view["confirmation"]["content_proof_facts"][0]["fact_id"],
+        facts[1]
+    );
+    assert_eq!(
+        view["confirmation"]["content_proof_facts"][0]["envelope"]["record"]["data"]["witness"]["kind"],
+        "matching_complete_snapshots"
+    );
+    assert_eq!(view["acceptance_ready"], false);
+    let completions: i64 = f
+        .admin
+        .query_one("SELECT count(*) FROM awr_team.completion_receipts", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(completions, 0);
+}
+
+#[tokio::test]
+async fn separate_proof_batch_and_unavailable_head_cannot_be_borrowed() {
+    let f = setup_content_integration().await;
+    let prepared = f.prepared().await;
+    let id = prepared["integration_id"].as_str().unwrap();
+    let lease = f.leased(id).await;
+    f.dispatched(id, lease["lease_id"].as_str().unwrap()).await;
+    let before = f.store.inspect(TENANT, PROJECT, WORKER, "a").await.unwrap();
+    let check = before["facts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|fact| fact["observation"]["kind"] == "verification")
+        .unwrap()["fact_id"]
+        .clone();
+    let mut records = f.rewritten_records(id);
+    f.ingest_record("separate-proof", records[1].clone()).await;
+    let fact = f.ingest_record("without-proof", records[0].clone()).await;
+    assert!(matches!(
+        f.store
+            .confirm_integration(
+                TENANT,
+                PROJECT,
+                WORKER,
+                f.confirm_request("confirm-without-proof", id, &fact)
+            )
+            .await,
+        Err(PgError::EvidenceInvalid)
+    ));
+    let DeliveryRecord::IntegrationContentProof(proof) = &mut records[1] else {
+        unreachable!()
+    };
+    proof.witness = IntegrationContentWitness::Unavailable {
+        reason: ContentProofUnavailableReason::HistoryUnavailable,
+    };
+    let unavailable = f.ingest_records("unavailable-proof", records).await;
+    assert!(matches!(
+        f.store
+            .confirm_integration(
+                TENANT,
+                PROJECT,
+                WORKER,
+                f.confirm_request("confirm-unavailable", id, &unavailable[0])
+            )
+            .await,
+        Err(PgError::EvidenceInvalid)
+    ));
+    let after = f.store.inspect(TENANT, PROJECT, WORKER, "a").await.unwrap();
+    let current = after["facts"].as_array().unwrap();
+    assert!(
+        current
+            .iter()
+            .any(|fact| fact["current"] == true && fact["fact_id"] == check)
+    );
+    let head = current
+        .iter()
+        .find(|fact| fact["current"] == true && fact["fact_id"] == unavailable[1])
+        .unwrap();
+    assert_eq!(head["observation"]["witness_kind"], "unavailable");
+    assert!(head["observation"].get("witness").is_none());
+    assert!(serde_json::to_vec(&head["observation"]).unwrap().len() < 4096);
+    assert!(
+        head["observation"]["provenance"]["recorded_at_unix_ms"]
+            .as_u64()
+            .unwrap()
+            > 1
+    );
+    assert_eq!(f.guards().await, 1);
+}
+
+#[tokio::test]
+async fn wrong_original_request_result_reference_and_origin_cannot_confirm_content() {
+    let f = setup_content_integration().await;
+    let prepared = f.prepared().await;
+    let id = prepared["integration_id"].as_str().unwrap();
+    let lease = f.leased(id).await;
+    f.dispatched(id, lease["lease_id"].as_str().unwrap()).await;
+    for (index, (pointer, value)) in [
+        ("/request_id", json!("different-original-request")),
+        ("/result_revision/value", json!("d".repeat(64))),
+        (
+            "/observation_reference",
+            json!("fixture://different-target"),
+        ),
+        ("/provenance/reference", json!("fixture://different-report")),
+        ("/provenance/observed_at_unix_ms", json!(2000)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut records = f.rewritten_records(id);
+        let DeliveryRecord::IntegrationContentProof(proof) = &records[1] else {
+            unreachable!()
+        };
+        let mut changed = serde_json::to_value(proof).unwrap();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        records[1] =
+            DeliveryRecord::IntegrationContentProof(serde_json::from_value(changed).unwrap());
+        let key = format!("wrong-content-{index}");
+        let facts = f.ingest_records(&key, records).await;
+        assert!(matches!(
+            f.store
+                .confirm_integration(
+                    TENANT,
+                    PROJECT,
+                    WORKER,
+                    f.confirm_request(&format!("confirm-{key}"), id, &facts[0])
+                )
+                .await,
+            Err(PgError::EvidenceInvalid)
+        ));
+        assert_eq!(f.guards().await, 1);
+    }
+    let mut declared = f.rewritten_records(id);
+    let DeliveryRecord::IntegrationContentProof(proof) = &mut declared[1] else {
+        unreachable!()
+    };
+    proof.provenance.source = FactSource::CallerDeclared;
+    // The configured observer principal cannot normalize a caller's assertion
+    // into adapter provenance. Use the actual reserved inspection for the refusal.
+    let inspection = f
+        .store
+        .reserve_inspection(
+            TENANT,
+            PROJECT,
+            WORKER,
+            ReserveDeliveryInspection {
+                request_id: "reserve-declared-content".into(),
+                read_set: f.set.clone(),
+                connector_id: "git".into(),
+                connector_version: "1".into(),
+                candidate_digest: f.request.candidate_digest.clone(),
+                lease_seconds: 60,
+            },
+        )
+        .await
+        .unwrap();
+    let result = f
+        .store
+        .ingest_facts(
+            TENANT,
+            PROJECT,
+            WORKER,
+            IngestDeliveryFacts {
+                request_id: "ingest-declared-content".into(),
+                read_set: f.set.clone(),
+                connector_id: "git".into(),
+                inspection_id: inspection["data"]["inspection_id"].as_str().unwrap().into(),
+                event_id: "declared-content".into(),
+                records: declared
+                    .into_iter()
+                    .map(|record| DeliveryEnvelope {
+                        protocol: DELIVERY_PROTOCOL.into(),
+                        protocol_version: DELIVERY_PROTOCOL_VERSION,
+                        record,
+                    })
+                    .collect(),
+            },
+        )
+        .await;
+    assert!(matches!(result, Err(PgError::Forbidden)));
+    let count: i64 = f
+        .admin
+        .query_one(
+            "SELECT count(*) FROM awr_team.delivery_inbox WHERE event_id='declared-content'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 0);
+    assert_eq!(f.guards().await, 1);
+}
+
+#[tokio::test]
+async fn early_and_wrong_connector_version_proofs_leave_original_guard_held() {
+    let f = setup_content_integration().await;
+    let prepared = f.prepared().await;
+    let id = prepared["integration_id"].as_str().unwrap();
+    let early = f
+        .ingest_records("early-complete-content", f.rewritten_records(id))
+        .await;
+    let lease = f.leased(id).await;
+    f.dispatched(id, lease["lease_id"].as_str().unwrap()).await;
+    assert!(matches!(
+        f.store
+            .confirm_integration(
+                TENANT,
+                PROJECT,
+                WORKER,
+                f.confirm_request("confirm-early-content", id, &early[0])
+            )
+            .await,
+        Err(PgError::EvidenceInvalid)
+    ));
+    let facts = f
+        .ingest_records("version-drift-content", f.rewritten_records(id))
+        .await;
+    f.admin.execute("UPDATE awr_team.delivery_inspections SET connector_version=2 WHERE id=(SELECT i.inspection_id
+        FROM awr_team.delivery_inbox i JOIN awr_team.delivery_facts f ON f.inbox_id=i.id WHERE f.id=$1)", &[&facts[0]]).await.unwrap();
+    assert!(matches!(
+        f.store
+            .confirm_integration(
+                TENANT,
+                PROJECT,
+                WORKER,
+                f.confirm_request("confirm-version-drift-content", id, &facts[0])
+            )
+            .await,
+        Err(PgError::EvidenceInvalid)
+    ));
+    assert_eq!(f.guards().await, 1);
+}
+
+#[tokio::test]
+async fn rewritten_content_remains_historical_after_issuer_revocation_and_worker_is_current() {
+    let f = setup_content_integration().await;
+    let prepared = f.prepared().await;
+    let id = prepared["integration_id"].as_str().unwrap();
+    let lease = f.leased(id).await;
+    f.dispatched(id, lease["lease_id"].as_str().unwrap()).await;
+    let facts = f
+        .ingest_records("historical-content", f.rewritten_records(id))
+        .await;
+    f.admin.batch_execute("UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='integration-supervisor'").await.unwrap();
+    let receipt = f
+        .store
+        .confirm_integration(
+            TENANT,
+            PROJECT,
+            WORKER,
+            f.confirm_request("confirm-historical-content", id, &facts[0]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(receipt["data"]["state"], "confirmed");
+    assert_eq!(receipt["data"]["current"], false);
+    assert_eq!(receipt["data"]["content_proof"]["fact_id"], facts[1]);
+    assert_eq!(f.guards().await, 0);
+    f.admin.batch_execute("UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id<>'integration-supervisor'").await.unwrap();
+    assert!(
+        f.store
+            .confirm_integration(
+                TENANT,
+                PROJECT,
+                WORKER,
+                f.confirm_request("confirm-historical-content", id, &facts[0])
+            )
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn ambiguous_original_batch_proof_cannot_release_the_unknown_effect_guard() {
+    let f = setup_content_integration().await;
+    let prepared = f.prepared().await;
+    let id = prepared["integration_id"].as_str().unwrap();
+    let lease = f.leased(id).await;
+    f.dispatched(id, lease["lease_id"].as_str().unwrap()).await;
+    let facts = f
+        .ingest_records("ambiguous-content", f.rewritten_records(id))
+        .await;
+    // Fault injection models malformed historical data. Normal ingestion rejects
+    // duplicate stable slots before writing any facts or notification.
+    f.admin.execute("INSERT INTO awr_team.delivery_facts(tenant_id,project_id,id,inbox_id,slot,envelope_json)
+        SELECT tenant_id,project_id,'ambiguous-proof',inbox_id,'other-slot',envelope_json
+        FROM awr_team.delivery_facts WHERE id=$1", &[&facts[1]]).await.unwrap();
+    assert!(matches!(
+        f.store
+            .confirm_integration(
+                TENANT,
+                PROJECT,
+                WORKER,
+                f.confirm_request("confirm-ambiguous-content", id, &facts[0])
+            )
+            .await,
+        Err(PgError::EvidenceInvalid)
+    ));
+    assert_eq!(f.guards().await, 1);
+    let view = f
+        .store
+        .inspect_integration(TENANT, PROJECT, SUPERVISOR, "a", id)
+        .await
+        .unwrap();
+    assert_eq!(view["state"], "dispatched");
+    assert!(view["confirmation"].is_null());
+}
+
+#[tokio::test]
+async fn simulated_members_keep_original_review_basis_with_complete_content_confirmation() {
+    let f = setup_simulated_content_integration().await;
+    let prepared = f.prepared().await;
+    let id = prepared["integration_id"].as_str().unwrap();
+    let lease = f.leased(id).await;
+    f.dispatched(id, lease["lease_id"].as_str().unwrap()).await;
+    let facts = f
+        .ingest_records("simulated-complete-content", f.rewritten_records(id))
+        .await;
+    let receipt = f
+        .store
+        .confirm_integration(
+            TENANT,
+            PROJECT,
+            WORKER,
+            f.confirm_request("confirm-simulated-content", id, &facts[0]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(receipt["data"]["state"], "confirmed");
+    assert_eq!(receipt["data"]["current"], true);
+    let decisions: Vec<Value> = f
+        .admin
+        .query("SELECT to_jsonb(d) FROM awr_team.review_decisions d", &[])
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    assert_eq!(decisions.len(), 1);
+    assert_eq!(decisions[0]["id"], f.request.review_decision_id);
+    assert_eq!(
+        decisions[0]["approval_basis"],
+        "simulated_member_independent_review"
+    );
+    assert_eq!(
+        decisions[0]["independence_kind"],
+        "simulated_member_independent"
+    );
+    assert_eq!(f.guards().await, 0);
+}
+
+#[tokio::test]
 async fn actual_member_review_and_checks_allow_one_dispatch_without_completing_work() {
     let f = setup_integration().await;
     let prepared = f.prepared().await;

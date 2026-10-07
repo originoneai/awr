@@ -1,4 +1,5 @@
 //! Version-bound authority for one repository effect, separate from acceptance.
+mod content;
 mod eligibility;
 mod lifecycle;
 

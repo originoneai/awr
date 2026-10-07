@@ -728,7 +728,7 @@ impl DeliverySyncStore {
         if !matches!(intent.state.as_str(), "dispatched" | "unknown") {
             return Err(PgError::RecoveryBlocked);
         }
-        let row = tx.query_opt("SELECT f.envelope_json,i.connector_id,x.binding_digest,x.connector_version
+        let row = tx.query_opt("SELECT f.envelope_json,i.connector_id,x.binding_digest,x.connector_version,i.id
             FROM awr_team.delivery_facts f JOIN awr_team.delivery_inbox i ON i.tenant_id=f.tenant_id AND i.project_id=f.project_id AND i.id=f.inbox_id
             JOIN awr_team.delivery_inspections x ON x.tenant_id=i.tenant_id AND x.project_id=i.project_id AND x.id=i.inspection_id
             JOIN awr_team.delivery_integration_intents d ON d.tenant_id=f.tenant_id AND d.project_id=f.project_id AND d.id=$4
@@ -752,6 +752,18 @@ impl DeliverySyncStore {
         {
             return Err(PgError::EvidenceInvalid);
         }
+        let content_proof = content::resolve(
+            &tx,
+            tenant,
+            project,
+            content::ConfirmationBinding {
+                inbox_id: &row.get::<_, String>(4),
+                original_connector_version: version(&intent.prepare.connector_version)?,
+                observed_connector_version: row.get(3),
+                observation,
+            },
+        )
+        .await?;
         let current = match revalidate(&tx, tenant, project, &intent).await {
             Ok(_) => {
                 connector.version == version(&intent.prepare.connector_version)?
@@ -775,7 +787,8 @@ impl DeliverySyncStore {
         }
         let receipt = auth::finish(&tx,tenant,project,&auth,set,op,&request.request_id,&request_hash,
             json!({"integration_id":request.integration_id,"state":state,"fact_id":request.fact_id,
-                "current":current,"guard_released":terminal,"candidate_digest":intent.prepare.candidate_digest})).await?;
+                "current":current,"guard_released":terminal,"candidate_digest":intent.prepare.candidate_digest,
+                "content_proof":content_proof})).await?;
         tx.commit().await?;
         Ok(receipt)
     }
@@ -908,16 +921,24 @@ impl DeliverySyncStore {
         let state: String = row.get(0);
         let confirmation = if let Some(fact) = row.get::<_, Option<String>>(7) {
             let proof = tx.query_opt("SELECT f.envelope_json,i.receipt_json,x.connector_version,
-                x.binding_digest,x.id FROM awr_team.delivery_facts f
+                x.binding_digest,x.id,i.id FROM awr_team.delivery_facts f
                 JOIN awr_team.delivery_inbox i ON i.tenant_id=f.tenant_id AND i.project_id=f.project_id AND i.id=f.inbox_id
                 JOIN awr_team.delivery_inspections x ON x.tenant_id=i.tenant_id AND x.project_id=i.project_id AND x.id=i.inspection_id
                 JOIN awr_team.delivery_candidates c ON c.tenant_id=x.tenant_id AND c.project_id=x.project_id AND c.binding_digest=x.binding_digest
                 WHERE f.tenant_id=$1 AND f.project_id=$2 AND f.id=$3 AND i.connector_id=$4 AND c.work_id=$5",
                 &[&tenant, &project, &fact, &prepare.connector_id, &work]).await?
                 .ok_or(PgError::SourceDivergence)?;
+            let envelope: Value = proof.get(0);
+            let reference = envelope["record"]["data"]["external_reference"]
+                .as_str()
+                .ok_or(PgError::SourceDivergence)?;
+            let content_facts =
+                content::details(tx, tenant, project, &proof.get::<_, String>(5), reference)
+                    .await?;
             json!({"fact_id":fact,"envelope":proof.get::<_,Value>(0),
                 "receipt":proof.get::<_,Value>(1),"connector_version":proof.get::<_,i64>(2).to_string(),
-                "candidate_digest":proof.get::<_,String>(3),"inspection_id":proof.get::<_,String>(4)})
+                "candidate_digest":proof.get::<_,String>(3),"inspection_id":proof.get::<_,String>(4),
+                "content_proof_facts":content_facts})
         } else {
             Value::Null
         };

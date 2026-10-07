@@ -1,7 +1,7 @@
 use super::binding::{digest, names, text};
 use super::{
-    ArtifactEntry, ArtifactManifest, CandidateBinding, RevisionFormat, RevisionRef,
-    require_same_candidate,
+    ArtifactEntry, ArtifactManifest, CandidateBinding, IntegrationContentProof, RevisionFormat,
+    RevisionRef, require_same_candidate,
 };
 use crate::{ActorId, RequestId, TeamError, TeamResult};
 use serde::{Deserialize, Serialize};
@@ -27,7 +27,7 @@ pub struct FactProvenance {
 }
 
 impl FactProvenance {
-    fn validate(&self) -> TeamResult<()> {
+    pub(super) fn validate(&self) -> TeamResult<()> {
         text(&self.reference, 4096, "fact reference")?;
         for time in self
             .observed_at_unix_ms
@@ -176,6 +176,7 @@ pub enum DeliveryRecord {
     ReviewDecision(ReviewDecision),
     IntegrationRequest(IntegrationRequest),
     IntegrationObservation(IntegrationObservation),
+    IntegrationContentProof(IntegrationContentProof),
     AdapterCapabilities(AdapterCapabilities),
 }
 
@@ -188,6 +189,7 @@ impl DeliveryRecord {
             Self::ReviewDecision(record) => &record.binding,
             Self::IntegrationRequest(record) => &record.binding,
             Self::IntegrationObservation(record) => &record.binding,
+            Self::IntegrationContentProof(record) => &record.binding,
             Self::AdapterCapabilities(_) => return None,
         })
     }
@@ -316,6 +318,7 @@ impl DeliveryRecord {
                 }
                 record.provenance.validate()?;
             }
+            Self::IntegrationContentProof(record) => record.validate()?,
             Self::AdapterCapabilities(record) => {
                 text(&record.adapter_id, 128, "adapter identity")?;
                 if record.integration_requests
