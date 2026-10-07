@@ -153,8 +153,8 @@ declaration, not extra caller authority.
 
 **Current boundary:** planning publishes declarations; it grants no execution or
 review authority. Check `capabilities.simulated_member_review` before using the
-authenticated review flow below. Review support does not enable simulated-member
-finalization, repository integration or certify business acceptance.
+authenticated review flow below. Review approval alone does not finalize work,
+execute a repository integration or certify complete business acceptance.
 
 ## Review work as distinct simulated members
 
@@ -185,8 +185,38 @@ Default action receipts contain short member attribution or a basis digest. An
 authorized `review.inspect` returns the immutable round origins and full decision
 basis, including the actual covering delegation and grant versions. It does not
 return credentials. Check again after a binding, permission, contract, evidence or
-round change. Simulated-member finalization is currently refused: review approval
-alone does not complete the task or grant repository integration rights.
+round change.
+
+## Finalize a reviewed simulated-member delivery
+
+**When:** the exact artifact is available, execution succeeded with explicit
+workspace settlement, and an independent simulated member approved that bundle.
+**Basis:** finalization compares the stored executor, evidence submitter and round
+opener with the original decision, including its member, actor, client and source
+snapshot. It does not recapture those contributors from today's bindings.
+**Action:** an authorized human or Agent uses `work.complete` or
+`delivery.finalize` with the current `work.prepare` preconditions. An Agent needs
+an explicit live `finalize_delivery` delegation and current delivery scope; Review
+and development permissions alone cannot finalize. On an unknown result, inspect
+the original command before an exact retry. Exact replay retains the receipt;
+concurrent different requests cannot accept the same simulated decision twice.
+**Recheck:** permission, source, contract, artifact, settlement or review changes.
+Missing historical origins and mismatched original decisions remain blocked.
+
+Completion stores the full original review basis and exposes only its short digest
+and member summary by default. Its human approval flags remain false and its
+execution evidence remains caller asserted. Existing human and ordinary Agent
+policies retain their semantics.
+
+`delivery.integration.prepare` can reuse the exact simulated review and settlement
+for neutral **fast-forward** eligibility. Current candidate, connector, required
+checks and decision versions are pinned and dispatch checks them again. Preparation
+executes no Git command and grants no repository permissions. The optional adapter
+must separately perform and confirm the repository effect. AWR acceptance,
+observed integration and confirmed authoritative-source publication are separate
+facts; this capability does not claim the complete automatic source chain,
+squash/rebase content proof, cross-workstream simulated adoption or native business
+acceptance.
 
 ## Receive unfinished work
 

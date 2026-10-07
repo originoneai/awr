@@ -8,6 +8,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio_postgres::Transaction;
 
+mod completion;
+pub(crate) use completion::{CompletionBind, verify as verify_completion};
+
 pub(crate) const POLICY: &str =
     awr_team::ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY;
 pub(crate) const INDEPENDENCE: &str = "simulated_member_independent";
@@ -147,7 +150,7 @@ pub(crate) async fn capture(
     Ok(origin)
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EvidenceOrigins {
     codec: String,
@@ -155,7 +158,7 @@ struct EvidenceOrigins {
     submitter: Origin,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RoundOrigins {
     codec: String,

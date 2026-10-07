@@ -633,7 +633,10 @@ pub(crate) async fn read(
             "admission_rechecks_origin":true,"historical_origin_backfill":false,
             "approval_basis":crate::review::simulated_member::APPROVAL_BASIS,
             "human_approval":false,"team_independent_acceptance":false,
-            "completion_supported":false,"repository_integration_supported":false,
+            "completion_supported":true,"repository_integration_supported":true,
+            "finalization_action":"delivery.finalize","finalizer_requires":"current_explicit_delivery_authority",
+            "integration_operation":"fast_forward","preparation_executes_repository":false,
+            "completion_requires":["artifact_bytes","successful_execution","workspace_settlement","exact_immutable_review_basis"],
             "details":"review.inspect","default_receipt":"member_summary_and_basis_digest",
             "shared_controller_allowed":true
         });

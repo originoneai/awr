@@ -187,7 +187,7 @@ async fn simulated_members_review_with_one_controller_and_immutable_inspectable_
         .unwrap();
     assert_eq!(
         caps["simulated_member_review"]["completion_supported"],
-        false
+        true
     );
     let evidence = simulated_evidence(&store).await;
     let round = open_simulated(
@@ -258,17 +258,34 @@ async fn simulated_members_review_with_one_controller_and_immutable_inspectable_
         event["member_review_basis"]["basis_digest"],
         data["member_review_basis"]["basis_digest"]
     );
-    assert!(matches!(
-        run_err(
-            &store,
-            RUNNER,
-            "simulation-finalize",
-            "delivery.finalize",
-            completion_args(&evidence)
+    let finalized = run(
+        &store,
+        RUNNER,
+        "simulation-finalize",
+        "delivery.finalize",
+        completion_args(&evidence),
+    )
+    .await;
+    assert_eq!(finalized["task_complete"], true);
+    assert_eq!(finalized["human_approval"], false);
+    assert_eq!(finalized["team_independent_acceptance"], false);
+    assert_eq!(
+        finalized["member_review_basis"],
+        data["member_review_basis"]
+    );
+    assert!(finalized["member_review_basis"].get("origins").is_none());
+    let stored: Value = admin
+        .query_one(
+            "SELECT approved_by_json FROM awr_team.completion_receipts WHERE id=$1",
+            &[&finalized["receipt_id"].as_str().unwrap()],
         )
-        .await,
-        PgError::Unsupported(_)
-    ));
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(&stored["member_review_basis"], basis);
+    assert_eq!(stored["review_decision_id"], data["decision_id"]);
+    assert!(admin.execute("UPDATE awr_team.completion_receipts SET approved_by_json=jsonb_set(approved_by_json,'{human_approval}','true') WHERE id=$1",
+        &[&finalized["receipt_id"].as_str().unwrap()]).await.is_err());
     for (table, column, id) in [
         (
             "executions",

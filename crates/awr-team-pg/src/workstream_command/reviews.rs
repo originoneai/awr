@@ -996,12 +996,8 @@ async fn complete(
     )
     .await?;
     let policy = contract.completion_policy.as_str();
-    if policy == simulated_member::POLICY {
-        return Err(PgError::Unsupported(
-            "Simulated member finalization is not supported by this review-only capability".into(),
-        ));
-    }
-    let agent_policy = policy == crate::review::AGENT_REVIEW_POLICY;
+    let simulated_policy = policy == simulated_member::POLICY;
+    let agent_policy = policy == crate::review::AGENT_REVIEW_POLICY || simulated_policy;
     if let Some(requested) = a.requested_policy.as_deref() {
         if requested != policy {
             return Err(PgError::PolicyDowngrade);
@@ -1049,7 +1045,7 @@ async fn complete(
     if let Some(aid) = &artifact_id {
         let row = tx
             .query_opt(
-                "SELECT sha256, state, content FROM awr_team.artifacts
+                "SELECT sha256, state, content, byte_length FROM awr_team.artifacts
                  WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
                 &[&tenant, &project, aid],
             )
@@ -1062,6 +1058,7 @@ async fn complete(
         if state != "finalized"
             || sha256_hex(&content) != sha
             || output_digest.as_deref() != Some(sha.as_str())
+            || row.get::<_, i64>(3) != content.len() as i64
         {
             return Err(PgError::EvidenceInvalid);
         }
@@ -1118,7 +1115,7 @@ async fn complete(
         if exec_state != "succeeded" || exec_contract != ev_contract {
             return Err(PgError::EvidenceInvalid);
         }
-        if exec_executor != created_by || exec_scope != "main" {
+        if (!simulated_policy && exec_executor != created_by) || exec_scope != "main" {
             return Err(PgError::EvidenceInvalid);
         }
         if exec_input != input_digest {
@@ -1171,6 +1168,8 @@ async fn complete(
     let mut approver_actor: Option<String> = None;
     let mut approver_person: Option<String> = None;
     let mut approver_client: Option<String> = None;
+    let mut member_review_basis = None;
+    let mut simulated_review_ids = None;
     if policy != "ordinary_confirm" {
         // Only a still-valid (non-invalidated) approved round may satisfy
         // completion. review.open invalidates prior approved rounds when a
@@ -1195,7 +1194,7 @@ async fn complete(
         }
         let d = tx
             .query_opt(
-                "SELECT decision, reviewer_actor_id, reviewer_person_id, independence_kind, reviewer_client_id, approval_basis
+                "SELECT decision, reviewer_actor_id, reviewer_person_id, independence_kind, reviewer_client_id, approval_basis, id
                  FROM awr_team.review_decisions
                  WHERE tenant_id=$1 AND project_id=$2 AND review_round_id=$3
                  ORDER BY created_at DESC LIMIT 1",
@@ -1208,7 +1207,26 @@ async fn complete(
         approver_person = d.get(2);
         independence_kind = d.get(3);
         approver_client = d.get(4);
-        if agent_policy {
+        if simulated_policy {
+            let decision_id: String = d.get(6);
+            member_review_basis = Some(
+                simulated_member::verify_completion(
+                    tx,
+                    tenant,
+                    project,
+                    simulated_member::CompletionBind {
+                        work: &command.work_id,
+                        contract_hash,
+                        evidence: &a.evidence_id,
+                        round: &round_id,
+                        decision: &decision_id,
+                        snapshot: &auth.snapshot,
+                    },
+                )
+                .await?,
+            );
+            simulated_review_ids = Some((round_id.clone(), decision_id));
+        } else if agent_policy {
             let author: String = pinned.get(7);
             let author_client: Option<String> = pinned.get(8);
             if independence_kind != "agent_review"
@@ -1322,7 +1340,7 @@ async fn complete(
     // ID for author/executor person-agent namespaces (TMCP-031 CR).
     let author_actor = author_actor.or_else(|| Some(created_by.clone()));
     let executor_actor = executor_actor.or(verified_executor_actor);
-    let approved_by = json!({
+    let mut approved_by = json!({
         "approved_by": approver_actor,
         "approved_by_person_id": approver_person,
         "submitted_by": auth.actor_id,
@@ -1344,6 +1362,24 @@ async fn complete(
         "reviewer_client_id": approver_client,
         "caller_execution_binding": caller_execution_binding,
     });
+    if let Some(basis) = &member_review_basis {
+        let (round, decision) = simulated_review_ids
+            .as_ref()
+            .ok_or(PgError::ReviewRequired)?;
+        let accepted: bool = tx.query_one(
+            "SELECT EXISTS(SELECT 1 FROM awr_team.completion_receipts
+             WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND scope_id='main'
+               AND contract_hash=$4 AND evidence_id=$5 AND independence_kind='simulated_member_independent'
+               AND approved_by_json->>'review_decision_id'=$6)",
+            &[&tenant,&project,&command.work_id,&ev_contract,&a.evidence_id,&decision],
+        ).await?.get(0);
+        if accepted {
+            return Err(PgError::CompletionRejected);
+        }
+        approved_by["member_review_basis"] = basis.clone();
+        approved_by["review_round_id"] = json!(round);
+        approved_by["review_decision_id"] = json!(decision);
+    }
     let dependency_binding_hash = sha256_hex(json!(&dependency_links).to_string().as_bytes());
     let receipt_id = crate::tx::new_id();
     let independence_for_receipt = if policy == "ordinary_confirm" {
@@ -1429,7 +1465,7 @@ async fn complete(
     if selected.as_deref() != Some(receipt_id.as_str()) {
         return Err(PgError::CompletionRejected);
     }
-    Ok(Applied {
+    let mut applied = Applied {
         data: json!({
             "receipt_id": receipt_id,
             "selected_completion_id": receipt_id,
@@ -1468,7 +1504,13 @@ async fn complete(
                 "approved_by_person_id": approver_person,
             }),
         )],
-    })
+    };
+    if let Some(basis) = &member_review_basis {
+        let summary = simulated_member::basis_summary(basis);
+        applied.data["member_review_basis"] = summary.clone();
+        applied.preceding_events[0].1["member_review_basis"] = summary;
+    }
+    Ok(applied)
 }
 
 async fn register_pr(
