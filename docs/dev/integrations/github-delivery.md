@@ -108,10 +108,9 @@ not manufacture passing or rejected terminal facts.
 
 ## Current delivery boundary
 
-This is a library observation adapter with explicit authenticated reconciliation.
-Background service admission, signed wake-up notifications, fallback polling and
-synchronization timing measurements are separate work. No webhook body is an
-authoritative delivery fact.
+The library adapter and optional Team service worker use explicit authenticated
+reconciliation. Signed wake-up notifications and synchronization timing
+measurements remain separate work. No webhook body is an authoritative fact.
 
 The observer advertises `integration_requests: false`. Repository effects require
 the separate opt-in integrator described below; observations never grant authority.
@@ -181,6 +180,60 @@ unchanged. Neither query finalizes work or asserts that authoritative source
 writeback succeeded.
 
 Integration confirmation, authoritative source writeback and final task acceptance
-remain separate. This library mechanism is not background service admission,
-signed webhook delivery, squash/rebase finalization or complete native-client
-business acceptance.
+remain separate. Neither the library nor its worker establishes signed webhook
+delivery, squash/rebase finalization or complete native-client business acceptance.
+
+## Optional Team service worker
+
+Set `AWR_TEAM_GITHUB_WORKER_CONFIG` to a private TOML file based on
+[`worker.toml`](../../../examples/github-delivery/worker.toml). It declares the
+project key, worker ID, explicit repository mapping, AWR credential environment
+name, separate provider credential environment name and mandatory
+`integration_enabled` mode. Raw credential values, unknown fields and transport
+injection are refused. Use an existing private report directory and retain it
+through restart. This configuration creates no identity, grant or approval.
+
+Each configured principal needs current scoped AWR observation authority and a
+matching enabled `github` connector. Effect mode additionally requires existing
+integration/finalization authority. Provider access is authenticated separately.
+The worker never infers AWR authority from repository credentials or a GitHub
+approval. `integration_enabled = false` only observes current facts; it does not
+lease or dispatch even an approved prepared intent. Enable effects explicitly
+to execute **already prepared** authorized integrations and recover their original
+results. The worker does not plan work, create approval or finalize acceptance.
+
+The Team service validates every optional source, local Git and GitHub group
+before credential lookup, then completes all sealed admissions before spawning
+any group, under one 30-second startup deadline. A denied later group cannot
+leave an earlier source publisher or repository worker running. Duplicate
+observer connector scopes are refused across provider groups. An absent/empty
+group touches no worker credentials, provider or PG connection. Existing
+`DeliveryWorkers::start` and source-only callers retain their entry points;
+`start_with_github` adds the explicit third group. Trusted Rust transport
+extensions still undergo configuration and PG admission; HTTP/MCP callers cannot
+select them.
+
+Each loop obtains a fresh authenticated schedule. Current-fact observation uses
+`reconcile_current`; original integration recovery uses
+`reconcile_original_current`. Missing/stale current selection does not hide
+dispatched original requests. Live leases are observed rather than stolen;
+prepared or proven expired pre-dispatch intents can be leased through the neutral
+store. Dispatched/unknown originals are only queried. Settled history remains
+immutable, and no uncertainty permits another POST. Approval/check/source changes
+are rechecked by the actual store and effect preflight.
+
+Worker count, page size, pages/jobs per poll and operation/lease limits are bounded.
+Every page is authenticated; a partially visited page never advances past
+unvisited rows. Provider rate limits, revoked credentials, mapping changes and
+store failures use finite redacted failure codes and bounded exponential backoff.
+Monitors expose loop counters and state, never credentials or provider bodies;
+these counters are not delivery receipts.
+
+Drop, explicit stop and HTTP shutdown share cancellation. Blocking HTTPS jobs
+retain their permits until their bounded work exits, even if the async future
+is dropped. Startup resolves credentials once into zeroizing memory; explicit
+restart is the rotation boundary. A revoked credential cannot keep observing or
+execute from cached authority. Restart recovers durable original intents and
+digest-bound reports without persisting secret values. Signed notification,
+physical GitHub-to-source completion timing and complete natural-client business
+acceptance need their own evidence.

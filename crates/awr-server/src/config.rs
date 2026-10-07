@@ -1,4 +1,6 @@
 //! Optional server-owned delivery workers. Credentials and source paths are not configuration data.
+mod github_worker;
+pub use github_worker::{GITHUB_WORKER_CONFIG_ENV, GitHubWorkerConfig, GitHubWorkerSpec};
 mod local_git_worker;
 pub use local_git_worker::{LOCAL_GIT_WORKER_CONFIG_ENV, LocalGitWorkerConfig, LocalGitWorkerSpec};
 
