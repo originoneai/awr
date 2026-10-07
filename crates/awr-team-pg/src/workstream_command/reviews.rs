@@ -4,6 +4,7 @@ pub(crate) use agent_completion::verify_execution as verify_integration_executio
 mod artifact_input;
 
 use super::*;
+use crate::review::simulated_member;
 use crate::review::{
     evidence_digest, legacy_pr_snapshot, required_dependencies_covered, resolve_person_id,
     self_review_permitted,
@@ -292,9 +293,9 @@ pub(super) async fn apply(
         .hash()
         .map_err(|e| PgError::Protocol(e.to_string()))?;
     match action {
-        Action::Submit(a) => submit(tx, tenant, project, auth, command, &contract_hash, a).await,
+        Action::Submit(a) => submit(tx, tenant, project, auth, command, contract, a).await,
         Action::Open(a) | Action::SubmitAndRequest(a) => {
-            open(tx, tenant, project, auth, command, a).await
+            open(tx, tenant, project, auth, command, contract, a).await
         }
         Action::Accept(a) => {
             decide(
@@ -372,9 +373,28 @@ async fn submit(
     project: &str,
     auth: &ReaderAuthority,
     command: &WorkstreamCommand,
-    contract_hash: &str,
+    contract: &awr_team::WorkContract,
     a: SubmitEvidence,
 ) -> PgResult<Applied> {
+    let contract_hash = contract
+        .hash()
+        .map_err(|e| PgError::Protocol(e.to_string()))?;
+    let member_origins = if contract.completion_policy == simulated_member::POLICY {
+        Some(
+            simulated_member::evidence_origins(
+                tx,
+                tenant,
+                project,
+                auth,
+                &command.work_id,
+                &contract_hash,
+                a.execution_id.as_deref(),
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
     let kind: String = tx
         .query_opt(
             "SELECT kind FROM awr_team.actors WHERE tenant_id=$1 AND id=$2",
@@ -424,7 +444,7 @@ async fn submit(
         .map(str::to_owned);
     let digest_v = evidence_digest(
         &command.work_id,
-        contract_hash,
+        &contract_hash,
         a.input_digest.as_deref(),
         output_digest.as_deref(),
         execution_result_digest.as_deref(),
@@ -457,8 +477,8 @@ async fn submit(
         "INSERT INTO awr_team.evidence(
             tenant_id, project_id, id, work_id, execution_id, artifact_id,
             contract_hash, input_digest, output_digest, execution_result_digest,
-            evidence_kind, trust_basis, digest, payload_json, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'report',$11,$12,$13,$14)",
+            evidence_kind, trust_basis, digest, payload_json, created_by, member_origins_json)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'report',$11,$12,$13,$14,$15)",
         &[
             &tenant,
             &project,
@@ -474,10 +494,11 @@ async fn submit(
             &digest_v,
             &a.payload,
             &auth.actor_id,
+            &member_origins,
         ],
     )
     .await?;
-    Ok(Applied {
+    let mut applied = Applied {
         data: json!({
             "evidence_id": id,
             "digest": digest_v,
@@ -499,7 +520,13 @@ async fn submit(
                 "execution_id": a.execution_id,
             }),
         )],
-    })
+    };
+    if let Some(origins) = member_origins {
+        let submitter = simulated_member::decode_origin(origins["submitter"].clone())?;
+        simulated_member::add_summary(&mut applied.data, Some(&submitter));
+        simulated_member::add_summary(&mut applied.preceding_events[0].1, Some(&submitter));
+    }
+    Ok(applied)
 }
 
 async fn open(
@@ -508,6 +535,7 @@ async fn open(
     project: &str,
     auth: &ReaderAuthority,
     command: &WorkstreamCommand,
+    contract: &awr_team::WorkContract,
     a: OpenReview,
 ) -> PgResult<Applied> {
     if !identity(&a.evidence_id) {
@@ -515,7 +543,7 @@ async fn open(
     }
     let row = tx
         .query_opt(
-            "SELECT work_id, contract_hash, digest, execution_id, output_digest, execution_result_digest
+            "SELECT work_id, contract_hash, digest, execution_id, output_digest, execution_result_digest, member_origins_json
              FROM awr_team.evidence WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
             &[&tenant, &project, &a.evidence_id],
         )
@@ -533,24 +561,51 @@ async fn open(
     // Resolve to a person for independence checks. Unbound agents get a
     // person row keyed by actor id so the FK holds; that person is not a
     // substitute for a real human owner when judging team independence.
-    let author_person = match resolve_person_id(tx, tenant, project, &auth.actor_id).await {
-        Ok(p) => p,
-        Err(_) => {
-            tx.execute(
-                "INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
-                 VALUES ($1,$2,$3,$3,'active') ON CONFLICT DO NOTHING",
-                &[&tenant, &project, &auth.actor_id],
+    let member_origins = if contract.completion_policy == simulated_member::POLICY {
+        if contract_hash
+            != contract
+                .hash()
+                .map_err(|e| PgError::Protocol(e.to_string()))?
+        {
+            return Err(PgError::EvidenceInvalid);
+        }
+        Some(
+            simulated_member::round_origins(
+                tx,
+                tenant,
+                project,
+                auth,
+                row.get::<_, Option<Value>>(6)
+                    .ok_or(PgError::EvidenceInvalid)?,
             )
-            .await?;
-            tx.execute(
+            .await?,
+        )
+    } else {
+        None
+    };
+    let author_person = if let Some(origins) = &member_origins {
+        origins.opener.member_id.clone()
+    } else {
+        match resolve_person_id(tx, tenant, project, &auth.actor_id).await {
+            Ok(p) => p,
+            Err(_) => {
+                tx.execute(
+                    "INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+                 VALUES ($1,$2,$3,$3,'active') ON CONFLICT DO NOTHING",
+                    &[&tenant, &project, &auth.actor_id],
+                )
+                .await?;
+                tx.execute(
                 "INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status)
                  VALUES ($1,$2,$3,$4,$4,'active') ON CONFLICT DO NOTHING",
                 &[&tenant, &project, &crate::tx::new_id(), &auth.actor_id],
             )
             .await?;
-            auth.actor_id.clone()
+                auth.actor_id.clone()
+            }
         }
     };
+    let member_origins_json = member_origins.as_ref().map(|o| json!(o));
     tx.execute(
         "UPDATE awr_team.review_rounds SET state='invalidated'
          WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3
@@ -571,8 +626,8 @@ async fn open(
         "INSERT INTO awr_team.review_rounds(
             tenant_id, project_id, id, work_id, round_index, bundle_hash,
             contract_hash, author_actor_id, state, author_person_id, evidence_id,
-            execution_id, artifact_digest, execution_result_digest, author_client_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'open',$9,$10,$11,$12,$13,$14)",
+            execution_id, artifact_digest, execution_result_digest, author_client_id, member_origins_json)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'open',$9,$10,$11,$12,$13,$14,$15)",
         &[
             &tenant,
             &project,
@@ -588,10 +643,11 @@ async fn open(
             &artifact_digest,
             &execution_result_digest,
             &auth.client_id,
+            &member_origins_json,
         ],
     )
     .await?;
-    Ok(Applied {
+    let mut applied = Applied {
         data: json!({
             "round_id": id,
             "round_index": round_index,
@@ -613,7 +669,12 @@ async fn open(
                 "author_person_id": author_person,
             }),
         )],
-    })
+    };
+    if let Some(origins) = &member_origins {
+        simulated_member::add_summary(&mut applied.data, Some(&origins.opener));
+        simulated_member::add_summary(&mut applied.preceding_events[0].1, Some(&origins.opener));
+    }
+    Ok(applied)
 }
 
 async fn decide(
@@ -632,7 +693,7 @@ async fn decide(
     let row = tx
         .query_opt(
             "SELECT work_id, author_actor_id, bundle_hash, state, round_index, contract_hash,
-                    author_person_id, evidence_id, author_client_id
+                    author_person_id, evidence_id, author_client_id, member_origins_json
              FROM awr_team.review_rounds
              WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR UPDATE",
             &[&tenant, &project, &a.round_id],
@@ -671,8 +732,6 @@ async fn decide(
             .await
             .unwrap_or(author.clone()),
     };
-    let reviewer_person = resolve_person_id(tx, tenant, project, &auth.actor_id).await?;
-    let same_person = author_person == reviewer_person || auth.actor_id == author;
     let live_policy: String = tx
         .query_opt(
             "SELECT contract_json->>'completion_policy'
@@ -684,8 +743,32 @@ async fn decide(
         .await?
         .and_then(|r| r.get::<_, Option<String>>(0))
         .unwrap_or_else(|| "trusted_execution_and_review".into());
-    let agent_policy = live_policy == crate::review::AGENT_REVIEW_POLICY;
-    let independence_kind = if agent_policy {
+    let simulated_policy = live_policy == simulated_member::POLICY;
+    let agent_policy = live_policy == crate::review::AGENT_REVIEW_POLICY || simulated_policy;
+    let mut member_review_basis = None;
+    let reviewer_person = if simulated_policy {
+        if reviewer_kind != "agent" || command.op != "review.decide" {
+            return Err(PgError::Forbidden);
+        }
+        crate::tx::require_agent_review_grant(tx, tenant, project, &auth.actor_id).await?;
+        let (reviewer, basis) = simulated_member::review_basis(
+            tx,
+            tenant,
+            project,
+            auth,
+            row.get::<_, Option<Value>>(9)
+                .ok_or(PgError::EvidenceInvalid)?,
+        )
+        .await?;
+        member_review_basis = Some(basis);
+        reviewer.member_id
+    } else {
+        resolve_person_id(tx, tenant, project, &auth.actor_id).await?
+    };
+    let same_person = author_person == reviewer_person || auth.actor_id == author;
+    let independence_kind = if simulated_policy {
+        simulated_member::INDEPENDENCE
+    } else if agent_policy {
         if reviewer_kind != "agent" || command.op != "review.decide" {
             return Err(PgError::Forbidden);
         }
@@ -738,8 +821,8 @@ async fn decide(
         "INSERT INTO awr_team.review_decisions(
             tenant_id, project_id, id, review_round_id, work_id, bundle_hash,
             reviewer_actor_id, decision, reason, reviewer_person_id, independence_kind,
-            reviewer_client_id, approval_basis)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+            reviewer_client_id, approval_basis, member_review_basis_json)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
         &[
             &tenant,
             &project,
@@ -754,6 +837,7 @@ async fn decide(
             &independence_kind,
             &auth.client_id,
             &approval_basis,
+            &member_review_basis,
         ],
     )
     .await?;
@@ -765,7 +849,7 @@ async fn decide(
     .await?;
     let team_independent_acceptance =
         independence_kind == "team_independent" && decision == "approve";
-    Ok(Applied {
+    let mut applied = Applied {
         data: json!({
             "round_id": a.round_id,
             "decision_id": decision_id,
@@ -801,7 +885,13 @@ async fn decide(
                 "team_independent_acceptance": team_independent_acceptance,
             }),
         )],
-    })
+    };
+    if let Some(basis) = &member_review_basis {
+        let summary = simulated_member::basis_summary(basis);
+        applied.data["member_review_basis"] = summary.clone();
+        applied.preceding_events[0].1["member_review_basis"] = summary;
+    }
+    Ok(applied)
 }
 
 async fn rework(
@@ -906,6 +996,11 @@ async fn complete(
     )
     .await?;
     let policy = contract.completion_policy.as_str();
+    if policy == simulated_member::POLICY {
+        return Err(PgError::Unsupported(
+            "Simulated member finalization is not supported by this review-only capability".into(),
+        ));
+    }
     let agent_policy = policy == crate::review::AGENT_REVIEW_POLICY;
     if let Some(requested) = a.requested_policy.as_deref() {
         if requested != policy {
@@ -1735,7 +1830,7 @@ pub(crate) async fn inspect_review(
         .query_opt(
             "SELECT id, work_id, round_index, bundle_hash, contract_hash, state,
                     author_actor_id, author_person_id, evidence_id, execution_id,
-                    artifact_digest, execution_result_digest, author_client_id
+                    artifact_digest, execution_result_digest, author_client_id, member_origins_json
              FROM awr_team.review_rounds
              WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
             &[&tenant, &project, &round_id],
@@ -1745,14 +1840,14 @@ pub(crate) async fn inspect_review(
     let decisions = tx
         .query(
             "SELECT decision, reviewer_actor_id, reviewer_person_id, independence_kind, reason,
-                    approval_basis, reviewer_client_id, id
+                    approval_basis, reviewer_client_id, id, member_review_basis_json
              FROM awr_team.review_decisions
              WHERE tenant_id=$1 AND project_id=$2 AND review_round_id=$3
              ORDER BY created_at ASC",
             &[&tenant, &project, &round_id],
         )
         .await?;
-    Ok(json!({"review":{
+    let mut data = json!({"review":{
         "round_id": row.get::<_,String>(0),
         "work_id": row.get::<_,String>(1),
         "round_index": row.get::<_,i32>(2),
@@ -1766,7 +1861,8 @@ pub(crate) async fn inspect_review(
         "artifact_digest": row.get::<_,Option<String>>(10),
         "execution_result_digest": row.get::<_,Option<String>>(11),
         "author_client_id": row.get::<_,Option<String>>(12),
-        "decisions": decisions.iter().map(|d| json!({
+        "decisions": decisions.iter().map(|d| {
+            let mut item = json!({
             "decision": d.get::<_,String>(0),
             "reviewer_actor_id": d.get::<_,String>(1),
             "reviewer_person_id": d.get::<_,Option<String>>(2),
@@ -1777,8 +1873,17 @@ pub(crate) async fn inspect_review(
             "decision_id": d.get::<_,String>(7),
             "human_approval": matches!(d.get::<_,String>(5).as_str(), "human_independent_review" | "human_author_self_review") && d.get::<_,String>(0)=="approve",
             "team_independent_acceptance": d.get::<_,String>(3)=="team_independent" && d.get::<_,String>(0)=="approve",
-        })).collect::<Vec<_>>(),
-    }}))
+            });
+            if let Some(basis) = d.get::<_,Option<Value>>(8) {
+                item["member_review_basis"] = basis;
+            }
+            item
+        }).collect::<Vec<_>>(),
+    }});
+    if let Some(origins) = row.get::<_, Option<Value>>(13) {
+        data["review"]["member_origins"] = origins;
+    }
+    Ok(data)
 }
 
 pub(crate) async fn inspect_completion(

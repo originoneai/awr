@@ -166,6 +166,17 @@ pub(super) async fn start(
     if settlement_policy != contract.execution_settlement {
         return Err(PgError::PreconditionsChanged);
     }
+    if contract.completion_policy == crate::review::simulated_member::POLICY {
+        let recorded = crate::review::simulated_member::decode_origin(
+            r.get::<_, Option<Value>>("executor_origin_json")
+                .ok_or(PgError::EvidenceInvalid)?,
+        )?;
+        let current = crate::review::simulated_member::capture(tx, tenant, project, auth).await?;
+        current.require_simulated_agent()?;
+        if recorded != current {
+            return Err(PgError::PreconditionsChanged);
+        }
+    }
     if r.get::<_, Option<String>>("claim_id").as_deref() != Some(&a.claim_id) {
         return Err(PgError::Forbidden);
     }

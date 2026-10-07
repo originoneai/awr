@@ -151,13 +151,42 @@ fields are omitted. An ordinary workspace contract uses contract V3; the exact
 named simulated-member policy uses contract V4. These versions describe the
 declaration, not extra caller authority.
 
-**Current boundary:** `capabilities.planning.execution_settlement.declaration_only`
-is true. This planning flow does not authenticate simulated members, enable their
-review or finalization, authorize repository integration, or certify a business
-acceptance. Those require separate supported execution and review mechanisms.
-Distinct Agents under one physical operator can be declared for team simulation;
-the declaration does not establish independent human approval or bypass existing
-member, actor and client checks.
+**Current boundary:** planning publishes declarations; it grants no execution or
+review authority. Check `capabilities.simulated_member_review` before using the
+authenticated review flow below. Review support does not enable simulated-member
+finalization, repository integration or certify business acceptance.
+
+## Review work as distinct simulated members
+
+Under the explicit `caller_managed_execution_and_simulated_member_review` policy,
+distinct authenticated Agents may represent different simulated team members,
+including members controlled by one physical operator. Each execution/reviewer
+Agent must have exactly one active binding to an active member with explicit
+`member_identity.kind=simulated_member`, an active Agent anchor and current project
+membership. Model labels, two windows and a controller reference cannot establish
+this identity or grant permissions.
+
+`execution.prepare` captures the executor's actual member, actor, client, binding
+ID and membership versions. `execution.start` checks that attribution again.
+Evidence submission and review opening retain that executor origin and capture
+their own origins. A human supervisor may submit or open a round with fresh human
+attribution; missing member metadata remains explicitly unspecified. Changing a
+binding later or opening another member's bundle cannot replace its original
+author. Legacy records without these snapshots cannot enter this review flow.
+
+Use `review.decide` with an explicit `agent_review` membership grant and a current
+Review delegation. The reviewer must differ in **member, actor and client** from
+every original executor, evidence submitter and round opener. The successful
+decision reports `approval_basis=simulated_member_independent_review`, while
+`human_approval` and `team_independent_acceptance` remain false. Ordinary Agent
+review and existing human-review policies retain their own semantics.
+
+Default action receipts contain short member attribution or a basis digest. An
+authorized `review.inspect` returns the immutable round origins and full decision
+basis, including the actual covering delegation and grant versions. It does not
+return credentials. Check again after a binding, permission, contract, evidence or
+round change. Simulated-member finalization is currently refused: review approval
+alone does not complete the task or grant repository integration rights.
 
 ## Receive unfinished work
 

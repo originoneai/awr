@@ -303,23 +303,31 @@ async fn prepare(
     let id = crate::tx::new_id();
     let declared = json!(a.declared_scope);
     let settlement_policy = contract.execution_settlement.as_ref().map(|p| json!(p));
+    let executor_origin = if contract.completion_policy == crate::review::simulated_member::POLICY {
+        let origin = crate::review::simulated_member::capture(tx, tenant, project, auth).await?;
+        origin.require_simulated_agent()?;
+        Some(origin)
+    } else {
+        None
+    };
+    let executor_origin_json = executor_origin.as_ref().map(|o| json!(o));
     tx.execute("INSERT INTO awr_team.executions(tenant_id,project_id,id,work_id,session_id,claim_id,fence,
         contract_hash,input_digest,executor_actor_id,state,effect_key,fencing_class,declared_scope_json,
-        scope_id,coordinator_epoch,workstream_id,ownership_version,executor_client_id,settlement_policy_json)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'prepared',$3,'uncontrolled',$11,'main',$12,$13,$14,$15,$16)",
+        scope_id,coordinator_epoch,workstream_id,ownership_version,executor_client_id,settlement_policy_json,executor_origin_json)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'prepared',$3,'uncontrolled',$11,'main',$12,$13,$14,$15,$16,$17)",
         &[&tenant,&project,&id,&command.work_id,&a.session_id,&a.claim_id,&fence,
           &command.expected_contract_hash,&a.input_digest,&auth.actor_id,&declared,&auth.epoch,
-          &command.workstream_id.to_string(),&ownership,&auth.client_id,&settlement_policy]).await?;
+          &command.workstream_id.to_string(),&ownership,&auth.client_id,&settlement_policy,&executor_origin_json]).await?;
     // No outbox row: an intent cannot be mistaken for an admitted dispatch.
     let work_version = advance_work(tx, tenant, project, &command.work_id).await?;
-    Ok(
-        json!({"execution_id":id,"execution_version":"1","session_id":a.session_id,"claim_id":a.claim_id,
+    let mut data = json!({"execution_id":id,"execution_version":"1","session_id":a.session_id,"claim_id":a.claim_id,
         "fence":fence.to_string(),"state":"prepared","effect_key":id,"input_digest":a.input_digest,
         "contract_hash":command.expected_contract_hash,"work_version":work_version.to_string(),
         "dispatched":false,"admission":"not_evaluated","fencing_class":"uncontrolled",
         "exactly_once_supported":false,"scope_validation":"lexical_contract_only",
-        "settlement_policy":settlement_policy}),
-    )
+        "settlement_policy":settlement_policy});
+    crate::review::simulated_member::add_summary(&mut data, executor_origin.as_ref());
+    Ok(data)
 }
 
 /// Refuse prepare/start when an active planning-change block or invalid

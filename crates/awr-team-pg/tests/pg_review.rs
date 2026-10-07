@@ -116,6 +116,51 @@ async fn approve(store: &ReviewStore, evidence_id: &str) {
         .unwrap();
 }
 
+#[tokio::test]
+async fn legacy_store_cannot_approve_or_finalize_the_simulated_member_policy() {
+    let policy = "caller_managed_execution_and_simulated_member_review";
+    let (_guard, admin, store) = setup(policy).await;
+    let evidence = evidence(
+        &store,
+        "hash-a",
+        json!({"passed":true}),
+        Some(b"synthetic artifact"),
+        None,
+    )
+    .await;
+    let round = store
+        .open_review(TENANT, PROJECT, AUTHOR, "work-a", &evidence.id)
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .decide_review(
+                TENANT,
+                PROJECT,
+                REVIEWER,
+                &round.id,
+                "approve",
+                "Reviewed the exact synthetic artifact"
+            )
+            .await,
+        Err(PgError::Unsupported(_))
+    ));
+    assert!(matches!(
+        complete(&store, &evidence.id, "legacy-simulated-completion").await,
+        Err(PgError::Unsupported(_))
+    ));
+    let row = admin
+        .query_one(
+            "SELECT (SELECT count(*) FROM awr_team.review_decisions),
+        (SELECT count(*) FROM awr_team.completion_receipts)",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, i64>(0), 0);
+    assert_eq!(row.get::<_, i64>(1), 0);
+}
+
 async fn complete(
     store: &ReviewStore,
     evidence_id: &str,

@@ -38,7 +38,7 @@
           "key_assertion": "源声明不创建团队完成回执",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "fc763f80179d33601e85dca7ea38ac80c317e78181f81d409565dc741d96f078"
+          "test_file_sha256": "328c15f5f35b9e7c084b867b07f4a5d6d52c33eabb15f2a07b555942fb601935"
         }
       ],
       "real_postgresql": true,
@@ -75,7 +75,7 @@
           "key_assertion": "自报证据不能完成且作者不能自审",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "fc763f80179d33601e85dca7ea38ac80c317e78181f81d409565dc741d96f078"
+          "test_file_sha256": "328c15f5f35b9e7c084b867b07f4a5d6d52c33eabb15f2a07b555942fb601935"
         }
       ],
       "real_postgresql": true,
@@ -324,7 +324,7 @@
           "key_assertion": "旧合同证据拒绝完成",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "fc763f80179d33601e85dca7ea38ac80c317e78181f81d409565dc741d96f078"
+          "test_file_sha256": "328c15f5f35b9e7c084b867b07f4a5d6d52c33eabb15f2a07b555942fb601935"
         }
       ],
       "real_postgresql": true,
@@ -711,7 +711,7 @@
           "key_assertion": "材料变化拒绝旧评审",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "fc763f80179d33601e85dca7ea38ac80c317e78181f81d409565dc741d96f078"
+          "test_file_sha256": "328c15f5f35b9e7c084b867b07f4a5d6d52c33eabb15f2a07b555942fb601935"
         }
       ],
       "real_postgresql": true,
@@ -748,7 +748,7 @@
           "key_assertion": "拒绝作者自审",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "fc763f80179d33601e85dca7ea38ac80c317e78181f81d409565dc741d96f078"
+          "test_file_sha256": "328c15f5f35b9e7c084b867b07f4a5d6d52c33eabb15f2a07b555942fb601935"
         }
       ],
       "real_postgresql": true,
@@ -1788,7 +1788,7 @@
           "key_assertion": "禁止策略降级",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "fc763f80179d33601e85dca7ea38ac80c317e78181f81d409565dc741d96f078"
+          "test_file_sha256": "328c15f5f35b9e7c084b867b07f4a5d6d52c33eabb15f2a07b555942fb601935"
         }
       ],
       "real_postgresql": true,
@@ -1926,7 +1926,7 @@
           "key_assertion": "材料变化使旧批准失效",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "fc763f80179d33601e85dca7ea38ac80c317e78181f81d409565dc741d96f078"
+          "test_file_sha256": "328c15f5f35b9e7c084b867b07f4a5d6d52c33eabb15f2a07b555942fb601935"
         }
       ],
       "real_postgresql": true,
@@ -1963,7 +1963,7 @@
           "key_assertion": "按证据读取和重验字节；另一个报告替代的精确对照待补",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "fc763f80179d33601e85dca7ea38ac80c317e78181f81d409565dc741d96f078"
+          "test_file_sha256": "328c15f5f35b9e7c084b867b07f4a5d6d52c33eabb15f2a07b555942fb601935"
         }
       ],
       "real_postgresql": true,
@@ -2205,7 +2205,7 @@
           "key_assertion": "dirty状态缺字节拒绝",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "fc763f80179d33601e85dca7ea38ac80c317e78181f81d409565dc741d96f078"
+          "test_file_sha256": "328c15f5f35b9e7c084b867b07f4a5d6d52c33eabb15f2a07b555942fb601935"
         }
       ],
       "real_postgresql": true,

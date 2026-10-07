@@ -4,6 +4,90 @@ use awr_team_pg::{EXPECTED_SCHEMA_VERSION, check_schema, migrate};
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn schema46_member_origins_upgrade_is_atomic_and_never_backfills_legacy_records() {
+    let (_g, admin, _) = common::historical_team_schema(46).await;
+    admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('upgrade-tenant','Upgrade','active');
+        INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+        VALUES('upgrade-tenant','upgrade-project','upgrade','team','old-epoch','active');
+        INSERT INTO awr_team.work_items(tenant_id,project_id,id,external_key) VALUES('upgrade-tenant','upgrade-project','legacy-work','legacy-work');
+        INSERT INTO awr_team.executions(tenant_id,project_id,id,work_id,fence,contract_hash,executor_actor_id,state)
+        VALUES('upgrade-tenant','upgrade-project','legacy-run','legacy-work',1,'old-contract','old-executor','unknown');
+        INSERT INTO awr_team.evidence(tenant_id,project_id,id,work_id,contract_hash,evidence_kind,trust_basis,digest,payload_json,created_by)
+        VALUES('upgrade-tenant','upgrade-project','legacy-evidence','legacy-work','old-contract','report','caller_asserted','old-digest','{}','old-executor');
+        INSERT INTO awr_team.review_rounds(tenant_id,project_id,id,work_id,round_index,bundle_hash,contract_hash,author_actor_id,state,evidence_id)
+        VALUES('upgrade-tenant','upgrade-project','legacy-round','legacy-work',1,'old-digest','old-contract','old-executor','approved','legacy-evidence');
+        INSERT INTO awr_team.review_decisions(tenant_id,project_id,id,review_round_id,work_id,bundle_hash,reviewer_actor_id,decision,reason)
+        VALUES('upgrade-tenant','upgrade-project','legacy-decision','legacy-round','legacy-work','old-digest','old-reviewer','approve','Legacy review');").await.unwrap();
+    let tables = [
+        ("executions", "executor_origin_json"),
+        ("evidence", "member_origins_json"),
+        ("review_rounds", "member_origins_json"),
+        ("review_decisions", "member_review_basis_json"),
+    ];
+    let mut originals = vec![];
+    for (table, _) in tables {
+        let row: Value = admin
+            .query_one(&format!("SELECT to_jsonb(t) FROM awr_team.{table} t"), &[])
+            .await
+            .unwrap()
+            .get(0);
+        originals.push(row);
+    }
+    let ddl = include_str!("../migrations/20261007000047_simulated_member_review.sql");
+    assert!(
+        admin
+            .batch_execute(&ddl.replace(
+                "UPDATE awr_team.schema_state",
+                "SELECT 1/0; UPDATE awr_team.schema_state"
+            ))
+            .await
+            .is_err()
+    );
+    admin.batch_execute("ROLLBACK").await.unwrap();
+    let row=admin.query_one("SELECT (SELECT version FROM awr_team.schema_state),
+        (SELECT count(*) FROM information_schema.columns WHERE table_schema='awr_team' AND column_name='executor_origin_json'),
+        to_regprocedure('awr_team.valid_member_origin(jsonb)')::text",&[]).await.unwrap();
+    assert_eq!(row.get::<_, i32>(0), 46);
+    assert_eq!(row.get::<_, i64>(1), 0);
+    assert!(row.get::<_, Option<String>>(2).is_none());
+    migrate(&admin).await.unwrap();
+    check_schema(&admin).await.unwrap();
+    migrate(&admin).await.unwrap();
+    for ((table, column), original) in tables.into_iter().zip(originals) {
+        let mut row: Value = admin
+            .query_one(&format!("SELECT to_jsonb(t) FROM awr_team.{table} t"), &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(
+            row.as_object_mut().unwrap().remove(column),
+            Some(Value::Null)
+        );
+        assert_eq!(row, original);
+        assert!(
+            admin
+                .batch_execute(&format!("UPDATE awr_team.{table} SET {column}='{{}}'"))
+                .await
+                .is_err()
+        );
+    }
+    assert!(admin.batch_execute("UPDATE awr_team.review_decisions SET independence_kind='simulated_member_independent',
+        approval_basis='simulated_member_independent_review',reviewer_client_id='legacy-client'").await.is_err());
+    for value in [
+        json!({}),
+        json!({"codec":"awr-member-origin-v1"}),
+        json!({"codec":"awr-member-origin-v1","caller_identity":"forged"}),
+    ] {
+        let accepted: bool = admin
+            .query_one("SELECT awr_team.valid_member_origin($1)", &[&value])
+            .await
+            .unwrap()
+            .get(0);
+        assert!(!accepted);
+    }
+}
+
+#[tokio::test]
 async fn schema45_integration_upgrade_is_atomic_and_preserves_delivery_records() {
     let (_g, admin, _) = common::historical_team_schema(45).await;
     admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('upgrade-tenant','Upgrade','active');
@@ -352,7 +436,7 @@ async fn schema40_upgrade_preserves_legacy_provenance_and_is_atomic_and_repeatab
     assert_eq!(before, unchanged);
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 46);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 47);
     let after: Value = admin
         .query_one(
             "SELECT to_jsonb(e) FROM awr_team.executions e WHERE id='legacy-run'",
@@ -366,6 +450,7 @@ async fn schema40_upgrade_preserves_legacy_provenance_and_is_atomic_and_repeatab
         "settlement_policy_json",
         "admission_mode",
         "admission_lease_version",
+        "executor_origin_json",
     ] {
         assert!(preserved[field].is_null());
         preserved.as_object_mut().unwrap().remove(field);
