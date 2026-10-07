@@ -63,7 +63,7 @@ pub async fn setup_integration() -> Fixture {
 
 /// Bind an actual repository candidate before submitting evidence or approval.
 pub async fn setup_integration_with_candidate(actual: Option<DeliveryCandidate>) -> Fixture {
-    setup_integration_inner(actual, None, None).await
+    setup_integration_inner(actual, None, None, false).await
 }
 
 /// Activate the physical contract before execution or business review. No delivery
@@ -80,13 +80,24 @@ pub async fn setup_source_integration_with_checks(
     checks: &[String],
 ) -> Fixture {
     assert!(!checks.is_empty());
-    setup_integration_inner(Some(actual), Some(root), Some(checks)).await
+    setup_integration_inner(Some(actual), Some(root), Some(checks), false).await
+}
+
+/// Actual member anchors are provisioned only on the explicit simulated path.
+/// Existing ordinary/source fixtures keep their original identity semantics.
+pub async fn setup_simulated_member_integration() -> Fixture {
+    let fixture = setup_integration_inner(None, None, None, true).await;
+    fixture.admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
+        VALUES($1,$2,'session-supervisor','main','a','supervisor','cli-supervisor','supervisor-conversation','active',$3,1)",
+        &[&TENANT,&PROJECT,&awr_core::Id::from(1).to_string()]).await.unwrap();
+    fixture
 }
 
 async fn setup_integration_inner(
     actual: Option<DeliveryCandidate>,
     source_root: Option<&Path>,
     source_checks: Option<&[String]>,
+    simulated: bool,
 ) -> Fixture {
     let (guard, admin, db, reads) = setup().await;
     let config = common::with_app_role(&common::test_config(), &db);
@@ -211,6 +222,12 @@ async fn setup_integration_inner(
         admin.execute("INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status,member_identity)
             VALUES($1,$2,$3,$3,'active','{\"kind\":\"simulated_member\",\"controller_ref\":\"shared-test-controller\"}')",
             &[&TENANT,&PROJECT,&member]).await.unwrap();
+        if simulated {
+            admin.execute("INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status) VALUES($1,$2,'agent',$2,'active')",
+                &[&TENANT,&member]).await.unwrap();
+            admin.execute("INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role) VALUES($1,$2,$3,'developer')",
+                &[&TENANT,&PROJECT,&member]).await.unwrap();
+        }
         admin.execute("INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status)
             VALUES($1,$2,$3,$4,$5,'active')",&[&TENANT,&PROJECT,&binding,&member,&actor]).await.unwrap();
         AuthorizationStore::from_config(config.clone())
@@ -257,8 +274,18 @@ async fn setup_integration_inner(
     let value = prepare(&reads, A, "a").await["data"]["published_contract"].clone();
     let mut contract: WorkContract = serde_json::from_value(value).unwrap();
     if source_root.is_none() {
-        contract.codec = WorkContract::CODEC_V3.into();
-        contract.completion_policy = POLICY.into();
+        contract.codec = if simulated {
+            WorkContract::CODEC_V4
+        } else {
+            WorkContract::CODEC_V3
+        }
+        .into();
+        contract.completion_policy = if simulated {
+            ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
+        } else {
+            POLICY
+        }
+        .into();
         contract.execution_settlement = Some(ExecutionSettlementPolicy {
             mode: ExecutionSettlementMode::IndependentWorkspaceV1,
             workspace_id: "synthetic-workspace-a".into(),

@@ -141,7 +141,8 @@ pub(super) async fn resolve(
             "sha256":entry.sha256,"byte_length":entry.byte_length}));
     }
     let policy = contract.completion_policy.as_str();
-    let agent_policy = policy == crate::review::AGENT_REVIEW_POLICY;
+    let simulated_policy = policy == crate::review::simulated_member::POLICY;
+    let agent_policy = policy == crate::review::AGENT_REVIEW_POLICY || simulated_policy;
     // Integration always requires an explicit approved round. Ordinary human
     // confirmation remains available through its existing completion workflow.
     if !agent_policy
@@ -177,7 +178,8 @@ pub(super) async fn resolve(
         || exec.get::<_, String>("contract_hash") != set.contract_hash
         || exec.get::<_, String>("scope_id") != "main"
         || exec.get::<_, String>("work_id") != set.work_id
-        || exec.get::<_, String>("executor_actor_id") != ev.get::<_, String>("created_by")
+        || (!simulated_policy
+            && exec.get::<_, String>("executor_actor_id") != ev.get::<_, String>("created_by"))
         || input.is_none()
         || exec.get::<_, Option<String>>("input_digest") != input
         || result.is_none()
@@ -229,7 +231,10 @@ pub(super) async fn resolve(
         || decision.get::<_, String>("decision") != "approve"
         || decision.get::<_, String>("work_id") != set.work_id
         || decision.get::<_, String>("bundle_hash") != evidence_digest
-        || if agent_policy {
+        || if simulated_policy {
+            independence != crate::review::simulated_member::INDEPENDENCE
+                || basis != crate::review::simulated_member::APPROVAL_BASIS
+        } else if agent_policy {
             independence != "agent_review"
                 || basis != "agent_review"
                 || reviewer == ev.get::<_, String>("created_by")
@@ -260,6 +265,26 @@ pub(super) async fn resolve(
     {
         return Err(PgError::ReviewRequired);
     }
+    let member_review_basis = if simulated_policy {
+        Some(
+            crate::review::simulated_member::verify_completion(
+                tx,
+                tenant,
+                project,
+                crate::review::simulated_member::CompletionBind {
+                    work: &set.work_id,
+                    contract_hash: &set.contract_hash,
+                    evidence: &request.evidence_id,
+                    round: &request.review_round_id,
+                    decision: &request.review_decision_id,
+                    snapshot: &auth.snapshot,
+                },
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
     let mut checks = Vec::new();
     let mut facts = Vec::new();
     for check in &candidate.binding.required_checks {
@@ -299,14 +324,18 @@ pub(super) async fn resolve(
         });
         facts.push(json!({"fact_id":row.get::<_,String>(0),"generation":row.get::<_,i64>(2).to_string(),"envelope_digest":hash(&json!(envelope))?}));
     }
-    Ok(Eligibility {
-        candidate,
-        checks,
-        binding: json!({"read_set":set,"candidate_digest":selected,"selection_version":selection.to_string(),
+    let mut binding = json!({"read_set":set,"candidate_digest":selected,"selection_version":selection.to_string(),
             "connector_id":request.connector_id,"connector_version":request.connector_version,
             "worker_actor_id":connector.get::<_,String>(6),"worker_client_id":connector.get::<_,String>(7),
             "policy":policy,"evidence_id":request.evidence_id,"evidence_digest":evidence_digest,"artifact_id":artifact_id,"artifacts":artifacts,
             "review_round_id":request.review_round_id,"review_decision_id":request.review_decision_id,
-            "reviewer_actor_id":reviewer,"reviewer_client_id":reviewer_client,"approval_basis":basis,"settlement":settlement,"verification_facts":facts}),
+            "reviewer_actor_id":reviewer,"reviewer_client_id":reviewer_client,"approval_basis":basis,"settlement":settlement,"verification_facts":facts});
+    if let Some(basis) = member_review_basis {
+        binding["member_review_basis"] = basis;
+    }
+    Ok(Eligibility {
+        candidate,
+        checks,
+        binding,
     })
 }
