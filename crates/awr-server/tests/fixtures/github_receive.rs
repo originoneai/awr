@@ -80,7 +80,31 @@ impl GitHubTransport for Api {
             json!({"id":1,"head_sha":source,"name":"CI","app":{"id":9},"status":"completed","conclusion":"success"})
         } else if let Some(pair) = route.strip_prefix("/compare/") {
             let (a, b) = pair.split_once("...").unwrap();
-            let ancestor = self.repo.bare(&["merge-base", a, b]);
+            let merge = Command::new(&self.repo.config.git_executable)
+                .args([
+                    "-C",
+                    self.repo.config.repository.to_str().unwrap(),
+                    "merge-base",
+                    a,
+                    b,
+                ])
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env(
+                    "GIT_CONFIG_GLOBAL",
+                    if cfg!(windows) { "NUL" } else { "/dev/null" },
+                )
+                .output()
+                .unwrap();
+            if !merge.status.success() {
+                return Ok(GitHubResponse {
+                    status: 404,
+                    body: vec![],
+                });
+            }
+            let ancestor = String::from_utf8(merge.stdout)
+                .unwrap()
+                .trim_end()
+                .to_owned();
             let status = if a == b {
                 "identical"
             } else if ancestor == a {
@@ -90,7 +114,7 @@ impl GitHubTransport for Api {
             } else {
                 "diverged"
             };
-            json!({"status":status,"base_commit":{"sha":a},"merge_base_commit":{"sha":ancestor}})
+            github::comparison(a, b, &ancestor, status)
         } else {
             return Ok(GitHubResponse {
                 status: 404,
@@ -245,5 +269,46 @@ impl Fixture {
             self.receive.clone(),
         )
         .unwrap()
+    }
+
+    /// Construct an immutable pre-witness archive with its original valid index.
+    pub fn legacy_integration_report(&self, artifact: &ArtifactEntry) -> (String, Vec<u8>) {
+        let integrator = self.integrator();
+        let mut report: Value =
+            serde_json::from_slice(&integrator.report_bytes(&artifact.sha256).unwrap()).unwrap();
+        report.as_object_mut().unwrap().remove("content_witness");
+        report["observation"]
+            .as_object_mut()
+            .unwrap()
+            .remove("content_witness");
+        let report: GitHubIntegrationReport = serde_json::from_value(report).unwrap();
+        let bytes = serde_json::to_vec(&report).unwrap();
+        let hash = github::hash(&bytes);
+        let directory = &self.config.repository.report_directory;
+        std::fs::write(
+            directory.join(format!("github-integration-report-{hash}.json")),
+            &bytes,
+        )
+        .unwrap();
+        let mut changed = 0;
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let entry = entry.unwrap();
+            if !entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("github-integration-inspection-")
+            {
+                continue;
+            }
+            let mut pointer: Value =
+                serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap();
+            if pointer["report_sha256"] == artifact.sha256 {
+                pointer["report_sha256"] = json!(hash);
+                std::fs::write(entry.path(), serde_json::to_vec(&pointer).unwrap()).unwrap();
+                changed += 1;
+            }
+        }
+        assert_eq!(changed, 1);
+        (hash, bytes)
     }
 }

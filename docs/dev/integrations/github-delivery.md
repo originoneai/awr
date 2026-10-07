@@ -42,8 +42,8 @@ without choosing an inspection or carrying cached authority. Each call obtains
 the actual authenticated schedule, current candidate, source read set and enabled
 connector version before a fresh provider query.
 
-The source manifest, each mapped required check, PR state and target inclusion
-are compared independently. Equal outcome alone is insufficient: a new check-run
+The source manifest, each mapped required check, PR state, target observation and
+complete-content proof are compared independently. Equal outcome alone is insufficient: a new check-run
 ID changes that verification. A target or PR change preserves unrelated manifest
 and check fact IDs, reports and verification references. Repeated stable polls,
 including after reconstruction, publish no observation, notification or new
@@ -83,6 +83,29 @@ authority.
   Merely seeing `merged: true` on a PR does not prove integration. A target or PR
   that changes during inspection yields uncertainty; repository identity and
   PR/target observations are checked again before publishing the report.
+
+New reports also include a separate provider-neutral complete-content witness.
+An exact source/result commit is distinguished from rewritten commits with equal
+complete Git trees and the declared exact base retained in both histories.
+Tree identity includes nonmanifest paths and file modes. Every subtree response
+must be available, nontruncated and structurally valid within the existing shared
+request, response and time budgets. These reads trust the configured provider
+transport; no caller-supplied tree or response URL can establish the proof.
+
+REST comparison has no `head_commit` field. Its response URL is checked against
+the exact requested API origin, repository and base/head pair, with the exact
+base/merge-base and observed commit/tree identities; returned URLs are never
+followed. No comparison commit-list pagination or webhook is needed. The final
+target barrier follows content, artifact, PR and repository reads. Missing or
+lost history, changed complete content, unavailable/invalid responses or a
+moving target cannot establish complete delivery. Actual ancestry remains
+truthful when equal content comes from a squash or rebase performed elsewhere.
+
+The content slot preserves unchanged verification/run/approval identities and
+exposes only a compact `witness_kind`; full immutable proof remains available by
+reference. Old reports omit the optional field and retain their original bytes,
+without inferred or backfilled proof. A fresh observation is required to gain a
+new witness; damaged report/index/summary data cannot borrow an earlier one.
 
 Finite immutable reports contain mapped identities, revisions, digests, outcomes
 and observation time. Provider response bodies, check output, commit messages,
@@ -134,7 +157,7 @@ revision, updated by fast-forward to an existing source commit**. Fresh API read
 must prove pinned repository identity, push permission, an unarchived repository,
 the exact unprotected branch, a successful empty effective-rules response, source
 ancestry, manifest bytes and all required checks. Missing/unsupported policy,
-protected targets, missing targets, squash/rebase and unsupported formats refuse
+protected targets, missing targets, squash/rebase effects and unsupported formats refuse
 before the effect. Operator credentials should be limited to this repository.
 There is no deliberate administrator or protection bypass.
 
@@ -152,14 +175,16 @@ authenticated store. Before any possibly executable preparation it durably saves
 the original request/candidate/read-set/connector/eligibility marker. It rechecks
 current AWR source, candidate, evidence, checks, review and authority before the
 single POST. An HTTP success or `ok` acknowledgement is **not** delivery proof.
-Fresh reads must prove original source inclusion and exact target artifact bytes.
+Fresh reads must prove original complete content and exact target artifact bytes.
+The adapter observes external history rewrites; it never performs squash or rebase.
 
 A lost permit response, timeout, cancellation, malformed acknowledgement or
 restart cannot issue another POST. `query` observes the original request using
 current authenticated admission, without replacing it with a newer candidate or
 requiring that a newer PR head/check still describe the old operation. `reconcile`
 uses the existing neutral inspection/inbox/confirmation path for that original
-result. Stable target state alone does not resolve an uncertain launched effect;
+result. Its integration observation and content witness share one reserved
+inbox batch, original request/candidate/result/base and report provenance. Stable target state alone does not resolve an uncertain launched effect;
 it remains unknown unless actual inclusion or a definitive no-launch/rejection
 record establishes the result. Private immutable markers and digest-checked
 reports must be retained across service restarts.
@@ -167,7 +192,8 @@ reports must be retained across service restarts.
 `GitHubIntegrator::reconcile_original_current(store, credential, integration_id)`
 provides scheduled recovery for that original intent. It obtains fresh current
 mapping and identity admission, and compares unknown results against the actual
-digest-verified report, index and complete original confirmation envelope. Stable
+digest-verified report, index and both original confirmation/proof envelopes. Only
+the store-owned recording time is normalized; all other fields must match. Stable
 unknown observations retain their confirmation fact ID after a fresh query;
 changed or missing proof requires an admitted original reobservation. The query
 ignores newer PR heads/checks and never issues another POST. Only a proven

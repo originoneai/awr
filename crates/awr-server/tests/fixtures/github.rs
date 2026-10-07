@@ -20,6 +20,8 @@ pub const SOURCE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 pub const TARGET: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 pub const TREE: &str = "cccccccccccccccccccccccccccccccccccccccc";
 pub const BLOB: &str = "dddddddddddddddddddddddddddddddddddddddd";
+pub const REWRITTEN: &str = "1111111111111111111111111111111111111111";
+pub const BASE_TREE: &str = "2222222222222222222222222222222222222222";
 pub const BYTES: &[u8] = b"verified output\n";
 
 pub fn hash(bytes: &[u8]) -> String {
@@ -33,6 +35,11 @@ pub fn pull() -> Value {
 }
 pub fn reference(s: &str) -> Value {
     json!({"ref":"refs/heads/main","object":{"type":"commit","sha":s}})
+}
+
+pub fn comparison(base: &str, head: &str, merge_base: &str, status: &str) -> Value {
+    json!({"url":format!("https://github.example/api/v3/repos/acme/demo/compare/{base}...{head}"),
+        "status":status,"base_commit":{"sha":base},"merge_base_commit":{"sha":merge_base}})
 }
 
 #[derive(Default)]
@@ -72,11 +79,9 @@ impl GitHubTransport for Api {
     fn get(&self, url: &Url, _: Duration, _: usize) -> Result<GitHubResponse, GitHubError> {
         assert_eq!(url.scheme(), "https");
         assert_eq!(url.host_str(), Some("github.example"));
-        let route = url
-            .path()
-            .strip_prefix("/api/v3/repos/acme/demo")
-            .unwrap()
-            .to_owned();
+        let prefix = "/api/v3/repos/acme/demo";
+        assert!(url.path()[..prefix.len()].eq_ignore_ascii_case(prefix));
+        let route = url.path()[prefix.len()..].to_owned();
         let route = match url.query() {
             Some(q) => format!("{route}?{q}"),
             None => route,
@@ -104,8 +109,14 @@ impl GitHubTransport for Api {
                     "/git/ref/heads/main" => reference(TARGET),
                     "/pulls/11" => pull(),
                     "/git/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                    | "/git/commits/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" => {
+                    | "/git/commits/1111111111111111111111111111111111111111" => {
                         json!({"sha":route.rsplit('/').next().unwrap(),"tree":{"sha":TREE}})
+                    }
+                    "/git/commits/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" => {
+                        json!({"sha":TARGET,"tree":{"sha":BASE_TREE}})
+                    }
+                    "/git/trees/2222222222222222222222222222222222222222" => {
+                        json!({"sha":BASE_TREE,"truncated":false,"tree":[]})
                     }
                     "/git/trees/cccccccccccccccccccccccccccccccccccccccc" => {
                         json!({"sha":TREE,"truncated":false,"tree":[{"path":"result.txt","type":"blob","mode":"100644","sha":BLOB,"size":BYTES.len()}]})
@@ -118,13 +129,17 @@ impl GitHubTransport for Api {
                         json!({"total_count":1,"check_runs":[run()]})
                     }
                     "/check-runs/1" => run(),
-                    "/compare/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" =>
-                    {
-                        json!({"status":"behind","base_commit":{"sha":SOURCE},"merge_base_commit":{"sha":TARGET}})
+                    "/compare/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" => {
+                        comparison(SOURCE, TARGET, TARGET, "behind")
                     }
-                    "/compare/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" =>
-                    {
-                        json!({"status":"ahead","base_commit":{"sha":TARGET},"merge_base_commit":{"sha":TARGET}})
+                    "/compare/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" => {
+                        comparison(TARGET, SOURCE, TARGET, "ahead")
+                    }
+                    "/compare/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...1111111111111111111111111111111111111111" => {
+                        comparison(SOURCE, REWRITTEN, TARGET, "diverged")
+                    }
+                    "/compare/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...1111111111111111111111111111111111111111" => {
+                        comparison(TARGET, REWRITTEN, TARGET, "ahead")
                     }
                     _ => {
                         return Ok(GitHubResponse {

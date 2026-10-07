@@ -169,9 +169,9 @@ fn slot(fact: &Value) -> String {
     }
 }
 
-fn assert_only_changed(before: &Value, after: &Value, changed: &str) {
-    assert_eq!(before["facts"].as_array().unwrap().len(), 4);
-    assert_eq!(after["facts"].as_array().unwrap().len(), 4);
+fn assert_only_changed(before: &Value, after: &Value, changed: &[&str]) {
+    assert_eq!(before["facts"].as_array().unwrap().len(), 5);
+    assert_eq!(after["facts"].as_array().unwrap().len(), 5);
     for previous in before["facts"].as_array().unwrap() {
         let current = after["facts"]
             .as_array()
@@ -180,7 +180,7 @@ fn assert_only_changed(before: &Value, after: &Value, changed: &str) {
             .find(|f| slot(f) == slot(previous))
             .unwrap();
         assert_eq!(current["current"], true);
-        if slot(previous) == changed {
+        if changed.contains(&slot(previous).as_str()) {
             assert_ne!(previous["fact_id"], current["fact_id"]);
         } else {
             assert_eq!(
@@ -194,6 +194,93 @@ fn assert_only_changed(before: &Value, after: &Value, changed: &str) {
 }
 
 #[tokio::test]
+async fn content_basis_changes_keep_actual_verification_and_other_slot_identities() {
+    let f = setup_github().await;
+    f.adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    let before = f.view().await;
+    f.github.api.set(
+        &format!("/compare/{}...{}", github::TARGET, github::SOURCE),
+        github::comparison(github::TARGET, github::SOURCE, &"3".repeat(40), "diverged"),
+    );
+    let result = f
+        .adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    assert_eq!(
+        result["changed_slots"],
+        json!(["integration_content_proof"])
+    );
+    let after = f.view().await;
+    assert_only_changed(&before, &after, &["integration_content_proof"]);
+    let proof = after["facts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| slot(f) == "integration_content_proof")
+        .unwrap();
+    assert_eq!(proof["observation"]["witness_kind"], "unavailable");
+    assert!(proof["observation"].get("witness").is_none());
+    assert_eq!(
+        f.adapter
+            .reconcile_current(&f.store, OBSERVER)
+            .await
+            .unwrap()["unchanged"],
+        true
+    );
+    assert_eq!(f.view().await["facts"], after["facts"]);
+    f.github.api.0.lock().unwrap().replies.remove(&format!(
+        "/compare/{}...{}",
+        github::TARGET,
+        github::SOURCE
+    ));
+    let result = f
+        .adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    assert_eq!(
+        result["changed_slots"],
+        json!(["integration_content_proof"])
+    );
+    assert_only_changed(&after, &f.view().await, &["integration_content_proof"]);
+}
+
+#[tokio::test]
+async fn altered_content_summary_requires_fresh_proof_without_churning_checks() {
+    let f = setup_github().await;
+    f.github
+        .api
+        .set("/git/ref/heads/main", github::reference(github::SOURCE));
+    f.adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    let before = f.view().await;
+    let fact = before["facts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| slot(f) == "integration_content_proof")
+        .unwrap();
+    f.admin.execute("UPDATE awr_team.delivery_facts SET envelope_json=jsonb_set(envelope_json,$1,$2) WHERE id=$3",
+        &[&vec!["record", "data", "result_revision", "value"], &json!(github::TARGET), &fact["fact_id"].as_str().unwrap()]).await.unwrap();
+    let result = f
+        .adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    assert_eq!(
+        result["changed_slots"],
+        json!(["integration_content_proof"])
+    );
+    assert_only_changed(&before, &f.view().await, &["integration_content_proof"]);
+}
+
+#[tokio::test]
 async fn current_poll_queries_freshly_without_churning_facts_after_restart() {
     let f = setup_github().await;
     let first = f
@@ -202,7 +289,7 @@ async fn current_poll_queries_freshly_without_churning_facts_after_restart() {
         .await
         .unwrap();
     assert_eq!(first["unchanged"], false);
-    assert_eq!(first["changed_slots"].as_array().unwrap().len(), 4);
+    assert_eq!(first["changed_slots"].as_array().unwrap().len(), 5);
     let view = f.view().await;
     let counts = f.durable_counts().await;
     for _ in 0..3 {
@@ -243,7 +330,7 @@ async fn concurrent_current_polls_converge_on_one_durable_observation() {
     let counts = f.durable_counts().await;
     assert_eq!(counts["inspections"], 1);
     assert_eq!(counts["inbox"], 1);
-    assert_eq!(counts["facts"], 4);
+    assert_eq!(counts["facts"], 5);
     assert_eq!(counts["completions"], 0);
 }
 
@@ -263,9 +350,16 @@ async fn current_poll_changes_target_pr_and_check_slots_independently() {
         .reconcile_current(&f.store, OBSERVER)
         .await
         .unwrap();
-    assert_eq!(result["changed_slots"], json!(["integration_observation"]));
+    assert_eq!(
+        result["changed_slots"],
+        json!(["integration_observation", "integration_content_proof"])
+    );
     let target = f.view().await;
-    assert_only_changed(&before, &target, "integration_observation");
+    assert_only_changed(
+        &before,
+        &target,
+        &["integration_observation", "integration_content_proof"],
+    );
 
     let mut pull = github::pull();
     pull["state"] = "closed".into();
@@ -278,7 +372,7 @@ async fn current_poll_changes_target_pr_and_check_slots_independently() {
         .unwrap();
     assert_eq!(result["changed_slots"], json!(["change_request"]));
     let pr = f.view().await;
-    assert_only_changed(&target, &pr, "change_request");
+    assert_only_changed(&target, &pr, &["change_request"]);
 
     let mut run = github::run();
     run["id"] = 2.into();
@@ -297,8 +391,8 @@ async fn current_poll_changes_target_pr_and_check_slots_independently() {
         .unwrap();
     let check = format!("verification:{}", f.github.config.checks[0].check);
     assert_eq!(result["changed_slots"], json!([check]));
-    assert_only_changed(&pr, &f.view().await, &check);
-    assert_eq!(f.durable_counts().await["facts"], 7);
+    assert_only_changed(&pr, &f.view().await, &[&check]);
+    assert_eq!(f.durable_counts().await["facts"], 9);
     assert_eq!(f.durable_counts().await["completions"], 0);
 }
 
@@ -356,7 +450,7 @@ async fn missing_or_corrupt_report_and_index_cannot_prove_unchanged_facts() {
             result["unchanged"], false,
             "damage incorrectly accepted: {damage}"
         );
-        assert_eq!(result["changed_slots"].as_array().unwrap().len(), 4);
+        assert_eq!(result["changed_slots"].as_array().unwrap().len(), 5);
         let after = f.view().await;
         for previous in before["facts"].as_array().unwrap() {
             assert!(
@@ -417,7 +511,7 @@ async fn inconsistent_exposed_fact_summary_requires_fresh_slot_proof() {
             .await
             .unwrap();
         assert_eq!(result["changed_slots"], json!([check]));
-        assert_only_changed(&before, &f.view().await, &check);
+        assert_only_changed(&before, &f.view().await, &[&check]);
     }
 }
 
@@ -499,7 +593,7 @@ async fn current_poll_cannot_reuse_disabled_wrong_or_replaced_binding() {
                 .await
                 .unwrap();
             assert_eq!(result["unchanged"], false);
-            assert_eq!(result["changed_slots"].as_array().unwrap().len(), 4);
+            assert_eq!(result["changed_slots"].as_array().unwrap().len(), 5);
             assert_eq!(
                 f.view().await["candidate"]["binding"]["candidate_version"],
                 "2"
@@ -638,7 +732,7 @@ async fn failed_reserved_query_renews_only_a_proven_expired_observation() {
     let counts = f.durable_counts().await;
     assert_eq!(counts["inspections"], 2);
     assert_eq!(counts["inbox"], 1);
-    assert_eq!(counts["facts"], 4);
+    assert_eq!(counts["facts"], 5);
     assert_eq!(counts["completions"], 0);
 }
 
@@ -667,7 +761,7 @@ async fn mapped_query_ingests_inspectable_facts_and_recovers_original_receipts_a
     assert_eq!(first["receipt"], replay["receipt"]);
     assert_eq!(calls, f.github.api.calls());
     let view = store.inspect(TENANT, PROJECT, OBSERVER, "a").await.unwrap();
-    assert_eq!(view["facts"].as_array().unwrap().len(), 4);
+    assert_eq!(view["facts"].as_array().unwrap().len(), 5);
     assert_eq!(view["acceptance_ready"], false);
     assert!(
         !view["facts"]
@@ -697,7 +791,7 @@ async fn concurrent_same_request_has_one_receipt_and_no_duplicate_facts() {
             .as_array()
             .unwrap()
             .len(),
-        4
+        5
     );
 }
 

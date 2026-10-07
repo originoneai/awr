@@ -105,6 +105,8 @@ pub struct GitHubIntegrationReport {
     pub diagnostic: Option<GitHubError>,
     pub outcome: IntegrationOutcome,
     pub observed_at_unix_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_witness: Option<IntegrationContentWitness>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -587,6 +589,14 @@ impl GitHubIntegrator {
             // not establish no effect. Keep the durable target guard unresolved.
             IntegrationOutcome::Unknown
         };
+        let content_witness = Some(
+            observed
+                .as_ref()
+                .and_then(|r| r.content_witness.clone())
+                .unwrap_or(IntegrationContentWitness::Unavailable {
+                    reason: ContentProofUnavailableReason::NotObserved,
+                }),
+        );
         Ok(GitHubIntegrationReport {
             version: 1,
             config_digest: self.observer.config_digest.clone(),
@@ -603,6 +613,7 @@ impl GitHubIntegrator {
             observation: observed,
             diagnostic,
             outcome: terminal,
+            content_witness,
         })
     }
 
@@ -727,13 +738,19 @@ impl GitHubIntegrator {
         let record = DeliveryEnvelope {
             protocol: DELIVERY_PROTOCOL.into(),
             protocol_version: DELIVERY_PROTOCOL_VERSION,
-            record: DeliveryRecord::IntegrationObservation(observation),
+            record: DeliveryRecord::IntegrationObservation(observation.clone()),
         };
-        record.validate().map_err(|_| GitHubError::ReportConflict)?;
+        let mut records = vec![record];
+        if let Some(witness) = &report.content_witness {
+            records.push(super::github::content_record(&observation, witness.clone()));
+        }
+        for record in &records {
+            record.validate().map_err(|_| GitHubError::ReportConflict)?;
+        }
         Ok(Some(GitHubIntegrationSnapshot {
             report,
             report_artifact: artifact,
-            records: vec![record],
+            records,
         }))
     }
 
@@ -898,6 +915,23 @@ impl GitHubIntegrator {
             || json!(expected) != json!(envelope)
         {
             return None;
+        }
+        let actual = proof["content_proof_facts"].as_array()?;
+        if actual.len() != snapshot.records.len() - 1 {
+            return None;
+        }
+        for expected in snapshot.records.iter().skip(1) {
+            let mut expected = expected.clone();
+            let DeliveryRecord::IntegrationContentProof(content) = &mut expected.record else {
+                return None;
+            };
+            content.provenance.recorded_at_unix_ms = receipt["recorded_at_unix_ms"].as_u64()?;
+            if !actual
+                .iter()
+                .any(|fact| fact["envelope"] == json!(expected))
+            {
+                return None;
+            }
         }
         Some(snapshot.report)
     }

@@ -9,6 +9,315 @@ use serde_json::json;
 use std::fs;
 
 #[tokio::test]
+async fn rewritten_complete_content_with_the_declared_base_is_observed_as_applied() {
+    let f = Fixture::new();
+    f.api.set("/git/ref/heads/main", reference(REWRITTEN));
+    let snapshot = f
+        .adapter()
+        .inspect(&f.candidate(), "rewritten")
+        .await
+        .unwrap();
+    assert_eq!(snapshot.report.graph_contains_source, Some(false));
+    assert_eq!(
+        snapshot.report.integration_outcome,
+        IntegrationOutcome::Applied
+    );
+    assert_eq!(
+        snapshot.report.target_artifacts[0].state,
+        ArtifactState::Passed
+    );
+    assert!(matches!(
+        snapshot.report.content_witness,
+        Some(IntegrationContentWitness::MatchingCompleteSnapshots { .. })
+    ));
+    let [.., observation, proof] = snapshot.records.as_slice() else {
+        panic!("missing content pair")
+    };
+    let (
+        DeliveryRecord::IntegrationObservation(observation),
+        DeliveryRecord::IntegrationContentProof(proof),
+    ) = (&observation.record, &proof.record)
+    else {
+        panic!("wrong content pair")
+    };
+    assert!(proof.proves_observation(observation).unwrap());
+}
+
+#[tokio::test]
+async fn equal_selected_bytes_do_not_hide_nonmanifest_or_mode_changes() {
+    for mode in ["100644", "100755"] {
+        let f = Fixture::new();
+        let different = "3".repeat(40);
+        f.api.set("/git/ref/heads/main", reference(REWRITTEN));
+        f.api.set(
+            &format!("/git/commits/{REWRITTEN}"),
+            json!({"sha":REWRITTEN,"tree":{"sha":different}}),
+        );
+        f.api.set(
+            &format!("/git/trees/{different}"),
+            json!({"sha":different,"truncated":false,"tree":[
+                {"path":"result.txt","type":"blob","mode":mode,"sha":BLOB,"size":BYTES.len()},
+                {"path":"outside-manifest.txt","type":"blob","mode":"100644","sha":BLOB}
+            ]}),
+        );
+        let snapshot = f
+            .adapter()
+            .inspect(&f.candidate(), "changed")
+            .await
+            .unwrap();
+        assert_ne!(
+            snapshot.report.integration_outcome,
+            IntegrationOutcome::Applied
+        );
+        assert_eq!(
+            snapshot.report.content_witness,
+            Some(IntegrationContentWitness::Unavailable {
+                reason: ContentProofUnavailableReason::ContentChanged,
+            })
+        );
+    }
+}
+
+#[tokio::test]
+async fn equal_trees_require_the_actual_declared_base_in_both_histories() {
+    for source in [true, false] {
+        let f = Fixture::new();
+        f.api.set("/git/ref/heads/main", reference(REWRITTEN));
+        let head = if source { SOURCE } else { REWRITTEN };
+        f.api.set(
+            &format!("/compare/{TARGET}...{head}"),
+            comparison(TARGET, head, &"3".repeat(40), "diverged"),
+        );
+        let snapshot = f
+            .adapter()
+            .inspect(&f.candidate(), "lost-base")
+            .await
+            .unwrap();
+        assert_ne!(
+            snapshot.report.integration_outcome,
+            IntegrationOutcome::Applied
+        );
+        assert_eq!(
+            snapshot.report.content_witness,
+            Some(IntegrationContentWitness::Unavailable {
+                reason: ContentProofUnavailableReason::BaseChanged,
+            })
+        );
+    }
+    let f = Fixture::new();
+    f.api.set("/git/ref/heads/main", reference(REWRITTEN));
+    let mut candidate = f.candidate();
+    candidate.binding.target.precondition = TargetPrecondition::Missing;
+    let snapshot = f
+        .adapter()
+        .inspect(&candidate, "undeclared-base")
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot.report.content_witness,
+        Some(IntegrationContentWitness::Unavailable {
+            reason: ContentProofUnavailableReason::BaseChanged,
+        })
+    );
+}
+
+#[tokio::test]
+async fn every_compare_response_binds_its_exact_head_and_base() {
+    for route in [
+        format!("/compare/{SOURCE}...{REWRITTEN}"),
+        format!("/compare/{TARGET}...{SOURCE}"),
+        format!("/compare/{TARGET}...{REWRITTEN}"),
+    ] {
+        for field in ["base_commit", "url"] {
+            let f = Fixture::new();
+            f.api.set("/git/ref/heads/main", reference(REWRITTEN));
+            let (base, head) = route
+                .strip_prefix("/compare/")
+                .unwrap()
+                .split_once("...")
+                .unwrap();
+            let mut response = comparison(
+                base,
+                head,
+                TARGET,
+                if base == SOURCE { "diverged" } else { "ahead" },
+            );
+            if field == "url" {
+                response[field] = comparison(base, &"3".repeat(40), TARGET, "ahead")["url"].clone();
+            } else {
+                response[field]["sha"] = json!("3".repeat(40));
+            }
+            f.api.set(&route, response);
+            assert_eq!(
+                f.adapter()
+                    .inspect(&f.candidate(), "wrong-compare")
+                    .await
+                    .unwrap_err(),
+                GitHubError::BindingMismatch
+            );
+            assert_eq!(f.files(), 0);
+        }
+    }
+}
+
+#[tokio::test]
+async fn comparison_urls_accept_repository_case_but_refuse_other_origins_or_routes() {
+    let mut f = Fixture::new();
+    f.config.owner = "ACME".into();
+    f.config.repository = "Demo".into();
+    f.api.set("/git/ref/heads/main", reference(REWRITTEN));
+    assert_eq!(
+        f.adapter()
+            .inspect(&f.candidate(), "canonical-case")
+            .await
+            .unwrap()
+            .report
+            .integration_outcome,
+        IntegrationOutcome::Applied
+    );
+    for (index, url) in [
+        format!("https://other.example/api/v3/repos/acme/demo/compare/{SOURCE}...{REWRITTEN}"),
+        format!("https://github.example/api/v3/repos/acme/other/compare/{SOURCE}...{REWRITTEN}"),
+        format!(
+            "https://github.example/api/v3/repos/acme/demo/compare/{SOURCE}...{REWRITTEN}?page=2"
+        ),
+        format!(
+            "https://github.example/api/v3/repos/acme/demo/compare/{SOURCE}...{REWRITTEN}#fragment"
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut response = comparison(SOURCE, REWRITTEN, TARGET, "diverged");
+        response["url"] = json!(url);
+        f.api
+            .set(&format!("/compare/{SOURCE}...{REWRITTEN}"), response);
+        assert_eq!(
+            f.adapter()
+                .inspect(&f.candidate(), &format!("wrong-url-{index}"))
+                .await
+                .unwrap_err(),
+            GitHubError::BindingMismatch
+        );
+    }
+}
+
+#[tokio::test]
+async fn nonmanifest_subtrees_must_be_complete_valid_and_bounded() {
+    let subtree = "3".repeat(40);
+    for damage in [
+        "missing",
+        "truncated",
+        "duplicate",
+        "invalid-mode",
+        "wrong-sha",
+        "cycle",
+        "permission",
+    ] {
+        let f = Fixture::new();
+        f.api.set("/git/ref/heads/main", reference(REWRITTEN));
+        f.api.set(
+            &format!("/git/trees/{TREE}"),
+            json!({"sha":TREE,"truncated":false,"tree":[
+                {"path":"result.txt","type":"blob","mode":"100644","sha":BLOB,"size":BYTES.len()},
+                {"path":"other","type":"tree","mode":"040000","sha":subtree}
+            ]}),
+        );
+        let entry = json!({"path":"note","type":"blob","mode":"100644","sha":BLOB});
+        let mut response = json!({"sha":subtree,"truncated":false,"tree":[entry]});
+        match damage {
+            "truncated" => response["truncated"] = json!(true),
+            "duplicate" => response["tree"].as_array_mut().unwrap().push(entry),
+            "invalid-mode" => response["tree"][0]["mode"] = json!("040000"),
+            "wrong-sha" => response["sha"] = json!(TREE),
+            "cycle" => {
+                response["tree"] =
+                    json!([{ "path":"cycle", "type":"tree", "mode":"040000", "sha":TREE }])
+            }
+            _ => {}
+        }
+        f.api.set(&format!("/git/trees/{subtree}"), response);
+        if damage == "missing" || damage == "permission" {
+            f.api.raw(
+                &format!("/git/trees/{subtree}"),
+                if damage == "missing" { 404 } else { 403 },
+                vec![],
+            );
+        }
+        assert!(
+            f.adapter()
+                .inspect(&f.candidate(), "bad-subtree")
+                .await
+                .is_err(),
+            "accepted {damage}"
+        );
+        assert_eq!(f.files(), 0);
+    }
+}
+
+#[tokio::test]
+async fn final_target_barrier_invalidates_an_otherwise_valid_rewrite_proof() {
+    let f = Fixture::new();
+    f.api.sequence(
+        "/git/ref/heads/main",
+        vec![reference(REWRITTEN), reference(TARGET)],
+    );
+    let snapshot = f
+        .adapter()
+        .inspect(&f.candidate(), "proof-race")
+        .await
+        .unwrap();
+    assert_eq!(
+        snapshot.report.integration_outcome,
+        IntegrationOutcome::Unknown
+    );
+    assert_eq!(
+        snapshot.report.content_witness,
+        Some(IntegrationContentWitness::Unavailable {
+            reason: ContentProofUnavailableReason::TargetUnstable,
+        })
+    );
+}
+
+#[tokio::test]
+async fn legacy_report_bytes_do_not_infer_or_backfill_content_proof() {
+    let f = Fixture::new();
+    let candidate = f.candidate();
+    let snapshot = f.adapter().inspect(&candidate, "legacy").await.unwrap();
+    let mut report = serde_json::to_value(&snapshot.report).unwrap();
+    report.as_object_mut().unwrap().remove("content_witness");
+    let legacy: awr_server::delivery_adapter::GitHubReport =
+        serde_json::from_value(report).unwrap();
+    let bytes = serde_json::to_vec(&legacy).unwrap();
+    let digest = hash(&bytes);
+    let path = f.root.join(format!("github-report-{digest}.json"));
+    fs::write(&path, &bytes).unwrap();
+    let index = f.root.join(format!(
+        "github-inspection-{}.json",
+        hash(&serde_json::to_vec(&(&f.config.adapter_id, "legacy")).unwrap())
+    ));
+    let mut pointer: serde_json::Value =
+        serde_json::from_slice(&fs::read(&index).unwrap()).unwrap();
+    pointer["report_sha256"] = json!(digest);
+    fs::write(&index, serde_json::to_vec(&pointer).unwrap()).unwrap();
+    let calls = f.api.calls();
+    let cached = f.adapter().inspect(&candidate, "legacy").await.unwrap();
+    assert!(cached.report.content_witness.is_none());
+    assert!(
+        cached
+            .records
+            .iter()
+            .all(|r| !matches!(r.record, DeliveryRecord::IntegrationContentProof(_)))
+    );
+    assert_eq!(f.api.calls(), calls);
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    assert_eq!(serde_json::to_vec(&cached.report).unwrap(), bytes);
+    let fresh = f.adapter().inspect(&candidate, "new-proof").await.unwrap();
+    assert!(fresh.report.content_witness.is_some());
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+}
+
+#[tokio::test]
 async fn mapped_artifacts_and_checks_are_inspectable_neutral_facts_without_approval() {
     let f = Fixture::new();
     let adapter = f.adapter();
@@ -41,7 +350,7 @@ async fn mapped_artifacts_and_checks_are_inspectable_neutral_facts_without_appro
         ),
         snapshot.report_artifact.sha256
     );
-    assert_eq!(snapshot.records.len(), 4);
+    assert_eq!(snapshot.records.len(), 5);
     for record in &snapshot.records {
         record.validate().unwrap();
         assert!(!matches!(
@@ -71,8 +380,12 @@ async fn exact_target_with_actual_bytes_proves_integration_independently_of_pr_s
         snapshot.report.target_artifacts[0].state,
         ArtifactState::Passed
     );
-    let DeliveryRecord::IntegrationObservation(observation) =
-        &snapshot.records.last().unwrap().record
+    let DeliveryRecord::IntegrationObservation(observation) = &snapshot
+        .records
+        .iter()
+        .find(|r| matches!(r.record, DeliveryRecord::IntegrationObservation(_)))
+        .unwrap()
+        .record
     else {
         panic!("expected target observation")
     };
@@ -103,9 +416,10 @@ async fn merged_pr_alone_does_not_prove_target_contains_the_candidate() {
 #[tokio::test]
 async fn source_ancestry_still_requires_matching_target_artifact_bytes() {
     let f = Fixture::new();
+    f.api.set("/git/ref/heads/main", reference(REWRITTEN));
     f.api.set(
-        &format!("/compare/{SOURCE}...{TARGET}"),
-        json!({"status":"ahead","base_commit":{"sha":SOURCE},"merge_base_commit":{"sha":SOURCE}}),
+        &format!("/compare/{SOURCE}...{REWRITTEN}"),
+        comparison(SOURCE, REWRITTEN, SOURCE, "ahead"),
     );
     // Reusing the immutable blob is valid when the target's tree retains the artifact.
     let good = f
@@ -117,8 +431,8 @@ async fn source_ancestry_still_requires_matching_target_artifact_bytes() {
     let new_tree = "e".repeat(40);
     let new_blob = "f".repeat(40);
     f.api.set(
-        &format!("/git/commits/{TARGET}"),
-        json!({"sha":TARGET,"tree":{"sha":new_tree}}),
+        &format!("/git/commits/{REWRITTEN}"),
+        json!({"sha":REWRITTEN,"tree":{"sha":new_tree}}),
     );
     f.api.set(&format!("/git/trees/{new_tree}"), json!({"sha":new_tree,"truncated":false,"tree":[{"path":"result.txt","type":"blob","mode":"100644","sha":new_blob,"size":16}]}));
     f.api.set(
