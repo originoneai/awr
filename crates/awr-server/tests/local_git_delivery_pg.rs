@@ -191,7 +191,7 @@ async fn local_query_and_real_push_use_same_durable_neutral_facts_and_restart_re
         .unwrap();
     let view = store.inspect(TENANT, PROJECT, OBSERVER, "a").await.unwrap();
     let facts = view["facts"].as_array().unwrap();
-    assert_eq!(facts.len(), 2);
+    assert_eq!(facts.len(), 3);
     assert!(facts.iter().all(|fact| fact["current"] == true));
     let integration = facts
         .iter()
@@ -221,7 +221,7 @@ async fn local_query_and_real_push_use_same_durable_neutral_facts_and_restart_re
         .await
         .unwrap();
     assert_eq!(counts.get::<_, i64>(0), 2);
-    assert_eq!(counts.get::<_, i64>(1), 2);
+    assert_eq!(counts.get::<_, i64>(1), 3);
     assert_eq!(counts.get::<_, i64>(2), 1);
     assert_eq!(counts.get::<_, i64>(3), 4); // One refresh and one source intent per observation.
 }
@@ -459,7 +459,10 @@ async fn target_application_and_rollback_keep_original_source_verification() {
         .reconcile_current(&f.store, OBSERVER)
         .await
         .unwrap();
-    assert_eq!(result["changed_slots"], json!(["integration_observation"]));
+    assert_eq!(
+        result["changed_slots"],
+        json!(["integration_observation", "integration_content_proof"])
+    );
     let applied = current_facts(&f).await;
     assert_eq!(fact(&applied, "verification"), &verification);
     assert_ne!(
@@ -481,14 +484,17 @@ async fn target_application_and_rollback_keep_original_source_verification() {
         .reconcile_current(&f.store, OBSERVER)
         .await
         .unwrap();
-    assert_eq!(result["changed_slots"], json!(["integration_observation"]));
+    assert_eq!(
+        result["changed_slots"],
+        json!(["integration_observation", "integration_content_proof"])
+    );
     let restored = current_facts(&f).await;
     assert_eq!(fact(&restored, "verification"), &verification);
     assert_eq!(
         fact(&restored, "integration_observation")["observation"]["outcome"],
         "pending"
     );
-    assert_eq!(observation_counts(&f).await, vec![3, 3, 4, 3, 6]);
+    assert_eq!(observation_counts(&f).await, vec![3, 3, 7, 3, 6]);
 }
 
 #[tokio::test]
@@ -502,7 +508,7 @@ async fn concurrent_scheduled_observers_share_one_publication() {
     );
     a.unwrap();
     b.unwrap();
-    assert_eq!(observation_counts(&f).await, vec![1, 1, 2, 1, 2]);
+    assert_eq!(observation_counts(&f).await, vec![1, 1, 3, 1, 2]);
     assert_eq!(
         f.adapter
             .reconcile_current(&f.store, OBSERVER)
@@ -556,7 +562,7 @@ async fn missing_and_corrupt_proof_require_new_actual_verification() {
             true
         );
     }
-    assert_eq!(observation_counts(&f).await, vec![3, 3, 6, 3, 6]);
+    assert_eq!(observation_counts(&f).await, vec![3, 3, 9, 3, 6]);
 }
 
 #[tokio::test]
@@ -583,7 +589,7 @@ async fn abandoned_expired_observation_recovers_without_replaying_an_effect() {
         .await
         .unwrap();
     assert_eq!(recovered["unchanged"], false);
-    assert_eq!(observation_counts(&f).await, vec![2, 1, 2, 1, 2]);
+    assert_eq!(observation_counts(&f).await, vec![2, 1, 3, 1, 2]);
     assert_eq!(f.git.bare(&["rev-parse", "refs/heads/main"]), f.git.base);
 }
 
@@ -693,7 +699,11 @@ async fn replaced_connector_requires_new_bound_proof_and_disabled_mapping_stops_
         .unwrap();
     assert_eq!(
         restored["changed_slots"],
-        json!(["verification", "integration_observation"])
+        json!([
+            "verification",
+            "integration_observation",
+            "integration_content_proof"
+        ])
     );
     let view = current_facts(&f).await;
     assert_ne!(
@@ -764,4 +774,158 @@ async fn newly_unavailable_source_cannot_reuse_a_passed_verification() {
             .unwrap()["unchanged"],
         true
     );
+}
+
+#[tokio::test]
+async fn new_content_slot_upgrades_a_legacy_batch_without_replacing_existing_facts() {
+    let f = setup_local().await;
+    let reserved = f.reserve("legacy-reserve").await;
+    let inspection = reserved["inspection_id"].as_str().unwrap();
+    let original = f.adapter.inspect(&f.candidate, inspection).await.unwrap();
+    let (hash, bytes) = f.git.legacy_report(&original.report_artifact);
+    let legacy = f
+        .git
+        .adapter()
+        .await
+        .inspect(&f.candidate, inspection)
+        .await
+        .unwrap();
+    assert_eq!(legacy.records.len(), 2);
+    f.store
+        .ingest_facts(
+            TENANT,
+            PROJECT,
+            OBSERVER,
+            IngestDeliveryFacts {
+                request_id: "legacy-ingest".into(),
+                read_set: f.set.clone(),
+                connector_id: f.git.config.connector_id.clone(),
+                inspection_id: inspection.into(),
+                event_id: "legacy-event".into(),
+                records: legacy.records,
+            },
+        )
+        .await
+        .unwrap();
+    let before = current_facts(&f).await;
+    let verification = fact(&before, "verification").clone();
+    let integration = fact(&before, "integration_observation").clone();
+    let upgraded = f
+        .adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    assert_eq!(
+        upgraded["changed_slots"],
+        json!(["integration_content_proof"])
+    );
+    let after = current_facts(&f).await;
+    assert_eq!(fact(&after, "verification"), &verification);
+    assert_eq!(fact(&after, "integration_observation"), &integration);
+    assert_eq!(
+        fact(&after, "integration_content_proof")["observation"]["witness_kind"],
+        "unavailable"
+    );
+    assert_eq!(f.adapter.report_bytes(&hash).unwrap(), bytes);
+    let counts = observation_counts(&f).await;
+    assert_eq!(
+        f.git
+            .adapter()
+            .await
+            .reconcile_current(
+                &DeliverySyncStore::from_config(f.database.clone()),
+                OBSERVER
+            )
+            .await
+            .unwrap()["unchanged"],
+        true
+    );
+    assert_eq!(observation_counts(&f).await, counts);
+}
+
+#[tokio::test]
+async fn rewrite_then_unavailable_content_replaces_only_target_slots() {
+    let f = setup_local().await;
+    f.adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    let before = current_facts(&f).await;
+    let verification = fact(&before, "verification").clone();
+    f.git.rewrite_main(Some(&f.git.base));
+    let rewritten = f
+        .adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    assert_eq!(
+        rewritten["changed_slots"],
+        json!(["integration_observation", "integration_content_proof"])
+    );
+    let applied = current_facts(&f).await;
+    let usable = fact(&applied, "integration_content_proof");
+    assert_eq!(
+        usable["observation"]["witness_kind"],
+        "matching_complete_snapshots"
+    );
+    assert_eq!(fact(&applied, "verification"), &verification);
+    let counts = observation_counts(&f).await;
+    assert_eq!(
+        f.adapter
+            .reconcile_current(&f.store, OBSERVER)
+            .await
+            .unwrap()["unchanged"],
+        true
+    );
+    assert_eq!(observation_counts(&f).await, counts);
+    let outside = f
+        .git
+        .git(&["rev-parse", &format!("{}:README.md", f.git.source)]);
+    f.git.remove_object(&outside);
+    let unavailable = f
+        .adapter
+        .reconcile_current(&f.store, OBSERVER)
+        .await
+        .unwrap();
+    assert!(
+        unavailable["changed_slots"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("integration_content_proof"))
+    );
+    let after = current_facts(&f).await;
+    let proof = fact(&after, "integration_content_proof");
+    assert_ne!(proof["fact_id"], usable["fact_id"]);
+    assert_eq!(proof["current"], true);
+    assert_eq!(proof["observation"]["witness_kind"], "unavailable");
+    let hash = proof["observation"]["provenance"]["reference"]
+        .as_str()
+        .unwrap()
+        .rsplit(':')
+        .next()
+        .unwrap();
+    let report: awr_server::delivery_adapter::LocalGitReport =
+        serde_json::from_slice(&f.adapter.report_bytes(hash).unwrap()).unwrap();
+    assert_eq!(
+        report.content_witness,
+        Some(awr_team::delivery::IntegrationContentWitness::Unavailable {
+            reason: awr_team::delivery::ContentProofUnavailableReason::HistoryUnavailable
+        })
+    );
+    assert_eq!(fact(&after, "verification"), &verification);
+    assert_ne!(
+        fact(&after, "integration_observation")["observation"]["outcome"],
+        "applied"
+    );
+    let counts = observation_counts(&f).await;
+    assert_eq!(
+        f.git
+            .adapter()
+            .await
+            .reconcile_current(&f.store, OBSERVER)
+            .await
+            .unwrap()["unchanged"],
+        true
+    );
+    assert_eq!(observation_counts(&f).await, counts);
 }

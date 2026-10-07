@@ -1,9 +1,24 @@
 //! Mechanism conformance, never native business acceptance or approval.
 #[path = "fixtures/local_git.rs"]
 mod fixture;
-use awr_server::delivery_adapter::{LocalGitAdapter, LocalGitError, local_git::ArtifactState};
+use awr_server::delivery_adapter::{
+    LocalGitAdapter, LocalGitError, LocalGitSnapshot, local_git::ArtifactState,
+};
 use awr_team::delivery::*;
 use fixture::*;
+
+fn content(snapshot: &LocalGitSnapshot) -> &IntegrationContentProof {
+    let records: Vec<_> = snapshot
+        .records
+        .iter()
+        .filter_map(|e| match &e.record {
+            DeliveryRecord::IntegrationContentProof(p) => Some(p),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(records.len(), 1);
+    records[0]
+}
 
 async fn observe(sha256: bool) {
     let f = GitFixture::new(sha256);
@@ -18,6 +33,10 @@ async fn observe(sha256: bool) {
     );
     assert!(first.report.target_precondition_matches);
     assert_eq!(first.report.unsupported_required_checks, vec!["unit-tests"]);
+    assert!(matches!(
+        content(&first).witness,
+        IntegrationContentWitness::Unavailable { .. }
+    ));
     assert_eq!(
         before,
         f.bare(&["for-each-ref", "--format=%(refname) %(objectname)"])
@@ -42,6 +61,11 @@ async fn observe(sha256: bool) {
     );
     assert!(!second.report.target_precondition_matches);
     assert_eq!(second.report.graph_contains_source, Some(true));
+    assert_eq!(
+        content(&second).witness,
+        IntegrationContentWitness::ExactRevision
+    );
+    assert!(content(&second).request_id.is_none());
     for record in &second.records {
         assert_eq!(
             parse_delivery_record(&serde_json::to_vec(record).unwrap()).unwrap(),
@@ -66,6 +90,292 @@ async fn sha1_query_push_observation_and_restart() {
 #[tokio::test]
 async fn sha256_query_push_observation_and_restart() {
     observe(true).await;
+}
+
+async fn retained_base_rewrite(sha256: bool) {
+    let f = GitFixture::new(sha256);
+    let rewritten = f.rewrite_main(Some(&f.base));
+    assert_ne!(rewritten, f.source);
+    assert_eq!(f.git(&["merge-base", &f.source, &rewritten]), f.base);
+    let before = f.bare(&["for-each-ref", "--format=%(refname) %(objectname)"]);
+    let result = f
+        .adapter()
+        .await
+        .inspect(&f.candidate(), "retained-base-rewrite")
+        .await
+        .unwrap();
+    let IntegrationContentWitness::MatchingCompleteSnapshots {
+        source_snapshot,
+        result_snapshot,
+        retained_base,
+    } = &content(&result).witness
+    else {
+        panic!("a changed commit requires a complete-tree witness");
+    };
+    assert_eq!(source_snapshot, result_snapshot);
+    assert_eq!(
+        source_snapshot.value,
+        f.git(&["rev-parse", &format!("{}^{{tree}}", f.source)])
+    );
+    assert_eq!(retained_base.value, f.base);
+    assert_eq!(
+        source_snapshot.format,
+        if sha256 {
+            SnapshotIdentityFormat::GitTreeSha256
+        } else {
+            SnapshotIdentityFormat::GitTreeSha1
+        }
+    );
+    assert_eq!(
+        content(&result).result_revision.as_ref().unwrap().value,
+        rewritten
+    );
+    let DeliveryRecord::IntegrationObservation(observation) = &result.records[1].record else {
+        panic!("wrong observation slot")
+    };
+    assert!(content(&result).proves_observation(observation).unwrap());
+    assert_eq!(result.report.graph_contains_source, Some(false));
+    assert_eq!(
+        result.report.integration_outcome,
+        IntegrationOutcome::Applied
+    );
+    assert_eq!(
+        before,
+        f.bare(&["for-each-ref", "--format=%(refname) %(objectname)"])
+    );
+}
+
+#[tokio::test]
+async fn sha1_retained_base_rewrite_observes_complete_content() {
+    retained_base_rewrite(false).await;
+}
+
+#[tokio::test]
+async fn sha256_retained_base_rewrite_observes_complete_content() {
+    retained_base_rewrite(true).await;
+}
+
+#[tokio::test]
+async fn nonmanifest_content_omissions_and_modes_do_not_prove_a_rewrite() {
+    for sha256 in [false, true] {
+        for change in ["content", "omission", "mode"] {
+            let f = GitFixture::new(sha256);
+            match change {
+                "content" => f.commit("README.md", b"changed outside the manifest\n"),
+                "omission" => {
+                    f.git(&["rm", "README.md"]);
+                    f.git(&["commit", "-m", "Omit a nonmanifest file"]);
+                }
+                _ => {
+                    f.git(&["update-index", "--chmod=+x", "README.md"]);
+                    f.git(&["commit", "-m", "Change a nonmanifest mode"]);
+                }
+            }
+            let tree = f.git(&["rev-parse", "HEAD^{tree}"]);
+            f.publish_tree(&tree, Some(&f.base));
+            let result = f
+                .adapter()
+                .await
+                .inspect(&f.candidate(), "partial-rewrite")
+                .await
+                .unwrap();
+            assert_eq!(result.report.manifest_outcome, VerificationOutcome::Passed);
+            assert_eq!(
+                content(&result).witness,
+                IntegrationContentWitness::Unavailable {
+                    reason: ContentProofUnavailableReason::ContentChanged
+                }
+            );
+            assert_ne!(
+                result.report.integration_outcome,
+                IntegrationOutcome::Applied
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn matching_complete_tree_requires_the_declared_base_in_both_histories() {
+    for sha256 in [false, true] {
+        let f = GitFixture::new(sha256);
+        f.rewrite_main(None);
+        let result = f
+            .adapter()
+            .await
+            .inspect(&f.candidate(), "lost-base")
+            .await
+            .unwrap();
+        assert_eq!(
+            content(&result).witness,
+            IntegrationContentWitness::Unavailable {
+                reason: ContentProofUnavailableReason::BaseChanged
+            }
+        );
+        assert_ne!(
+            result.report.integration_outcome,
+            IntegrationOutcome::Applied
+        );
+        f.rewrite_main(Some(&f.base));
+        let mut candidate = f.candidate();
+        candidate.binding.target.precondition = TargetPrecondition::Missing;
+        let result = f
+            .adapter()
+            .await
+            .inspect(&candidate, "undeclared-base")
+            .await
+            .unwrap();
+        assert_eq!(
+            content(&result).witness,
+            IntegrationContentWitness::Unavailable {
+                reason: ContentProofUnavailableReason::BaseChanged
+            }
+        );
+        assert_ne!(
+            result.report.integration_outcome,
+            IntegrationOutcome::Applied
+        );
+        candidate.binding.target.precondition =
+            TargetPrecondition::Exact(candidate.binding.source_revision.clone().unwrap());
+        let result = f
+            .adapter()
+            .await
+            .inspect(&candidate, "wrong-exact-base")
+            .await
+            .unwrap();
+        assert_eq!(
+            content(&result).witness,
+            IntegrationContentWitness::Unavailable {
+                reason: ContentProofUnavailableReason::BaseChanged
+            }
+        );
+        assert_ne!(
+            result.report.integration_outcome,
+            IntegrationOutcome::Applied
+        );
+    }
+}
+
+#[tokio::test]
+async fn missing_base_and_nonmanifest_objects_cannot_prove_complete_content() {
+    for sha256 in [false, true] {
+        for missing in ["base", "nonmanifest_blob"] {
+            let f = GitFixture::new(sha256);
+            f.rewrite_main(Some(&f.base));
+            let object = if missing == "base" {
+                f.base.clone()
+            } else {
+                f.git(&["rev-parse", &format!("{}:README.md", f.source)])
+            };
+            f.remove_object(&object);
+            let result = f
+                .adapter()
+                .await
+                .inspect(&f.candidate(), "missing-complete-object")
+                .await
+                .unwrap();
+            assert_eq!(result.report.manifest_outcome, VerificationOutcome::Passed);
+            assert_eq!(
+                content(&result).witness,
+                IntegrationContentWitness::Unavailable {
+                    reason: ContentProofUnavailableReason::HistoryUnavailable
+                }
+            );
+            assert_ne!(
+                result.report.integration_outcome,
+                IntegrationOutcome::Applied
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn immutable_legacy_report_replays_without_inventing_a_content_witness() {
+    let f = GitFixture::new(false);
+    let candidate = f.candidate();
+    let first = f
+        .adapter()
+        .await
+        .inspect(&candidate, "legacy")
+        .await
+        .unwrap();
+    let (hash, bytes) = f.legacy_report(&first.report_artifact);
+    f.push_main();
+    let adapter = f.adapter().await;
+    let legacy = adapter.inspect(&candidate, "legacy").await.unwrap();
+    assert_eq!(legacy.records.len(), 2);
+    assert!(legacy.report.content_witness.is_none());
+    assert_eq!(
+        legacy.report.integration_outcome,
+        IntegrationOutcome::Pending
+    );
+    assert_eq!(adapter.report_bytes(&hash).unwrap(), bytes);
+    assert!(
+        serde_json::to_value(&legacy.report)
+            .unwrap()
+            .get("content_witness")
+            .is_none()
+    );
+    assert_eq!(
+        adapter
+            .report_bytes(&first.report_artifact.sha256)
+            .unwrap()
+            .len()
+            .to_string(),
+        first.report_artifact.byte_length
+    );
+    let fresh = adapter
+        .inspect(&candidate, "fresh-after-legacy")
+        .await
+        .unwrap();
+    assert_eq!(
+        fresh.report.integration_outcome,
+        IntegrationOutcome::Applied
+    );
+    assert_eq!(
+        content(&fresh).witness,
+        IntegrationContentWitness::ExactRevision
+    );
+    assert_eq!(adapter.report_bytes(&hash).unwrap(), bytes);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn target_read_barrier_follows_complete_content_queries() {
+    use std::os::unix::fs::PermissionsExt;
+    fn quote(value: &str) -> String {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+    let mut f = GitFixture::new(false);
+    let rewritten = f.rewrite_main(Some(&f.base));
+    let real_git = f.config.git_executable.clone();
+    let wrapper = f.root.join("target-race-git");
+    let trigger = quote(&format!("{rewritten}^{{tree}}"));
+    let executable = quote(real_git.to_str().unwrap());
+    let script = format!(
+        "#!/bin/sh\nfor last do :; done\nif [ \"$last\" = {trigger} ]; then\n  {executable} \"$@\"\n  command_status=$?\n  {executable} --git-dir=. update-ref refs/heads/main {} {}\n  exit \"$command_status\"\nfi\nexec {executable} \"$@\"\n",
+        f.base, rewritten
+    );
+    std::fs::write(&wrapper, script).unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    f.config.git_executable = wrapper;
+    let result = f
+        .adapter()
+        .await
+        .inspect(&f.candidate(), "tree-query-race")
+        .await
+        .unwrap();
+    assert!(!result.report.target_stable);
+    assert_eq!(
+        content(&result).witness,
+        IntegrationContentWitness::Unavailable {
+            reason: ContentProofUnavailableReason::TargetUnstable
+        }
+    );
+    assert_eq!(
+        result.report.integration_outcome,
+        IntegrationOutcome::Unknown
+    );
+    assert_eq!(f.bare(&["rev-parse", "refs/heads/main"]), f.base);
 }
 
 #[tokio::test]

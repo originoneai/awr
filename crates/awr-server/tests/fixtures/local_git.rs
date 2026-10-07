@@ -157,6 +157,88 @@ impl GitFixture {
             "HEAD:refs/heads/main",
         ]);
     }
+    /// An external fixture rewrite; the observation adapter never performs it.
+    pub fn publish_tree(&self, tree: &str, parent: Option<&str>) -> String {
+        let mut args = vec!["commit-tree", tree, "-m", "Rewritten fixture history"];
+        if let Some(parent) = parent {
+            args.extend(["-p", parent]);
+        }
+        let revision = self.git(&args);
+        self.git(&[
+            "push",
+            "--force",
+            self.config.repository.to_str().unwrap(),
+            &format!("{revision}:refs/heads/main"),
+        ]);
+        revision
+    }
+
+    pub fn rewrite_main(&self, parent: Option<&str>) -> String {
+        let tree = self.git(&["rev-parse", &format!("{}^{{tree}}", self.source)]);
+        self.publish_tree(&tree, parent)
+    }
+
+    pub fn remove_object(&self, revision: &str) {
+        let path = self
+            .config
+            .repository
+            .join("objects")
+            .join(&revision[..2])
+            .join(&revision[2..]);
+        assert!(
+            path.is_file(),
+            "fixture object must be independently removable"
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    /// Model an archived pre-witness report, without modifying its original bytes.
+    pub fn legacy_report(&self, artifact: &ArtifactEntry) -> (String, Vec<u8>) {
+        let prefix = if artifact.locator.starts_with("awr-local-git-integration:") {
+            "integration-report"
+        } else {
+            "report"
+        };
+        let original = self
+            .config
+            .report_directory
+            .join(format!("{prefix}-{}.json", artifact.sha256));
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(original).unwrap()).unwrap();
+        value.as_object_mut().unwrap().remove("content_witness");
+        if let Some(observation) = value
+            .get_mut("observation")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            observation.remove("content_witness");
+        }
+        let bytes = serde_json::to_vec(&value).unwrap();
+        let hash = sha(&bytes);
+        fs::write(
+            self.config
+                .report_directory
+                .join(format!("{prefix}-{hash}.json")),
+            &bytes,
+        )
+        .unwrap();
+        let mut changed = 0;
+        for entry in fs::read_dir(&self.config.report_directory).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy();
+            if name.starts_with("inspection-") || name.starts_with("integration-inspection-") {
+                let mut index: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                if index["report_sha256"] == artifact.sha256 {
+                    index["report_sha256"] = hash.clone().into();
+                    fs::write(path, serde_json::to_vec(&index).unwrap()).unwrap();
+                    changed += 1;
+                }
+            }
+        }
+        assert_eq!(changed, 1);
+        (hash, bytes)
+    }
+
     pub async fn adapter(&self) -> LocalGitAdapter {
         LocalGitAdapter::open(self.config.clone()).await.unwrap()
     }

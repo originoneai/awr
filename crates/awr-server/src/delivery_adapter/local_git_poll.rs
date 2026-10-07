@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 enum Slot {
     Verification,
     Integration,
+    Content,
 }
 
 impl Slot {
@@ -18,6 +19,7 @@ impl Slot {
         match self {
             Self::Verification => "verification",
             Self::Integration => "integration_observation",
+            Self::Content => "integration_content_proof",
         }
     }
 
@@ -43,11 +45,16 @@ impl Slot {
                 report.target_precondition_matches,
                 report.integration_outcome
             ]),
+            Self::Content => json!([
+                report.source_revision,
+                report.target_revision,
+                report.content_witness
+            ]),
         }
     }
 }
 
-const SLOTS: [Slot; 2] = [Slot::Verification, Slot::Integration];
+const SLOTS: [Slot; 3] = [Slot::Verification, Slot::Integration, Slot::Content];
 
 impl LocalGitAdapter {
     fn prior_report(&self, facts: &[Value], slot: Slot, binding: &str) -> Option<LocalGitReport> {
@@ -88,6 +95,17 @@ impl LocalGitAdapter {
                     == format!("local-git-target:{}", self.config.adapter_id)
                     && observation["outcome"] == json!(report.integration_outcome)
                     && observation["result_revision"] == json!(report.target_revision)
+            }
+            Slot::Content => {
+                report.content_witness.is_some()
+                    && observation["observation_reference"]
+                        == format!("local-git-target:{}", self.config.adapter_id)
+                    && observation["request_id"].is_null()
+                    && observation["result_revision"] == json!(report.target_revision)
+                    && report
+                        .content_witness
+                        .as_ref()
+                        .is_some_and(|w| observation["witness_kind"] == w.kind())
             }
         };
         consistent.then_some(report)
@@ -200,7 +218,8 @@ impl LocalGitAdapter {
                 binding,
                 predecessors,
                 Slot::Verification.semantics(&probe),
-                Slot::Integration.semantics(&probe)
+                Slot::Integration.semantics(&probe),
+                Slot::Content.semantics(&probe)
             ]))
             .map_err(|_| LocalGitError::InvalidStoreResponse)?,
         );
@@ -248,6 +267,7 @@ impl LocalGitAdapter {
                             (slot, &record.record),
                             (Slot::Verification, DeliveryRecord::Verification(_))
                                 | (Slot::Integration, DeliveryRecord::IntegrationObservation(_))
+                                | (Slot::Content, DeliveryRecord::IntegrationContentProof(_))
                         )
                     })
                 })
