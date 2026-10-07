@@ -43,7 +43,8 @@ jobs:
           - platform: windows-x64
             runner: windows-2025
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    # Keep every gate while allowing the slower Intel runner to finish.
+    timeout-minutes: ${{ matrix.platform == 'macos-x64' && 60 || 45 }}
     defaults:
       run:
         shell: bash
