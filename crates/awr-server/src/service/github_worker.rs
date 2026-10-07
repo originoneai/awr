@@ -15,7 +15,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     future::Future,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{sync::watch, task::JoinHandle};
@@ -44,6 +47,8 @@ pub struct GitHubWorkerSnapshot {
     pub state: WorkerState,
     pub failure_code: Option<GitHubWorkerFailure>,
     pub polls: u64,
+    pub wakeups_requested: u64,
+    pub wakeups_consumed: u64,
     pub current_changed: u64,
     pub current_unchanged: u64,
     pub selection_waits: u64,
@@ -66,6 +71,7 @@ type Snapshot = Arc<Mutex<GitHubWorkerSnapshot>>;
 #[derive(Clone)]
 pub struct GitHubWorkerMonitor {
     snapshots: Vec<Snapshot>,
+    wakeups: Vec<GitHubWorkerWakeup>,
 }
 impl GitHubWorkerMonitor {
     pub fn snapshots(&self) -> Vec<GitHubWorkerSnapshot> {
@@ -73,6 +79,62 @@ impl GitHubWorkerMonitor {
             .iter()
             .map(|s| s.lock().unwrap_or_else(|e| e.into_inner()).clone())
             .collect()
+    }
+    pub fn wakeups(&self) -> Vec<GitHubWorkerWakeup> {
+        self.wakeups.clone()
+    }
+}
+
+/// Fixed operator mapping. A wakeup carries no candidate, facts or authority.
+#[derive(Clone, PartialEq, Eq)]
+pub struct GitHubWakeScope {
+    pub worker_id: String,
+    pub project: String,
+    pub tenant_id: String,
+    pub project_id: String,
+    pub workstream_id: String,
+    pub work_id: String,
+    pub connector_id: String,
+    pub resource: String,
+    pub repository_id: u64,
+}
+impl GitHubWakeScope {
+    pub(super) fn from_spec(spec: &GitHubWorkerSpec) -> Self {
+        Self {
+            worker_id: spec.worker_id.clone(),
+            project: spec.project.clone(),
+            tenant_id: spec.repository.tenant_id.clone(),
+            project_id: spec.repository.project_id.clone(),
+            workstream_id: spec.repository.workstream_id.clone(),
+            work_id: spec.repository.work_id.clone(),
+            connector_id: spec.repository.connector_id.clone(),
+            resource: spec.repository.resource.clone(),
+            repository_id: spec.repository.repository_id,
+        }
+    }
+}
+#[derive(Clone)]
+pub struct GitHubWorkerWakeup {
+    scope: GitHubWakeScope,
+    wake: watch::Sender<u64>,
+    stopping: Arc<AtomicBool>,
+    snapshot: Snapshot,
+}
+impl GitHubWorkerWakeup {
+    pub fn scope(&self) -> &GitHubWakeScope {
+        &self.scope
+    }
+    /// Coalesced notification only. Fresh queries still authenticate inside PG.
+    pub fn notify(&self) -> bool {
+        if self.stopping.load(Ordering::SeqCst) || self.wake.is_closed() {
+            return false;
+        }
+        self.wake
+            .send_modify(|generation| *generation = generation.wrapping_add(1));
+        observe(&self.snapshot, |s| {
+            s.wakeups_requested = s.wakeups_requested.saturating_add(1)
+        });
+        true
     }
 }
 
@@ -116,6 +178,7 @@ pub(super) struct GitHubWorkerAdmission {
 
 pub struct GitHubWorkerRuntime {
     stop: watch::Sender<bool>,
+    stopping: Arc<AtomicBool>,
     tasks: Vec<JoinHandle<()>>,
     monitor: GitHubWorkerMonitor,
 }
@@ -297,6 +360,8 @@ impl GitHubWorkerRuntime {
                     state: WorkerState::Starting,
                     failure_code: None,
                     polls: 0,
+                    wakeups_requested: 0,
+                    wakeups_consumed: 0,
                     current_changed: 0,
                     current_unchanged: 0,
                     selection_waits: 0,
@@ -334,14 +399,19 @@ impl GitHubWorkerRuntime {
         let (stop, _) = watch::channel(false);
         Self {
             stop,
+            stopping: Arc::new(AtomicBool::new(false)),
             tasks: vec![],
-            monitor: GitHubWorkerMonitor { snapshots: vec![] },
+            monitor: GitHubWorkerMonitor {
+                snapshots: vec![],
+                wakeups: vec![],
+            },
         }
     }
     pub fn monitor(&self) -> GitHubWorkerMonitor {
         self.monitor.clone()
     }
     pub fn request_stop(&self) {
+        self.stopping.store(true, Ordering::SeqCst);
         let _ = self.stop.send(true);
     }
     pub async fn shutdown(mut self) {
@@ -361,17 +431,28 @@ impl GitHubWorkerAdmission {
         let (stop, receiver) = watch::channel(false);
         let mut runtime = GitHubWorkerRuntime {
             stop,
+            stopping: Arc::new(AtomicBool::new(false)),
             tasks: vec![],
-            monitor: GitHubWorkerMonitor { snapshots: vec![] },
+            monitor: GitHubWorkerMonitor {
+                snapshots: vec![],
+                wakeups: vec![],
+            },
         };
         for worker in self.workers {
             runtime.monitor.snapshots.push(worker.snapshot.clone());
+            let (wake, waking) = watch::channel(0);
+            runtime.monitor.wakeups.push(GitHubWorkerWakeup {
+                scope: GitHubWakeScope::from_spec(&worker.spec),
+                wake,
+                stopping: runtime.stopping.clone(),
+                snapshot: worker.snapshot.clone(),
+            });
             let stopped = StopObservation(worker.snapshot.clone());
             let store = self.store.clone();
             let receiver = receiver.clone();
             runtime.tasks.push(tokio::spawn(async move {
                 let _on_stop = stopped;
-                run(worker, store, receiver).await;
+                run(worker, store, receiver, waking).await;
             }));
         }
         runtime
@@ -719,14 +800,22 @@ async fn poll(
     Some(failure.map_or(Ok(()), Err))
 }
 
-async fn run(worker: Worker, store: Arc<DeliverySyncStore>, mut stop: watch::Receiver<bool>) {
+async fn run(
+    worker: Worker,
+    store: Arc<DeliverySyncStore>,
+    mut stop: watch::Receiver<bool>,
+    mut wake: watch::Receiver<u64>,
+) {
     let mut cursor = None;
     let mut delay = worker.spec.poll_interval_ms;
     observe(&worker.snapshot, |s| s.state = WorkerState::Running);
     loop {
+        // Events accumulated before this query are covered by its fresh read.
+        wake.borrow_and_update();
         let Some(result) = poll(&worker, &store, &mut cursor, &mut stop).await else {
             return;
         };
+        let allow_wakeup = result.is_ok();
         match result {
             Ok(()) => {
                 delay = worker.spec.poll_interval_ms;
@@ -746,6 +835,17 @@ async fn run(worker: Worker, store: Arc<DeliverySyncStore>, mut stop: watch::Rec
                 });
             }
         }
-        tokio::select! { biased; _ = stopped(&mut stop) => return, _ = tokio::time::sleep(Duration::from_millis(delay)) => {} }
+        let cooldown = tokio::time::Instant::now()
+            + Duration::from_millis(worker.spec.poll_interval_ms.min(1000));
+        tokio::select! { biased;
+            _ = stopped(&mut stop) => return,
+            _ = tokio::time::sleep(Duration::from_millis(delay)) => {},
+            event = wake.changed(), if allow_wakeup => {
+                if event.is_err() { return; }
+                // Even a valid event flood cannot create an unbounded tight loop.
+                tokio::select! { biased; _ = stopped(&mut stop) => return, _ = tokio::time::sleep_until(cooldown) => {} }
+                observe(&worker.snapshot, |s| s.wakeups_consumed = s.wakeups_consumed.saturating_add(1));
+            }
+        }
     }
 }

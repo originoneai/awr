@@ -109,8 +109,9 @@ not manufacture passing or rejected terminal facts.
 ## Current delivery boundary
 
 The library adapter and optional Team service worker use explicit authenticated
-reconciliation. Signed wake-up notifications and synchronization timing
-measurements remain separate work. No webhook body is an authoritative fact.
+reconciliation. Optional signed notifications can bring the next fresh query
+forward. No webhook body is an authoritative fact; polling remains the recovery
+path when notifications are absent, duplicated, missed or reordered.
 
 The observer advertises `integration_requests: false`. Repository effects require
 the separate opt-in integrator described below; observations never grant authority.
@@ -180,8 +181,8 @@ unchanged. Neither query finalizes work or asserts that authoritative source
 writeback succeeded.
 
 Integration confirmation, authoritative source writeback and final task acceptance
-remain separate. Neither the library nor its worker establishes signed webhook
-delivery, squash/rebase finalization or complete native-client business acceptance.
+remain separate. Notifications do not establish repository delivery,
+squash/rebase finalization or complete native-client business acceptance.
 
 ## Optional Team service worker
 
@@ -234,6 +235,71 @@ retain their permits until their bounded work exits, even if the async future
 is dropped. Startup resolves credentials once into zeroizing memory; explicit
 restart is the rotation boundary. A revoked credential cannot keep observing or
 execute from cached authority. Restart recovers durable original intents and
-digest-bound reports without persisting secret values. Signed notification,
-physical GitHub-to-source completion timing and complete natural-client business
-acceptance need their own evidence.
+digest-bound reports without persisting secret values. Complete natural-client
+business acceptance needs its own evidence.
+
+## Optional signed query wakeups
+
+Set `AWR_TEAM_GITHUB_WEBHOOK_CONFIG` to a **separate** private TOML file:
+
+```toml
+version = 1
+max_body_bytes = 65536
+
+[[hooks]]
+worker_id = "github-repository-worker"
+secret_env = "GITHUB_NOTIFICATION_SECRET"
+```
+
+The worker ID must already exist in the GitHub worker configuration. Provision
+the secret separately through the named environment variable and configure the
+same secret at the provider. Use a distinct 32–4096-byte secret without control
+characters, separate from every AWR/provider credential. Restart is the explicit
+rotation boundary. An absent configuration or a valid file with no hooks adds
+no endpoint and reads no notification secrets.
+
+Configure the provider's webhook URL as
+`https://<team-service>/v1/hooks/github/<worker_id>`, with JSON payloads and
+HMAC-SHA256 signatures. Forward the original request body and GitHub headers;
+the Host must match the Team service configuration. Browser Origin requests are
+refused. Configure TLS at the existing service ingress.
+
+At most 16 requests can read or process a body at once, under a 10-second
+deadline; partial uploads cannot reserve the endpoint indefinitely. The endpoint
+bounds the original body, verifies its exact
+`X-Hub-Signature-256` before parsing, and requires a numeric repository ID matching
+the prepared mapping. The admitted worker must also match the full immutable
+tenant/project/workstream/work/connector/resource scope. An unavailable or
+stopped worker cannot be woken. `push`, `pull_request`, `check_run`, `check_suite`,
+`status` and `workflow_run` events request a query; other well-formed, signed
+events are acknowledged and ignored.
+
+Delivery IDs are deduplicated in bounded memory (512 per hook, 10-minute TTL).
+Concurrent duplicates converge on one wake request, and pending requests share
+one coalesced channel. A successful query can run sooner after a notification,
+with a minimum interval of `min(poll_interval_ms, 1000)` milliseconds. Existing
+error/rate-limit backoff is preserved in full. Stop/drop immediately refuse
+retained wake handles. Deduplication is deliberately not durable: after restart
+a replay may trigger a fresh query, which still cannot create duplicate facts
+or repeat an uncertain repository effect.
+
+Every notification JSON response includes `authoritative_fact: false`.
+`202 QueryWakeupRequested` means a query was requested, not that a repository
+operation or source write succeeded. `NotificationCoalesced` acknowledges an
+already-seen delivery without another wake. `503 WorkerUnavailable` allows the
+sender to retry; independently, periodic polling keeps working. Worker admission
+is rechecked by the fresh query, so a correctly signed notification cannot
+restore a revoked AWR credential, disabled connector or stale approval.
+
+The optional source publisher still needs its own admitted configuration and
+physical source binding. Only its confirmed fingerprint, current projection and
+current cursor establish source synchronization. Observation, integration,
+source publication and final acceptance remain separate facts.
+
+The `github_worker_pg` regression suite exercises actual loopback HTTP, isolated
+PG, real Git bytes and physical source writeback. Provider identity and CI
+metadata are synthetic. Its three event and three missed-event polling samples
+report every elapsed time, counts, nearest-rank p95 and exceedances against
+10-second/60-second targets with 20-second repository and 100-millisecond source
+poll intervals. These small isolated measurements are neither a production SLA
+nor complete member business acceptance.

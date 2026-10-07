@@ -3,6 +3,7 @@
 mod action_auth;
 pub mod delivery_sync;
 pub mod delivery_workers;
+pub mod github_webhook;
 pub mod github_worker;
 pub mod local_git_worker;
 mod mcp;
@@ -1068,6 +1069,8 @@ pub async fn serve(path: &FilePath) -> Result<(), String> {
     let workers = crate::config::DeliveryWorkerConfig::from_environment(&config)?;
     let git_workers = crate::config::LocalGitWorkerConfig::from_environment(&config)?;
     let github_workers = crate::config::GitHubWorkerConfig::from_environment(&config)?;
+    let github_hooks =
+        github_webhook::GitHubWebhookConfig::from_environment(&config, github_workers.as_ref())?;
     let url = std::env::var("AWR_TEAM_DATABASE_URL")
         .map_err(|_| "AWR_TEAM_DATABASE_URL is required".to_string())?;
     let delivery = awr_team_pg::DeliverySyncStore::new(url.clone());
@@ -1085,7 +1088,14 @@ pub async fn serve(path: &FilePath) -> Result<(), String> {
         .local_addr()
         .map_err(|_| "could not inspect listener".to_string())?;
     // Build all routes before any worker starts. Router/config failures cannot leave workers.
-    let router = router(config.clone(), actual, store)?;
+    let hooks = github_webhook::GitHubWebhookRuntime::prepare(
+        &config,
+        actual,
+        github_hooks,
+        github_workers.as_ref(),
+        |name| std::env::var(name).ok(),
+    )?;
+    let router = router(config.clone(), actual, store)?.merge(hooks.router());
     let workers = delivery_workers::DeliveryWorkers::start_with_github(
         &config,
         workers,
@@ -1095,6 +1105,7 @@ pub async fn serve(path: &FilePath) -> Result<(), String> {
         |name| std::env::var(name).ok(),
     )
     .await?;
+    hooks.connect(&workers.github_monitor());
     println!(
         "{}",
         json!({"service":"awr-team-workstream","listen":actual.to_string(),"protocol_version":1})
