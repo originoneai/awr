@@ -63,18 +63,30 @@ pub async fn setup_integration() -> Fixture {
 
 /// Bind an actual repository candidate before submitting evidence or approval.
 pub async fn setup_integration_with_candidate(actual: Option<DeliveryCandidate>) -> Fixture {
-    setup_integration_inner(actual, None).await
+    setup_integration_inner(actual, None, None).await
 }
 
 /// Activate the physical contract before execution or business review. No delivery
 /// contract, check or approval is supplied through fixture SQL on this path.
 pub async fn setup_source_integration(actual: DeliveryCandidate, root: &Path) -> Fixture {
-    setup_integration_inner(Some(actual), Some(root)).await
+    setup_source_integration_with_checks(actual, root, &["local_git.manifest".into()]).await
+}
+
+/// Verify explicit provider-specific requirements against the activated source.
+/// Existing local Git callers retain their exact original requirement assertion.
+pub async fn setup_source_integration_with_checks(
+    actual: DeliveryCandidate,
+    root: &Path,
+    checks: &[String],
+) -> Fixture {
+    assert!(!checks.is_empty());
+    setup_integration_inner(Some(actual), Some(root), Some(checks)).await
 }
 
 async fn setup_integration_inner(
     actual: Option<DeliveryCandidate>,
     source_root: Option<&Path>,
+    source_checks: Option<&[String]>,
 ) -> Fixture {
     let (guard, admin, db, reads) = setup().await;
     let config = common::with_app_role(&common::test_config(), &db);
@@ -255,7 +267,7 @@ async fn setup_integration_inner(
             &[&json!(contract),&contract.hash().unwrap()]).await.unwrap();
     } else {
         assert_eq!(contract.completion_policy, POLICY);
-        assert_eq!(contract.verification_requirements, ["local_git.manifest"]);
+        assert_eq!(contract.verification_requirements, source_checks.unwrap());
         assert_eq!(
             contract.execution_settlement.as_ref().unwrap().mode,
             ExecutionSettlementMode::IndependentWorkspaceV1

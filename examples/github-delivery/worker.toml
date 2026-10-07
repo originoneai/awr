@@ -46,3 +46,14 @@ max_requests = 256
 check = "ci"
 name = "Build and test"
 app_id = 15368
+
+# Optional signed wakeups use a SEPARATE private file named by
+# AWR_TEAM_GITHUB_WEBHOOK_CONFIG. Do not add these fields to this worker file.
+# Example notification file (secret values are provisioned separately):
+# version = 1
+# max_body_bytes = 65536
+# [[hooks]]
+# worker_id = "github-repository-worker"
+# secret_env = "GITHUB_NOTIFICATION_SECRET"
+# Route: /v1/hooks/github/github-repository-worker
+# Notifications only wake fresh queries; fallback polling remains active.
