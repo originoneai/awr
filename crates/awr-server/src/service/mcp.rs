@@ -593,7 +593,7 @@ fn catalog() -> Vec<Tool> {
             "request_id":{"type":"string","maxLength":128},
             "mode":{"type":"string","enum":["create","edit"]},
             "candidate_id":{"type":["string","null"],"maxLength":128},
-            "changes":{"type":"array","maxItems":256},
+            "changes":{"type":"array","maxItems":256,"description":"DraftChange objects with op, before and after TaskDraft. V4 execution_settlement is {mode: independent_workspace_v1, workspace_id: opaque identity}. New simulated-member tasks require settlement, scope_paths and verification_requirements. Optional execution fields omitted on edits retain source values; explicit replacement must include their exact prior values in before."},
             "suggestion_ids":{"type":"array","maxItems":256,"items":{"type":"string"}},
             "allowed_spec_roots":{"type":"array","maxItems":64,"items":{"type":"string"}},
             "project_goal_keys":{"type":"array","maxItems":64,"items":{"type":"string"}},
@@ -671,7 +671,7 @@ fn catalog() -> Vec<Tool> {
             planning_suggest.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_planning_draft",
-            "Create or edit a planning draft candidate (planning.edit_draft). Split/cancel/archive are DraftChange ops inside changes. No hard-delete of history and no forging done via status. Stable request_id.",
+            "Create or edit a planning draft candidate (planning.edit_draft). Split/cancel/archive are DraftChange ops inside changes. V4 supports reviewed workspace declarations, not execution/review authority. Preview and approve the current digest before publishing. No hard-delete of history or forging done via status. Stable request_id.",
             planning_draft.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_planning_preview",

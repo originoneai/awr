@@ -7,6 +7,7 @@
 //! must not downgrade independent delivery-review requirements.
 
 use crate::canonical::contract_hash;
+use crate::contract::ExecutionSettlementPolicy;
 use crate::error::{TeamError, TeamResult};
 use crate::permission::{Action, AuthorityScope, ResourceRef, authorize_action};
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 pub const PLANNING_CODEC: &str = "awr-team-planning-v1";
 pub const PLANNING_CODEC_V2: &str = "awr-team-planning-v2";
 pub const PLANNING_CODEC_V3: &str = "awr-team-planning-v3";
+pub const PLANNING_CODEC_V4: &str = "awr-team-planning-v4";
 
 /// Suggestions never become claimable work and never enlarge the formal work
 /// denominator or mutate live deps/acceptance.
@@ -172,6 +174,14 @@ pub struct TaskDraft {
         deserialize_with = "present_contract_list"
     )]
     pub verification_requirements: Option<Vec<String>>,
+    /// V4 only. Omission retains the source workspace declaration; null is not
+    /// removal. This field does not grant execution, review or repository rights.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_execution_settlement"
+    )]
+    pub execution_settlement: Option<ExecutionSettlementPolicy>,
     pub definition_state: DraftDefinitionState,
     /// Owning workstream external key. Required for CreateTask writeback so
     /// publish prep can bind the new task before authoritative source mutation.
@@ -188,6 +198,12 @@ fn present_contract_list<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Option<Vec<String>>, D::Error> {
     // A supplied null must not be interpreted as a legacy omission.
     Vec::<String>::deserialize(d).map(Some)
+}
+
+fn present_execution_settlement<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<ExecutionSettlementPolicy>, D::Error> {
+    ExecutionSettlementPolicy::deserialize(d).map(Some)
 }
 
 impl TaskDraft {
@@ -209,6 +225,24 @@ impl TaskDraft {
             return Err(TeamError::InvalidInput(
                 "draft completion_policy required".into(),
             ));
+        }
+        if let Some(settlement) = &self.execution_settlement {
+            settlement.validate()?;
+            if !matches!(
+                self.completion_policy.as_str(),
+                ExecutionSettlementPolicy::COMPLETION_POLICY
+                    | ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
+            ) || self.scope_paths.is_empty()
+                || self.scope_paths.iter().any(|p| p.trim().is_empty())
+                || self
+                    .verification_requirements
+                    .as_ref()
+                    .is_some_and(Vec::is_empty)
+            {
+                return Err(TeamError::InvalidInput(
+                    "workspace settlement requires an explicit supported review policy, scope and nonempty verification requirements".into(),
+                ));
+            }
         }
         for (field, entries) in [
             ("hard_rules", &self.hard_rules),
@@ -258,6 +292,28 @@ impl TaskDraft {
         ) {
             return Err(TeamError::InvalidInput(
                 "completion_policy cannot forge completion via status synonyms".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// New workspace declarations must be complete. Existing edits may omit
+    /// optional fields; guarded publication validates their retained source values.
+    pub fn validate_for_create(&self) -> TeamResult<()> {
+        self.validate()?;
+        if (self.execution_settlement.is_some()
+            || self.completion_policy
+                == ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY)
+            && (self.execution_settlement.is_none()
+                || self.scope_paths.is_empty()
+                || self.scope_paths.iter().any(|p| p.trim().is_empty())
+                || self
+                    .verification_requirements
+                    .as_ref()
+                    .is_none_or(Vec::is_empty))
+        {
+            return Err(TeamError::InvalidInput(
+                "new workspace task requires execution_settlement, scope_paths and verification_requirements".into(),
             ));
         }
         Ok(())
@@ -390,6 +446,7 @@ impl PlanningCandidate {
                             "create_task must not carry before state".into(),
                         ));
                     }
+                    change.after.validate_for_create()?;
                 }
                 DraftOpKind::EditFields | DraftOpKind::Cancel | DraftOpKind::Archive => {
                     if change.before.is_none() {
@@ -710,6 +767,20 @@ pub fn build_candidate_diff(
             });
             review_requirements.insert("explicit_dependency_assurance_review".into());
         }
+        let before_settlement = change
+            .before
+            .as_ref()
+            .and_then(|b| b.execution_settlement.as_ref());
+        let after_settlement = change.after.execution_settlement.as_ref();
+        if after_settlement.is_some() && before_settlement != after_settlement {
+            field_diffs.push(FieldDiff {
+                work_key: key.clone(),
+                field: "execution_settlement".into(),
+                before: before_settlement.map(|s| json!(s)),
+                after: after_settlement.map(|s| json!(s)),
+            });
+            review_requirements.insert("execution_contract_review".into());
+        }
         for (field, before, after) in [
             (
                 "hard_rules",
@@ -937,6 +1008,14 @@ pub fn edit_candidate(
 /// original digest without a schema migration or a reinterpretation of policy.
 pub fn planning_codec_for_changes(changes: &[DraftChange]) -> &'static str {
     if changes.iter().any(|c| {
+        std::iter::once(&c.after).chain(c.before.as_ref()).any(|d| {
+            d.execution_settlement.is_some()
+                || d.completion_policy
+                    == ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
+        })
+    }) {
+        PLANNING_CODEC_V4
+    } else if changes.iter().any(|c| {
         c.after.hard_rules.is_some()
             || c.after.verification_requirements.is_some()
             || c.before
@@ -974,6 +1053,7 @@ mod tests {
             dependency_acceptance: None,
             hard_rules: None,
             verification_requirements: None,
+            execution_settlement: None,
             definition_state: DraftDefinitionState::Draft,
             workstream: None,
             split_from: None,

@@ -24,6 +24,7 @@ fn draft(id: &str, deps: &[&str], state: DraftDefinitionState) -> TaskDraft {
         dependency_acceptance: None,
         hard_rules: None,
         verification_requirements: None,
+        execution_settlement: None,
         definition_state: state,
         workstream: None,
         split_from: None,

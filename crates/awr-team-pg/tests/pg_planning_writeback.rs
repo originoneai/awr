@@ -24,11 +24,378 @@ fn draft(id: &str, deps: &[&str], state: DraftDefinitionState) -> TaskDraft {
         dependency_acceptance: None,
         hard_rules: None,
         verification_requirements: None,
+        execution_settlement: None,
         definition_state: state,
         workstream: None,
         split_from: None,
         split_children: vec![],
     }
+}
+
+fn workspace_task(id: &str, policy: &str) -> TaskDraft {
+    let mut task = draft(id, &[], DraftDefinitionState::Enabled);
+    task.workstream = Some("alpha".into());
+    task.completion_policy = policy.into();
+    task.execution_settlement = Some(awr_team::ExecutionSettlementPolicy {
+        mode: awr_team::ExecutionSettlementMode::IndependentWorkspaceV1,
+        workspace_id: format!("workspace-{id}"),
+    });
+    task.hard_rules = Some(vec!["Preserve recorded history".into()]);
+    task.verification_requirements = Some(vec!["Run persistence regressions".into()]);
+    task
+}
+
+async fn create_workspace_candidate(store: &SourceStore, change: DraftChange) -> serde_json::Value {
+    store
+        .create_planning_candidate(
+            TENANT,
+            PROJECT,
+            A,
+            &DraftCandidateCreate {
+                changes: vec![change],
+                suggestion_ids: vec![],
+                allowed_spec_roots: vec!["specs".into()],
+                project_goal_keys: vec!["delivery".into()],
+                self_approve_policy: Some(OrdinaryPlanningSelfApprovePolicy::ordinary_default()),
+                author_person_id: Some("agent".into()),
+                predetermined_candidate_id: None,
+            },
+        )
+        .await
+        .unwrap()
+}
+
+async fn approve_workspace_candidate(store: &SourceStore, candidate: &serde_json::Value) -> String {
+    let id = candidate["candidate_id"].as_str().unwrap();
+    let digest = candidate["candidate_digest"].as_str().unwrap();
+    store
+        .approve_planning_candidate(TENANT, PROJECT, A, id, digest, Some("agent"))
+        .await
+        .unwrap();
+    let published = store
+        .publish_planning_candidate(TENANT, PROJECT, A, id, digest)
+        .await
+        .unwrap();
+    published["receipt_id"].as_str().unwrap().into()
+}
+
+fn workspace_activation(
+    tmp: &TmpLedger,
+    receipt: String,
+    request: &str,
+) -> WritebackActivateRequest {
+    WritebackActivateRequest {
+        request_id: request.into(),
+        publish_receipt_id: receipt,
+        source_root: tmp.root.clone(),
+        ledger_relative_path: "ledger.yaml".into(),
+        impact_proven: true,
+        stopped_work_ids: vec![],
+    }
+}
+
+#[tokio::test]
+#[expect(
+    clippy::await_holding_lock,
+    reason = "The guard serializes the shared PostgreSQL fixture for this entire async test."
+)]
+async fn reviewed_workspace_contracts_roundtrip_reload_retain_and_replace_to_work_prepare() {
+    use awr_team::{
+        ExecutionSettlementPolicy as Policy, PLANNING_CODEC, PLANNING_CODEC_V4, WorkContract,
+        planning_codec_for_changes,
+    };
+    use awr_team_pg::WorkstreamReadStore;
+    use serde_json::{Value, json};
+
+    let (_g, admin, db, store) = store_and_roles().await;
+    let read = WorkstreamReadStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let tmp = tempfile_ledger();
+    for (key, policy) in [
+        ("ORDINARY-1", Policy::COMPLETION_POLICY),
+        ("SIMULATED-1", Policy::SIMULATED_MEMBER_COMPLETION_POLICY),
+    ] {
+        let original = workspace_task(key, policy);
+        let mut omitted = original.clone();
+        omitted.execution_settlement = None;
+        omitted.hard_rules = None;
+        omitted.verification_requirements = None;
+        let mut renamed = omitted.clone();
+        renamed.title = "Retain existing execution requirements".into();
+        let mut replacement = original.clone();
+        replacement
+            .execution_settlement
+            .as_mut()
+            .unwrap()
+            .workspace_id = format!("replacement-{key}");
+        replacement.verification_requirements = Some(vec!["Verify API and process reload".into()]);
+
+        for (index, change, expected, codec) in [
+            (
+                0,
+                DraftChange {
+                    op: DraftOpKind::CreateTask,
+                    before: None,
+                    after: original.clone(),
+                },
+                original.clone(),
+                PLANNING_CODEC_V4,
+            ),
+            (
+                1,
+                DraftChange {
+                    op: DraftOpKind::EditFields,
+                    before: Some(omitted),
+                    after: renamed,
+                },
+                original.clone(),
+                if policy == Policy::COMPLETION_POLICY {
+                    PLANNING_CODEC
+                } else {
+                    PLANNING_CODEC_V4
+                },
+            ),
+            (
+                2,
+                DraftChange {
+                    op: DraftOpKind::EditFields,
+                    before: Some(original),
+                    after: replacement.clone(),
+                },
+                replacement,
+                PLANNING_CODEC_V4,
+            ),
+        ] {
+            let created = create_workspace_candidate(&store, change).await;
+            let id = created["candidate_id"].as_str().unwrap();
+            let saved: Value = admin
+                .query_one(
+                    "SELECT changes_json FROM awr_team.planning_candidates WHERE id=$1",
+                    &[&id],
+                )
+                .await
+                .unwrap()
+                .get(0);
+            assert_eq!(
+                planning_codec_for_changes(
+                    &serde_json::from_value::<Vec<DraftChange>>(saved).unwrap()
+                ),
+                codec
+            );
+            // A fresh store must load the same candidate from PG rather than process memory.
+            let reloaded =
+                SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+            let preview = reloaded
+                .preview_planning_candidate(TENANT, PROJECT, A, id)
+                .await
+                .unwrap();
+            assert_eq!(
+                preview["diff"]["candidate_digest"],
+                created["candidate_digest"]
+            );
+            let fields = preview["diff"]["field_diffs"].as_array().unwrap();
+            assert_eq!(
+                fields.iter().any(|d| d["field"] == "execution_settlement"),
+                index != 1
+            );
+            let receipt = approve_workspace_candidate(&reloaded, &created).await;
+            reloaded
+                .activate_planning_writeback(
+                    TENANT,
+                    PROJECT,
+                    A,
+                    &workspace_activation(&tmp, receipt, &format!("workspace-{key}-{index}")),
+                )
+                .await
+                .unwrap();
+            let contract = activated_contract(&admin, key).await;
+            assert_eq!(
+                contract.codec,
+                if policy == Policy::COMPLETION_POLICY {
+                    WorkContract::CODEC_V3
+                } else {
+                    WorkContract::CODEC_V4
+                }
+            );
+            assert_eq!(contract.execution_settlement, expected.execution_settlement);
+            assert_eq!(contract.completion_policy, expected.completion_policy);
+            assert_eq!(contract.scope_paths, expected.scope_paths);
+            assert_eq!(
+                contract.verification_requirements,
+                expected.verification_requirements.unwrap()
+            );
+            let prepared = prepare(&read, A, key).await;
+            assert_eq!(prepared["data"]["context_complete"], true);
+            assert_eq!(
+                prepared["data"]["published_contract"]["execution_settlement"],
+                json!(contract.execution_settlement)
+            );
+            assert_eq!(
+                prepared["data"]["published_contract"]["completion_policy"],
+                policy
+            );
+            assert_eq!(
+                prepared["data"]["published_contract"]["verification_requirements"],
+                json!(contract.verification_requirements)
+            );
+            assert_eq!(prepared["data"]["execution_admission"], "not_evaluated");
+            let source = std::fs::read_to_string(tmp.root.join("ledger.yaml")).unwrap();
+            assert!(source.contains(&format!("id: {key}")));
+            assert!(source.contains(&contract.execution_settlement.as_ref().unwrap().workspace_id));
+        }
+    }
+}
+
+#[tokio::test]
+#[expect(
+    clippy::await_holding_lock,
+    reason = "The guard serializes the shared PostgreSQL fixture for this entire async test."
+)]
+async fn workspace_source_stale_priors_and_incomplete_retained_contracts_fail_before_mutation() {
+    use awr_team::ExecutionSettlementPolicy as Policy;
+    let (_g, admin, _db, store) = store_and_roles().await;
+    let tmp = tempfile_ledger();
+    let task = workspace_task("SIMULATED-1", Policy::SIMULATED_MEMBER_COMPLETION_POLICY);
+    let created = create_workspace_candidate(
+        &store,
+        DraftChange {
+            op: DraftOpKind::CreateTask,
+            before: None,
+            after: task.clone(),
+        },
+    )
+    .await;
+    let receipt = approve_workspace_candidate(&store, &created).await;
+    store
+        .activate_planning_writeback(
+            TENANT,
+            PROJECT,
+            A,
+            &workspace_activation(&tmp, receipt, "workspace-create"),
+        )
+        .await
+        .unwrap();
+    let source_bytes = std::fs::read(tmp.root.join("ledger.yaml")).unwrap();
+    let source_contract = activated_contract(&admin, "SIMULATED-1").await;
+    let mut after = task.clone();
+    after.execution_settlement.as_mut().unwrap().workspace_id = "new-workspace".into();
+    let mut omitted = task.clone();
+    omitted.execution_settlement = None;
+    let mut stale = task.clone();
+    stale.execution_settlement.as_mut().unwrap().workspace_id = "unobserved-workspace".into();
+    let mut retained_invalid = omitted.clone();
+    retained_invalid.verification_requirements = Some(vec![]);
+    for (index, change) in [
+        DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(omitted.clone()),
+            after: after.clone(),
+        },
+        DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(stale.clone()),
+            after,
+        },
+        DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(stale),
+            after: omitted,
+        },
+        DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(task),
+            after: retained_invalid,
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let created = create_workspace_candidate(&store, change).await;
+        let receipt = approve_workspace_candidate(&store, &created).await;
+        let result = store
+            .activate_planning_writeback(
+                TENANT,
+                PROJECT,
+                A,
+                &workspace_activation(&tmp, receipt, &format!("workspace-stale-{index}")),
+            )
+            .await;
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(
+            std::fs::read(tmp.root.join("ledger.yaml")).unwrap(),
+            source_bytes
+        );
+        assert_eq!(
+            activated_contract(&admin, "SIMULATED-1").await,
+            source_contract
+        );
+    }
+}
+
+#[tokio::test]
+#[expect(
+    clippy::await_holding_lock,
+    reason = "The guard serializes the shared PostgreSQL fixture for this entire async test."
+)]
+async fn workspace_candidate_edit_requires_fresh_digest_approval_after_reload() {
+    use awr_team::ExecutionSettlementPolicy as Policy;
+    let (_g, admin, db, store) = store_and_roles().await;
+    let original = workspace_task("SIMULATED-1", Policy::SIMULATED_MEMBER_COMPLETION_POLICY);
+    let mut change = DraftChange {
+        op: DraftOpKind::CreateTask,
+        before: None,
+        after: original,
+    };
+    let created = create_workspace_candidate(&store, change.clone()).await;
+    let id = created["candidate_id"].as_str().unwrap();
+    let old = created["candidate_digest"].as_str().unwrap();
+    store
+        .approve_planning_candidate(TENANT, PROJECT, A, id, old, Some("agent"))
+        .await
+        .unwrap();
+    change
+        .after
+        .execution_settlement
+        .as_mut()
+        .unwrap()
+        .workspace_id = "reviewed-replacement".into();
+    let edited = store
+        .edit_planning_candidate(TENANT, PROJECT, A, id, vec![change])
+        .await
+        .unwrap();
+    let new = edited["candidate_digest"].as_str().unwrap();
+    assert_ne!(old, new);
+    assert_eq!(edited["prior_approval_cleared"], true);
+    let saved = admin
+        .query_one(
+            "SELECT candidate_digest,state FROM awr_team.planning_candidates WHERE id=$1",
+            &[&id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved.get::<_, String>(0), new);
+    assert_eq!(saved.get::<_, String>(1), "drafting");
+    let reloaded = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    assert!(
+        reloaded
+            .publish_planning_candidate(TENANT, PROJECT, A, id, old)
+            .await
+            .is_err()
+    );
+    assert!(
+        reloaded
+            .publish_planning_candidate(TENANT, PROJECT, A, id, new)
+            .await
+            .is_err()
+    );
+    reloaded
+        .approve_planning_candidate(TENANT, PROJECT, A, id, new, Some("agent"))
+        .await
+        .unwrap();
+    let published = reloaded
+        .publish_planning_candidate(TENANT, PROJECT, A, id, new)
+        .await
+        .unwrap();
+    assert!(published["receipt_id"].is_string());
 }
 
 async fn store_and_roles() -> (
