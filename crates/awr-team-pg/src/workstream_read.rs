@@ -624,6 +624,19 @@ pub(crate) async fn read(
             "cross_workstream_adoption":"human_independent_only", "existing_same_stream_policies":"unchanged",
             "legacy_human_review_aliases":["review.accept","review.return"]
         });
+        caps["simulated_member_review"] = json!({
+            "policy":crate::review::simulated_member::POLICY,"command":"review.decide",
+            "requires":["explicit_simulated_members","unique_active_agent_binding",
+                "active_member_actor_and_membership","agent_review_membership_grant",
+                "live_review_delegation","distinct_original_member_actor_and_client"],
+            "origin_capture":["execution.prepare","evidence.submit","review.open"],
+            "admission_rechecks_origin":true,"historical_origin_backfill":false,
+            "approval_basis":crate::review::simulated_member::APPROVAL_BASIS,
+            "human_approval":false,"team_independent_acceptance":false,
+            "completion_supported":false,"repository_integration_supported":false,
+            "details":"review.inspect","default_receipt":"member_summary_and_basis_digest",
+            "shared_controller_allowed":true
+        });
         caps["identity"] = navigation::identity(auth);
         caps["business_role_presets"] = json!({
             "roles":awr_team::BusinessRole::all(), "explicit_combined_duties":true,

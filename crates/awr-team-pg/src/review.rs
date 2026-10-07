@@ -7,12 +7,14 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 pub(crate) const AGENT_REVIEW_POLICY: &str = "caller_managed_execution_and_agent_review";
+pub(crate) mod simulated_member;
 
 pub(crate) fn approval_basis(independence_kind: &str) -> &'static str {
     match independence_kind {
         "team_independent" => "human_independent_review",
         "personal_self_review" => "human_author_self_review",
         "agent_review" => "agent_review",
+        simulated_member::INDEPENDENCE => simulated_member::APPROVAL_BASIS,
         _ => "unspecified",
     }
 }
@@ -382,7 +384,7 @@ impl ReviewStore {
             .get("completion_policy")
             .and_then(Value::as_str)
             .unwrap_or("trusted_execution_and_review");
-        if policy == AGENT_REVIEW_POLICY {
+        if matches!(policy, AGENT_REVIEW_POLICY | simulated_member::POLICY) {
             return Err(PgError::Unsupported(
                 "Agent review requires the authenticated workstream command path".into(),
             ));
@@ -587,7 +589,7 @@ impl ReviewStore {
                 return Err(PgError::PolicyDowngrade);
             }
         }
-        if policy == AGENT_REVIEW_POLICY {
+        if matches!(policy, AGENT_REVIEW_POLICY | simulated_member::POLICY) {
             return Err(PgError::Unsupported(
                 "Agent-reviewed completion requires the authenticated workstream command path"
                     .into(),
