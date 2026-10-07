@@ -321,7 +321,7 @@ impl GitHubAdapter {
 
     /// The blocking HTTPS job never publishes files. Dropping the future cannot
     /// leave a late report; its bounded job retains the semaphore until it exits.
-    async fn probe(
+    pub(super) async fn probe(
         &self,
         c: &DeliveryCandidate,
         inspection: &str,
@@ -414,11 +414,7 @@ impl GitHubAdapter {
         if !text(inspection, 128) {
             return Err(GitHubError::BindingMismatch);
         }
-        let key = digest(&serde_json::to_vec(&(&self.config.adapter_id, inspection)).unwrap());
-        let index = self
-            .config
-            .report_directory
-            .join(format!("github-inspection-{key}.json"));
+        let index = self.inspection_index(inspection);
         if let Some(s) = self.cached(&index, c, inspection)? {
             return Ok(s);
         }
@@ -469,7 +465,14 @@ impl GitHubAdapter {
         Ok(bytes)
     }
 
-    fn cached(
+    pub(super) fn inspection_index(&self, inspection: &str) -> PathBuf {
+        let key = digest(&serde_json::to_vec(&(&self.config.adapter_id, inspection)).unwrap());
+        self.config
+            .report_directory
+            .join(format!("github-inspection-{key}.json"))
+    }
+
+    pub(super) fn cached(
         &self,
         index: &Path,
         c: &DeliveryCandidate,

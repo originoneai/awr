@@ -1,6 +1,7 @@
 //! Optional provider adapters. Observation is neither approval nor completion.
 mod git_process;
 pub mod github;
+mod github_current;
 mod github_http;
 pub mod github_integration;
 mod github_poll;
