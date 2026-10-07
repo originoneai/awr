@@ -639,6 +639,16 @@ async fn database_failure_before_and_after_source_effect_recovers_without_rewrit
 async fn completion_notes_require_selected_candidate_bound_evidence_and_actual_artifact() {
     let f = setup_publisher().await;
     let content = b"synthetic output\n";
+    let mut selection = f.selection.clone();
+    selection.request_id = "select-evidence-candidate".into();
+    selection.expected_selected_digest = Some(selection.candidate.binding.digest().unwrap());
+    selection.candidate.binding.candidate_version = "2".into();
+    f.store
+        .select_candidate(TENANT, PROJECT, A, selection.clone())
+        .await
+        .unwrap();
+    f.observe(&selection, "candidate-evidence").await;
+    let digest = selection.candidate.binding.digest().unwrap();
     let prepared = prepare(&f.reads, A, "a").await;
     let evidence = f
         .reads
@@ -653,7 +663,7 @@ async fn completion_notes_require_selected_candidate_bound_evidence_and_actual_a
                 "evidence.submit",
                 json!({
                     "session_id":"session-a","expected_session_version":"1",
-                    "payload":{"criterion":"verified","passed":true},
+                    "payload":{"criterion":"verified","passed":true,"delivery_candidate_digest":digest},
                     "artifact_text":std::str::from_utf8(content).unwrap(),"dirty_tree":false
                 }),
             ),
@@ -664,18 +674,10 @@ async fn completion_notes_require_selected_candidate_bound_evidence_and_actual_a
     let artifact = evidence["artifact_id"].as_str().unwrap().to_owned();
     let evidence_id = evidence["evidence_id"].as_str().unwrap().to_owned();
     let evidence_digest = evidence["digest"].as_str().unwrap().to_owned();
-    let mut selection = f.selection.clone();
-    selection.request_id = "select-evidence-candidate".into();
-    selection.expected_selected_digest = Some(selection.candidate.binding.digest().unwrap());
-    selection.candidate.binding.candidate_version = "2".into();
-    selection.candidate.manifest.entries[0].artifact_id = artifact.clone();
-    selection.candidate.binding.manifest_digest = selection.candidate.manifest.digest().unwrap();
-    f.store
-        .select_candidate(TENANT, PROJECT, A, selection.clone())
-        .await
-        .unwrap();
-    f.observe(&selection, "candidate-evidence").await;
-    let digest = selection.candidate.binding.digest().unwrap();
+    assert_ne!(
+        artifact,
+        selection.candidate.manifest.entries[0].artifact_id
+    );
     let dependencies = fingerprint(b"[]")[7..].to_owned();
     // Synthetic domain fixture: represents the neutral finalizer's selected
     // receipt. Publication must validate it; it never creates or approves one.

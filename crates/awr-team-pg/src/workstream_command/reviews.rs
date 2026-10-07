@@ -1293,6 +1293,20 @@ async fn complete(
     if view != CompletionView::CurrentlyVerified {
         return Err(PgError::CompletionRejected);
     }
+    let delivery_candidate_digest = crate::delivery_sync::completion::bind_new_receipt(
+        tx,
+        tenant,
+        project,
+        auth,
+        command,
+        contract,
+        crate::delivery_sync::completion::AcceptedEvidence {
+            payload: &payload,
+            artifact_id: artifact_id.as_deref(),
+            output_digest: output_digest.as_deref(),
+        },
+    )
+    .await?;
     let team_independent_acceptance = independence_kind == "team_independent";
     let approval_basis = crate::review::approval_basis(&independence_kind);
     let execution_basis = if agent_policy {
@@ -1394,8 +1408,8 @@ async fn complete(
             policy, approved_by_json, independence_kind, evidence_id, execution_id,
             approved_by_person_id, submitted_by_person_id,
             author_actor_id, owner_person_id, executor_actor_id,
-            final_submitter_actor_id, pr_delivery_id)
-         VALUES ($1,$2,$3,$4,'main',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)",
+            final_submitter_actor_id, pr_delivery_id, delivery_candidate_digest)
+         VALUES ($1,$2,$3,$4,'main',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)",
         &[
             &tenant,
             &project,
@@ -1417,6 +1431,7 @@ async fn complete(
             &executor_actor,
             &auth.actor_id,
             &pr_delivery_id,
+            &delivery_candidate_digest,
         ],
     )
     .await?;
@@ -1470,6 +1485,7 @@ async fn complete(
             "receipt_id": receipt_id,
             "selected_completion_id": receipt_id,
             "contract_hash": ev_contract,
+            "delivery_candidate_digest": delivery_candidate_digest,
             "policy": policy,
             "independence_kind": independence_for_receipt,
             "team_independent_acceptance": team_independent_acceptance,

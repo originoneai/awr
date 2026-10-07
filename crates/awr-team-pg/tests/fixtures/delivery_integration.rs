@@ -83,6 +83,16 @@ pub async fn setup_source_integration_with_checks(
     setup_integration_inner(Some(actual), Some(root), Some(checks), false).await
 }
 
+/// Activate the explicit simulated policy from physical source declarations.
+pub async fn setup_source_simulated_member_integration(
+    actual: DeliveryCandidate,
+    root: &Path,
+    checks: &[String],
+) -> Fixture {
+    assert!(!checks.is_empty());
+    setup_integration_inner(Some(actual), Some(root), Some(checks), true).await
+}
+
 /// Actual member anchors are provisioned only on the explicit simulated path.
 /// Existing ordinary/source fixtures keep their original identity semantics.
 pub async fn setup_simulated_member_integration() -> Fixture {
@@ -293,7 +303,14 @@ async fn setup_integration_inner(
         admin.execute("UPDATE awr_team.work_contracts SET contract_json=$1,contract_hash=$2 WHERE work_id='a'",
             &[&json!(contract),&contract.hash().unwrap()]).await.unwrap();
     } else {
-        assert_eq!(contract.completion_policy, POLICY);
+        assert_eq!(
+            contract.completion_policy,
+            if simulated {
+                ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
+            } else {
+                POLICY
+            }
+        );
         assert_eq!(contract.verification_requirements, source_checks.unwrap());
         assert_eq!(
             contract.execution_settlement.as_ref().unwrap().mode,
@@ -431,6 +448,10 @@ async fn setup_integration_inner(
 
 impl Fixture {
     pub async fn approve_source_review(&mut self) {
+        self.approve_source_review_with_key("approve-review").await;
+    }
+
+    pub async fn approve_source_review_with_key(&mut self, key: &str) {
         assert!(self.request.review_decision_id.is_empty());
         let mut q = query("artifact.content");
         q.work_id = Some("a".into());
@@ -446,7 +467,7 @@ impl Fixture {
         let decision = run(
             &self.reads,
             REVIEWER,
-            "approve-review",
+            key,
             "review.decide",
             json!({"session_id":"session-reviewer","expected_session_version":"1",
                 "round_id":self.request.review_round_id,"decision":"approve",
