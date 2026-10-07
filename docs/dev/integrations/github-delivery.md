@@ -78,12 +78,58 @@ Background service admission, signed wake-up notifications, fallback polling and
 synchronization timing measurements are separate work. No webhook body is an
 authoritative delivery fact.
 
-Repository effects are also separate. GitHub REST PR merge `sha` guards the head
-commit only; Git reference PATCH has no expected-old target precondition. Neither
-can supply the exact target guard required by the neutral integration permit.
-This observer therefore advertises `integration_requests: false`. It does not
-weaken a target precondition or claim support for automatic merge/finalization.
+The observer advertises `integration_requests: false`. Repository effects require
+the separate opt-in integrator described below; observations never grant authority.
 
 Synthetic API conformance, controlled real HTTPS transport, isolated PostgreSQL
 mechanism regressions and complete natural-client business acceptance are
 different verification scopes. Passing the former does not imply the latter.
+
+## Guarded integration and original-result recovery
+
+[`integration.toml`](../../../examples/github-delivery/integration.toml) wraps the
+same explicit mapping with `enabled = true`. `GitHubIntegrator::open` holds a
+separately supplied zeroizing credential. Opening it performs no network request
+and grants no AWR approval or execution authority. A configured Git endpoint is
+derived from `github.com` for the public API or the same Enterprise HTTPS origin.
+There is no caller-selected URL, checkout, Git subprocess or credential helper.
+
+The first supported operation is an **existing SHA-1 target with an exact old
+revision, updated by fast-forward to an existing source commit**. Fresh API reads
+must prove pinned repository identity, push permission, an unarchived repository,
+the exact unprotected branch, a successful empty effective-rules response, source
+ancestry, manifest bytes and all required checks. Missing/unsupported policy,
+protected targets, missing targets, squash/rebase and unsupported formats refuse
+before the effect. Operator credentials should be limited to this repository.
+There is no deliberate administrator or protection bypass.
+
+GitHub REST PR merge `sha` guards only the PR head. Git reference PATCH has no
+expected-old target precondition. The integrator instead uses HTTPS Git smart
+`receive-pack`, requiring advertised `atomic` and `report-status`, and sending the
+exact old revision, approved new revision and named target. The provider validates
+the old ID and applies its live authorization/policy. The standard empty pack
+contains no uploaded source objects; the source already exists in that repository.
+TLS verification, redirect/proxy refusal, time and byte bounds also apply to GET
+advertisement and the single POST. Error bodies are never read into a receipt.
+
+`execute` obtains the noncloneable neutral integration permit from the actual
+authenticated store. Before any possibly executable preparation it durably saves
+the original request/candidate/read-set/connector/eligibility marker. It rechecks
+current AWR source, candidate, evidence, checks, review and authority before the
+single POST. An HTTP success or `ok` acknowledgement is **not** delivery proof.
+Fresh reads must prove original source inclusion and exact target artifact bytes.
+
+A lost permit response, timeout, cancellation, malformed acknowledgement or
+restart cannot issue another POST. `query` observes the original request using
+current authenticated admission, without replacing it with a newer candidate or
+requiring that a newer PR head/check still describe the old operation. `reconcile`
+uses the existing neutral inspection/inbox/confirmation path for that original
+result. Stable target state alone does not resolve an uncertain launched effect;
+it remains unknown unless actual inclusion or a definitive no-launch/rejection
+record establishes the result. Private immutable markers and digest-checked
+reports must be retained across service restarts.
+
+Integration confirmation, authoritative source writeback and final task acceptance
+remain separate. This library mechanism is not background service admission,
+signed webhook delivery, squash/rebase finalization or complete native-client
+business acceptance.

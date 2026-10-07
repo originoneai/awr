@@ -1,0 +1,32 @@
+# Library opt-in: this grants no AWR delivery authority and contains no credential.
+enabled = true
+
+[repository]
+version = 1
+adapter_id = "github-delivery"
+connector_id = "github-observer"
+tenant_id = "example-tenant"
+project_id = "example-project"
+workstream_id = "00000000000000000000000001"
+work_id = "api-delivery"
+resource = "repository:example-api"
+api_base_url = "https://api.github.com"
+repository_id = 123456
+owner = "example-org"
+repository = "example-api"
+target_branch = "main"
+pull_number = 17
+report_directory = "/absolute/private/github-reports"
+request_timeout_ms = 5000
+inspection_timeout_ms = 60000
+max_response_bytes = 2097152
+max_total_response_bytes = 16777216
+max_blob_bytes = 1048576
+max_total_blob_bytes = 4194304
+max_checks = 500
+max_requests = 256
+
+[[repository.checks]]
+check = "ci"
+name = "Build and test"
+app_id = 15368
