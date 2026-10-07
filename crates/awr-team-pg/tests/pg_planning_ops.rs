@@ -194,6 +194,7 @@ fn task(id: &str, title: &str) -> TaskDraft {
         dependency_acceptance: None,
         hard_rules: None,
         verification_requirements: None,
+        execution_settlement: None,
         definition_state: DraftDefinitionState::Draft,
         workstream: None,
         split_from: None,

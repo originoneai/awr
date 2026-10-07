@@ -13,7 +13,7 @@ use awr_core::{Id, WorkstreamAction};
 use awr_team::{
     AffectedTaskImpact, BaselineView, CandidateState, DraftChange,
     OrdinaryPlanningSelfApprovePolicy, PLANNING_CODEC, PLANNING_CODEC_V2, PLANNING_CODEC_V3,
-    PlanningApproval, PlanningCandidate, PlanningSuggestion, ResourceRef,
+    PLANNING_CODEC_V4, PlanningApproval, PlanningCandidate, PlanningSuggestion, ResourceRef,
     SUGGESTION_ADDS_FORMAL_WORK, SUGGESTION_CLAIMABLE, SuggestionState, attested_actor_person,
     authorize_planning_approve, authorize_planning_publish, build_candidate_diff, edit_candidate,
     ensure_independent_review_not_downgraded, planning_codec_for_changes,
@@ -956,7 +956,14 @@ impl SourceStore {
     pub fn planning_capabilities() -> Value {
         json!({
             "codec": PLANNING_CODEC,
-            "supported_candidate_codecs": [PLANNING_CODEC, PLANNING_CODEC_V2, PLANNING_CODEC_V3],
+            "supported_candidate_codecs": [PLANNING_CODEC, PLANNING_CODEC_V2, PLANNING_CODEC_V3, PLANNING_CODEC_V4],
+            "execution_settlement": {
+                "mode": "independent_workspace_v1",
+                "workspace_id": "opaque_identity",
+                "omission": "retain_source",
+                "removal_supported": false,
+                "declaration_only": true
+            },
             "actions": [
                 "planning.propose",
                 "planning.edit_draft",

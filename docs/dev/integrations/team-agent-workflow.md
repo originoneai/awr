@@ -103,6 +103,62 @@ Reconnecting MCP does not end a durable work session or renew its lease. A secon
 Agent belonging to the same person is not an independent reviewer. Keep
 implementation, verification, GitHub merge and AWR acceptance as separate facts.
 
+## Publish an execution workspace declaration
+
+When `capabilities.planning.supported_candidate_codecs` advertises
+`awr-team-planning-v4`, an authorized planner can include an
+`execution_settlement` in a normal `awr_team_planning_draft` change. For example,
+these are the execution fields of a complete `TaskDraft`, alongside its usual
+identity, goals, acceptance, workstream and definition fields:
+
+```json
+{
+  "completion_policy": "caller_managed_execution_and_simulated_member_review",
+  "execution_settlement": {
+    "mode": "independent_workspace_v1",
+    "workspace_id": "workspace-backend"
+  },
+  "scope_paths": ["src/api"],
+  "verification_requirements": ["Run the API persistence regressions"]
+}
+```
+
+The other supported workspace review policy is
+`caller_managed_execution_and_agent_review`. New workspace declarations require
+the settlement, a nonempty scope and nonempty verification requirements.
+`workspace_id` is a stable opaque identity, not a filesystem path, process ID,
+member identity or permission grant. Unknown fields or modes and explicit `null`
+are rejected. Older ordinary Agent-review definitions without settlement remain
+valid; they do not silently opt into workspace settlement.
+
+Use the normal **draft → preview → approve the current digest → publish** flow.
+An approved source activation compiles the declaration into the current contract;
+consume fresh `work.prepare` to check its policy, scope, settlement and checks
+before execution. Drafts and previews alone do not change active work.
+
+On existing work, omitting optional settlement, hard-rule or verification fields
+retains their authoritative source values. To replace one, include its exact
+current value in `before` and the requested value in `after`. An explicit prior
+must match even when `after` omits that field. The publisher validates the final
+composed contract before writing, and refuses stale priors or incomplete retained
+contracts. Settlement removal is unsupported. Changing a candidate invalidates
+its previous approval; inspect and approve the new digest before publishing.
+Existing independent human-review policies cannot be downgraded by a planning
+edit or a forged `before` value.
+
+Planning V4 preserves older V1–V3 wire representations and digests when their
+fields are omitted. An ordinary workspace contract uses contract V3; the exact
+named simulated-member policy uses contract V4. These versions describe the
+declaration, not extra caller authority.
+
+**Current boundary:** `capabilities.planning.execution_settlement.declaration_only`
+is true. This planning flow does not authenticate simulated members, enable their
+review or finalization, authorize repository integration, or certify a business
+acceptance. Those require separate supported execution and review mechanisms.
+Distinct Agents under one physical operator can be declared for team simulation;
+the declaration does not establish independent human approval or bypass existing
+member, actor and client checks.
+
 ## Receive unfinished work
 
 Use the actual `handoff.id` returned by the proposal receipt. An `events.list`

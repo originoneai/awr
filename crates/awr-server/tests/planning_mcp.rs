@@ -78,7 +78,12 @@ async fn call(client: &Client, name: &str, args: Value, error: bool) -> Value {
         )
         .await
         .unwrap();
-    assert_eq!(result.is_error.unwrap_or(false), error, "{result:?}");
+    assert_eq!(
+        result.is_error.unwrap_or(false),
+        error,
+        "{name} request {:?}: {result:?}",
+        args.get("request_id")
+    );
     result.structured_content.unwrap()
 }
 
@@ -95,6 +100,7 @@ fn draft(id: &str) -> TaskDraft {
         dependency_acceptance: None,
         hard_rules: None,
         verification_requirements: None,
+        execution_settlement: None,
         definition_state: DraftDefinitionState::Draft,
         workstream: None,
         split_from: None,
@@ -293,11 +299,315 @@ async fn planning_draft_create_via_mcp_uses_business_entrypoint() {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::await_holding_lock,
+    reason = "The guard serializes the shared PostgreSQL fixture for this entire async test."
+)]
+async fn reviewed_workspace_declarations_publish_through_authenticated_mcp_to_work_prepare() {
+    use awr_team::{
+        ExecutionSettlementMode, ExecutionSettlementPolicy as Policy, PLANNING_CODEC_V4,
+    };
+    let (_g, admin, _db, store) = setup().await;
+    enable_writes(&admin).await;
+    admin.batch_execute("UPDATE awr_team.project_memberships SET role='maintainer',membership_version=membership_version+1 WHERE actor_id='agent'").await.unwrap();
+    let root = std::env::temp_dir().join(format!("awr-planning-workspace-{}", common::nonce(0)));
+    std::fs::create_dir(&root).unwrap();
+    let root = std::fs::canonicalize(root).unwrap();
+    let definitions: Vec<_> = [
+        ("00000000000000000000000001", "alpha"),
+        ("00000000000000000000000002", "private-beta"),
+    ]
+    .into_iter()
+    .map(|(id, key)| {
+        json!({
+            "id":id,"external_key":key,"title":key,"state":"active",
+            "authority_version":1,"goal_keys":[key],"acceptance_contracts":[]
+        })
+    })
+    .collect();
+    let works: Vec<_> = [
+        ("a", "alpha", vec![]),
+        ("b-private", "private-beta", vec![]),
+        ("c", "alpha", vec!["b-private"]),
+    ]
+    .into_iter()
+    .map(|(id, stream, deps)| {
+        json!({
+            "id":id,"title":id,"status":"planned","workstream":stream,
+            "goals":[stream],"acceptance":["verified"],"paths":["src"],"depends_on":deps
+        })
+    })
+    .collect();
+    let ledger = root.join("ledger.yaml");
+    std::fs::write(&ledger, serde_json::to_vec(&json!({
+        "workstreams":{"version":1,"definitions":definitions},
+        "goals":[{"id":"alpha","title":"Alpha","status":"active"},{"id":"private-beta","title":"Private","status":"active"}],
+        "work_items":works
+    })).unwrap()).unwrap();
+    let binding =
+        json!({"kind":"server_directory","locator":root,"ledger_relative_path":"ledger.yaml"});
+    admin.execute("UPDATE awr_team.source_snapshots s SET source_ref_json=jsonb_set(s.source_ref_json,'{sole_source}',$3)
+        FROM awr_team.projects p WHERE p.tenant_id=$1 AND p.id=$2 AND s.tenant_id=p.tenant_id AND s.project_id=p.id AND s.id=p.active_snapshot_id",
+        &[&TENANT,&PROJECT,&binding]).await.unwrap();
+    let server = start(store).await;
+    let client = connect(&server, A).await;
+    let caps = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"capabilities"}),
+        false,
+    )
+    .await;
+    assert!(
+        caps["planning"]["supported_candidate_codecs"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(PLANNING_CODEC_V4))
+    );
+    assert_eq!(
+        caps["planning"]["execution_settlement"]["declaration_only"],
+        true
+    );
+    assert_eq!(
+        caps["planning"]["execution_settlement"]["removal_supported"],
+        false
+    );
+    let tools = client.list_tools(Default::default()).await.unwrap();
+    let draft_tool = tools
+        .tools
+        .iter()
+        .find(|t| t.name == "awr_team_planning_draft")
+        .unwrap();
+    let guidance = draft_tool.input_schema["properties"]["changes"]["description"]
+        .as_str()
+        .unwrap();
+    assert!(guidance.contains("execution_settlement") && guidance.contains("exact prior"));
+
+    for (key, policy) in [
+        ("ORDINARY-1", Policy::COMPLETION_POLICY),
+        ("SIMULATED-1", Policy::SIMULATED_MEMBER_COMPLETION_POLICY),
+    ] {
+        let mut task = draft(key);
+        task.workstream = Some("alpha".into());
+        task.definition_state = DraftDefinitionState::Enabled;
+        task.completion_policy = policy.into();
+        task.execution_settlement = Some(Policy {
+            mode: ExecutionSettlementMode::IndependentWorkspaceV1,
+            workspace_id: format!("workspace-{key}"),
+        });
+        task.hard_rules = Some(vec!["Preserve recorded history".into()]);
+        task.verification_requirements = Some(vec!["Run persistence regressions".into()]);
+        let mut omitted = task.clone();
+        omitted.execution_settlement = None;
+        omitted.hard_rules = None;
+        omitted.verification_requirements = None;
+        let mut renamed = omitted.clone();
+        renamed.title = "Retain the execution contract".into();
+        let mut replacement = task.clone();
+        replacement
+            .execution_settlement
+            .as_mut()
+            .unwrap()
+            .workspace_id = format!("replacement-{key}");
+        replacement.verification_requirements = Some(vec!["Verify API and process reload".into()]);
+        for (index, change, expected) in [
+            (
+                0,
+                DraftChange {
+                    op: DraftOpKind::CreateTask,
+                    before: None,
+                    after: task.clone(),
+                },
+                task.clone(),
+            ),
+            (
+                1,
+                DraftChange {
+                    op: DraftOpKind::EditFields,
+                    before: Some(omitted),
+                    after: renamed,
+                },
+                task.clone(),
+            ),
+            (
+                2,
+                DraftChange {
+                    op: DraftOpKind::EditFields,
+                    before: Some(task),
+                    after: replacement.clone(),
+                },
+                replacement,
+            ),
+        ] {
+            let created = call(&client, "awr_team_planning_draft", json!({
+                "protocol_version":1,"request_id":format!("{key}-{index}-draft"),"mode":"create",
+                "changes":[change.clone()],"allowed_spec_roots":["specs"],"project_goal_keys":["delivery"],
+                "self_approve_policy":OrdinaryPlanningSelfApprovePolicy::ordinary_default()
+            }), false).await;
+            let candidate = &created["result"]["candidate_id"];
+            let mut digest = created["result"]["candidate_digest"].clone();
+            let preview = call(
+                &client,
+                "awr_team_planning_preview",
+                json!({"protocol_version":1,"candidate_id":candidate}),
+                false,
+            )
+            .await;
+            assert_eq!(preview["diff"]["candidate_digest"], digest);
+            assert_eq!(
+                preview["diff"]["field_diffs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|d| d["field"] == "execution_settlement"),
+                index != 1
+            );
+            call(&client,"awr_team_planning_approve",json!({
+                "protocol_version":1,"request_id":format!("{key}-{index}-approve"),"candidate_id":candidate,"candidate_digest":digest
+            }),false).await;
+            if index == 0 {
+                // Editing a reviewed candidate invalidates its approval even over the same authenticated transport.
+                let mut edited_change = change;
+                edited_change.after.title = "Reviewed execution workspace".into();
+                let edited = call(
+                    &client,
+                    "awr_team_planning_draft",
+                    json!({
+                        "protocol_version":1,"request_id":format!("{key}-redraft"),"mode":"edit",
+                        "candidate_id":candidate,"changes":[edited_change]
+                    }),
+                    false,
+                )
+                .await;
+                let new_digest = edited["result"]["candidate_digest"].clone();
+                assert_ne!(new_digest, digest);
+                for (suffix, refused_digest) in
+                    [("old", digest.clone()), ("unapproved", new_digest.clone())]
+                {
+                    call(&client,"awr_team_planning_publish",json!({
+                        "protocol_version":1,"request_id":format!("{key}-{suffix}-publish"),"candidate_id":candidate,
+                        "candidate_digest":refused_digest,"activate":true,"impact_proven":true
+                    }),true).await;
+                }
+                digest = new_digest;
+                call(&client,"awr_team_planning_approve",json!({
+                    "protocol_version":1,"request_id":format!("{key}-reapprove"),"candidate_id":candidate,"candidate_digest":digest
+                }),false).await;
+            }
+            let published = call(&client,"awr_team_planning_publish",json!({
+                "protocol_version":1,"request_id":format!("{key}-{index}-publish"),"candidate_id":candidate,"candidate_digest":digest,
+                "activate":true,"impact_proven":true
+            }),false).await;
+            assert!(published["result"]["activation"]["activated_snapshot_id"].is_string());
+            let prepared = call(
+                &client,
+                "awr_team_query",
+                json!({"protocol_version":1,"op":"work.prepare","work_id":key}),
+                false,
+            )
+            .await;
+            assert_eq!(prepared["data"]["context_complete"], true);
+            assert_eq!(
+                prepared["data"]["published_contract"]["completion_policy"],
+                policy
+            );
+            assert_eq!(
+                prepared["data"]["published_contract"]["execution_settlement"],
+                json!(expected.execution_settlement)
+            );
+            assert_eq!(
+                prepared["data"]["published_contract"]["verification_requirements"],
+                json!(expected.verification_requirements)
+            );
+            assert_eq!(prepared["data"]["execution_admission"], "not_evaluated");
+            assert!(prepared["data"]["runtime"].is_null());
+            assert!(
+                std::fs::read_to_string(&ledger)
+                    .unwrap()
+                    .contains(&expected.execution_settlement.as_ref().unwrap().workspace_id)
+            );
+        }
+    }
+    client.cancel().await.unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+#[expect(
+    clippy::await_holding_lock,
+    reason = "The guard serializes the shared PostgreSQL fixture for this entire async test."
+)]
+async fn workspace_declaration_mcp_refuses_malformed_contracts_and_unprivileged_planners() {
+    use awr_team::{ExecutionSettlementMode, ExecutionSettlementPolicy as Policy};
+    let (_g, admin, _db, store) = setup().await;
+    enable_writes(&admin).await;
+    admin.batch_execute("UPDATE awr_team.project_memberships SET role='maintainer',membership_version=membership_version+1 WHERE actor_id='agent'").await.unwrap();
+    let server = start(store).await;
+    let planner = connect(&server, A).await;
+    let employee = connect(&server, B).await;
+    let mut task = draft("SIMULATED-1");
+    task.workstream = Some("alpha".into());
+    task.completion_policy = Policy::SIMULATED_MEMBER_COMPLETION_POLICY.into();
+    task.execution_settlement = Some(Policy {
+        mode: ExecutionSettlementMode::IndependentWorkspaceV1,
+        workspace_id: "workspace-a".into(),
+    });
+    task.verification_requirements = Some(vec!["Run persistence regressions".into()]);
+    let change = json!(DraftChange {
+        op: DraftOpKind::CreateTask,
+        before: None,
+        after: task
+    });
+    let body = json!({"protocol_version":1,"request_id":"workspace-employee-draft","mode":"create","changes":[change],
+        "allowed_spec_roots":["specs"],"project_goal_keys":["delivery"],"self_approve_policy":OrdinaryPlanningSelfApprovePolicy::ordinary_default()});
+    call(&employee, "awr_team_planning_draft", body.clone(), true).await;
+    for (index, invalid) in [
+        json!(null), json!({"mode":"unknown","workspace_id":"workspace-a"}),
+        json!({"mode":"independent_workspace_v1","workspace_id":"/tmp/source"}),
+        json!({"mode":"independent_workspace_v1","workspace_id":"workspace-a","review_authorized":true}),
+    ].into_iter().enumerate() {
+        let mut malformed = body.clone();
+        malformed["request_id"] = json!(format!("workspace-invalid-{index}"));
+        malformed["changes"][0]["after"]["execution_settlement"] = invalid;
+        call(&planner,"awr_team_planning_draft",malformed,true).await;
+    }
+    for (index, missing) in [
+        "execution_settlement",
+        "scope_paths",
+        "verification_requirements",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut incomplete = body.clone();
+        incomplete["request_id"] = json!(format!("workspace-incomplete-{index}"));
+        if missing == "scope_paths" {
+            incomplete["changes"][0]["after"][missing] = json!([]);
+        } else {
+            incomplete["changes"][0]["after"]
+                .as_object_mut()
+                .unwrap()
+                .remove(missing);
+        }
+        call(&planner, "awr_team_planning_draft", incomplete, true).await;
+    }
+    let count: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.planning_candidates", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 0);
+    planner.cancel().await.unwrap();
+    employee.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn storage_failure_http_mcp_and_original_request_recovery() {
     let (_g, admin, _db, store) = setup().await;
     enable_writes(&admin).await;
     let root = std::env::temp_dir().join(format!("awr-planning-storage-{}", common::nonce(0)));
     std::fs::create_dir(&root).unwrap();
+    let root = std::fs::canonicalize(root).unwrap();
     let definitions: Vec<_> = [
         ("00000000000000000000000001", "alpha"),
         ("00000000000000000000000002", "private-beta"),
@@ -379,8 +689,12 @@ async fn storage_failure_http_mcp_and_original_request_recovery() {
         "candidate_id":candidate,"candidate_digest":digest,
         "activate":true,"impact_proven":true
     });
-    let obstruction = root.join(".ledger.yaml.tmcp022.tmp");
-    std::fs::create_dir(&obstruction).unwrap();
+    // The guarded writer uses a unique temporary name. Make the actual source
+    // read-only to exercise its recoverable replacement failure on every host.
+    let permissions = std::fs::metadata(&ledger).unwrap().permissions();
+    let mut readonly = permissions.clone();
+    readonly.set_readonly(true);
+    std::fs::set_permissions(&ledger, readonly).unwrap();
     let failed = call(&client, "awr_team_planning_publish", body.clone(), true).await;
     assert_eq!(failed["code"], "SourceStorageUnavailable");
     assert!(!failed.to_string().contains(root.to_str().unwrap()));
@@ -431,7 +745,7 @@ async fn storage_failure_http_mcp_and_original_request_recovery() {
     changed["impact_proven"] = json!(false);
     let conflict = call(&client, "awr_team_planning_publish", changed, true).await;
     assert_eq!(conflict["code"], "IdempotencyConflict");
-    std::fs::remove_dir(&obstruction).unwrap();
+    std::fs::set_permissions(&ledger, permissions).unwrap();
     let resumed = call(&client, "awr_team_planning_publish", body.clone(), false).await;
     assert_eq!(resumed["already_recorded"], false);
     assert_eq!(resumed["request_hash"], original_hash);

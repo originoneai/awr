@@ -23,6 +23,7 @@ pub const SOURCE_WRITABLE_FIELDS: &[&str] = &[
     "dependency_acceptance",
     "hard_rules",
     "verification_requirements",
+    "execution_settlement",
     "definition_state",
     "workstream",
     "split_from",
@@ -176,6 +177,10 @@ pub fn apply_planning_changes_to_ledger(
         inspect_draft_for_runtime_fields(&change.after, &mut refused)?;
         match change.op {
             DraftOpKind::CreateTask => {
+                change
+                    .after
+                    .validate_for_create()
+                    .map_err(|e| Error::InvalidInput(e.to_string()))?;
                 let ws = change
                     .after
                     .workstream
@@ -243,6 +248,24 @@ pub fn apply_planning_changes_to_ledger(
                             "include the exact prior {field} before replacing it"
                         )));
                     }
+                }
+                let source_settlement: Option<awr_team::ExecutionSettlementPolicy> = row
+                    .get("execution_settlement")
+                    .map(|settlement| serde_json::from_value(settlement.clone()))
+                    .transpose()
+                    .map_err(|_| {
+                        Error::InvalidInput("invalid source execution_settlement".into())
+                    })?;
+                let before_settlement = change
+                    .before
+                    .as_ref()
+                    .and_then(|b| b.execution_settlement.as_ref());
+                if (change.after.execution_settlement.is_some() || before_settlement.is_some())
+                    && before_settlement != source_settlement.as_ref()
+                {
+                    return Err(Error::SourceConflict(
+                        "include the exact prior execution_settlement before replacing it".into(),
+                    ));
                 }
                 let source_modes: Option<BTreeMap<String, awr_team::DependencyAcceptanceMode>> =
                     row.get("dependency_acceptance")
@@ -367,6 +390,9 @@ fn draft_to_ledger_row(draft: &TaskDraft) -> Value {
         if let Some(requirements) = &draft.verification_requirements {
             obj.insert("verification_requirements".into(), json!(requirements));
         }
+        if let Some(settlement) = &draft.execution_settlement {
+            obj.insert("execution_settlement".into(), json!(settlement));
+        }
         if let Some(ws) = draft
             .workstream
             .as_deref()
@@ -401,6 +427,9 @@ fn apply_draft_fields(row: &mut Value, draft: &TaskDraft) {
         }
         if let Some(requirements) = &draft.verification_requirements {
             obj.insert("verification_requirements".into(), json!(requirements));
+        }
+        if let Some(settlement) = &draft.execution_settlement {
+            obj.insert("execution_settlement".into(), json!(settlement));
         }
         // Preserve existing workstream ownership unless the draft explicitly
         // carries a non-empty workstream (CreateTask always does).
@@ -461,6 +490,7 @@ mod tests {
             dependency_acceptance: None,
             hard_rules: None,
             verification_requirements: None,
+            execution_settlement: None,
             definition_state: DraftDefinitionState::Enabled,
             workstream: None,
             split_from: None,
@@ -788,6 +818,239 @@ work_items:
                 apply_planning_changes_to_ledger(ledger.as_bytes(), &[change]),
                 Err(Error::SourceConflict(_))
             ));
+        }
+    }
+
+    fn workspace_draft(policy: &str) -> TaskDraft {
+        let mut task = draft("SETTLED-1", &[]);
+        task.workstream = Some("delivery".into());
+        task.completion_policy = policy.into();
+        task.hard_rules = Some(vec!["Preserve recorded history".into()]);
+        task.verification_requirements = Some(vec!["Run persistence regressions".into()]);
+        task.execution_settlement = Some(awr_team::ExecutionSettlementPolicy {
+            mode: awr_team::ExecutionSettlementMode::IndependentWorkspaceV1,
+            workspace_id: "workspace-a".into(),
+        });
+        task
+    }
+
+    #[test]
+    fn workspace_source_create_retention_and_exact_replacement() {
+        use awr_team::ExecutionSettlementPolicy as Policy;
+        assert_eq!(
+            source_field_authority("execution_settlement"),
+            Some(FieldWriteAuthority::Source)
+        );
+        for policy in [
+            Policy::COMPLETION_POLICY,
+            Policy::SIMULATED_MEMBER_COMPLETION_POLICY,
+        ] {
+            let task = workspace_draft(policy);
+            let created = apply_planning_changes_to_ledger(
+                b"work_items: []\n",
+                &[DraftChange {
+                    op: DraftOpKind::CreateTask,
+                    before: None,
+                    after: task.clone(),
+                }],
+            )
+            .unwrap();
+            let original: Value = serde_yaml_ng::from_slice(&created.after_bytes).unwrap();
+            assert_eq!(
+                original["work_items"][0]["execution_settlement"],
+                json!(task.execution_settlement)
+            );
+            assert_eq!(original["work_items"][0]["completion_policy"], policy);
+
+            let mut omitted = task.clone();
+            omitted.execution_settlement = None;
+            omitted.verification_requirements = None;
+            omitted.hard_rules = None;
+            let mut renamed = omitted.clone();
+            renamed.title = "Renamed without replacing the workspace".into();
+            let retained = apply_planning_changes_to_ledger(
+                &created.after_bytes,
+                &[DraftChange {
+                    op: DraftOpKind::EditFields,
+                    before: Some(omitted),
+                    after: renamed,
+                }],
+            )
+            .unwrap();
+            let row: Value = serde_yaml_ng::from_slice(&retained.after_bytes).unwrap();
+            for field in [
+                "execution_settlement",
+                "verification_requirements",
+                "hard_rules",
+                "completion_policy",
+            ] {
+                assert_eq!(
+                    row["work_items"][0][field],
+                    original["work_items"][0][field]
+                );
+            }
+            let mut after = task.clone();
+            after.execution_settlement.as_mut().unwrap().workspace_id = "workspace-b".into();
+            after.verification_requirements = Some(vec!["Check the reloaded API".into()]);
+            let replaced = apply_planning_changes_to_ledger(
+                &retained.after_bytes,
+                &[DraftChange {
+                    op: DraftOpKind::EditFields,
+                    before: Some(task),
+                    after: after.clone(),
+                }],
+            )
+            .unwrap();
+            let row: Value = serde_yaml_ng::from_slice(&replaced.after_bytes).unwrap();
+            assert_eq!(
+                row["work_items"][0]["execution_settlement"],
+                json!(after.execution_settlement)
+            );
+            assert_eq!(
+                row["work_items"][0]["verification_requirements"],
+                json!(after.verification_requirements)
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_source_rejects_omitted_invented_and_stale_explicit_prior() {
+        use awr_team::ExecutionSettlementPolicy as Policy;
+        let task = workspace_draft(Policy::SIMULATED_MEMBER_COMPLETION_POLICY);
+        let created = apply_planning_changes_to_ledger(
+            b"work_items: []\n",
+            &[DraftChange {
+                op: DraftOpKind::CreateTask,
+                before: None,
+                after: task.clone(),
+            }],
+        )
+        .unwrap();
+        let mut after = task.clone();
+        after.execution_settlement.as_mut().unwrap().workspace_id = "workspace-b".into();
+        let mut omitted = task.clone();
+        omitted.execution_settlement = None;
+        let mut stale = task.clone();
+        stale.execution_settlement.as_mut().unwrap().workspace_id = "workspace-unobserved".into();
+        for before in [None, Some(omitted), Some(stale.clone())] {
+            assert!(matches!(
+                apply_planning_changes_to_ledger(
+                    &created.after_bytes,
+                    &[DraftChange {
+                        op: DraftOpKind::EditFields,
+                        before,
+                        after: after.clone(),
+                    }]
+                ),
+                Err(Error::SourceConflict(_))
+            ));
+        }
+        // Supplying an unobserved prior still fails when the after-field is omitted.
+        after.execution_settlement = None;
+        assert!(matches!(
+            apply_planning_changes_to_ledger(
+                &created.after_bytes,
+                &[DraftChange {
+                    op: DraftOpKind::EditFields,
+                    before: Some(stale),
+                    after: after.clone(),
+                }]
+            ),
+            Err(Error::SourceConflict(_))
+        ));
+        // A forged prior must also fail against an actually absent declaration.
+        let mut source = task.clone();
+        source.execution_settlement = None;
+        source.completion_policy = Policy::COMPLETION_POLICY.into();
+        let bytes = serde_yaml_ng::to_string(&json!({"work_items":[draft_to_ledger_row(&source)]}))
+            .unwrap();
+        after.completion_policy = source.completion_policy.clone();
+        let mut invented = source;
+        invented.execution_settlement = task.execution_settlement;
+        assert!(matches!(
+            apply_planning_changes_to_ledger(
+                bytes.as_bytes(),
+                &[DraftChange {
+                    op: DraftOpKind::EditFields,
+                    before: Some(invented),
+                    after,
+                }]
+            ),
+            Err(Error::SourceConflict(_))
+        ));
+    }
+
+    #[test]
+    fn incomplete_new_simulated_workspace_source_is_rejected() {
+        use awr_team::ExecutionSettlementPolicy as Policy;
+        for missing in [
+            "execution_settlement",
+            "scope_paths",
+            "verification_requirements",
+        ] {
+            let mut task = workspace_draft(Policy::SIMULATED_MEMBER_COMPLETION_POLICY);
+            match missing {
+                "execution_settlement" => task.execution_settlement = None,
+                "scope_paths" => task.scope_paths.clear(),
+                _ => task.verification_requirements = None,
+            }
+            assert!(matches!(
+                apply_planning_changes_to_ledger(
+                    b"work_items: []\n",
+                    &[DraftChange {
+                        op: DraftOpKind::CreateTask,
+                        before: None,
+                        after: task,
+                    }]
+                ),
+                Err(Error::InvalidInput(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn workspace_source_cannot_bypass_actual_human_review_policy() {
+        use awr_team::ExecutionSettlementPolicy as Policy;
+        for human_policy in [
+            "independent_review",
+            "independent-review",
+            "trusted_execution_and_review",
+        ] {
+            let mut source = draft("SETTLED-1", &[]);
+            source.completion_policy = human_policy.into();
+            let bytes =
+                serde_yaml_ng::to_string(&json!({"work_items":[draft_to_ledger_row(&source)]}))
+                    .unwrap();
+            for policy in [
+                Policy::COMPLETION_POLICY,
+                Policy::SIMULATED_MEMBER_COMPLETION_POLICY,
+            ] {
+                let after = workspace_draft(policy);
+                assert!(matches!(
+                    apply_planning_changes_to_ledger(
+                        bytes.as_bytes(),
+                        &[DraftChange {
+                            op: DraftOpKind::EditFields,
+                            before: Some(source.clone()),
+                            after: after.clone(),
+                        }]
+                    ),
+                    Err(Error::RuleViolation(_))
+                ));
+                let mut forged = source.clone();
+                forged.completion_policy = policy.into();
+                assert!(matches!(
+                    apply_planning_changes_to_ledger(
+                        bytes.as_bytes(),
+                        &[DraftChange {
+                            op: DraftOpKind::EditFields,
+                            before: Some(forged),
+                            after,
+                        }]
+                    ),
+                    Err(Error::SourceConflict(_))
+                ));
+            }
         }
     }
 }

@@ -70,6 +70,7 @@ fn draft(id: &str, deps: &[&str]) -> TaskDraft {
         dependency_acceptance: None,
         hard_rules: None,
         verification_requirements: None,
+        execution_settlement: None,
         definition_state: DraftDefinitionState::Draft,
         split_from: None,
         split_children: vec![],
