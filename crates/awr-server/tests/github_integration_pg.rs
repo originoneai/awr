@@ -94,6 +94,496 @@ async fn no_completion(f: &integration_fixture::Fixture) {
     assert_eq!(count, 0);
 }
 
+async fn delivery_audit(f: &integration_fixture::Fixture) -> Value {
+    f.admin
+        .query_one(
+            "SELECT jsonb_build_object(
+        'inspections',(SELECT count(*) FROM awr_team.delivery_inspections),
+        'inbox',(SELECT count(*) FROM awr_team.delivery_inbox),
+        'facts',(SELECT count(*) FROM awr_team.delivery_facts),
+        'notifications',(SELECT count(*) FROM awr_team.delivery_notifications),
+        'reviews',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM awr_team.review_rounds r),
+        'decisions',(SELECT jsonb_agg(to_jsonb(d) ORDER BY id) FROM awr_team.review_decisions d))",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0)
+}
+
+#[tokio::test]
+async fn stable_current_queries_preserve_approved_integration_eligibility() {
+    let (repo, f, integrator) = setup_github().await;
+    let (id, lease) = ready(&f).await;
+    let audit = delivery_audit(&f).await;
+    let facts = f.store.inspect(TENANT, PROJECT, WORKER, "a").await.unwrap()["facts"].clone();
+    for _ in 0..2 {
+        let adapter =
+            GitHubAdapter::from_transport(repo.config.repository.clone(), repo.api.clone())
+                .unwrap();
+        let result = adapter.reconcile_current(&f.store, WORKER).await.unwrap();
+        assert_eq!(result["unchanged"], true);
+        assert_eq!(delivery_audit(&f).await, audit);
+        assert_eq!(
+            f.store.inspect(TENANT, PROJECT, WORKER, "a").await.unwrap()["facts"],
+            facts
+        );
+    }
+    let result = integrator
+        .execute(
+            &f.store,
+            WORKER,
+            f.dispatch_request("stable-approved", &id, &lease),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.report.outcome, IntegrationOutcome::Applied);
+    assert_eq!(repo.receive.posts.load(Ordering::SeqCst), 1);
+    no_completion(&f).await;
+}
+
+#[tokio::test]
+async fn a_new_passing_check_run_refuses_stale_approved_integration() {
+    let (repo, f, integrator) = setup_github().await;
+    let (id, lease) = ready(&f).await;
+    let run = json!({"id":2,"head_sha":repo.repo.source,"name":"CI","app":{"id":9},"status":"completed","conclusion":"success"});
+    repo.api.overrides.set(
+        &format!(
+            "/commits/{}/check-runs?filter=latest&per_page=100&page=1",
+            repo.repo.source
+        ),
+        json!({"total_count":1,"check_runs":[run.clone()]}),
+    );
+    repo.api.overrides.set("/check-runs/2", run);
+    let adapter =
+        GitHubAdapter::from_transport(repo.config.repository.clone(), repo.api.clone()).unwrap();
+    let result = adapter.reconcile_current(&f.store, WORKER).await.unwrap();
+    assert_eq!(
+        result["changed_slots"],
+        json!([format!(
+            "verification:{}",
+            repo.config.repository.checks[0].check
+        )])
+    );
+    assert!(
+        integrator
+            .execute(
+                &f.store,
+                WORKER,
+                f.dispatch_request("changed-check", &id, &lease)
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(repo.receive.posts.load(Ordering::SeqCst), 0);
+    no_completion(&f).await;
+}
+
+#[tokio::test]
+async fn stable_unknown_original_queries_preserve_proof_and_never_repost() {
+    let (repo, f, integrator) = setup_github().await;
+    let (id, lease) = ready(&f).await;
+    drop(f.dispatched(&id, &lease).await);
+    integrator
+        .execute(
+            &f.store,
+            WORKER,
+            f.dispatch_request("missing-permit", &id, &lease),
+        )
+        .await
+        .unwrap();
+    let first = integrator
+        .reconcile_original_current(&f.store, WORKER, &id)
+        .await
+        .unwrap();
+    assert_eq!(first["integration"]["data"]["state"], "unknown");
+    let original = f
+        .store
+        .inspect_integration(TENANT, PROJECT, WORKER, "a", &id)
+        .await
+        .unwrap();
+    let audit = delivery_audit(&f).await;
+    for _ in 0..3 {
+        let calls = repo.api.calls.lock().unwrap().len();
+        let store = DeliverySyncStore::from_config(f.config.clone());
+        let result = repo
+            .integrator()
+            .reconcile_original_current(&store, WORKER, &id)
+            .await
+            .unwrap();
+        assert_eq!(result["unchanged"], true);
+        assert_eq!(result["terminal"], false);
+        assert_eq!(
+            result["integration"]["confirmation"],
+            original["confirmation"]
+        );
+        assert!(repo.api.calls.lock().unwrap().len() > calls);
+        assert_eq!(delivery_audit(&f).await, audit);
+    }
+    assert_eq!(f.guards().await, 1);
+    assert_eq!(repo.receive.posts.load(Ordering::SeqCst), 0);
+    no_completion(&f).await;
+}
+
+#[tokio::test]
+async fn concurrent_original_queries_converge_without_duplicate_confirmation() {
+    let (repo, f, integrator) = setup_github().await;
+    let (id, lease) = ready(&f).await;
+    drop(f.dispatched(&id, &lease).await);
+    integrator
+        .execute(
+            &f.store,
+            WORKER,
+            f.dispatch_request("missing-permit", &id, &lease),
+        )
+        .await
+        .unwrap();
+    let before = delivery_audit(&f).await;
+    let (a, b) = tokio::join!(
+        integrator.reconcile_original_current(&f.store, WORKER, &id),
+        integrator.reconcile_original_current(&f.store, WORKER, &id)
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    if a["unchanged"] == false && b["unchanged"] == false {
+        assert_eq!(a["observation"]["receipt"], b["observation"]["receipt"]);
+        assert_eq!(a["integration"]["receipt"], b["integration"]["receipt"]);
+    }
+    let after = delivery_audit(&f).await;
+    for field in ["inspections", "inbox", "facts"] {
+        assert_eq!(
+            after[field].as_i64().unwrap(),
+            before[field].as_i64().unwrap() + 1
+        );
+    }
+    assert_eq!(after["reviews"], before["reviews"]);
+    assert_eq!(after["decisions"], before["decisions"]);
+    assert_eq!(repo.receive.posts.load(Ordering::SeqCst), 0);
+    no_completion(&f).await;
+}
+
+#[tokio::test]
+async fn failed_original_admission_recovers_only_expired_observation_and_never_reposts() {
+    let (repo, f, integrator) = setup_github().await;
+    let (id, lease) = ready(&f).await;
+    drop(f.dispatched(&id, &lease).await);
+    integrator
+        .execute(
+            &f.store,
+            WORKER,
+            f.dispatch_request("missing-permit", &id, &lease),
+        )
+        .await
+        .unwrap();
+    let baseline = delivery_audit(&f).await;
+    repo.api.overrides.set(
+        "",
+        json!({"id":7,"full_name":"acme/demo","archived":false,"permissions":{"push":true}}),
+    );
+    repo.api.overrides.0.lock().unwrap().delay_ms = 30;
+    let revoke = async {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while delivery_audit(&f).await["inspections"] == baseline["inspections"] {
+                tokio::task::yield_now().await;
+            }
+            f.admin.batch_execute("UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='integration-worker'").await.unwrap();
+        }).await.unwrap();
+    };
+    let (result, ()) = tokio::join!(
+        integrator.reconcile_original_current(&f.store, WORKER, &id),
+        revoke
+    );
+    assert_eq!(result.unwrap_err(), GitHubError::AuthorizationUnavailable);
+    let failed = delivery_audit(&f).await;
+    assert_eq!(failed["inbox"], baseline["inbox"]);
+    assert_eq!(failed["facts"], baseline["facts"]);
+    f.admin
+        .batch_execute(
+            "UPDATE awr_team.credentials SET revoked_at=NULL WHERE id='integration-worker';
+        UPDATE awr_team.delivery_inspections SET expires_at=clock_timestamp()-interval '1 second'",
+        )
+        .await
+        .unwrap();
+    repo.api.overrides.0.lock().unwrap().delay_ms = 0;
+    let result = repo
+        .integrator()
+        .reconcile_original_current(&f.store, WORKER, &id)
+        .await
+        .unwrap();
+    assert_eq!(result["integration"]["data"]["state"], "unknown");
+    let after = delivery_audit(&f).await;
+    assert_eq!(
+        after["inspections"].as_i64().unwrap(),
+        baseline["inspections"].as_i64().unwrap() + 2
+    );
+    assert_eq!(
+        after["facts"].as_i64().unwrap(),
+        baseline["facts"].as_i64().unwrap() + 1
+    );
+    assert_eq!(repo.receive.posts.load(Ordering::SeqCst), 0);
+    no_completion(&f).await;
+}
+
+#[tokio::test]
+async fn scheduled_original_recovers_exact_effect_despite_later_candidate_pr_and_check() {
+    let (repo, f, integrator) = setup_github().await;
+    let (id, lease) = ready(&f).await;
+    integrator
+        .execute(
+            &f.store,
+            WORKER,
+            f.dispatch_request("original-effect", &id, &lease),
+        )
+        .await
+        .unwrap();
+    repo.repo
+        .commit("src/api/result.json", b"temporary downstream drift");
+    repo.repo.push_main();
+    let unknown = integrator
+        .reconcile_original_current(&f.store, WORKER, &id)
+        .await
+        .unwrap();
+    assert_eq!(unknown["integration"]["data"]["state"], "unknown");
+    let stable = integrator
+        .reconcile_original_current(&f.store, WORKER, &id)
+        .await
+        .unwrap();
+    assert_eq!(stable["unchanged"], true);
+
+    let mut selection = f.selection.clone();
+    selection.request_id = "later-selection".into();
+    selection.expected_selected_digest = Some(f.request.candidate_digest.clone());
+    selection.candidate.binding.candidate_version = "2".into();
+    f.store
+        .select_candidate(TENANT, PROJECT, A, selection)
+        .await
+        .unwrap();
+    repo.repo
+        .bare(&["update-ref", "refs/heads/main", &repo.repo.source]);
+    repo.api
+        .overrides
+        .set("/pulls/11", json!({"head":{"sha":"e".repeat(40)}}));
+    repo.api.overrides.raw(
+        &format!(
+            "/commits/{}/check-runs?filter=latest&per_page=100&page=1",
+            repo.repo.source
+        ),
+        500,
+        b"synthetic unavailable later checks".to_vec(),
+    );
+    let calls = repo.api.calls.lock().unwrap().len();
+    let result = repo
+        .integrator()
+        .reconcile_original_current(&f.store, WORKER, &id)
+        .await
+        .unwrap();
+    assert_eq!(result["integration"]["data"]["state"], "confirmed");
+    assert_eq!(result["integration"]["data"]["current"], false);
+    assert!(
+        repo.api.calls.lock().unwrap()[calls..]
+            .iter()
+            .all(|s| !s.contains("pulls") && !s.contains("check-runs"))
+    );
+    let view = f
+        .store
+        .inspect_integration(TENANT, PROJECT, WORKER, "a", &id)
+        .await
+        .unwrap();
+    assert_eq!(view["candidate"]["binding"]["candidate_version"], "1");
+    assert_eq!(result["source_synchronized"], false);
+    assert_eq!(repo.receive.posts.load(Ordering::SeqCst), 1);
+    no_completion(&f).await;
+}
+
+#[tokio::test]
+async fn historical_terminal_stays_bound_while_current_query_reports_target_drift() {
+    let (repo, f, integrator) = setup_github().await;
+    let (id, lease) = ready(&f).await;
+    integrator
+        .execute(
+            &f.store,
+            WORKER,
+            f.dispatch_request("terminal-effect", &id, &lease),
+        )
+        .await
+        .unwrap();
+    integrator
+        .reconcile_original_current(&f.store, WORKER, &id)
+        .await
+        .unwrap();
+    let terminal = f
+        .store
+        .inspect_integration(TENANT, PROJECT, WORKER, "a", &id)
+        .await
+        .unwrap();
+    let audit = delivery_audit(&f).await;
+    repo.repo
+        .commit("src/api/result.json", b"later target bytes");
+    repo.repo.push_main();
+    let result = repo
+        .integrator()
+        .reconcile_original_current(&f.store, WORKER, &id)
+        .await
+        .unwrap();
+    assert_eq!(result["unchanged"], true);
+    assert_eq!(result["terminal"], true);
+    assert_eq!(
+        result["integration"]["confirmation"],
+        terminal["confirmation"]
+    );
+    assert_eq!(delivery_audit(&f).await, audit);
+    let adapter =
+        GitHubAdapter::from_transport(repo.config.repository.clone(), repo.api.clone()).unwrap();
+    let current = adapter.reconcile_current(&f.store, WORKER).await.unwrap();
+    assert_eq!(current["unchanged"], false);
+    let view = f.store.inspect(TENANT, PROJECT, WORKER, "a").await.unwrap();
+    let target = view["facts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| {
+            v["observation"]["kind"] == "integration_observation"
+                && v["observation"]["external_reference"] == "github-target:7:main"
+        })
+        .unwrap();
+    assert_eq!(target["observation"]["outcome"], "unknown");
+    assert_eq!(repo.receive.posts.load(Ordering::SeqCst), 1);
+    no_completion(&f).await;
+}
+
+#[tokio::test]
+async fn scheduled_original_rejects_corrupt_proof_without_overwriting_or_redispatch() {
+    for damage in ["report", "index", "envelope"] {
+        let (repo, f, integrator) = setup_github().await;
+        let (id, lease) = ready(&f).await;
+        drop(f.dispatched(&id, &lease).await);
+        integrator
+            .execute(
+                &f.store,
+                WORKER,
+                f.dispatch_request("missing-permit", &id, &lease),
+            )
+            .await
+            .unwrap();
+        integrator
+            .reconcile_original_current(&f.store, WORKER, &id)
+            .await
+            .unwrap();
+        let view = f
+            .store
+            .inspect_integration(TENANT, PROJECT, WORKER, "a", &id)
+            .await
+            .unwrap();
+        let proof = &view["confirmation"];
+        let hash = proof["envelope"]["record"]["data"]["provenance"]["reference"]
+            .as_str()
+            .unwrap()
+            .rsplit(':')
+            .next()
+            .unwrap();
+        let report = repo
+            .config
+            .repository
+            .report_directory
+            .join(format!("github-integration-report-{hash}.json"));
+        let inspection = proof["inspection_id"].as_str().unwrap();
+        let key = github::hash(
+            &serde_json::to_vec(&(id.as_str(), inspection, &repo.config.repository.adapter_id))
+                .unwrap(),
+        );
+        let index = repo
+            .config
+            .repository
+            .report_directory
+            .join(format!("github-integration-inspection-{key}.json"));
+        match damage {
+            "report" => {
+                std::fs::write(&report, b"synthetic corrupted original proof").unwrap();
+            }
+            "index" => {
+                std::fs::remove_file(&index).unwrap();
+            }
+            "envelope" => {
+                f.admin.execute("UPDATE awr_team.delivery_facts SET envelope_json=jsonb_set(envelope_json,
+                '{record,data,external_reference}','\"inconsistent-original-reference\"') WHERE id=$1",
+                &[&proof["fact_id"].as_str().unwrap()]).await.unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let result = repo
+            .integrator()
+            .reconcile_original_current(&f.store, WORKER, &id)
+            .await
+            .unwrap();
+        assert_eq!(
+            result["unchanged"], false,
+            "corrupt proof accepted: {damage}"
+        );
+        let refreshed = f
+            .store
+            .inspect_integration(TENANT, PROJECT, WORKER, "a", &id)
+            .await
+            .unwrap();
+        assert_ne!(
+            refreshed["confirmation_fact_id"],
+            view["confirmation_fact_id"]
+        );
+        if damage == "report" {
+            assert_eq!(
+                std::fs::read(report).unwrap(),
+                b"synthetic corrupted original proof"
+            );
+        }
+        if damage == "index" {
+            assert!(!index.exists());
+        }
+        assert_eq!(repo.receive.posts.load(Ordering::SeqCst), 0);
+        no_completion(&f).await;
+    }
+}
+
+#[tokio::test]
+async fn scheduled_original_cannot_reuse_revoked_or_disabled_mapping() {
+    for change in ["revoked", "disabled", "wrong-resource"] {
+        let (repo, f, integrator) = setup_github().await;
+        let (id, lease) = ready(&f).await;
+        drop(f.dispatched(&id, &lease).await);
+        integrator
+            .execute(
+                &f.store,
+                WORKER,
+                f.dispatch_request("missing-permit", &id, &lease),
+            )
+            .await
+            .unwrap();
+        integrator
+            .reconcile_original_current(&f.store, WORKER, &id)
+            .await
+            .unwrap();
+        let audit = delivery_audit(&f).await;
+        let calls = repo.api.calls.lock().unwrap().len();
+        let sql = match change {
+            "revoked" => {
+                "UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='integration-worker'"
+            }
+            "disabled" => "UPDATE awr_team.delivery_connectors SET enabled=false WHERE id='git'",
+            "wrong-resource" => {
+                "UPDATE awr_team.delivery_connectors SET resource='fixture://other' WHERE id='git'"
+            }
+            _ => unreachable!(),
+        };
+        f.admin.batch_execute(sql).await.unwrap();
+        assert!(
+            integrator
+                .reconcile_original_current(&f.store, WORKER, &id)
+                .await
+                .is_err()
+        );
+        assert_eq!(repo.api.calls.lock().unwrap().len(), calls);
+        assert_eq!(delivery_audit(&f).await, audit);
+        assert_eq!(repo.receive.posts.load(Ordering::SeqCst), 0);
+    }
+}
+
 #[tokio::test]
 async fn real_guarded_receive_pack_is_version_bound_and_confirmed_separately_from_acceptance() {
     let (repo, f, integrator) = setup_github().await;

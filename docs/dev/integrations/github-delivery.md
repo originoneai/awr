@@ -35,6 +35,41 @@ Keep the request ID and read set when recovering a missing receipt. Reusing the
 same inspection returns its original digest-bound report after restart; changed
 bindings or corrupt proof are rejected. A fresh request obtains a new observation.
 
+## Stable current-fact polling
+
+Service-owned polling can call `GitHubAdapter::reconcile_current(store, credential)`
+without choosing an inspection or carrying cached authority. Each call obtains
+the actual authenticated schedule, current candidate, source read set and enabled
+connector version before a fresh provider query.
+
+The source manifest, each mapped required check, PR state and target inclusion
+are compared independently. Equal outcome alone is insufficient: a new check-run
+ID changes that verification. A target or PR change preserves unrelated manifest
+and check fact IDs, reports and verification references. Repeated stable polls,
+including after reconstruction, publish no observation, notification or new
+inspection; unchanged approval references remain usable. If verification
+references change, an already prepared integration must revalidate its approval
+and eligibility before executing. Full rework and final-acceptance policy are
+separate from this observation mechanism.
+
+Equality requires a current, applied, mapped receipt with the actual fact ID,
+candidate, selection and source binding. The adapter reads the immutable report
+through its SHA-256, verifies the inspection index, reconstructs its records and
+compares every exposed summary field. Only the store's recording timestamp is
+normalized. Missing, corrupt or inconsistent proof requires new proof; it never
+means unchanged. A truncated inventory omitting an expected slot refuses before
+the provider query because absence cannot be established.
+
+The preliminary query grants no authority and publishes nothing. Changed slots
+use a deterministic request bound to the current mapping, read set, predecessor
+facts and complete observation semantics, then reserve and reobserve before
+ingestion. Concurrent observers converge on the same durable observation. Only
+a store-proven expired observation lease may renew, with a bounded retry; that
+renewal cannot dispatch a repository effect. Stable queries recheck current
+admission after the provider read, including credential revocation. Results are
+observations at read time, without execution, acceptance or source-writeback
+authority.
+
 ## What the report proves
 
 - Exact immutable source commit; regular tree/blob paths from `git-blob:` artifact
@@ -128,6 +163,22 @@ result. Stable target state alone does not resolve an uncertain launched effect;
 it remains unknown unless actual inclusion or a definitive no-launch/rejection
 record establishes the result. Private immutable markers and digest-checked
 reports must be retained across service restarts.
+
+`GitHubIntegrator::reconcile_original_current(store, credential, integration_id)`
+provides scheduled recovery for that original intent. It obtains fresh current
+mapping and identity admission, and compares unknown results against the actual
+digest-verified report, index and complete original confirmation envelope. Stable
+unknown observations retain their confirmation fact ID after a fresh query;
+changed or missing proof requires an admitted original reobservation. The query
+ignores newer PR heads/checks and never issues another POST. Only a proven
+expired observation lease may renew.
+
+Confirmed/rejected receipts describe historical settled effects and retain their
+original candidate and proof. Scheduled original recovery does not rewrite them
+when the target later changes. Use current-fact polling to detect subsequent
+target drift; historical confirmation is not a claim that today's target is
+unchanged. Neither query finalizes work or asserts that authoritative source
+writeback succeeded.
 
 Integration confirmation, authoritative source writeback and final task acceptance
 remain separate. This library mechanism is not background service admission,

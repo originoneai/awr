@@ -847,6 +847,194 @@ impl GitHubIntegrator {
                 "read_only":false,"execution_authorized":false,"acceptance_ready":false,"source_synchronized":false}),
         )
     }
+
+    fn previous_original_report(
+        &self,
+        attempt: &Attempt,
+        view: &Value,
+        connector_version: &Value,
+    ) -> Option<GitHubIntegrationReport> {
+        let proof = &view["confirmation"];
+        let receipt = &proof["receipt"];
+        if proof["connector_version"] != *connector_version
+            || proof["candidate_digest"] != attempt.candidate.binding.digest().ok()?
+            || receipt["connector_id"] != self.observer.config.connector_id
+            || !matches!(receipt["state"].as_str(), Some("applied" | "superseded"))
+            || receipt["fact_source"] != "adapter_observation"
+            || !receipt["fact_ids"].as_array()?.contains(&proof["fact_id"])
+        {
+            return None;
+        }
+        let envelope: DeliveryEnvelope = serde_json::from_value(proof["envelope"].clone()).ok()?;
+        envelope.validate().ok()?;
+        let DeliveryRecord::IntegrationObservation(observation) = &envelope.record else {
+            return None;
+        };
+        let prefix = format!(
+            "awr-github-integration:{}:",
+            self.observer.config.adapter_id
+        );
+        let hash = observation.provenance.reference.strip_prefix(&prefix)?;
+        let report: GitHubIntegrationReport =
+            serde_json::from_slice(&self.report_bytes(hash).ok()?).ok()?;
+        let snapshot = self
+            .cached(
+                &self.report_index(attempt, &report.inspection_id),
+                attempt,
+                &report.inspection_id,
+                &digest(&bytes(attempt).ok()?),
+            )
+            .ok()??;
+        let mut expected = snapshot.records.first()?.clone();
+        let DeliveryRecord::IntegrationObservation(record) = &mut expected.record else {
+            return None;
+        };
+        // Only PG recording time changes during ingestion. Every other field,
+        // including the immutable original request and provider observation, must match.
+        record.provenance.recorded_at_unix_ms = receipt["recorded_at_unix_ms"].as_u64()?;
+        if snapshot.report_artifact.sha256 != hash
+            || proof["inspection_id"] != report.inspection_id
+            || receipt["inspection_id"] != report.inspection_id
+            || json!(expected) != json!(envelope)
+        {
+            return None;
+        }
+        Some(snapshot.report)
+    }
+
+    /// Fresh scheduled recovery of one original intent. Stable unknown proof is
+    /// retained; historical terminal confirmation is never replaced by later target drift.
+    pub async fn reconcile_original_current(
+        &self,
+        store: &DeliverySyncStore,
+        credential: &str,
+        integration_id: &str,
+    ) -> Result<Value, GitHubError> {
+        let config = &self.observer.config;
+        let schedule = self.current_mapping(store, credential).await?;
+        let (original, view) = self.original(store, credential, integration_id).await?;
+        if matches!(view["state"].as_str(), Some("confirmed" | "rejected")) {
+            return Ok(json!({"unchanged":true,"terminal":true,"read_only":true,
+                "state_basis":"at_read","integration":view,"observation":null,
+                "execution_authorized":false,"acceptance_ready":false,"source_synchronized":false}));
+        }
+        if view["dispatched_at"].is_null() {
+            return Err(GitHubError::PreconditionsChanged);
+        }
+        let set: DeliveryReadSet = serde_json::from_value(schedule["read_set"].clone())
+            .map_err(|_| GitHubError::InvalidResponse)?;
+        let previous = self.previous_original_report(
+            &original,
+            &view,
+            &schedule["connector"]["connector_version"],
+        );
+        let probe = self.probe_attempt(&original, "scheduled-probe").await?;
+        if previous
+            .as_ref()
+            .is_some_and(|p| original_semantics(p) == original_semantics(&probe))
+        {
+            // Cached proof does not preserve revoked authority across a provider query.
+            let current = self.current_mapping(store, credential).await?;
+            if current["read_set"] != schedule["read_set"]
+                || current["connector"]["connector_version"]
+                    != schedule["connector"]["connector_version"]
+            {
+                return Err(GitHubError::PreconditionsChanged);
+            }
+            return Ok(json!({"unchanged":true,"terminal":false,"read_only":true,
+                "state_basis":"at_read","integration":view,"observation":null,
+                "execution_authorized":false,"acceptance_ready":false,"source_synchronized":false}));
+        }
+        let key = digest(&bytes(&json!([
+            "github-original-v1",
+            self.observer.config_digest,
+            set,
+            schedule["connector"]["connector_version"],
+            original.request,
+            view["confirmation_fact_id"],
+            original_semantics(&probe)
+        ]))?);
+        let mut prefix = format!("original:{key}");
+        for retry in 0..2 {
+            let request = GitHubIntegrationPollRequest {
+                request_id: prefix.clone(),
+                integration_id: integration_id.into(),
+                read_set: set.clone(),
+                connector_version: schedule["connector"]["connector_version"]
+                    .as_str()
+                    .ok_or(GitHubError::InvalidResponse)?
+                    .into(),
+            };
+            let reservation = |request_id: String| ReserveDeliveryInspection {
+                request_id,
+                read_set: set.clone(),
+                connector_id: config.connector_id.clone(),
+                connector_version: request.connector_version.clone(),
+                candidate_digest: original.candidate.binding.digest().unwrap(),
+                lease_seconds: 120,
+            };
+            let reserved = store
+                .reserve_integration_inspection(
+                    &config.tenant_id,
+                    &config.project_id,
+                    credential,
+                    integration_id,
+                    reservation(format!("{prefix}:reserve")),
+                )
+                .await
+                .map_err(domain_error)?;
+            if reserved["inspection_lease"]["live"] != true {
+                if retry == 0 {
+                    prefix = format!("renew:{}", awr_core::Id::new());
+                    continue;
+                }
+                return Err(GitHubError::PreconditionsChanged);
+            }
+            // The unpublished probe is not authority. Actual admitted reobservation
+            // uses the immutable original attempt and never dispatches another POST.
+            match self
+                .reconcile_reserved(
+                    store,
+                    credential,
+                    request.clone(),
+                    original.clone(),
+                    &reserved,
+                )
+                .await
+            {
+                Ok(result) => return Ok(result),
+                Err(GitHubError::PreconditionsChanged) if retry == 0 => {
+                    let replay = store
+                        .reserve_integration_inspection(
+                            &config.tenant_id,
+                            &config.project_id,
+                            credential,
+                            integration_id,
+                            reservation(format!("{prefix}:reserve")),
+                        )
+                        .await
+                        .map_err(domain_error)?;
+                    if replay["inspection_lease"]["live"] == true {
+                        return Err(GitHubError::PreconditionsChanged);
+                    }
+                    prefix = format!("renew:{}", awr_core::Id::new());
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(GitHubError::PreconditionsChanged)
+    }
+}
+
+fn original_semantics(report: &GitHubIntegrationReport) -> Value {
+    let mut value = json!(report);
+    for field in ["inspection_id", "observed_at_unix_ms"] {
+        value.as_object_mut().unwrap().remove(field);
+        if let Some(observation) = value["observation"].as_object_mut() {
+            observation.remove(field);
+        }
+    }
+    value
 }
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
