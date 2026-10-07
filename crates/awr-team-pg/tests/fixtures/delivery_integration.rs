@@ -5,9 +5,10 @@ use awr_core::{
     AgentAuthorization, AuthorizationScope, AuthorizationStatus, AuthorizedAction,
     ExecutionSubjectKind, IssueAuthorizationRequest, PersonId,
 };
-use awr_team::{ExecutionSettlementMode, ExecutionSettlementPolicy, WorkContract};
+use awr_source::{PublishPrepOptions, prepare_publish_from_server_directory};
+use awr_team::{ExecutionSettlementMode, ExecutionSettlementPolicy, WorkContract, delivery::*};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeSet, sync::MutexGuard};
+use std::{collections::BTreeSet, path::Path, sync::MutexGuard};
 use tokio_postgres::Client;
 
 pub const SUPERVISOR: &str =
@@ -62,8 +63,82 @@ pub async fn setup_integration() -> Fixture {
 
 /// Bind an actual repository candidate before submitting evidence or approval.
 pub async fn setup_integration_with_candidate(actual: Option<DeliveryCandidate>) -> Fixture {
+    setup_integration_inner(actual, None).await
+}
+
+/// Activate the physical contract before execution or business review. No delivery
+/// contract, check or approval is supplied through fixture SQL on this path.
+pub async fn setup_source_integration(actual: DeliveryCandidate, root: &Path) -> Fixture {
+    setup_integration_inner(Some(actual), Some(root)).await
+}
+
+async fn setup_integration_inner(
+    actual: Option<DeliveryCandidate>,
+    source_root: Option<&Path>,
+) -> Fixture {
     let (guard, admin, db, reads) = setup().await;
     let config = common::with_app_role(&common::test_config(), &db);
+    let authority: i64 = if let Some(root) = source_root {
+        let package = prepare_publish_from_server_directory(
+            root,
+            "ledger.yaml",
+            PROJECT,
+            &PublishPrepOptions::default(),
+        )
+        .unwrap();
+        let source = SourceStore::from_config(config.clone());
+        let (candidate, _) = source
+            .ingest_publish_candidate(IngestRequest {
+                tenant_id: TENANT.into(),
+                project_id: PROJECT.into(),
+                actor_id: "agent".into(),
+                parser_version: package.parser_version,
+                files: package
+                    .files
+                    .into_iter()
+                    .map(|f| SourceFile {
+                        path: f.path,
+                        bytes: f.bytes,
+                    })
+                    .collect(),
+            })
+            .await
+            .unwrap();
+        // Source bootstrap approval precedes delegation and is distinct from
+        // the independently attributed business review of the later artifact.
+        source
+            .approve(
+                TENANT,
+                PROJECT,
+                &candidate.proposal_id,
+                "reviewer",
+                &candidate.manifest_digest,
+            )
+            .await
+            .unwrap();
+        source
+            .activate_workstreams(
+                TENANT,
+                PROJECT,
+                "agent",
+                &candidate.proposal_id,
+                &awr_team::SourceActivationPlan {
+                    candidate_digest: candidate.manifest_digest.clone(),
+                    parser_version: candidate.parser_version,
+                    expected_authority_epoch: candidate.base_epoch,
+                    approved_candidate_digest: candidate.manifest_digest,
+                },
+            )
+            .await
+            .unwrap();
+        // Source activation grants no access. Provision explicit current grants
+        // as identity infrastructure, without changing delivery prerequisites.
+        admin.execute("UPDATE awr_team.workstream_grants SET authority_version=2,grant_version=grant_version+1 WHERE client_id='cli-a' AND workstream_id=$1",
+            &[&awr_core::Id::from(1).to_string()]).await.unwrap();
+        2
+    } else {
+        1
+    };
     admin.batch_execute("UPDATE awr_team.actors SET kind='agent' WHERE id IN ('agent','reviewer');
         UPDATE awr_team.project_memberships SET role='developer' WHERE actor_id IN ('agent','reviewer');
         UPDATE awr_team.project_memberships SET agent_review=true WHERE actor_id='reviewer';
@@ -86,8 +161,8 @@ pub async fn setup_integration_with_candidate(actual: Option<DeliveryCandidate>)
         admin.execute("INSERT INTO awr_team.credentials(tenant_id,id,actor_id,client_id,secret_hash) VALUES($1,$2,$3,$4,$5)",
             &[&TENANT,&id,&actor,&client,&workstream_credential_hash(token).unwrap()]).await.unwrap();
         admin.execute("INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,can_write,can_manage)
-            VALUES($1,$2,$3,$4,$5,1,true,true,$6)",
-            &[&TENANT,&PROJECT,&actor,&client,&awr_core::Id::from(1).to_string(),&(actor=="integrator")]).await.unwrap();
+            VALUES($1,$2,$3,$4,$5,$6,true,true,$7)",
+            &[&TENANT,&PROJECT,&actor,&client,&awr_core::Id::from(1).to_string(),&authority,&(actor=="integrator")]).await.unwrap();
     }
     for (actor, client, member, actions) in [
         (
@@ -165,23 +240,27 @@ pub async fn setup_integration_with_candidate(actual: Option<DeliveryCandidate>)
     admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
         VALUES($1,$2,'session-reviewer','main','a','reviewer','cli-reviewer','reviewer-conversation','active',$3,1)",
         &[&TENANT,&PROJECT,&awr_core::Id::from(1).to_string()]).await.unwrap();
-    let value: Value = admin
-        .query_one(
-            "SELECT contract_json FROM awr_team.work_contracts WHERE work_id='a'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    // A second source activation retains historical contracts. Read the exact
+    // active snapshot through the authorized interface, never an unscoped row.
+    let value = prepare(&reads, A, "a").await["data"]["published_contract"].clone();
     let mut contract: WorkContract = serde_json::from_value(value).unwrap();
-    contract.codec = WorkContract::CODEC_V3.into();
-    contract.completion_policy = POLICY.into();
-    contract.execution_settlement = Some(ExecutionSettlementPolicy {
-        mode: ExecutionSettlementMode::IndependentWorkspaceV1,
-        workspace_id: "synthetic-workspace-a".into(),
-    });
-    admin.execute("UPDATE awr_team.work_contracts SET contract_json=$1,contract_hash=$2 WHERE work_id='a'",
-        &[&json!(contract),&contract.hash().unwrap()]).await.unwrap();
+    if source_root.is_none() {
+        contract.codec = WorkContract::CODEC_V3.into();
+        contract.completion_policy = POLICY.into();
+        contract.execution_settlement = Some(ExecutionSettlementPolicy {
+            mode: ExecutionSettlementMode::IndependentWorkspaceV1,
+            workspace_id: "synthetic-workspace-a".into(),
+        });
+        admin.execute("UPDATE awr_team.work_contracts SET contract_json=$1,contract_hash=$2 WHERE work_id='a'",
+            &[&json!(contract),&contract.hash().unwrap()]).await.unwrap();
+    } else {
+        assert_eq!(contract.completion_policy, POLICY);
+        assert_eq!(contract.verification_requirements, ["local_git.manifest"]);
+        assert_eq!(
+            contract.execution_settlement.as_ref().unwrap().mode,
+            ExecutionSettlementMode::IndependentWorkspaceV1
+        );
+    }
     let claim = run(
         &reads,
         A,
@@ -243,7 +322,12 @@ pub async fn setup_integration_with_candidate(actual: Option<DeliveryCandidate>)
                 expected_connector_version: "0".into(),
                 mapping: DeliveryConnectorMapping {
                     connector_id: "git".into(),
-                    provider: "reference".into(),
+                    provider: if source_root.is_some() {
+                        "local_git"
+                    } else {
+                        "reference"
+                    }
+                    .into(),
                     resource: selection.candidate.binding.target.resource.clone(),
                     principal_actor_id: "integrator".into(),
                     principal_client_id: "cli-worker".into(),
@@ -271,16 +355,12 @@ pub async fn setup_integration_with_candidate(actual: Option<DeliveryCandidate>)
         "artifact_text":CONTENT,"input_digest":INPUT,"execution_id":execution["execution_id"],"dirty_tree":false,
         "payload":{"passed":true,"output_digest":result,"delivery_candidate_digest":candidate_digest}})).await;
     let round=run(&reads,A,"open-review","review.open",json!({"session_id":"session-a","expected_session_version":"1","evidence_id":evidence["evidence_id"]})).await;
-    run(&reads,REVIEWER,"approve-review","review.decide",json!({"session_id":"session-reviewer","expected_session_version":"1",
-        "round_id":round["round_id"],"decision":"approve","reason":"Verified the exact package and candidate binding."})).await;
-    let decision: String = admin
-        .query_one(
-            "SELECT id FROM awr_team.review_decisions WHERE review_round_id=$1",
-            &[&round["round_id"].as_str().unwrap()],
-        )
-        .await
-        .unwrap()
-        .get(0);
+    let decision = if source_root.is_none() {
+        run(&reads,REVIEWER,"approve-review","review.decide",json!({"session_id":"session-reviewer","expected_session_version":"1",
+            "round_id":round["round_id"],"decision":"approve","reason":"Verified the exact package and candidate binding."})).await["decision_id"].as_str().unwrap().to_owned()
+    } else {
+        String::new() // No business approval until the real observer verifies the manifest.
+    };
     let request = PrepareDeliveryIntegration {
         request_id: "integration-prepare".into(),
         read_set: set.clone(),
@@ -304,11 +384,39 @@ pub async fn setup_integration_with_candidate(actual: Option<DeliveryCandidate>)
         request,
         evidence,
     };
-    f.check("initial-check", VerificationOutcome::Passed).await;
+    if source_root.is_none() {
+        f.check("initial-check", VerificationOutcome::Passed).await;
+    }
     f
 }
 
 impl Fixture {
+    pub async fn approve_source_review(&mut self) {
+        assert!(self.request.review_decision_id.is_empty());
+        let mut q = query("artifact.content");
+        q.work_id = Some("a".into());
+        q.artifact_id = Some(self.evidence["artifact_id"].as_str().unwrap().into());
+        q.expected_sha256 = Some(self.selection.candidate.manifest.entries[0].sha256.clone());
+        let content = self
+            .reads
+            .query(TENANT, PROJECT, REVIEWER, q)
+            .await
+            .unwrap();
+        assert_eq!(content["data"]["text"], CONTENT);
+        assert_eq!(content["data"]["byte_length"], CONTENT.len());
+        let decision = run(
+            &self.reads,
+            REVIEWER,
+            "approve-review",
+            "review.decide",
+            json!({"session_id":"session-reviewer","expected_session_version":"1",
+                "round_id":self.request.review_round_id,"decision":"approve",
+                "reason":"Read the bound artifact and verified its observed Git manifest."}),
+        )
+        .await;
+        self.request.review_decision_id = decision["decision_id"].as_str().unwrap().into();
+    }
+
     pub async fn ingest_record(&self, key: &str, record: DeliveryRecord) -> String {
         let inspection = self
             .store

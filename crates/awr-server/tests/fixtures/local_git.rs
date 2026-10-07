@@ -210,6 +210,85 @@ impl GitFixture {
         rebind(&mut candidate);
         candidate
     }
+
+    /// Independent authoritative source, outside the repository and report spool.
+    /// The manifest requirement is activated before any business review.
+    pub fn source_contract(&self) -> PathBuf {
+        let root = self.root.join("project source");
+        fs::create_dir_all(root.join("docs")).unwrap();
+        fs::write(
+            root.join("docs/spec.md"),
+            "# Delivery contract\nVerify the exact package and preserve compatibility.\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("ledger.yaml"),
+            r#"# Preserve operator comments and unrelated work.
+description: Source-first local Git delivery
+workstreams:
+  version: 1
+  definitions:
+    - id: 00000000000000000000000001
+      external_key: alpha
+      title: alpha
+      state: active
+      authority_version: 2
+      goal_keys: [alpha]
+      acceptance_contracts: [docs/spec.md]
+    - id: 00000000000000000000000002
+      external_key: private-beta
+      title: private-beta
+      state: active
+      authority_version: 1
+      goal_keys: [private-beta]
+      acceptance_contracts: []
+goals:
+  - id: alpha
+    title: Alpha
+    status: active
+  - id: private-beta
+    title: Private
+    status: active
+work_items:
+  - id: a
+    title: Reviewed API package
+    status: planned
+    workstream: alpha
+    goals: [alpha]
+    acceptance: [verified]
+    hard_rules: [preserve compatibility]
+    paths: [src/api]
+    depends_on: []
+    completion_policy: caller_managed_execution_and_agent_review
+    execution_settlement:
+      mode: independent_workspace_v1
+      workspace_id: synthetic-workspace-a
+    verification_requirements: [local_git.manifest]
+  - id: c
+    title: Unrelated work
+    status: planned
+    workstream: alpha
+    goals: [alpha]
+    acceptance: [verified]
+    paths: [other]
+    depends_on: []
+    completion_policy: ordinary_confirm
+    verification_requirements: [report]
+  - id: b-private
+    title: Private work
+    status: planned
+    workstream: private-beta
+    goals: [private-beta]
+    acceptance: [verified]
+    paths: [private]
+    depends_on: []
+    completion_policy: ordinary_confirm
+    verification_requirements: [report]
+"#,
+        )
+        .unwrap();
+        fs::canonicalize(root).unwrap()
+    }
 }
 
 pub fn rebind(candidate: &mut DeliveryCandidate) {
