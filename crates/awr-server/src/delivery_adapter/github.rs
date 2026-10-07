@@ -29,6 +29,8 @@ pub enum GitHubError {
     BindingMismatch,
     ProviderUnavailable,
     ProviderAuthorizationUnavailable,
+    ProviderPolicyUnsupported,
+    UnsupportedGuarantee,
     RateLimited,
     InvalidResponse,
     TimedOut,
@@ -324,6 +326,25 @@ impl GitHubAdapter {
         c: &DeliveryCandidate,
         inspection: &str,
     ) -> Result<GitHubReport, GitHubError> {
+        self.probe_mode(c, inspection, true).await
+    }
+
+    /// Original-effect recovery proves immutable content and actual inclusion.
+    /// A changed PR head or new check cannot replace that historical request.
+    pub(super) async fn probe_original(
+        &self,
+        c: &DeliveryCandidate,
+        inspection: &str,
+    ) -> Result<GitHubReport, GitHubError> {
+        self.probe_mode(c, inspection, false).await
+    }
+
+    async fn probe_mode(
+        &self,
+        c: &DeliveryCandidate,
+        inspection: &str,
+        current_pr_and_checks: bool,
+    ) -> Result<GitHubReport, GitHubError> {
         self.validate_candidate(c)?;
         let deadline = Instant::now() + Duration::from_millis(self.config.inspection_timeout_ms);
         let permit = tokio::time::timeout_at(deadline.into(), self.gate.clone().acquire_owned())
@@ -335,7 +356,50 @@ impl GitHubAdapter {
         let inspection = inspection.to_owned();
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            Query::new(&adapter, deadline).observe(&candidate, &inspection)
+            Query::new(&adapter, deadline).observe(&candidate, &inspection, current_pr_and_checks)
+        })
+        .await
+        .map_err(|_| GitHubError::ProviderUnavailable)?
+    }
+
+    /// Fresh, unpublished permission/policy/source/check proof before a permit
+    /// is rechecked in the actual store. No REST merge or reference mutation.
+    pub(super) async fn integration_preflight(
+        &self,
+        c: &DeliveryCandidate,
+    ) -> Result<GitHubReport, GitHubError> {
+        self.validate_candidate(c)?;
+        if !matches!(c.binding.target.precondition, TargetPrecondition::Exact(_)) {
+            return Err(GitHubError::UnsupportedGuarantee);
+        }
+        let deadline = Instant::now() + Duration::from_millis(self.config.inspection_timeout_ms);
+        let permit = tokio::time::timeout_at(deadline.into(), self.gate.clone().acquire_owned())
+            .await
+            .map_err(|_| GitHubError::TimedOut)?
+            .map_err(|_| GitHubError::ProviderUnavailable)?;
+        let adapter = self.clone();
+        let candidate = c.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let mut query = Query::new(&adapter, deadline);
+            query.integration_policy(&candidate)?;
+            let report = query.observe(&candidate, "integration-preflight", true)?;
+            if report.manifest_outcome != VerificationOutcome::Passed
+                || !report.target_stable
+                || !report.target_precondition_matches
+                || !report.pull_stable
+                || !report.unsupported_required_checks.is_empty()
+                || report
+                    .checks
+                    .iter()
+                    .any(|c| c.outcome != VerificationOutcome::Passed)
+            {
+                return Err(GitHubError::PreconditionsChanged);
+            }
+            // Recheck policy and pinned identity after the potentially longer
+            // content/check reads. Receive-pack enforces the live server policy.
+            query.integration_policy(&candidate)?;
+            Ok(report)
         })
         .await
         .map_err(|_| GitHubError::ProviderUnavailable)?
@@ -602,7 +666,7 @@ impl<'a> Query<'a> {
         self.get(tail, &[])?.ok_or(GitHubError::ProviderUnavailable)
     }
 
-    fn repository(&mut self) -> Result<(), GitHubError> {
+    fn repository(&mut self) -> Result<Value, GitHubError> {
         let repo = self.required(&[])?;
         if repo["id"].as_u64() != Some(self.adapter.config.repository_id)
             || !repo["full_name"].as_str().is_some_and(|s| {
@@ -613,6 +677,43 @@ impl<'a> Query<'a> {
             })
         {
             return Err(GitHubError::BindingMismatch);
+        }
+        Ok(repo)
+    }
+
+    fn integration_policy(&mut self, c: &DeliveryCandidate) -> Result<(), GitHubError> {
+        let repo = self.repository()?;
+        if repo["permissions"]["push"] != true {
+            return Err(GitHubError::ProviderAuthorizationUnavailable);
+        }
+        if repo["archived"] != false {
+            return Err(GitHubError::ProviderPolicyUnsupported);
+        }
+        let TargetPrecondition::Exact(expected) = &c.binding.target.precondition else {
+            return Err(GitHubError::UnsupportedGuarantee);
+        };
+        let branch = self.adapter.config.target_branch.clone();
+        let current = self.required(&["branches", &branch])?;
+        if current["name"] != branch || sha(&current["commit"]["sha"])? != expected.value {
+            return Err(GitHubError::PreconditionsChanged);
+        }
+        if current["protected"] != false {
+            return Err(GitHubError::ProviderPolicyUnsupported);
+        }
+        let rules = self
+            .get(&["rules", "branches", &branch], &[])?
+            .ok_or(GitHubError::ProviderPolicyUnsupported)?;
+        if rules.as_array().is_none_or(|r| !r.is_empty()) {
+            return Err(GitHubError::ProviderPolicyUnsupported);
+        }
+        let source = c.binding.source_revision.as_ref().unwrap();
+        let comparison =
+            self.required(&["compare", &format!("{}...{}", expected.value, source.value)])?;
+        if sha(&comparison["base_commit"]["sha"])? != expected.value
+            || sha(&comparison["merge_base_commit"]["sha"])? != expected.value
+            || !matches!(comparison["status"].as_str(), Some("ahead" | "identical"))
+        {
+            return Err(GitHubError::PreconditionsChanged);
         }
         Ok(())
     }
@@ -896,13 +997,18 @@ impl<'a> Query<'a> {
     }
 
     fn observe(
-        mut self,
+        &mut self,
         c: &DeliveryCandidate,
         inspection: &str,
+        current_pr_and_checks: bool,
     ) -> Result<GitHubReport, GitHubError> {
         self.repository()?;
         let source = c.binding.source_revision.as_ref().unwrap();
-        let pull = self.pull(&source.value)?;
+        let pull = if current_pr_and_checks {
+            self.pull(&source.value)?
+        } else {
+            None
+        };
         let root = self.commit(&source.value)?;
         let source_artifacts = self.artifacts(c, &root)?;
         let manifest_outcome = if source_artifacts
@@ -918,7 +1024,11 @@ impl<'a> Query<'a> {
         } else {
             VerificationOutcome::Unknown
         };
-        let mut checks = self.checks(c, &source.value)?;
+        let mut checks = if current_pr_and_checks {
+            self.checks(c, &source.value)?
+        } else {
+            Vec::new()
+        };
         let target = self.target()?;
         let contains = if let Some(target) = &target {
             if target == source {
@@ -947,7 +1057,7 @@ impl<'a> Query<'a> {
                 Vec::new()
             };
         let target_stable = target == self.target()?;
-        let pull_stable = pull == self.pull(&source.value)?;
+        let pull_stable = !current_pr_and_checks || pull == self.pull(&source.value)?;
         self.repository()?;
         // A PR that moved while checking cannot carry a terminal verification.
         let manifest_outcome = if pull_stable {

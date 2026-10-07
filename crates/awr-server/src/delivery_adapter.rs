@@ -2,7 +2,9 @@
 mod git_process;
 pub mod github;
 mod github_http;
+pub mod github_integration;
 mod github_poll;
+mod github_receive;
 pub mod local_git;
 pub mod local_git_integration;
 mod local_git_poll;
@@ -11,7 +13,12 @@ pub use github::{
     GitHubAdapter, GitHubCheckMapping, GitHubConfig, GitHubError, GitHubReport, GitHubSnapshot,
 };
 pub use github_http::{GitHubResponse, GitHubTransport};
+pub use github_integration::{
+    GitHubIntegrationConfig, GitHubIntegrationPollRequest, GitHubIntegrationReport,
+    GitHubIntegrationSnapshot, GitHubIntegrator,
+};
 pub use github_poll::GitHubPollRequest;
+pub use github_receive::{GitHubReceiveMethod, GitHubReceiveResponse, GitHubReceiveTransport};
 pub use local_git::{LocalGitAdapter, LocalGitConfig, LocalGitReport, LocalGitSnapshot};
 pub use local_git_integration::{
     LocalGitIntegrationConfig, LocalGitIntegrationPollRequest, LocalGitIntegrationReport,

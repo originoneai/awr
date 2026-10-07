@@ -94,7 +94,13 @@ impl GitHubTransport for Api {
                 (status, body, delay)
             } else {
                 let value = match route.as_str() {
-                    "" => json!({"id":7,"full_name":"acme/demo"}),
+                    "" => {
+                        json!({"id":7,"full_name":"acme/demo","archived":false,"permissions":{"push":true}})
+                    }
+                    "/branches/main" => {
+                        json!({"name":"main","protected":false,"commit":{"sha":TARGET}})
+                    }
+                    "/rules/branches/main" => json!([]),
                     "/git/ref/heads/main" => reference(TARGET),
                     "/pulls/11" => pull(),
                     "/git/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -115,6 +121,10 @@ impl GitHubTransport for Api {
                     "/compare/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" =>
                     {
                         json!({"status":"behind","base_commit":{"sha":SOURCE},"merge_base_commit":{"sha":TARGET}})
+                    }
+                    "/compare/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" =>
+                    {
+                        json!({"status":"ahead","base_commit":{"sha":TARGET},"merge_base_commit":{"sha":TARGET}})
                     }
                     _ => {
                         return Ok(GitHubResponse {
