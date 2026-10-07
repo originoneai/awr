@@ -4,10 +4,12 @@
 //! trust, artifact accessibility or approval. Authenticated stores must resolve
 //! their references against the existing AWR review/completion rules.
 mod binding;
+mod content;
 mod legacy;
 mod records;
 
 pub use binding::*;
+pub use content::*;
 pub use legacy::*;
 pub use records::*;
 

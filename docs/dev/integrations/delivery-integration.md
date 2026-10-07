@@ -167,6 +167,15 @@ grants observation only. Old bindings remain historical; currently revoked or
 unmapped connectors cannot ingest them, and facts from an inspection begun before
 dispatch still cannot resolve the intent.
 
+Different Git result revisions require an authenticated
+[complete integration content proof](../reference/delivery-content-proof.md)
+from the same post-dispatch inbox batch and original connector version. Selected
+manifest entries cannot establish equality of the entire approved content.
+Exact source/result revision confirmation remains compatible. Missing or
+unavailable proof retains the original guard and never authorizes redispatch.
+Proof slots do not replace verification or approval identities; authorized
+inspection retains the original proof envelopes separately from eligibility.
+
 Integration confirmations never create completion receipts, mark work complete,
 or silently update authoritative source status.
 

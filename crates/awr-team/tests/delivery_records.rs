@@ -55,6 +55,223 @@ fn provenance() -> FactProvenance {
     }
 }
 
+fn rewritten_proof() -> (IntegrationContentProof, IntegrationObservation) {
+    let binding = candidate().binding;
+    let result = RevisionRef {
+        resource: binding.target.resource.clone(),
+        format: RevisionFormat::GitSha256,
+        value: "f".repeat(64),
+    };
+    let snapshot = CompleteSnapshotIdentity {
+        resource: binding.target.resource.clone(),
+        format: SnapshotIdentityFormat::GitTreeSha256,
+        value: "a".repeat(64),
+    };
+    let TargetPrecondition::Exact(base) = &binding.target.precondition else {
+        unreachable!()
+    };
+    let mut origin = provenance();
+    origin.source = FactSource::AdapterObservation;
+    let proof = IntegrationContentProof {
+        binding: binding.clone(),
+        request_id: Some(RequestId::new("original-attempt").unwrap()),
+        observation_reference: "target:main".into(),
+        result_revision: Some(result.clone()),
+        witness: IntegrationContentWitness::MatchingCompleteSnapshots {
+            source_snapshot: snapshot.clone(),
+            result_snapshot: snapshot,
+            retained_base: base.clone(),
+        },
+        provenance: origin.clone(),
+    };
+    let observation = IntegrationObservation {
+        binding,
+        request_id: proof.request_id.clone(),
+        external_reference: proof.observation_reference.clone(),
+        outcome: IntegrationOutcome::Applied,
+        result_revision: Some(result),
+        contains_manifest_digest: Some(proof.binding.manifest_digest.clone()),
+        provenance: origin,
+    };
+    (proof, observation)
+}
+
+#[test]
+fn content_proofs_round_trip_with_typed_whole_snapshots_and_unavailable_state() {
+    let (original, observation) = rewritten_proof();
+    assert!(original.proves_observation(&observation).unwrap());
+    for witness in [
+        original.witness.clone(),
+        IntegrationContentWitness::Unavailable {
+            reason: ContentProofUnavailableReason::HistoryUnavailable,
+        },
+    ] {
+        let mut proof = original.clone();
+        proof.witness = witness;
+        let wire = envelope(DeliveryRecord::IntegrationContentProof(proof));
+        assert_eq!(
+            parse_delivery_record(&serde_json::to_vec(&wire).unwrap()).unwrap(),
+            wire
+        );
+    }
+    let mut unknown = original;
+    unknown.result_revision = None;
+    unknown.request_id = None;
+    unknown.witness = IntegrationContentWitness::Unavailable {
+        reason: ContentProofUnavailableReason::NotObserved,
+    };
+    unknown.validate().unwrap();
+}
+
+#[test]
+fn exact_content_identity_supports_both_git_formats_and_missing_target_creation() {
+    for (format, length) in [
+        (RevisionFormat::GitSha1, 40),
+        (RevisionFormat::GitSha256, 64),
+    ] {
+        let (mut proof, mut observation) = rewritten_proof();
+        let source = proof.binding.source_revision.as_mut().unwrap();
+        source.format = format;
+        source.value = "c".repeat(length);
+        proof.result_revision = Some(source.clone());
+        proof.binding.target.precondition = TargetPrecondition::Missing;
+        proof.witness = IntegrationContentWitness::ExactRevision;
+        observation.binding = proof.binding.clone();
+        observation.result_revision = proof.result_revision.clone();
+        assert!(proof.proves_observation(&observation).unwrap());
+        proof.result_revision.as_mut().unwrap().value = "e".repeat(length);
+        assert!(proof.validate().is_err());
+    }
+}
+
+#[test]
+fn complete_snapshot_identities_keep_the_repository_object_algorithm() {
+    for (format, snapshot_format, length) in [
+        (
+            RevisionFormat::GitSha1,
+            SnapshotIdentityFormat::GitTreeSha1,
+            40,
+        ),
+        (
+            RevisionFormat::GitSha256,
+            SnapshotIdentityFormat::GitTreeSha256,
+            64,
+        ),
+    ] {
+        let (mut proof, mut observation) = rewritten_proof();
+        let source = proof.binding.source_revision.as_mut().unwrap();
+        source.format = format.clone();
+        source.value = "c".repeat(length);
+        let base = RevisionRef {
+            resource: source.resource.clone(),
+            format: format.clone(),
+            value: "d".repeat(length),
+        };
+        let snapshot = CompleteSnapshotIdentity {
+            resource: source.resource.clone(),
+            format: snapshot_format,
+            value: "a".repeat(length),
+        };
+        proof.result_revision = Some(RevisionRef {
+            resource: source.resource.clone(),
+            format,
+            value: "e".repeat(length),
+        });
+        proof.binding.target.precondition = TargetPrecondition::Exact(base.clone());
+        proof.witness = IntegrationContentWitness::MatchingCompleteSnapshots {
+            source_snapshot: snapshot.clone(),
+            result_snapshot: snapshot,
+            retained_base: base,
+        };
+        observation.binding = proof.binding.clone();
+        observation.result_revision = proof.result_revision.clone();
+        assert!(proof.proves_observation(&observation).unwrap());
+    }
+}
+
+#[test]
+fn whole_content_proofs_reject_changed_tree_base_resource_and_algorithm() {
+    let (proof, _) = rewritten_proof();
+    for (pointer, value) in [
+        ("/witness/result_snapshot/value", json!("b".repeat(64))),
+        ("/witness/retained_base/value", json!("e".repeat(64))),
+        (
+            "/witness/source_snapshot/resource",
+            json!("repository:other"),
+        ),
+        ("/witness/result_snapshot/format", json!("git_tree_sha1")),
+        ("/result_revision/resource", json!("repository:other")),
+        ("/result_revision/format", json!("artifact")),
+        ("/binding/source_revision", Value::Null),
+        ("/binding/target/precondition", json!({"kind":"missing"})),
+        ("/observation_reference", json!("\n")),
+    ] {
+        let mut changed = serde_json::to_value(&proof).unwrap();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        let changed: IntegrationContentProof = serde_json::from_value(changed).unwrap();
+        assert!(changed.validate().is_err(), "accepted changed {pointer}");
+    }
+    let mut source = proof;
+    source.witness = IntegrationContentWitness::ExactRevision;
+    assert!(source.validate().is_err());
+}
+
+#[test]
+fn proofs_bind_original_observation_request_version_provenance_and_recording() {
+    let (proof, observation) = rewritten_proof();
+    for (pointer, value) in [
+        ("/request_id", json!("another-attempt")),
+        ("/observation_reference", json!("target:other")),
+        ("/result_revision/value", json!("e".repeat(64))),
+        ("/binding/candidate_version", json!("2")),
+        ("/provenance/source", json!("caller_declared")),
+        ("/provenance/reference", json!("report:other")),
+        ("/provenance/observed_at_unix_ms", Value::Null),
+        ("/provenance/recorded_at_unix_ms", json!(2001)),
+    ] {
+        let mut changed = serde_json::to_value(&proof).unwrap();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        let changed: IntegrationContentProof = serde_json::from_value(changed).unwrap();
+        assert!(
+            changed.proves_observation(&observation).is_err(),
+            "accepted changed {pointer}"
+        );
+    }
+    let mut unavailable = proof;
+    unavailable.witness = IntegrationContentWitness::Unavailable {
+        reason: ContentProofUnavailableReason::ContentChanged,
+    };
+    assert!(!unavailable.proves_observation(&observation).unwrap());
+}
+
+#[test]
+fn content_proof_wire_rejects_unknown_fields_partial_digest_and_oversize_records() {
+    let (proof, _) = rewritten_proof();
+    let wire =
+        serde_json::to_value(envelope(DeliveryRecord::IntegrationContentProof(proof))).unwrap();
+    for pointer in [
+        "/record/data",
+        "/record/data/witness",
+        "/record/data/witness/source_snapshot",
+    ] {
+        let mut value = wire.clone();
+        value
+            .pointer_mut(pointer)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert("manifest_is_complete".into(), json!(true));
+        assert!(parse_delivery_record(&serde_json::to_vec(&value).unwrap()).is_err());
+    }
+    let mut partial = wire.clone();
+    partial["record"]["data"]["witness"] =
+        json!({"kind":"manifest_subset","digest":"a".repeat(64)});
+    assert!(parse_delivery_record(&serde_json::to_vec(&partial).unwrap()).is_err());
+    let mut large = serde_json::to_vec(&wire).unwrap();
+    large.resize(MAX_DELIVERY_RECORD_BYTES + 1, b' ');
+    assert!(parse_delivery_record(&large).is_err());
+}
+
 fn envelope(record: DeliveryRecord) -> DeliveryEnvelope {
     DeliveryEnvelope {
         protocol: DELIVERY_PROTOCOL.into(),

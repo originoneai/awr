@@ -61,9 +61,14 @@ pub async fn setup_integration() -> Fixture {
     setup_integration_with_candidate(None).await
 }
 
+/// Synthetic exact-base setup; all execution, evidence and review commands still run.
+pub async fn setup_content_integration() -> Fixture {
+    setup_integration_inner(None, None, None, false, true).await
+}
+
 /// Bind an actual repository candidate before submitting evidence or approval.
 pub async fn setup_integration_with_candidate(actual: Option<DeliveryCandidate>) -> Fixture {
-    setup_integration_inner(actual, None, None, false).await
+    setup_integration_inner(actual, None, None, false, false).await
 }
 
 /// Activate the physical contract before execution or business review. No delivery
@@ -80,7 +85,7 @@ pub async fn setup_source_integration_with_checks(
     checks: &[String],
 ) -> Fixture {
     assert!(!checks.is_empty());
-    setup_integration_inner(Some(actual), Some(root), Some(checks), false).await
+    setup_integration_inner(Some(actual), Some(root), Some(checks), false, false).await
 }
 
 /// Activate the explicit simulated policy from physical source declarations.
@@ -90,13 +95,21 @@ pub async fn setup_source_simulated_member_integration(
     checks: &[String],
 ) -> Fixture {
     assert!(!checks.is_empty());
-    setup_integration_inner(Some(actual), Some(root), Some(checks), true).await
+    setup_integration_inner(Some(actual), Some(root), Some(checks), true, false).await
 }
 
 /// Actual member anchors are provisioned only on the explicit simulated path.
 /// Existing ordinary/source fixtures keep their original identity semantics.
 pub async fn setup_simulated_member_integration() -> Fixture {
-    let fixture = setup_integration_inner(None, None, None, true).await;
+    setup_simulated_integration(false).await
+}
+
+pub async fn setup_simulated_content_integration() -> Fixture {
+    setup_simulated_integration(true).await
+}
+
+async fn setup_simulated_integration(exact_base: bool) -> Fixture {
+    let fixture = setup_integration_inner(None, None, None, true, exact_base).await;
     fixture.admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
         VALUES($1,$2,'session-supervisor','main','a','supervisor','cli-supervisor','supervisor-conversation','active',$3,1)",
         &[&TENANT,&PROJECT,&awr_core::Id::from(1).to_string()]).await.unwrap();
@@ -108,6 +121,7 @@ async fn setup_integration_inner(
     source_root: Option<&Path>,
     source_checks: Option<&[String]>,
     simulated: bool,
+    exact_base: bool,
 ) -> Fixture {
     let (guard, admin, db, reads) = setup().await;
     let config = common::with_app_role(&common::test_config(), &db);
@@ -341,6 +355,13 @@ async fn setup_integration_inner(
         "candidate_id":"candidate-a","candidate_version":"1","contract_hash":set.contract_hash,
         "manifest_digest":manifest.digest().unwrap(),"source_revision":{"resource":RESOURCE,"format":"git_sha256","value":"a".repeat(64)},
         "required_checks":["report"],"target":{"resource":RESOURCE,"reference":"main","precondition":{"kind":"missing"}}},"manifest":manifest})).unwrap();
+    if exact_base {
+        candidate.binding.target.precondition = TargetPrecondition::Exact(RevisionRef {
+            resource: RESOURCE.into(),
+            format: RevisionFormat::GitSha256,
+            value: "b".repeat(64),
+        });
+    }
     if let Some(mut supplied) = actual {
         supplied.binding.tenant_id = awr_team::TenantId::new(TENANT).unwrap();
         supplied.binding.project_id = awr_team::ProjectId::new(PROJECT).unwrap();
@@ -478,6 +499,9 @@ impl Fixture {
     }
 
     pub async fn ingest_record(&self, key: &str, record: DeliveryRecord) -> String {
+        self.ingest_records(key, vec![record]).await.remove(0)
+    }
+    pub async fn ingest_records(&self, key: &str, records: Vec<DeliveryRecord>) -> Vec<String> {
         let inspection = self
             .store
             .reserve_inspection(
@@ -507,19 +531,24 @@ impl Fixture {
                     connector_id: "git".into(),
                     inspection_id: inspection["data"]["inspection_id"].as_str().unwrap().into(),
                     event_id: key.into(),
-                    records: vec![DeliveryEnvelope {
-                        protocol: DELIVERY_PROTOCOL.into(),
-                        protocol_version: DELIVERY_PROTOCOL_VERSION,
-                        record,
-                    }],
+                    records: records
+                        .into_iter()
+                        .map(|record| DeliveryEnvelope {
+                            protocol: DELIVERY_PROTOCOL.into(),
+                            protocol_version: DELIVERY_PROTOCOL_VERSION,
+                            record,
+                        })
+                        .collect(),
                 },
             )
             .await
             .unwrap();
-        receipt["data"]["observation_receipt"]["fact_ids"][0]
-            .as_str()
+        receipt["data"]["observation_receipt"]["fact_ids"]
+            .as_array()
             .unwrap()
-            .into()
+            .iter()
+            .map(|id| id.as_str().unwrap().into())
+            .collect()
     }
     pub async fn check(&self, key: &str, outcome: VerificationOutcome) -> String {
         self.ingest_record(
@@ -609,6 +638,44 @@ impl Fixture {
             integration_id: id.into(),
             fact_id: fact.into(),
         }
+    }
+    /// Synthetic protocol proof only; it does not query a real repository.
+    pub fn rewritten_records(&self, id: &str) -> Vec<DeliveryRecord> {
+        let DeliveryRecord::IntegrationObservation(mut observation) =
+            self.observation(id, IntegrationOutcome::Applied)
+        else {
+            unreachable!()
+        };
+        let source = observation.binding.source_revision.as_ref().unwrap();
+        observation.result_revision.as_mut().unwrap().value = "e".repeat(source.value.len());
+        let snapshot = CompleteSnapshotIdentity {
+            resource: source.resource.clone(),
+            format: match source.format {
+                RevisionFormat::GitSha1 => SnapshotIdentityFormat::GitTreeSha1,
+                RevisionFormat::GitSha256 => SnapshotIdentityFormat::GitTreeSha256,
+                _ => unreachable!(),
+            },
+            value: "f".repeat(source.value.len()),
+        };
+        let TargetPrecondition::Exact(base) = &observation.binding.target.precondition else {
+            panic!("synthetic rewritten proof requires an exact base")
+        };
+        let proof = IntegrationContentProof {
+            binding: observation.binding.clone(),
+            request_id: observation.request_id.clone(),
+            observation_reference: observation.external_reference.clone(),
+            result_revision: observation.result_revision.clone(),
+            witness: IntegrationContentWitness::MatchingCompleteSnapshots {
+                source_snapshot: snapshot.clone(),
+                result_snapshot: snapshot,
+                retained_base: base.clone(),
+            },
+            provenance: observation.provenance.clone(),
+        };
+        vec![
+            DeliveryRecord::IntegrationObservation(observation),
+            DeliveryRecord::IntegrationContentProof(proof),
+        ]
     }
     pub async fn guards(&self) -> i64 {
         self.admin
