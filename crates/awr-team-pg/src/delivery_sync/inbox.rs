@@ -183,6 +183,10 @@ impl DeliverySyncStore {
             tx.commit().await?;
             return Ok(result);
         }
+        // A reservation may precede publication preparation. Defer new facts,
+        // while preserving original request/event replays above, until the
+        // pending source effect is settled under the same project writer lock.
+        snapshots::require_source_publication_settled(&tx, tenant, project, set).await?;
         let generation: i64 = reserved.get(1);
         let binding_digest: String = reserved.get(2);
         let source_snapshot: String = reserved.get(3);

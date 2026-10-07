@@ -349,6 +349,7 @@ fn pg_failure(error: PgError) -> LocalGitWorkerFailure {
 }
 fn git_failure(error: LocalGitError) -> LocalGitWorkerFailure {
     match error {
+        LocalGitError::Contention => LocalGitWorkerFailure::Contention,
         LocalGitError::AuthorizationUnavailable => LocalGitWorkerFailure::AuthorizationUnavailable,
         LocalGitError::BindingMismatch
         | LocalGitError::PreconditionsChanged

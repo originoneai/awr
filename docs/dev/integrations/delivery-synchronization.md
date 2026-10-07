@@ -403,6 +403,21 @@ and `preconditions_changed`; raw errors, paths and secrets are not accepted.
 Backoff preserves an associated publication. Conflict resolution never
 discards an unknown source effect to obtain a new write slot.
 
+New inspection reservations and new fact ingestion for a work item wait while
+that work has a pending source publication in the active snapshot. They return
+`ResourceConflict` without advancing the connector generation or changing fact
+heads. This admission check shares the existing authenticated project writer
+lock with source preparation and confirmation. It also covers observations
+reserved before publication preparation. Original request and event replays
+remain available; observations for other work items remain independent.
+
+An expired lease does not release this barrier: a file write may have landed
+without its database acknowledgement. The configured principal recovers the
+original journal under a new fence, observes exact bytes, and confirms or
+explicitly resolves the retained conflict before new facts can proceed. Local
+Git workers treat this coordination response as contention and use bounded
+backoff. No approval, task completion or repository effect is inferred from it.
+
 Schema 45 adds forced tenant/project RLS, scoped foreign keys and the intent
 queue. Its atomic migration backfills pending applied notifications using
 their immutable inspection, source, contract and catalog bindings. It invents

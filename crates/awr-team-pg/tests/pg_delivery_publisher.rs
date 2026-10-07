@@ -255,8 +255,17 @@ async fn independent_work_publications_preserve_each_others_current_notes() {
 async fn changed_observations_refuse_stale_intents_and_allow_safe_unwritten_withdrawal() {
     let f = setup_publisher().await;
     let before = f.bytes();
-    let p = f.prepare("prepare-old-observations").await;
     f.observe(&f.selection, "new-observations").await;
+    let p = f.prepare("prepare-old-observations").await;
+    // Normal new observations now wait for pending publication. Inject a
+    // historical head rollback explicitly to retain the stale-note safeguard.
+    // Both facts were admitted normally before preparation; no prerequisite is
+    // synthesized and the fixture never bypasses a production API for delivery.
+    f.admin.batch_execute("UPDATE awr_team.delivery_fact_heads h SET fact_id=(
+        SELECT f.id FROM awr_team.delivery_facts f JOIN awr_team.delivery_inbox i
+        ON (i.tenant_id,i.project_id,i.id)=(f.tenant_id,f.project_id,f.inbox_id)
+        WHERE i.tenant_id=h.tenant_id AND i.project_id=h.project_id AND i.connector_id=h.connector_id
+        AND i.event_id='initial' AND f.slot=h.slot) WHERE h.work_id='a'").await.unwrap();
     assert!(matches!(
         f.store
             .write_source_publication(TENANT, PROJECT, A, f.step(&p, "stale-write"))
@@ -281,6 +290,7 @@ async fn changed_observations_refuse_stale_intents_and_allow_safe_unwritten_with
             .unwrap()["replayed"],
         true
     );
+    f.observe(&f.selection, "after-withdrawal").await;
     f.publish("publish-new-observations", &f.selection).await;
     f.observe(&f.selection, "later-observations").await;
     let status = f.status().await;

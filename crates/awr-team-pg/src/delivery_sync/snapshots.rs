@@ -10,6 +10,25 @@ pub(super) struct InspectionBinding<'a> {
     pub selection_version: i64,
 }
 
+/// Authenticated writers hold the project lock. Keep this work's fact heads
+/// stable until its pending filesystem effect has a known durable outcome.
+/// Lease expiry alone cannot release an unknown effect; other work is independent.
+pub(super) async fn require_source_publication_settled(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    set: &DeliveryReadSet,
+) -> PgResult<()> {
+    let pending: bool = tx.query_one("SELECT EXISTS(SELECT 1 FROM awr_team.delivery_source_cursors c
+        JOIN awr_team.delivery_source_publications j ON (j.tenant_id,j.project_id,j.id)=(c.tenant_id,c.project_id,c.pending_publication_id)
+        WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.source_snapshot_id=$3 AND j.work_id=$4)",
+        &[&tenant,&project,&set.source_snapshot_id,&set.work_id]).await?.get(0);
+    if pending {
+        return Err(PgError::ResourceConflict);
+    }
+    Ok(())
+}
+
 /// Current selection and historical dispatched intents share the same inbox.
 /// Admission stays with the caller; this helper grants no effect capability.
 #[allow(clippy::too_many_arguments)]
@@ -24,6 +43,7 @@ pub(super) async fn reserve_bound(
     op: &str,
     request_hash: &str,
 ) -> PgResult<Value> {
+    require_source_publication_settled(tx, tenant, project, &request.read_set).await?;
     let generation = connector
         .generation
         .checked_add(1)

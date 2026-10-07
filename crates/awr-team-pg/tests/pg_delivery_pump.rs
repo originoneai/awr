@@ -7,6 +7,10 @@ mod fixture;
 mod publication;
 
 use awr_core::Id;
+use awr_team::delivery::{
+    DELIVERY_PROTOCOL, DELIVERY_PROTOCOL_VERSION, DeliveryEnvelope, DeliveryRecord, FactProvenance,
+    FactSource, VerificationOutcome, VerificationRun,
+};
 use awr_team_pg::*;
 use fixture::*;
 use publication::*;
@@ -66,6 +70,332 @@ async fn row(f: &Fixture, lease: &DeliverySyncLease) -> Value {
 
 async fn count(f: &Fixture, sql: &str) -> i64 {
     f.admin.query_one(sql, &[]).await.unwrap().get(0)
+}
+
+fn inspection(f: &Fixture, key: &str) -> ReserveDeliveryInspection {
+    ReserveDeliveryInspection {
+        request_id: key.into(),
+        read_set: f.set.clone(),
+        connector_id: "connector-a".into(),
+        connector_version: "1".into(),
+        candidate_digest: f.selection.candidate.binding.digest().unwrap(),
+        lease_seconds: 60,
+    }
+}
+
+fn observation(f: &Fixture, reserved: &Value, event: &str) -> IngestDeliveryFacts {
+    IngestDeliveryFacts {
+        request_id: format!("ingest-a-{event}"),
+        read_set: f.set.clone(),
+        connector_id: "connector-a".into(),
+        inspection_id: reserved["data"]["inspection_id"].as_str().unwrap().into(),
+        event_id: event.into(),
+        records: vec![DeliveryEnvelope {
+            protocol: DELIVERY_PROTOCOL.into(),
+            protocol_version: DELIVERY_PROTOCOL_VERSION,
+            record: DeliveryRecord::Verification(VerificationRun {
+                binding: f.selection.candidate.binding.clone(),
+                run_id: "run-a".into(),
+                check: "report".into(),
+                outcome: VerificationOutcome::Unknown,
+                result_artifact: None,
+                provenance: FactProvenance {
+                    source: FactSource::CallerDeclared,
+                    reference: "fixture://checks/result".into(),
+                    observed_at_unix_ms: None,
+                    recorded_at_unix_ms: 123,
+                },
+            }),
+        }],
+    }
+}
+
+#[tokio::test]
+async fn pending_publication_defers_new_observations_but_preserves_replays_and_other_work() {
+    let f = setup_publisher().await;
+    f.admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
+        VALUES($1,$2,'session-d','main','d','agent','cli-a','conversation-d','active',$3,1)",
+        &[&TENANT,&PROJECT,&f.set.workstream_id.to_string()]).await.unwrap();
+    let other = select(&f.reads, &f.store, "d", "session-d").await;
+    let source = take(&f, &intent(&f, "source").await, "claim", "worker-a").await;
+    f.store
+        .prepare_sync_source(TENANT, PROJECT, A, &source, 60)
+        .await
+        .unwrap();
+    let before = f.bytes();
+    let request = inspection(&f, "next-inspection");
+    for _ in 0..2 {
+        assert!(matches!(
+            f.store
+                .reserve_inspection(TENANT, PROJECT, A, request.clone())
+                .await,
+            Err(PgError::ResourceConflict)
+        ));
+    }
+    assert!(denied(
+        f.store
+            .reserve_inspection(TENANT, PROJECT, B, request.clone())
+            .await
+    ));
+    let initial = f
+        .store
+        .reserve_inspection(TENANT, PROJECT, A, inspection(&f, "inspect-a-initial"))
+        .await
+        .unwrap();
+    let original = observation(&f, &initial, "initial");
+    f.store
+        .ingest_facts(TENANT, PROJECT, A, original.clone())
+        .await
+        .unwrap();
+    let mut event_replay = original;
+    event_replay.request_id = "same-event-new-request".into();
+    assert_eq!(
+        f.store
+            .ingest_facts(TENANT, PROJECT, A, event_replay)
+            .await
+            .unwrap()["data"]["event_replayed"],
+        true
+    );
+    assert_eq!(
+        count(
+            &f,
+            "SELECT inspection_generation FROM awr_team.delivery_connectors WHERE work_id='a'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        count(&f, "SELECT count(*) FROM awr_team.delivery_facts").await,
+        1
+    );
+    assert_eq!(f.bytes(), before);
+    f.observe(&other, "independent").await;
+    assert_eq!(
+        count(
+            &f,
+            "SELECT count(*) FROM awr_team.delivery_fact_heads WHERE work_id='d'"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        f.store
+            .process_sync_intent(TENANT, PROJECT, A, &source, 60)
+            .await
+            .unwrap()["data"]["phase"],
+        "confirmed"
+    );
+    assert_eq!(
+        f.store
+            .reserve_inspection(TENANT, PROJECT, A, request)
+            .await
+            .unwrap()["data"]["generation"],
+        "2"
+    );
+    assert_eq!(
+        count(&f, "SELECT count(*) FROM awr_team.completion_receipts").await,
+        0
+    );
+}
+
+#[tokio::test]
+async fn reserved_observation_waits_for_source_confirmation_without_losing_its_request() {
+    let f = setup_publisher().await;
+    let reserved = f
+        .store
+        .reserve_inspection(TENANT, PROJECT, A, inspection(&f, "already-in-flight"))
+        .await
+        .unwrap();
+    let publication = f.prepare("prepare-between-reserve-and-ingest").await;
+    let request = observation(&f, &reserved, "after-publication");
+    let before = f.bytes();
+    assert!(matches!(
+        f.store
+            .ingest_facts(TENANT, PROJECT, A, request.clone())
+            .await,
+        Err(PgError::ResourceConflict)
+    ));
+    assert_eq!(
+        count(&f, "SELECT count(*) FROM awr_team.delivery_inbox").await,
+        1
+    );
+    assert_eq!(f.bytes(), before);
+    assert_eq!(
+        f.store
+            .write_source_publication(TENANT, PROJECT, A, f.step(&publication, "write-first"))
+            .await
+            .unwrap()["data"]["phase"],
+        "source_written"
+    );
+    assert!(matches!(
+        f.store
+            .ingest_facts(TENANT, PROJECT, A, request.clone())
+            .await,
+        Err(PgError::ResourceConflict)
+    ));
+    f.store
+        .confirm_source_publication(TENANT, PROJECT, A, f.step(&publication, "confirm-first"))
+        .await
+        .unwrap();
+    assert_eq!(f.status().await["source_synchronized"], true);
+    let ingested = f
+        .store
+        .ingest_facts(TENANT, PROJECT, A, request.clone())
+        .await
+        .unwrap();
+    let replay = f
+        .store
+        .ingest_facts(TENANT, PROJECT, A, request)
+        .await
+        .unwrap();
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(replay["data"], ingested["data"]);
+    assert_eq!(
+        replay["committed_project_revision"],
+        ingested["committed_project_revision"]
+    );
+    assert_eq!(
+        count(&f, "SELECT count(*) FROM awr_team.delivery_facts").await,
+        2
+    );
+    assert_eq!(f.status().await["source_synchronized"], false);
+    let next = queue(&f).await["intents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["kind"] == "source" && i["state"] == "pending" && i["binding_current"] == true)
+        .unwrap()
+        .clone();
+    let next = take(&f, &next, "new-facts", "worker-a").await;
+    f.store
+        .process_sync_intent(TENANT, PROJECT, A, &next, 60)
+        .await
+        .unwrap();
+    assert_eq!(f.status().await["source_synchronized"], true);
+    assert_eq!(
+        count(&f, "SELECT count(*) FROM awr_team.completion_receipts").await,
+        0
+    );
+}
+
+#[tokio::test]
+async fn lost_source_write_reply_blocks_new_generations_until_fenced_recovery() {
+    let f = setup_publisher().await;
+    let source = take(&f, &intent(&f, "source").await, "original", "worker-a").await;
+    f.store
+        .prepare_sync_source(TENANT, PROJECT, A, &source, 60)
+        .await
+        .unwrap();
+    let before = f.bytes();
+    f.admin.batch_execute("CREATE FUNCTION awr_team.lose_write_reply() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN IF NEW.event_type='delivery.source.write' THEN RAISE EXCEPTION 'synthetic reply loss'; END IF; RETURN NEW; END $$;
+        CREATE TRIGGER lose_write_reply BEFORE INSERT ON awr_team.events FOR EACH ROW EXECUTE FUNCTION awr_team.lose_write_reply()").await.unwrap();
+    assert!(matches!(
+        f.store.write_sync_source(TENANT, PROJECT, A, &source).await,
+        Err(PgError::Db(_))
+    ));
+    let landed = f.bytes();
+    assert_ne!(landed, before);
+    let modified = std::fs::metadata(f.root.join("ledger.yaml"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert_eq!(f.status().await["history"][0]["phase"], "pending");
+    f.admin.batch_execute("DROP TRIGGER lose_write_reply ON awr_team.events;
+        UPDATE awr_team.delivery_source_publications SET expires_at=clock_timestamp()-interval '1 second'").await.unwrap();
+    expire(&f, &source).await;
+    let request = inspection(&f, "wait-for-unknown-effect");
+    assert!(matches!(
+        f.store
+            .reserve_inspection(TENANT, PROJECT, A, request.clone())
+            .await,
+        Err(PgError::ResourceConflict)
+    ));
+    assert_eq!(
+        count(
+            &f,
+            "SELECT inspection_generation FROM awr_team.delivery_connectors"
+        )
+        .await,
+        1
+    );
+    let recovered = take(&f, &row(&f, &source).await, "recover-original", "worker-b").await;
+    let restarted = f.restarted();
+    assert_eq!(
+        restarted
+            .process_sync_intent(TENANT, PROJECT, A, &recovered, 60)
+            .await
+            .unwrap()["data"]["phase"],
+        "confirmed"
+    );
+    assert_eq!(f.bytes(), landed);
+    assert_eq!(
+        std::fs::metadata(f.root.join("ledger.yaml"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        modified
+    );
+    assert_eq!(f.status().await["source_synchronized"], true);
+    assert_eq!(
+        f.store
+            .reserve_inspection(TENANT, PROJECT, A, request)
+            .await
+            .unwrap()["data"]["generation"],
+        "2"
+    );
+    assert_eq!(
+        count(
+            &f,
+            "SELECT count(*) FROM awr_team.delivery_source_publications"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        count(&f, "SELECT count(*) FROM awr_team.completion_receipts").await,
+        0
+    );
+}
+
+#[tokio::test]
+async fn concurrent_observation_and_source_preparation_cannot_strand_a_journal() {
+    let f = setup_publisher().await;
+    let source = take(&f, &intent(&f, "source").await, "claim", "worker-a").await;
+    let (publication, observation) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(
+            f.store.prepare_sync_source(TENANT, PROJECT, A, &source, 60),
+            f.store
+                .reserve_inspection(TENANT, PROJECT, A, inspection(&f, "concurrent"))
+        )
+    })
+    .await
+    .unwrap();
+    match (publication, observation) {
+        (Ok(_), Err(PgError::ResourceConflict)) => {
+            f.store
+                .process_sync_intent(TENANT, PROJECT, A, &source, 60)
+                .await
+                .unwrap();
+            assert_eq!(f.status().await["source_synchronized"], true);
+        }
+        (Err(PgError::PreconditionsChanged), Ok(_)) => {
+            assert_eq!(
+                count(
+                    &f,
+                    "SELECT count(*) FROM awr_team.delivery_source_publications"
+                )
+                .await,
+                0
+            );
+            assert_eq!(f.status().await["pending_publication_id"], Value::Null);
+        }
+        results => panic!("unexpected source/observation admission: {results:?}"),
+    }
+    assert_eq!(
+        count(&f, "SELECT count(*) FROM awr_team.completion_receipts").await,
+        0
+    );
 }
 
 fn denied<T>(result: PgResult<T>) -> bool {
