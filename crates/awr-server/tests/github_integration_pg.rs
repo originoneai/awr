@@ -27,7 +27,18 @@ async fn setup_github() -> (
     GitHubIntegrator,
 ) {
     let repo = receive::Fixture::new();
-    let mut f = integration_fixture::setup_integration_with_candidate(Some(repo.candidate())).await;
+    let f = integration_fixture::setup_integration_with_candidate(Some(repo.candidate())).await;
+    configure_github(repo, f).await
+}
+
+async fn configure_github(
+    repo: receive::Fixture,
+    mut f: integration_fixture::Fixture,
+) -> (
+    receive::Fixture,
+    integration_fixture::Fixture,
+    GitHubIntegrator,
+) {
     // Identity infrastructure maps the existing worker through the public
     // authenticated domain command. No approval or check is fabricated here.
     f.store
@@ -68,6 +79,267 @@ async fn setup_github() -> (
         .unwrap();
     let integrator = repo.integrator();
     (repo, f, integrator)
+}
+
+async fn source_review(
+    simulated: bool,
+) -> (
+    receive::Fixture,
+    integration_fixture::Fixture,
+    GitHubIntegrator,
+) {
+    let repo = receive::Fixture::new();
+    repo.repo.bare(&["config", "core.logAllRefUpdates", "true"]);
+    let root = repo.repo.source_contract();
+    let path = root.join("ledger.yaml");
+    let original = std::fs::read_to_string(&path).unwrap();
+    assert!(original.contains("local_git.manifest"));
+    let mut source = original.replace("local_git.manifest", "github.manifest");
+    if simulated {
+        assert!(source.contains(integration_fixture::POLICY));
+        source = source.replace(
+            integration_fixture::POLICY,
+            awr_team::ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY,
+        );
+    }
+    std::fs::write(path, source).unwrap();
+    let checks = vec!["github.manifest".into()];
+    let f = if simulated {
+        integration_fixture::setup_source_simulated_member_integration(
+            repo.candidate(),
+            &root,
+            &checks,
+        )
+        .await
+    } else {
+        integration_fixture::setup_source_integration_with_checks(repo.candidate(), &root, &checks)
+            .await
+    };
+    let (repo, mut f, integrator) = configure_github(repo, f).await;
+    f.approve_source_review().await;
+    (repo, f, integrator)
+}
+
+#[tokio::test]
+async fn actual_source_member_review_and_rewritten_history_confirm_only_the_original_effect() {
+    for simulated in [false, true] {
+        let (repo, f, integrator) = source_review(simulated).await;
+        let before = f.store.inspect(TENANT, PROJECT, WORKER, "a").await.unwrap();
+        let verifications: Vec<_> = before["facts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["observation"]["kind"] == "verification")
+            .cloned()
+            .collect();
+        let reviews: Value = f
+            .admin
+            .query_one(
+                "SELECT jsonb_agg(to_jsonb(d) ORDER BY id) FROM awr_team.review_decisions d",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(
+            reviews[0]["approval_basis"],
+            if simulated {
+                "simulated_member_independent_review"
+            } else {
+                "agent_review"
+            }
+        );
+        let (id, lease) = ready(&f).await;
+        integrator
+            .execute(
+                &f.store,
+                WORKER,
+                f.dispatch_request("before-rewrite", &id, &lease),
+            )
+            .await
+            .unwrap();
+        assert_eq!(repo.receive.posts.load(Ordering::SeqCst), 1);
+        let rewritten = repo.repo.rewrite_main(Some(&repo.repo.base));
+        let effects = repo
+            .repo
+            .bare(&["reflog", "show", "--format=%H", "refs/heads/main"]);
+        let recovered = repo
+            .integrator()
+            .reconcile_original_current(&f.store, WORKER, &id)
+            .await
+            .unwrap();
+        assert_eq!(recovered["integration"]["data"]["state"], "confirmed");
+        assert_eq!(
+            recovered["integration"]["data"]["content_proof"]["basis"],
+            "matching_complete_snapshots"
+        );
+        assert_eq!(f.guards().await, 0);
+        let view = f
+            .store
+            .inspect_integration(TENANT, PROJECT, WORKER, "a", &id)
+            .await
+            .unwrap();
+        let confirmation = &view["confirmation"];
+        assert_eq!(
+            confirmation["receipt"]["fact_ids"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            confirmation["content_proof_facts"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let observed: DeliveryEnvelope =
+            serde_json::from_value(confirmation["envelope"].clone()).unwrap();
+        let proven: DeliveryEnvelope =
+            serde_json::from_value(confirmation["content_proof_facts"][0]["envelope"].clone())
+                .unwrap();
+        let (
+            DeliveryRecord::IntegrationObservation(observed),
+            DeliveryRecord::IntegrationContentProof(proven),
+        ) = (observed.record, proven.record)
+        else {
+            panic!("wrong original fact kinds")
+        };
+        assert!(proven.proves_observation(&observed).unwrap());
+        assert_eq!(proven.request_id.as_ref().unwrap().as_str(), id);
+        assert_eq!(proven.result_revision.as_ref().unwrap().value, rewritten);
+        let after = f.store.inspect(TENANT, PROJECT, WORKER, "a").await.unwrap();
+        let current_verifications: Vec<_> = after["facts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["observation"]["kind"] == "verification")
+            .cloned()
+            .collect();
+        assert_eq!(verifications, current_verifications);
+        let current_reviews: Value = f
+            .admin
+            .query_one(
+                "SELECT jsonb_agg(to_jsonb(d) ORDER BY id) FROM awr_team.review_decisions d",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(reviews, current_reviews);
+        assert_eq!(
+            repo.integrator()
+                .reconcile_original_current(&f.store, WORKER, &id)
+                .await
+                .unwrap()["terminal"],
+            true
+        );
+        let replay = repo
+            .integrator()
+            .execute(
+                &f.store,
+                WORKER,
+                f.dispatch_request("query-original-again", &id, &lease),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replay.report.integration_id, id);
+        assert_eq!(replay.report.outcome, IntegrationOutcome::Applied);
+        assert_eq!(repo.receive.posts.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            repo.repo
+                .bare(&["reflog", "show", "--format=%H", "refs/heads/main"]),
+            effects
+        );
+        no_completion(&f).await;
+    }
+}
+
+#[tokio::test]
+async fn nonmanifest_changes_retain_unknown_guard_until_complete_content_recovers() {
+    let (repo, f, integrator) = setup_github().await;
+    let (id, lease) = ready(&f).await;
+    integrator
+        .execute(
+            &f.store,
+            WORKER,
+            f.dispatch_request("partial-effect", &id, &lease),
+        )
+        .await
+        .unwrap();
+    repo.repo
+        .commit("outside.txt", b"Changed outside the selected manifest\n");
+    repo.repo.push_main();
+    let result = repo
+        .integrator()
+        .reconcile_original_current(&f.store, WORKER, &id)
+        .await
+        .unwrap();
+    assert_eq!(result["integration"]["data"]["state"], "unknown");
+    assert_eq!(f.guards().await, 1);
+    let stable = repo
+        .integrator()
+        .reconcile_original_current(&f.store, WORKER, &id)
+        .await
+        .unwrap();
+    assert_eq!(stable["unchanged"], true);
+    repo.repo.rewrite_main(Some(&repo.repo.base));
+    let result = repo
+        .integrator()
+        .reconcile_original_current(&f.store, WORKER, &id)
+        .await
+        .unwrap();
+    assert_eq!(result["integration"]["data"]["state"], "confirmed");
+    assert_eq!(f.guards().await, 0);
+    assert_eq!(repo.receive.posts.load(Ordering::SeqCst), 1);
+    no_completion(&f).await;
+}
+
+#[tokio::test]
+async fn legacy_original_report_stays_immutable_until_a_fresh_rewrite_observation() {
+    let (repo, f, integrator) = setup_github().await;
+    let (id, lease) = ready(&f).await;
+    let first = integrator
+        .execute(
+            &f.store,
+            WORKER,
+            f.dispatch_request("legacy-effect", &id, &lease),
+        )
+        .await
+        .unwrap();
+    let (hash, bytes) = repo.legacy_integration_report(&first.report_artifact);
+    let cached = repo
+        .integrator()
+        .query(&f.store, WORKER, &id, &first.report.inspection_id)
+        .await
+        .unwrap();
+    assert_eq!(cached.records.len(), 1);
+    assert!(cached.report.content_witness.is_none());
+    assert!(
+        cached
+            .report
+            .observation
+            .as_ref()
+            .unwrap()
+            .content_witness
+            .is_none()
+    );
+    assert_eq!(repo.integrator().report_bytes(&hash).unwrap(), bytes);
+    repo.repo.rewrite_main(Some(&repo.repo.base));
+    let fresh = repo
+        .integrator()
+        .reconcile_original_current(&f.store, WORKER, &id)
+        .await
+        .unwrap();
+    assert_eq!(fresh["integration"]["data"]["state"], "confirmed");
+    assert_eq!(
+        fresh["integration"]["data"]["content_proof"]["basis"],
+        "matching_complete_snapshots"
+    );
+    assert_eq!(repo.integrator().report_bytes(&hash).unwrap(), bytes);
+    assert_eq!(repo.receive.posts.load(Ordering::SeqCst), 1);
+    no_completion(&f).await;
 }
 
 async fn ready(f: &integration_fixture::Fixture) -> (String, String) {
@@ -252,7 +524,7 @@ async fn concurrent_original_queries_converge_without_duplicate_confirmation() {
     for field in ["inspections", "inbox", "facts"] {
         assert_eq!(
             after[field].as_i64().unwrap(),
-            before[field].as_i64().unwrap() + 1
+            before[field].as_i64().unwrap() + if field == "facts" { 2 } else { 1 }
         );
     }
     assert_eq!(after["reviews"], before["reviews"]);
@@ -317,7 +589,7 @@ async fn failed_original_admission_recovers_only_expired_observation_and_never_r
     );
     assert_eq!(
         after["facts"].as_i64().unwrap(),
-        baseline["facts"].as_i64().unwrap() + 1
+        baseline["facts"].as_i64().unwrap() + 2
     );
     assert_eq!(repo.receive.posts.load(Ordering::SeqCst), 0);
     no_completion(&f).await;
@@ -452,7 +724,7 @@ async fn historical_terminal_stays_bound_while_current_query_reports_target_drif
 
 #[tokio::test]
 async fn scheduled_original_rejects_corrupt_proof_without_overwriting_or_redispatch() {
-    for damage in ["report", "index", "envelope"] {
+    for damage in ["report", "index", "envelope", "content-envelope"] {
         let (repo, f, integrator) = setup_github().await;
         let (id, lease) = ready(&f).await;
         drop(f.dispatched(&id, &lease).await);
@@ -506,6 +778,11 @@ async fn scheduled_original_rejects_corrupt_proof_without_overwriting_or_redispa
                 f.admin.execute("UPDATE awr_team.delivery_facts SET envelope_json=jsonb_set(envelope_json,
                 '{record,data,external_reference}','\"inconsistent-original-reference\"') WHERE id=$1",
                 &[&proof["fact_id"].as_str().unwrap()]).await.unwrap();
+            }
+            "content-envelope" => {
+                f.admin.execute("UPDATE awr_team.delivery_facts SET envelope_json=jsonb_set(envelope_json,
+                '{record,data,observation_reference}','\"inconsistent-content-reference\"') WHERE id=$1",
+                &[&proof["content_proof_facts"][0]["fact_id"].as_str().unwrap()]).await.unwrap();
             }
             _ => unreachable!(),
         }

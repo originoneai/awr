@@ -20,6 +20,9 @@ use tokio::sync::Semaphore;
 use url::Url;
 use zeroize::Zeroizing;
 
+#[path = "github_content.rs"]
+mod content;
+
 pub const MANIFEST_CHECK: &str = "github.manifest";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,6 +140,9 @@ pub struct GitHubReport {
     pub target_stable: bool,
     pub target_precondition_matches: bool,
     pub integration_outcome: IntegrationOutcome,
+    /// Historical reports retain their exact bytes and never invent a witness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_witness: Option<IntegrationContentWitness>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -553,22 +559,25 @@ impl GitHubAdapter {
                 provenance: provenance.clone(),
             })));
         }
+        let observation = IntegrationObservation {
+            binding: c.binding.clone(),
+            request_id: None,
+            external_reference: format!(
+                "github-target:{}:{}",
+                self.config.repository_id, self.config.target_branch
+            ),
+            outcome: report.integration_outcome.clone(),
+            result_revision: report.target_revision.clone(),
+            contains_manifest_digest: (report.integration_outcome == IntegrationOutcome::Applied)
+                .then(|| c.binding.manifest_digest.clone()),
+            provenance,
+        };
         records.push(wrap(DeliveryRecord::IntegrationObservation(
-            IntegrationObservation {
-                binding: c.binding.clone(),
-                request_id: None,
-                external_reference: format!(
-                    "github-target:{}:{}",
-                    self.config.repository_id, self.config.target_branch
-                ),
-                outcome: report.integration_outcome.clone(),
-                result_revision: report.target_revision.clone(),
-                contains_manifest_digest: (report.integration_outcome
-                    == IntegrationOutcome::Applied)
-                    .then(|| c.binding.manifest_digest.clone()),
-                provenance,
-            },
+            observation.clone(),
         )));
+        if let Some(witness) = &report.content_witness {
+            records.push(content_record(&observation, witness.clone()));
+        }
         for r in &records {
             r.validate().map_err(|_| GitHubError::ReportConflict)?;
         }
@@ -710,8 +719,7 @@ impl<'a> Query<'a> {
             return Err(GitHubError::ProviderPolicyUnsupported);
         }
         let source = c.binding.source_revision.as_ref().unwrap();
-        let comparison =
-            self.required(&["compare", &format!("{}...{}", expected.value, source.value)])?;
+        let comparison = self.comparison(&expected.value, &source.value)?;
         if sha(&comparison["base_commit"]["sha"])? != expected.value
             || sha(&comparison["merge_base_commit"]["sha"])? != expected.value
             || !matches!(comparison["status"].as_str(), Some("ahead" | "identical"))
@@ -1034,34 +1042,32 @@ impl<'a> Query<'a> {
         };
         let target = self.target()?;
         let contains = if let Some(target) = &target {
-            if target == source {
-                Some(true)
-            } else {
-                let comparison =
-                    self.required(&["compare", &format!("{}...{}", source.value, target.value)])?;
-                if sha(&comparison["base_commit"]["sha"])? != source.value {
-                    return Err(GitHubError::BindingMismatch);
-                }
-                let ancestor = sha(&comparison["merge_base_commit"]["sha"])? == source.value;
-                match comparison["status"].as_str() {
-                    Some("ahead" | "identical") if ancestor => Some(true),
-                    Some("behind" | "diverged") if !ancestor => Some(false),
-                    _ => return Err(GitHubError::InvalidResponse),
-                }
-            }
+            Some(self.contains(&source.value, &target.value)?)
         } else {
             None
         };
-        let target_artifacts =
-            if contains == Some(true) && manifest_outcome == VerificationOutcome::Passed {
-                let root = self.commit(&target.as_ref().unwrap().value)?;
-                self.artifacts(c, &root)?
-            } else {
-                Vec::new()
-            };
-        let target_stable = target == self.target()?;
+        let mut content_witness = self.content_witness(c, &root, target.as_ref())?;
+        let usable_content = !matches!(
+            content_witness,
+            IntegrationContentWitness::Unavailable { .. }
+        );
+        let target_artifacts = if (contains == Some(true) || usable_content)
+            && manifest_outcome == VerificationOutcome::Passed
+        {
+            let root = self.commit(&target.as_ref().unwrap().value)?;
+            self.artifacts(c, &root)?
+        } else {
+            Vec::new()
+        };
         let pull_stable = !current_pr_and_checks || pull == self.pull(&source.value)?;
         self.repository()?;
+        // The final ref barrier follows every proof, artifact and PR read.
+        let target_stable = target == self.target()?;
+        if !target_stable || !pull_stable {
+            content_witness = IntegrationContentWitness::Unavailable {
+                reason: ContentProofUnavailableReason::TargetUnstable,
+            };
+        }
         // A PR that moved while checking cannot carry a terminal verification.
         let manifest_outcome = if pull_stable {
             manifest_outcome
@@ -1075,7 +1081,7 @@ impl<'a> Query<'a> {
         }
         let integration_outcome = if !target_stable || !pull_stable {
             IntegrationOutcome::Unknown
-        } else if contains == Some(true)
+        } else if usable_content
             && manifest_outcome == VerificationOutcome::Passed
             && target_artifacts
                 .iter()
@@ -1124,6 +1130,7 @@ impl<'a> Query<'a> {
             target_stable,
             target_precondition_matches: precondition,
             integration_outcome,
+            content_witness: Some(content_witness),
         };
         if serde_json::to_vec(&report)
             .map_err(|_| GitHubError::ReportUnavailable)?
@@ -1133,5 +1140,23 @@ impl<'a> Query<'a> {
             return Err(GitHubError::OutputLimit);
         }
         Ok(report)
+    }
+}
+
+pub(super) fn content_record(
+    observation: &IntegrationObservation,
+    witness: IntegrationContentWitness,
+) -> DeliveryEnvelope {
+    DeliveryEnvelope {
+        protocol: DELIVERY_PROTOCOL.into(),
+        protocol_version: DELIVERY_PROTOCOL_VERSION,
+        record: DeliveryRecord::IntegrationContentProof(IntegrationContentProof {
+            binding: observation.binding.clone(),
+            request_id: observation.request_id.clone(),
+            observation_reference: observation.external_reference.clone(),
+            result_revision: observation.result_revision.clone(),
+            witness,
+            provenance: observation.provenance.clone(),
+        }),
     }
 }

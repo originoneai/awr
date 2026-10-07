@@ -24,6 +24,7 @@ enum Slot {
     Verification(String),
     ChangeRequest(String),
     Target(String),
+    Content(String),
 }
 
 impl Slot {
@@ -32,6 +33,7 @@ impl Slot {
             Self::Verification(check) => format!("verification:{check}"),
             Self::ChangeRequest(_) => "change_request".into(),
             Self::Target(_) => "integration_observation".into(),
+            Self::Content(_) => "integration_content_proof".into(),
         }
     }
 
@@ -48,6 +50,11 @@ impl Slot {
             Self::Target(reference) => {
                 observation["kind"] == "integration_observation"
                     && observation["external_reference"] == *reference
+            }
+            Self::Content(reference) => {
+                observation["kind"] == "integration_content_proof"
+                    && observation["observation_reference"] == *reference
+                    && observation["request_id"].is_null()
             }
         }
     }
@@ -73,6 +80,11 @@ impl Slot {
                 report.target_precondition_matches,
                 report.integration_outcome
             ]),
+            Self::Content(_) => json!([
+                report.source_revision,
+                report.target_revision,
+                report.content_witness
+            ]),
         }
     }
 }
@@ -85,6 +97,7 @@ fn summary(record: &DeliveryRecord, recorded_at: u64) -> Option<Value> {
         DeliveryRecord::Verification(r) => &mut r.provenance,
         DeliveryRecord::ChangeRequest(r) => &mut r.provenance,
         DeliveryRecord::IntegrationObservation(r) => &mut r.provenance,
+        DeliveryRecord::IntegrationContentProof(r) => &mut r.provenance,
         _ => return None,
     };
     provenance.recorded_at_unix_ms = recorded_at;
@@ -96,6 +109,9 @@ fn summary(record: &DeliveryRecord, recorded_at: u64) -> Option<Value> {
         DeliveryRecord::IntegrationObservation(r) => json!({"kind":"integration_observation",
             "external_reference":r.external_reference,"outcome":r.outcome,
             "result_revision":r.result_revision,"provenance":r.provenance}),
+        DeliveryRecord::IntegrationContentProof(r) => json!({"kind":"integration_content_proof",
+            "request_id":r.request_id,"observation_reference":r.observation_reference,
+            "result_revision":r.result_revision,"witness_kind":r.witness.kind(),"provenance":r.provenance}),
         _ => return None,
     })
 }
@@ -117,6 +133,10 @@ impl GitHubAdapter {
             )));
         }
         slots.push(Slot::Target(format!(
+            "github-target:{}:{}",
+            self.config.repository_id, self.config.target_branch
+        )));
+        slots.push(Slot::Content(format!(
             "github-target:{}:{}",
             self.config.repository_id, self.config.target_branch
         )));
