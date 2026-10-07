@@ -2,6 +2,30 @@
 #[path = "fixtures/local_git.rs"]
 mod git;
 use awr_server::delivery_adapter::{LocalGitError, LocalGitIntegrationConfig, LocalGitIntegrator};
+use awr_team::delivery::{IntegrationContentWitness, IntegrationOutcome};
+
+#[tokio::test]
+async fn observed_history_rewrite_adds_no_repository_effect_capability() {
+    let f = git::GitFixture::new(false);
+    let target = f.rewrite_main(Some(&f.base));
+    let observer = f.adapter().await;
+    let observed = observer
+        .inspect(&f.candidate(), "external-rewrite")
+        .await
+        .unwrap();
+    assert_eq!(
+        observed.report.integration_outcome,
+        IntegrationOutcome::Applied
+    );
+    assert!(matches!(
+        observed.report.content_witness,
+        Some(IntegrationContentWitness::MatchingCompleteSnapshots { .. })
+    ));
+    assert!(!observer.capabilities().integration_requests);
+    assert!(!observer.capabilities().change_requests);
+    assert_eq!(f.bare(&["rev-parse", "refs/heads/main"]), target);
+    assert!(!f.config.report_directory.join("attempts").exists());
+}
 
 #[tokio::test]
 async fn integration_is_explicitly_enabled_and_observer_remains_read_only() {

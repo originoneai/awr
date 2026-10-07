@@ -9,6 +9,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+#[path = "local_git_content.rs"]
+mod content;
+
 pub const MANIFEST_CHECK: &str = "local_git.manifest";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -72,6 +75,9 @@ pub struct LocalGitReport {
     pub target_stable: bool,
     pub target_precondition_matches: bool,
     pub integration_outcome: IntegrationOutcome,
+    /// Absent in immutable legacy reports; absence never implies a witness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_witness: Option<IntegrationContentWitness>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -399,7 +405,17 @@ impl LocalGitAdapter {
             observed_at_unix_ms: Some(report.observed_at_unix_ms),
             recorded_at_unix_ms: report.observed_at_unix_ms,
         };
-        let records = vec![
+        let observation = IntegrationObservation {
+            binding: candidate.binding.clone(),
+            request_id: None,
+            external_reference: format!("local-git-target:{}", self.config.adapter_id),
+            outcome: report.integration_outcome.clone(),
+            result_revision: report.target_revision.clone(),
+            contains_manifest_digest: (report.integration_outcome == IntegrationOutcome::Applied)
+                .then(|| candidate.binding.manifest_digest.clone()),
+            provenance,
+        };
+        let mut records = vec![
             DeliveryEnvelope {
                 protocol: DELIVERY_PROTOCOL.into(),
                 protocol_version: DELIVERY_PROTOCOL_VERSION,
@@ -409,25 +425,18 @@ impl LocalGitAdapter {
                     check: MANIFEST_CHECK.into(),
                     outcome: report.manifest_outcome.clone(),
                     result_artifact: Some(report_artifact.clone()),
-                    provenance: provenance.clone(),
+                    provenance: observation.provenance.clone(),
                 }),
             },
             DeliveryEnvelope {
                 protocol: DELIVERY_PROTOCOL.into(),
                 protocol_version: DELIVERY_PROTOCOL_VERSION,
-                record: DeliveryRecord::IntegrationObservation(IntegrationObservation {
-                    binding: candidate.binding.clone(),
-                    request_id: None,
-                    external_reference: format!("local-git-target:{}", self.config.adapter_id),
-                    outcome: report.integration_outcome.clone(),
-                    result_revision: report.target_revision.clone(),
-                    contains_manifest_digest: (report.integration_outcome
-                        == IntegrationOutcome::Applied)
-                        .then(|| candidate.binding.manifest_digest.clone()),
-                    provenance,
-                }),
+                record: DeliveryRecord::IntegrationObservation(observation.clone()),
             },
         ];
+        if let Some(witness) = &report.content_witness {
+            records.push(content_record(&observation, witness.clone()));
+        }
         for record in &records {
             record
                 .validate()
@@ -662,7 +671,14 @@ impl LocalGitAdapter {
         } else {
             None
         };
-        let target_artifacts = if graph_contains_source == Some(true)
+        let mut content_witness = self
+            .content_witness(candidate, target_revision.as_ref(), source_available)
+            .await;
+        let usable_content = !matches!(
+            content_witness,
+            IntegrationContentWitness::Unavailable { .. }
+        );
+        let target_artifacts = if (graph_contains_source == Some(true) || usable_content)
             && manifest_outcome == VerificationOutcome::Passed
         {
             self.artifacts(
@@ -675,9 +691,14 @@ impl LocalGitAdapter {
             vec![]
         };
         let target_stable = target_revision == self.target().await?;
+        if !target_stable {
+            content_witness = IntegrationContentWitness::Unavailable {
+                reason: ContentProofUnavailableReason::TargetUnstable,
+            };
+        }
         let integration_outcome = if !target_stable {
             IntegrationOutcome::Unknown
-        } else if graph_contains_source == Some(true)
+        } else if usable_content
             && manifest_outcome == VerificationOutcome::Passed
             && target_artifacts
                 .iter()
@@ -720,6 +741,7 @@ impl LocalGitAdapter {
             target_stable,
             target_precondition_matches,
             integration_outcome,
+            content_witness: Some(content_witness),
         };
         if serde_json::to_vec(&report)
             .map_err(|_| LocalGitError::ReportUnavailable)?
@@ -729,5 +751,23 @@ impl LocalGitAdapter {
             return Err(LocalGitError::OutputLimit);
         }
         Ok(report)
+    }
+}
+
+pub(super) fn content_record(
+    observation: &IntegrationObservation,
+    witness: IntegrationContentWitness,
+) -> DeliveryEnvelope {
+    DeliveryEnvelope {
+        protocol: DELIVERY_PROTOCOL.into(),
+        protocol_version: DELIVERY_PROTOCOL_VERSION,
+        record: DeliveryRecord::IntegrationContentProof(IntegrationContentProof {
+            binding: observation.binding.clone(),
+            request_id: observation.request_id.clone(),
+            observation_reference: observation.external_reference.clone(),
+            result_revision: observation.result_revision.clone(),
+            witness,
+            provenance: observation.provenance.clone(),
+        }),
     }
 }

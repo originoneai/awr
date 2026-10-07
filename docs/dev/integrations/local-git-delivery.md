@@ -47,13 +47,33 @@ Other required checks remain explicitly unsupported in the report and absent
 from observed verification facts. A missing/unavailable revision, unsupported
 artifact or exceeded content budget stays unknown; a measured mismatch fails.
 
-Integration is observed as applied only when the source commit is an ancestor
-of the observed target commit, every manifest artifact still matches in that
-target, and the target reference remains unchanged across the inspection.
-Matching trees without ancestry, squash/rebase inclusion, replaced artifacts
-and uncertain queries do not prove integration. A missing or not-yet-containing
-target remains pending. Observing a manually performed push does not prove that
-AWR requested or approved it; `request_id` remains absent.
+Integration is observed as applied only with a usable complete-content witness,
+matching manifest bytes and a stable target reference. The witness distinguishes:
+
+- `exact_revision`: the actual target is the same immutable Git commit as the
+  selected source. Missing-target creation retains this ordinary behavior.
+- `matching_complete_snapshots`: the actual commits differ, their **whole** Git
+  trees match, and the declared exact target base is an ancestor of both commits.
+  The source need not be an ancestor of a rewritten result. Fixed bounded reads
+  resolve SHA-1/SHA-256 tree objects and check their complete reachable object
+  graph, including files and modes outside the manifest. No missing object is
+  fetched. The final target read occurs after these queries and artifact reads.
+- `unavailable`: no usable proof was obtained. Finite reasons distinguish missing
+  observations/history, changed content/base, unstable targets and unsupported
+  formats. A matching selected subset or a caller flag cannot establish equality.
+
+This supports read-only recognition of squash/rebase results under the unchanged
+declared base. A different base, file omission, unrelated content or mode change,
+missing nonmanifest object, or target race cannot confirm the old candidate.
+Exact whole-snapshot equality is deliberately conservative: legitimate changes
+that produce a different tree need a new candidate, verification and review.
+`graph_contains_source` still reports actual ancestry; it is not rewritten to
+true when complete trees establish equality.
+
+A missing or not-yet-containing target remains pending; uncertain application
+remains unconfirmed. Observing an operator's push or rewrite does not establish
+that AWR requested or approved it; observation-only `request_id` remains absent.
+The observer performs no squash, rebase, merge, push or reference mutation.
 
 Capabilities advertise observation and polling, with integration requests,
 change requests and notifications disabled. These flags never grant permission.
@@ -199,7 +219,7 @@ or reconstructed store never launches another command for that intent.
 
 `query(store, credential, integration_id, inspection_id)` observes the original
 request without obtaining a lease or permit. Application requires a stable actual
-target that includes the original source and exact manifest bytes. A recorded
+target with a usable complete-content witness and exact manifest bytes. A recorded
 pre-command rejection can establish no effect. A failed/launched command, missing
 result or unchanged target remains **unknown** unless application can be proven;
 absence of a change is not permission to retry. Unknown results retain the store's
@@ -214,7 +234,12 @@ repository facts without recreating the missing history or repeating the effect.
 
 `reconcile(store, credential, LocalGitIntegrationPollRequest)` reserves a current
 system connector inspection for the immutable original dispatch, ingests its
-request-bound neutral observation, and confirms that effect. Its read set and
+request-bound neutral observation and its independent content-proof record in
+the **same** reserved inbox batch, and confirms that effect. The observation is
+the first record, preserving the original confirmation fact identity. A changed
+Git result can settle only the original request under its original connector
+version with matching candidate/result/report provenance. Unavailable proof
+keeps the target guard; it never authorizes redispatch. Its read set and
 connector version describe **current admission**. Source, selection or ownership
 changes preserve the old candidate's historical binding; they cannot promote it
 to acceptance of the new work version. The same poll ID recovers the durable
@@ -222,6 +247,13 @@ receipt after restart. Confirmation, task acceptance and authoritative source
 publication remain separate; this entry point never completes a task.
 
 ## Reports, retry and current facts
+
+New reports include an optional typed `content_witness`. Missing legacy fields
+remain absent and emit no invented proof record. Existing version-one archives
+and their exact bytes remain readable without backfilling or overwriting them;
+a fresh inspection is required to observe new proof. Integration reports retain
+an explicit unavailable witness even if a bounded repository observation fails.
+An archive's presence never establishes current connector authority.
 
 Reports contain bound revision IDs, measured hashes/lengths, finite outcomes and
 the actual observation time. Complete files are published immutably, indexed by
@@ -263,8 +295,9 @@ It derives admission from the authenticated schedule and requires the configured
 no caller identity, path, approval or read set. The optional server worker uses
 this entry point. Explicit retries of a published poll still use `reconcile`.
 
-Every poll probes the actual bounded Git state. It compares source verification
-and target integration separately with current facts from that connector and
+Every poll probes the actual bounded Git state. It compares source verification,
+target integration and complete-content proof as three independent slots with
+current facts from that connector and
 SHA-verified immutable reports. Report timestamps and inspection IDs are excluded
 from comparison. Source revisions, measured artifact hashes/lengths, outcomes,
 unsupported checks, target contents/ancestry and stability remain significant.
@@ -272,8 +305,10 @@ When the preliminary probe matches current proof, it publishes no report,
 inspection, fact or notification. Restart
 uses the same persisted proof and actual Git probe, without an in-memory cache.
 
-Target-only changes publish only integration observations and preserve the
-original source verification run and fact. A missing, corrupt, stale or mismatched
+Target-only changes publish changed integration/content slots and preserve the
+original source verification run and fact. A new unavailable content observation
+replaces its old usable proof without inheriting it. Upgrading an otherwise
+unchanged legacy batch can publish only the new proof slot. A missing, corrupt, stale or mismatched
 proof requires a fresh reserved observation. A truncated snapshot that omits a
 needed slot is an explicit bounded-response error, not proof of absence.
 Changed observations share deterministic reservation identities based on actual
@@ -297,10 +332,12 @@ and selection changes remain checked on every poll and domain write.
 separately queries the authenticated original dispatch. Its confirmation snapshot
 contains the exact fact envelope, observation receipt and inspection/connector
 binding. The worker verifies immutable report bytes and the complete original
-record, accounting for the server-owned recording time separately from Git's
+record and every original content-proof envelope, accounting for the
+server-owned recording time separately from Git's
 observation time. It then compares a fresh bounded Git probe, excluding only
 report timestamps and inspection IDs. Attempt/result state, candidate, measured
-contents and integration outcome remain significant.
+contents, complete-content witness and integration outcome remain significant.
+Missing or mismatched original proof cannot become an unchanged equality result.
 
 An unchanged unknown query publishes no inspection, fact or confirmation, even
 after reconstruction. Missing/corrupt proof requires a fresh reserved observation

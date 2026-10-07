@@ -67,6 +67,365 @@ async fn no_completion(f: &integration_fixture::Fixture) {
     assert_eq!(count, 0);
 }
 
+async fn source_review(repo: &git::GitFixture, simulated: bool) -> integration_fixture::Fixture {
+    let root = repo.source_contract();
+    if simulated {
+        let path = root.join("ledger.yaml");
+        let source = std::fs::read_to_string(&path).unwrap();
+        assert!(source.contains(integration_fixture::POLICY));
+        std::fs::write(
+            path,
+            source.replace(
+                integration_fixture::POLICY,
+                awr_team::ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY,
+            ),
+        )
+        .unwrap();
+    }
+    let candidate = repo.integration_candidate();
+    let mut f = if simulated {
+        integration_fixture::setup_source_simulated_member_integration(
+            candidate,
+            &root,
+            &["local_git.manifest".into()],
+        )
+        .await
+    } else {
+        integration_fixture::setup_source_integration(candidate, &root).await
+    };
+    repo.adapter()
+        .await
+        .reconcile_current(&f.store, WORKER)
+        .await
+        .unwrap();
+    f.approve_source_review().await;
+    f
+}
+
+async fn review_decisions(f: &integration_fixture::Fixture) -> Vec<Value> {
+    f.admin
+        .query(
+            "SELECT to_jsonb(d) FROM awr_team.review_decisions d ORDER BY id",
+            &[],
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.get(0))
+        .collect()
+}
+
+async fn verification_facts(f: &integration_fixture::Fixture) -> Vec<Value> {
+    let view = f.store.inspect(TENANT, PROJECT, WORKER, "a").await.unwrap();
+    view["facts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["observation"]["kind"] == "verification")
+        .cloned()
+        .collect()
+}
+
+#[tokio::test]
+async fn real_source_review_and_rewritten_history_confirm_the_original_dispatch() {
+    for sha256 in [false, true] {
+        for simulated in [false, true] {
+            let repo = git::GitFixture::integration(sha256);
+            repo.bare(&["config", "core.logAllRefUpdates", "true"]);
+            let f = source_review(&repo, simulated).await;
+            let reviews = review_decisions(&f).await;
+            assert_eq!(reviews.len(), 1);
+            assert_eq!(
+                reviews[0]["approval_basis"],
+                if simulated {
+                    "simulated_member_independent_review"
+                } else {
+                    "agent_review"
+                }
+            );
+            if simulated {
+                assert_eq!(
+                    reviews[0]["independence_kind"],
+                    "simulated_member_independent"
+                );
+            }
+            let verification = verification_facts(&f).await;
+            assert_eq!(verification.len(), 1);
+            let (id, lease) = ready(&f).await;
+            let dispatched = open(&repo)
+                .await
+                .execute(
+                    &f.store,
+                    WORKER,
+                    f.dispatch_request("effect-before-rewrite", &id, &lease),
+                )
+                .await
+                .unwrap();
+            assert_eq!(dispatched.report.outcome, IntegrationOutcome::Applied);
+            assert_eq!(repo.bare(&["rev-parse", "refs/heads/main"]), repo.source);
+            // Lose confirmation, then observe an operator-performed history rewrite.
+            let rewritten = repo.rewrite_main(Some(&repo.base));
+            let before = repo.bare(&["reflog", "show", "--format=%H", "refs/heads/main"]);
+            let store = DeliverySyncStore::from_config(f.config.clone());
+            let reconstructed = open(&repo).await;
+            let receipt = reconstructed
+                .reconcile_original_current(&store, WORKER, &id)
+                .await
+                .unwrap();
+            assert_eq!(receipt["integration"]["data"]["state"], "confirmed");
+            assert_eq!(
+                receipt["integration"]["data"]["content_proof"]["basis"],
+                "matching_complete_snapshots"
+            );
+            assert_eq!(f.guards().await, 0);
+            let view = f
+                .store
+                .inspect_integration(TENANT, PROJECT, WORKER, "a", &id)
+                .await
+                .unwrap();
+            let confirmation = &view["confirmation"];
+            let proofs = confirmation["content_proof_facts"].as_array().unwrap();
+            assert_eq!(proofs.len(), 1);
+            assert_eq!(
+                confirmation["receipt"]["fact_ids"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                2
+            );
+            assert_eq!(confirmation["receipt"]["fact_ids"][1], proofs[0]["fact_id"]);
+            assert_eq!(confirmation["envelope"]["record"]["data"]["request_id"], id);
+            assert_eq!(proofs[0]["envelope"]["record"]["data"]["request_id"], id);
+            assert_eq!(
+                proofs[0]["envelope"]["record"]["data"]["result_revision"]["value"],
+                rewritten
+            );
+            let observed: DeliveryEnvelope =
+                serde_json::from_value(confirmation["envelope"].clone()).unwrap();
+            let proven: DeliveryEnvelope =
+                serde_json::from_value(proofs[0]["envelope"].clone()).unwrap();
+            let (
+                DeliveryRecord::IntegrationObservation(observed),
+                DeliveryRecord::IntegrationContentProof(proven),
+            ) = (observed.record, proven.record)
+            else {
+                panic!("wrong original proof kinds")
+            };
+            assert!(proven.proves_observation(&observed).unwrap());
+            assert_eq!(review_decisions(&f).await, reviews);
+            assert_eq!(verification_facts(&f).await, verification);
+            assert!(
+                reconstructed
+                    .reconcile_original_current(&store, WORKER, &id)
+                    .await
+                    .unwrap()["terminal"]
+                    .as_bool()
+                    .unwrap()
+            );
+            // A replay returns the observed original attempt, without a new
+            // execution permit. Success here is a query receipt, not an effect.
+            let replay = reconstructed
+                .execute(
+                    &store,
+                    WORKER,
+                    f.dispatch_request("attempted-redispatch", &id, &lease),
+                )
+                .await
+                .unwrap();
+            assert_eq!(replay.report.integration_id, id);
+            assert_eq!(replay.report.outcome, IntegrationOutcome::Applied);
+            assert_eq!(
+                replay
+                    .report
+                    .observation
+                    .as_ref()
+                    .unwrap()
+                    .target_revision
+                    .as_ref()
+                    .unwrap()
+                    .value,
+                rewritten
+            );
+            assert_eq!(
+                repo.bare(&["reflog", "show", "--format=%H", "refs/heads/main"]),
+                before
+            );
+            no_completion(&f).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn partial_rewrite_keeps_unknown_guard_until_actual_complete_content_recovers() {
+    let repo = git::GitFixture::integration(false);
+    repo.bare(&["config", "core.logAllRefUpdates", "true"]);
+    let f = source_review(&repo, false).await;
+    let integrator = open(&repo).await;
+    let (id, lease) = ready(&f).await;
+    integrator
+        .execute(
+            &f.store,
+            WORKER,
+            f.dispatch_request("original-effect", &id, &lease),
+        )
+        .await
+        .unwrap();
+    repo.commit("README.md", b"unapproved content outside the manifest\n");
+    let tree = repo.git(&["rev-parse", "HEAD^{tree}"]);
+    repo.publish_tree(&tree, Some(&repo.base));
+    let before = repo.bare(&["reflog", "show", "--format=%H", "refs/heads/main"]);
+    let unknown = open(&repo)
+        .await
+        .reconcile_original_current(&f.store, WORKER, &id)
+        .await
+        .unwrap();
+    assert_eq!(unknown["integration"]["data"]["state"], "unknown");
+    assert_eq!(f.guards().await, 1);
+    let view = f
+        .store
+        .inspect_integration(TENANT, PROJECT, WORKER, "a", &id)
+        .await
+        .unwrap();
+    assert_eq!(
+        view["confirmation"]["content_proof_facts"][0]["envelope"]["record"]["data"]["witness"],
+        json!({"kind":"unavailable","reason":"content_changed"})
+    );
+    assert_eq!(
+        open(&repo)
+            .await
+            .reconcile_original_current(&f.store, WORKER, &id)
+            .await
+            .unwrap()["unchanged"],
+        true
+    );
+    assert_eq!(
+        repo.bare(&["reflog", "show", "--format=%H", "refs/heads/main"]),
+        before
+    );
+    assert!(
+        integrator
+            .execute(
+                &f.store,
+                WORKER,
+                f.dispatch_request("no-second-effect", &id, &lease)
+            )
+            .await
+            .is_ok()
+    );
+    assert_eq!(
+        repo.bare(&["reflog", "show", "--format=%H", "refs/heads/main"]),
+        before
+    );
+    repo.rewrite_main(Some(&repo.base));
+    let confirmed = open(&repo)
+        .await
+        .reconcile_original_current(&f.store, WORKER, &id)
+        .await
+        .unwrap();
+    assert_eq!(confirmed["integration"]["data"]["state"], "confirmed");
+    assert_eq!(f.guards().await, 0);
+    no_completion(&f).await;
+}
+
+#[tokio::test]
+async fn changed_original_content_envelope_requires_a_fresh_actual_query() {
+    let repo = git::GitFixture::integration(false);
+    let f = source_review(&repo, false).await;
+    let integrator = open(&repo).await;
+    let (id, lease) = ready(&f).await;
+    drop(f.dispatched(&id, &lease).await);
+    let first = integrator
+        .reconcile_original_current(&f.store, WORKER, &id)
+        .await
+        .unwrap();
+    assert_eq!(first["integration"]["data"]["state"], "unknown");
+    assert_eq!(
+        integrator
+            .reconcile_original_current(&f.store, WORKER, &id)
+            .await
+            .unwrap()["unchanged"],
+        true
+    );
+    let view = f
+        .store
+        .inspect_integration(TENANT, PROJECT, WORKER, "a", &id)
+        .await
+        .unwrap();
+    let proof = view["confirmation"]["content_proof_facts"][0]["fact_id"]
+        .as_str()
+        .unwrap();
+    f.admin.execute("UPDATE awr_team.delivery_facts SET envelope_json=jsonb_set(envelope_json,'{record,data,witness,reason}','\"not_observed\"') WHERE id=$1", &[&proof]).await.unwrap();
+    let before = repo.bare(&["for-each-ref", "--format=%(refname) %(objectname)"]);
+    let repaired = open(&repo)
+        .await
+        .reconcile_original_current(&f.store, WORKER, &id)
+        .await
+        .unwrap();
+    assert_eq!(repaired["unchanged"], false);
+    assert_eq!(repaired["integration"]["data"]["state"], "unknown");
+    assert_eq!(f.guards().await, 1);
+    assert_eq!(
+        repo.bare(&["for-each-ref", "--format=%(refname) %(objectname)"]),
+        before
+    );
+    assert_eq!(
+        open(&repo)
+            .await
+            .reconcile_original_current(&f.store, WORKER, &id)
+            .await
+            .unwrap()["unchanged"],
+        true
+    );
+    no_completion(&f).await;
+}
+
+#[tokio::test]
+async fn legacy_integration_report_stays_immutable_before_a_new_rewrite_observation() {
+    let repo = git::GitFixture::integration(false);
+    let f = source_review(&repo, false).await;
+    let integrator = open(&repo).await;
+    let (id, lease) = ready(&f).await;
+    let first = integrator
+        .execute(
+            &f.store,
+            WORKER,
+            f.dispatch_request("legacy-effect", &id, &lease),
+        )
+        .await
+        .unwrap();
+    let (hash, bytes) = repo.legacy_report(&first.report_artifact);
+    let legacy = open(&repo)
+        .await
+        .query(&f.store, WORKER, &id, &first.report.inspection_id)
+        .await
+        .unwrap();
+    assert_eq!(legacy.records.len(), 1);
+    assert!(legacy.report.content_witness.is_none());
+    assert!(
+        legacy
+            .report
+            .observation
+            .as_ref()
+            .unwrap()
+            .content_witness
+            .is_none()
+    );
+    assert_eq!(integrator.report_bytes(&hash).unwrap(), bytes);
+    repo.rewrite_main(Some(&repo.base));
+    let fresh = open(&repo)
+        .await
+        .reconcile_original_current(&f.store, WORKER, &id)
+        .await
+        .unwrap();
+    assert_eq!(fresh["integration"]["data"]["state"], "confirmed");
+    assert_eq!(
+        fresh["integration"]["data"]["content_proof"]["basis"],
+        "matching_complete_snapshots"
+    );
+    assert_eq!(integrator.report_bytes(&hash).unwrap(), bytes);
+    no_completion(&f).await;
+}
+
 #[tokio::test]
 async fn sha1_fast_forward_is_real_version_bound_and_distinct_from_task_acceptance() {
     let repo = git::GitFixture::integration(false);
