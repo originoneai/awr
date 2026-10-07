@@ -60,6 +60,49 @@ change requests and notifications disabled. These flags never grant permission.
 
 ## Optional Team server worker
 
+### Source-first delivery without a pull request
+
+The server can connect independently identified members, an authoritative YAML
+ledger and a bare Git repository without loading a GitHub or pull-request adapter.
+Publish the physical ledger through the existing source preparation, approval and
+activation interfaces **before** execution and business review. Its work contract
+must explicitly require the intended checks. For the byte-verification flow:
+
+```yaml
+completion_policy: caller_managed_execution_and_agent_review
+execution_settlement:
+  mode: independent_workspace_v1
+  workspace_id: member-owned-workspace
+verification_requirements: [local_git.manifest]
+```
+
+The executor submits its execution result and exact artifact as evidence. An
+observation-only Git worker verifies the selected commit's actual manifest bytes;
+it creates no integration intent or business approval. The independent reviewer
+reads the bound evidence through `artifact.content` and records the business
+decision. Source bootstrap approval and this later artifact review are separate.
+
+The supervisor obtains current contract, connector, selection, evidence and
+decision versions through `work.prepare`, `delivery.neutral.inspect` and
+`review.inspect`, then issues `delivery.integration.prepare`. If its reply is
+lost, query `delivery.neutral.outcome` using the same preparation request key.
+That recovers the original intent; it does not request another integration.
+
+With both optional worker groups configured, the Git worker performs the one
+authorized fast-forward and re-observes the actual target. The source worker
+writes bounded `delivery_sync` references into the exact physical work record,
+then confirms its fingerprint and reindex. The original contract, task status,
+unrelated work and operator comments remain intact. A source conflict leaves the
+operator's bytes untouched and reports synchronization as pending even if the
+repository integration was confirmed. After explicit source-conflict resolution
+or recovery of a landed write's missing receipt, persisted workers resume the
+original operation without repeating Git effects or rewriting unchanged bytes.
+
+`source_synchronized` establishes that these references match the observed source.
+It is not task completion. Domain acceptance, any completion receipt and the
+source reference to that receipt remain separate steps. This flow does not turn
+`local_git.manifest` into a unit-test result or a native Agent business acceptance.
+
 Set `AWR_TEAM_LOCAL_GIT_WORKER_CONFIG` to a separate strict TOML file based on
 [the worker example](../../../examples/local-git-delivery/worker.toml), then start
 the existing `awr-server serve --config /absolute/path/service.toml` entry point.
