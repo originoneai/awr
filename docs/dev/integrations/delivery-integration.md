@@ -170,6 +170,39 @@ dispatch still cannot resolve the intent.
 Integration confirmations never create completion receipts, mark work complete,
 or silently update authoritative source status.
 
+## Bind acceptance to a source reference
+
+When a delivery candidate is selected, authenticated `work.complete` and
+`delivery.finalize` bind each new completion receipt to
+`payload.delivery_candidate_digest` in the original reviewed evidence. That
+declaration must match the actual current selection, work, scope, contract and
+required check set. Artifact bytes, hash and length must match the candidate's
+manifest. Selecting a different version cannot retrofit the earlier evidence
+or receipt. Completion without an optional delivery selection retains its
+existing policy, execution and review gates; it does not create a candidate
+binding. Legacy unbound receipts remain unbound.
+
+An unrelated source activation can preserve this task's candidate for
+finalization only when its archived and current contract definitions both
+recompute to the same hash and the original ownership and fence remain valid.
+Missing history, corrupt definitions or changed requirements cannot qualify.
+This continuity rule does not relax the source publisher's current read set.
+
+The separately authorized source publisher accepts a selected completion only
+after rechecking its original candidate binding, evidence digest, execution
+result and finalized artifacts. Logical manifest names are linked to allocated
+storage IDs through exact bytes, hash and length in evidence that originally
+declared the same candidate. Source notes reference the actual stored artifact
+ID. An unrelated artifact with matching bytes alone is insufficient.
+
+`prepare_source_publication`, `write_source_publication` and
+`confirm_source_publication` retain their existing fingerprint, journal, lease
+and interrupted-write recovery checks. The note records confirmed references;
+it preserves the original source status, comments and other work. These library
+operations do not install an automatic acceptance queue, enable a worker or
+infer a repository effect. A configured source worker and acceptance-driven
+scheduling remain separate integration responsibilities.
+
 ## Compatibility and verification
 
 PostgreSQL schema 46 adds durable intents and target guards with forced project
@@ -187,3 +220,11 @@ regressions additionally obtain integration prerequisites through public queries
 and verify transport parity, strict fields, permission denial, reconnect, service
 reconstruction and unknown-attempt recovery. They do not substitute for native
 business scenarios.
+
+Actual-path source-publication regressions activate a physical source package,
+run authenticated execution, settlement, evidence, independent review and
+finalization, then write and confirm the exact source reference. They cover
+ordinary Agent and explicit simulated-member policies, missing or changed
+candidate declarations, persisted artifact/evidence/execution mismatches and
+recovery after lease expiry. These are mechanism regressions, not native-client
+or complete team business acceptance.

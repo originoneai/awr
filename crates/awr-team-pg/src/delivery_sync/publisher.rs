@@ -274,26 +274,31 @@ async fn completion_reference(
     id: &str,
 ) -> PgResult<DeliveryCompletionReference> {
     let row = tx.query_opt("SELECT e.id,e.digest,e.input_digest,e.output_digest,e.execution_result_digest,
-        e.payload_json,a.id,a.sha256,a.content,a.state FROM awr_team.work_runtime w
+        e.payload_json,a.id,a.sha256,a.content,a.state,a.byte_length FROM awr_team.work_runtime w
         JOIN awr_team.completion_receipts c ON c.tenant_id=w.tenant_id AND c.project_id=w.project_id AND c.id=w.selected_completion_id
         JOIN awr_team.evidence e ON e.tenant_id=c.tenant_id AND e.project_id=c.project_id AND e.id=c.evidence_id
         JOIN awr_team.artifacts a ON a.tenant_id=e.tenant_id AND a.project_id=e.project_id AND a.id=e.artifact_id
+        LEFT JOIN awr_team.executions x ON x.tenant_id=c.tenant_id AND x.project_id=c.project_id AND x.id=c.execution_id
         WHERE w.tenant_id=$1 AND w.project_id=$2 AND w.scope_id='main' AND w.work_id=$3
           AND w.state='completed' AND NOT w.recovery_blocked AND c.id=$4 AND c.scope_id='main'
           AND c.work_id=$3 AND e.work_id=$3 AND c.contract_hash=$5 AND e.contract_hash=$5
           AND c.delivery_candidate_digest=$6 AND c.result_digest=e.digest AND c.evidence_bundle_hash=e.digest
-          AND c.execution_id IS NOT DISTINCT FROM e.execution_id",
+          AND c.execution_id IS NOT DISTINCT FROM e.execution_id
+          AND (c.execution_id IS NULL OR (x.state='succeeded' AND x.scope_id='main' AND x.work_id=$3
+            AND x.contract_hash=$5 AND x.input_digest IS NOT DISTINCT FROM e.input_digest
+            AND x.result_digest=e.execution_result_digest))",
         &[&tenant,&project,&set.work_id,&id,&set.contract_hash,&selected]).await?.ok_or(PgError::EvidenceInvalid)?;
     let input: Option<String> = row.get(2);
     let output: Option<String> = row.get(3);
     let result: Option<String> = row.get(4);
+    let payload: Value = row.get(5);
     let evidence_digest = crate::review::evidence_digest(
         &set.work_id,
         &set.contract_hash,
         input.as_deref(),
         output.as_deref(),
         result.as_deref(),
-        &row.get(5),
+        &payload,
     )?;
     let artifact_id: String = row.get(6);
     let sha: String = row.get(7);
@@ -303,15 +308,24 @@ async fn completion_reference(
     if row.get::<_, String>(1) != evidence_digest
         || row.get::<_, String>(9) != "finalized"
         || fingerprint(&content) != format!("sha256:{sha}")
+        || row.get::<_, i64>(10) != content.len() as i64
         || output.as_deref() != Some(sha.as_str())
-        || !candidate.manifest.entries.iter().any(|e| {
-            e.artifact_id == artifact_id
-                && e.sha256 == sha
-                && e.byte_length == content.len().to_string()
-        })
     {
         return Err(PgError::EvidenceInvalid);
     }
+    completion::verify_artifacts(
+        tx,
+        tenant,
+        project,
+        candidate,
+        selected,
+        completion::AcceptedEvidence {
+            payload: &payload,
+            artifact_id: Some(&artifact_id),
+            output_digest: output.as_deref(),
+        },
+    )
+    .await?;
     Ok(DeliveryCompletionReference {
         receipt_id: id.into(),
         evidence_id: row.get(0),

@@ -159,8 +159,24 @@ pub async fn fresh_team_schema() -> (MutexGuard<'static, ()>, Client, String) {
 /// Rebuild an actual historical schema in this process's exclusive database.
 /// Resetting only schema_state on a current schema leaves future DDL behind.
 pub async fn historical_team_schema(version: i32) -> (MutexGuard<'static, ()>, Client, String) {
-    assert!((1..=awr_team_pg::EXPECTED_SCHEMA_VERSION).contains(&version));
     let (guard, admin, name) = fresh_team_schema().await;
+    rebuild_historical_team_schema(&admin, version).await;
+    (guard, admin, name)
+}
+
+/// The caller must already hold the fixture lock. Verify the database belongs
+/// to this process before replacing its schema; never acquire the lock again.
+async fn rebuild_historical_team_schema(admin: &Client, version: i32) {
+    assert!((1..=awr_team_pg::EXPECTED_SCHEMA_VERSION).contains(&version));
+    assert_eq!(
+        admin
+            .query_one("SELECT current_database()", &[])
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        gate_db_name().await,
+        "historical reconstruction is confined to this process's fixture database"
+    );
     admin
         .batch_execute("DROP SCHEMA awr_team CASCADE")
         .await
@@ -202,7 +218,73 @@ pub async fn historical_team_schema(version: i32) -> (MutexGuard<'static, ()>, C
             .get::<_, i32>(0),
         version
     );
-    (guard, admin, name)
+}
+
+/// Rebuild genuine historical DDL while retaining only rows and columns that
+/// exist at that version. The caller retains its exclusive fixture lock.
+/// Foreign keys and triggers stay enabled throughout restoration.
+pub async fn historical_team_schema_preserving_rows(admin: &Client, version: i32) {
+    let tables = admin.query("SELECT tablename FROM pg_tables WHERE schemaname='awr_team' AND tablename<>'schema_state' ORDER BY tablename", &[]).await.unwrap();
+    let mut rows = std::collections::BTreeMap::new();
+    for row in tables {
+        let table: String = row.get(0);
+        assert!(
+            table
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'_')
+        );
+        let data: serde_json::Value = admin.query_one(
+            &format!("SELECT coalesce(jsonb_agg(to_jsonb(t)), '[]'::jsonb) FROM awr_team.\"{table}\" t"),
+            &[],
+        ).await.unwrap().get(0);
+        rows.insert(table, data);
+    }
+    rebuild_historical_team_schema(admin, version).await;
+    let tables = admin.query("SELECT tablename FROM pg_tables WHERE schemaname='awr_team' AND tablename<>'schema_state' ORDER BY tablename", &[]).await.unwrap();
+    let mut pending: std::collections::BTreeMap<_, _> = tables
+        .into_iter()
+        .map(|row| {
+            let table: String = row.get(0);
+            let data = rows
+                .remove(&table)
+                .expect("historical fixture table must exist in the current schema");
+            (table, data)
+        })
+        .collect();
+    while !pending.is_empty() {
+        let mut restored = Vec::new();
+        for (table, data) in &pending {
+            // Inserting projects creates default workstream mode rows through
+            // the historical trigger. Restore their observed enabled state.
+            let conflict = if table == "workstream_modes" {
+                " ON CONFLICT (tenant_id,project_id) DO UPDATE SET enabled=EXCLUDED.enabled"
+            } else {
+                ""
+            };
+            let statement = format!(
+                "INSERT INTO awr_team.\"{table}\" SELECT * FROM jsonb_populate_recordset(NULL::awr_team.\"{table}\", $1){conflict}"
+            );
+            match admin.execute(&statement, &[data]).await {
+                Ok(count) => {
+                    assert_eq!(count as usize, data.as_array().unwrap().len());
+                    restored.push(table.clone());
+                }
+                Err(error)
+                    if error.as_db_error().is_some_and(|e| {
+                        *e.code() == tokio_postgres::error::SqlState::FOREIGN_KEY_VIOLATION
+                    }) => {}
+                Err(error) => panic!("cannot restore historical fixture table {table}: {error:?}"),
+            }
+        }
+        assert!(
+            !restored.is_empty(),
+            "historical fixture rows have unresolved foreign keys: {:?}",
+            pending.keys().collect::<Vec<_>>()
+        );
+        for table in restored {
+            pending.remove(&table);
+        }
+    }
 }
 
 pub async fn app_client(db: &str) -> Client {
