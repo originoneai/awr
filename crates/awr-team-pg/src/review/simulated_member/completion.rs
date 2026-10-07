@@ -34,14 +34,16 @@ struct ReviewBasis {
     team_independent_acceptance: bool,
 }
 
-fn validate_basis(basis: &ReviewBasis, snapshot: &str) -> PgResult<()> {
+fn validate_basis(basis: &ReviewBasis) -> PgResult<()> {
     if basis.codec != "awr-simulated-member-review-v1"
         || basis.policy != POLICY
         || basis.approval_basis != APPROVAL_BASIS
         || basis.human_approval
         || basis.team_independent_acceptance
         || basis.origins.codec != "awr-member-review-origins-v1"
-        || basis.authority.snapshot_id != snapshot
+        || basis.authority.snapshot_id.is_empty()
+        || basis.authority.snapshot_id.len() > 128
+        || basis.authority.snapshot_id.chars().any(char::is_control)
         || basis.authority.membership_version != basis.reviewer.actor_membership_version
         || basis.authority.delegation_id.is_empty()
         || basis.authority.delegation_id.len() > 128
@@ -99,7 +101,41 @@ pub(crate) async fn verify(
     let value = required(3)?;
     let basis: ReviewBasis =
         serde_json::from_value(value.clone()).map_err(|_| PgError::ReviewRequired)?;
-    validate_basis(&basis, bind.snapshot)?;
+    validate_basis(&basis)?;
+    // Keep the review's original source authority. An unrelated publication may
+    // advance the project snapshot without changing this task's reviewed contract.
+    // Both archived and current definitions must still prove the exact same hash.
+    let contracts = tx
+        .query_opt(
+            "SELECT original.contract_json,current.contract_json
+         FROM awr_team.work_contracts original JOIN awr_team.work_contracts current
+           ON current.tenant_id=original.tenant_id AND current.project_id=original.project_id
+           AND current.scope_id=original.scope_id AND current.work_id=original.work_id
+           AND current.contract_hash=original.contract_hash
+         WHERE original.tenant_id=$1 AND original.project_id=$2 AND original.scope_id='main'
+           AND original.work_id=$3 AND original.snapshot_id=$4 AND current.snapshot_id=$5
+           AND original.contract_hash=$6",
+            &[
+                &tenant,
+                &project,
+                &bind.work,
+                &basis.authority.snapshot_id,
+                &bind.snapshot,
+                &bind.contract_hash,
+            ],
+        )
+        .await?
+        .ok_or(PgError::ReviewRequired)?;
+    for index in [0, 1] {
+        let contract: awr_team::WorkContract =
+            serde_json::from_value(contracts.get(index)).map_err(|_| PgError::ReviewRequired)?;
+        if contract.work_id.as_str() != bind.work
+            || contract.completion_policy != POLICY
+            || contract.hash().map_err(|_| PgError::ReviewRequired)? != bind.contract_hash
+        {
+            return Err(PgError::ReviewRequired);
+        }
+    }
     if evidence.codec != "awr-member-evidence-origins-v1"
         || evidence.executor != executor
         || origins.executor != evidence.executor
@@ -145,16 +181,21 @@ mod tests {
     }
 
     #[test]
-    fn completion_basis_keeps_controller_identity_and_current_source_distinct() {
+    fn completion_basis_requires_original_authority_and_preserves_simulation_flags() {
         let value = basis();
         let original: ReviewBasis = serde_json::from_value(value.clone()).unwrap();
-        validate_basis(&original, "snapshot").unwrap();
-        assert!(validate_basis(&original, "other-snapshot").is_err());
+        validate_basis(&original).unwrap();
+        for snapshot in ["", "invalid\nsnapshot"] {
+            let mut changed = value.clone();
+            changed["authority"]["snapshot_id"] = json!(snapshot);
+            let parsed: ReviewBasis = serde_json::from_value(changed).unwrap();
+            assert!(validate_basis(&parsed).is_err());
+        }
         for pointer in ["/human_approval", "/team_independent_acceptance"] {
             let mut changed = value.clone();
             *changed.pointer_mut(pointer).unwrap() = json!(true);
             let parsed: ReviewBasis = serde_json::from_value(changed).unwrap();
-            assert!(validate_basis(&parsed, "snapshot").is_err());
+            assert!(validate_basis(&parsed).is_err());
         }
     }
 
@@ -167,7 +208,7 @@ mod tests {
         value["reviewer"]["client_id"] = value["origins"]["submitter"]["client_id"].clone();
         let parsed: ReviewBasis = serde_json::from_value(value.clone()).unwrap();
         assert!(matches!(
-            validate_basis(&parsed, "snapshot"),
+            validate_basis(&parsed),
             Err(PgError::AuthorCannotReview)
         ));
         value["caller_approved"] = json!(true);

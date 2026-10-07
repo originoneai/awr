@@ -194,6 +194,10 @@ workspace settlement, and an independent simulated member approved that bundle.
 **Basis:** finalization compares the stored executor, evidence submitter and round
 opener with the original decision, including its member, actor, client and source
 snapshot. It does not recapture those contributors from today's bindings.
+An unrelated source publication may keep that review usable only when the
+archived reviewed contract and the current task contract still prove the same
+exact hash. Missing or corrupt history and relevant contract changes are refused;
+the stored review authority retains its original snapshot.
 **Action:** an authorized human or Agent uses `work.complete` or
 `delivery.finalize` with the current `work.prepare` preconditions. An Agent needs
 an explicit live `finalize_delivery` delegation and current delivery scope; Review
