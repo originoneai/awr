@@ -25,11 +25,12 @@ impl WorkstreamBundle {
     pub const CODEC: &'static str = "awr-team-workstreams-v1";
     pub const CODEC_V2: &'static str = "awr-team-workstreams-v2";
     pub const CODEC_V3: &'static str = "awr-team-workstreams-v3";
+    pub const CODEC_V4: &'static str = "awr-team-workstreams-v4";
 
     pub fn validate(&self, project_id: &str) -> TeamResult<()> {
         if !matches!(
             self.codec.as_str(),
-            Self::CODEC | Self::CODEC_V2 | Self::CODEC_V3
+            Self::CODEC | Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4
         ) || self.catalog.project_id != project_id
         {
             return Err(TeamError::InvalidContract(
@@ -49,9 +50,15 @@ impl WorkstreamBundle {
                     "extended contracts require an explicit extended workstream codec".into(),
                 ));
             }
-            if self.codec == Self::CODEC_V2 && entry.contract.codec == WorkContract::CODEC_V3 {
+            if (self.codec == Self::CODEC_V2
+                && matches!(
+                    entry.contract.codec.as_str(),
+                    WorkContract::CODEC_V3 | WorkContract::CODEC_V4
+                ))
+                || (self.codec == Self::CODEC_V3 && entry.contract.codec == WorkContract::CODEC_V4)
+            {
                 return Err(TeamError::InvalidContract(
-                    "V3 contracts require workstreams V3".into(),
+                    "contract codec is newer than the workstream codec".into(),
                 ));
             }
             for upstream in entry.contract.dependency_acceptance.keys() {

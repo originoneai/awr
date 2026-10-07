@@ -182,6 +182,38 @@ are invalidated on head/contract change.
 
 ## Explicit Agent review
 
+### Explicit simulated-member contract (V4)
+
+The kernel and source publisher support the closed
+`awr-team-contract-v4` policy below. Distinct authenticated simulated members
+may share a physical operator; neither a model name nor a controller count
+establishes their identities or grants review authority.
+
+```yaml
+completion_policy: caller_managed_execution_and_simulated_member_review
+paths: [src/api.rs]
+verification_requirements: [verify the delivered API artifact]
+execution_settlement:
+  mode: independent_workspace_v1
+  workspace_id: developer-workspace
+```
+
+V4 requires that exact policy, explicit supported settlement, scoped paths and
+nonempty verification requirements. V1/V2/V3 reject the new policy and retain
+their existing serialized bytes, hashes and human/ordinary Agent review meaning.
+Publishing the declaration selects `awr-team-workstreams-v4` and source parser
+`awr-team-workstreams/4`; mixed bundles preserve every nested older contract hash.
+The preview exposes `completion_policy_diffs` with the prior and proposed policy.
+Missing or malformed settlement refuses preparation without changing the source.
+
+This is contract expression support. The current Agent command path does not
+yet accept simulated-member approval or Agent finalization under this policy.
+Parsing or activating it does not authenticate a member, attest execution,
+create review/finalization/merge permissions, or satisfy a downstream acceptance
+rule. Legacy dependency policies retain their existing scope and assurance.
+
+### Ordinary Agent review
+
 For a contract with `completion_policy: caller_managed_execution_and_agent_review`,
 use `review.decide` with an authenticated Agent identity. An administrator must
 explicitly grant `agent_review: true`; an active WS-016 `Review` delegation must
