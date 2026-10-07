@@ -1,9 +1,17 @@
 //! Optional provider adapters. Observation is neither approval nor completion.
 mod git_process;
+pub mod github;
+mod github_http;
+mod github_poll;
 pub mod local_git;
 pub mod local_git_integration;
 mod local_git_poll;
 
+pub use github::{
+    GitHubAdapter, GitHubCheckMapping, GitHubConfig, GitHubError, GitHubReport, GitHubSnapshot,
+};
+pub use github_http::{GitHubResponse, GitHubTransport};
+pub use github_poll::GitHubPollRequest;
 pub use local_git::{LocalGitAdapter, LocalGitConfig, LocalGitReport, LocalGitSnapshot};
 pub use local_git_integration::{
     LocalGitIntegrationConfig, LocalGitIntegrationPollRequest, LocalGitIntegrationReport,

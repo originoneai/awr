@@ -22,6 +22,7 @@ zeroize = "1.9"
 base64.workspace = true
 sha2.workspace = true
 url.workspace = true
+ureq.workspace = true
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 rmcp = { version = "3.2.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time", "process", "io-util"] }
@@ -35,6 +36,8 @@ pg-tests = ["awr-team-pg/pg-tests"]
 tls = ["awr-team-pg/tls"]
 
 [dev-dependencies]
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 awr-source.workspace = true
 awr-core.workspace = true
 awr-team = { path = "../awr-team" }
