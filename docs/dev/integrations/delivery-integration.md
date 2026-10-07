@@ -186,7 +186,9 @@ An unrelated source activation can preserve this task's candidate for
 finalization only when its archived and current contract definitions both
 recompute to the same hash and the original ownership and fence remain valid.
 Missing history, corrupt definitions or changed requirements cannot qualify.
-This continuity rule does not relax the source publisher's current read set.
+Receipt-backed source publication repeats this exact-contract proof. Its command
+read set must still identify the currently authenticated source; an old source
+identifier alone does not grant permission to publish.
 
 The separately authorized source publisher accepts a selected completion only
 after rechecking its original candidate binding, evidence digest, execution
@@ -198,10 +200,53 @@ ID. An unrelated artifact with matching bytes alone is insufficient.
 `prepare_source_publication`, `write_source_publication` and
 `confirm_source_publication` retain their existing fingerprint, journal, lease
 and interrupted-write recovery checks. The note records confirmed references;
-it preserves the original source status, comments and other work. These library
-operations do not install an automatic acceptance queue, enable a worker or
-infer a repository effect. A configured source worker and acceptance-driven
-scheduling remain separate integration responsibilities.
+it preserves the original source status, comments and other work. A completion
+reference records the accepted domain result. It does not infer repository
+integration or replace the source's separate business status.
+
+## Automatically synchronize actual acceptance
+
+Successful authenticated `work.complete` and `delivery.finalize` enqueue a
+`domain_acceptance` notification and durable `refresh` / `source` intents in the
+same transaction as their selected, candidate-bound completion receipt. Exact
+command retries return the original receipt and queue references. Refused
+finalization or a failed queue write rolls back the entire transaction.
+
+The short `receipt.data.source_sync` describes a **queued** source update; it is
+not a confirmation. Queue inspection exposes the origin, completion receipt,
+current binding and synchronization state. Acknowledging refresh only makes the
+new fact available. Physical source write and confirmation are separate facts.
+
+Domain acceptance needs no provider connector, external inbox event, GitHub or
+webhook. Existing observation-driven intents keep their `adapter_observation`
+origin and exact connector, generation and inspection bindings. Ordinary
+completion without a delivery candidate remains supported but does not schedule
+a delivery-source update; it cannot manufacture a candidate or bind historical
+receipts retroactively.
+
+Automatic processing requires the existing **explicitly configured source
+worker**, with current project/workstream management access and a live service
+credential. Starting HTTP/MCP alone grants neither filesystem access nor a
+background write loop. The worker carries the original completion receipt into
+the existing prepare/write/confirm journal, rechecking its selected candidate,
+contract, ownership, fence, evidence, successful execution and exact artifact
+bytes. A connector revocation affects its adapter observations; it cannot turn a
+domain acceptance into a provider event or grant source-worker authority.
+
+For a pending domain intent with **no publication journal**, an unrelated source
+activation can offer a current read set only after both original and current
+task contracts recompute identically and the original candidate, ownership,
+execution fence, epoch and permission versions remain valid. The claim repeats
+those proofs before persisting the observed source binding. Receipt-backed
+publication also proves the original selected contract. Related changes,
+missing/corrupt history and replaced candidates refuse continuation.
+
+An existing or unknown publication is never rebound to another source. Lost
+responses, worker reconstruction and lease replacement recover the **same
+journal** with its renewed fence. The worker observes actual before/after bytes
+and retains unresolved effects and source conflicts; it cannot authorize a
+second write by treating a timeout as failure. Acceptance, source confirmation,
+repository application and human approval retain their separate meanings.
 
 ## Compatibility and verification
 
@@ -209,6 +254,11 @@ PostgreSQL schema 46 adds durable intents and target guards with forced project
 RLS. The migration is transactional and preserves existing delivery records.
 Upgrade through the normal migrator; binaries expecting another schema must not
 write it.
+
+Schema 49 adds mutually exclusive inbox-backed and completion-backed notification
+and intent origins, receipt/work/candidate foreign keys and deduplication. The
+atomic, idempotent upgrade retains forced RLS and existing observer rows. It does
+not backfill domain notifications or infer candidate bindings for old receipts.
 
 Synthetic PostgreSQL regressions exercise real task, execution, evidence and
 review commands under distinct simulated members, concurrent preparation and
@@ -228,3 +278,10 @@ ordinary Agent and explicit simulated-member policies, missing or changed
 candidate declarations, persisted artifact/evidence/execution mismatches and
 recovery after lease expiry. These are mechanism regressions, not native-client
 or complete team business acceptance.
+
+Acceptance-driven regressions also exercise atomic queue rollback, concurrent
+exact finalization, unrelated-source continuity, changed-contract refusal,
+renewed-fence journal recovery and a configured source worker that confirms a
+real accepted artifact without a repository observer. Historical-schema tests
+retain observer bindings and rollback behavior. Mechanism checks receive no
+complete native business-acceptance credit.

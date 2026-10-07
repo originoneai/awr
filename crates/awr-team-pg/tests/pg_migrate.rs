@@ -4,6 +4,123 @@ use awr_team_pg::{EXPECTED_SCHEMA_VERSION, check_schema, migrate};
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn schema48_acceptance_origins_upgrade_atomically_and_preserve_observer_and_legacy_records() {
+    let (_guard, admin, db) = common::historical_team_schema(48).await;
+    admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('upgrade-tenant','Upgrade','active');
+        INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+            VALUES('upgrade-tenant','upgrade-project','upgrade','team','old-epoch','active');
+        INSERT INTO awr_team.work_items(tenant_id,project_id,id,external_key) VALUES('upgrade-tenant','upgrade-project','legacy-work','legacy-work');
+        INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status) VALUES('upgrade-tenant','legacy-observer','system','Legacy observer','active');
+        INSERT INTO awr_team.completion_receipts(tenant_id,project_id,id,work_id,scope_id,contract_hash,result_digest,
+            dependency_binding_hash,evidence_bundle_hash,policy,approved_by_json,independence_kind)
+            VALUES('upgrade-tenant','upgrade-project','legacy-receipt','legacy-work','main','old-contract','old-result',
+                'old-dependencies','old-bundle','ordinary_confirm','{}','unspecified');
+        INSERT INTO awr_team.delivery_candidates(tenant_id,project_id,binding_digest,work_id,candidate_id,candidate_version,body_json)
+            VALUES('upgrade-tenant','upgrade-project',repeat('a',64),'legacy-work','legacy-candidate','1','{\"legacy_fixture\":true}');
+        INSERT INTO awr_team.delivery_connectors(tenant_id,project_id,id,scope_id,workstream_id,work_id,provider,resource,
+            principal_actor_id,principal_client_id,fact_source,version,coordinator_epoch,enabled,configured_by_actor_id)
+            VALUES('upgrade-tenant','upgrade-project','legacy-connector','main','legacy-stream','legacy-work','reference',
+                'fixture://legacy','legacy-observer','legacy-client','adapter_observation',1,'old-epoch',true,'legacy-observer');
+        INSERT INTO awr_team.delivery_inspections(tenant_id,project_id,id,connector_id,connector_version,generation,binding_digest,
+            selection_version,source_snapshot_id,ownership_version,coordinator_epoch,actor_id,client_id,authority_binding,expires_at)
+            VALUES('upgrade-tenant','upgrade-project','legacy-inspection','legacy-connector',1,1,repeat('a',64),1,
+                'legacy-snapshot',1,'old-epoch','legacy-observer','legacy-client','legacy-authority',clock_timestamp()+interval '1 hour');
+        INSERT INTO awr_team.delivery_inbox(tenant_id,project_id,id,connector_id,event_id,inspection_id,input_digest,state,receipt_json)
+            VALUES('upgrade-tenant','upgrade-project','legacy-inbox','legacy-connector','legacy-event','legacy-inspection',repeat('b',64),'applied','{}');
+        INSERT INTO awr_team.delivery_notifications(tenant_id,project_id,id,inbox_id,work_id)
+            VALUES('upgrade-tenant','upgrade-project','legacy-notification','legacy-inbox','legacy-work');
+        INSERT INTO awr_team.delivery_sync_intents(tenant_id,project_id,id,notification_id,kind,work_id,connector_id,
+            connector_version,generation,candidate_digest,selection_version,read_set_json)
+            VALUES('upgrade-tenant','upgrade-project','legacy-intent','legacy-notification','source','legacy-work',
+                'legacy-connector',1,1,repeat('a',64),1,'{\"legacy_fixture\":true}')").await.unwrap();
+    let mut originals = Vec::new();
+    for table in [
+        "delivery_notifications",
+        "delivery_sync_intents",
+        "completion_receipts",
+    ] {
+        let value: Value = admin
+            .query_one(&format!("SELECT to_jsonb(t) FROM awr_team.{table} t"), &[])
+            .await
+            .unwrap()
+            .get(0);
+        originals.push(value);
+    }
+    let ddl = include_str!("../migrations/20261007000049_acceptance_source_sync.sql");
+    assert!(
+        admin
+            .batch_execute(&ddl.replace(
+                "UPDATE awr_team.schema_state",
+                "SELECT 1/0; UPDATE awr_team.schema_state"
+            ))
+            .await
+            .is_err()
+    );
+    admin.batch_execute("ROLLBACK").await.unwrap();
+    let rolled_back = admin.query_one("SELECT (SELECT version FROM awr_team.schema_state),
+        (SELECT count(*) FROM information_schema.columns WHERE table_schema='awr_team' AND column_name='origin')", &[])
+        .await.unwrap();
+    assert_eq!(rolled_back.get::<_, i32>(0), 48);
+    assert_eq!(rolled_back.get::<_, i64>(1), 0);
+    migrate(&admin).await.unwrap();
+    check_schema(&admin).await.unwrap();
+    migrate(&admin).await.unwrap();
+    for (table, original) in [
+        "delivery_notifications",
+        "delivery_sync_intents",
+        "completion_receipts",
+    ]
+    .into_iter()
+    .zip(originals)
+    {
+        let mut value: Value = admin
+            .query_one(&format!("SELECT to_jsonb(t) FROM awr_team.{table} t"), &[])
+            .await
+            .unwrap()
+            .get(0);
+        if table != "completion_receipts" {
+            assert_eq!(
+                value.as_object_mut().unwrap().remove("origin"),
+                Some(json!("adapter_observation"))
+            );
+            assert_eq!(
+                value
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("completion_receipt_id"),
+                Some(Value::Null)
+            );
+        }
+        assert_eq!(value, original);
+    }
+    for sql in [
+        "UPDATE awr_team.delivery_notifications SET origin='unrecognized'",
+        "UPDATE awr_team.delivery_notifications SET origin='domain_acceptance',completion_receipt_id='legacy-receipt'",
+        "UPDATE awr_team.delivery_sync_intents SET origin='domain_acceptance',completion_receipt_id='legacy-receipt'",
+        "UPDATE awr_team.delivery_sync_intents SET connector_id=NULL",
+    ] {
+        assert!(
+            admin.batch_execute(sql).await.is_err(),
+            "Malformed or mixed origins must be rejected"
+        );
+    }
+    awr_team_pg::Bootstrap::grant_app(&admin, "awr_app")
+        .await
+        .unwrap();
+    let app = common::app_client(&db).await;
+    assert_eq!(
+        app.query_one("SELECT count(*) FROM awr_team.delivery_sync_intents", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0,
+        "Existing forced RLS must remain effective"
+    );
+    assert_eq!(admin.query_one("SELECT count(*) FROM awr_team.delivery_notifications WHERE origin='domain_acceptance'", &[])
+        .await.unwrap().get::<_,i64>(0), 0, "Migration must not infer acceptance from historical completions");
+}
+
+#[tokio::test]
 async fn schema47_simulated_completion_upgrade_is_atomic_and_keeps_legacy_receipts() {
     let (_g, admin, _) = common::historical_team_schema(47).await;
     admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('upgrade-tenant','Upgrade','active');
@@ -494,7 +611,7 @@ async fn schema40_upgrade_preserves_legacy_provenance_and_is_atomic_and_repeatab
     assert_eq!(before, unchanged);
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 48);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 49);
     let after: Value = admin
         .query_one(
             "SELECT to_jsonb(e) FROM awr_team.executions e WHERE id='legacy-run'",

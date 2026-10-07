@@ -1480,6 +1480,22 @@ async fn complete(
     if selected.as_deref() != Some(receipt_id.as_str()) {
         return Err(PgError::CompletionRejected);
     }
+    let source_sync = if let Some(candidate) = &delivery_candidate_digest {
+        Some(
+            crate::delivery_sync::acceptance::enqueue(
+                tx,
+                tenant,
+                project,
+                auth,
+                command,
+                &receipt_id,
+                candidate,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
     let mut applied = Applied {
         data: json!({
             "receipt_id": receipt_id,
@@ -1521,6 +1537,10 @@ async fn complete(
             }),
         )],
     };
+    if let Some(sync) = source_sync {
+        applied.data["source_sync"] = sync.clone();
+        applied.preceding_events[0].1["source_sync"] = sync;
+    }
     if let Some(basis) = &member_review_basis {
         let summary = simulated_member::basis_summary(basis);
         applied.data["member_review_basis"] = summary.clone();

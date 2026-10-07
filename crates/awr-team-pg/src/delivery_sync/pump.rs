@@ -49,9 +49,11 @@ struct Intent {
     notification: String,
     kind: String,
     set: DeliveryReadSet,
-    connector: String,
-    connector_version: i64,
-    generation: i64,
+    origin: acceptance::Origin,
+    completion: Option<String>,
+    connector: Option<String>,
+    connector_version: Option<i64>,
+    generation: Option<i64>,
     candidate: String,
     selection: i64,
     state: String,
@@ -71,6 +73,8 @@ impl Intent {
             id: row.get("id"),
             notification: row.get("notification_id"),
             kind: row.get("kind"),
+            origin: acceptance::Origin::parse(row.get("origin"))?,
+            completion: row.get("completion_receipt_id"),
             set: serde_json::from_value(row.get("read_set_json"))
                 .map_err(|_| PgError::SourceDivergence)?,
             connector: row.get("connector_id"),
@@ -105,8 +109,9 @@ impl Intent {
 
     fn summary(&self) -> Value {
         json!({"intent_id":self.id,"notification_id":self.notification,"kind":self.kind,
+            "origin":self.origin,"completion_receipt_id":self.completion,
             "work_id":self.set.work_id,"read_set":self.set,"connector_id":self.connector,
-            "connector_version":self.connector_version.to_string(),"generation":self.generation.to_string(),
+            "connector_version":self.connector_version.map(|v|v.to_string()),"generation":self.generation.map(|v|v.to_string()),
             "candidate_digest":self.candidate,"selection_version":self.selection.to_string(),
             "state":self.state,"fence":self.fence.to_string(),"worker_id":self.worker,
             "lease_live":self.live,"retry_due":self.due,"publication_id":self.publication,
@@ -114,6 +119,25 @@ impl Intent {
     }
 
     async fn current(&self, tx: &Transaction<'_>, tenant: &str, project: &str) -> PgResult<bool> {
+        if self.origin == acceptance::Origin::DomainAcceptance {
+            let pending: bool = tx.query_one("SELECT EXISTS(SELECT 1 FROM awr_team.delivery_notifications
+                WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND origin='domain_acceptance'
+                  AND completion_receipt_id=$4 AND work_id=$5 AND state IN ('pending','delivered'))",
+                &[&tenant,&project,&self.notification,&self.completion,&self.set.work_id]).await?.get(0);
+            return Ok(pending
+                && acceptance::current(
+                    tx,
+                    tenant,
+                    project,
+                    &self.set,
+                    self.completion
+                        .as_deref()
+                        .ok_or(PgError::SourceDivergence)?,
+                    &self.candidate,
+                    self.selection,
+                )
+                .await?);
+        }
         let current: bool = tx.query_one("SELECT EXISTS(SELECT 1 FROM awr_team.delivery_connectors c
             JOIN awr_team.delivery_selections s ON (s.tenant_id,s.project_id,s.work_id)=(c.tenant_id,c.project_id,c.work_id)
             JOIN awr_team.work_runtime w ON (w.tenant_id,w.project_id,w.scope_id,w.work_id)=(s.tenant_id,s.project_id,s.scope_id,s.work_id)
@@ -126,6 +150,48 @@ impl Intent {
               &self.set.coordinator_epoch,&self.candidate,&self.selection,&self.set.source_snapshot_id,
               &version(&self.set.ownership_version)?]).await?.get(0);
         Ok(current)
+    }
+
+    /// An observed current read set is offered only before any source journal.
+    /// The claim transaction repeats these proofs before persisting a rebind.
+    async fn effective_set(
+        &self,
+        tx: &Transaction<'_>,
+        tenant: &str,
+        project: &str,
+        auth: &ReaderAuthority,
+    ) -> PgResult<DeliveryReadSet> {
+        let mut set = self.set.clone();
+        if self.origin == acceptance::Origin::DomainAcceptance
+            && self.publication.is_none()
+            && self.set.source_snapshot_id != auth.snapshot
+            && self.set.coordinator_epoch == auth.epoch
+        {
+            let (_, ownership) =
+                crate::workstream_read::work_binding(tx, tenant, project, auth, &self.set.work_id)
+                    .await?;
+            if version(&self.set.ownership_version)? == ownership
+                && version(&self.set.authority_version)? as u64
+                    == auth.catalog.get(self.set.workstream_id)?.authority_version
+            {
+                match completion::require_contracts(
+                    tx,
+                    tenant,
+                    project,
+                    &self.set.work_id,
+                    &self.set.source_snapshot_id,
+                    &auth.snapshot,
+                    &self.set.contract_hash,
+                )
+                .await
+                {
+                    Ok(()) => set.source_snapshot_id = auth.snapshot.clone(),
+                    Err(PgError::PreconditionsChanged) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        Ok(set)
     }
 }
 
@@ -342,7 +408,7 @@ impl DeliverySyncStore {
         let mut items = Vec::new();
         let mut next = None;
         for row in rows.into_iter().take(usize::from(limit)) {
-            let intent = Intent::from_row(&row)?;
+            let mut intent = Intent::from_row(&row)?;
             let (_, ownership) = crate::workstream_read::work_binding(
                 &tx,
                 tenant,
@@ -351,6 +417,7 @@ impl DeliverySyncStore {
                 &intent.set.work_id,
             )
             .await?;
+            intent.set = intent.effective_set(&tx, tenant, project, &auth).await?;
             let current = intent.set.source_snapshot_id == auth.snapshot
                 && intent.set.coordinator_epoch == auth.epoch
                 && version(&intent.set.ownership_version)? == ownership
@@ -402,7 +469,9 @@ impl DeliverySyncStore {
             None,
         )
         .await?;
-        let intent = Intent::load(&tx, tenant, project, &request.intent_id).await?;
+        let mut intent = Intent::load(&tx, tenant, project, &request.intent_id).await?;
+        let original_set = intent.set.clone();
+        intent.set = intent.effective_set(&tx, tenant, project, &auth).await?;
         if json!(intent.set) != json!(request.read_set) {
             return Err(PgError::Forbidden);
         }
@@ -457,6 +526,14 @@ impl DeliverySyncStore {
                 json!({"intent_id":intent.id,"state":"superseded","fence":intent.fence.to_string()})).await?;
             tx.commit().await?;
             return Ok(None);
+        }
+        if json!(original_set) != json!(intent.set) {
+            let changed = tx.execute("UPDATE awr_team.delivery_sync_intents SET read_set_json=$4,updated_at=clock_timestamp()
+                WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND origin='domain_acceptance' AND publication_id IS NULL",
+                &[&tenant,&project,&intent.id,&json!(intent.set)]).await?;
+            if changed != 1 {
+                return Err(PgError::PreconditionsChanged);
+            }
         }
         if let Some(publication) = &intent.publication {
             let owner = tx
@@ -661,7 +738,7 @@ impl DeliverySyncStore {
                         .as_str()
                         .ok_or(PgError::SourceDivergence)?
                         .into(),
-                    completion_receipt_id: None,
+                    completion_receipt_id: intent.completion,
                     lease_seconds: lease_seconds_value,
                 },
                 lease,

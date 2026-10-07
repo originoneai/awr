@@ -61,8 +61,30 @@ pub(crate) async fn bind_new_receipt(
     {
         return Err(PgError::PreconditionsChanged);
     }
-    // An unrelated source activation can retain this exact reviewed task. Prove
-    // both definitions and original ownership/fence; never whitelist old snapshots.
+    require_contracts(
+        tx,
+        tenant,
+        project,
+        &command.work_id,
+        &snapshot,
+        &auth.snapshot,
+        &set.contract_hash,
+    )
+    .await?;
+    verify_artifacts(tx, tenant, project, &candidate, &selected, evidence).await?;
+    Ok(Some(selected))
+}
+
+/// Recompute both exact definitions; an old source identifier alone is no proof.
+pub(super) async fn require_contracts(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    work: &str,
+    original: &str,
+    current: &str,
+    contract_hash: &str,
+) -> PgResult<()> {
     let definitions = tx
         .query_opt(
             "SELECT original.contract_json,current.contract_json
@@ -76,10 +98,10 @@ pub(crate) async fn bind_new_receipt(
             &[
                 &tenant,
                 &project,
-                &command.work_id,
-                &snapshot,
-                &auth.snapshot,
-                &set.contract_hash,
+                &work,
+                &original,
+                &current,
+                &contract_hash,
             ],
         )
         .await?
@@ -87,14 +109,13 @@ pub(crate) async fn bind_new_receipt(
     for index in [0, 1] {
         let definition: WorkContract = serde_json::from_value(definitions.get(index))
             .map_err(|_| PgError::SourceDivergence)?;
-        if definition.work_id.as_str() != command.work_id
-            || definition.hash().map_err(|_| PgError::SourceDivergence)? != set.contract_hash
+        if definition.work_id.as_str() != work
+            || definition.hash().map_err(|_| PgError::SourceDivergence)? != contract_hash
         {
             return Err(PgError::PreconditionsChanged);
         }
     }
-    verify_artifacts(tx, tenant, project, &candidate, &selected, evidence).await?;
-    Ok(Some(selected))
+    Ok(())
 }
 
 /// Use only evidence that originally names this exact candidate. The primary

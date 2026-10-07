@@ -196,12 +196,24 @@ async fn current_note(
             .ok_or(PgError::InactiveCandidate)?;
     auth::bind_candidate(tenant, project, set, &candidate.binding)?;
     if selected != expected_digest
-        || snapshot != auth.snapshot
+        || (snapshot != auth.snapshot && completion.is_none())
         || ownership != version(&set.ownership_version)?
         || !fence_current
         || selection_version != expected_selection
     {
         return Err(PgError::PreconditionsChanged);
+    }
+    if completion.is_some() {
+        completion::require_contracts(
+            tx,
+            tenant,
+            project,
+            &set.work_id,
+            &snapshot,
+            &auth.snapshot,
+            &set.contract_hash,
+        )
+        .await?;
     }
     let rows = tx.query("SELECT f.id,i.id FROM awr_team.delivery_fact_heads h
         JOIN awr_team.delivery_facts f ON f.tenant_id=h.tenant_id AND f.project_id=h.project_id AND f.id=h.fact_id

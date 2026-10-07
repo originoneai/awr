@@ -1048,6 +1048,17 @@ async fn schema44_pending_notifications_backfill_exact_historical_bindings_atomi
         .unwrap()
         .get(0);
     common::historical_team_schema_preserving_rows(&f.admin, 44).await;
+    let mut historical = before.clone();
+    for row in historical.as_array_mut().unwrap() {
+        assert_eq!(
+            row.as_object_mut().unwrap().remove("origin"),
+            Some(json!("adapter_observation"))
+        );
+        assert_eq!(
+            row.as_object_mut().unwrap().remove("completion_receipt_id"),
+            Some(Value::Null)
+        );
+    }
     assert!(
         f.admin
             .query_one(
@@ -1061,7 +1072,7 @@ async fn schema44_pending_notifications_backfill_exact_historical_bindings_atomi
     );
     assert_eq!(
         f.admin.query_one("SELECT jsonb_agg(to_jsonb(n) ORDER BY n.id) FROM awr_team.delivery_notifications n", &[]).await.unwrap().get::<_, Value>(0),
-        before
+        historical
     );
     let ddl = include_str!("../migrations/20261006000045_delivery_sync_pump.sql");
     assert!(

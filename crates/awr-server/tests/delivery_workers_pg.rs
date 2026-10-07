@@ -1,5 +1,7 @@
 #![cfg(feature = "pg-tests")]
 //! Actual isolated source/PG admission and synthetic provider transport boundaries.
+#[path = "../../awr-team-pg/tests/fixtures/delivery_acceptance.rs"]
+mod acceptance_fixture;
 #[path = "../../awr-team-pg/tests/common/mod.rs"]
 mod common;
 #[path = "../../awr-team-pg/tests/fixtures/workstream_access.rs"]
@@ -8,6 +10,8 @@ mod fixture;
 mod git;
 #[path = "fixtures/github.rs"]
 mod github;
+#[path = "../../awr-team-pg/tests/fixtures/delivery_integration.rs"]
+mod integration_fixture;
 #[path = "../../awr-team-pg/tests/fixtures/delivery_publication.rs"]
 mod publication;
 
@@ -21,6 +25,7 @@ use awr_server::{
 use awr_team::delivery::*;
 use awr_team_pg::*;
 use fixture::*;
+use serde_json::{Value, json};
 use std::time::Duration;
 
 fn service() -> ServiceConfig {
@@ -112,6 +117,74 @@ fn no_secret(value: impl serde::Serialize) {
         assert!(!value.contains(secret));
     }
 }
+
+#[tokio::test]
+async fn configured_source_worker_confirms_actual_acceptance_without_repository_observers() {
+    for simulated in [false, true] {
+        let f = acceptance_fixture::SourceFixture::new(simulated).await;
+        let completed = f.finalize("worker-acceptance").await;
+        let runtime = DeliveryWorkers::start(
+            &service(),
+            Some(source()),
+            None,
+            DeliverySyncStore::from_config(f.f.config.clone()),
+            |_| Some(integration_fixture::WORKER.into()),
+        )
+        .await
+        .unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let count: i64 = f
+                .f
+                .admin
+                .query_one(
+                    "SELECT count(*) FROM awr_team.delivery_sync_intents WHERE state='succeeded'",
+                    &[],
+                )
+                .await
+                .unwrap()
+                .get(0);
+            if count == 2 && runtime.source_monitor().snapshots()[0].synchronized == 2 {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "Configured source worker did not confirm the real receipt"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let source_monitor = runtime.source_monitor();
+        let git_monitor = runtime.git_monitor();
+        let github_monitor = runtime.github_monitor();
+        runtime.shutdown().await;
+        let rows = f.queue().await;
+        assert!(
+            rows["intents"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|i| i["origin"] == "domain_acceptance"
+                    && i["completion_receipt_id"] == completed["receipt_id"])
+        );
+        assert!(git_monitor.snapshots().is_empty());
+        assert!(github_monitor.snapshots().is_empty());
+        let snapshots = source_monitor.snapshots();
+        assert_eq!(snapshots[0].synchronized, 2);
+        no_secret(&snapshots);
+        let text = std::fs::read_to_string(f.root.0.join("ledger.yaml")).unwrap();
+        assert!(text.contains(completed["receipt_id"].as_str().unwrap()));
+        assert!(text.starts_with("# Preserve this comment"));
+        assert_eq!(
+            f.f.admin
+                .query_one("SELECT count(*) FROM awr_team.delivery_inbox", &[])
+                .await
+                .unwrap()
+                .get::<_, i64>(0),
+            0
+        );
+    }
+}
+
 #[tokio::test]
 async fn absent_and_empty_three_groups_preserve_legacy_and_source_only_entries() {
     for empty in [false, true] {

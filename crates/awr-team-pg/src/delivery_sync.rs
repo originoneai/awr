@@ -1,5 +1,6 @@
 //! Durable neutral observations and recoverable, confined source metadata writes.
 //! Repository effects, approval and domain finalization remain separate.
+pub(crate) mod acceptance;
 mod auth;
 pub(crate) mod completion;
 mod connectors;
