@@ -18,6 +18,7 @@ pub const PLANNING_CODEC: &str = "awr-team-planning-v1";
 pub const PLANNING_CODEC_V2: &str = "awr-team-planning-v2";
 pub const PLANNING_CODEC_V3: &str = "awr-team-planning-v3";
 pub const PLANNING_CODEC_V4: &str = "awr-team-planning-v4";
+pub const PLANNING_CODEC_V5: &str = "awr-team-planning-v5";
 
 /// Suggestions never become claimable work and never enlarge the formal work
 /// denominator or mutate live deps/acceptance.
@@ -152,7 +153,8 @@ pub struct TaskDraft {
     pub acceptance: Vec<String>,
     pub required_dependencies: Vec<String>,
     pub completion_policy: String,
-    /// V2 only. Omission retains the source policy; a present map is an explicit
+    /// V2 onward; simulated-member inputs require V5. Omission retains the source
+    /// policy; a present map is an explicit
     /// reviewed replacement, never an implicit acceptance or permission grant.
     #[serde(
         default,
@@ -1008,6 +1010,16 @@ pub fn edit_candidate(
 /// original digest without a schema migration or a reinterpretation of policy.
 pub fn planning_codec_for_changes(changes: &[DraftChange]) -> &'static str {
     if changes.iter().any(|c| {
+        std::iter::once(&c.after).chain(c.before.as_ref()).any(|d| {
+            d.dependency_acceptance.as_ref().is_some_and(|modes| {
+                modes.values().any(|mode| {
+                    *mode == crate::DependencyAcceptanceMode::SimulatedMemberIndependent
+                })
+            })
+        })
+    }) {
+        PLANNING_CODEC_V5
+    } else if changes.iter().any(|c| {
         std::iter::once(&c.after).chain(c.before.as_ref()).any(|d| {
             d.execution_settlement.is_some()
                 || d.completion_policy

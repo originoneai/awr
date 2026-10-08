@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 #[serde(rename_all = "snake_case")]
 pub enum DependencyAcceptanceMode {
     AgentReviewedCallerAssertedReconciled,
+    SimulatedMemberIndependent,
 }
 
 /// An explicit agreement about workspace-local caller-managed effects. This
@@ -149,11 +150,13 @@ impl TryFrom<WireContract> for WorkContract {
                 "dependency_acceptance requires contract V2".into(),
             ));
         }
-        if !matches!(wire.codec.as_str(), Self::CODEC_V3 | Self::CODEC_V4)
-            && wire.execution_settlement.is_some()
+        if !matches!(
+            wire.codec.as_str(),
+            Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5
+        ) && wire.execution_settlement.is_some()
         {
             return Err(TeamError::InvalidContract(
-                "execution_settlement requires contract V3/V4".into(),
+                "execution_settlement requires contract V3/V4/V5".into(),
             ));
         }
         let dependency_acceptance = wire.dependency_acceptance.unwrap_or_default();
@@ -181,11 +184,12 @@ impl WorkContract {
     pub const CODEC_V2: &'static str = "awr-team-contract-v2";
     pub const CODEC_V3: &'static str = "awr-team-contract-v3";
     pub const CODEC_V4: &'static str = "awr-team-contract-v4";
+    pub const CODEC_V5: &'static str = "awr-team-contract-v5";
 
     pub fn validate(&self) -> TeamResult<()> {
         if !matches!(
             self.codec.as_str(),
-            Self::CODEC | Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4
+            Self::CODEC | Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5
         ) {
             return Err(TeamError::InvalidContract(
                 "unsupported contract codec".into(),
@@ -195,7 +199,7 @@ impl WorkContract {
             || (self.codec == Self::CODEC_V2 && self.dependency_acceptance.is_empty())
             || (matches!(
                 self.codec.as_str(),
-                Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4
+                Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5
             ) && self
                 .required_dependencies
                 .iter()
@@ -207,25 +211,41 @@ impl WorkContract {
             })
         {
             return Err(TeamError::InvalidContract(
-                "dependency_acceptance requires V2/V3/V4 and unique existing required predecessors; V2 requires a nonempty map".into(),
+                "dependency_acceptance requires V2/V3/V4/V5 and unique existing required predecessors; V2 requires a nonempty map".into(),
+            ));
+        }
+        let simulated_dependency = self
+            .dependency_acceptance
+            .values()
+            .any(|mode| *mode == DependencyAcceptanceMode::SimulatedMemberIndependent);
+        if simulated_dependency != (self.codec == Self::CODEC_V5) {
+            return Err(TeamError::InvalidContract(
+                "simulated_member_independent dependencies require V5; V5 requires at least one explicit simulated predecessor".into(),
             ));
         }
         if self.completion_policy == ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
-            && self.codec != Self::CODEC_V4
+            && !matches!(self.codec.as_str(), Self::CODEC_V4 | Self::CODEC_V5)
         {
             return Err(TeamError::InvalidContract(
-                "simulated member review requires contract V4".into(),
+                "simulated member review requires contract V4/V5".into(),
             ));
         }
         match (&self.execution_settlement, self.codec.as_str()) {
-            (Some(policy), Self::CODEC_V3 | Self::CODEC_V4) => {
+            (Some(policy), Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5) => {
                 policy.validate()?;
-                let expected_policy = if self.codec == Self::CODEC_V4 {
-                    ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
-                } else {
-                    ExecutionSettlementPolicy::COMPLETION_POLICY
+                let supported_policy = match self.codec.as_str() {
+                    Self::CODEC_V4 => {
+                        self.completion_policy
+                            == ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
+                    }
+                    Self::CODEC_V5 => matches!(
+                        self.completion_policy.as_str(),
+                        ExecutionSettlementPolicy::COMPLETION_POLICY
+                            | ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
+                    ),
+                    _ => self.completion_policy == ExecutionSettlementPolicy::COMPLETION_POLICY,
                 };
-                if self.completion_policy != expected_policy
+                if !supported_policy
                     || self.scope_paths.is_empty()
                     || self.scope_paths.iter().any(|p| p.trim().is_empty())
                     || self.verification_requirements.is_empty()
@@ -240,9 +260,12 @@ impl WorkContract {
                 }
             }
             (None, Self::CODEC | Self::CODEC_V2) => {}
+            (None, Self::CODEC_V5)
+                if self.completion_policy
+                    != ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY => {}
             _ => {
                 return Err(TeamError::InvalidContract(
-                    "execution_settlement is required for V3/V4 and forbidden in V1/V2".into(),
+                    "execution_settlement is required for V3/V4 and simulated completion, forbidden in V1/V2, and otherwise optional in V5".into(),
                 ));
             }
         }
@@ -292,11 +315,14 @@ impl WorkContract {
         });
         if matches!(
             self.codec.as_str(),
-            Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4
+            Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5
         ) {
             value["dependency_acceptance"] = json!(self.dependency_acceptance);
         }
-        if matches!(self.codec.as_str(), Self::CODEC_V3 | Self::CODEC_V4) {
+        if matches!(
+            self.codec.as_str(),
+            Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5
+        ) {
             value["execution_settlement"] = json!(self.execution_settlement);
         }
         let _ = canonical_json(&value)?;
