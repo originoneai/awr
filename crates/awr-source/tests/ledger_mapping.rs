@@ -158,6 +158,75 @@ fn diagnostics_locate_mapped_chinese_fields_and_list_members_without_source_cont
     assert_eq!(d["location"]["line"], 3);
 }
 
+fn evidence_ledger(entry: &str) -> String {
+    format!("work_items:\n- id: W\n  title: Reviewed work\n  evidence:\n    {entry}\n")
+}
+
+#[test]
+fn an_unquoted_colon_in_an_evidence_entry_is_diagnosed_as_missing_quotes() {
+    // YAML reads `- Report.java: text` as a mapping with one key, so the entry has no locator although the author wrote one.
+    let report = parse(
+        &evidence_ledger("- Report.java: refresh() parses both columns"),
+        "yaml-ledger-v1",
+        "",
+    )
+    .unwrap_err()
+    .report();
+    assert_eq!(report.code, "InvalidInput");
+    let d = report.details.unwrap();
+    assert_eq!(d["rule"], "ledger.evidence_locator");
+    assert_eq!(d["location"]["pointer"], "/work_items/0/evidence/0");
+    assert_eq!(d["location"]["line"], 5);
+    assert!(report.message.contains("mapping"));
+    let repair = d["repair"].as_str().unwrap();
+    assert!(repair.contains("Quote the whole entry"));
+    assert!(repair.contains("locator"));
+    // The rejected text is not echoed back.
+    assert!(!report.message.contains("Report.java") && !repair.contains("Report.java"));
+    assert!(!report.message.contains("refresh()") && !repair.contains("refresh()"));
+
+    // A mapping that really lacks a locator keeps the plain repair.
+    for entry in ["- summary: reviewed", "- locator: ''", "- {}"] {
+        let report = parse(&evidence_ledger(entry), "yaml-ledger-v1", "")
+            .unwrap_err()
+            .report();
+        let d = report.details.unwrap();
+        assert_eq!(d["rule"], "ledger.evidence_locator", "{entry}");
+        assert!(
+            d["repair"].as_str().unwrap().contains("report path or URI"),
+            "{entry}"
+        );
+    }
+
+    // The spellings that work keep their whole text as the locator.
+    for (entry, locator) in [
+        (
+            r#"- "Report.java: refresh() parses both columns""#,
+            "Report.java: refresh() parses both columns",
+        ),
+        (
+            "- 'Report.java: refresh() parses both columns'",
+            "Report.java: refresh() parses both columns",
+        ),
+        (
+            "- locator: \"Report.java: refresh()\"\n      summary: parses both columns",
+            "Report.java: refresh()",
+        ),
+        (
+            "- Report.java：refresh() parses both columns",
+            "Report.java：refresh() parses both columns",
+        ),
+        (
+            r##"- "src/Report.java #12 refresh()""##,
+            "src/Report.java #12 refresh()",
+        ),
+    ] {
+        let batch = parse(&evidence_ledger(entry), "yaml-ledger-v1", "").unwrap();
+        assert_eq!(batch.evidence.len(), 1, "{entry}");
+        assert_eq!(batch.evidence[0].locator, locator, "{entry}");
+    }
+}
+
 #[test]
 fn syntax_diagnostics_and_valid_long_chinese_yaml_are_not_confused() {
     let report = parse(

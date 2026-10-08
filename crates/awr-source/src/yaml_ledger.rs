@@ -720,6 +720,32 @@ fn edge(
     }
 }
 
+/// The diagnostic for an evidence entry without a usable locator. A plain list item such as `- Report.java: section 2` is read
+/// by YAML as a mapping with one key, not as text, so it arrives here looking like a missing locator although the author wrote one.
+fn missing_locator(item: &Value, pointer: &str) -> Error {
+    let unquoted_text = item.as_object().is_some_and(|fields| {
+        fields.len() == 1
+            && fields
+                .keys()
+                .all(|key| !matches!(key.as_str(), "locator" | "path" | "summary"))
+    });
+    if unquoted_text {
+        // The rejected text itself is never echoed.
+        return invalid(
+            pointer,
+            "ledger.evidence_locator",
+            "evidence entry is a mapping without locator or path; YAML reads an unquoted `text: more text` item as a mapping",
+            "Quote the whole entry, for example - \"report.md: section 2\", or write locator: report.md with an optional summary. Quote any entry that contains `: ` or ` #`.",
+        );
+    }
+    invalid(
+        pointer,
+        "ledger.evidence_locator",
+        "evidence reference needs a locator",
+        "Supply the actual report path or URI.",
+    )
+}
+
 fn parse_evidence(
     context: &ParseContext<'_>,
     snapshot: &SourceSnapshot,
@@ -750,14 +776,7 @@ fn parse_evidence(
         };
         let locator = string(location, &item_pointer)?
             .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| {
-                invalid(
-                    &item_pointer,
-                    "ledger.evidence_locator",
-                    "evidence reference needs a locator",
-                    "Supply the actual report path or URI.",
-                )
-            })?;
+            .ok_or_else(|| missing_locator(item, &item_pointer))?;
         if !locators.insert(locator.clone()) {
             return Err(Error::SourceConflict(format!(
                 "{pointer}: duplicate evidence locator {locator}"
