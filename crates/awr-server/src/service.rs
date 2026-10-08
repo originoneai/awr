@@ -851,8 +851,21 @@ pub(crate) fn error_response(error: PgError) -> Response {
     response(status, value)
 }
 
+/// A deadlock or serialization failure rolled the transaction back, so nothing was
+/// committed and the same request can be repeated with its original request ID.
+fn retryable_value() -> Value {
+    json!({
+        "code":"Retryable",
+        "message":"the database rolled the request back after a lock conflict; nothing was committed",
+        "next_step":"repeat the same request with its original request ID"
+    })
+}
+
 // Shared by HTTP and MCP; never expose SQL, URLs, credentials or source bodies.
 fn public_error(error: PgError) -> (StatusCode, Value) {
+    if error.is_retryable() {
+        return (StatusCode::SERVICE_UNAVAILABLE, retryable_value());
+    }
     if let Some(reason) = error.source_storage_reason() {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -1160,4 +1173,39 @@ async fn shutdown_signal() {
         return;
     }
     let _ = tokio::signal::ctrl_c().await;
+}
+
+#[cfg(test)]
+mod retryable_tests {
+    use super::*;
+
+    #[test]
+    fn a_retryable_conflict_says_nothing_was_committed_and_how_to_repeat_the_request() {
+        let value = retryable_value();
+        assert_eq!(value["code"], "Retryable");
+        assert!(
+            value["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("nothing was committed"))
+        );
+        assert!(
+            value["next_step"]
+                .as_str()
+                .is_some_and(|m| m.contains("original request ID"))
+        );
+    }
+
+    #[test]
+    fn domain_errors_are_never_reported_as_retryable() {
+        for error in [
+            PgError::Forbidden,
+            PgError::IdempotencyConflict,
+            PgError::PreconditionsChanged,
+            PgError::ProjectNotAvailable,
+        ] {
+            let (status, value) = public_error(error);
+            assert_ne!(value["code"], "Retryable");
+            assert_ne!(status, StatusCode::SERVICE_UNAVAILABLE);
+        }
+    }
 }

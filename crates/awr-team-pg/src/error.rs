@@ -133,6 +133,21 @@ impl PgError {
         )
     }
 
+    /// PostgreSQL rolled the whole transaction back because of a deadlock or a
+    /// serialization failure. Nothing was committed, so repeating the same request
+    /// with its original request ID is safe. Every other database error, including
+    /// a lost connection, leaves the outcome open and is not classified here.
+    pub fn is_retryable(&self) -> bool {
+        use tokio_postgres::error::SqlState;
+        matches!(
+            self,
+            Self::Db(error) if error.code().is_some_and(|code| {
+                *code == SqlState::T_R_DEADLOCK_DETECTED
+                    || *code == SqlState::T_R_SERIALIZATION_FAILURE
+            })
+        )
+    }
+
     pub fn source_storage_reason(&self) -> Option<&'static str> {
         match self {
             Self::Protocol(message) if message == Self::SOURCE_STORAGE_PERMISSION => {

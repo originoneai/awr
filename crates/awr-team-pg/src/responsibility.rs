@@ -433,6 +433,11 @@ impl ResponsibilityStore {
         let mut client = self.connect().await?;
         let tx = client.transaction().await?;
         bind_workstream_scope(&tx, tenant, project).await?;
+        // Same order as the authenticated command path: the project barrier first,
+        // then the request and task locks that `apply_in_transaction` takes. Taking
+        // the task lock first and the barrier later (through the foreign key of the
+        // task row) deadlocked against a command that already held the barrier.
+        crate::agent_authorization::lock_project(&tx, tenant, project).await?;
         let result = apply_in_transaction(
             &tx,
             tenant,
