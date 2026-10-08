@@ -188,6 +188,12 @@ scope enablement and source migration require explicit, recoverable transitions.
 Old dependency and ownership checks remain until replacement protocols pass
 compatibility checks.
 
+Navigation nodes (`awr nav`, MCP `awr_workstream` with `action: "nav"`) and `work graph`
+nodes carry `last_event_at`: the newest event time of that work in milliseconds over every
+branch and session, or null when the work has no event. It dates activity without paging
+through the event history; it is neither a progress nor a completion signal, and it does
+not enter the graph fingerprint.
+
 ## Verification boundary
 
 ### Team source projection in the development branch

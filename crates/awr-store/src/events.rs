@@ -190,6 +190,18 @@ impl Store {
                     "source_id":r.get::<_,Option<String>>(10)?,"checkpoint_id":r.get::<_,Option<String>>(11)?,"artifact_id":r.get::<_,Option<String>>(12)?}))
             }).optional().map_err(db_error)?.ok_or_else(|| Error::NotFound(format!("event {id}")))
     }
+    /// Newest event time of every work item that has events, over all branches and sessions: the value
+    /// `event history` shows as the largest `created_at` of that work. Events without a work belong to no
+    /// item, and a work without events is absent from the map.
+    pub fn last_event_times(&self, project: Id) -> Result<std::collections::BTreeMap<Id, i64>> {
+        self.conn
+            .prepare("SELECT work_item_id,MAX(created_at) FROM events WHERE project_id=?1 AND work_item_id IS NOT NULL GROUP BY work_item_id")
+            .map_err(db_error)?
+            .query_map([project.to_string()], |r| Ok((id_at(r, 0)?, r.get::<_, i64>(1)?)))
+            .map_err(db_error)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(db_error)
+    }
     pub fn event(&self, project: Id, id: Id) -> Result<Event> {
         self.conn.query_row("SELECT id,project_id,work_item_id,session_id,branch_id,event_type,importance,summary,payload_json,project_revision,created_at FROM events WHERE project_id=?1 AND id=?2",params![project.to_string(),id.to_string()],event_row).optional().map_err(db_error)?.ok_or_else(||Error::NotFound(format!("event {id}")))
     }

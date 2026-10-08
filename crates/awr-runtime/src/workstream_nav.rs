@@ -64,6 +64,8 @@ pub struct MainlineNavExtras {
     pub eta_by_work: BTreeMap<String, EtaComponents>,
     pub responsibility_by_work: BTreeMap<String, TaskResponsibility>,
     pub waits_by_work: BTreeMap<String, Vec<ExplainableWait>>,
+    /// Newest event time (milliseconds) per work key; `mainline_nav` loads it from the store.
+    pub last_event_at_by_work: BTreeMap<String, i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,6 +82,9 @@ pub struct MainlineNavNode {
     pub blocker: Option<String>,
     pub next_action: String,
     pub outcomes: Vec<String>,
+    /// Newest event of this work in milliseconds, over all branches and sessions; null when it has none.
+    #[serde(default)]
+    pub last_event_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -461,6 +466,7 @@ pub fn assemble_mainline_nav(
             blocker: work.blocker.clone(),
             next_action: short(&work.next_action),
             outcomes: concrete_outcomes(work),
+            last_event_at: extras.last_event_at_by_work.get(&work.key).copied(),
         });
     }
 
@@ -625,6 +631,17 @@ pub fn mainline_nav(
                 binding.workstream_id.to_string(),
             );
         }
+    }
+    if extras.last_event_at_by_work.is_empty() {
+        let last_events = store.last_event_times(project.id)?;
+        extras.last_event_at_by_work = projected
+            .iter()
+            .filter_map(|w| {
+                last_events
+                    .get(&w.item.meta.id)
+                    .map(|at| (w.item.meta.external_key.clone(), *at))
+            })
+            .collect();
     }
     for work in &projected {
         let key = work.item.meta.external_key.as_str();
@@ -875,6 +892,52 @@ mod tests {
         assert!(snap.get("accept_responsibility").is_none());
         assert_eq!(snap["accounting"]["available"], false);
     }
+    #[test]
+    fn nodes_carry_the_newest_event_time_or_null_without_changing_other_fields() {
+        let busy = fact("BUSY", "Has events", "in_progress", &["Done"]);
+        let quiet = fact("QUIET", "Has none", "ready", &["Done"]);
+        let snap = |extras: &MainlineNavExtras| {
+            assemble_mainline_nav(
+                &project(),
+                &MainlineNavScope::default(),
+                None,
+                &[busy.clone(), quiet.clone()],
+                &[],
+                &BTreeMap::new(),
+                extras,
+            )
+            .unwrap()
+        };
+        let plain = snap(&MainlineNavExtras::default());
+        let dated = snap(&MainlineNavExtras {
+            last_event_at_by_work: BTreeMap::from([("BUSY".to_string(), 1_790_000_000_123)]),
+            ..Default::default()
+        });
+        let node = |snap: &Value, key: &str| {
+            snap["mainline_graph"]["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|n| n["work_key"] == key)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(node(&dated, "BUSY")["last_event_at"], 1_790_000_000_123_i64);
+        assert!(node(&dated, "QUIET")["last_event_at"].is_null());
+        assert!(node(&plain, "BUSY")["last_event_at"].is_null());
+        // Only the new field differs: protocol, schema and every other node field are untouched.
+        let mut without = node(&dated, "BUSY");
+        without["last_event_at"] = Value::Null;
+        assert_eq!(without, node(&plain, "BUSY"));
+        assert_eq!(dated["protocol"], MAINLINE_NAV_PROTOCOL);
+        assert_eq!(dated["schema_version"], MAINLINE_NAV_SCHEMA_VERSION);
+        // Older payloads without the field still decode.
+        let mut old = node(&plain, "QUIET");
+        old.as_object_mut().unwrap().remove("last_event_at");
+        let decoded: MainlineNavNode = serde_json::from_value(old).unwrap();
+        assert_eq!(decoded.last_event_at, None);
+    }
+
     fn supports(project_id: Id, work: &str, goal: &str) -> Edge {
         let mut link = edge(project_id, work, goal);
         link.relation = "supports".into();
