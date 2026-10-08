@@ -49,6 +49,7 @@ function parseArgs(argv) {
     teamPublicUrl: null,
     teamOnly: false,
     teamFixtureDir: null,
+    mapConfig: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -61,6 +62,7 @@ function parseArgs(argv) {
     else if (a === '--team-public-url') out.teamPublicUrl = argv[++i] || null;
     else if (a === '--team-only') out.teamOnly = true;
     else if (a === '--team-fixture-dir') out.teamFixtureDir = path.resolve(argv[++i] || '.');
+    else if (a === '--map-config') out.mapConfig = path.resolve(argv[++i] || '.');
     else if (a === '--help' || a === '-h') {
       console.log([
         'Usage: node server.js [options]',
@@ -73,6 +75,7 @@ function parseArgs(argv) {
         '  --team-public-url <url> Public Team service base URL for member MCP setup',
         '  --team-only        Serve only Team APIs and hide local Inspector navigation',
         '  --team-fixture-dir Use on-disk team-web-loop fixtures (demo/tests)',
+        '  --map-config <file> Display configuration (JSON) for the Project map page: lanes, panels, thresholds',
         '  --no-open          Do not open the browser automatically',
       ].join('\n'));
       process.exit(0);
@@ -87,6 +90,16 @@ if (ARGS.teamOnly && (!ARGS.teamUrl || ARGS.demo)) {
   process.exit(1);
 }
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const projectMapConfig = require('./project-map-config');
+const MAP_CONFIG = (() => {
+  if (!ARGS.mapConfig) return null;
+  try {
+    return projectMapConfig.load(ARGS.mapConfig);
+  } catch (e) {
+    console.error(`--map-config: ${e.message}`);
+    process.exit(1);
+  }
+})();
 const { createTeamBridge } = require('./team-bridge');
 const teamBridge = createTeamBridge({ teamUrl: ARGS.teamUrl, teamPublicUrl: ARGS.teamPublicUrl, teamFixtureDir: ARGS.teamFixtureDir, port: ARGS.port });
 
@@ -252,6 +265,13 @@ const COMMANDS = {
   sourceReindex: { argv: ['source', 'reindex'], write: true },
   sessionList: { argv: ['session', 'list', '--active'], write: false },
   eventHistory: { argv: ['event', 'history'], write: false },
+  // Project map: the official read-only commands behind the snapshot (see public/project-map/extract.js).
+  mapWorkGraph: { argv: ['work', 'graph'], write: false },
+  mapNav: { argv: ['nav', '--cached'], write: false },
+  mapGoals: { argv: ['search', '--type', 'goal', '--limit', '100', '--cached'], write: false },
+  mapEvents: { argv: ['event', 'history'], write: false },
+  mapSessions: { argv: ['session', 'list', '--active', '--limit', '100'], write: false },
+  mapDoctor: { argv: ['doctor'], write: false },
 };
 
 // Validate each field according to its semantics instead of one broad ASCII expression.
@@ -651,6 +671,62 @@ const routes = {
     }
     return runCommand('eventHistory', ['--limit', String(limit)]);
   },
+
+  // Project map data. Each route is one allowlisted read-only command with validated arguments.
+  'GET /api/map/config': async () => ({
+    ok: true,
+    data: { config: MAP_CONFIG ? MAP_CONFIG.config : null, source: MAP_CONFIG ? path.basename(MAP_CONFIG.file) : null },
+  }),
+
+  'GET /api/map/work-graph': async (url) => {
+    const limit = url.searchParams.get('limit');
+    const n = limit == null || limit === '' ? 100 : Number(limit);
+    if (!Number.isInteger(n) || n < 1 || n > 1000) {
+      return { ok: false, error: { code: 'BadRequest', message: 'limit must be an integer from 1 to 1000' } };
+    }
+    const extra = ['--limit', String(n)];
+    if (url.searchParams.get('cached') === '1') extra.push('--cached');
+    return runCommand('mapWorkGraph', extra);
+  },
+
+  'GET /api/map/nav': async (url) => {
+    const extra = [];
+    const milestone = url.searchParams.get('milestone');
+    if (milestone != null && milestone !== '') {
+      const key = asKey(milestone);
+      if (!key) return { ok: false, error: { code: 'BadRequest', message: 'milestone must be a valid key' } };
+      extra.push('--milestone', key);
+    }
+    return runCommand('mapNav', extra);
+  },
+
+  'GET /api/map/goals': async () => runCommand('mapGoals', []),
+
+  'GET /api/map/events': async (url) => {
+    const limit = url.searchParams.get('limit');
+    const n = limit == null || limit === '' ? 1000 : Number(limit);
+    if (!Number.isInteger(n) || n < 1 || n > 1000) {
+      return { ok: false, error: { code: 'BadRequest', message: 'limit must be an integer from 1 to 1000' } };
+    }
+    const extra = ['--limit', String(n)];
+    const through = url.searchParams.get('through');
+    if (through != null && through !== '') {
+      const r = Number(through);
+      if (!Number.isSafeInteger(r) || r < 0) return { ok: false, error: { code: 'BadRequest', message: 'through must be a non-negative integer' } };
+      extra.push('--through-revision', String(r));
+    }
+    const cursor = url.searchParams.get('cursor');
+    if (cursor != null && cursor !== '') {
+      const parsed = projectMapConfig.parseEventCursor(cursor);
+      if (!parsed) return { ok: false, error: { code: 'BadRequest', message: 'cursor must be the next_cursor object of the previous page' } };
+      extra.push('--cursor', JSON.stringify(parsed));
+    }
+    return runCommand('mapEvents', extra);
+  },
+
+  'GET /api/map/sessions': async () => runCommand('mapSessions', []),
+
+  'GET /api/map/doctor': async () => runCommand('mapDoctor', []),
 
   'POST /api/context/compile': async (_url, body) => {
     const extra = [];

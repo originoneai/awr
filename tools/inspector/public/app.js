@@ -285,6 +285,13 @@
     }
   }
 
+  // A static file of the page itself (the Project map puts the same module files into the HTML it downloads).
+  async function fetchAsset(path) {
+    const res = await fetch(path);
+    if (!res.ok) throw new Error(path + ': ' + res.status);
+    return res.text();
+  }
+
   // Normalization
 
   function normWorkBrief(raw) {
@@ -2038,8 +2045,10 @@
 
   // Team Web collaboration loop handle (WS-044); initialized in boot().
   let teamWeb = null;
+  // Project map controller; created in boot() when its scripts are loaded.
+  let projectMap = null;
 
-  const VIEWS = ['overview', 'work', 'context', 'mainline', 'sources', 'team'];
+  const VIEWS = ['overview', 'work', 'context', 'mainline', 'map', 'sources', 'team'];
 
   function go(view, refresh = true) {
     if (state.teamOnly) view = 'team';
@@ -2057,6 +2066,7 @@
     if (refresh && view === 'team' && window.AWR_TEAM_WEB && teamWeb) {
       teamWeb.refresh().catch((e) => errorBlock(e, 'team web'));
     }
+    if (refresh && view === 'map' && projectMap) projectMap.show();
   }
 
   // Getting-started tour
@@ -2164,6 +2174,7 @@
       b.classList.add('spin');
       try {
         if (state.view === 'team' && teamWeb) await teamWeb.refresh();
+        else if (state.view === 'map' && projectMap) await projectMap.refresh();
         else await loadAll();
       } finally { b.classList.remove('spin'); }
     });
@@ -2225,9 +2236,13 @@
         callApi: callApi,
       });
     }
+    if (window.AWR_PROJECT_MAP && window.AWR_PROJECT_MAP.ui) {
+      projectMap = window.AWR_PROJECT_MAP.ui.createProjectMap({ i18n: i18n, $: $, callApi: callApi, fetchSource: fetchAsset });
+    }
     go((location.hash || '#overview').slice(1), false);
     await loadAll();
     if (state.view === 'mainline') await loadMainline();
+    if (state.view === 'map' && projectMap) await projectMap.show();
 
     let seen = null;
     try { seen = localStorage.getItem('awr.tour.seen'); } catch (_) {}

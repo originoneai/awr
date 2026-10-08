@@ -1,0 +1,65 @@
+{
+ "version": 1,
+ "stale_days": 7,
+ "project_goal": "合成夹具：用于渲染回归测试",
+ "titles": {
+  "overview": "示例项目节点图",
+  "explore": "依赖图 · 示例泳道"
+ },
+ "overview": {
+  "match_order": [
+   "ALPHA",
+   "BETA"
+  ],
+  "default_lane": "GAMMA",
+  "lanes": [
+   {
+    "id": "ALPHA",
+    "name": "示例主线甲",
+    "tag": "DEMO-A",
+    "color": "#3b82f6",
+    "key_regex": "^DEMO-A-"
+   },
+   {
+    "id": "BETA",
+    "name": "示例主线乙",
+    "tag": "DEMO-B",
+    "color": "#8b5cf6",
+    "key_regex": "^DEMO-B-"
+   },
+   {
+    "id": "GAMMA",
+    "name": "其他",
+    "tag": "DEMO-C",
+    "color": "#22a06b"
+   }
+  ]
+ },
+ "mainline_panels": [
+  {
+   "lane": "ALPHA"
+  },
+  {
+   "lane": "BETA",
+   "keep_done": true
+  }
+ ],
+ "explore_lanes": [
+  {
+   "goal": "DEMO-G-ONE",
+   "name": "泳道一",
+   "color": "#3b82f6",
+   "milestones": [
+    "M1"
+   ]
+  },
+  {
+   "goal": "DEMO-G-TWO",
+   "name": "泳道二",
+   "color": "#8b5cf6",
+   "milestones": [
+    "M2"
+   ]
+  }
+ ]
+}
