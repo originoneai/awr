@@ -141,9 +141,9 @@ the project revision without changing the source state fingerprint. A response i
 its recorded revision; later events do not make its internally consistent facts false.
 Context hashes already bind their source and runtime snapshot identities.
 
-`status --cached`, `ready --cached`, `work show <key> --cached`, `object list <kind>
---cached` and `search --cached` read the last recorded projections without opening
-business files or writing project files. They explicitly return `read_only: true`,
+`status --cached`, `ready --cached`, `work show <key> --cached`, `work graph --cached`,
+`object list <kind> --cached` and `search --cached` read the last recorded projections
+without opening business files or writing project files. They explicitly return `read_only: true`,
 `source_refresh_performed: false`, `freshness_basis: last_recorded_source_state` and
 `snapshot.source_currentness_verified: false`. Cached facts do not establish current
 progress. The temporary capture is bounded to 256 MiB and may reject an active writer;
