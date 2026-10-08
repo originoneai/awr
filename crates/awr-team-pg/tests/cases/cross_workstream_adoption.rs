@@ -239,10 +239,23 @@ async fn cross_stream_adoption_allows_pending_assignment_before_acceptance() {
 
 #[tokio::test]
 async fn cross_stream_adoption_serializes_replay_and_invalidates_after_revocation() {
+    adoption_replay_and_revocation(false).await;
+}
+
+#[tokio::test]
+async fn fixed_delivery_adoption_replay_and_revocation() {
+    adoption_replay_and_revocation(true).await;
+}
+
+async fn adoption_replay_and_revocation(fixed: bool) {
     let (_g, admin, db, store) = setup().await;
     seed_simulated_members(&admin, &db).await;
     let upstream = complete_simulated_upstream(&store).await;
-    let consumer = exported_consumer(&admin, &store, &db).await;
+    let consumer = if fixed {
+        fixed_export_consumer(&admin, &store, &db).await
+    } else {
+        exported_consumer(&admin, &store, &db).await
+    };
     adoption_roles(&admin).await;
     let session = adoption_session(&store, "replay-adoption-session").await;
     let exported = publish_export(&store, &consumer, &upstream, "replay-adoption-export").await;
@@ -425,7 +438,7 @@ async fn cross_stream_competing_export_versions_never_select_a_withdrawn_input()
 }
 
 #[tokio::test]
-async fn cross_stream_adoption_rechecks_version_selectors_and_rejects_fixed_history() {
+async fn cross_stream_adoption_rechecks_version_selectors() {
     for (field, value) in [
         ("expected_session_version", json!("2")),
         ("expected_responsibility_version", json!("1")),
@@ -464,40 +477,6 @@ async fn cross_stream_adoption_rechecks_version_selectors_and_rejects_fixed_hist
             0
         );
     }
-    let (_g, admin, db, store) = setup().await;
-    seed_simulated_members(&admin, &db).await;
-    let upstream = complete_simulated_upstream(&store).await;
-    let mut consumer = exported_consumer(&admin, &store, &db).await;
-    adoption_roles(&admin).await;
-    let session = adoption_session(&store, "fixed-history-session").await;
-    consumer.dependency_acceptance.insert(
-        "a".into(),
-        awr_team::DependencyAcceptanceMode::CrossWorkstream(
-            awr_team::CrossWorkstreamDependencyPolicy {
-                review_assurance:
-                    awr_team::CrossWorkstreamReviewAssurance::SimulatedMemberIndependent,
-                version_policy: awr_core::DeliveryVersionPolicy::FixedDelivery,
-            },
-        ),
-    );
-    admin.execute("UPDATE awr_team.work_contracts SET contract_json=$1,contract_hash=$2 WHERE work_id='b-private'",&[&json!(consumer),&consumer.hash().unwrap()]).await.unwrap();
-    let exported = publish_export(&store, &consumer, &upstream, "fixed-export").await;
-    assert!(matches!(
-        store
-            .commands()
-            .execute(
-                TENANT,
-                PROJECT,
-                B,
-                adoption_request(&store, &session, &exported, "fixed-adopt").await
-            )
-            .await,
-        Err(PgError::Unsupported(_))
-    ));
-    assert_eq!(
-        prepare(&store, B, "b-private").await["data"]["adopted_dependencies"][0]["adoption_available"],
-        false
-    );
 }
 
 #[tokio::test]
@@ -589,10 +568,23 @@ async fn cross_stream_adoption_never_reuses_invalid_upstream_proof_or_consumer_c
 
 #[tokio::test]
 async fn cross_stream_adoption_rolls_back_selection_and_recovers_after_reading_unknown_result() {
+    adoption_rollback_and_read_first_recovery(false).await;
+}
+
+#[tokio::test]
+async fn fixed_delivery_adoption_rollback_and_read_first_recovery() {
+    adoption_rollback_and_read_first_recovery(true).await;
+}
+
+async fn adoption_rollback_and_read_first_recovery(fixed: bool) {
     let (_g, admin, db, store) = setup().await;
     seed_simulated_members(&admin, &db).await;
     let upstream = complete_simulated_upstream(&store).await;
-    let consumer = exported_consumer(&admin, &store, &db).await;
+    let consumer = if fixed {
+        fixed_export_consumer(&admin, &store, &db).await
+    } else {
+        exported_consumer(&admin, &store, &db).await
+    };
     adoption_roles(&admin).await;
     let session = adoption_session(&store, "rollback-adoption-session").await;
     let first = publish_export(&store, &consumer, &upstream, "rollback-first-export").await;
@@ -655,6 +647,15 @@ async fn cross_stream_adoption_rolls_back_selection_and_recovers_after_reading_u
 
 #[tokio::test]
 async fn cross_stream_adoption_rechecks_live_authority_and_assignee_without_mutation() {
+    adoption_current_authority_and_assignee(false).await;
+}
+
+#[tokio::test]
+async fn fixed_delivery_adoption_current_authority_and_assignee() {
+    adoption_current_authority_and_assignee(true).await;
+}
+
+async fn adoption_current_authority_and_assignee(fixed: bool) {
     for mutation in [
         "grant",
         "delegation",
@@ -667,7 +668,11 @@ async fn cross_stream_adoption_rechecks_live_authority_and_assignee_without_muta
         let (_g, admin, db, store) = setup().await;
         seed_simulated_members(&admin, &db).await;
         let upstream = complete_simulated_upstream(&store).await;
-        let consumer = exported_consumer(&admin, &store, &db).await;
+        let consumer = if fixed {
+            fixed_export_consumer(&admin, &store, &db).await
+        } else {
+            exported_consumer(&admin, &store, &db).await
+        };
         adoption_roles(&admin).await;
         let session = adoption_session(&store, "authority-adoption-session").await;
         let exported =
@@ -733,10 +738,23 @@ async fn cross_stream_adoption_rechecks_live_authority_and_assignee_without_muta
 
 #[tokio::test]
 async fn cross_stream_adoption_and_revoke_race_never_unlocks_a_withdrawn_export() {
+    adoption_and_revoke_race(false).await;
+}
+
+#[tokio::test]
+async fn fixed_delivery_adoption_and_revoke_race() {
+    adoption_and_revoke_race(true).await;
+}
+
+async fn adoption_and_revoke_race(fixed: bool) {
     let (_g, admin, db, store) = setup().await;
     seed_simulated_members(&admin, &db).await;
     let upstream = complete_simulated_upstream(&store).await;
-    let consumer = exported_consumer(&admin, &store, &db).await;
+    let consumer = if fixed {
+        fixed_export_consumer(&admin, &store, &db).await
+    } else {
+        exported_consumer(&admin, &store, &db).await
+    };
     adoption_roles(&admin).await;
     let session = adoption_session(&store, "revoke-race-session").await;
     let exported = publish_export(&store, &consumer, &upstream, "revoke-race-export").await;
@@ -780,10 +798,23 @@ async fn cross_stream_adoption_and_revoke_race_never_unlocks_a_withdrawn_export(
 
 #[tokio::test]
 async fn cross_stream_adoption_gates_execution_and_finalization_and_links_exact_input() {
+    adoption_execution_completion_and_original_inputs(false).await;
+}
+
+#[tokio::test]
+async fn fixed_delivery_adoption_execution_completion_and_original_inputs() {
+    adoption_execution_completion_and_original_inputs(true).await;
+}
+
+async fn adoption_execution_completion_and_original_inputs(fixed: bool) {
     let (_g, admin, db, store) = setup().await;
     seed_simulated_members(&admin, &db).await;
     let upstream = complete_simulated_upstream(&store).await;
-    let mut consumer = exported_consumer(&admin, &store, &db).await;
+    let mut consumer = if fixed {
+        fixed_export_consumer(&admin, &store, &db).await
+    } else {
+        exported_consumer(&admin, &store, &db).await
+    };
     adoption_roles(&admin).await;
     consumer.completion_policy = SIMULATED_POLICY.into();
     consumer.scope_paths = vec!["src/integration".into()];

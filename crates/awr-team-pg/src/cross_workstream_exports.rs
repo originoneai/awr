@@ -159,8 +159,13 @@ fn edge(
     }
 }
 
-/// Recheck the selected receipt, canonical evidence and EXACT original approval.
-/// Old receipts without original review IDs remain unknown, not backfilled.
+/// Publication requires a current selection; fixed reads bind accepted history.
+#[derive(Clone, Copy)]
+enum ProofVersion {
+    CurrentSelected,
+    FixedAccepted,
+}
+
 async fn proof(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -169,21 +174,26 @@ async fn proof(
     work: &str,
     receipt: &str,
     assurance: CrossWorkstreamReviewAssurance,
+    version: ProofVersion,
 ) -> PgResult<(Value, Value)> {
+    let historical = matches!(version, ProofVersion::FixedAccepted);
     let r = tx.query_opt("SELECT r.id,r.independence_kind,r.policy,r.approved_by_json,
-            r.contract_hash,r.evidence_id,p.active_snapshot_id,r.execution_id,
+            r.contract_hash,r.evidence_id,c.snapshot_id,r.execution_id,
             e.execution_id,r.evidence_bundle_hash,e.digest,r.result_digest,
-            to_jsonb(r),to_jsonb(e)
-         FROM awr_team.completion_receipts r JOIN awr_team.work_runtime w
+            to_jsonb(r),to_jsonb(e),c.contract_json
+         FROM awr_team.completion_receipts r LEFT JOIN awr_team.work_runtime w
            ON w.tenant_id=r.tenant_id AND w.project_id=r.project_id AND w.scope_id=r.scope_id
-           AND w.work_id=r.work_id AND w.state='completed' AND w.selected_completion_id=r.id AND NOT w.recovery_blocked
+           AND w.work_id=r.work_id
          JOIN awr_team.projects p ON p.tenant_id=r.tenant_id AND p.id=r.project_id
          JOIN awr_team.work_contracts c ON c.tenant_id=r.tenant_id AND c.project_id=r.project_id
-           AND c.snapshot_id=p.active_snapshot_id AND c.scope_id=r.scope_id AND c.work_id=r.work_id AND c.contract_hash=r.contract_hash
+           AND c.snapshot_id=$5 AND c.scope_id=r.scope_id AND c.work_id=r.work_id
+           AND c.contract_hash=r.contract_hash AND c.definition_state='enabled'
          JOIN awr_team.evidence e ON e.tenant_id=r.tenant_id AND e.project_id=r.project_id AND e.id=r.evidence_id
            AND e.work_id=r.work_id AND e.contract_hash=r.contract_hash
          WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.scope_id='main' AND r.work_id=$3 AND r.id=$4
-           AND p.active_snapshot_id=$5", &[&tenant,&project,&work,&receipt,&snapshot]).await?.ok_or(PgError::EvidenceInvalid)?;
+           AND ($6 OR (p.active_snapshot_id=$5 AND w.state='completed'
+                AND w.selected_completion_id=r.id AND NOT w.recovery_blocked))",
+        &[&tenant,&project,&work,&receipt,&snapshot,&historical]).await?.ok_or(PgError::EvidenceInvalid)?;
     let basis: Value = r.get(3);
     let evidence: Value = r.get(13);
     let contract_hash: String = r.get(4);
@@ -234,6 +244,47 @@ async fn proof(
         .get(0);
     if !successful {
         return Err(PgError::EvidenceInvalid);
+    }
+    let contract: WorkContract =
+        serde_json::from_value(r.get(14)).map_err(|_| PgError::EvidenceInvalid)?;
+    if contract.work_id.as_str() != work
+        || contract.hash().map_err(|_| PgError::EvidenceInvalid)? != contract_hash
+    {
+        return Err(PgError::EvidenceInvalid);
+    }
+    if contract
+        .dependency_acceptance
+        .values()
+        .any(|m| matches!(m, DependencyAcceptanceMode::CrossWorkstream(_)))
+    {
+        let links: std::collections::BTreeMap<String, String> = tx
+            .query("SELECT predecessor_work_id,predecessor_completion_id FROM awr_team.completion_dependencies
+                WHERE tenant_id=$1 AND project_id=$2 AND completion_id=$3", &[&tenant,&project,&receipt])
+            .await?.into_iter().map(|r| (r.get(0),r.get(1))).collect();
+        if links.len() != contract.required_dependencies.len() {
+            return Err(PgError::EvidenceInvalid);
+        }
+        let inputs = contract
+            .required_dependencies
+            .iter()
+            .map(|w| {
+                links
+                    .get(w)
+                    .cloned()
+                    .map(|receipt| (w.clone(), receipt))
+                    .ok_or(PgError::EvidenceInvalid)
+            })
+            .collect::<PgResult<Vec<_>>>()?;
+        crate::cross_workstream_adoption::require_execution_inputs(
+            tx,
+            tenant,
+            project,
+            work,
+            &contract,
+            Some(execution),
+            &inputs,
+        )
+        .await?;
     }
     let (Some(round), Some(decision)) = (
         basis["review_round_id"].as_str(),
@@ -355,7 +406,7 @@ pub(crate) async fn apply(
                 return Err(PgError::PreconditionsChanged);
             }
             let policy = edge(&command.work_id, &provider, &consumer)?;
-            let (archive, summary) = proof(
+            let (archive, summary) = Box::pin(proof(
                 tx,
                 tenant,
                 project,
@@ -363,7 +414,8 @@ pub(crate) async fn apply(
                 &command.work_id,
                 &a.receipt_id,
                 policy.review_assurance,
-            )
+                ProofVersion::CurrentSelected,
+            ))
             .await?;
             let artifact_id = archive["evidence"]["artifact_id"]
                 .as_str()
@@ -379,12 +431,18 @@ pub(crate) async fn apply(
             if archive["evidence"]["output_digest"] != a.expected_artifact_sha256 {
                 return Err(PgError::EvidenceInvalid);
             }
-            let manifest = json!({"codec":"awr-approved-artifact-export-v1","provider_work_id":command.work_id,
+            let fixed = policy.version_policy == awr_core::DeliveryVersionPolicy::FixedDelivery;
+            let mut manifest = json!({"codec":if fixed {"awr-approved-artifact-export-v2"} else {"awr-approved-artifact-export-v1"},"provider_work_id":command.work_id,
                 "provider_workstream_id":provider.stream,"provider_ownership_version":provider.ownership.to_string(),"provider_contract_hash":provider.hash,
                 "consumer_work_id":a.consumer_work_id,"consumer_workstream_id":consumer.stream,
                 "consumer_ownership_version":consumer.ownership.to_string(),"consumer_contract_hash":consumer.hash,
                 "receipt_id":a.receipt_id,"artifact_id":artifact_id,"artifact_sha256":a.expected_artifact_sha256,
                 "byte_length":bytes.len(),"media_type":media,"policy":policy,"review":summary,"repository_source_sha":Value::Null});
+            if fixed {
+                // Captured only while the provider's exact current completion is
+                // verified. Never guess historical source for legacy exports.
+                manifest["provider_source_snapshot_id"] = json!(auth.snapshot);
+            }
             let disclosure = hash(&manifest)?;
             if let Some(r) = tx
                 .query_opt(
@@ -448,27 +506,51 @@ async fn live(
     let provider = source_work(tx, tenant, project, snapshot, provider_work).await?;
     let consumer = source_work(tx, tenant, project, snapshot, consumer_work).await?;
     let policy = edge(provider_work, &provider, &consumer)?;
-    if manifest["provider_contract_hash"] != provider.hash
+    let archived = if policy.version_policy == awr_core::DeliveryVersionPolicy::FixedDelivery {
+        if manifest["codec"] != "awr-approved-artifact-export-v2" {
+            return Err(PgError::EvidenceInvalid);
+        }
+        let original = manifest["provider_source_snapshot_id"]
+            .as_str()
+            .filter(|s| id(s))
+            .ok_or(PgError::EvidenceInvalid)?;
+        Some(source_work(tx, tenant, project, original, provider_work).await?)
+    } else {
+        if manifest["codec"] != "awr-approved-artifact-export-v1" {
+            return Err(PgError::EvidenceInvalid);
+        }
+        None
+    };
+    let proof_provider = archived.as_ref().unwrap_or(&provider);
+    if manifest["provider_contract_hash"] != proof_provider.hash
         || manifest["consumer_contract_hash"] != consumer.hash
-        || manifest["provider_workstream_id"] != provider.stream
+        || manifest["provider_workstream_id"] != proof_provider.stream
         || manifest["consumer_workstream_id"] != consumer.stream
-        || manifest["provider_ownership_version"] != provider.ownership.to_string()
+        || manifest["provider_ownership_version"] != proof_provider.ownership.to_string()
         || manifest["consumer_ownership_version"] != consumer.ownership.to_string()
         || manifest["policy"] != json!(policy)
     {
         return Err(PgError::PreconditionsChanged);
     }
-    let (actual, summary) = proof(
+    let (actual, summary) = Box::pin(proof(
         tx,
         tenant,
         project,
-        snapshot,
+        manifest["provider_source_snapshot_id"]
+            .as_str()
+            .filter(|_| archived.is_some())
+            .unwrap_or(snapshot),
         provider_work,
         manifest["receipt_id"]
             .as_str()
             .ok_or(PgError::EvidenceInvalid)?,
         policy.review_assurance,
-    )
+        if archived.is_some() {
+            ProofVersion::FixedAccepted
+        } else {
+            ProofVersion::CurrentSelected
+        },
+    ))
     .await?;
     if &actual != archive
         || manifest["review"] != summary
@@ -681,6 +763,6 @@ pub(crate) async fn list(
     };
     Ok(
         json!({"items":items,"next_cursor":next,"adoption_available":true,
-            "adoption_version_policies":["current_contract"],"upstream_source_access":false}),
+            "adoption_version_policies":["current_contract","fixed_delivery"],"upstream_source_access":false}),
     )
 }

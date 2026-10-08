@@ -712,30 +712,52 @@ async fn member_command(
     reason = "The guard serializes the shared PostgreSQL fixture for this entire async test."
 )]
 async fn simulated_dependency_supports_complete_ordinary_member_mcp_workflow() {
-    ordinary_member_mcp_workflow(ConsumerWorkflow::SameStream).await;
+    Box::pin(ordinary_member_mcp_workflow(ConsumerWorkflow::SameStream)).await;
 }
 
 #[tokio::test]
 async fn approved_artifact_exports_work_over_authenticated_mcp_without_upstream_access() {
-    ordinary_member_mcp_workflow(ConsumerWorkflow::Disclosure).await;
+    Box::pin(ordinary_member_mcp_workflow(ConsumerWorkflow::Disclosure)).await;
 }
 
 #[tokio::test]
 async fn current_cross_stream_adoption_supports_complete_pool_member_mcp_workflow() {
-    ordinary_member_mcp_workflow(ConsumerWorkflow::PoolAdoption).await;
+    Box::pin(ordinary_member_mcp_workflow(
+        ConsumerWorkflow::PoolAdoption(awr_core::DeliveryVersionPolicy::CurrentContract),
+    ))
+    .await;
 }
 
 #[tokio::test]
 async fn current_cross_stream_adoption_supports_complete_assigned_member_mcp_workflow() {
-    ordinary_member_mcp_workflow(ConsumerWorkflow::AssignedAdoption).await;
+    Box::pin(ordinary_member_mcp_workflow(
+        ConsumerWorkflow::AssignedAdoption(awr_core::DeliveryVersionPolicy::CurrentContract),
+    ))
+    .await;
+}
+
+#[tokio::test]
+async fn fixed_cross_stream_adoption_supports_complete_pool_member_mcp_workflow() {
+    Box::pin(ordinary_member_mcp_workflow(
+        ConsumerWorkflow::PoolAdoption(awr_core::DeliveryVersionPolicy::FixedDelivery),
+    ))
+    .await;
+}
+
+#[tokio::test]
+async fn fixed_cross_stream_adoption_supports_complete_assigned_member_mcp_workflow() {
+    Box::pin(ordinary_member_mcp_workflow(
+        ConsumerWorkflow::AssignedAdoption(awr_core::DeliveryVersionPolicy::FixedDelivery),
+    ))
+    .await;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ConsumerWorkflow {
     SameStream,
     Disclosure,
-    PoolAdoption,
-    AssignedAdoption,
+    PoolAdoption(awr_core::DeliveryVersionPolicy),
+    AssignedAdoption(awr_core::DeliveryVersionPolicy),
 }
 
 #[expect(
@@ -746,8 +768,14 @@ async fn ordinary_member_mcp_workflow(mode: ConsumerWorkflow) {
     let disclose = mode != ConsumerWorkflow::SameStream;
     let adopt = matches!(
         mode,
-        ConsumerWorkflow::PoolAdoption | ConsumerWorkflow::AssignedAdoption
+        ConsumerWorkflow::PoolAdoption(_) | ConsumerWorkflow::AssignedAdoption(_)
     );
+    let version_policy = match mode {
+        ConsumerWorkflow::PoolAdoption(policy) | ConsumerWorkflow::AssignedAdoption(policy) => {
+            policy
+        }
+        _ => awr_core::DeliveryVersionPolicy::CurrentContract,
+    };
     const CONSUMER_AGENT: &str =
         "awr1.consumer-agent.cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
     use awr_core::{
@@ -760,7 +788,8 @@ async fn ordinary_member_mcp_workflow(mode: ConsumerWorkflow) {
     use awr_team_pg::AuthorizationStore;
     use std::collections::BTreeSet;
 
-    let (_g, admin, db, store) = setup().await;
+    // Heap-bound nested fixture futures preserve the ordinary test stack.
+    let (_g, admin, db, store) = Box::pin(setup()).await;
     // Provision distinct simulated members before starting the loopback service.
     // Subsequent workflow mutations use authenticated MCP, never direct SQL.
     admin.batch_execute(r#"UPDATE awr_team.actors SET kind='agent' WHERE id IN ('agent','reviewer');
@@ -939,7 +968,7 @@ async fn ordinary_member_mcp_workflow(mode: ConsumerWorkflow) {
             DependencyAcceptanceMode::CrossWorkstream(awr_team::CrossWorkstreamDependencyPolicy {
                 review_assurance:
                     awr_team::CrossWorkstreamReviewAssurance::SimulatedMemberIndependent,
-                version_policy: awr_core::DeliveryVersionPolicy::CurrentContract,
+                version_policy,
             }),
         );
         if adopt {
@@ -954,7 +983,7 @@ async fn ordinary_member_mcp_workflow(mode: ConsumerWorkflow) {
         }
         admin.execute("UPDATE awr_team.work_contracts SET contract_json=$1,contract_hash=$2 WHERE work_id='b-private'",&[&json!(consumer),&consumer.hash().unwrap()]).await.unwrap();
     }
-    let server = start(store).await;
+    let server = Box::pin(start(store)).await;
     let author = connect(&server, A).await;
     let reviewer = connect(&server, B).await;
     let supervisor = connect(&server, NONE).await;
@@ -1173,6 +1202,14 @@ async fn ordinary_member_mcp_workflow(mode: ConsumerWorkflow) {
                 caps["approved_artifact_exports"]["adoption_available"],
                 true
             );
+            assert_eq!(
+                caps["planning"]["cross_workstream_policy"]["adoption_version_policies"],
+                json!(["current_contract", "fixed_delivery"])
+            );
+            assert_eq!(
+                caps["approved_artifact_exports"]["historical_fixed_delivery_available"],
+                true
+            );
             let tools = consumer.list_all_tools().await.unwrap();
             assert_eq!(
                 tools
@@ -1253,7 +1290,7 @@ async fn ordinary_member_mcp_workflow(mode: ConsumerWorkflow) {
             assert_eq!(observed["data"]["state"], "committed");
             assert_eq!(observed["data"]["receipt"], exported["receipt"]);
             if let Some(client) = &adoption_client {
-                let assigned = mode == ConsumerWorkflow::AssignedAdoption;
+                let assigned = matches!(mode, ConsumerWorkflow::AssignedAdoption(_));
                 let mut p = call(
                     client,
                     "awr_team_query",
@@ -1313,7 +1350,7 @@ async fn ordinary_member_mcp_workflow(mode: ConsumerWorkflow) {
                 );
                 let request = serde_json::to_value(command(
                     &p,
-                    "adopt-current-artifact",
+                    "adopt-approved-artifact",
                     "delivery.adopt",
                     adopt_args,
                 ))
@@ -1321,7 +1358,7 @@ async fn ordinary_member_mcp_workflow(mode: ConsumerWorkflow) {
                 let adopted = call(client, "awr_team_command", request.clone(), false).await;
                 assert_eq!(adopted["receipt"]["data"]["adopted"], true);
                 assert_eq!(adopted["execution_authorized"], false);
-                let inspected = call(client,"awr_team_query",json!({"protocol_version":1,"op":"command.inspect","work_id":"b-private","request_id":"adopt-current-artifact"}),false).await;
+                let inspected = call(client,"awr_team_query",json!({"protocol_version":1,"op":"command.inspect","work_id":"b-private","request_id":"adopt-approved-artifact"}),false).await;
                 assert_eq!(inspected["data"]["receipt"], adopted["receipt"]);
                 let replay = call(client, "awr_team_command", request, false).await;
                 assert_eq!(replay["receipt"], adopted["receipt"]);

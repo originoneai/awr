@@ -681,20 +681,19 @@ pub(crate) async fn read(
             "content_query":"artifact.content","content_selector":"export_id",
             "publication_action":"delivery.finalize","requires":"current_selected_receipt_and_exact_original_review",
             "read_scope":"exact_consumer_work","upstream_source_access":false,"adoption_available":true,
-            "current_contract_only":true,"historical_fixed_delivery_available":false,
+            "current_contract_only":false,"historical_fixed_delivery_available":true,
             "adoption_command":"delivery.adopt","adoption_action":"execution.request_and_report_own",
             "adoption_args":["session_id","expected_session_version","expected_responsibility_version","export_id","expected_export_version","expected_disclosure_sha256","expected_adoption_version"],
             "publish_args":["session_id","expected_session_version","consumer_work_id","expected_consumer_contract_hash","expected_consumer_ownership_version","receipt_id","expected_artifact_sha256"],
             "revoke_args":["session_id","expected_session_version","export_id","expected_export_version"]
         });
-        // Planning declares both policies; this command plane currently adopts
-        // only current-contract exports. Do not imply historical support.
+        // Fixed history requires the explicit source-pinned export codec.
         caps["planning"]["cross_workstream_policy"]["declaration_only"] = json!(false);
         caps["planning"]["cross_workstream_policy"]["adoption_available"] = json!(true);
         caps["planning"]["cross_workstream_policy"]["adoption_version_policies"] =
-            json!(["current_contract"]);
+            json!(["current_contract", "fixed_delivery"]);
         caps["planning"]["cross_workstream_policy"]["historical_fixed_delivery_available"] =
-            json!(false);
+            json!(true);
         caps["agent_review"] = json!({
             "command":"review.decide", "policy":crate::review::AGENT_REVIEW_POLICY,
             "requires":["agent_actor","agent_review_membership_grant","live_review_delegation","distinct_author_actor_and_client"],
@@ -726,7 +725,7 @@ pub(crate) async fn read(
             "unmapped_dependencies":"blocked",
             "cross_workstream_adoption_supported":true,
             "v5_dependency_scope":"same_workstream",
-            "cross_workstream_adoption_policy":"explicit_v6_current_contract"
+            "cross_workstream_adoption_policy":"explicit_v6_version_policy"
         });
         caps["identity"] = navigation::identity(auth);
         caps["business_role_presets"] = json!({
