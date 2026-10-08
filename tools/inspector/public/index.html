@@ -7,6 +7,8 @@
 <meta http-equiv="content-security-policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'">
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="team-network.css">
+<link rel="stylesheet" href="project-map/interact.css">
+<link rel="stylesheet" href="project-map.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🧭</text></svg>">
 </head>
 <body>
@@ -78,6 +80,10 @@
     <a href="#mainline" data-view="mainline">
       <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8 7.5l3.5 8M16 7.5l-3.5 8"/></svg>
       <span data-i18n="ui.mainline">Mainline</span>
+    </a>
+    <a href="#map" data-view="map">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="5" rx="1.5"/><rect x="14" y="4" width="7" height="5" rx="1.5"/><rect x="8.5" y="15" width="7" height="5" rx="1.5"/><path d="M6.5 9v3h11V9M12 12v3"/></svg>
+      <span data-i18n="map.nav">Project map</span>
     </a>
     <a href="#sources" data-view="sources">
       <svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/></svg>
@@ -486,6 +492,32 @@
       </div>
     </section>
 
+    <section class="view" id="view-map" hidden>
+      <div class="view-head">
+        <span class="eyebrow" data-i18n="map.eyebrow">awr work graph · nav · doctor</span>
+        <h1><span data-i18n="map.nav">Project map</span></h1>
+        <p class="lede"><span data-i18n="map.lede">Node graph and dependency graphs built from official awr JSON only.</span></p>
+      </div>
+      <div class="stack-lg">
+        <div class="panel">
+          <div class="body map-controls">
+            <button class="btn" id="mapRefreshBtn"><span data-i18n="map.refresh">Refresh map</span></button>
+            <button class="btn ghost" id="mapDownloadBtn" disabled><span data-i18n="map.download">Download HTML</span></button>
+            <button class="btn ghost" id="mapDownloadJsonBtn" disabled><span data-i18n="map.download_json">Download snapshot JSON</span></button>
+            <label class="map-toggle" title="Needs an awr that supports work graph --cached." data-i18n-title="map.recorded_only_hint">
+              <input type="checkbox" id="mapCachedToggle"> <span data-i18n="map.recorded_only">Recorded state only (no source refresh)</span>
+            </label>
+          </div>
+          <div class="body map-status" id="mapStatus" role="status" aria-live="polite" hidden></div>
+          <div class="body"><button class="btn ghost" id="mapRetryBtn" hidden><span data-i18n="map.error.retry">Retry</span></button></div>
+        </div>
+        <div id="mapBody" hidden>
+          <div id="mapHeader"></div>
+          <div id="mapStage" class="pm-scope"></div>
+        </div>
+      </div>
+    </section>
+
     <section class="view" id="view-sources" hidden>
       <div class="view-head">
         <span class="eyebrow">awr intake inspect</span>
@@ -621,6 +653,17 @@
 <script src="team-onboarding.js"></script>
 <script src="team-admin.js"></script>
 <script src="team-web.js"></script>
+<script src="project-map/snapshot.js"></script>
+<script src="project-map/model.js"></script>
+<script src="project-map/svgkit.js"></script>
+<script src="project-map/layout.js"></script>
+<script src="project-map/views.js"></script>
+<script src="project-map/detail.js"></script>
+<script src="project-map/page.js"></script>
+<script src="project-map/interact.js"></script>
+<script src="project-map/extract.js"></script>
+<script src="project-map/demo.js"></script>
+<script src="project-map/ui.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

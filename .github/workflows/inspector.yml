@@ -35,6 +35,10 @@ jobs:
           node --check public/i18n.js
           node --check public/locales/en.js
           node --check public/locales/zh-CN.js
+          node --check export-map.js
+          node --check project-map-config.js
+          node --check awr-process.js
+          for f in public/project-map/*.js; do node --check "$f"; done
       - name: Bridge tests
         run: node --test test/*.test.js
       - name: No external asset loads

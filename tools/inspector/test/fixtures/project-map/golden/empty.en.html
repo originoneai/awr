@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>AWR project map · Demo Project · r100</title>
+<style>:root{color-scheme:light dark;--bg:#f2f5fb;--ink:#1d1d1f;--muted:#6e6e73;--faint:#86868b;--line:rgba(0,0,0,.1);--panel:#fff;--chip:#fff;--accent:#0a5cff;--shadow:0 10px 30px rgba(13,48,120,.12);--scroll:#e9eff9}
+@media (prefers-color-scheme:dark){:root{--bg:#10131a;--ink:#eceef2;--muted:#a3a8b3;--faint:#8b909c;--line:rgba(255,255,255,.14);--panel:#1b2030;--chip:#1b2030;--accent:#7fb0ff;--shadow:0 10px 30px rgba(0,0,0,.45);--scroll:#1b2030}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.top{display:flex;flex-wrap:wrap;gap:16px 28px;align-items:center;justify-content:space-between;padding:22px max(16px,3vw) 8px}
+.brand{display:flex;gap:14px;align-items:center;min-width:0}
+.badge{flex:none;width:44px;height:44px;border-radius:13px;background:linear-gradient(135deg,#57b8ff,#0a5cff);color:#fff;font-weight:700;font-size:20px;display:grid;place-items:center}
+h1{font-size:20px;line-height:1.25;margin:0}
+.sub{margin:2px 0 0;color:var(--muted);font-size:12.5px;overflow-wrap:anywhere}
+.stats{display:flex;gap:10px;list-style:none;padding:0;margin:0;flex-wrap:wrap}
+.stats li{background:var(--chip);border:1px solid var(--line);border-radius:14px;padding:6px 14px;text-align:center;min-width:72px}
+.stats b{display:block;font-size:18px}.stats span{color:var(--faint);font-size:11.5px}
+.tabs{padding:6px max(16px,3vw) 0}
+.tabs>input{position:absolute;opacity:0;pointer-events:none}
+.tabs>label{display:inline-block;margin:0 8px 10px 0;padding:7px 16px;border-radius:999px;border:1px solid var(--line);background:var(--chip);color:var(--muted);cursor:pointer;font-weight:600;font-size:13px}
+.tabs>input:checked+label{background:var(--accent);border-color:var(--accent);color:#fff}
+.tabs>input:focus-visible+label{outline:2px solid var(--accent);outline-offset:2px}
+.view{display:none}
+#v-overview:checked~.views #s-overview,#v-mainline:checked~.views #s-mainline,#v-explore:checked~.views #s-explore{display:block}
+.scroll{overflow-x:auto;max-width:100%;border-radius:18px;background:var(--scroll);box-shadow:var(--shadow);border:1px solid var(--line)}
+.scroll svg{display:block;margin:0 auto}
+.table,.notes{margin:18px max(16px,3vw)}
+.table summary{cursor:pointer;font-weight:600;padding:8px 0}
+table{border-collapse:collapse;width:100%;font-size:12.5px;min-width:760px}
+th,td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:600}
+td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}
+.notes{color:var(--muted);font-size:12.5px}.notes h2{font-size:13px;margin:12px 0 4px;color:var(--ink)}.notes ul{margin:4px 0;padding-left:20px}
+@media (max-width:640px){h1{font-size:17px}.stats li{min-width:64px;padding:5px 10px}}
+@media print{.tabs>input,.tabs>label{display:none}.view{display:block!important;break-inside:avoid;margin-bottom:16px}.scroll{box-shadow:none;overflow:visible}}</style>
+</head>
+<body>
+<header class="top"><div class="brand"><span class="badge" aria-hidden="true">A</span><div><h1>AWR project map · Demo Project</h1><p class="sub">revision 100 · snapshot cc56e9dda886 · generated 2026-01-15 00:00 UTC</p></div></div><ul class="stats"><li><b>0</b><span>Work items</span></li><li><b>0</b><span>Dependencies</span></li><li><b>0</b><span>Stalled</span></li><li><b>0</b><span>Blocked</span></li><li><b>0</b><span>Active sessions</span></li></ul></header>
+<main><div class="tabs"><input type="radio" name="view" id="v-overview" checked><label for="v-overview">Project node graph</label><input type="radio" name="view" id="v-mainline"><label for="v-mainline">Main dependency graph</label><input type="radio" name="view" id="v-explore"><label for="v-explore">Lane dependency graph</label><div class="views"><section class="view" id="s-overview" aria-label="Project node graph"><div class="scroll"><svg xmlns="http://www.w3.org/2000/svg" width="1100" height="770" viewBox="0 0 1100 770" font-family="-apple-system,BlinkMacSystemFont,&#x27;SF Pro Display&#x27;,&#x27;Avenir Next&#x27;,&#x27;Segoe UI&#x27;,&#x27;PingFang SC&#x27;,&#x27;Microsoft YaHei&#x27;,sans-serif" role="img" aria-label="Project node graph: 0 work items, 0 dependencies, grouped by lane">
+<defs>
+<radialGradient id="overview-gBg" cx="50%" cy="-12%" r="95%"><stop offset="0" stop-color="#ffffff"/><stop offset=".52" stop-color="#edf1f9"/><stop offset="1" stop-color="#e0e9f6"/></radialGradient>
+<linearGradient id="overview-gPanel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f8faff"/><stop offset="1" stop-color="#eef3fc"/></linearGradient>
+<linearGradient id="overview-gProj" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#eef4ff"/></linearGradient>
+<linearGradient id="overview-gDev" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#57b8ff"/><stop offset="1" stop-color="#0a5cff"/></linearGradient>
+<filter id="overview-sh" x="-25%" y="-25%" width="150%" height="170%"><feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="#0d3078" flood-opacity=".11"/></filter>
+<filter id="overview-shS" x="-25%" y="-25%" width="150%" height="170%"><feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#0d3078" flood-opacity=".10"/></filter>
+<filter id="overview-glow" x="-30%" y="-30%" width="160%" height="190%"><feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#0a5cff" flood-opacity=".30"/></filter>
+<filter id="overview-shell" x="-5%" y="-3%" width="110%" height="108%"><feDropShadow dx="0" dy="24" stdDeviation="26" flood-color="#0a3cb4" flood-opacity=".12"/></filter>
+<marker id="overview-aBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.4" markerHeight="5.4" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#6e98d9" stroke-width="1.3"/></marker>
+<marker id="overview-aCrit" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#0a5cff" stroke-width="1.6"/></marker>
+<marker id="overview-aRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.4" markerHeight="5.4" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#e14b54" stroke-width="1.3"/></marker>
+<marker id="overview-aGray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#9aa3b2" stroke-width="1.2"/></marker>
+</defs>
+<rect width="1100" height="770" fill="url(#overview-gBg)"/>
+<rect x="28" y="24" width="1044" height="722" rx="28" fill="#fff" fill-opacity=".55" stroke="rgba(255,255,255,.9)" stroke-width="1.5" filter="url(#overview-shell)"/>
+<text x="550.0" y="74.0" font-size="9.5" fill="#86868b" font-weight="600" text-anchor="middle" letter-spacing="1.6">AWR · PROJECT NODE GRAPH</text>
+<text x="550.0" y="108.0" font-size="25" fill="#1d1d1f" font-weight="750" text-anchor="middle" letter-spacing="-0.3">示例项目节点图</text>
+<text x="550.0" y="132.0" font-size="11" fill="#6e6e73" font-weight="500" text-anchor="middle" letter-spacing="1.2">0 work items (0 cancelled) · 0 dependencies · 3 lanes by display configuration · 2026-01-15 00:00 UTC</text>
+<rect x="224.0" y="146.0" width="651.9" height="22" rx="11" fill="rgba(245,158,11,.12)" stroke="rgba(245,158,11,.34)" stroke-width="1"/>
+<text x="550.0" y="160.5" font-size="10" fill="#8a6417" font-weight="500" text-anchor="middle">Read-only snapshot: all data comes from official CLI JSON (work graph, nav, doctor …); no ledger or state database was read</text>
+<rect x="170" y="196" width="760" height="76" rx="18" fill="url(#overview-gProj)" stroke="rgba(10,92,255,.32)" stroke-width="1.2" filter="url(#overview-sh)"/>
+<rect x="186" y="213" width="42" height="42" rx="12" fill="url(#overview-gDev)"/>
+<g transform="translate(195,222) scale(.98)" fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5 9-5z M3 12l9 5 9-5 M3 16l9 5 9-5"/></g>
+<text x="242.0" y="225.0" font-size="15" fill="#1d1d1f" font-weight="700" text-anchor="start">Demo Project</text>
+<rect x="353.4" y="211.0" width="71.3" height="17" rx="8.5" fill="rgba(10,92,255,.09)" stroke="rgba(10,92,255,.28)" stroke-width="1"/>
+<text x="389.0" y="222.8" font-size="9.5" fill="#0a5cff" font-weight="600" text-anchor="middle">revision 100</text>
+<text x="242.0" y="241.0" font-size="9.5" fill="#86868b" font-weight="500" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">awr work graph · nav · doctor (official JSON)</text>
+<text x="242.0" y="257.0" font-size="9.5" fill="#6e6e73" font-weight="500" text-anchor="start">合成夹具：用于渲染回归测试</text>
+<text x="877.0" y="234.0" font-size="18" fill="#1d1d1f" font-weight="700" text-anchor="middle">0</text>
+<text x="877.0" y="250.0" font-size="8.5" fill="#86868b" font-weight="500" text-anchor="middle">Blocked</text>
+<line x1="840" y1="218" x2="840" y2="252" stroke="rgba(0,0,0,.08)"/>
+<text x="811.0" y="234.0" font-size="18" fill="#1d1d1f" font-weight="700" text-anchor="middle">0</text>
+<text x="811.0" y="250.0" font-size="8.5" fill="#86868b" font-weight="500" text-anchor="middle">Stalled</text>
+<line x1="774" y1="218" x2="774" y2="252" stroke="rgba(0,0,0,.08)"/>
+<text x="745.0" y="234.0" font-size="18" fill="#1d1d1f" font-weight="700" text-anchor="middle">0</text>
+<text x="745.0" y="250.0" font-size="8.5" fill="#86868b" font-weight="500" text-anchor="middle">Dependencies</text>
+<line x1="708" y1="218" x2="708" y2="252" stroke="rgba(0,0,0,.08)"/>
+<text x="679.0" y="234.0" font-size="18" fill="#1d1d1f" font-weight="700" text-anchor="middle">0</text>
+<text x="679.0" y="250.0" font-size="8.5" fill="#86868b" font-weight="500" text-anchor="middle">Work items</text>
+<line x1="642" y1="218" x2="642" y2="252" stroke="rgba(0,0,0,.08)"/>
+<path d="M550,272 L550,292" stroke="#b7c9ee" stroke-width="1.6" fill="none"/>
+<path d="M308,292 L792,292" stroke="#b7c9ee" stroke-width="1.6" fill="none"/>
+<path d="M308,292 L308,316" stroke="#b7c9ee" stroke-width="1.6" fill="none" marker-end="url(#overview-aBlue)"/>
+<path d="M550,292 L550,316" stroke="#b7c9ee" stroke-width="1.6" fill="none" marker-end="url(#overview-aBlue)"/>
+<path d="M792,292 L792,316" stroke="#b7c9ee" stroke-width="1.6" fill="none" marker-end="url(#overview-aBlue)"/>
+<rect x="193" y="310" width="230" height="146" rx="22" fill="#fff" fill-opacity=".38" stroke="rgba(255,255,255,.85)"/>
+<rect x="435" y="310" width="230" height="146" rx="22" fill="#fff" fill-opacity=".38" stroke="rgba(255,255,255,.85)"/>
+<rect x="677" y="310" width="230" height="146" rx="22" fill="#fff" fill-opacity=".38" stroke="rgba(255,255,255,.85)"/>
+<g class="pm-fold" data-lane="ALPHA" data-open="true"><rect x="233.0" y="318" width="150.0" height="42" rx="12" fill="#fff" fill-opacity=".86" stroke="rgba(255,255,255,.9)" filter="url(#overview-shS)"/><rect x="249.0" y="334" width="10" height="10" rx="3" fill="#3b82f6"/><text x="267.0" y="336.0" font-size="12" fill="#1d1d1f" font-weight="700" text-anchor="start">示例主线甲</text><text x="267.0" y="349.0" font-size="8.5" fill="#86868b" font-weight="500" text-anchor="start" letter-spacing="0.3">DEMO-A</text><path class="pm-chevron" d="M361.0,337.0 l4.5,4.5 l4.5,-4.5" fill="none" stroke="#86868b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
+<clipPath id="overview-bar-205-370"><rect x="205" y="370" width="206" height="7" rx="3.5"/></clipPath><g clip-path="url(#overview-bar-205-370)">
+<rect x="205" y="370" width="206" height="7" fill="#e6e9f0"/>
+</g>
+<text x="205.0" y="398.0" font-size="10.5" fill="#1d1d1f" font-weight="650" text-anchor="start">0/0 done</text>
+<text x="205.0" y="430.0" font-size="8.8" fill="#86868b" font-weight="650" text-anchor="start" letter-spacing="1.1">No work items</text>
+<g class="pm-fold" data-lane="BETA" data-open="true"><rect x="475.0" y="318" width="150.0" height="42" rx="12" fill="#fff" fill-opacity=".86" stroke="rgba(255,255,255,.9)" filter="url(#overview-shS)"/><rect x="491.0" y="334" width="10" height="10" rx="3" fill="#8b5cf6"/><text x="509.0" y="336.0" font-size="12" fill="#1d1d1f" font-weight="700" text-anchor="start">示例主线乙</text><text x="509.0" y="349.0" font-size="8.5" fill="#86868b" font-weight="500" text-anchor="start" letter-spacing="0.3">DEMO-B</text><path class="pm-chevron" d="M603.0,337.0 l4.5,4.5 l4.5,-4.5" fill="none" stroke="#86868b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
+<clipPath id="overview-bar-447-370"><rect x="447" y="370" width="206" height="7" rx="3.5"/></clipPath><g clip-path="url(#overview-bar-447-370)">
+<rect x="447" y="370" width="206" height="7" fill="#e6e9f0"/>
+</g>
+<text x="447.0" y="398.0" font-size="10.5" fill="#1d1d1f" font-weight="650" text-anchor="start">0/0 done</text>
+<text x="447.0" y="430.0" font-size="8.8" fill="#86868b" font-weight="650" text-anchor="start" letter-spacing="1.1">No work items</text>
+<g class="pm-fold" data-lane="GAMMA" data-open="true"><rect x="717.0" y="318" width="150.0" height="42" rx="12" fill="#fff" fill-opacity=".86" stroke="rgba(255,255,255,.9)" filter="url(#overview-shS)"/><rect x="733.0" y="334" width="10" height="10" rx="3" fill="#22a06b"/><text x="751.0" y="336.0" font-size="12" fill="#1d1d1f" font-weight="700" text-anchor="start">其他</text><text x="751.0" y="349.0" font-size="8.5" fill="#86868b" font-weight="500" text-anchor="start" letter-spacing="0.3">DEMO-C</text><path class="pm-chevron" d="M845.0,337.0 l4.5,4.5 l4.5,-4.5" fill="none" stroke="#86868b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
+<clipPath id="overview-bar-689-370"><rect x="689" y="370" width="206" height="7" rx="3.5"/></clipPath><g clip-path="url(#overview-bar-689-370)">
+<rect x="689" y="370" width="206" height="7" fill="#e6e9f0"/>
+</g>
+<text x="689.0" y="398.0" font-size="10.5" fill="#1d1d1f" font-weight="650" text-anchor="start">0/0 done</text>
+<text x="689.0" y="430.0" font-size="8.8" fill="#86868b" font-weight="650" text-anchor="start" letter-spacing="1.1">No work items</text>
+<rect x="193" y="494" width="714" height="138" rx="22" fill="#fff" fill-opacity=".72" stroke="rgba(255,255,255,.9)" filter="url(#overview-shS)"/>
+<text x="209.0" y="522.0" font-size="9.5" fill="#86868b" font-weight="600" text-anchor="start" letter-spacing="1.4">EXECUTORS</text>
+<text x="285.0" y="522.0" font-size="10.5" fill="#6e6e73" font-weight="500" text-anchor="start">Unfinished work with an active claim · 0 items / 0 executors</text>
+<text x="209.0" y="599.0" font-size="9.5" fill="#86868b" font-weight="600" text-anchor="start" letter-spacing="1.4">DOCTOR</text>
+<rect x="271.0" y="584.0" width="110.5" height="24" rx="12" fill="rgba(245,158,11,.11)" stroke="rgba(245,158,11,.4)" stroke-width="1"/>
+<text x="326.2" y="599.5" font-size="10" fill="#b4740a" font-weight="600" text-anchor="middle">active sessions  0</text>
+<line x1="201" y1="658" x2="899" y2="658" stroke="rgba(0,0,0,.10)" stroke-dasharray="5 4"/>
+<text x="207.0" y="685.0" font-size="9.5" fill="#86868b" font-weight="600" text-anchor="start" letter-spacing="1">Legend</text>
+<circle cx="252" cy="682" r="5" fill="#1fae74"/>
+<text x="263.0" y="685.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Done</text>
+<circle cx="313.6" cy="682" r="9" fill="none" stroke="rgba(10,92,255,.45)" stroke-width="1.3"/><circle cx="313.6" cy="682" r="5" fill="url(#overview-gDev)"/>
+<text x="324.6" y="685.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">In progress</text>
+<circle cx="411.90000000000003" cy="682" r="5" fill="#fff" stroke="#f59e0b" stroke-width="2"/>
+<text x="422.9" y="685.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Stalled</text>
+<circle cx="485.30000000000007" cy="682" r="5" fill="#e14b54"/>
+<text x="496.3" y="685.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Blocked</text>
+<circle cx="561.2" cy="682" r="5" fill="#fff" stroke="#aeb7c7" stroke-width="2"/>
+<text x="572.2" y="685.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Ready</text>
+<circle cx="628.4000000000001" cy="682" r="5" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="639.4" y="685.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Waiting</text>
+<path d="M698.6,682.0 C698.6,682.0 728.6,682.0 728.6,682.0" fill="none" stroke="#8fb0e6" stroke-width="1.6" marker-end="url(#overview-aBlue)"/>
+<text x="736.6" y="685.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Direct dependency</text>
+<text x="207.0" y="702.0" font-size="9.5" fill="#86868b" font-weight="500" text-anchor="start">“Stalled” in this graph: status in_progress and no event for ≥7 days. Lanes come from the display configuration; inside a lane, items are grouped by status and ordered by dependency depth.</text>
+<text x="207.0" y="718.0" font-size="9.5" fill="#86868b" font-weight="500" text-anchor="start">0 dependencies, 0 across lanes; all data from official CLI JSON (snapshot cc56e9dda886, revision 100); as of 2026-01-15 00:00 UTC.</text>
+<text x="207.0" y="734.0" font-size="9.5" fill="#86868b" font-weight="500" text-anchor="start">Not provided by the official interfaces: node.goal, node.scope, node.priority, node.milestone, project.scenarios, project.release_funnel</text>
+</svg>
+</div></section><section class="view" id="s-mainline" aria-label="Main dependency graph"><div class="scroll"><svg xmlns="http://www.w3.org/2000/svg" width="1100" height="330" viewBox="0 0 1100 330" font-family="-apple-system,BlinkMacSystemFont,&#x27;SF Pro Display&#x27;,&#x27;Avenir Next&#x27;,&#x27;Segoe UI&#x27;,&#x27;PingFang SC&#x27;,&#x27;Microsoft YaHei&#x27;,sans-serif" role="img" aria-label="Main dependency graph: dependencies and critical path of each lane">
+<defs>
+<radialGradient id="mainline-gBg" cx="50%" cy="-12%" r="95%"><stop offset="0" stop-color="#ffffff"/><stop offset=".52" stop-color="#edf1f9"/><stop offset="1" stop-color="#e0e9f6"/></radialGradient>
+<linearGradient id="mainline-gPanel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f8faff"/><stop offset="1" stop-color="#eef3fc"/></linearGradient>
+<linearGradient id="mainline-gProj" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#eef4ff"/></linearGradient>
+<linearGradient id="mainline-gDev" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#57b8ff"/><stop offset="1" stop-color="#0a5cff"/></linearGradient>
+<filter id="mainline-sh" x="-25%" y="-25%" width="150%" height="170%"><feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="#0d3078" flood-opacity=".11"/></filter>
+<filter id="mainline-shS" x="-25%" y="-25%" width="150%" height="170%"><feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#0d3078" flood-opacity=".10"/></filter>
+<filter id="mainline-glow" x="-30%" y="-30%" width="160%" height="190%"><feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#0a5cff" flood-opacity=".30"/></filter>
+<filter id="mainline-shell" x="-5%" y="-3%" width="110%" height="108%"><feDropShadow dx="0" dy="24" stdDeviation="26" flood-color="#0a3cb4" flood-opacity=".12"/></filter>
+<marker id="mainline-aBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.4" markerHeight="5.4" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#6e98d9" stroke-width="1.3"/></marker>
+<marker id="mainline-aCrit" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#0a5cff" stroke-width="1.6"/></marker>
+<marker id="mainline-aRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.4" markerHeight="5.4" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#e14b54" stroke-width="1.3"/></marker>
+<marker id="mainline-aGray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#9aa3b2" stroke-width="1.2"/></marker>
+</defs>
+<rect width="1100" height="330" fill="url(#mainline-gBg)"/>
+<rect x="28" y="24" width="1044" height="282" rx="28" fill="#fff" fill-opacity=".55" stroke="rgba(255,255,255,.9)" stroke-width="1.5" filter="url(#mainline-shell)"/>
+<text x="550.0" y="74.0" font-size="9.5" fill="#86868b" font-weight="600" text-anchor="middle" letter-spacing="1.6">AWR · DEPENDENCY GRAPH</text>
+<text x="550.0" y="108.0" font-size="25" fill="#1d1d1f" font-weight="750" text-anchor="middle" letter-spacing="-0.3">Dependency graph</text>
+<text x="550.0" y="132.0" font-size="11" fill="#6e6e73" font-weight="500" text-anchor="middle" letter-spacing="1.2"></text>
+<rect x="315.0" y="146.0" width="470.0" height="22" rx="11" fill="rgba(245,158,11,.12)" stroke="rgba(245,158,11,.34)" stroke-width="1"/>
+<text x="550.0" y="160.5" font-size="10" fill="#8a6417" font-weight="500" text-anchor="middle">No dependency panel to draw: the display configuration has no lane panel with work items</text>
+</svg>
+</div></section><section class="view" id="s-explore" aria-label="Lane dependency graph"><div class="scroll"><svg xmlns="http://www.w3.org/2000/svg" width="1100" height="330" viewBox="0 0 1100 330" font-family="-apple-system,BlinkMacSystemFont,&#x27;SF Pro Display&#x27;,&#x27;Avenir Next&#x27;,&#x27;Segoe UI&#x27;,&#x27;PingFang SC&#x27;,&#x27;Microsoft YaHei&#x27;,sans-serif" role="img" aria-label="Lane dependency graph: unfinished work by milestone lane and its dependencies">
+<defs>
+<radialGradient id="explore-gBg" cx="50%" cy="-12%" r="95%"><stop offset="0" stop-color="#ffffff"/><stop offset=".52" stop-color="#edf1f9"/><stop offset="1" stop-color="#e0e9f6"/></radialGradient>
+<linearGradient id="explore-gPanel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f8faff"/><stop offset="1" stop-color="#eef3fc"/></linearGradient>
+<linearGradient id="explore-gProj" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#eef4ff"/></linearGradient>
+<linearGradient id="explore-gDev" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#57b8ff"/><stop offset="1" stop-color="#0a5cff"/></linearGradient>
+<filter id="explore-sh" x="-25%" y="-25%" width="150%" height="170%"><feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="#0d3078" flood-opacity=".11"/></filter>
+<filter id="explore-shS" x="-25%" y="-25%" width="150%" height="170%"><feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#0d3078" flood-opacity=".10"/></filter>
+<filter id="explore-glow" x="-30%" y="-30%" width="160%" height="190%"><feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#0a5cff" flood-opacity=".30"/></filter>
+<filter id="explore-shell" x="-5%" y="-3%" width="110%" height="108%"><feDropShadow dx="0" dy="24" stdDeviation="26" flood-color="#0a3cb4" flood-opacity=".12"/></filter>
+<marker id="explore-aBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.4" markerHeight="5.4" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#6e98d9" stroke-width="1.3"/></marker>
+<marker id="explore-aCrit" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#0a5cff" stroke-width="1.6"/></marker>
+<marker id="explore-aRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.4" markerHeight="5.4" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#e14b54" stroke-width="1.3"/></marker>
+<marker id="explore-aGray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#9aa3b2" stroke-width="1.2"/></marker>
+</defs>
+<rect width="1100" height="330" fill="url(#explore-gBg)"/>
+<rect x="28" y="24" width="1044" height="282" rx="28" fill="#fff" fill-opacity=".55" stroke="rgba(255,255,255,.9)" stroke-width="1.5" filter="url(#explore-shell)"/>
+<text x="550.0" y="74.0" font-size="9.5" fill="#86868b" font-weight="600" text-anchor="middle" letter-spacing="1.6">AWR · DEPENDENCY GRAPH</text>
+<text x="550.0" y="108.0" font-size="25" fill="#1d1d1f" font-weight="750" text-anchor="middle" letter-spacing="-0.3">依赖图 · 示例泳道</text>
+<text x="550.0" y="132.0" font-size="11" fill="#6e6e73" font-weight="500" text-anchor="middle" letter-spacing="1.2"></text>
+<rect x="434.6" y="146.0" width="230.8" height="22" rx="11" fill="rgba(245,158,11,.12)" stroke="rgba(245,158,11,.34)" stroke-width="1"/>
+<text x="550.0" y="160.5" font-size="10" fill="#8a6417" font-weight="500" text-anchor="middle">No unfinished work in the milestone lanes</text>
+</svg>
+</div></section></div></div>
+<details class="table"><summary>All work items (0)</summary><div class="scroll"><table><thead><tr><th>Key</th><th>Title</th><th>Status</th><th>Lane</th><th>Milestone</th><th>Owner / claim</th><th>Idle days</th></tr></thead><tbody></tbody></table></div></details>
+<section class="notes"><h2>Data basis</h2><p>Official CLI snapshot r100 · <code>sha256:cc56e9dda8863810e0df39effcfa8f22837e8a59721e891207a323df409ea614</code> · generated 2026-01-15 00:00 UTC. The page depends only on this snapshot and the display configuration; no ledger or state database was read.</p><h2>Definitions</h2><ul><li>“Stalled”: status in_progress and no event for ≥7 days.</li><li>Lanes come from the display configuration; the lane dependency graph groups by milestone.</li><li>Expired claims do not count as active claims.</li></ul><h2>Fields the official interfaces do not provide</h2><ul><li><code>node.goal</code>: work graph and nav nodes carry no goal; membership exists only per goal (nav --goal), which this map does not query</li><li><code>node.scope</code>: the contract or scope id is not exposed per item</li><li><code>node.priority</code>: only work show returns it, one refreshing call per item; not collected in bulk</li><li><code>node.milestone</code>: there is no bulk field; it is resolved only for the milestones named in the display configuration, through nav --milestone</li><li><code>project.scenarios</code>: project-specific acceptance scenarios are outside the AWR work model and have no data source</li><li><code>project.release_funnel</code>: a presentation concept without a data source</li></ul></section></main>
+</body>
+</html>

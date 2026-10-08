@@ -1,0 +1,567 @@
+{
+ "basis": {
+  "events": {
+   "count": 0,
+   "pages": 0,
+   "through_revision": 100
+  },
+  "goals": {
+   "truncated": false
+  },
+  "milestones_resolved": [
+   "M1",
+   "M2"
+  ],
+  "nav": {
+   "freshness_basis": "last_recorded_source_state",
+   "protocol": "awr-mainline-nav",
+   "schema_version": 1
+  },
+  "sessions": {
+   "count": 2,
+   "truncated": false
+  },
+  "work_graph": {
+   "edge_count": 17,
+   "graph_fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+   "node_count": 20
+  }
+ },
+ "doctor": {
+  "findings": [
+   {
+    "code": "active_session",
+    "message": "Session is active",
+    "object_id": "sess-demo-agent-1",
+    "object_kind": "session",
+    "severity": "info"
+   },
+   {
+    "code": "expired_claim",
+    "message": "Active claim expired",
+    "object_id": "claim-old",
+    "object_kind": "claim",
+    "severity": "warning"
+   },
+   {
+    "code": "orphan_session",
+    "message": "Bound work item is terminal",
+    "object_id": "sess-old",
+    "object_kind": "session",
+    "severity": "error"
+   }
+  ],
+  "ok": false
+ },
+ "edges": [
+  {
+   "dependent": "DEMO-A-002",
+   "prerequisite": "DEMO-A-001",
+   "required": true
+  },
+  {
+   "dependent": "DEMO-A-003",
+   "prerequisite": "DEMO-A-001",
+   "required": true
+  },
+  {
+   "dependent": "DEMO-A-004",
+   "prerequisite": "DEMO-A-002",
+   "required": true
+  },
+  {
+   "dependent": "DEMO-A-004",
+   "prerequisite": "DEMO-A-003",
+   "required": true
+  },
+  {
+   "dependent": "DEMO-A-005",
+   "prerequisite": "DEMO-A-004",
+   "required": true
+  },
+  {
+   "dependent": "DEMO-A-006",
+   "prerequisite": "DEMO-A-005",
+   "required": true
+  },
+  {
+   "dependent": "DEMO-A-007",
+   "prerequisite": "DEMO-A-003",
+   "required": true
+  },
+  {
+   "dependent": "DEMO-A-008",
+   "prerequisite": "DEMO-A-003",
+   "required": true
+  },
+  {
+   "dependent": "DEMO-A-011",
+   "prerequisite": "DEMO-A-001",
+   "required": true
+  },
+  {
+   "dependent": "DEMO-A-012",
+   "prerequisite": "DEMO-A-002",
+   "required": true
+  },
+  {
+   "dependent": "DEMO-A-012",
+   "prerequisite": "DEMO-A-011",
+   "required": true
+  },
+  {
+   "dependent": "DEMO-A-013",
+   "prerequisite": "DEMO-A-012",
+   "required": true
+  },
+  {
+   "dependent": "DEMO-A-014",
+   "prerequisite": "DEMO-A-007",
+   "required": true
+  },
+  {
+   "dependent": "DEMO-A-014",
+   "prerequisite": "DEMO-A-013",
+   "required": true
+  },
+  {
+   "dependent": "DEMO-B-002",
+   "prerequisite": "DEMO-B-001",
+   "required": true
+  },
+  {
+   "dependent": "DEMO-B-003",
+   "prerequisite": "DEMO-A-002",
+   "required": true
+  },
+  {
+   "dependent": "DEMO-B-003",
+   "prerequisite": "DEMO-B-002",
+   "required": true
+  }
+ ],
+ "fingerprint": "sha256:4e11ac7378de3fd3c00356deb7a39efeea1d9cf0087f8e2168a8359b6f031ba8",
+ "generated_at": "2026-01-15T00:00:00Z",
+ "goals": [
+  {
+   "id": "DEMO-G-ONE",
+   "status": "active",
+   "title": "示例目标一：先把基础能力做扎实"
+  },
+  {
+   "id": "DEMO-G-TWO",
+   "status": "active",
+   "title": "示例目标二：再扩展到集成与发布"
+  }
+ ],
+ "nodes": [
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [],
+   "id": "id-DEMO-A-001",
+   "key": "DEMO-A-001",
+   "last_event_at": null,
+   "milestone": "M1",
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "completed",
+   "title": "示例：初始化环境",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [],
+   "id": "id-DEMO-A-002",
+   "key": "DEMO-A-002",
+   "last_event_at": null,
+   "milestone": "M1",
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "completed",
+   "title": "示例：基础模块",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [],
+   "id": "id-DEMO-A-003",
+   "key": "DEMO-A-003",
+   "last_event_at": null,
+   "milestone": "M2",
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "completed",
+   "title": "示例：接口约定",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [
+    {
+     "acquired_at": 1768348800000,
+     "agent_id": "demo-agent-1",
+     "expires_at": 1768446000000,
+     "id": "claim-DEMO-A-004",
+     "session_id": "sess-demo-agent-1"
+    }
+   ],
+   "diagnostics": [],
+   "id": "id-DEMO-A-004",
+   "key": "DEMO-A-004",
+   "last_event_at": 1768348800000,
+   "milestone": "M1",
+   "next_action": null,
+   "owner": "demo-agent-1",
+   "ready": false,
+   "status": "in_progress",
+   "title": "示例：核心功能（进行中，有有效认领）",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [],
+   "id": "id-DEMO-A-005",
+   "key": "DEMO-A-005",
+   "last_event_at": null,
+   "milestone": "M1",
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "planned",
+   "title": "示例：集成联调",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [],
+   "id": "id-DEMO-A-006",
+   "key": "DEMO-A-006",
+   "last_event_at": null,
+   "milestone": "M2",
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "planned",
+   "title": "示例：发布准备",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [],
+   "id": "id-DEMO-A-007",
+   "key": "DEMO-A-007",
+   "last_event_at": null,
+   "milestone": "M2",
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "planned",
+   "title": "示例：文档补全（就绪）",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": "waiting_for_user: 示例审批未完成",
+   "claims": [],
+   "diagnostics": [],
+   "id": "id-DEMO-A-008",
+   "key": "DEMO-A-008",
+   "last_event_at": null,
+   "milestone": "M2",
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "blocked",
+   "title": "示例：等待外部审批",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [],
+   "id": "id-DEMO-A-009",
+   "key": "DEMO-A-009",
+   "last_event_at": 1766707200000,
+   "milestone": "M1",
+   "next_action": null,
+   "owner": "demo-agent-2",
+   "ready": false,
+   "status": "in_progress",
+   "title": "示例：长期无动静的工作（停滞，认领已过期）",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [],
+   "id": "id-DEMO-A-010",
+   "key": "DEMO-A-010",
+   "last_event_at": null,
+   "milestone": null,
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "draft",
+   "title": "示例：尚未激活的草稿",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [],
+   "id": "id-DEMO-A-011",
+   "key": "DEMO-A-011",
+   "last_event_at": null,
+   "milestone": "M1",
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "cancelled",
+   "title": "示例：已取消的方案",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [
+    {
+     "code": "dependency_not_completed",
+     "detail": "required dependency has source status cancelled",
+     "work_item_key": "DEMO-A-011"
+    }
+   ],
+   "id": "id-DEMO-A-012",
+   "key": "DEMO-A-012",
+   "last_event_at": null,
+   "milestone": "M1",
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "planned",
+   "title": "示例：仍依赖已取消方案",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [
+    {
+     "code": "dependency_not_completed",
+     "detail": "required dependency has source status cancelled",
+     "work_item_key": "DEMO-A-011"
+    }
+   ],
+   "id": "id-DEMO-A-013",
+   "key": "DEMO-A-013",
+   "last_event_at": null,
+   "milestone": "M2",
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "planned",
+   "title": "示例：卡在取消依赖下游（一）",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [
+    {
+     "code": "dependency_not_completed",
+     "detail": "required dependency has source status cancelled",
+     "work_item_key": "DEMO-A-011"
+    }
+   ],
+   "id": "id-DEMO-A-014",
+   "key": "DEMO-A-014",
+   "last_event_at": null,
+   "milestone": "M2",
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "planned",
+   "title": "示例：卡在取消依赖下游（二，多前置）",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [],
+   "id": "id-DEMO-B-001",
+   "key": "DEMO-B-001",
+   "last_event_at": null,
+   "milestone": "M1",
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "completed",
+   "title": "示例乙：基线",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [
+    {
+     "acquired_at": 1768348800000,
+     "agent_id": "demo-agent-3",
+     "expires_at": 1768446000000,
+     "id": "claim-DEMO-B-002",
+     "session_id": "sess-demo-agent-3"
+    }
+   ],
+   "diagnostics": [],
+   "id": "id-DEMO-B-002",
+   "key": "DEMO-B-002",
+   "last_event_at": 1768417920000,
+   "milestone": "M1",
+   "next_action": null,
+   "owner": "demo-agent-3",
+   "ready": false,
+   "status": "in_progress",
+   "title": "示例乙：实现（进行中）",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [],
+   "id": "id-DEMO-B-003",
+   "key": "DEMO-B-003",
+   "last_event_at": null,
+   "milestone": "M2",
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "planned",
+   "title": "示例乙：跨主线依赖甲的基础模块",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [],
+   "id": "id-DEMO-B-004",
+   "key": "DEMO-B-004",
+   "last_event_at": null,
+   "milestone": "M2",
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "planned",
+   "title": "示例乙：独立任务（就绪）",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [],
+   "id": "id-DEMO-C-001",
+   "key": "DEMO-C-001",
+   "last_event_at": null,
+   "milestone": null,
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "planned",
+   "title": "示例丙：就绪任务",
+   "waits": []
+  },
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [],
+   "id": "id-DEMO-C-002",
+   "key": "DEMO-C-002",
+   "last_event_at": null,
+   "milestone": null,
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "completed",
+   "title": "示例丙：已完成",
+   "waits": []
+  }
+ ],
+ "project": {
+  "id": "demo-id",
+  "key": "demo-project",
+  "name": "Demo Project",
+  "revision": 100
+ },
+ "schema": "awr-project-snapshot",
+ "sessions": [
+  {
+   "agent_id": "demo-agent-1",
+   "id": "sess-demo-agent-1",
+   "last_checkpoint_id": null,
+   "last_event_at": 1768348800000,
+   "started_at": 1768348800000,
+   "status": "active",
+   "work_key": "DEMO-A-004"
+  },
+  {
+   "agent_id": "demo-agent-3",
+   "id": "sess-demo-agent-3",
+   "last_checkpoint_id": "cp-1",
+   "last_event_at": 1768417920000,
+   "started_at": 1768392000000,
+   "status": "active",
+   "work_key": "DEMO-B-002"
+  }
+ ],
+ "unavailable": [
+  {
+   "field": "node.goal",
+   "reason": "work graph, nav and work show expose no per-item goal; nav --goal returns no nodes for goals declared with the ledger goal field"
+  },
+  {
+   "field": "node.scope",
+   "reason": "the contract or scope id is not exposed per item"
+  },
+  {
+   "field": "node.priority",
+   "reason": "only work show returns it (about 1.1 s per item, refreshing the projection); not collected in bulk"
+  },
+  {
+   "field": "node.milestone",
+   "reason": "no bulk field; resolved only for the milestones listed in the display config, through nav --cached --milestone"
+  },
+  {
+   "field": "project.scenarios",
+   "reason": "ledger-private acceptance sections (for example the TF scenarios) are outside the AWR work model"
+  },
+  {
+   "field": "project.release_funnel",
+   "reason": "a synthetic presentation on the website; there is no data source"
+  }
+ ],
+ "version": 1
+}

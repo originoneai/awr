@@ -1,0 +1,884 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>AWR project map · Demo Project · r100</title>
+<style>:root{color-scheme:light dark;--bg:#f2f5fb;--ink:#1d1d1f;--muted:#6e6e73;--faint:#86868b;--line:rgba(0,0,0,.1);--panel:#fff;--chip:#fff;--accent:#0a5cff;--shadow:0 10px 30px rgba(13,48,120,.12);--scroll:#e9eff9}
+@media (prefers-color-scheme:dark){:root{--bg:#10131a;--ink:#eceef2;--muted:#a3a8b3;--faint:#8b909c;--line:rgba(255,255,255,.14);--panel:#1b2030;--chip:#1b2030;--accent:#7fb0ff;--shadow:0 10px 30px rgba(0,0,0,.45);--scroll:#1b2030}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.top{display:flex;flex-wrap:wrap;gap:16px 28px;align-items:center;justify-content:space-between;padding:22px max(16px,3vw) 8px}
+.brand{display:flex;gap:14px;align-items:center;min-width:0}
+.badge{flex:none;width:44px;height:44px;border-radius:13px;background:linear-gradient(135deg,#57b8ff,#0a5cff);color:#fff;font-weight:700;font-size:20px;display:grid;place-items:center}
+h1{font-size:20px;line-height:1.25;margin:0}
+.sub{margin:2px 0 0;color:var(--muted);font-size:12.5px;overflow-wrap:anywhere}
+.stats{display:flex;gap:10px;list-style:none;padding:0;margin:0;flex-wrap:wrap}
+.stats li{background:var(--chip);border:1px solid var(--line);border-radius:14px;padding:6px 14px;text-align:center;min-width:72px}
+.stats b{display:block;font-size:18px}.stats span{color:var(--faint);font-size:11.5px}
+.tabs{padding:6px max(16px,3vw) 0}
+.tabs>input{position:absolute;opacity:0;pointer-events:none}
+.tabs>label{display:inline-block;margin:0 8px 10px 0;padding:7px 16px;border-radius:999px;border:1px solid var(--line);background:var(--chip);color:var(--muted);cursor:pointer;font-weight:600;font-size:13px}
+.tabs>input:checked+label{background:var(--accent);border-color:var(--accent);color:#fff}
+.tabs>input:focus-visible+label{outline:2px solid var(--accent);outline-offset:2px}
+.view{display:none}
+#v-overview:checked~.views #s-overview,#v-mainline:checked~.views #s-mainline,#v-explore:checked~.views #s-explore{display:block}
+.scroll{overflow-x:auto;max-width:100%;border-radius:18px;background:var(--scroll);box-shadow:var(--shadow);border:1px solid var(--line)}
+.scroll svg{display:block;margin:0 auto}
+.table,.notes{margin:18px max(16px,3vw)}
+.table summary{cursor:pointer;font-weight:600;padding:8px 0}
+table{border-collapse:collapse;width:100%;font-size:12.5px;min-width:760px}
+th,td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:600}
+td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}
+.notes{color:var(--muted);font-size:12.5px}.notes h2{font-size:13px;margin:12px 0 4px;color:var(--ink)}.notes ul{margin:4px 0;padding-left:20px}
+@media (max-width:640px){h1{font-size:17px}.stats li{min-width:64px;padding:5px 10px}}
+@media print{.tabs>input,.tabs>label{display:none}.view{display:block!important;break-inside:avoid;margin-bottom:16px}.scroll{box-shadow:none;overflow:visible}}</style>
+</head>
+<body>
+<header class="top"><div class="brand"><span class="badge" aria-hidden="true">A</span><div><h1>AWR project map · Demo Project</h1><p class="sub">revision 100 · snapshot 23b5c7e2ec1b · generated 2026-01-15 00:00 UTC</p></div></div><ul class="stats"><li><b>20</b><span>Work items</span></li><li><b>17</b><span>Dependencies</span></li><li><b>1</b><span>Stalled</span></li><li><b>1</b><span>Blocked</span></li><li><b>2</b><span>Active sessions</span></li></ul></header>
+<main><div class="tabs"><input type="radio" name="view" id="v-overview" checked><label for="v-overview">Project node graph</label><input type="radio" name="view" id="v-mainline"><label for="v-mainline">Main dependency graph</label><input type="radio" name="view" id="v-explore"><label for="v-explore">Lane dependency graph</label><div class="views"><section class="view" id="s-overview" aria-label="Project node graph"><div class="scroll"><svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1880" viewBox="0 0 1100 1880" font-family="-apple-system,BlinkMacSystemFont,&#x27;SF Pro Display&#x27;,&#x27;Avenir Next&#x27;,&#x27;Segoe UI&#x27;,&#x27;PingFang SC&#x27;,&#x27;Microsoft YaHei&#x27;,sans-serif" role="img" aria-label="Project node graph: 20 work items, 17 dependencies, grouped by lane">
+<defs>
+<radialGradient id="overview-gBg" cx="50%" cy="-12%" r="95%"><stop offset="0" stop-color="#ffffff"/><stop offset=".52" stop-color="#edf1f9"/><stop offset="1" stop-color="#e0e9f6"/></radialGradient>
+<linearGradient id="overview-gPanel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f8faff"/><stop offset="1" stop-color="#eef3fc"/></linearGradient>
+<linearGradient id="overview-gProj" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#eef4ff"/></linearGradient>
+<linearGradient id="overview-gDev" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#57b8ff"/><stop offset="1" stop-color="#0a5cff"/></linearGradient>
+<filter id="overview-sh" x="-25%" y="-25%" width="150%" height="170%"><feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="#0d3078" flood-opacity=".11"/></filter>
+<filter id="overview-shS" x="-25%" y="-25%" width="150%" height="170%"><feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#0d3078" flood-opacity=".10"/></filter>
+<filter id="overview-glow" x="-30%" y="-30%" width="160%" height="190%"><feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#0a5cff" flood-opacity=".30"/></filter>
+<filter id="overview-shell" x="-5%" y="-3%" width="110%" height="108%"><feDropShadow dx="0" dy="24" stdDeviation="26" flood-color="#0a3cb4" flood-opacity=".12"/></filter>
+<marker id="overview-aBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.4" markerHeight="5.4" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#6e98d9" stroke-width="1.3"/></marker>
+<marker id="overview-aCrit" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#0a5cff" stroke-width="1.6"/></marker>
+<marker id="overview-aRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.4" markerHeight="5.4" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#e14b54" stroke-width="1.3"/></marker>
+<marker id="overview-aGray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#9aa3b2" stroke-width="1.2"/></marker>
+</defs>
+<rect width="1100" height="1880" fill="url(#overview-gBg)"/>
+<rect x="28" y="24" width="1044" height="1832" rx="28" fill="#fff" fill-opacity=".55" stroke="rgba(255,255,255,.9)" stroke-width="1.5" filter="url(#overview-shell)"/>
+<text x="550.0" y="74.0" font-size="9.5" fill="#86868b" font-weight="600" text-anchor="middle" letter-spacing="1.6">AWR · PROJECT NODE GRAPH</text>
+<text x="550.0" y="108.0" font-size="25" fill="#1d1d1f" font-weight="750" text-anchor="middle" letter-spacing="-0.3">Project node graph</text>
+<text x="550.0" y="132.0" font-size="11" fill="#6e6e73" font-weight="500" text-anchor="middle" letter-spacing="1.2">20 work items (1 cancelled) · 17 dependencies · 3 lanes by display configuration · 2026-01-15 00:00 UTC</text>
+<rect x="224.0" y="146.0" width="651.9" height="22" rx="11" fill="rgba(245,158,11,.12)" stroke="rgba(245,158,11,.34)" stroke-width="1"/>
+<text x="550.0" y="160.5" font-size="10" fill="#8a6417" font-weight="500" text-anchor="middle">Read-only snapshot: all data comes from official CLI JSON (work graph, nav, doctor …); no ledger or state database was read</text>
+<rect x="170" y="196" width="760" height="76" rx="18" fill="url(#overview-gProj)" stroke="rgba(10,92,255,.32)" stroke-width="1.2" filter="url(#overview-sh)"/>
+<rect x="186" y="213" width="42" height="42" rx="12" fill="url(#overview-gDev)"/>
+<g transform="translate(195,222) scale(.98)" fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5 9-5z M3 12l9 5 9-5 M3 16l9 5 9-5"/></g>
+<text x="242.0" y="225.0" font-size="15" fill="#1d1d1f" font-weight="700" text-anchor="start">Demo Project</text>
+<rect x="353.4" y="211.0" width="71.3" height="17" rx="8.5" fill="rgba(10,92,255,.09)" stroke="rgba(10,92,255,.28)" stroke-width="1"/>
+<text x="389.0" y="222.8" font-size="9.5" fill="#0a5cff" font-weight="600" text-anchor="middle">revision 100</text>
+<text x="242.0" y="241.0" font-size="9.5" fill="#86868b" font-weight="500" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">awr work graph · nav · doctor (official JSON)</text>
+<text x="242.0" y="257.0" font-size="9.5" fill="#6e6e73" font-weight="500" text-anchor="start">Synthetic data for the demonstration</text>
+<text x="877.0" y="234.0" font-size="18" fill="#1d1d1f" font-weight="700" text-anchor="middle">1</text>
+<text x="877.0" y="250.0" font-size="8.5" fill="#86868b" font-weight="500" text-anchor="middle">Blocked</text>
+<line x1="840" y1="218" x2="840" y2="252" stroke="rgba(0,0,0,.08)"/>
+<text x="811.0" y="234.0" font-size="18" fill="#1d1d1f" font-weight="700" text-anchor="middle">1</text>
+<text x="811.0" y="250.0" font-size="8.5" fill="#86868b" font-weight="500" text-anchor="middle">Stalled</text>
+<line x1="774" y1="218" x2="774" y2="252" stroke="rgba(0,0,0,.08)"/>
+<text x="745.0" y="234.0" font-size="18" fill="#1d1d1f" font-weight="700" text-anchor="middle">17</text>
+<text x="745.0" y="250.0" font-size="8.5" fill="#86868b" font-weight="500" text-anchor="middle">Dependencies</text>
+<line x1="708" y1="218" x2="708" y2="252" stroke="rgba(0,0,0,.08)"/>
+<text x="679.0" y="234.0" font-size="18" fill="#1d1d1f" font-weight="700" text-anchor="middle">20</text>
+<text x="679.0" y="250.0" font-size="8.5" fill="#86868b" font-weight="500" text-anchor="middle">Work items</text>
+<line x1="642" y1="218" x2="642" y2="252" stroke="rgba(0,0,0,.08)"/>
+<path d="M550,272 L550,292" stroke="#b7c9ee" stroke-width="1.6" fill="none"/>
+<path d="M308,292 L792,292" stroke="#b7c9ee" stroke-width="1.6" fill="none"/>
+<path d="M308,292 L308,316" stroke="#b7c9ee" stroke-width="1.6" fill="none" marker-end="url(#overview-aBlue)"/>
+<path d="M550,292 L550,316" stroke="#b7c9ee" stroke-width="1.6" fill="none" marker-end="url(#overview-aBlue)"/>
+<path d="M792,292 L792,316" stroke="#b7c9ee" stroke-width="1.6" fill="none" marker-end="url(#overview-aBlue)"/>
+<rect x="193" y="310" width="230" height="1256" rx="22" fill="#fff" fill-opacity=".38" stroke="rgba(255,255,255,.85)"/>
+<rect x="435" y="310" width="230" height="1256" rx="22" fill="#fff" fill-opacity=".38" stroke="rgba(255,255,255,.85)"/>
+<rect x="677" y="310" width="230" height="1256" rx="22" fill="#fff" fill-opacity=".38" stroke="rgba(255,255,255,.85)"/>
+<g class="pm-fold" data-lane="ALPHA" data-open="true"><rect x="233.0" y="318" width="150.0" height="42" rx="12" fill="#fff" fill-opacity=".86" stroke="rgba(255,255,255,.9)" filter="url(#overview-shS)"/><rect x="249.0" y="334" width="10" height="10" rx="3" fill="#3b82f6"/><text x="267.0" y="336.0" font-size="12" fill="#1d1d1f" font-weight="700" text-anchor="start">Demo lane A</text><text x="267.0" y="349.0" font-size="8.5" fill="#86868b" font-weight="500" text-anchor="start" letter-spacing="0.3">DEMO-A</text><path class="pm-chevron" d="M361.0,337.0 l4.5,4.5 l4.5,-4.5" fill="none" stroke="#86868b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
+<clipPath id="overview-bar-205-370"><rect x="205" y="370" width="206" height="7" rx="3.5"/></clipPath><g clip-path="url(#overview-bar-205-370)">
+<rect x="205" y="370" width="206" height="7" fill="#e6e9f0"/>
+<rect x="205.0" y="370" width="44.1" height="7" fill="#1fae74"/>
+<rect x="248.3" y="370" width=".8" height="7" fill="#fff" opacity=".9"/>
+<rect x="249.1" y="370" width="14.7" height="7" fill="url(#overview-gDev)"/>
+<rect x="263.1" y="370" width=".8" height="7" fill="#fff" opacity=".9"/>
+<rect x="263.9" y="370" width="14.7" height="7" fill="#f59e0b"/>
+<rect x="277.8" y="370" width=".8" height="7" fill="#fff" opacity=".9"/>
+<rect x="278.6" y="370" width="14.7" height="7" fill="#e14b54"/>
+<rect x="292.5" y="370" width=".8" height="7" fill="#fff" opacity=".9"/>
+<rect x="293.3" y="370" width="14.7" height="7" fill="#c2c9d6"/>
+<rect x="307.2" y="370" width=".8" height="7" fill="#fff" opacity=".9"/>
+<rect x="308.0" y="370" width="73.6" height="7" fill="#e6e9f0"/>
+<rect x="380.8" y="370" width=".8" height="7" fill="#fff" opacity=".9"/>
+<rect x="381.6" y="370" width="14.7" height="7" fill="#eff1f5"/>
+<rect x="395.5" y="370" width=".8" height="7" fill="#fff" opacity=".9"/>
+<rect x="396.3" y="370" width="14.7" height="7" fill="#8d96a6"/>
+<rect x="410.2" y="370" width=".8" height="7" fill="#fff" opacity=".9"/>
+</g>
+<text x="205.0" y="398.0" font-size="10.5" fill="#1d1d1f" font-weight="650" text-anchor="start">3/14 done</text>
+<text x="401.2" y="398.0" font-size="10" fill="#c93b44" font-weight="700" text-anchor="start">1</text>
+<circle cx="392.2" cy="394.5" r="3.6" fill="#e14b54"/>
+<text x="374.4" y="398.0" font-size="10" fill="#b4740a" font-weight="700" text-anchor="start">1</text>
+<circle cx="365.4" cy="394.5" r="3.6" fill="#fff" stroke="#f59e0b" stroke-width="2"/>
+<text x="347.6" y="398.0" font-size="10" fill="#0a5cff" font-weight="700" text-anchor="start">1</text>
+<circle cx="338.59999999999997" cy="394.5" r="7.6" fill="none" stroke="rgba(10,92,255,.45)" stroke-width="1.3"/><circle cx="338.59999999999997" cy="394.5" r="3.6" fill="url(#overview-gDev)"/>
+<g class="pm-fold" data-done-lane="ALPHA" data-open="false"><title>3 done · A 3</title><rect x="201" y="414" width="214" height="48" rx="14" fill="rgba(31,174,116,.07)" stroke="rgba(31,174,116,.42)" stroke-width="1.2" stroke-dasharray="5 4"/>
+<circle cx="223" cy="438" r="9" fill="#1fae74"/>
+<path d="M218.5,438.3 l3.2,3.3 l6.2,-6.8" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="241.0" y="435.0" font-size="12" fill="#12855c" font-weight="700" text-anchor="start">3 done</text>
+<text x="241.0" y="450.0" font-size="9.5" fill="#6e6e73" font-weight="500" text-anchor="start">A 3</text>
+<path class="pm-chevron" d="M393.0,432.0 l4.5,4.5 l-4.5,4.5" fill="none" stroke="#86868b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="205.0" y="478.0" font-size="8.8" fill="#c93b44" font-weight="650" text-anchor="start" letter-spacing="1.1">Dependency defect</text>
+<g opacity="1" class="pm-card" data-key="DEMO-A-011" data-vis="blocked"><title>DEMO-A-011 &lt;- DEMO-A-012 · 1 still depend on the cancelled DEMO-A-011</title>
+
+<rect x="201" y="484" width="214" height="96.0" rx="14" fill="#fff8f8" fill-opacity="0.9" stroke="rgba(225,75,84,.58)" stroke-width="1.2" filter="url(#overview-sh)"/>
+<circle cx="218" cy="501" r="6" fill="#e14b54"/>
+<text x="230.0" y="504.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-011 → D…-012</text>
+<rect x="357.7" y="493.0" width="45.3" height="16" rx="8" fill="rgba(225,75,84,.09)" stroke="rgba(225,75,84,.58)" stroke-width="1"/>
+<text x="380.3" y="504.1" font-size="9" fill="#c93b44" font-weight="600" text-anchor="middle">Defect</text>
+<text x="214.0" y="521.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">1 still depend on the cancelled</text>
+<text x="214.0" y="536.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">DEMO-A-011</text>
+<text x="214.0" y="550.0" font-size="9.8" fill="#c93b44" font-weight="500" text-anchor="start">AWR counts the dependency as unmet:</text>
+<text x="214.0" y="563.0" font-size="9.8" fill="#c93b44" font-weight="500" text-anchor="start">3 downstream cannot become ready</text>
+<rect class="pm-ring" x="199" y="482" width="218" height="100.0" rx="16" fill="none" stroke="none"/>
+</g>
+<text x="205.0" y="596.0" font-size="8.8" fill="#86868b" font-weight="650" text-anchor="start" letter-spacing="1.1">In progress</text>
+<g opacity="1" class="pm-card" data-key="DEMO-A-004" data-vis="developing"><title>DEMO-A-004 · Demo: core feature (in progress, active claim)</title>
+
+<rect x="201" y="602" width="214" height="92.0" rx="14" fill="#ffffff" fill-opacity="0.9" stroke="rgba(10,92,255,.5)" stroke-width="1.2" filter="url(#overview-glow)"/>
+<circle cx="218" cy="619" r="10" fill="none" stroke="rgba(10,92,255,.45)" stroke-width="1.3"/><circle cx="218" cy="619" r="6" fill="url(#overview-gDev)"/>
+<text x="230.0" y="622.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-004</text>
+<rect x="334.7" y="611.0" width="68.3" height="16" rx="8" fill="rgba(10,92,255,.08)" stroke="rgba(10,92,255,.5)" stroke-width="1"/>
+<text x="368.9" y="622.1" font-size="9" fill="#0a5cff" font-weight="600" text-anchor="middle">In progress</text>
+<text x="214.0" y="639.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: core feature (in progress,</text>
+<text x="214.0" y="654.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">active claim)</text>
+<rect x="213.0" y="666.0" width="75.4" height="16" rx="8" fill="rgba(122,165,248,.12)" stroke="rgba(122,165,248,.4)" stroke-width="1"/>
+<text x="250.7" y="677.1" font-size="9" fill="#3b6fd4" font-weight="600" text-anchor="middle">demo-agent-1</text>
+<rect class="pm-ring" x="199" y="600" width="218" height="96.0" rx="16" fill="none" stroke="none"/>
+</g>
+<text x="205.0" y="710.0" font-size="8.8" fill="#b4740a" font-weight="650" text-anchor="start" letter-spacing="1.1">Stalled · no activity for ≥7 days</text>
+<g opacity="1" class="pm-card" data-key="DEMO-A-009" data-vis="stalled"><title>DEMO-A-009 · Demo: long-quiet work (stalled, claim expired)</title>
+
+<rect x="201" y="716" width="214" height="92.0" rx="14" fill="#fffdf7" fill-opacity="0.9" stroke="rgba(245,158,11,.65)" stroke-width="1.2" stroke-dasharray="5 3" filter="url(#overview-sh)"/>
+<circle cx="218" cy="733" r="6" fill="#fff" stroke="#f59e0b" stroke-width="2"/>
+<text x="230.0" y="736.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-009</text>
+<rect x="338.9" y="725.0" width="64.1" height="16" rx="8" fill="rgba(245,158,11,.11)" stroke="rgba(245,158,11,.65)" stroke-width="1"/>
+<text x="370.9" y="736.1" font-size="9" fill="#b4740a" font-weight="600" text-anchor="middle">Stalled 20d</text>
+<text x="214.0" y="753.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: long-quiet work (stalled,</text>
+<text x="214.0" y="768.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">claim expired)</text>
+<rect x="213.0" y="780.0" width="75.4" height="16" rx="8" fill="rgba(122,165,248,.12)" stroke="rgba(122,165,248,.4)" stroke-width="1"/>
+<text x="250.7" y="791.1" font-size="9" fill="#3b6fd4" font-weight="600" text-anchor="middle">demo-agent-2</text>
+<rect class="pm-ring" x="199" y="714" width="218" height="96.0" rx="16" fill="none" stroke="none"/>
+</g>
+<text x="205.0" y="824.0" font-size="8.8" fill="#c93b44" font-weight="650" text-anchor="start" letter-spacing="1.1">Blocked</text>
+<g opacity="1" class="pm-card" data-key="DEMO-A-008" data-vis="blocked"><title>DEMO-A-008 · Demo: waiting for external approval</title>
+
+<rect x="201" y="830" width="214" height="96.0" rx="14" fill="#fff8f8" fill-opacity="0.9" stroke="rgba(225,75,84,.58)" stroke-width="1.2" filter="url(#overview-sh)"/>
+<circle cx="218" cy="847" r="6" fill="#e14b54"/>
+<text x="230.0" y="850.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-008</text>
+<rect x="354.9" y="839.0" width="48.1" height="16" rx="8" fill="rgba(225,75,84,.09)" stroke="rgba(225,75,84,.58)" stroke-width="1"/>
+<text x="378.9" y="850.1" font-size="9" fill="#c93b44" font-weight="600" text-anchor="middle">Blocked</text>
+<text x="214.0" y="867.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: waiting for external</text>
+<text x="214.0" y="882.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">approval</text>
+<text x="214.0" y="896.0" font-size="9.8" fill="#c93b44" font-weight="500" text-anchor="start">waiting_for_user: the demo approval</text>
+<text x="214.0" y="909.0" font-size="9.8" fill="#c93b44" font-weight="500" text-anchor="start">is not done</text>
+<rect class="pm-ring" x="199" y="828" width="218" height="100.0" rx="16" fill="none" stroke="none"/>
+</g>
+<text x="205.0" y="942.0" font-size="8.8" fill="#86868b" font-weight="650" text-anchor="start" letter-spacing="1.1">Ready</text>
+<g opacity="1" class="pm-card" data-key="DEMO-A-007" data-vis="ready"><title>DEMO-A-007 · Demo: finish the documentation (ready)</title>
+
+<rect x="201" y="948" width="214" height="70.0" rx="14" fill="#ffffff" fill-opacity="0.9" stroke="rgba(0,0,0,.11)" stroke-width="1.2" filter="url(#overview-sh)"/>
+<circle cx="218" cy="965" r="6" fill="#fff" stroke="#aeb7c7" stroke-width="2"/>
+<text x="230.0" y="968.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-007</text>
+<rect x="362.7" y="957.0" width="40.3" height="16" rx="8" fill="rgba(0,0,0,.045)" stroke="rgba(0,0,0,.11)" stroke-width="1"/>
+<text x="382.9" y="968.1" font-size="9" fill="#556075" font-weight="600" text-anchor="middle">Ready</text>
+<text x="214.0" y="985.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: finish the documentation</text>
+<text x="214.0" y="1000.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">(ready)</text>
+<rect class="pm-ring" x="199" y="946" width="218" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+<text x="205.0" y="1034.0" font-size="8.8" fill="#86868b" font-weight="650" text-anchor="start" letter-spacing="1.1">Draft · not activated</text>
+<g opacity="0.7" class="pm-card" data-key="DEMO-A-010" data-vis="draft"><title>DEMO-A-010 · Demo: draft not activated yet</title>
+
+<rect x="201" y="1040" width="214" height="55.0" rx="14" fill="#ffffff" fill-opacity="0.9" stroke="rgba(0,0,0,.12)" stroke-width="1.2" stroke-dasharray="2 3" filter="url(#overview-sh)"/>
+<circle cx="218" cy="1057" r="6" fill="#fff" stroke="#cdd3df" stroke-width="2"/>
+<text x="230.0" y="1060.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-010</text>
+<rect x="362.7" y="1049.0" width="40.3" height="16" rx="8" fill="rgba(0,0,0,.03)" stroke="rgba(0,0,0,.12)" stroke-width="1"/>
+<text x="382.9" y="1060.2" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Draft</text>
+<text x="214.0" y="1077.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: draft not activated yet</text>
+<rect class="pm-ring" x="199" y="1038" width="218" height="59.0" rx="16" fill="none" stroke="none"/>
+</g>
+<text x="205.0" y="1111.0" font-size="8.8" fill="#86868b" font-weight="650" text-anchor="start" letter-spacing="1.1">Waiting for prerequisites</text>
+<g opacity="0.74" class="pm-card" data-key="DEMO-A-012" data-vis="waiting"><title>DEMO-A-012 · Demo: still depends on the cancelled approach</title>
+
+<rect x="201" y="1117" width="214" height="83.0" rx="14" fill="#ffffff" fill-opacity="0.9" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#overview-sh)"/>
+<circle cx="218" cy="1134" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="230.0" y="1137.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-012</text>
+<rect x="355.5" y="1126.0" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="379.3" y="1137.2" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="214.0" y="1154.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: still depends on the</text>
+<text x="214.0" y="1169.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">cancelled approach</text>
+<text x="214.0" y="1183.0" font-size="9.8" fill="#86868b" font-weight="500" text-anchor="start">Needs DEMO-A-011</text>
+<rect class="pm-ring" x="199" y="1115" width="218" height="87.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.74" class="pm-card" data-key="DEMO-A-005" data-vis="waiting"><title>DEMO-A-005 · Demo: integration testing</title>
+
+<rect x="201" y="1211" width="214" height="68.0" rx="14" fill="#ffffff" fill-opacity="0.9" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#overview-sh)"/>
+<circle cx="218" cy="1228" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="230.0" y="1231.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-005</text>
+<rect x="355.5" y="1220.0" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="379.3" y="1231.2" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="214.0" y="1248.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: integration testing</text>
+<text x="214.0" y="1262.0" font-size="9.8" fill="#86868b" font-weight="500" text-anchor="start">Needs DEMO-A-004</text>
+<rect class="pm-ring" x="199" y="1209" width="218" height="72.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.74" class="pm-card" data-key="DEMO-A-013" data-vis="waiting"><title>DEMO-A-013 · Demo: stuck behind the cancelled dependency (one)</title>
+
+<rect x="201" y="1290" width="214" height="83.0" rx="14" fill="#ffffff" fill-opacity="0.9" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#overview-sh)"/>
+<circle cx="218" cy="1307" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="230.0" y="1310.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-013</text>
+<rect x="355.5" y="1299.0" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="379.3" y="1310.2" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="214.0" y="1327.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: stuck behind the cancelled</text>
+<text x="214.0" y="1342.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">dependency (one)</text>
+<text x="214.0" y="1356.0" font-size="9.8" fill="#86868b" font-weight="500" text-anchor="start">Needs DEMO-A-012</text>
+<rect class="pm-ring" x="199" y="1288" width="218" height="87.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.74" class="pm-card" data-key="DEMO-A-006" data-vis="waiting"><title>DEMO-A-006 · Demo: release preparation</title>
+
+<rect x="201" y="1384" width="214" height="68.0" rx="14" fill="#ffffff" fill-opacity="0.9" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#overview-sh)"/>
+<circle cx="218" cy="1401" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="230.0" y="1404.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-006</text>
+<rect x="355.5" y="1393.0" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="379.3" y="1404.2" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="214.0" y="1421.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: release preparation</text>
+<text x="214.0" y="1435.0" font-size="9.8" fill="#86868b" font-weight="500" text-anchor="start">Needs DEMO-A-005</text>
+<rect class="pm-ring" x="199" y="1382" width="218" height="72.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.74" class="pm-card" data-key="DEMO-A-014" data-vis="waiting"><title>DEMO-A-014 · Demo: stuck behind the cancelled dependency (two, several prerequisites)</title>
+
+<rect x="201" y="1463" width="214" height="83.0" rx="14" fill="#ffffff" fill-opacity="0.9" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#overview-sh)"/>
+<circle cx="218" cy="1480" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="230.0" y="1483.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-014</text>
+<rect x="355.5" y="1472.0" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="379.3" y="1483.2" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="214.0" y="1500.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: stuck behind the cancelled</text>
+<text x="214.0" y="1515.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">dependency (two, several…</text>
+<text x="214.0" y="1529.0" font-size="9.8" fill="#86868b" font-weight="500" text-anchor="start">Needs DEMO-A-007/013</text>
+<rect class="pm-ring" x="199" y="1461" width="218" height="87.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g class="pm-fold" data-lane="BETA" data-open="true"><rect x="475.0" y="318" width="150.0" height="42" rx="12" fill="#fff" fill-opacity=".86" stroke="rgba(255,255,255,.9)" filter="url(#overview-shS)"/><rect x="491.0" y="334" width="10" height="10" rx="3" fill="#8b5cf6"/><text x="509.0" y="336.0" font-size="12" fill="#1d1d1f" font-weight="700" text-anchor="start">Demo lane B</text><text x="509.0" y="349.0" font-size="8.5" fill="#86868b" font-weight="500" text-anchor="start" letter-spacing="0.3">DEMO-B</text><path class="pm-chevron" d="M603.0,337.0 l4.5,4.5 l4.5,-4.5" fill="none" stroke="#86868b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
+<clipPath id="overview-bar-447-370"><rect x="447" y="370" width="206" height="7" rx="3.5"/></clipPath><g clip-path="url(#overview-bar-447-370)">
+<rect x="447" y="370" width="206" height="7" fill="#e6e9f0"/>
+<rect x="447.0" y="370" width="51.5" height="7" fill="#1fae74"/>
+<rect x="497.7" y="370" width=".8" height="7" fill="#fff" opacity=".9"/>
+<rect x="498.5" y="370" width="51.5" height="7" fill="url(#overview-gDev)"/>
+<rect x="549.2" y="370" width=".8" height="7" fill="#fff" opacity=".9"/>
+<rect x="550.0" y="370" width="51.5" height="7" fill="#c2c9d6"/>
+<rect x="600.7" y="370" width=".8" height="7" fill="#fff" opacity=".9"/>
+<rect x="601.5" y="370" width="51.5" height="7" fill="#e6e9f0"/>
+<rect x="652.2" y="370" width=".8" height="7" fill="#fff" opacity=".9"/>
+</g>
+<text x="447.0" y="398.0" font-size="10.5" fill="#1d1d1f" font-weight="650" text-anchor="start">1/4 done</text>
+<text x="643.2" y="398.0" font-size="10" fill="#0a5cff" font-weight="700" text-anchor="start">1</text>
+<circle cx="634.2" cy="394.5" r="7.6" fill="none" stroke="rgba(10,92,255,.45)" stroke-width="1.3"/><circle cx="634.2" cy="394.5" r="3.6" fill="url(#overview-gDev)"/>
+<g class="pm-fold" data-done-lane="BETA" data-open="false"><title>1 done · B 1</title><rect x="443" y="414" width="214" height="48" rx="14" fill="rgba(31,174,116,.07)" stroke="rgba(31,174,116,.42)" stroke-width="1.2" stroke-dasharray="5 4"/>
+<circle cx="465" cy="438" r="9" fill="#1fae74"/>
+<path d="M460.5,438.3 l3.2,3.3 l6.2,-6.8" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="483.0" y="435.0" font-size="12" fill="#12855c" font-weight="700" text-anchor="start">1 done</text>
+<text x="483.0" y="450.0" font-size="9.5" fill="#6e6e73" font-weight="500" text-anchor="start">B 1</text>
+<path class="pm-chevron" d="M635.0,432.0 l4.5,4.5 l-4.5,4.5" fill="none" stroke="#86868b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="447.0" y="478.0" font-size="8.8" fill="#86868b" font-weight="650" text-anchor="start" letter-spacing="1.1">In progress</text>
+<g opacity="1" class="pm-card" data-key="DEMO-B-002" data-vis="developing"><title>DEMO-B-002 · Demo B: implementation (in progress)</title>
+
+<rect x="443" y="484" width="214" height="92.0" rx="14" fill="#ffffff" fill-opacity="0.9" stroke="rgba(10,92,255,.5)" stroke-width="1.2" filter="url(#overview-glow)"/>
+<circle cx="460" cy="501" r="10" fill="none" stroke="rgba(10,92,255,.45)" stroke-width="1.3"/><circle cx="460" cy="501" r="6" fill="url(#overview-gDev)"/>
+<text x="472.0" y="504.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-B-002</text>
+<rect x="576.7" y="493.0" width="68.3" height="16" rx="8" fill="rgba(10,92,255,.08)" stroke="rgba(10,92,255,.5)" stroke-width="1"/>
+<text x="610.9" y="504.1" font-size="9" fill="#0a5cff" font-weight="600" text-anchor="middle">In progress</text>
+<text x="456.0" y="521.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo B: implementation (in</text>
+<text x="456.0" y="536.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">progress)</text>
+<rect x="455.0" y="548.0" width="75.4" height="16" rx="8" fill="rgba(122,165,248,.12)" stroke="rgba(122,165,248,.4)" stroke-width="1"/>
+<text x="492.7" y="559.1" font-size="9" fill="#3b6fd4" font-weight="600" text-anchor="middle">demo-agent-3</text>
+<rect class="pm-ring" x="441" y="482" width="218" height="96.0" rx="16" fill="none" stroke="none"/>
+</g>
+<text x="447.0" y="592.0" font-size="8.8" fill="#86868b" font-weight="650" text-anchor="start" letter-spacing="1.1">Ready</text>
+<g opacity="1" class="pm-card" data-key="DEMO-B-004" data-vis="ready"><title>DEMO-B-004 · Demo B: independent task (ready)</title>
+
+<rect x="443" y="598" width="214" height="70.0" rx="14" fill="#ffffff" fill-opacity="0.9" stroke="rgba(0,0,0,.11)" stroke-width="1.2" filter="url(#overview-sh)"/>
+<circle cx="460" cy="615" r="6" fill="#fff" stroke="#aeb7c7" stroke-width="2"/>
+<text x="472.0" y="618.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-B-004</text>
+<rect x="604.7" y="607.0" width="40.3" height="16" rx="8" fill="rgba(0,0,0,.045)" stroke="rgba(0,0,0,.11)" stroke-width="1"/>
+<text x="624.9" y="618.1" font-size="9" fill="#556075" font-weight="600" text-anchor="middle">Ready</text>
+<text x="456.0" y="635.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo B: independent task</text>
+<text x="456.0" y="650.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">(ready)</text>
+<rect class="pm-ring" x="441" y="596" width="218" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+<text x="447.0" y="684.0" font-size="8.8" fill="#86868b" font-weight="650" text-anchor="start" letter-spacing="1.1">Waiting for prerequisites</text>
+<g opacity="0.74" class="pm-card" data-key="DEMO-B-003" data-vis="waiting"><title>DEMO-B-003 · Demo B: depends on lane A&#x27;s base module</title>
+
+<rect x="443" y="690" width="214" height="83.0" rx="14" fill="#ffffff" fill-opacity="0.9" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#overview-sh)"/>
+<circle cx="460" cy="707" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="472.0" y="710.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-B-003</text>
+<rect x="597.5" y="699.0" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="621.3" y="710.1" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="456.0" y="727.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo B: depends on lane A&#x27;s base</text>
+<text x="456.0" y="742.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">module</text>
+<text x="456.0" y="756.0" font-size="9.8" fill="#86868b" font-weight="500" text-anchor="start">Needs DEMO-B-002</text>
+<rect class="pm-ring" x="441" y="688" width="218" height="87.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g class="pm-fold" data-lane="GAMMA" data-open="true"><rect x="717.0" y="318" width="150.0" height="42" rx="12" fill="#fff" fill-opacity=".86" stroke="rgba(255,255,255,.9)" filter="url(#overview-shS)"/><rect x="733.0" y="334" width="10" height="10" rx="3" fill="#22a06b"/><text x="751.0" y="336.0" font-size="12" fill="#1d1d1f" font-weight="700" text-anchor="start">Other</text><text x="751.0" y="349.0" font-size="8.5" fill="#86868b" font-weight="500" text-anchor="start" letter-spacing="0.3">DEMO-C</text><path class="pm-chevron" d="M845.0,337.0 l4.5,4.5 l4.5,-4.5" fill="none" stroke="#86868b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
+<clipPath id="overview-bar-689-370"><rect x="689" y="370" width="206" height="7" rx="3.5"/></clipPath><g clip-path="url(#overview-bar-689-370)">
+<rect x="689" y="370" width="206" height="7" fill="#e6e9f0"/>
+<rect x="689.0" y="370" width="103.0" height="7" fill="#1fae74"/>
+<rect x="791.2" y="370" width=".8" height="7" fill="#fff" opacity=".9"/>
+<rect x="792.0" y="370" width="103.0" height="7" fill="#c2c9d6"/>
+<rect x="894.2" y="370" width=".8" height="7" fill="#fff" opacity=".9"/>
+</g>
+<text x="689.0" y="398.0" font-size="10.5" fill="#1d1d1f" font-weight="650" text-anchor="start">1/2 done</text>
+<g class="pm-fold" data-done-lane="GAMMA" data-open="false"><title>1 done · C 1</title><rect x="685" y="414" width="214" height="48" rx="14" fill="rgba(31,174,116,.07)" stroke="rgba(31,174,116,.42)" stroke-width="1.2" stroke-dasharray="5 4"/>
+<circle cx="707" cy="438" r="9" fill="#1fae74"/>
+<path d="M702.5,438.3 l3.2,3.3 l6.2,-6.8" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="725.0" y="435.0" font-size="12" fill="#12855c" font-weight="700" text-anchor="start">1 done</text>
+<text x="725.0" y="450.0" font-size="9.5" fill="#6e6e73" font-weight="500" text-anchor="start">C 1</text>
+<path class="pm-chevron" d="M877.0,432.0 l4.5,4.5 l-4.5,4.5" fill="none" stroke="#86868b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text x="689.0" y="478.0" font-size="8.8" fill="#86868b" font-weight="650" text-anchor="start" letter-spacing="1.1">Ready</text>
+<g opacity="1" class="pm-card" data-key="DEMO-C-001" data-vis="ready"><title>DEMO-C-001 · Demo C: ready task</title>
+
+<rect x="685" y="484" width="214" height="55.0" rx="14" fill="#ffffff" fill-opacity="0.9" stroke="rgba(0,0,0,.11)" stroke-width="1.2" filter="url(#overview-sh)"/>
+<circle cx="702" cy="501" r="6" fill="#fff" stroke="#aeb7c7" stroke-width="2"/>
+<text x="714.0" y="504.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-C-001</text>
+<rect x="846.7" y="493.0" width="40.3" height="16" rx="8" fill="rgba(0,0,0,.045)" stroke="rgba(0,0,0,.11)" stroke-width="1"/>
+<text x="866.9" y="504.1" font-size="9" fill="#556075" font-weight="600" text-anchor="middle">Ready</text>
+<text x="698.0" y="521.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo C: ready task</text>
+<rect class="pm-ring" x="683" y="482" width="218" height="59.0" rx="16" fill="none" stroke="none"/>
+</g>
+<rect x="193" y="1604" width="714" height="138" rx="22" fill="#fff" fill-opacity=".72" stroke="rgba(255,255,255,.9)" filter="url(#overview-shS)"/>
+<text x="209.0" y="1632.0" font-size="9.5" fill="#86868b" font-weight="600" text-anchor="start" letter-spacing="1.4">EXECUTORS</text>
+<text x="285.0" y="1632.0" font-size="10.5" fill="#6e6e73" font-weight="500" text-anchor="start">Unfinished work with an active claim · 2 items / 2 executors</text>
+<g class="pm-agent" data-agent="demo-agent-1"><title>demo-agent-1 · DEMO-A-004</title>
+<rect x="201.0" y="1648" width="205.1" height="30" rx="15" fill="#fff" fill-opacity=".9" stroke="rgba(10,92,255,.4)" filter="url(#overview-shS)"/>
+<circle cx="221.0" cy="1663" r="10" fill="url(#overview-gDev)"/>
+<text x="221.0" y="1666.6" font-size="10" fill="#fff" font-weight="700" text-anchor="middle">D</text>
+<text x="238.0" y="1666.8" font-size="10.5" fill="#1d1d1f" font-weight="650" text-anchor="start">demo-agent-1</text>
+<text x="326.8" y="1666.6" font-size="9.5" fill="#6e6e73" font-weight="500" text-anchor="start">DEMO-A-004</text>
+</g>
+<g class="pm-agent" data-agent="demo-agent-3"><title>demo-agent-3 · DEMO-B-002</title>
+<rect x="414.1" y="1648" width="205.1" height="30" rx="15" fill="#fff" fill-opacity=".9" stroke="rgba(10,92,255,.4)" filter="url(#overview-shS)"/>
+<circle cx="434.1" cy="1663" r="10" fill="url(#overview-gDev)"/>
+<text x="434.1" y="1666.6" font-size="10" fill="#fff" font-weight="700" text-anchor="middle">D</text>
+<text x="451.1" y="1666.8" font-size="10.5" fill="#1d1d1f" font-weight="650" text-anchor="start">demo-agent-3</text>
+<text x="539.9" y="1666.6" font-size="9.5" fill="#6e6e73" font-weight="500" text-anchor="start">DEMO-B-002</text>
+</g>
+<text x="209.0" y="1709.0" font-size="9.5" fill="#86868b" font-weight="600" text-anchor="start" letter-spacing="1.4">DOCTOR</text>
+<rect x="271.0" y="1694.0" width="110.5" height="24" rx="12" fill="rgba(245,158,11,.11)" stroke="rgba(245,158,11,.4)" stroke-width="1"/>
+<text x="326.2" y="1709.5" font-size="10" fill="#b4740a" font-weight="600" text-anchor="middle">active sessions  2</text>
+<rect x="389.5" y="1694.0" width="102.3" height="24" rx="12" fill="rgba(245,158,11,.11)" stroke="rgba(245,158,11,.4)" stroke-width="1"/>
+<text x="440.6" y="1709.5" font-size="10" fill="#b4740a" font-weight="600" text-anchor="middle">expired_claim  1</text>
+<rect x="499.8" y="1694.0" width="109.9" height="24" rx="12" fill="rgba(225,75,84,.09)" stroke="rgba(225,75,84,.4)" stroke-width="1"/>
+<text x="554.8" y="1709.5" font-size="10" fill="#c93b44" font-weight="600" text-anchor="middle">orphan_session  1</text>
+<rect x="617.7" y="1694.0" width="239.9" height="24" rx="12" fill="rgba(225,75,84,.09)" stroke="rgba(225,75,84,.4)" stroke-width="1"/>
+<text x="737.6" y="1709.5" font-size="10" fill="#c93b44" font-weight="600" text-anchor="middle">Dependencies on cancelled items 1 · 3 stuck</text>
+<line x1="201" y1="1768" x2="899" y2="1768" stroke="rgba(0,0,0,.10)" stroke-dasharray="5 4"/>
+<text x="207.0" y="1795.0" font-size="9.5" fill="#86868b" font-weight="600" text-anchor="start" letter-spacing="1">Legend</text>
+<circle cx="252" cy="1792" r="5" fill="#1fae74"/>
+<text x="263.0" y="1795.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Done</text>
+<circle cx="313.6" cy="1792" r="9" fill="none" stroke="rgba(10,92,255,.45)" stroke-width="1.3"/><circle cx="313.6" cy="1792" r="5" fill="url(#overview-gDev)"/>
+<text x="324.6" y="1795.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">In progress</text>
+<circle cx="411.90000000000003" cy="1792" r="5" fill="#fff" stroke="#f59e0b" stroke-width="2"/>
+<text x="422.9" y="1795.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Stalled</text>
+<circle cx="485.30000000000007" cy="1792" r="5" fill="#e14b54"/>
+<text x="496.3" y="1795.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Blocked</text>
+<circle cx="561.2" cy="1792" r="5" fill="#fff" stroke="#aeb7c7" stroke-width="2"/>
+<text x="572.2" y="1795.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Ready</text>
+<circle cx="628.4000000000001" cy="1792" r="5" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="639.4" y="1795.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Waiting</text>
+<circle cx="703.6000000000001" cy="1792" r="5" fill="#fff" stroke="#cdd3df" stroke-width="2"/>
+<text x="714.6" y="1795.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Draft</text>
+<path d="M765.8,1792.0 C765.8,1792.0 795.8,1792.0 795.8,1792.0" fill="none" stroke="#8fb0e6" stroke-width="1.6" marker-end="url(#overview-aBlue)"/>
+<text x="803.8" y="1795.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Direct dependency</text>
+<text x="207.0" y="1812.0" font-size="9.5" fill="#86868b" font-weight="500" text-anchor="start">“Stalled” in this graph: status in_progress and no event for ≥7 days. Lanes come from the display configuration; inside a lane, items are grouped by status and ordered by dependency depth.</text>
+<text x="207.0" y="1828.0" font-size="9.5" fill="#86868b" font-weight="500" text-anchor="start">17 dependencies, 1 across lanes; all data from official CLI JSON (snapshot 23b5c7e2ec1b, revision 100); as of 2026-01-15 00:00 UTC.</text>
+<text x="207.0" y="1844.0" font-size="9.5" fill="#86868b" font-weight="500" text-anchor="start">Not provided by the official interfaces: node.goal, node.scope, node.priority, node.milestone, project.scenarios, project.release_funnel</text>
+</svg>
+</div></section><section class="view" id="s-mainline" aria-label="Main dependency graph"><div class="scroll"><svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1441" viewBox="0 0 1200 1441" font-family="-apple-system,BlinkMacSystemFont,&#x27;SF Pro Display&#x27;,&#x27;Avenir Next&#x27;,&#x27;Segoe UI&#x27;,&#x27;PingFang SC&#x27;,&#x27;Microsoft YaHei&#x27;,sans-serif" role="img" aria-label="Main dependency graph: dependencies and critical path of each lane">
+<defs>
+<radialGradient id="mainline-gBg" cx="50%" cy="-12%" r="95%"><stop offset="0" stop-color="#ffffff"/><stop offset=".52" stop-color="#edf1f9"/><stop offset="1" stop-color="#e0e9f6"/></radialGradient>
+<linearGradient id="mainline-gPanel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f8faff"/><stop offset="1" stop-color="#eef3fc"/></linearGradient>
+<linearGradient id="mainline-gProj" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#eef4ff"/></linearGradient>
+<linearGradient id="mainline-gDev" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#57b8ff"/><stop offset="1" stop-color="#0a5cff"/></linearGradient>
+<filter id="mainline-sh" x="-25%" y="-25%" width="150%" height="170%"><feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="#0d3078" flood-opacity=".11"/></filter>
+<filter id="mainline-shS" x="-25%" y="-25%" width="150%" height="170%"><feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#0d3078" flood-opacity=".10"/></filter>
+<filter id="mainline-glow" x="-30%" y="-30%" width="160%" height="190%"><feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#0a5cff" flood-opacity=".30"/></filter>
+<filter id="mainline-shell" x="-5%" y="-3%" width="110%" height="108%"><feDropShadow dx="0" dy="24" stdDeviation="26" flood-color="#0a3cb4" flood-opacity=".12"/></filter>
+<marker id="mainline-aBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.4" markerHeight="5.4" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#6e98d9" stroke-width="1.3"/></marker>
+<marker id="mainline-aCrit" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#0a5cff" stroke-width="1.6"/></marker>
+<marker id="mainline-aRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.4" markerHeight="5.4" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#e14b54" stroke-width="1.3"/></marker>
+<marker id="mainline-aGray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#9aa3b2" stroke-width="1.2"/></marker>
+</defs>
+<rect width="1200" height="1441" fill="url(#mainline-gBg)"/>
+<rect x="28" y="24" width="1144" height="1393" rx="28" fill="#fff" fill-opacity=".55" stroke="rgba(255,255,255,.9)" stroke-width="1.5" filter="url(#mainline-shell)"/>
+<text x="600.0" y="74.0" font-size="9.5" fill="#86868b" font-weight="600" text-anchor="middle" letter-spacing="1.6">AWR · DEPENDENCY GRAPH</text>
+<text x="600.0" y="108.0" font-size="25" fill="#1d1d1f" font-weight="750" text-anchor="middle" letter-spacing="-0.3">Dependency graph · Demo lane A &amp; Demo lane B</text>
+<text x="600.0" y="132.0" font-size="11" fill="#6e6e73" font-weight="500" text-anchor="middle" letter-spacing="1.2">Demo lane A 14 items · Demo lane B 4 items · declared dependencies 16 → 16 after reduction · 2026-01-15 00:00 UTC</text>
+<rect x="259.3" y="146.0" width="681.3" height="22" rx="11" fill="rgba(245,158,11,.12)" stroke="rgba(245,158,11,.34)" stroke-width="1"/>
+<text x="600.0" y="160.5" font-size="10" fill="#8a6417" font-weight="500" text-anchor="middle">A line means “the upstream must finish first”; direct dependencies implied by other paths are hidden and finished work is collapsed</text>
+<rect x="129.4229252400546" y="196" width="941.1541495198908" height="679" rx="24" fill="#fff" fill-opacity=".42" stroke="rgba(255,255,255,.88)" filter="url(#mainline-shS)"/>
+<g class="pm-fold" data-panel="ALPHA" data-open="true"><rect x="151.4" y="214" width="150.0" height="42" rx="12" fill="#fff" fill-opacity=".86" stroke="rgba(255,255,255,.9)" filter="url(#mainline-shS)"/><rect x="167.4" y="230" width="10" height="10" rx="3" fill="#3b82f6"/><text x="185.4" y="232.0" font-size="12" fill="#1d1d1f" font-weight="700" text-anchor="start">Demo lane A</text><text x="185.4" y="245.0" font-size="8.5" fill="#86868b" font-weight="500" text-anchor="start" letter-spacing="0.3">DEMO-A</text><path class="pm-chevron" d="M279.4,233.0 l4.5,4.5 l4.5,-4.5" fill="none" stroke="#86868b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="317.4" y="240.0" font-size="11" fill="#6e6e73" font-weight="500" text-anchor="start">3/14 done · 11 unfinished · critical path 4 layers → DEMO-A-014 · 1 dependencies on other lanes</text>
+<g class="pm-btn" data-panel-done="ALPHA" data-open="false"><rect x="937.5" y="222.0" width="111.1" height="20" rx="10" fill="rgba(10,92,255,.07)" stroke="rgba(10,92,255,.22)" stroke-width="1"/>
+<text x="993.0" y="235.3" font-size="9.5" fill="#556075" font-weight="600" text-anchor="middle">Show finished work</text></g>
+<g transform="translate(163.4,270)">
+<path d="M229.7,73.5 C229.7,106.2 99.0,106.2 99.0,139.0" fill="none" stroke="#8fb0e6" stroke-width="1.6" data-from="DEMO-A-001" data-to="DEMO-A-002" marker-end="url(#mainline-aBlue)"/>
+<path d="M229.7,73.5 C229.7,106.2 547.0,106.2 547.0,139.0" fill="none" stroke="#8fb0e6" stroke-width="1.6" data-from="DEMO-A-001" data-to="DEMO-A-003" marker-end="url(#mainline-aBlue)"/>
+<path d="M99.0,195.0 C99.0,218.5 102.2,218.5 102.2,242.0" fill="none" stroke="#8fb0e6" stroke-width="1.6" data-from="DEMO-A-002" data-to="DEMO-A-004" marker-end="url(#mainline-aBlue)"/>
+<path d="M547.0,195.0 C547.0,218.5 102.2,218.5 102.2,242.0" fill="none" stroke="#8fb0e6" stroke-width="1.6" data-from="DEMO-A-003" data-to="DEMO-A-004" marker-end="url(#mainline-aBlue)"/>
+<path d="M102.2,335.0 C102.2,362.2 173.2,362.2 173.2,389.5" fill="none" stroke="#8fb0e6" stroke-width="1.6" data-from="DEMO-A-004" data-to="DEMO-A-005" marker-end="url(#mainline-aBlue)"/>
+<path d="M173.2,445.5 C173.2,476.5 173.2,476.5 173.2,507.5" fill="none" stroke="#8fb0e6" stroke-width="1.6" data-from="DEMO-A-005" data-to="DEMO-A-006" marker-end="url(#mainline-aBlue)"/>
+<path d="M547.0,195.0 C547.0,224.0 550.2,224.0 550.2,253.0" fill="none" stroke="#8fb0e6" stroke-width="1.6" data-from="DEMO-A-003" data-to="DEMO-A-007" marker-end="url(#mainline-aBlue)"/>
+<path d="M547.0,195.0 C547.0,224.0 774.2,224.0 774.2,253.0" fill="none" stroke="#8fb0e6" stroke-width="1.6" data-from="DEMO-A-003" data-to="DEMO-A-008" marker-end="url(#mainline-aBlue)"/>
+<path d="M229.7,73.5 C229.7,106.2 323.0,106.2 323.0,139.0" fill="none" stroke="#8fb0e6" stroke-width="1.6" data-from="DEMO-A-001" data-to="DEMO-A-011" marker-end="url(#mainline-aBlue)"/>
+<path d="M99.0,195.0 C99.0,224.0 326.2,224.0 326.2,253.0" fill="none" stroke="#8fb0e6" stroke-width="1.6" data-from="DEMO-A-002" data-to="DEMO-A-012" marker-end="url(#mainline-aBlue)"/>
+<path d="M550.2,324.0 C550.2,371.0 576.2,371.0 576.2,418.0 C576.2,459.0 509.2,459.0 509.2,500.0" fill="none" stroke="#8fb0e6" stroke-width="1.6" data-from="DEMO-A-007" data-to="DEMO-A-014" marker-end="url(#mainline-aBlue)"/>
+<path d="M326.2,324.0 C326.2,353.0 442.2,353.0 442.2,382.0" fill="none" stroke="#0a5cff" stroke-width="2.8" data-from="DEMO-A-012" data-to="DEMO-A-013" marker-end="url(#mainline-aCrit)"/>
+<path d="M442.2,453.0 C442.2,476.5 509.2,476.5 509.2,500.0" fill="none" stroke="#0a5cff" stroke-width="2.8" data-from="DEMO-A-013" data-to="DEMO-A-014" marker-end="url(#mainline-aCrit)"/>
+<path d="M323.0,195.0 C323.0,224.0 326.2,224.0 326.2,253.0" fill="none" stroke="#e14b54" stroke-width="1.5" stroke-dasharray="4 4" data-from="DEMO-A-011" data-to="DEMO-A-012" marker-end="url(#mainline-aRed)"/>
+<g opacity="1" class="pm-card" data-key="DEMO-A-001" data-vis="done"><title>DEMO-A-001 · Demo: set up the environment</title>
+
+<rect x="130.72427983539274" y="18.5" width="198" height="55.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(31,174,116,.38)" stroke-width="1.2" filter="url(#mainline-sh)"/>
+<circle cx="147.72427983539274" cy="35.5" r="6" fill="#1fae74"/>
+<text x="159.7" y="39.0" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-001</text>
+<rect x="281.5" y="27.5" width="35.2" height="16" rx="8" fill="rgba(31,174,116,.09)" stroke="rgba(31,174,116,.38)" stroke-width="1"/>
+<text x="299.1" y="38.6" font-size="9" fill="#12855c" font-weight="600" text-anchor="middle">Done</text>
+<text x="143.7" y="55.5" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: set up the environment</text>
+<rect class="pm-ring" x="128.72427983539274" y="16.5" width="202" height="59.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="1" class="pm-card" data-key="DEMO-A-009" data-vis="stalled"><title>DEMO-A-009 · Demo: long-quiet work (stalled, claim expired)</title>
+
+<rect x="354.72427983539274" y="0" width="198" height="92.0" rx="14" fill="#fffdf7" fill-opacity="1" stroke="rgba(245,158,11,.65)" stroke-width="1.2" stroke-dasharray="5 3" filter="url(#mainline-sh)"/>
+<circle cx="371.72427983539274" cy="17" r="6" fill="#fff" stroke="#f59e0b" stroke-width="2"/>
+<text x="383.7" y="20.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-009</text>
+<rect x="476.6" y="9.0" width="64.1" height="16" rx="8" fill="rgba(245,158,11,.11)" stroke="rgba(245,158,11,.65)" stroke-width="1"/>
+<text x="508.7" y="20.1" font-size="9" fill="#b4740a" font-weight="600" text-anchor="middle">Stalled 20d</text>
+<text x="367.7" y="37.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: long-quiet work</text>
+<text x="367.7" y="52.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">(stalled, claim expired)</text>
+<rect x="366.7" y="64.0" width="75.4" height="16" rx="8" fill="rgba(122,165,248,.12)" stroke="rgba(122,165,248,.4)" stroke-width="1"/>
+<text x="404.4" y="75.2" font-size="9" fill="#3b6fd4" font-weight="600" text-anchor="middle">demo-agent-2</text>
+<rect class="pm-ring" x="352.72427983539274" y="-2" width="202" height="96.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.7" class="pm-card" data-key="DEMO-A-010" data-vis="draft"><title>DEMO-A-010 · Demo: draft not activated yet</title>
+
+<rect x="578.7242798353927" y="11" width="198" height="70.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.12)" stroke-width="1.2" stroke-dasharray="2 3" filter="url(#mainline-sh)"/>
+<circle cx="595.7242798353927" cy="28" r="6" fill="#fff" stroke="#cdd3df" stroke-width="2"/>
+<text x="607.7" y="31.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-010</text>
+<rect x="724.4" y="20.0" width="40.3" height="16" rx="8" fill="rgba(0,0,0,.03)" stroke="rgba(0,0,0,.12)" stroke-width="1"/>
+<text x="744.6" y="31.1" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Draft</text>
+<text x="591.7" y="48.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: draft not activated</text>
+<text x="591.7" y="63.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">yet</text>
+<rect class="pm-ring" x="576.7242798353927" y="9" width="202" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="1" class="pm-card" data-key="DEMO-A-002" data-vis="done"><title>DEMO-A-002 · Demo: base module</title>
+
+<rect x="0" y="140" width="198" height="55.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(31,174,116,.38)" stroke-width="1.2" filter="url(#mainline-sh)"/>
+<circle cx="17" cy="157" r="6" fill="#1fae74"/>
+<text x="29.0" y="160.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-002</text>
+<rect x="150.8" y="149.0" width="35.2" height="16" rx="8" fill="rgba(31,174,116,.09)" stroke="rgba(31,174,116,.38)" stroke-width="1"/>
+<text x="168.4" y="160.2" font-size="9" fill="#12855c" font-weight="600" text-anchor="middle">Done</text>
+<text x="13.0" y="177.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: base module</text>
+<rect class="pm-ring" x="-2" y="138" width="202" height="59.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.92" class="pm-card" data-key="DEMO-A-011" data-vis="cancelled"><title>DEMO-A-011 · Demo: cancelled approach</title>
+
+<rect x="224" y="140" width="198" height="55.0" rx="14" fill="#f4f5f8" fill-opacity="1" stroke="rgba(0,0,0,.24)" stroke-width="1.2" stroke-dasharray="3 3" filter="url(#mainline-sh)"/>
+<circle cx="241" cy="157" r="6" fill="#fff" stroke="#9aa3b2" stroke-width="2"/>
+<text x="253.0" y="160.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-011</text>
+<rect x="354.1" y="149.0" width="55.9" height="16" rx="8" fill="rgba(0,0,0,.05)" stroke="rgba(0,0,0,.24)" stroke-width="1"/>
+<text x="382.0" y="160.2" font-size="9" fill="#6e6e73" font-weight="600" text-anchor="middle">Cancelled</text>
+<text x="237.0" y="177.0" font-size="11.5" fill="#6e6e73" font-weight="650" text-anchor="start" text-decoration="line-through">Demo: cancelled approach</text>
+<rect class="pm-ring" x="222" y="138" width="202" height="59.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="1" class="pm-card" data-key="DEMO-A-003" data-vis="done"><title>DEMO-A-003 · Demo: interface contract</title>
+
+<rect x="448" y="140" width="198" height="55.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(31,174,116,.38)" stroke-width="1.2" filter="url(#mainline-sh)"/>
+<circle cx="465" cy="157" r="6" fill="#1fae74"/>
+<text x="477.0" y="160.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-003</text>
+<rect x="598.8" y="149.0" width="35.2" height="16" rx="8" fill="rgba(31,174,116,.09)" stroke="rgba(31,174,116,.38)" stroke-width="1"/>
+<text x="616.4" y="160.2" font-size="9" fill="#12855c" font-weight="600" text-anchor="middle">Done</text>
+<text x="461.0" y="177.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: interface contract</text>
+<rect class="pm-ring" x="446" y="138" width="202" height="59.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="1" class="pm-card" data-key="DEMO-A-004" data-vis="developing"><title>DEMO-A-004 · Demo: core feature (in progress, active claim)</title>
+
+<rect x="3.1541495198907796" y="243" width="198" height="92.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(10,92,255,.5)" stroke-width="1.2" filter="url(#mainline-glow)"/>
+<circle cx="20.15414951989078" cy="260" r="10" fill="none" stroke="rgba(10,92,255,.45)" stroke-width="1.3"/><circle cx="20.15414951989078" cy="260" r="6" fill="url(#mainline-gDev)"/>
+<text x="32.2" y="263.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-004</text>
+<rect x="120.9" y="252.0" width="68.3" height="16" rx="8" fill="rgba(10,92,255,.08)" stroke="rgba(10,92,255,.5)" stroke-width="1"/>
+<text x="155.0" y="263.1" font-size="9" fill="#0a5cff" font-weight="600" text-anchor="middle">In progress</text>
+<text x="16.2" y="280.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: core feature (in</text>
+<text x="16.2" y="295.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">progress, active claim)</text>
+<rect x="15.2" y="307.0" width="75.4" height="16" rx="8" fill="rgba(122,165,248,.12)" stroke="rgba(122,165,248,.4)" stroke-width="1"/>
+<text x="52.8" y="318.1" font-size="9" fill="#3b6fd4" font-weight="600" text-anchor="middle">demo-agent-1</text>
+<rect class="pm-ring" x="1.1541495198907796" y="241" width="202" height="96.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.74" class="pm-card" data-key="DEMO-A-012" data-vis="waiting"><title>DEMO-A-012 · Demo: still depends on the cancelled approach</title>
+<rect x="223.65414951989078" y="250.5" width="205" height="77.0" rx="17" fill="none" stroke="#e14b54" stroke-opacity=".55" stroke-width="1.3" stroke-dasharray="2.5 3"/>
+<rect x="227.15414951989078" y="254" width="198" height="70.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#mainline-sh)"/>
+<circle cx="244.15414951989078" cy="271" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="256.2" y="274.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-012</text>
+<rect x="365.7" y="263.0" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="389.4" y="274.1" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="240.2" y="291.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: still depends on the</text>
+<text x="240.2" y="306.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">cancelled approach</text>
+<rect class="pm-ring" x="225.15414951989078" y="252" width="202" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="1" class="pm-card" data-key="DEMO-A-007" data-vis="ready"><title>DEMO-A-007 · Demo: finish the documentation (ready)</title>
+
+<rect x="451.1541495198908" y="254" width="198" height="70.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.11)" stroke-width="1.2" filter="url(#mainline-sh)"/>
+<circle cx="468.1541495198908" cy="271" r="6" fill="#fff" stroke="#aeb7c7" stroke-width="2"/>
+<text x="480.2" y="274.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-007</text>
+<rect x="596.9" y="263.0" width="40.3" height="16" rx="8" fill="rgba(0,0,0,.045)" stroke="rgba(0,0,0,.11)" stroke-width="1"/>
+<text x="617.0" y="274.1" font-size="9" fill="#556075" font-weight="600" text-anchor="middle">Ready</text>
+<text x="464.2" y="291.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: finish the</text>
+<text x="464.2" y="306.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">documentation (ready)</text>
+<rect class="pm-ring" x="449.1541495198908" y="252" width="202" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="1" class="pm-card" data-key="DEMO-A-008" data-vis="blocked"><title>DEMO-A-008 · Demo: waiting for external approval</title>
+
+<rect x="675.1541495198908" y="254" width="198" height="70.0" rx="14" fill="#fff8f8" fill-opacity="1" stroke="rgba(225,75,84,.58)" stroke-width="1.2" filter="url(#mainline-sh)"/>
+<circle cx="692.1541495198908" cy="271" r="6" fill="#e14b54"/>
+<text x="704.2" y="274.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-008</text>
+<rect x="813.0" y="263.0" width="48.1" height="16" rx="8" fill="rgba(225,75,84,.09)" stroke="rgba(225,75,84,.58)" stroke-width="1"/>
+<text x="837.1" y="274.1" font-size="9" fill="#c93b44" font-weight="600" text-anchor="middle">Blocked</text>
+<text x="688.2" y="291.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: waiting for external</text>
+<text x="688.2" y="306.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">approval</text>
+<rect class="pm-ring" x="673.1541495198908" y="252" width="202" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.74" class="pm-card" data-key="DEMO-A-005" data-vis="waiting"><title>DEMO-A-005 · Demo: integration testing</title>
+
+<rect x="74.19847393690179" y="390.5" width="198" height="55.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#mainline-sh)"/>
+<circle cx="91.19847393690179" cy="407.5" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="103.2" y="411.0" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-005</text>
+<rect x="212.7" y="399.5" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="236.5" y="410.6" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="87.2" y="427.5" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: integration testing</text>
+<rect class="pm-ring" x="72.19847393690179" y="388.5" width="202" height="59.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.74" class="pm-card" data-key="DEMO-A-013" data-vis="waiting"><title>DEMO-A-013 · Demo: stuck behind the cancelled dependency (one)</title>
+<rect x="339.6984739369018" y="379.5" width="205" height="77.0" rx="17" fill="none" stroke="#e14b54" stroke-opacity=".55" stroke-width="1.3" stroke-dasharray="2.5 3"/>
+<rect x="343.1984739369018" y="383" width="198" height="70.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#mainline-sh)"/>
+<circle cx="360.1984739369018" cy="400" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="372.2" y="403.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-013</text>
+<rect x="481.7" y="392.0" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="505.5" y="403.1" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="356.2" y="420.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: stuck behind the</text>
+<text x="356.2" y="435.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">cancelled dependency (one)</text>
+<rect class="pm-ring" x="341.1984739369018" y="381" width="202" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.74" class="pm-card" data-key="DEMO-A-006" data-vis="waiting"><title>DEMO-A-006 · Demo: release preparation</title>
+
+<rect x="74.19847393690179" y="508.5" width="198" height="55.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#mainline-sh)"/>
+<circle cx="91.19847393690179" cy="525.5" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="103.2" y="529.0" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-006</text>
+<rect x="212.7" y="517.5" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="236.5" y="528.6" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="87.2" y="545.5" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: release preparation</text>
+<rect class="pm-ring" x="72.19847393690179" y="506.5" width="202" height="59.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.74" class="pm-card" data-key="DEMO-A-014" data-vis="waiting"><title>DEMO-A-014 · Demo: stuck behind the cancelled dependency (two, several prerequisites)</title>
+<rect x="406.6984739369018" y="497.5" width="205" height="77.0" rx="17" fill="none" stroke="#e14b54" stroke-opacity=".55" stroke-width="1.3" stroke-dasharray="2.5 3"/>
+<rect x="410.1984739369018" y="501" width="198" height="70.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#mainline-sh)"/>
+<circle cx="427.1984739369018" cy="518" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="439.2" y="521.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-A-014</text>
+<rect x="548.7" y="510.0" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="572.5" y="521.1" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="423.2" y="538.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: stuck behind the</text>
+<text x="423.2" y="553.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">cancelled dependency (two,…</text>
+<rect class="pm-ring" x="408.1984739369018" y="499" width="202" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+</g>
+<rect x="355" y="903" width="490" height="436" rx="24" fill="#fff" fill-opacity=".42" stroke="rgba(255,255,255,.88)" filter="url(#mainline-shS)"/>
+<g class="pm-fold" data-panel="BETA" data-open="true"><rect x="377.0" y="921" width="150.0" height="42" rx="12" fill="#fff" fill-opacity=".86" stroke="rgba(255,255,255,.9)" filter="url(#mainline-shS)"/><rect x="393.0" y="937" width="10" height="10" rx="3" fill="#8b5cf6"/><text x="411.0" y="939.0" font-size="12" fill="#1d1d1f" font-weight="700" text-anchor="start">Demo lane B</text><text x="411.0" y="952.0" font-size="8.5" fill="#86868b" font-weight="500" text-anchor="start" letter-spacing="0.3">DEMO-B</text><path class="pm-chevron" d="M505.0,940.0 l4.5,4.5 l4.5,-4.5" fill="none" stroke="#86868b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="543.0" y="947.0" font-size="11" fill="#6e6e73" font-weight="500" text-anchor="start">1/4 done · 3 unfinished · critical path 2 layers → D…</text>
+<g transform="translate(389.0,977)">
+<path d="M99.0,62.5 C99.0,89.8 155.0,89.8 155.0,117.0" fill="none" stroke="#8fb0e6" stroke-width="1.6" data-from="DEMO-B-001" data-to="DEMO-B-002" marker-end="url(#mainline-aBlue)"/>
+<path d="M155.0,210.0 C155.0,233.5 155.0,233.5 155.0,257.0" fill="none" stroke="#0a5cff" stroke-width="2.8" data-from="DEMO-B-002" data-to="DEMO-B-003" marker-end="url(#mainline-aCrit)"/>
+<g opacity="1" class="pm-card" data-key="DEMO-B-001" data-vis="done"><title>DEMO-B-001 · Demo B: baseline</title>
+
+<rect x="0" y="7.5" width="198" height="55.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(31,174,116,.38)" stroke-width="1.2" filter="url(#mainline-sh)"/>
+<circle cx="17" cy="24.5" r="6" fill="#1fae74"/>
+<text x="29.0" y="28.0" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-B-001</text>
+<rect x="150.8" y="16.5" width="35.2" height="16" rx="8" fill="rgba(31,174,116,.09)" stroke="rgba(31,174,116,.38)" stroke-width="1"/>
+<text x="168.4" y="27.6" font-size="9" fill="#12855c" font-weight="600" text-anchor="middle">Done</text>
+<text x="13.0" y="44.5" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo B: baseline</text>
+<rect class="pm-ring" x="-2" y="5.5" width="202" height="59.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="1" class="pm-card" data-key="DEMO-B-004" data-vis="ready"><title>DEMO-B-004 · Demo B: independent task (ready)</title>
+
+<rect x="224" y="0" width="198" height="70.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.11)" stroke-width="1.2" filter="url(#mainline-sh)"/>
+<circle cx="241" cy="17" r="6" fill="#fff" stroke="#aeb7c7" stroke-width="2"/>
+<text x="253.0" y="20.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-B-004</text>
+<rect x="369.7" y="9.0" width="40.3" height="16" rx="8" fill="rgba(0,0,0,.045)" stroke="rgba(0,0,0,.11)" stroke-width="1"/>
+<text x="389.9" y="20.1" font-size="9" fill="#556075" font-weight="600" text-anchor="middle">Ready</text>
+<text x="237.0" y="37.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo B: independent task</text>
+<text x="237.0" y="52.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">(ready)</text>
+<rect class="pm-ring" x="222" y="-2" width="202" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="1" class="pm-card" data-key="DEMO-B-002" data-vis="developing"><title>DEMO-B-002 · Demo B: implementation (in progress)</title>
+
+<rect x="56" y="118" width="198" height="92.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(10,92,255,.5)" stroke-width="1.2" filter="url(#mainline-glow)"/>
+<circle cx="73" cy="135" r="10" fill="none" stroke="rgba(10,92,255,.45)" stroke-width="1.3"/><circle cx="73" cy="135" r="6" fill="url(#mainline-gDev)"/>
+<text x="85.0" y="138.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-B-002</text>
+<rect x="173.7" y="127.0" width="68.3" height="16" rx="8" fill="rgba(10,92,255,.08)" stroke="rgba(10,92,255,.5)" stroke-width="1"/>
+<text x="207.9" y="138.2" font-size="9" fill="#0a5cff" font-weight="600" text-anchor="middle">In progress</text>
+<text x="69.0" y="155.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo B: implementation (in</text>
+<text x="69.0" y="170.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">progress)</text>
+<rect x="68.0" y="182.0" width="75.4" height="16" rx="8" fill="rgba(122,165,248,.12)" stroke="rgba(122,165,248,.4)" stroke-width="1"/>
+<text x="105.7" y="193.2" font-size="9" fill="#3b6fd4" font-weight="600" text-anchor="middle">demo-agent-3</text>
+<rect class="pm-ring" x="54" y="116" width="202" height="96.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.74" class="pm-card" data-key="DEMO-B-003" data-vis="waiting"><title>DEMO-B-003 · Demo B: depends on lane A&#x27;s base module</title>
+
+<rect x="56" y="258" width="198" height="70.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#mainline-sh)"/>
+<circle cx="73" cy="275" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="85.0" y="278.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO-B-003</text>
+<rect x="194.5" y="267.0" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="218.3" y="278.1" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="69.0" y="295.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo B: depends on lane A&#x27;s</text>
+<text x="69.0" y="310.0" font-size="11.5" fill="#1d1d1f" font-weight="650" text-anchor="start">base module</text>
+<rect class="pm-ring" x="54" y="256" width="202" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+</g>
+<line x1="76" y1="1361" x2="1124" y2="1361" stroke="rgba(0,0,0,.10)" stroke-dasharray="5 4"/>
+<text x="82.0" y="1388.0" font-size="9.5" fill="#86868b" font-weight="600" text-anchor="start" letter-spacing="1">Legend</text>
+<circle cx="127" cy="1385" r="5" fill="#1fae74"/>
+<text x="138.0" y="1388.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Done</text>
+<circle cx="188.60000000000002" cy="1385" r="9" fill="none" stroke="rgba(10,92,255,.45)" stroke-width="1.3"/><circle cx="188.60000000000002" cy="1385" r="5" fill="url(#mainline-gDev)"/>
+<text x="199.6" y="1388.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">In progress</text>
+<circle cx="286.90000000000003" cy="1385" r="5" fill="#fff" stroke="#f59e0b" stroke-width="2"/>
+<text x="297.9" y="1388.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Stalled</text>
+<circle cx="360.30000000000007" cy="1385" r="5" fill="#e14b54"/>
+<text x="371.3" y="1388.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Blocked</text>
+<circle cx="436.20000000000005" cy="1385" r="5" fill="#fff" stroke="#aeb7c7" stroke-width="2"/>
+<text x="447.2" y="1388.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Ready</text>
+<circle cx="503.40000000000003" cy="1385" r="5" fill="#fff" stroke="#cdd3df" stroke-width="2"/>
+<text x="514.4" y="1388.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Draft</text>
+<circle cx="570.6" cy="1385" r="5" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="581.6" y="1388.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Waiting</text>
+<path d="M640.8,1385.0 C640.8,1385.0 670.8,1385.0 670.8,1385.0" fill="none" stroke="#8fb0e6" stroke-width="1.6" marker-end="url(#mainline-aBlue)"/>
+<text x="678.8" y="1388.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Direct dependency (upstream → downstream)</text>
+<path d="M923.1,1385.0 C923.1,1385.0 953.1,1385.0 953.1,1385.0" fill="none" stroke="#0a5cff" stroke-width="2.8" marker-end="url(#mainline-aCrit)"/>
+<text x="961.1" y="1388.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Critical path of DEMO-A-014, DEMO-B-003</text>
+<text x="82.0" y="1405.0" font-size="9.5" fill="#86868b" font-weight="500" text-anchor="start">“Declares N prerequisites · M after reduction”: depends_on lists N, of which N−M are implied by other paths and are not drawn again.</text>
+</svg>
+</div></section><section class="view" id="s-explore" aria-label="Lane dependency graph"><div class="scroll"><svg xmlns="http://www.w3.org/2000/svg" width="1240" height="1316" viewBox="0 0 1240 1316" font-family="-apple-system,BlinkMacSystemFont,&#x27;SF Pro Display&#x27;,&#x27;Avenir Next&#x27;,&#x27;Segoe UI&#x27;,&#x27;PingFang SC&#x27;,&#x27;Microsoft YaHei&#x27;,sans-serif" role="img" aria-label="Lane dependency graph: unfinished work by milestone lane and its dependencies">
+<defs>
+<radialGradient id="explore-gBg" cx="50%" cy="-12%" r="95%"><stop offset="0" stop-color="#ffffff"/><stop offset=".52" stop-color="#edf1f9"/><stop offset="1" stop-color="#e0e9f6"/></radialGradient>
+<linearGradient id="explore-gPanel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f8faff"/><stop offset="1" stop-color="#eef3fc"/></linearGradient>
+<linearGradient id="explore-gProj" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#eef4ff"/></linearGradient>
+<linearGradient id="explore-gDev" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#57b8ff"/><stop offset="1" stop-color="#0a5cff"/></linearGradient>
+<filter id="explore-sh" x="-25%" y="-25%" width="150%" height="170%"><feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="#0d3078" flood-opacity=".11"/></filter>
+<filter id="explore-shS" x="-25%" y="-25%" width="150%" height="170%"><feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#0d3078" flood-opacity=".10"/></filter>
+<filter id="explore-glow" x="-30%" y="-30%" width="160%" height="190%"><feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#0a5cff" flood-opacity=".30"/></filter>
+<filter id="explore-shell" x="-5%" y="-3%" width="110%" height="108%"><feDropShadow dx="0" dy="24" stdDeviation="26" flood-color="#0a3cb4" flood-opacity=".12"/></filter>
+<marker id="explore-aBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.4" markerHeight="5.4" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#6e98d9" stroke-width="1.3"/></marker>
+<marker id="explore-aCrit" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#0a5cff" stroke-width="1.6"/></marker>
+<marker id="explore-aRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.4" markerHeight="5.4" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#e14b54" stroke-width="1.3"/></marker>
+<marker id="explore-aGray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#9aa3b2" stroke-width="1.2"/></marker>
+</defs>
+<rect width="1240" height="1316" fill="url(#explore-gBg)"/>
+<rect x="28" y="24" width="1184" height="1268" rx="28" fill="#fff" fill-opacity=".55" stroke="rgba(255,255,255,.9)" stroke-width="1.5" filter="url(#explore-shell)"/>
+<text x="620.0" y="74.0" font-size="9.5" fill="#86868b" font-weight="600" text-anchor="middle" letter-spacing="1.6">AWR · DEPENDENCY GRAPH</text>
+<text x="620.0" y="108.0" font-size="25" fill="#1d1d1f" font-weight="750" text-anchor="middle" letter-spacing="-0.3">Dependency graph · milestone lanes</text>
+<text x="620.0" y="132.0" font-size="11" fill="#6e6e73" font-weight="500" text-anchor="middle" letter-spacing="1.2">12 unfinished nodes · declared dependencies 17 → 17 after reduction · lane = milestone group of the display configuration · 2026-01-15 00:00 UTC</text>
+<rect x="286.6" y="146.0" width="666.8" height="22" rx="11" fill="rgba(245,158,11,.12)" stroke="rgba(245,158,11,.34)" stroke-width="1"/>
+<text x="620.0" y="160.5" font-size="10" fill="#8a6417" font-weight="500" text-anchor="middle">Red dashed frame = downstream of a cancelled dependency; AWR counts its dependency as unmet, so it cannot become ready now</text>
+<rect x="431" y="196" width="378" height="1018" rx="24" fill="#fff" fill-opacity=".42" stroke="rgba(255,255,255,.88)" filter="url(#explore-shS)"/>
+<rect x="460" y="302" width="156" height="890" rx="18" fill="#fff" fill-opacity=".34" stroke="rgba(255,255,255,.85)"/>
+<g class="pm-fold" data-xlane="0" data-open="true"><rect x="465" y="218" width="146" height="62" rx="12" fill="#fff" fill-opacity=".9" stroke="rgba(255,255,255,.9)" filter="url(#explore-shS)"/><rect x="477" y="230" width="10" height="10" rx="3" fill="#3b82f6"/><text x="495.0" y="239.5" font-size="12" fill="#1d1d1f" font-weight="700" text-anchor="start">Lane one</text><text x="477.0" y="254.0" font-size="8.6" fill="#6e6e73" font-weight="500" text-anchor="start">Demo goal one: build</text><text x="477.0" y="265.0" font-size="8.6" fill="#6e6e73" font-weight="500" text-anchor="start">solid foundations</text><path class="pm-chevron" d="M591.0,232.0 l4.5,4.5 l4.5,-4.5" fill="none" stroke="#86868b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="469.0" y="296.0" font-size="9.6" fill="#86868b" font-weight="600" text-anchor="start">5 unfinished · 3 done</text>
+<rect x="624" y="302" width="156" height="890" rx="18" fill="#fff" fill-opacity=".34" stroke="rgba(255,255,255,.85)"/>
+<g class="pm-fold" data-xlane="1" data-open="true"><rect x="629" y="218" width="146" height="62" rx="12" fill="#fff" fill-opacity=".9" stroke="rgba(255,255,255,.9)" filter="url(#explore-shS)"/><rect x="641" y="230" width="10" height="10" rx="3" fill="#8b5cf6"/><text x="659.0" y="239.5" font-size="12" fill="#1d1d1f" font-weight="700" text-anchor="start">Lane two</text><text x="641.0" y="254.0" font-size="8.6" fill="#6e6e73" font-weight="500" text-anchor="start">Demo goal two: extend</text><text x="641.0" y="265.0" font-size="8.6" fill="#6e6e73" font-weight="500" text-anchor="start">to integration and…</text><path class="pm-chevron" d="M755.0,232.0 l4.5,4.5 l4.5,-4.5" fill="none" stroke="#86868b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
+<text x="633.0" y="296.0" font-size="9.6" fill="#86868b" font-weight="600" text-anchor="start">7 unfinished · 1 done</text>
+<path d="M538.0,406.0 L538.0,414.0 L617.0,414.0 L617.0,771.0 L538.0,771.0 L538.0,779.0" fill="none" stroke="#8fb0e6" stroke-width="1.6" data-from="DEMO-A-004" data-to="DEMO-A-005" marker-end="url(#explore-aBlue)"/>
+<path d="M538.0,850.0 C538.0,864.5 702.0,864.5 702.0,879.0" fill="none" stroke="#7ea6e8" stroke-width="1.3" stroke-dasharray="5 4" data-from="DEMO-A-005" data-to="DEMO-A-006" marker-end="url(#explore-aBlue)"/>
+<path d="M538.0,950.0 C538.0,964.5 702.0,964.5 702.0,979.0" fill="none" stroke="#7ea6e8" stroke-width="1.3" stroke-dasharray="5 4" data-from="DEMO-A-012" data-to="DEMO-A-013" marker-end="url(#explore-aBlue)"/>
+<path d="M702.0,384.0 L702.0,392.0 L781.0,392.0 L781.0,1086.0 L702.0,1086.0 L702.0,1094.0" fill="none" stroke="#8fb0e6" stroke-width="1.6" data-from="DEMO-A-007" data-to="DEMO-A-014" marker-end="url(#explore-aBlue)"/>
+<path d="M702.0,1065.0 C702.0,1079.5 702.0,1079.5 702.0,1094.0" fill="none" stroke="#8fb0e6" stroke-width="1.6" data-from="DEMO-A-013" data-to="DEMO-A-014" marker-end="url(#explore-aBlue)"/>
+<path d="M538.0,750.0 C538.0,764.5 702.0,764.5 702.0,779.0" fill="none" stroke="#7ea6e8" stroke-width="1.3" stroke-dasharray="5 4" data-from="DEMO-B-002" data-to="DEMO-B-003" marker-end="url(#explore-aBlue)"/>
+<path d="M538.0,628.0 L538.0,636.0 L617.0,636.0 L617.0,871.0 L538.0,871.0 L538.0,879.0" fill="none" stroke="#e14b54" stroke-width="1.5" stroke-dasharray="4 4" data-from="DEMO-A-011" data-to="DEMO-A-012" marker-end="url(#explore-aRed)"/>
+<g opacity="1" class="pm-card" data-key="DEMO-A-004" data-vis="developing"><title>DEMO-A-004 · Demo: core feature (in progress, active claim)</title>
+
+<rect x="465" y="314" width="146" height="92.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(10,92,255,.5)" stroke-width="1.2" filter="url(#explore-glow)"/>
+<circle cx="482" cy="331" r="10" fill="none" stroke="rgba(10,92,255,.45)" stroke-width="1.3"/><circle cx="482" cy="331" r="6" fill="url(#explore-gDev)"/>
+<text x="494.0" y="334.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEM…-004</text>
+<rect x="530.7" y="323.0" width="68.3" height="16" rx="8" fill="rgba(10,92,255,.08)" stroke="rgba(10,92,255,.5)" stroke-width="1"/>
+<text x="564.9" y="334.1" font-size="9" fill="#0a5cff" font-weight="600" text-anchor="middle">In progress</text>
+<text x="478.0" y="351.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: core feature (in</text>
+<text x="478.0" y="366.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">progress, active claim)</text>
+<rect x="477.0" y="378.0" width="75.4" height="16" rx="8" fill="rgba(122,165,248,.12)" stroke="rgba(122,165,248,.4)" stroke-width="1"/>
+<text x="514.7" y="389.1" font-size="9" fill="#3b6fd4" font-weight="600" text-anchor="middle">demo-agent-1</text>
+<rect class="pm-ring" x="463" y="312" width="150" height="96.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.74" class="pm-card" data-key="DEMO-A-005" data-vis="waiting"><title>DEMO-A-005 · Demo: integration testing</title>
+
+<rect x="465" y="780" width="146" height="70.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#explore-sh)"/>
+<circle cx="482" cy="797" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="494.0" y="800.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEM…-005</text>
+<rect x="551.5" y="789.0" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="575.3" y="800.1" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="478.0" y="817.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: integration</text>
+<text x="478.0" y="832.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">testing</text>
+<rect class="pm-ring" x="463" y="778" width="150" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.74" class="pm-card" data-key="DEMO-A-006" data-vis="waiting"><title>DEMO-A-006 · Demo: release preparation</title>
+
+<rect x="629" y="880" width="146" height="70.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#explore-sh)"/>
+<circle cx="646" cy="897" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="658.0" y="900.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEM…-006</text>
+<rect x="715.5" y="889.0" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="739.3" y="900.1" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="642.0" y="917.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: release</text>
+<text x="642.0" y="932.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">preparation</text>
+<rect class="pm-ring" x="627" y="878" width="150" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="1" class="pm-card" data-key="DEMO-A-007" data-vis="ready"><title>DEMO-A-007 · Demo: finish the documentation (ready)</title>
+
+<rect x="629" y="314" width="146" height="70.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.11)" stroke-width="1.2" filter="url(#explore-sh)"/>
+<circle cx="646" cy="331" r="6" fill="#fff" stroke="#aeb7c7" stroke-width="2"/>
+<text x="658.0" y="334.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO…-007</text>
+<rect x="722.7" y="323.0" width="40.3" height="16" rx="8" fill="rgba(0,0,0,.045)" stroke="rgba(0,0,0,.11)" stroke-width="1"/>
+<text x="742.9" y="334.1" font-size="9" fill="#556075" font-weight="600" text-anchor="middle">Ready</text>
+<text x="642.0" y="351.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: finish the</text>
+<text x="642.0" y="366.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">documentation (ready)</text>
+<rect class="pm-ring" x="627" y="312" width="150" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="1" class="pm-card" data-key="DEMO-A-008" data-vis="blocked"><title>DEMO-A-008 · Demo: waiting for external approval</title>
+
+<rect x="629" y="436" width="146" height="70.0" rx="14" fill="#fff8f8" fill-opacity="1" stroke="rgba(225,75,84,.58)" stroke-width="1.2" filter="url(#explore-sh)"/>
+<circle cx="646" cy="453" r="6" fill="#e14b54"/>
+<text x="658.0" y="456.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEM…-008</text>
+<rect x="714.9" y="445.0" width="48.1" height="16" rx="8" fill="rgba(225,75,84,.09)" stroke="rgba(225,75,84,.58)" stroke-width="1"/>
+<text x="738.9" y="456.1" font-size="9" fill="#c93b44" font-weight="600" text-anchor="middle">Blocked</text>
+<text x="642.0" y="473.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: waiting for</text>
+<text x="642.0" y="488.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">external approval</text>
+<rect class="pm-ring" x="627" y="434" width="150" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="1" class="pm-card" data-key="DEMO-A-009" data-vis="stalled"><title>DEMO-A-009 · Demo: long-quiet work (stalled, claim expired)</title>
+
+<rect x="465" y="436" width="146" height="92.0" rx="14" fill="#fffdf7" fill-opacity="1" stroke="rgba(245,158,11,.65)" stroke-width="1.2" stroke-dasharray="5 3" filter="url(#explore-sh)"/>
+<circle cx="482" cy="453" r="6" fill="#fff" stroke="#f59e0b" stroke-width="2"/>
+<text x="494.0" y="456.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEM…-009</text>
+<rect x="534.9" y="445.0" width="64.1" height="16" rx="8" fill="rgba(245,158,11,.11)" stroke="rgba(245,158,11,.65)" stroke-width="1"/>
+<text x="566.9" y="456.1" font-size="9" fill="#b4740a" font-weight="600" text-anchor="middle">Stalled 20d</text>
+<text x="478.0" y="473.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: long-quiet work</text>
+<text x="478.0" y="488.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">(stalled, claim expired)</text>
+<rect x="477.0" y="500.0" width="75.4" height="16" rx="8" fill="rgba(122,165,248,.12)" stroke="rgba(122,165,248,.4)" stroke-width="1"/>
+<text x="514.7" y="511.1" font-size="9" fill="#3b6fd4" font-weight="600" text-anchor="middle">demo-agent-2</text>
+<rect class="pm-ring" x="463" y="434" width="150" height="96.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.92" class="pm-card" data-key="DEMO-A-011" data-vis="cancelled"><title>DEMO-A-011 · Demo: cancelled approach</title>
+
+<rect x="465" y="558" width="146" height="70.0" rx="14" fill="#f4f5f8" fill-opacity="1" stroke="rgba(0,0,0,.24)" stroke-width="1.2" stroke-dasharray="3 3" filter="url(#explore-sh)"/>
+<circle cx="482" cy="575" r="6" fill="#fff" stroke="#9aa3b2" stroke-width="2"/>
+<text x="494.0" y="578.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEM…-011</text>
+<rect x="543.1" y="567.0" width="55.9" height="16" rx="8" fill="rgba(0,0,0,.05)" stroke="rgba(0,0,0,.24)" stroke-width="1"/>
+<text x="571.0" y="578.1" font-size="9" fill="#6e6e73" font-weight="600" text-anchor="middle">Cancelled</text>
+<text x="478.0" y="595.0" font-size="10" fill="#6e6e73" font-weight="650" text-anchor="start" text-decoration="line-through">Demo: cancelled</text>
+<text x="478.0" y="610.0" font-size="10" fill="#6e6e73" font-weight="650" text-anchor="start" text-decoration="line-through">approach</text>
+<rect class="pm-ring" x="463" y="556" width="150" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.74" class="pm-card" data-key="DEMO-A-012" data-vis="waiting"><title>DEMO-A-012 · Demo: still depends on the cancelled approach</title>
+<rect x="461.5" y="876.5" width="153" height="77.0" rx="17" fill="none" stroke="#e14b54" stroke-opacity=".55" stroke-width="1.3" stroke-dasharray="2.5 3"/>
+<rect x="465" y="880" width="146" height="70.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#explore-sh)"/>
+<circle cx="482" cy="897" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="494.0" y="900.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEM…-012</text>
+<rect x="551.5" y="889.0" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="575.3" y="900.1" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="478.0" y="917.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: still depends on</text>
+<text x="478.0" y="932.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">the cancelled approach</text>
+<rect class="pm-ring" x="463" y="878" width="150" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.74" class="pm-card" data-key="DEMO-A-013" data-vis="waiting"><title>DEMO-A-013 · Demo: stuck behind the cancelled dependency (one)</title>
+<rect x="625.5" y="976.5" width="153" height="92.0" rx="17" fill="none" stroke="#e14b54" stroke-opacity=".55" stroke-width="1.3" stroke-dasharray="2.5 3"/>
+<rect x="629" y="980" width="146" height="85.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#explore-sh)"/>
+<circle cx="646" cy="997" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="658.0" y="1000.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEM…-013</text>
+<rect x="715.5" y="989.0" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="739.3" y="1000.1" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="642.0" y="1017.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: stuck behind the</text>
+<text x="642.0" y="1032.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">cancelled dependency</text>
+<text x="642.0" y="1047.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">(one)</text>
+<rect class="pm-ring" x="627" y="978" width="150" height="89.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.74" class="pm-card" data-key="DEMO-A-014" data-vis="waiting"><title>DEMO-A-014 · Demo: stuck behind the cancelled dependency (two, several prerequisites)</title>
+<rect x="625.5" y="1091.5" width="153" height="92.0" rx="17" fill="none" stroke="#e14b54" stroke-opacity=".55" stroke-width="1.3" stroke-dasharray="2.5 3"/>
+<rect x="629" y="1095" width="146" height="85.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#explore-sh)"/>
+<circle cx="646" cy="1112" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="658.0" y="1115.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEM…-014</text>
+<rect x="715.5" y="1104.0" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="739.3" y="1115.2" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="642.0" y="1132.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo: stuck behind the</text>
+<text x="642.0" y="1147.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">cancelled dependency</text>
+<text x="642.0" y="1162.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">(two, several…</text>
+<rect class="pm-ring" x="627" y="1093" width="150" height="89.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="1" class="pm-card" data-key="DEMO-B-002" data-vis="developing"><title>DEMO-B-002 · Demo B: implementation (in progress)</title>
+
+<rect x="465" y="658" width="146" height="92.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(10,92,255,.5)" stroke-width="1.2" filter="url(#explore-glow)"/>
+<circle cx="482" cy="675" r="10" fill="none" stroke="rgba(10,92,255,.45)" stroke-width="1.3"/><circle cx="482" cy="675" r="6" fill="url(#explore-gDev)"/>
+<text x="494.0" y="678.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEM…-002</text>
+<rect x="530.7" y="667.0" width="68.3" height="16" rx="8" fill="rgba(10,92,255,.08)" stroke="rgba(10,92,255,.5)" stroke-width="1"/>
+<text x="564.9" y="678.1" font-size="9" fill="#0a5cff" font-weight="600" text-anchor="middle">In progress</text>
+<text x="478.0" y="695.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo B: implementation</text>
+<text x="478.0" y="710.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">(in progress)</text>
+<rect x="477.0" y="722.0" width="75.4" height="16" rx="8" fill="rgba(122,165,248,.12)" stroke="rgba(122,165,248,.4)" stroke-width="1"/>
+<text x="514.7" y="733.1" font-size="9" fill="#3b6fd4" font-weight="600" text-anchor="middle">demo-agent-3</text>
+<rect class="pm-ring" x="463" y="656" width="150" height="96.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="0.74" class="pm-card" data-key="DEMO-B-003" data-vis="waiting"><title>DEMO-B-003 · Demo B: depends on lane A&#x27;s base module</title>
+
+<rect x="629" y="780" width="146" height="70.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.16)" stroke-width="1.2" stroke-dasharray="4 3" filter="url(#explore-sh)"/>
+<circle cx="646" cy="797" r="6" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="658.0" y="800.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEM…-003</text>
+<rect x="715.5" y="789.0" width="47.5" height="16" rx="8" fill="rgba(0,0,0,.035)" stroke="rgba(0,0,0,.16)" stroke-width="1"/>
+<text x="739.3" y="800.1" font-size="9" fill="#86868b" font-weight="600" text-anchor="middle">Waiting</text>
+<text x="642.0" y="817.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo B: depends on lane</text>
+<text x="642.0" y="832.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">A&#x27;s base module</text>
+<rect class="pm-ring" x="627" y="778" width="150" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+<g opacity="1" class="pm-card" data-key="DEMO-B-004" data-vis="ready"><title>DEMO-B-004 · Demo B: independent task (ready)</title>
+
+<rect x="629" y="558" width="146" height="70.0" rx="14" fill="#ffffff" fill-opacity="1" stroke="rgba(0,0,0,.11)" stroke-width="1.2" filter="url(#explore-sh)"/>
+<circle cx="646" cy="575" r="6" fill="#fff" stroke="#aeb7c7" stroke-width="2"/>
+<text x="658.0" y="578.5" font-size="9.8" fill="#86868b" font-weight="600" text-anchor="start" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" letter-spacing="0.3">DEMO…-004</text>
+<rect x="722.7" y="567.0" width="40.3" height="16" rx="8" fill="rgba(0,0,0,.045)" stroke="rgba(0,0,0,.11)" stroke-width="1"/>
+<text x="742.9" y="578.1" font-size="9" fill="#556075" font-weight="600" text-anchor="middle">Ready</text>
+<text x="642.0" y="595.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">Demo B: independent</text>
+<text x="642.0" y="610.0" font-size="10" fill="#1d1d1f" font-weight="650" text-anchor="start">task (ready)</text>
+<rect class="pm-ring" x="627" y="556" width="150" height="74.0" rx="16" fill="none" stroke="none"/>
+</g>
+<text x="465.0" y="210.0" font-size="10" fill="#c93b44" font-weight="650" text-anchor="start">DEMO-A-011 cancelled, but DEMO-A-012 still list it as a pre…</text>
+<line x1="76" y1="1236" x2="1164" y2="1236" stroke="rgba(0,0,0,.10)" stroke-dasharray="5 4"/>
+<text x="82.0" y="1263.0" font-size="9.5" fill="#86868b" font-weight="600" text-anchor="start" letter-spacing="1">Legend</text>
+<circle cx="127" cy="1260" r="5" fill="#e14b54"/>
+<text x="138.0" y="1263.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Blocked</text>
+<circle cx="202.9" cy="1260" r="5" fill="#fff" stroke="#f59e0b" stroke-width="2"/>
+<text x="213.9" y="1263.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Stalled</text>
+<circle cx="276.3" cy="1260" r="9" fill="none" stroke="rgba(10,92,255,.45)" stroke-width="1.3"/><circle cx="276.3" cy="1260" r="5" fill="url(#explore-gDev)"/>
+<text x="287.3" y="1263.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">In progress</text>
+<circle cx="374.6" cy="1260" r="5" fill="#fff" stroke="#aeb7c7" stroke-width="2"/>
+<text x="385.6" y="1263.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Ready</text>
+<circle cx="441.8" cy="1260" r="5" fill="#fff" stroke="#c9d0dc" stroke-width="2"/>
+<text x="452.8" y="1263.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Waiting</text>
+<circle cx="517" cy="1260" r="5" fill="#fff" stroke="#9aa3b2" stroke-width="2"/>
+<text x="528.0" y="1263.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Cancelled</text>
+<path d="M596.6,1260 L626.6,1260" fill="none" stroke="#8fb0e6" stroke-width="1.6" marker-end="url(#explore-aBlue)"/>
+<text x="634.6" y="1263.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Dependency within a lane</text>
+<path d="M780.1999999999999,1260 L810.1999999999999,1260" fill="none" stroke="#7ea6e8" stroke-width="1.3" stroke-dasharray="5 4" marker-end="url(#explore-aBlue)"/>
+<text x="818.2" y="1263.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Dependency across lanes</text>
+<path d="M962.6999999999998,1260 L992.6999999999998,1260" fill="none" stroke="#e14b54" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#explore-aRed)"/>
+<text x="1000.7" y="1263.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Dependency on a cancelled item</text>
+<rect x="1177.3999999999999" y="1253" width="22" height="14" rx="5" fill="none" stroke="#e14b54" stroke-opacity=".6" stroke-dasharray="2.5 3"/>
+<text x="1207.4" y="1263.5" font-size="10" fill="#6e6e73" font-weight="500" text-anchor="start">Downstream of a cancelled dependency</text>
+<text x="82.0" y="1280.0" font-size="9.5" fill="#86868b" font-weight="500" text-anchor="start">4 finished items are not drawn: dependencies on them are satisfied and have no line. One column per lane, cards top to bottom with prerequisites first (8 rows). Dependencies are drawn after transitive reduction.</text>
+</svg>
+</div></section></div></div>
+<details class="table"><summary>All work items (20)</summary><div class="scroll"><table><thead><tr><th>Key</th><th>Title</th><th>Status</th><th>Lane</th><th>Milestone</th><th>Owner / claim</th><th>Idle days</th></tr></thead><tbody><tr data-key="DEMO-A-001" data-vis="done"><td class="k">DEMO-A-001</td><td>Demo: set up the environment</td><td title="completed">Done</td><td>Demo lane A</td><td>M1</td><td>—</td><td>—</td></tr><tr data-key="DEMO-A-002" data-vis="done"><td class="k">DEMO-A-002</td><td>Demo: base module</td><td title="completed">Done</td><td>Demo lane A</td><td>M1</td><td>—</td><td>—</td></tr><tr data-key="DEMO-A-003" data-vis="done"><td class="k">DEMO-A-003</td><td>Demo: interface contract</td><td title="completed">Done</td><td>Demo lane A</td><td>M2</td><td>—</td><td>—</td></tr><tr data-key="DEMO-A-004" data-vis="developing"><td class="k">DEMO-A-004</td><td>Demo: core feature (in progress, active claim)</td><td title="in_progress">In progress</td><td>Demo lane A</td><td>M1</td><td>demo-agent-1</td><td>1</td></tr><tr data-key="DEMO-A-005" data-vis="waiting"><td class="k">DEMO-A-005</td><td>Demo: integration testing</td><td title="planned">Waiting</td><td>Demo lane A</td><td>M1</td><td>—</td><td>—</td></tr><tr data-key="DEMO-A-006" data-vis="waiting"><td class="k">DEMO-A-006</td><td>Demo: release preparation</td><td title="planned">Waiting</td><td>Demo lane A</td><td>M2</td><td>—</td><td>—</td></tr><tr data-key="DEMO-A-007" data-vis="ready"><td class="k">DEMO-A-007</td><td>Demo: finish the documentation (ready)</td><td title="planned">Ready</td><td>Demo lane A</td><td>M2</td><td>—</td><td>—</td></tr><tr data-key="DEMO-A-008" data-vis="blocked"><td class="k">DEMO-A-008</td><td>Demo: waiting for external approval</td><td title="blocked">Blocked</td><td>Demo lane A</td><td>M2</td><td>—</td><td>—</td></tr><tr data-key="DEMO-A-009" data-vis="stalled"><td class="k">DEMO-A-009</td><td>Demo: long-quiet work (stalled, claim expired)</td><td title="in_progress">Stalled</td><td>Demo lane A</td><td>M1</td><td>demo-agent-2</td><td>20</td></tr><tr data-key="DEMO-A-010" data-vis="draft"><td class="k">DEMO-A-010</td><td>Demo: draft not activated yet</td><td title="draft">Draft</td><td>Demo lane A</td><td>—</td><td>—</td><td>—</td></tr><tr data-key="DEMO-A-011" data-vis="cancelled"><td class="k">DEMO-A-011</td><td>Demo: cancelled approach</td><td title="cancelled">Cancelled</td><td>Demo lane A</td><td>M1</td><td>—</td><td>—</td></tr><tr data-key="DEMO-A-012" data-vis="waiting"><td class="k">DEMO-A-012</td><td>Demo: still depends on the cancelled approach</td><td title="planned">Waiting</td><td>Demo lane A</td><td>M1</td><td>—</td><td>—</td></tr><tr data-key="DEMO-A-013" data-vis="waiting"><td class="k">DEMO-A-013</td><td>Demo: stuck behind the cancelled dependency (one)</td><td title="planned">Waiting</td><td>Demo lane A</td><td>M2</td><td>—</td><td>—</td></tr><tr data-key="DEMO-A-014" data-vis="waiting"><td class="k">DEMO-A-014</td><td>Demo: stuck behind the cancelled dependency (two, several prerequisites)</td><td title="planned">Waiting</td><td>Demo lane A</td><td>M2</td><td>—</td><td>—</td></tr><tr data-key="DEMO-B-001" data-vis="done"><td class="k">DEMO-B-001</td><td>Demo B: baseline</td><td title="completed">Done</td><td>Demo lane B</td><td>M1</td><td>—</td><td>—</td></tr><tr data-key="DEMO-B-002" data-vis="developing"><td class="k">DEMO-B-002</td><td>Demo B: implementation (in progress)</td><td title="in_progress">In progress</td><td>Demo lane B</td><td>M1</td><td>demo-agent-3</td><td>0</td></tr><tr data-key="DEMO-B-003" data-vis="waiting"><td class="k">DEMO-B-003</td><td>Demo B: depends on lane A&#x27;s base module</td><td title="planned">Waiting</td><td>Demo lane B</td><td>M2</td><td>—</td><td>—</td></tr><tr data-key="DEMO-B-004" data-vis="ready"><td class="k">DEMO-B-004</td><td>Demo B: independent task (ready)</td><td title="planned">Ready</td><td>Demo lane B</td><td>M2</td><td>—</td><td>—</td></tr><tr data-key="DEMO-C-001" data-vis="ready"><td class="k">DEMO-C-001</td><td>Demo C: ready task</td><td title="planned">Ready</td><td>Other</td><td>—</td><td>—</td><td>—</td></tr><tr data-key="DEMO-C-002" data-vis="done"><td class="k">DEMO-C-002</td><td>Demo C: done</td><td title="completed">Done</td><td>Other</td><td>—</td><td>—</td><td>—</td></tr></tbody></table></div></details>
+<section class="notes"><h2>Data basis</h2><p>Official CLI snapshot r100 · <code>sha256:23b5c7e2ec1bb489b25782b74e03783613efacd4d4755e3bde1ac93205f27546</code> · generated 2026-01-15 00:00 UTC. The page depends only on this snapshot and the display configuration; no ledger or state database was read.</p><h2>Definitions</h2><ul><li>“Stalled”: status in_progress and no event for ≥7 days.</li><li>Lanes come from the display configuration; the lane dependency graph groups by milestone.</li><li>Expired claims do not count as active claims.</li></ul><h2>Fields the official interfaces do not provide</h2><ul><li><code>node.goal</code>: work graph and nav nodes carry no goal; membership exists only per goal (nav --goal), which this map does not query</li><li><code>node.scope</code>: the contract or scope id is not exposed per item</li><li><code>node.priority</code>: only work show returns it, one refreshing call per item; not collected in bulk</li><li><code>node.milestone</code>: there is no bulk field; it is resolved only for the milestones named in the display configuration, through nav --milestone</li><li><code>project.scenarios</code>: project-specific acceptance scenarios are outside the AWR work model and have no data source</li><li><code>project.release_funnel</code>: a presentation concept without a data source</li></ul></section></main>
+</body>
+</html>
