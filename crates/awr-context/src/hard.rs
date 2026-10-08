@@ -244,7 +244,9 @@ fn hard_context_selected(
         ids.insert(rule.rule.source.id);
     }
     let sources = store.sources(project.id)?;
-    if !sources.iter().any(|s| s.domain == "rules") {
+    // Only an explicit minimal profile may go without a rules source; the same basis completeness and bootstrap use, so the
+    // rendered gaps never contradict `rules_complete`. Configured rules stay mandatory below, whatever the profile.
+    if !sources.iter().any(|s| s.domain == "rules") && !awr_source::minimal_context(&sources) {
         issues.push("rules source is missing".into());
     }
     for source in sources.iter().filter(|s| s.domain == "rules") {
