@@ -504,12 +504,7 @@ impl YamlLedgerAdapter {
                             &alias_pointer(dependency, &dependency_pointer, "id", "key"),
                         )?
                         .ok_or_else(|| {
-                            invalid(
-                                &dependency_pointer,
-                                "ledger.dependency_identity",
-                                "dependency needs id or key",
-                                "Supply a stable work ID.",
-                            )
+                            missing_dependency_identity(dependency, &dependency_pointer)
                         })?,
                         boolean(
                             &dependency["required"],
@@ -720,16 +715,38 @@ fn edge(
     }
 }
 
+/// A plain list item such as `- Report.java: section 2` or `- WORK-1: waits for the API` is read by YAML as a mapping with one
+/// key, not as text. True for such a mapping, i.e. one whose only key is not a field its position knows.
+fn is_unquoted_text(item: &Value, known: &[&str]) -> bool {
+    item.as_object().is_some_and(|fields| {
+        fields.len() == 1 && fields.keys().all(|key| !known.contains(&key.as_str()))
+    })
+}
+
+/// The diagnostic for a dependency mapping without an id. `- WORK-1: a note` arrives here looking like a dependency that
+/// forgot its id although the author wrote one.
+fn missing_dependency_identity(item: &Value, pointer: &str) -> Error {
+    if is_unquoted_text(item, &["id", "key", "required"]) {
+        // The rejected text itself is never echoed.
+        return invalid(
+            pointer,
+            "ledger.dependency_identity",
+            "dependency entry is a mapping without id or key; YAML reads an item such as `- WORK-1: a note` as a mapping",
+            "Write the work ID alone (- WORK-1), or id: WORK-1 with an optional required: false; keep notes in the work's summary or next_action, or quote the whole entry if it is text.",
+        );
+    }
+    invalid(
+        pointer,
+        "ledger.dependency_identity",
+        "dependency needs id or key",
+        "Supply a stable work ID.",
+    )
+}
+
 /// The diagnostic for an evidence entry without a usable locator. A plain list item such as `- Report.java: section 2` is read
 /// by YAML as a mapping with one key, not as text, so it arrives here looking like a missing locator although the author wrote one.
 fn missing_locator(item: &Value, pointer: &str) -> Error {
-    let unquoted_text = item.as_object().is_some_and(|fields| {
-        fields.len() == 1
-            && fields
-                .keys()
-                .all(|key| !matches!(key.as_str(), "locator" | "path" | "summary"))
-    });
-    if unquoted_text {
+    if is_unquoted_text(item, &["locator", "path", "summary"]) {
         // The rejected text itself is never echoed.
         return invalid(
             pointer,

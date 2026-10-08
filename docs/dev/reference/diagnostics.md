@@ -37,6 +37,14 @@ says so. Quote the whole entry (`- "Report.java: section 2"`) or write
 entry is a YAML comment and is dropped without any diagnostic, so quote entries that
 contain it as well.
 
+The same mistake under `depends_on:` or `dependencies:` (`- WORK-1: waits for the API`)
+fails with `ledger.dependency_identity`, and the repair names the cause: write the work
+ID alone (`- WORK-1`), or `id: WORK-1` with an optional `required: false`, and keep notes
+in the work's `summary` or `next_action`. Neither diagnostic echoes the rejected text.
+AWR's own writer quotes any text that would not read back unchanged and parses the
+result before saving it, so only hand-typed entries need this care. Other string
+fields report `ledger.string`, whose repair already asks for a quoted string.
+
 `awr source reindex` prints operation success, projection completeness, source
 location, rule and repair from the same index report serialized by `--json` and
 returned by MCP `awr_source_reindex`. A successful `source scan` can still have an

@@ -131,6 +131,27 @@ reason, and the returned revision/preview fingerprint. Query or recover with
 unchanged. A small field edit never changes ownership, lifecycle or verification;
 use dedicated work actions for those, or existing reviewed batches for wider edits.
 
+## Text typed into YAML by hand
+
+Prefer `work edit`, the work actions and `evidence add`: AWR's writer quotes any text
+that would not read back unchanged and parses the result before saving it. When a
+ledger entry has to be typed directly, quote every entry that contains a colon followed
+by a space or a space followed by `#`:
+
+```yaml
+evidence:
+  - "Report.java: refresh() parses both columns"   # quoted: one string
+  - Report.java: refresh() parses both columns      # unquoted: a mapping, rejected
+  - src/Report.java #12                             # unquoted: " #12" is a comment, dropped
+```
+
+Unquoted, `Report.java: refresh() ...` is read as a mapping with the key `Report.java`,
+so the entry loses its locator, and everything after ` #` silently disappears. The
+diagnostics for `evidence` and `depends_on` entries explain the colon case
+([source diagnostics](diagnostics.md)); nothing can report the dropped comment. A
+full-width colon is not a substitute for quotes: it hides the problem by changing the
+text.
+
 ## Diagnose intake rejection
 
 Sensitive-source errors retain `RuleViolation` and add safe `location`, `rule`,
