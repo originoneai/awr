@@ -4,6 +4,136 @@ use awr_team_pg::{EXPECTED_SCHEMA_VERSION, check_schema, migrate};
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn schema49_delivery_requests_upgrade_atomically_without_fabricating_legacy_bindings() {
+    let (_guard, admin, db) = common::historical_team_schema(49).await;
+    admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('upgrade-tenant','Upgrade','active');
+        INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+            VALUES('upgrade-tenant','upgrade-project','upgrade','team','old-epoch','active');
+        INSERT INTO awr_team.hard_delivery_dependencies(tenant_id,project_id,id,provider_work_id,provider_workstream_id,
+            consumer_work_id,consumer_workstream_id,policy,status,completion_receipt,contract_sha256,artifact_sha256,created_at_ms,body_json)
+            VALUES('upgrade-tenant','upgrade-project','legacy-dep','upstream','up-stream','downstream','down-stream',
+                'fixed_delivery','active','legacy-completion','old-contract','old-artifact',10,'{\"legacy_fixture\":true}');
+        INSERT INTO awr_team.export_authorizations(tenant_id,project_id,id,provider_work_id,status,completion_receipt,
+            contract_sha256,artifact_sha256,export_scope_sha256,granted_by,created_at_ms,body_json)
+            VALUES('upgrade-tenant','upgrade-project','legacy-export','upstream','granted','legacy-completion',
+                'old-contract','old-artifact','old-scope','owner',20,'{\"legacy_fixture\":true}');
+        INSERT INTO awr_team.adoption_credentials(tenant_id,project_id,id,dependency_id,status,completion_receipt,
+            export_authorization_id,adopted_at_ms,body_json)
+            VALUES('upgrade-tenant','upgrade-project','legacy-credential','legacy-dep','active','legacy-completion',
+                'legacy-export',100,'{\"legacy_fixture\":true}');
+        INSERT INTO awr_team.delivery_credential_receipts(tenant_id,project_id,request_key,subject_id,op,event_id,created_at_ms)
+            SELECT 'upgrade-tenant','upgrade-project',op,'legacy-subject',op,'legacy-event-'||op,100
+            FROM unnest(ARRAY['register_dependency','grant_export','adopt','revoke_dependency','revoke_export']) AS op").await.unwrap();
+    let tables = [
+        "hard_delivery_dependencies",
+        "export_authorizations",
+        "adoption_credentials",
+        "delivery_credential_receipts",
+    ];
+    let mut originals = Vec::new();
+    for table in tables {
+        originals.push(admin.query_one(&format!("SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM awr_team.{table} t"), &[])
+            .await.unwrap().get::<_,Value>(0));
+    }
+    let ddl = include_str!("../migrations/20261008000050_delivery_credential_requests.sql");
+    assert!(
+        admin
+            .batch_execute(&ddl.replace(
+                "UPDATE awr_team.schema_state",
+                "SELECT 1/0; UPDATE awr_team.schema_state"
+            ))
+            .await
+            .is_err()
+    );
+    admin.batch_execute("ROLLBACK").await.unwrap();
+    let rolled_back = admin.query_one("SELECT (SELECT version FROM awr_team.schema_state),
+        (SELECT count(*) FROM information_schema.columns WHERE table_schema='awr_team'
+            AND table_name='delivery_credential_receipts' AND column_name IN ('request_hash','result_json'))", &[]).await.unwrap();
+    assert_eq!(rolled_back.get::<_, i32>(0), 49);
+    assert_eq!(rolled_back.get::<_, i64>(1), 0);
+    migrate(&admin).await.unwrap();
+    check_schema(&admin).await.unwrap();
+    migrate(&admin).await.unwrap();
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 50);
+    for (table, original) in tables.into_iter().zip(originals) {
+        let mut rows = admin.query_one(&format!("SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM awr_team.{table} t"), &[])
+            .await.unwrap().get::<_,Value>(0);
+        if table == "delivery_credential_receipts" {
+            for row in rows.as_array_mut().unwrap() {
+                assert_eq!(
+                    row.as_object_mut().unwrap().remove("request_hash"),
+                    Some(Value::Null)
+                );
+                assert_eq!(
+                    row.as_object_mut().unwrap().remove("result_json"),
+                    Some(Value::Null)
+                );
+            }
+        }
+        assert_eq!(rows, original);
+        let policy = admin
+            .query_one(
+                "SELECT relrowsecurity,relforcerowsecurity FROM pg_class
+            WHERE oid=to_regclass($1)",
+                &[&format!("awr_team.{table}")],
+            )
+            .await
+            .unwrap();
+        assert!(policy.get::<_, bool>(0) && policy.get::<_, bool>(1));
+    }
+    for assignment in [
+        "request_hash=repeat('a',64)",
+        "result_json='{\"id\":\"legacy-subject\"}'",
+        "request_hash=repeat('a',63),result_json='{\"id\":\"legacy-subject\"}'",
+        "request_hash=repeat('A',64),result_json='{\"id\":\"legacy-subject\"}'",
+        "request_hash=repeat('a',64),result_json='[]'",
+        "request_hash=repeat('a',64),result_json='{}'",
+        "request_hash=repeat('a',64),result_json='{\"id\":null}'",
+        "request_hash=repeat('a',64),result_json='{\"id\":7}'",
+        "request_hash=repeat('a',64),result_json='{\"id\":\"other-subject\"}'",
+    ] {
+        assert!(
+            admin
+                .batch_execute(&format!(
+                    "UPDATE awr_team.delivery_credential_receipts SET {assignment}"
+                ))
+                .await
+                .is_err(),
+            "malformed request/outcome binding must be rejected: {assignment}"
+        );
+    }
+    admin.batch_execute("UPDATE awr_team.delivery_credential_receipts SET request_hash=repeat('a',64),result_json='{\"id\":\"legacy-subject\"}';
+        UPDATE awr_team.delivery_credential_receipts SET request_hash=NULL,result_json=NULL").await.unwrap();
+    awr_team_pg::Bootstrap::grant_app(&admin, "awr_app")
+        .await
+        .unwrap();
+    let app = common::app_client(&db).await;
+    assert_eq!(
+        app.query_one(
+            "SELECT count(*) FROM awr_team.delivery_credential_receipts",
+            &[]
+        )
+        .await
+        .unwrap()
+        .get::<_, i64>(0),
+        0
+    );
+    app.batch_execute("SELECT set_config('awr.tenant_id','other-tenant',false),set_config('awr.project_id','upgrade-project',false)").await.unwrap();
+    assert_eq!(
+        app.query_one(
+            "SELECT count(*) FROM awr_team.delivery_credential_receipts",
+            &[]
+        )
+        .await
+        .unwrap()
+        .get::<_, i64>(0),
+        0
+    );
+    app.batch_execute("SELECT set_config('awr.tenant_id','upgrade-tenant',false),set_config('awr.project_id','upgrade-project',false)").await.unwrap();
+    assert_eq!(app.query_one("SELECT count(*) FROM awr_team.delivery_credential_receipts WHERE request_hash IS NULL AND result_json IS NULL", &[]).await.unwrap().get::<_,i64>(0),5);
+}
+
+#[tokio::test]
 async fn schema48_acceptance_origins_upgrade_atomically_and_preserve_observer_and_legacy_records() {
     let (_guard, admin, db) = common::historical_team_schema(48).await;
     admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('upgrade-tenant','Upgrade','active');
@@ -611,7 +741,7 @@ async fn schema40_upgrade_preserves_legacy_provenance_and_is_atomic_and_repeatab
     assert_eq!(before, unchanged);
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 49);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 50);
     let after: Value = admin
         .query_one(
             "SELECT to_jsonb(e) FROM awr_team.executions e WHERE id='legacy-run'",
