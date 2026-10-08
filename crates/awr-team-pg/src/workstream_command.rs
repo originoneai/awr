@@ -57,6 +57,7 @@ pub(crate) const COMMANDS: &[&str] = &[
     "delivery.finalize",
     "delivery.export.publish",
     "delivery.export.revoke",
+    "delivery.adopt",
     "delivery.connector.configure",
     "delivery.candidate.select",
     "delivery.inspection.reserve",
@@ -69,7 +70,7 @@ pub(crate) const COMMANDS: &[&str] = &[
     "delivery.integration.prepare",
     "delivery.integration.reject_prepared",
 ];
-const RECEIPT_PROTOCOL: &str = "awr-team-workstream-command-v1";
+pub(crate) const RECEIPT_PROTOCOL: &str = "awr-team-workstream-command-v1";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -122,6 +123,7 @@ enum Action {
     Intake(task_intake::Action),
     Delivery(delivery::Action),
     Export(crate::cross_workstream_exports::Action),
+    Adopt(crate::cross_workstream_adoption::Adopt),
 }
 
 struct Applied {
@@ -165,6 +167,11 @@ impl WorkstreamCommand {
             return Err(invalid());
         }
         version(&self.expected_project_revision)?;
+        if self.op == "delivery.adopt" {
+            return Ok(Action::Adopt(crate::cross_workstream_adoption::parse(
+                self.args.clone(),
+            )?));
+        }
         if delivery::OPERATIONS.contains(&self.op.as_str()) {
             return Ok(Action::Delivery(delivery::Action::parse(self)?));
         }
@@ -462,10 +469,21 @@ impl WorkstreamCommandStore {
         if ["task.", "claim.", "execution.", "handoff."]
             .iter()
             .any(|prefix| command.op.starts_with(prefix))
+            || command.op == "delivery.adopt"
         {
             task_intake::lock_task(&tx, tenant, project, &auth, &command).await?;
         }
         let applied = match action {
+            Action::Adopt(a) => {
+                let data = crate::cross_workstream_adoption::apply(
+                    &tx, tenant, project, &auth, &command, ownership, a,
+                )
+                .await?;
+                Applied {
+                    preceding_events: vec![("artifact.adopted", data.clone())],
+                    data,
+                }
+            }
             Action::Export(a) => {
                 let data = crate::cross_workstream_exports::apply(
                     &tx, tenant, project, &auth, &command, ownership, a,
@@ -490,6 +508,22 @@ impl WorkstreamCommandStore {
                 task_intake::apply(&tx, tenant, project, &auth, &command, ownership, a).await?
             }
             Action::Execution(a) => {
+                if command.op == "execution.prepare"
+                    && contract.dependency_acceptance.values().any(|mode| {
+                        matches!(mode, awr_team::DependencyAcceptanceMode::CrossWorkstream(_))
+                    })
+                    && !task_intake::dependencies_ready(
+                        &tx,
+                        tenant,
+                        project,
+                        &auth,
+                        &command.work_id,
+                        &command.workstream_id.to_string(),
+                    )
+                    .await?
+                {
+                    return Err(PgError::MissingDependency);
+                }
                 executions::apply(
                     &tx, tenant, project, &auth, &command, ownership, &contract, a,
                 )
@@ -672,7 +706,8 @@ async fn apply(
         | Action::Review(_)
         | Action::Intake(_)
         | Action::Delivery(_)
-        | Action::Export(_) => Err(invalid()), // Specialized dispatch only.
+        | Action::Export(_)
+        | Action::Adopt(_) => Err(invalid()), // Specialized dispatch only.
         Action::Start(a) => {
             let active: bool = tx.query_one("SELECT EXISTS(SELECT 1 FROM awr_team.sessions
                 WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3 AND client_id=$4 AND conversation_id=$5 AND work_id=$6 AND state='active')",

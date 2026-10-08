@@ -433,9 +433,8 @@ pub fn command_business_action(op: &str) -> Option<awr_team::Action> {
         "claim.acquire" | "claim.renew" | "claim.release" | "handoff.propose"
         | "handoff.accept" | "handoff.reject" | "handoff.cancel" | "handoff.timeout"
         | "handoff.inspect" => ClaimManageOwn,
-        "execution.prepare" | "execution.start" | "execution.cancel" | "execution.report" => {
-            ExecutionRequestAndReportOwn
-        }
+        "execution.prepare" | "execution.start" | "execution.cancel" | "execution.report"
+        | "delivery.adopt" => ExecutionRequestAndReportOwn,
         "evidence.submit"
         | "review.open"
         | "delivery.submit_and_request_review"
@@ -652,6 +651,7 @@ pub(crate) fn command_authority(op: &str) -> Option<DomainAuthority> {
         | "delivery.finalize"
         | "delivery.export.publish"
         | "delivery.export.revoke"
+        | "delivery.adopt"
         | "delivery.integration.prepare"
         | "delivery.integration.reject_prepared"
         | "delivery.submit_and_request_review"

@@ -710,6 +710,25 @@ impl ReviewStore {
         let (binding_valid, dependency_links) =
             required_dependencies_covered(&tx, tenant_id, project_id, work_id, scope_id, &contract)
                 .await?;
+        if binding_valid
+            && dependency_policy(&contract)?
+                .1
+                .values()
+                .any(|mode| matches!(mode, awr_team::DependencyAcceptanceMode::CrossWorkstream(_)))
+        {
+            let parsed =
+                serde_json::from_value(contract.clone()).map_err(|_| PgError::SourceDivergence)?;
+            crate::cross_workstream_adoption::require_execution_inputs(
+                &tx,
+                tenant_id,
+                project_id,
+                work_id,
+                &parsed,
+                evidence.execution_id.as_deref(),
+                &dependency_links,
+            )
+            .await?;
+        }
         let pinned_round: Option<String> = tx
             .query_opt(
                 "SELECT id FROM awr_team.review_rounds
@@ -1576,6 +1595,29 @@ pub(crate) async fn required_dependencies_covered(
     let (required, modes) = dependency_policy(contract)?;
     let mut links = Vec::new();
     for upstream in &required {
+        if let Some(awr_team::DependencyAcceptanceMode::CrossWorkstream(policy)) =
+            modes.get(upstream)
+        {
+            if scope_id != "main" {
+                return Ok((false, vec![]));
+            }
+            let snapshot: String = tx
+                .query_one(
+                    "SELECT active_snapshot_id FROM awr_team.projects WHERE tenant_id=$1 AND id=$2",
+                    &[&tenant_id, &project_id],
+                )
+                .await?
+                .get(0);
+            match crate::cross_workstream_adoption::adopted_receipt(
+                tx, tenant_id, project_id, &snapshot, work_id, upstream, *policy,
+            )
+            .await?
+            {
+                Some(receipt) => links.push((upstream.clone(), receipt)),
+                None => return Ok((false, vec![])),
+            }
+            continue;
+        }
         let receipt = tx
             .query_opt(
                 "SELECT r.id,r.independence_kind,r.policy,r.approved_by_json,

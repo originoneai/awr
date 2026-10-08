@@ -680,11 +680,21 @@ pub(crate) async fn read(
             "commands":["delivery.export.publish","delivery.export.revoke"],"query":"delivery.exports",
             "content_query":"artifact.content","content_selector":"export_id",
             "publication_action":"delivery.finalize","requires":"current_selected_receipt_and_exact_original_review",
-            "read_scope":"exact_consumer_work","upstream_source_access":false,"adoption_available":false,
+            "read_scope":"exact_consumer_work","upstream_source_access":false,"adoption_available":true,
             "current_contract_only":true,"historical_fixed_delivery_available":false,
+            "adoption_command":"delivery.adopt","adoption_action":"execution.request_and_report_own",
+            "adoption_args":["session_id","expected_session_version","expected_responsibility_version","export_id","expected_export_version","expected_disclosure_sha256","expected_adoption_version"],
             "publish_args":["session_id","expected_session_version","consumer_work_id","expected_consumer_contract_hash","expected_consumer_ownership_version","receipt_id","expected_artifact_sha256"],
             "revoke_args":["session_id","expected_session_version","export_id","expected_export_version"]
         });
+        // Planning declares both policies; this command plane currently adopts
+        // only current-contract exports. Do not imply historical support.
+        caps["planning"]["cross_workstream_policy"]["declaration_only"] = json!(false);
+        caps["planning"]["cross_workstream_policy"]["adoption_available"] = json!(true);
+        caps["planning"]["cross_workstream_policy"]["adoption_version_policies"] =
+            json!(["current_contract"]);
+        caps["planning"]["cross_workstream_policy"]["historical_fixed_delivery_available"] =
+            json!(false);
         caps["agent_review"] = json!({
             "command":"review.decide", "policy":crate::review::AGENT_REVIEW_POLICY,
             "requires":["agent_actor","agent_review_membership_grant","live_review_delegation","distinct_author_actor_and_client"],
@@ -714,7 +724,9 @@ pub(crate) async fn read(
             "dependency_acceptance_mode":"simulated_member_independent",
             "dependency_adoption":"explicit_v5_same_stream_per_predecessor",
             "unmapped_dependencies":"blocked",
-            "cross_workstream_adoption_supported":false
+            "cross_workstream_adoption_supported":true,
+            "v5_dependency_scope":"same_workstream",
+            "cross_workstream_adoption_policy":"explicit_v6_current_contract"
         });
         caps["identity"] = navigation::identity(auth);
         caps["business_role_presets"] = json!({
@@ -1000,15 +1012,32 @@ pub(crate) async fn read(
             {
                 return Err(PgError::SourceDivergence);
             }
+            let adoptions = crate::cross_workstream_adoption::view(
+                tx,
+                tenant,
+                project,
+                &auth.snapshot,
+                work,
+                &contract,
+            )
+            .await?;
             let allowed=tx.query("SELECT work_id FROM awr_team.workstream_snapshot_ownership
                 WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND workstream_id=$4 AND work_id=ANY($5)",
                 &[&tenant,&project,&auth.snapshot,&stream,&contract.required_dependencies]).await?;
-            let ids: std::collections::BTreeSet<String> =
+            let mut ids: std::collections::BTreeSet<String> =
                 allowed.iter().map(|r| r.get(0)).collect();
-            let missing = contract
-                .required_dependencies
-                .iter()
-                .any(|d| !ids.contains(d));
+            // Explicit upstream references belong to the consumer's own contract.
+            // Showing an edge or adoption selector grants no upstream source access.
+            ids.extend(
+                adoptions
+                    .iter()
+                    .filter_map(|a| a["provider_work_id"].as_str().map(str::to_owned)),
+            );
+            let missing = adoptions.iter().any(|a| a["valid"] != true)
+                || contract
+                    .required_dependencies
+                    .iter()
+                    .any(|d| !ids.contains(d));
             contract.required_dependencies.retain(|d| ids.contains(d));
             contract
                 .dependency_acceptance
@@ -1049,6 +1078,7 @@ pub(crate) async fn read(
                 "responsibility":crate::workstream_command::task_intake::read_state(tx,tenant,project,auth,work,&stream,q.session_id.as_deref()).await?,
                 "ownership_version":ownership.to_string(),
                 "dependency_export_unavailable":missing,
+                "adopted_dependencies":adoptions,
                 "context_complete":reasons.is_empty(),
                 "completeness_reasons":reasons,
                 "execution_admission":"not_evaluated",

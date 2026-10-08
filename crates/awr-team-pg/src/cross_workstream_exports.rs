@@ -394,8 +394,19 @@ pub(crate) async fn apply(
                 )
                 .await?
             {
+                let adopted = crate::cross_workstream_adoption::is_selected_export(
+                    tx,
+                    tenant,
+                    project,
+                    &a.consumer_work_id,
+                    &r.get::<_, String>(0),
+                    r.get(1),
+                    &disclosure,
+                    &manifest,
+                )
+                .await?;
                 return Ok(
-                    json!({"export_id":r.get::<_,String>(0),"export_version":r.get::<_,i64>(1).to_string(),"disclosure_sha256":disclosure,"status":"active","already_published":true,"adopted":false}),
+                    json!({"export_id":r.get::<_,String>(0),"export_version":r.get::<_,i64>(1).to_string(),"disclosure_sha256":disclosure,"status":"active","already_published":true,"adopted":adopted}),
                 );
             }
             let export = crate::tx::new_id();
@@ -422,7 +433,7 @@ async fn live(
     tx: &Transaction<'_>,
     tenant: &str,
     project: &str,
-    auth: &ReaderAuthority,
+    snapshot: &str,
     consumer_work: &str,
     manifest: &Value,
     archive: &Value,
@@ -434,8 +445,8 @@ async fn live(
     let provider_work = manifest["provider_work_id"]
         .as_str()
         .ok_or(PgError::EvidenceInvalid)?;
-    let provider = source_work(tx, tenant, project, &auth.snapshot, provider_work).await?;
-    let consumer = source_work(tx, tenant, project, &auth.snapshot, consumer_work).await?;
+    let provider = source_work(tx, tenant, project, snapshot, provider_work).await?;
+    let consumer = source_work(tx, tenant, project, snapshot, consumer_work).await?;
     let policy = edge(provider_work, &provider, &consumer)?;
     if manifest["provider_contract_hash"] != provider.hash
         || manifest["consumer_contract_hash"] != consumer.hash
@@ -451,7 +462,7 @@ async fn live(
         tx,
         tenant,
         project,
-        &auth.snapshot,
+        snapshot,
         provider_work,
         manifest["receipt_id"]
             .as_str()
@@ -483,6 +494,32 @@ async fn live(
     Ok(bytes)
 }
 
+pub(crate) async fn validated_export(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    snapshot: &str,
+    consumer: &str,
+    export: &str,
+) -> PgResult<(Value, i64, String)> {
+    let r = tx.query_opt("SELECT manifest_json,proof_json,disclosure_sha256,version FROM awr_team.workstream_artifact_exports
+        WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND consumer_work_id=$4 AND status='active'",
+        &[&tenant,&project,&export,&consumer]).await?.ok_or(PgError::Forbidden)?;
+    let manifest: Value = r.get(0);
+    live(
+        tx,
+        tenant,
+        project,
+        snapshot,
+        consumer,
+        &manifest,
+        &r.get(1),
+        &r.get::<_, String>(2),
+    )
+    .await?;
+    Ok((manifest, r.get(3), r.get(2)))
+}
+
 pub(crate) async fn content(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -499,7 +536,7 @@ pub(crate) async fn content(
         tx,
         tenant,
         project,
-        auth,
+        &auth.snapshot,
         work,
         &manifest,
         &r.get(1),
@@ -516,12 +553,23 @@ pub(crate) async fn content(
         return Err(PgError::ContextIncomplete);
     }
     let text = String::from_utf8(bytes.clone()).ok();
+    let adopted = crate::cross_workstream_adoption::is_selected_export(
+        tx,
+        tenant,
+        project,
+        work,
+        export,
+        r.get(3),
+        &r.get::<_, String>(2),
+        &manifest,
+    )
+    .await?;
     Ok(
         json!({"kind":"exported_artifact","export_id":export,"export_version":r.get::<_,i64>(3).to_string(),
         "work_id":work,"sha256":manifest["artifact_sha256"],"byte_length":bytes.len(),"media_type":manifest["media_type"],
         "disclosure_sha256":r.get::<_,String>(2),"review":manifest["review"],"text":text,
         "content_base64":if text.is_none() { json!(crate::workstream_read::base64_encode(&bytes)) } else { Value::Null },
-        "adopted":false,"execution_authorized":false,"upstream_source_access":false}),
+        "adopted":adopted,"execution_authorized":false,"upstream_source_access":false}),
     )
 }
 
@@ -575,7 +623,7 @@ pub(crate) async fn list(
                 tx,
                 tenant,
                 project,
-                auth,
+                &auth.snapshot,
                 work,
                 &manifest,
                 &r.get(2),
@@ -597,8 +645,20 @@ pub(crate) async fn list(
             ) => false,
             Err(error) => return Err(error),
         };
+        let adopted = available
+            && crate::cross_workstream_adoption::is_selected_export(
+                tx,
+                tenant,
+                project,
+                work,
+                &export,
+                r.get(4),
+                &r.get::<_, String>(3),
+                &manifest,
+            )
+            .await?;
         let mut item = json!({"export_id":export,"export_version":r.get::<_,i64>(4).to_string(),"provider_work_id":provider,
-            "available":available,"status":if status == "revoked" {"revoked"} else if available {"active"} else {"requires_republication"},"adopted":false});
+            "available":available,"status":if status == "revoked" {"revoked"} else if available {"active"} else {"requires_republication"},"adopted":adopted});
         if available {
             item["artifact"] = json!({"sha256":manifest["artifact_sha256"],"byte_length":manifest["byte_length"],"media_type":manifest["media_type"]});
             item["disclosure_sha256"] = json!(r.get::<_, String>(3));
@@ -620,6 +680,7 @@ pub(crate) async fn list(
         Value::Null
     };
     Ok(
-        json!({"items":items,"next_cursor":next,"adoption_available":false,"upstream_source_access":false}),
+        json!({"items":items,"next_cursor":next,"adoption_available":true,
+            "adoption_version_policies":["current_contract"],"upstream_source_access":false}),
     )
 }

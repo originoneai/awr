@@ -228,10 +228,16 @@ pub(crate) async fn dependencies_ready(
         .get(0);
     let parsed: awr_team::WorkContract =
         serde_json::from_value(contract.clone()).map_err(|_| PgError::SourceDivergence)?;
-    let visible: i64 = tx.query_one("SELECT count(*) FROM awr_team.workstream_snapshot_ownership
-        WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND scope_id='main' AND workstream_id=$4 AND work_id=ANY($5)",
-        &[&tenant,&project,&auth.snapshot,&stream,&parsed.required_dependencies]).await?.get(0);
-    if visible as usize != parsed.required_dependencies.len() {
+    if !crate::cross_workstream_adoption::dependency_streams_match(
+        tx,
+        tenant,
+        project,
+        &auth.snapshot,
+        stream,
+        &parsed,
+    )
+    .await?
+    {
         return Ok(false);
     }
     Ok(
@@ -239,6 +245,36 @@ pub(crate) async fn dependencies_ready(
             .await?
             .0,
     )
+}
+
+/// A task's own member can adopt before accepting an otherwise blocked assignment.
+pub(crate) async fn require_dependency_adopter(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    auth: &ReaderAuthority,
+    command: &WorkstreamCommand,
+    expected_responsibility: u64,
+) -> PgResult<()> {
+    require_enabled(tx, tenant, project, auth, &command.work_id).await?;
+    claims::require_resolved_effects(tx, tenant, project, &command.work_id).await?;
+    let actor = actor_instance(tx, tenant, project, auth).await?;
+    let task = current(tx, tenant, project, &command.work_id).await?;
+    if task.version != expected_responsibility {
+        return Err(PgError::PreconditionsChanged);
+    }
+    if task.owner.as_ref().is_some_and(|p| p != actor.person_id())
+        || task.current_executor.as_ref().is_some_and(|e| e != &actor)
+        || task.pending.as_ref().is_some_and(|pending| {
+            pending.kind != ResponsibilityPendingKind::NoAcceptor
+                || pending.detail != ASSIGNMENT
+                || pending.person_id.as_ref() != Some(actor.person_id())
+        })
+        || !client_may_continue(tx, tenant, project, auth, &task).await?
+    {
+        return Err(PgError::ClaimHeld);
+    }
+    Ok(())
 }
 
 pub(crate) async fn require_admissible(
