@@ -1,0 +1,91 @@
+{
+ "basis": {
+  "events": {
+   "count": 0,
+   "pages": 0,
+   "through_revision": 100
+  },
+  "goals": {
+   "truncated": false
+  },
+  "milestones_resolved": [
+   "M1",
+   "M2"
+  ],
+  "nav": {
+   "freshness_basis": "last_recorded_source_state",
+   "protocol": "awr-mainline-nav",
+   "schema_version": 1
+  },
+  "sessions": {
+   "count": 0,
+   "truncated": false
+  },
+  "work_graph": {
+   "edge_count": 0,
+   "graph_fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+   "node_count": 1
+  }
+ },
+ "doctor": {
+  "findings": [],
+  "ok": true
+ },
+ "edges": [],
+ "fingerprint": "sha256:f267c97480f95694aa07e6dc971fdea4733edad7dbbeb18435bfedec35ffa366",
+ "generated_at": "2026-01-15T00:00:00Z",
+ "goals": [],
+ "nodes": [
+  {
+   "archived": false,
+   "blocker": null,
+   "claims": [],
+   "diagnostics": [],
+   "id": "id-DEMO-A-001",
+   "key": "DEMO-A-001",
+   "last_event_at": null,
+   "milestone": null,
+   "next_action": null,
+   "owner": null,
+   "ready": false,
+   "status": "planned",
+   "title": "示例：唯一的任务",
+   "waits": []
+  }
+ ],
+ "project": {
+  "id": "demo-id",
+  "key": "demo-project",
+  "name": "Demo Project",
+  "revision": 100
+ },
+ "schema": "awr-project-snapshot",
+ "sessions": [],
+ "unavailable": [
+  {
+   "field": "node.goal",
+   "reason": "work graph, nav and work show expose no per-item goal; nav --goal returns no nodes for goals declared with the ledger goal field"
+  },
+  {
+   "field": "node.scope",
+   "reason": "the contract or scope id is not exposed per item"
+  },
+  {
+   "field": "node.priority",
+   "reason": "only work show returns it (about 1.1 s per item, refreshing the projection); not collected in bulk"
+  },
+  {
+   "field": "node.milestone",
+   "reason": "no bulk field; resolved only for the milestones listed in the display config, through nav --cached --milestone"
+  },
+  {
+   "field": "project.scenarios",
+   "reason": "ledger-private acceptance sections (for example the TF scenarios) are outside the AWR work model"
+  },
+  {
+   "field": "project.release_funnel",
+   "reason": "a synthetic presentation on the website; there is no data source"
+  }
+ ],
+ "version": 1
+}

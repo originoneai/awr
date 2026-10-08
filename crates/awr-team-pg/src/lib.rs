@@ -2,6 +2,8 @@
 //! Personal SQLite runtime does not depend on this crate.
 mod agent_authorization;
 mod bootstrap;
+mod cross_workstream_adoption;
+mod cross_workstream_exports;
 mod delegation_auth;
 mod delivery_adoption;
 mod delivery_sync;
@@ -146,6 +148,6 @@ mod tests {
     #[test]
     fn schema_contract_is_stable() {
         assert_eq!(SCHEMA, "awr_team");
-        assert_eq!(EXPECTED_SCHEMA_VERSION, 49);
+        assert_eq!(EXPECTED_SCHEMA_VERSION, 52);
     }
 }

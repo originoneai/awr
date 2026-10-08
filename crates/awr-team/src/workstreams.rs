@@ -1,6 +1,6 @@
 //! Explicit multi-work source codec. Work branches keep their existing scope ID;
 //! workstream ownership is a separate, source-backed dimension.
-use crate::{TeamError, TeamResult, WorkContract, contract_hash};
+use crate::{DependencyAcceptanceMode, TeamError, TeamResult, WorkContract, contract_hash};
 use awr_core::{Id, WorkstreamCatalog, WorkstreamWorkBinding, validate_workstream_ownership};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -26,11 +26,18 @@ impl WorkstreamBundle {
     pub const CODEC_V2: &'static str = "awr-team-workstreams-v2";
     pub const CODEC_V3: &'static str = "awr-team-workstreams-v3";
     pub const CODEC_V4: &'static str = "awr-team-workstreams-v4";
+    pub const CODEC_V5: &'static str = "awr-team-workstreams-v5";
+    pub const CODEC_V6: &'static str = "awr-team-workstreams-v6";
 
     pub fn validate(&self, project_id: &str) -> TeamResult<()> {
         if !matches!(
             self.codec.as_str(),
-            Self::CODEC | Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4
+            Self::CODEC
+                | Self::CODEC_V2
+                | Self::CODEC_V3
+                | Self::CODEC_V4
+                | Self::CODEC_V5
+                | Self::CODEC_V6
         ) || self.catalog.project_id != project_id
         {
             return Err(TeamError::InvalidContract(
@@ -53,21 +60,42 @@ impl WorkstreamBundle {
             if (self.codec == Self::CODEC_V2
                 && matches!(
                     entry.contract.codec.as_str(),
-                    WorkContract::CODEC_V3 | WorkContract::CODEC_V4
+                    WorkContract::CODEC_V3
+                        | WorkContract::CODEC_V4
+                        | WorkContract::CODEC_V5
+                        | WorkContract::CODEC_V6
                 ))
-                || (self.codec == Self::CODEC_V3 && entry.contract.codec == WorkContract::CODEC_V4)
+                || (self.codec == Self::CODEC_V3
+                    && matches!(
+                        entry.contract.codec.as_str(),
+                        WorkContract::CODEC_V4 | WorkContract::CODEC_V5 | WorkContract::CODEC_V6
+                    ))
+                || (self.codec == Self::CODEC_V4
+                    && matches!(
+                        entry.contract.codec.as_str(),
+                        WorkContract::CODEC_V5 | WorkContract::CODEC_V6
+                    ))
+                || (self.codec == Self::CODEC_V5 && entry.contract.codec == WorkContract::CODEC_V6)
             {
                 return Err(TeamError::InvalidContract(
                     "contract codec is newer than the workstream codec".into(),
                 ));
             }
-            for upstream in entry.contract.dependency_acceptance.keys() {
-                if self
+            for (upstream, mode) in &entry.contract.dependency_acceptance {
+                let provider = self
                     .contracts
                     .iter()
                     .find(|provider| provider.contract.work_id.as_str() == upstream)
-                    .is_none_or(|provider| provider.workstream_id != entry.workstream_id)
-                {
+                    .ok_or_else(|| TeamError::InvalidContract("Agent dependency acceptance requires an existing predecessor in the same workstream; cross-stream adoption is unsupported".into()))?;
+                if matches!(mode, DependencyAcceptanceMode::CrossWorkstream(_)) {
+                    if self.codec != Self::CODEC_V6 || provider.workstream_id == entry.workstream_id
+                    {
+                        return Err(TeamError::InvalidContract(
+                            "cross_workstream requires V6 and different source-owned workstreams"
+                                .into(),
+                        ));
+                    }
+                } else if provider.workstream_id != entry.workstream_id {
                     return Err(TeamError::InvalidContract("Agent dependency acceptance requires an existing predecessor in the same workstream; cross-stream adoption is unsupported".into()));
                 }
             }
@@ -90,7 +118,58 @@ impl WorkstreamBundle {
             })
             .collect::<Vec<_>>();
         validate_workstream_ownership(&self.catalog, &ids, &bindings)
-            .map_err(|e| TeamError::InvalidContract(e.to_string()))
+            .map_err(|e| TeamError::InvalidContract(e.to_string()))?;
+        if self.codec == Self::CODEC_V6 {
+            self.validate_v6_dependencies()?;
+        }
+        Ok(())
+    }
+
+    fn validate_v6_dependencies(&self) -> TeamResult<()> {
+        if !self
+            .contracts
+            .iter()
+            .any(|e| e.contract.codec == WorkContract::CODEC_V6)
+        {
+            return Err(TeamError::InvalidContract(
+                "V6 bundle requires an explicit V6 cross-stream contract".into(),
+            ));
+        }
+        let by_id = self
+            .contracts
+            .iter()
+            .map(|e| (e.contract.work_id.as_str(), e))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let mut edges = Vec::new();
+        for entry in &self.contracts {
+            let mut predecessors = std::collections::BTreeSet::new();
+            for upstream in &entry.contract.required_dependencies {
+                if !predecessors.insert(upstream) {
+                    return Err(TeamError::InvalidContract(
+                        "V6 required dependency graph must not contain duplicate edges".into(),
+                    ));
+                }
+                let provider = by_id.get(upstream.as_str()).ok_or_else(|| {
+                    TeamError::InvalidContract(
+                        "V6 required dependency must resolve in the source-owned graph".into(),
+                    )
+                })?;
+                if provider.workstream_id != entry.workstream_id
+                    && !matches!(
+                        entry.contract.dependency_acceptance.get(upstream),
+                        Some(DependencyAcceptanceMode::CrossWorkstream(_))
+                    )
+                {
+                    return Err(TeamError::InvalidContract("V6 cross-stream required dependency needs an explicit cross_workstream policy".into()));
+                }
+                edges.push((entry.contract.work_id.as_str().to_owned(), upstream.clone()));
+            }
+        }
+        crate::planning::detect_cycle(
+            &by_id.keys().map(|id| (*id).to_owned()).collect::<Vec<_>>(),
+            &edges,
+        )
+        .map_err(|e| TeamError::InvalidContract(e.to_string()))
     }
 
     /// A projection identity, not an individual work's contract hash. Preserve

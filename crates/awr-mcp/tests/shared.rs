@@ -207,10 +207,14 @@ struct ProjectFixture {
 }
 impl ProjectFixture {
     fn workstreams() -> Self {
+        Self::workstreams_with("")
+    }
+    /// The workstream ledger plus extra `work_items` entries (two-space list items) appended at the end.
+    fn workstreams_with(extra_items: &str) -> Self {
         let fixture = Self::new("Workstream fixture");
         fs::write(fixture.root.join(".awr/project.toml"), "[project]\nname='Workstream HTTP fixture'\ncontext_profile='minimal'\n[[sources]]\ndomain='ledger'\nrole='primary'\npath='work.yaml'\nadapter='yaml-workstream-ledger-v1'\n").unwrap();
         let ledger = include_str!("../../../tests/fixtures/workstreams/context.yaml");
-        fs::write(fixture.root.join("work.yaml"), format!("{ledger}\n  - id: API-2\n    title: Review the interface\n    status: planned\n    workstream: api\n    acceptance: [Review the interface]\n")).unwrap();
+        fs::write(fixture.root.join("work.yaml"), format!("{ledger}\n  - id: API-2\n    title: Review the interface\n    status: planned\n    workstream: api\n    acceptance: [Review the interface]\n{extra_items}")).unwrap();
         fixture.reindex();
         fixture
     }
@@ -1907,6 +1911,41 @@ async fn workstream_nav_goal_selector_follows_goals_declared_in_the_source() {
             .await,
         "SourceStale",
     );
+    assert_eq!(a.revision(), before);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn workstream_nav_explains_a_cancelled_dependency_for_an_authorized_reader() {
+    let a = ProjectFixture::workstreams_with(
+        "  - id: API-3\n    title: Retired interface draft\n    status: cancelled\n    workstream: api\n  - id: API-4\n    title: Build on the interface draft\n    status: planned\n    workstream: api\n    depends_on: [API-3]\n    acceptance: [Build on the draft]\n",
+    );
+    let b = ProjectFixture::new("Unchanged legacy project");
+    let mut server = Server::start(&scoped_registry(&a, &b)).await;
+    let before = a.revision();
+    let mut request = scoped("nav", None, json!({}));
+    request["workstream"] = json!(API_SCOPE);
+    let nav = ok(server.call(READER, "awr_workstream", request).await);
+    assert_eq!(nav["protocol"], "awr-mainline-nav");
+    assert_eq!(nav["schema_version"], 1);
+    assert_eq!(nav["read_only"], true);
+    let nodes = nav["mainline_graph"]["nodes"].as_array().unwrap();
+    let waiting = nodes.iter().find(|n| n["work_key"] == "API-4").unwrap();
+    // The same wait the CLI reports: a cancelled prerequisite is explained, not silently skipped.
+    assert_eq!(waiting["explainable_waits"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        waiting["explainable_waits"][0]["kind"],
+        "dependency_cancelled"
+    );
+    assert_eq!(
+        waiting["explainable_waits"][0]["summary"],
+        "Required dependency API-3 was cancelled"
+    );
+    assert_eq!(
+        waiting["explainable_waits"][0]["release_condition"],
+        "Remove or replace API-3 in the dependencies of API-4, or reopen API-3 and complete it"
+    );
+    assert!(!nav.to_string().contains("PRIVATE_CLIENT"));
     assert_eq!(a.revision(), before);
     server.stop().await;
 }

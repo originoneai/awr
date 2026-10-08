@@ -10,7 +10,9 @@ use crate::locator::fingerprint;
 use awr_core::{
     Error, Id, Result, WORKSTREAM_CATALOG_VERSION, Workstream, WorkstreamCatalog, WorkstreamState,
 };
-use awr_team::{WorkContract, WorkId, WorkstreamBundle, WorkstreamContract};
+use awr_team::{
+    DependencyAcceptanceMode, WorkContract, WorkId, WorkstreamBundle, WorkstreamContract,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -31,6 +33,8 @@ pub const PARSER_VERSION: &str = "awr-team-workstreams/1";
 pub const PARSER_VERSION_V2: &str = "awr-team-workstreams/2";
 pub const PARSER_VERSION_V3: &str = "awr-team-workstreams/3";
 pub const PARSER_VERSION_V4: &str = "awr-team-workstreams/4";
+pub const PARSER_VERSION_V5: &str = "awr-team-workstreams/5";
+pub const PARSER_VERSION_V6: &str = "awr-team-workstreams/6";
 
 const SUPPORTED_SPEC_EXTENSIONS: &[&str] = &["json", "md", "markdown"];
 
@@ -259,6 +263,16 @@ pub fn prepare_publish_from_ledger_bytes(
     let bundle = WorkstreamBundle {
         codec: if contracts
             .iter()
+            .any(|entry| entry.contract.codec == WorkContract::CODEC_V6)
+        {
+            WorkstreamBundle::CODEC_V6
+        } else if contracts
+            .iter()
+            .any(|entry| entry.contract.codec == WorkContract::CODEC_V5)
+        {
+            WorkstreamBundle::CODEC_V5
+        } else if contracts
+            .iter()
             .any(|entry| entry.contract.codec == WorkContract::CODEC_V4)
         {
             WorkstreamBundle::CODEC_V4
@@ -342,6 +356,8 @@ pub fn prepare_publish_from_ledger_bytes(
         referenced_specs: referenced,
         files,
         parser_version: match bundle.codec.as_str() {
+            WorkstreamBundle::CODEC_V6 => PARSER_VERSION_V6,
+            WorkstreamBundle::CODEC_V5 => PARSER_VERSION_V5,
             WorkstreamBundle::CODEC_V4 => PARSER_VERSION_V4,
             WorkstreamBundle::CODEC_V3 => PARSER_VERSION_V3,
             WorkstreamBundle::CODEC_V2 => PARSER_VERSION_V2,
@@ -519,7 +535,7 @@ fn map_contracts(
         let hard_rules = optional_string_list(item, &["hard_rules"], &pointer)?;
         let verification_requirements =
             optional_string_list(item, &["verification_requirements"], &pointer)?;
-        let dependency_acceptance = item
+        let dependency_acceptance: BTreeMap<String, DependencyAcceptanceMode> = item
             .get("dependency_acceptance")
             .map(|raw| serde_json::from_value(raw.clone()))
             .transpose()
@@ -560,7 +576,17 @@ fn map_contracts(
         let work_id = WorkId::new(&external_key)
             .map_err(|e| Error::InvalidInput(format!("{pointer}/id: {e}")))?;
         let contract = WorkContract {
-            codec: if item_policy
+            codec: if dependency_acceptance
+                .values()
+                .any(|mode| matches!(mode, DependencyAcceptanceMode::CrossWorkstream(_)))
+            {
+                WorkContract::CODEC_V6
+            } else if dependency_acceptance
+                .values()
+                .any(|mode| *mode == DependencyAcceptanceMode::SimulatedMemberIndependent)
+            {
+                WorkContract::CODEC_V5
+            } else if item_policy
                 == awr_team::ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
             {
                 WorkContract::CODEC_V4
@@ -648,10 +674,16 @@ fn preview_against_baseline(
                 .find(|prior| prior.contract.external_key == after.external_key)
                 .map(|entry| &entry.contract)
         });
-        if (after.codec == WorkContract::CODEC_V4
-            || prior_contract.is_some_and(|prior| prior.codec == WorkContract::CODEC_V4))
-            && prior_contract.map(|prior| &prior.completion_policy)
-                != Some(&after.completion_policy)
+        if (matches!(
+            after.codec.as_str(),
+            WorkContract::CODEC_V4 | WorkContract::CODEC_V5 | WorkContract::CODEC_V6
+        ) || prior_contract.is_some_and(|prior| {
+            matches!(
+                prior.codec.as_str(),
+                WorkContract::CODEC_V4 | WorkContract::CODEC_V5 | WorkContract::CODEC_V6
+            )
+        })) && prior_contract.map(|prior| &prior.completion_policy)
+            != Some(&after.completion_policy)
         {
             preview.completion_policy_diffs.push(FieldDiff {
                 external_key: after.external_key.clone(),
@@ -1020,6 +1052,171 @@ mod tests {
                 .to_string()
                 .contains("same workstream")
         );
+    }
+
+    #[test]
+    fn simulated_dependency_source_selects_v5_and_previews_exact_edges() {
+        let root = fixture_root();
+        let original = fs::read(root.join("ledger.yaml")).unwrap();
+        let baseline = prepare_publish_from_server_directory(
+            &root,
+            "ledger.yaml",
+            "demo-project",
+            &PublishPrepOptions::default(),
+        )
+        .unwrap();
+        let old_bundle = baseline.bundle().unwrap();
+        let mut doc: Value = serde_yaml_ng::from_slice(&original).unwrap();
+        doc["work_items"][1]["workstream"] = json!("api");
+        doc["work_items"][1]["dependency_acceptance"] =
+            json!({"API-1":"simulated_member_independent"});
+        let prepare = |doc: &Value, before: Option<WorkstreamBundle>| {
+            prepare_publish_from_ledger_bytes(
+                &baseline.source_location,
+                &root,
+                serde_yaml_ng::to_string(doc).unwrap().as_bytes(),
+                "demo-project",
+                &PublishPrepOptions {
+                    baseline: before,
+                    completion_policy: None,
+                },
+            )
+        };
+        let candidate = prepare(&doc, Some(old_bundle.clone())).unwrap();
+        let bundle = candidate.bundle().unwrap();
+        assert_eq!(candidate.parser_version, PARSER_VERSION_V5);
+        assert_eq!(bundle.codec, WorkstreamBundle::CODEC_V5);
+        assert_eq!(bundle.contracts[1].contract.codec, WorkContract::CODEC_V5);
+        assert_eq!(
+            bundle.contracts[1].contract.completion_policy,
+            "independent_review"
+        );
+        assert!(bundle.contracts[1].contract.execution_settlement.is_none());
+        assert_eq!(
+            bundle.contracts[0].contract,
+            old_bundle.contracts[0].contract
+        );
+        assert_eq!(
+            bundle.contracts[0].contract.hash().unwrap(),
+            old_bundle.contracts[0].contract.hash().unwrap()
+        );
+        assert_eq!(
+            candidate.preview.dependency_acceptance_diffs[0].after,
+            Some(json!({"API-1":"simulated_member_independent"}))
+        );
+        assert!(
+            prepare(&doc, Some(bundle.clone()))
+                .unwrap()
+                .preview
+                .dependency_acceptance_diffs
+                .is_empty()
+        );
+        let mut removed = doc.clone();
+        removed["work_items"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("dependency_acceptance");
+        let changed = prepare(&removed, Some(bundle)).unwrap();
+        assert_eq!(
+            changed.preview.dependency_acceptance_diffs[0].after,
+            Some(json!({}))
+        );
+        for invalid in [
+            Value::Null,
+            json!({}),
+            json!({"API-1":"unknown"}),
+            json!({"absent":"simulated_member_independent"}),
+            json!({"CLIENT-1":"simulated_member_independent"}),
+        ] {
+            let mut invalid_doc = doc.clone();
+            invalid_doc["work_items"][1]["dependency_acceptance"] = invalid;
+            assert!(prepare(&invalid_doc, None).is_err());
+        }
+        doc["work_items"][1]["workstream"] = json!("client");
+        assert!(prepare(&doc, None).is_err());
+        assert_eq!(fs::read(root.join("ledger.yaml")).unwrap(), original);
+    }
+
+    #[test]
+    fn cross_stream_source_selects_v6_and_previews_both_policy_dimensions() {
+        let root = fixture_root();
+        let original = fs::read(root.join("ledger.yaml")).unwrap();
+        let baseline = prepare_publish_from_server_directory(
+            &root,
+            "ledger.yaml",
+            "demo-project",
+            &PublishPrepOptions::default(),
+        )
+        .unwrap();
+        let old = baseline.bundle().unwrap();
+        let mut doc: Value = serde_yaml_ng::from_slice(&original).unwrap();
+        let prepare = |doc: &Value, before: Option<WorkstreamBundle>| {
+            prepare_publish_from_ledger_bytes(
+                &baseline.source_location,
+                &root,
+                serde_yaml_ng::to_string(doc).unwrap().as_bytes(),
+                "demo-project",
+                &PublishPrepOptions {
+                    baseline: before,
+                    completion_policy: None,
+                },
+            )
+        };
+        for assurance in ["team_independent", "simulated_member_independent"] {
+            for version in ["fixed_delivery", "current_contract"] {
+                doc["work_items"][1]["dependency_acceptance"] = json!({"API-1":{
+                    "cross_workstream":{"review_assurance":assurance,"version_policy":version}
+                }});
+                let candidate = prepare(&doc, Some(old.clone())).unwrap();
+                let bundle = candidate.bundle().unwrap();
+                assert_eq!(candidate.parser_version, PARSER_VERSION_V6);
+                assert_eq!(bundle.codec, WorkstreamBundle::CODEC_V6);
+                assert_eq!(bundle.contracts[1].contract.codec, WorkContract::CODEC_V6);
+                assert_eq!(
+                    bundle.contracts[0].contract.hash().unwrap(),
+                    old.contracts[0].contract.hash().unwrap()
+                );
+                assert_eq!(
+                    bundle.contracts[1].contract.completion_policy,
+                    old.contracts[1].contract.completion_policy
+                );
+                assert_eq!(
+                    candidate.preview.dependency_acceptance_diffs[0].after,
+                    Some(doc["work_items"][1]["dependency_acceptance"].clone())
+                );
+                assert!(
+                    prepare(&doc, Some(bundle))
+                        .unwrap()
+                        .preview
+                        .dependency_acceptance_diffs
+                        .is_empty()
+                );
+            }
+        }
+        let valid = doc.clone();
+        doc["work_items"][1]["workstream"] = json!("api");
+        assert!(prepare(&doc, None).is_err());
+        for bad in [
+            Value::Null,
+            json!({}),
+            json!({"API-1":{"cross_workstream":{"review_assurance":"unknown","version_policy":"fixed_delivery"}}}),
+        ] {
+            let mut invalid = valid.clone();
+            invalid["work_items"][1]["dependency_acceptance"] = bad;
+            assert!(prepare(&invalid, None).is_err());
+        }
+        let mut cycle = valid;
+        cycle["work_items"][0]["depends_on"] = json!(["CLIENT-1"]);
+        cycle["work_items"][0]["dependency_acceptance"] = json!({"CLIENT-1":{
+            "cross_workstream":{"review_assurance":"team_independent","version_policy":"current_contract"}
+        }});
+        assert!(
+            prepare(&cycle, None)
+                .unwrap_err()
+                .to_string()
+                .contains("cycle")
+        );
+        assert_eq!(fs::read(root.join("ledger.yaml")).unwrap(), original);
     }
 
     #[test]

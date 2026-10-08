@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "stale_days": 7,
+  "project_goal": "Example display configuration for the Project map",
+  "titles": {
+    "page": "Example project map"
+  },
+  "strip_prefixes": ["EX-"],
+  "overview": {
+    "match_order": ["PLATFORM", "FEATURES"],
+    "default_lane": "OTHER",
+    "lanes": [
+      {"id": "PLATFORM", "name": "Platform", "tag": "EX-PLAT-*", "color": "#3b82f6", "key_regex": "^EX-PLAT-"},
+      {"id": "FEATURES", "name": "Features", "tag": "EX-FEAT-*", "color": "#8b5cf6", "key_regex": "^EX-FEAT-"},
+      {"id": "OTHER", "name": "Everything else", "tag": "", "color": "#8a94a6"}
+    ]
+  },
+  "mainline_panels": [
+    {"lane": "PLATFORM", "crit_end": "EX-PLAT-020"},
+    {"lane": "FEATURES", "keep_done": true}
+  ],
+  "explore_lanes": [
+    {"goal": "EX-GOAL-FOUNDATION", "name": "Foundation", "color": "#22a06b", "milestones": ["M1", "M2"]},
+    {"goal": "EX-GOAL-LAUNCH", "name": "Launch", "color": "#0ea5c6", "milestones": ["M3"]}
+  ],
+  "resolve_milestones_extra": []
+}

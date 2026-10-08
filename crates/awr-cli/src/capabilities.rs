@@ -156,6 +156,7 @@ fn catalog() -> Vec<Capability> {
                 "status",
                 "ready",
                 "work show",
+                "work graph",
                 "object list",
                 "search",
                 "context compile",

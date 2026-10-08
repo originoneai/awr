@@ -222,6 +222,37 @@ facts; this capability does not claim the complete automatic source chain,
 squash/rebase content proof, cross-workstream simulated adoption or native business
 acceptance.
 
+## Use a simulated member's accepted input
+
+**When:** a required predecessor in the same workstream was completed under the
+explicit simulated-member policy, and the consumer agrees to that assurance.
+**Basis:** the current selected upstream receipt must match its current contract,
+evidence and original authenticated executor, submitter, opener and reviewer.
+An omitted mode does not accept either Agent review or simulated-member review.
+**Action:** have an authorized planner declare the edge, preview its diff, approve
+the current candidate digest and publish through the normal planning tools:
+
+```yaml
+depends_on: [API-1]
+dependency_acceptance:
+  API-1: simulated_member_independent
+```
+
+This selects contract, bundle and source-parser V5; reviewed planning changes use
+planning V5. The consumer's own completion policy stays independent: accepting
+a simulated input does not replace its human-review requirement or grant rights.
+V1–V4 retain their original wire semantics and hashes. Omission on an edit retains
+the source map; an explicit replacement requires its exact prior map. Check
+`capabilities.simulated_member_review.dependency_adoption` for support.
+
+**Recheck:** upstream receipt selection, contract, evidence or original review
+changes. `work.next`, `task.claim_available`, execution admission and finalization
+use the same dependency gate. Missing original review records remain blocked;
+database failures are errors, not an ordinary dependency wait. The accepted basis
+keeps `human_approval=false`, `team_independent_acceptance=false` and the original
+execution trust level. This capability covers same-stream inputs; cross-stream
+version adoption requires its separate capability and workflow.
+
 ## Receive unfinished work
 
 Use the actual `handoff.id` returned by the proposal receipt. An `events.list`
