@@ -926,6 +926,7 @@ mod agent_review_tests {
         use super::*;
         include!("cases/simulated_member_review.rs");
         include!("cases/simulated_member_dependencies.rs");
+        include!("cases/cross_workstream_exports.rs");
     }
 
     #[tokio::test]

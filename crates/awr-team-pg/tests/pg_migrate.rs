@@ -4,6 +4,108 @@ use awr_team_pg::{EXPECTED_SCHEMA_VERSION, check_schema, migrate};
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn schema50_approved_exports_upgrade_atomically_preserve_history_and_enforce_rls() {
+    let (_g, admin, db) = common::historical_team_schema(50).await;
+    admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('upgrade-tenant','Upgrade','active');
+        INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+            VALUES('upgrade-tenant','upgrade-project','upgrade','team','old-epoch','active');
+        INSERT INTO awr_team.work_items(tenant_id,project_id,id,external_key) VALUES('upgrade-tenant','upgrade-project','legacy-work','legacy-work');
+        INSERT INTO awr_team.completion_receipts(tenant_id,project_id,id,work_id,scope_id,contract_hash,result_digest,
+            dependency_binding_hash,evidence_bundle_hash,policy,approved_by_json,independence_kind)
+            VALUES('upgrade-tenant','upgrade-project','legacy-receipt','legacy-work','main','old-contract','old-result',
+                'old-dependencies','old-bundle','ordinary_confirm','{}','unspecified');
+        INSERT INTO awr_team.artifacts(tenant_id,project_id,id,object_key,sha256,byte_length,media_type,state,created_by)
+            VALUES('upgrade-tenant','upgrade-project','legacy-artifact','fixture',repeat('a',64),0,'text/plain','finalized','fixture-author')").await.unwrap();
+    let original: Value = admin
+        .query_one(
+            "SELECT to_jsonb(r) FROM awr_team.completion_receipts r",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let ddl = include_str!("../migrations/20261008000051_workstream_artifact_exports.sql");
+    assert!(
+        admin
+            .batch_execute(&ddl.replace(
+                "UPDATE awr_team.schema_state",
+                "SELECT 1/0; UPDATE awr_team.schema_state"
+            ))
+            .await
+            .is_err()
+    );
+    admin.batch_execute("ROLLBACK").await.unwrap();
+    let rolled_back=admin.query_one("SELECT (SELECT version FROM awr_team.schema_state),to_regclass('awr_team.workstream_artifact_exports')::text",&[]).await.unwrap();
+    assert_eq!(rolled_back.get::<_, i32>(0), 50);
+    assert!(rolled_back.get::<_, Option<String>>(1).is_none());
+    migrate(&admin).await.unwrap();
+    migrate(&admin).await.unwrap();
+    check_schema(&admin).await.unwrap();
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT to_jsonb(r) FROM awr_team.completion_receipts r",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, Value>(0),
+        original,
+        "Migration must not invent original review references or alter historical receipts"
+    );
+    let isolation=admin.query_one("SELECT relrowsecurity,relforcerowsecurity FROM pg_class WHERE oid='awr_team.workstream_artifact_exports'::regclass",&[]).await.unwrap();
+    assert!(isolation.get::<_, bool>(0) && isolation.get::<_, bool>(1));
+    let insert="INSERT INTO awr_team.workstream_artifact_exports(tenant_id,project_id,id,provider_work_id,consumer_work_id,receipt_id,artifact_id,
+        disclosure_sha256,manifest_json,proof_json,published_by_actor_id,published_by_client_id)
+        VALUES('upgrade-tenant','upgrade-project',$1,'legacy-work','consumer','legacy-receipt','legacy-artifact',repeat('b',64),'{}','{}','publisher','client')";
+    admin.execute(insert, &[&"fixture-export"]).await.unwrap();
+    awr_team_pg::Bootstrap::grant_app(&admin, "awr_app")
+        .await
+        .unwrap();
+    let app = common::app_client(&db).await;
+    app.batch_execute("SELECT set_config('awr.tenant_id','other-tenant',false),set_config('awr.project_id','upgrade-project',false)").await.unwrap();
+    assert_eq!(
+        app.query_one(
+            "SELECT count(*) FROM awr_team.workstream_artifact_exports",
+            &[]
+        )
+        .await
+        .unwrap()
+        .get::<_, i64>(0),
+        0
+    );
+    assert_eq!(
+        app.execute(insert, &[&"forbidden-export"])
+            .await
+            .unwrap_err()
+            .code(),
+        Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE)
+    );
+    app.batch_execute("SELECT set_config('awr.tenant_id','upgrade-tenant',false),set_config('awr.project_id','other-project',false)").await.unwrap();
+    assert_eq!(
+        app.query_one(
+            "SELECT count(*) FROM awr_team.workstream_artifact_exports",
+            &[]
+        )
+        .await
+        .unwrap()
+        .get::<_, i64>(0),
+        0
+    );
+    app.batch_execute("SELECT set_config('awr.tenant_id','upgrade-tenant',false),set_config('awr.project_id','upgrade-project',false)").await.unwrap();
+    assert_eq!(
+        app.query_one(
+            "SELECT count(*) FROM awr_team.workstream_artifact_exports",
+            &[]
+        )
+        .await
+        .unwrap()
+        .get::<_, i64>(0),
+        1
+    );
+}
+
+#[tokio::test]
 async fn schema49_delivery_requests_upgrade_atomically_without_fabricating_legacy_bindings() {
     let (_guard, admin, db) = common::historical_team_schema(49).await;
     admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('upgrade-tenant','Upgrade','active');
@@ -54,7 +156,7 @@ async fn schema49_delivery_requests_upgrade_atomically_without_fabricating_legac
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
     migrate(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 50);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 51);
     for (table, original) in tables.into_iter().zip(originals) {
         let mut rows = admin.query_one(&format!("SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM awr_team.{table} t"), &[])
             .await.unwrap().get::<_,Value>(0);
@@ -741,7 +843,7 @@ async fn schema40_upgrade_preserves_legacy_provenance_and_is_atomic_and_repeatab
     assert_eq!(before, unchanged);
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 50);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 51);
     let after: Value = admin
         .query_one(
             "SELECT to_jsonb(e) FROM awr_team.executions e WHERE id='legacy-run'",

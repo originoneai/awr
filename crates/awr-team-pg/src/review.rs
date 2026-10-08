@@ -1632,7 +1632,7 @@ pub(crate) async fn required_dependencies_covered(
     Ok((true, links))
 }
 
-async fn simulated_dependency_verified(
+pub(crate) async fn simulated_dependency_verified(
     tx: &tokio_postgres::Transaction<'_>,
     tenant: &str,
     project: &str,
@@ -1723,7 +1723,7 @@ fn dependency_policy(
     ))
 }
 
-fn dependency_receipt_accepted(
+pub(crate) fn dependency_receipt_accepted(
     mode: Option<awr_team::DependencyAcceptanceMode>,
     kind: Option<&str>,
     policy: &str,
