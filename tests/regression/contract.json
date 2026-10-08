@@ -216,7 +216,7 @@
       "id": "cli_mcp_parity",
       "kind": "parity",
       "requires_build": true,
-      "expected_tests": 8,
+      "expected_tests": 9,
       "expected_tools": [
         "awr_context_compile",
         "awr_event_append",
@@ -224,6 +224,7 @@
         "awr_project_status",
         "awr_search",
         "awr_work_get",
+        "awr_work_graph",
         "awr_work_ready",
         "awr_work_transition"
       ],
@@ -238,7 +239,7 @@
         "{output}/cli_mcp_parity.json"
       ],
       "covers": [
-        "All eight MCP tools match CLI results and error contracts on identical disposable state"
+        "All nine MCP tools match CLI results and error contracts on identical disposable state"
       ]
     },
     {
