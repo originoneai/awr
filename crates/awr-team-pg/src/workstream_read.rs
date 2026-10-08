@@ -638,7 +638,11 @@ pub(crate) async fn read(
             "integration_operation":"fast_forward","preparation_executes_repository":false,
             "completion_requires":["artifact_bytes","successful_execution","workspace_settlement","exact_immutable_review_basis"],
             "details":"review.inspect","default_receipt":"member_summary_and_basis_digest",
-            "shared_controller_allowed":true
+            "shared_controller_allowed":true,
+            "dependency_acceptance_mode":"simulated_member_independent",
+            "dependency_adoption":"explicit_v5_same_stream_per_predecessor",
+            "unmapped_dependencies":"blocked",
+            "cross_workstream_adoption_supported":false
         });
         caps["identity"] = navigation::identity(auth);
         caps["business_role_presets"] = json!({

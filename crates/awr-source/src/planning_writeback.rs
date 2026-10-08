@@ -710,6 +710,60 @@ work_items:
     }
 
     #[test]
+    fn simulated_dependency_writeback_retains_omissions_and_binds_prior_policy() {
+        let mut before = draft("CLIENT-1", &["API-1"]);
+        before.workstream = Some("api".into());
+        before.dependency_acceptance = Some(BTreeMap::from([(
+            "API-1".into(),
+            awr_team::DependencyAcceptanceMode::SimulatedMemberIndependent,
+        )]));
+        let created = apply_planning_changes_to_ledger(
+            b"work_items: []\n",
+            &[DraftChange {
+                op: DraftOpKind::CreateTask,
+                before: None,
+                after: before.clone(),
+            }],
+        )
+        .unwrap();
+        let mut omitted_before = before.clone();
+        omitted_before.dependency_acceptance = None;
+        let mut omitted_after = omitted_before.clone();
+        omitted_after.title = "Rename the integration".into();
+        let retained = apply_planning_changes_to_ledger(
+            &created.after_bytes,
+            &[DraftChange {
+                op: DraftOpKind::EditFields,
+                before: Some(omitted_before),
+                after: omitted_after,
+            }],
+        )
+        .unwrap();
+        let parsed: Value = serde_yaml_ng::from_slice(&retained.after_bytes).unwrap();
+        assert_eq!(
+            parsed["work_items"][0]["dependency_acceptance"],
+            json!(before.dependency_acceptance)
+        );
+        let mut after = before.clone();
+        after.dependency_acceptance = Some(modes(&["API-1"]));
+        let change = DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(before),
+            after,
+        };
+        let replaced =
+            apply_planning_changes_to_ledger(&created.after_bytes, &[change.clone()]).unwrap();
+        let parsed: Value = serde_yaml_ng::from_slice(&replaced.after_bytes).unwrap();
+        assert_eq!(
+            parsed["work_items"][0]["dependency_acceptance"]["API-1"],
+            "agent_reviewed_caller_asserted_reconciled"
+        );
+        let mut stale = change;
+        stale.before.as_mut().unwrap().dependency_acceptance = None;
+        assert!(apply_planning_changes_to_ledger(&created.after_bytes, &[stale]).is_err());
+    }
+
+    #[test]
     fn create_writes_reviewed_completion_and_dependency_policies() {
         let mut task = draft("CLIENT-1", &["API-1"]);
         task.workstream = Some("client".into());

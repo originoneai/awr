@@ -26,11 +26,12 @@ impl WorkstreamBundle {
     pub const CODEC_V2: &'static str = "awr-team-workstreams-v2";
     pub const CODEC_V3: &'static str = "awr-team-workstreams-v3";
     pub const CODEC_V4: &'static str = "awr-team-workstreams-v4";
+    pub const CODEC_V5: &'static str = "awr-team-workstreams-v5";
 
     pub fn validate(&self, project_id: &str) -> TeamResult<()> {
         if !matches!(
             self.codec.as_str(),
-            Self::CODEC | Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4
+            Self::CODEC | Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5
         ) || self.catalog.project_id != project_id
         {
             return Err(TeamError::InvalidContract(
@@ -53,9 +54,14 @@ impl WorkstreamBundle {
             if (self.codec == Self::CODEC_V2
                 && matches!(
                     entry.contract.codec.as_str(),
-                    WorkContract::CODEC_V3 | WorkContract::CODEC_V4
+                    WorkContract::CODEC_V3 | WorkContract::CODEC_V4 | WorkContract::CODEC_V5
                 ))
-                || (self.codec == Self::CODEC_V3 && entry.contract.codec == WorkContract::CODEC_V4)
+                || (self.codec == Self::CODEC_V3
+                    && matches!(
+                        entry.contract.codec.as_str(),
+                        WorkContract::CODEC_V4 | WorkContract::CODEC_V5
+                    ))
+                || (self.codec == Self::CODEC_V4 && entry.contract.codec == WorkContract::CODEC_V5)
             {
                 return Err(TeamError::InvalidContract(
                     "contract codec is newer than the workstream codec".into(),
