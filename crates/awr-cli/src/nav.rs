@@ -13,6 +13,8 @@ pub struct NavArgs {
     /// Exact work keys to include; repeatable.
     #[arg(long)]
     work: Vec<String>,
+    /// Goal key. Selects work that declares the goal in its source (for example a ledger `goal:` field)
+    /// or carries it as a tag; an unknown goal is an error, not an empty selection.
     #[arg(long)]
     goal: Option<String>,
     #[arg(long)]

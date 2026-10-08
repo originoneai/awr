@@ -62,6 +62,14 @@ checkpoint, applicable hard rules and required dependency proofs. Unrelated
 active workstreams do not contribute their histories. Project-wide hard rules
 and administrative barriers still apply.
 
+The navigation goal selector (`awr nav --goal <key>`, MCP `awr_workstream` with
+`action: "nav"` and `args.goal`) selects work that declares the goal in its source,
+for example a ledger `goal:` field, and work that carries the key as a tag. Archived
+work is never shown; cancelled work is shown with its status. A goal key that nothing
+in the project defines or names is `NotFound` in the CLI (the shared MCP endpoint
+reports every nav failure through its opaque boundary error); a defined goal without
+work is an empty selection.
+
 ## Concurrent operations
 
 Ordinary writes validate their actual read set: authority, work and contract

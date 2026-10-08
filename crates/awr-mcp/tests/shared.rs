@@ -1875,6 +1875,47 @@ async fn workstream_pending_enablement_cannot_use_old_shared_mutations() {
 }
 
 #[tokio::test]
+async fn workstream_nav_goal_selector_follows_goals_declared_in_the_source() {
+    let a = ProjectFixture::workstreams();
+    let ledger = a.root.join("work.yaml");
+    let mut text = fs::read_to_string(&ledger).unwrap();
+    text.push_str("  - id: API-3\n    title: Declares the API goal\n    status: planned\n    workstream: api\n    goal: [api-delivery]\n    acceptance: [Deliver the API goal]\n");
+    fs::write(&ledger, text).unwrap();
+    a.reindex();
+    let b = ProjectFixture::new("Unchanged legacy project");
+    let mut server = Server::start(&scoped_registry(&a, &b)).await;
+    let before = a.revision();
+    let nav_with = |args: Value| {
+        let mut request = scoped("nav", None, args);
+        request["workstream"] = json!(API_SCOPE);
+        request
+    };
+    let nav = ok(server
+        .call(
+            READER,
+            "awr_workstream",
+            nav_with(json!({"goal":"api-delivery"})),
+        )
+        .await);
+    assert_eq!(nav["scope"]["selection"], json!(["API-3"]));
+    assert_eq!(nav["scope"]["requested"]["goal"], "api-delivery");
+    // An unknown goal fails instead of becoming an empty selection. This endpoint reports every nav failure
+    // through its opaque boundary error so that a scoped reader learns nothing about other scopes.
+    error(
+        server
+            .call(
+                READER,
+                "awr_workstream",
+                nav_with(json!({"goal":"absent-goal"})),
+            )
+            .await,
+        "SourceStale",
+    );
+    assert_eq!(a.revision(), before);
+    server.stop().await;
+}
+
+#[tokio::test]
 async fn workstream_nav_explains_a_cancelled_dependency_for_an_authorized_reader() {
     let a = ProjectFixture::workstreams_with(
         "  - id: API-3\n    title: Retired interface draft\n    status: cancelled\n    workstream: api\n  - id: API-4\n    title: Build on the interface draft\n    status: planned\n    workstream: api\n    depends_on: [API-3]\n    acceptance: [Build on the draft]\n",
