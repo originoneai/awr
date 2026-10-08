@@ -58,6 +58,9 @@ pub struct MainlineNavWorkFact {
 #[derive(Debug, Clone, Default)]
 pub struct MainlineNavExtras {
     pub accounting: Option<WorkstreamAccounting>,
+    /// Source-declared work-to-goal associations (`supports` edges, e.g. a ledger `goal:` field) used by the
+    /// `goal` scope selector. `mainline_nav` loads them from the store when a goal is selected.
+    pub goal_links: Vec<Edge>,
     pub eta_by_work: BTreeMap<String, EtaComponents>,
     pub responsibility_by_work: BTreeMap<String, TaskResponsibility>,
     pub waits_by_work: BTreeMap<String, Vec<ExplainableWait>>,
@@ -139,6 +142,68 @@ fn concrete_outcomes(work: &MainlineNavWorkFact) -> Vec<String> {
     out
 }
 
+/// Navigation must not call a path clear while readiness still refuses it. Readiness releases a
+/// required dependency only when it is completed and not archived (`dependency_not_completed`);
+/// every other state is a wait here, and a cancelled one gets its own kind because it can never
+/// finish by itself: the dependency has to change or the cancelled work has to be reopened.
+fn dependency_wait(
+    work: &MainlineNavWorkFact,
+    dependency: &MainlineNavWorkFact,
+) -> Option<ExplainableWait> {
+    if dependency.status == "cancelled" {
+        let reopen = if dependency.archived {
+            format!("restore {} from the archive and reopen it", dependency.key)
+        } else {
+            format!("reopen {} and complete it", dependency.key)
+        };
+        return Some(ExplainableWait {
+            kind: "dependency_cancelled".into(),
+            summary: format!("Required dependency {} was cancelled", dependency.key),
+            basis: format!(
+                "Required dependency {} ({}) is cancelled; readiness does not count it as completed",
+                dependency.key,
+                short(&dependency.title)
+            ),
+            release_condition: format!(
+                "Remove or replace {} in the dependencies of {}, or {reopen}",
+                dependency.key, work.key
+            ),
+        });
+    }
+    if dependency.status == "completed" && !dependency.archived {
+        return None;
+    }
+    let (basis, release_condition) = if dependency.archived {
+        (
+            format!(
+                "Required dependency {} ({}) is archived; readiness does not count an archived dependency as completed",
+                dependency.key, dependency.title
+            ),
+            format!(
+                "Restore {} from the archive and complete it so its concrete outcome is available",
+                dependency.key
+            ),
+        )
+    } else {
+        (
+            format!(
+                "Required dependency {} ({})",
+                dependency.key, dependency.title
+            ),
+            format!(
+                "Complete and accept {} so its concrete outcome is available",
+                dependency.key
+            ),
+        )
+    };
+    Some(ExplainableWait {
+        kind: "dependency_outcome".into(),
+        summary: format!("Waiting on outcome of {}", dependency.key),
+        basis,
+        release_condition,
+    })
+}
+
 fn execution_value(execution: &awr_core::ExecutionInstance) -> Value {
     match execution {
         awr_core::ExecutionInstance::Person { person_id } => json!({
@@ -213,6 +278,7 @@ fn select_nav_works<'a>(
     works: &'a [MainlineNavWorkFact],
     ownership: &BTreeMap<String, String>,
     edges: &[Edge],
+    goal_links: &[Edge],
 ) -> Vec<&'a MainlineNavWorkFact> {
     let work_filter: BTreeSet<_> = scope.work.iter().cloned().collect();
     let stream_id = scope.workstream.clone();
@@ -238,7 +304,7 @@ fn select_nav_works<'a>(
             }
             if let Some(goal) = &scope.goal {
                 let tagged = w.tags.iter().any(|t| t == goal);
-                let linked = edges.iter().any(|e| {
+                let linked = edges.iter().chain(goal_links).any(|e| {
                     (e.relation == "supports" || e.relation == "depends_on")
                         && e.from_key == w.key
                         && e.to_key == *goal
@@ -324,7 +390,13 @@ pub fn assemble_mainline_nav(
     ownership: &BTreeMap<String, String>,
     extras: &MainlineNavExtras,
 ) -> Result<Value> {
-    let selected = select_nav_works(scope, works, ownership, dependency_edges);
+    let selected = select_nav_works(
+        scope,
+        works,
+        ownership,
+        dependency_edges,
+        &extras.goal_links,
+    );
     let selected_keys: BTreeSet<&str> = selected.iter().map(|w| w.key.as_str()).collect();
     let by_key: BTreeMap<&str, &MainlineNavWorkFact> =
         works.iter().map(|w| (w.key.as_str(), w)).collect();
@@ -359,17 +431,7 @@ pub fn assemble_mainline_nav(
             .filter(|e| e.required && e.from_key == work.key)
         {
             if let Some(dep) = by_key.get(edge.to_key.as_str()) {
-                if dep.status != "completed" && dep.status != "cancelled" {
-                    waits.push(ExplainableWait {
-                        kind: "dependency_outcome".into(),
-                        summary: format!("Waiting on outcome of {}", dep.key),
-                        basis: format!("Required dependency {} ({})", dep.key, dep.title),
-                        release_condition: format!(
-                            "Complete and accept {} so its concrete outcome is available",
-                            dep.key
-                        ),
-                    });
-                }
+                waits.extend(dependency_wait(work, dep));
             }
         }
         if let Some(blocker) = work.blocker.as_ref().filter(|b| !b.trim().is_empty()) {
@@ -543,6 +605,23 @@ pub fn mainline_nav(
     let projected = store.work_items(project.id)?;
     let works: Vec<MainlineNavWorkFact> = projected.iter().map(work_fact).collect();
     let edges = store.work_dependency_links(project.id)?;
+    let mut extras = extras;
+    if let Some(goal) = &scope.goal {
+        if extras.goal_links.is_empty() {
+            extras.goal_links = store.work_goal_links(project.id)?;
+        }
+        // A goal that nothing in the project names would otherwise look like a goal without work.
+        let known = store
+            .goals(project.id)?
+            .iter()
+            .any(|g| g.item.meta.external_key == *goal)
+            || extras.goal_links.iter().any(|e| e.to_key == *goal)
+            || works.iter().any(|w| w.tags.iter().any(|t| t == goal))
+            || edges.iter().any(|e| e.to_key == *goal);
+        if !known {
+            return Err(awr_core::Error::NotFound(format!("goal {goal}")));
+        }
+    }
     let catalog = store.workstream_catalog(project.id).ok();
     let mut ownership = BTreeMap::new();
     for work in &projected {
@@ -553,7 +632,6 @@ pub fn mainline_nav(
             );
         }
     }
-    let mut extras = extras;
     if extras.last_event_at_by_work.is_empty() {
         let last_events = store.last_event_times(project.id)?;
         extras.last_event_at_by_work = projected
@@ -858,5 +936,229 @@ mod tests {
         old.as_object_mut().unwrap().remove("last_event_at");
         let decoded: MainlineNavNode = serde_json::from_value(old).unwrap();
         assert_eq!(decoded.last_event_at, None);
+    }
+
+    fn supports(project_id: Id, work: &str, goal: &str) -> Edge {
+        let mut link = edge(project_id, work, goal);
+        link.relation = "supports".into();
+        link.to_kind = EntityKind::Goal;
+        link
+    }
+
+    fn selected(
+        scope_goal: &str,
+        works: &[MainlineNavWorkFact],
+        dependencies: &[Edge],
+        goal_links: Vec<Edge>,
+    ) -> Vec<String> {
+        let snap = assemble_mainline_nav(
+            &project(),
+            &MainlineNavScope {
+                goal: Some(scope_goal.into()),
+                ..Default::default()
+            },
+            None,
+            works,
+            dependencies,
+            &BTreeMap::new(),
+            &MainlineNavExtras {
+                goal_links,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        snap["scope"]["selection"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| k.as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn goal_scope_matches_source_declared_links_and_stays_compatible_with_tags() {
+        let project_id = project().id;
+        let declared = fact("DECLARED", "Declares the goal", "ready", &["Done"]);
+        let both = fact("BOTH", "Declares two goals", "in_progress", &["Done"]);
+        let cancelled = fact(
+            "CANCELLED",
+            "Cancelled but declared",
+            "cancelled",
+            &["Done"],
+        );
+        let mut archived = fact("ARCHIVED", "Archived and declared", "ready", &["Done"]);
+        archived.archived = true;
+        let mut tagged = fact("TAGGED", "Carries the tag", "ready", &["Done"]);
+        tagged.tags = vec!["G".into()];
+        let unrelated = fact("UNRELATED", "Names no goal", "ready", &["Done"]);
+        let works = [declared, both, cancelled, archived, tagged, unrelated];
+        let links = || {
+            vec![
+                supports(project_id, "DECLARED", "G"),
+                supports(project_id, "BOTH", "G"),
+                supports(project_id, "BOTH", "OTHER"),
+                supports(project_id, "CANCELLED", "G"),
+                supports(project_id, "ARCHIVED", "G"),
+            ]
+        };
+
+        // Declared work, cancelled work and tagged work are in; archived work stays out as before.
+        assert_eq!(
+            selected("G", &works, &[], links()),
+            ["BOTH", "CANCELLED", "DECLARED", "TAGGED"]
+        );
+        // One work can serve several goals.
+        assert_eq!(selected("OTHER", &works, &[], links()), ["BOTH"]);
+        // Without the source links only the tag matches: the previous behavior.
+        assert_eq!(selected("G", &works, &[], vec![]), ["TAGGED"]);
+        // A goal nobody declares selects nothing in the pure assembler; `mainline_nav` rejects unknown goals.
+        assert!(selected("ABSENT", &works, &[], links()).is_empty());
+    }
+
+    fn consumer_waits(
+        dependency_status: &str,
+        archived: bool,
+        required: bool,
+    ) -> Vec<ExplainableWait> {
+        let project = project();
+        let mut dependency = fact(
+            "PRODUCER",
+            "Producer",
+            dependency_status,
+            &["Producer done"],
+        );
+        dependency.archived = archived;
+        let consumer = fact("CONSUMER", "Consumer", "planned", &["Consumer done"]);
+        let mut link = edge(project.id, "CONSUMER", "PRODUCER");
+        link.required = required;
+        let snap = assemble_mainline_nav(
+            &project,
+            &MainlineNavScope {
+                work: vec!["CONSUMER".into()],
+                ..Default::default()
+            },
+            None,
+            &[dependency, consumer],
+            &[link],
+            &BTreeMap::new(),
+            &MainlineNavExtras::default(),
+        )
+        .unwrap();
+        let nodes = snap["mainline_graph"]["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 1);
+        serde_json::from_value(nodes[0]["explainable_waits"].clone()).unwrap()
+    }
+
+    #[test]
+    fn a_required_dependency_releases_only_when_completed_and_unarchived_like_readiness() {
+        for status in ["planned", "ready", "in_progress", "blocked", "draft"] {
+            let waits = consumer_waits(status, false, true);
+            assert_eq!(waits.len(), 1, "{status}");
+            assert_eq!(waits[0].kind, "dependency_outcome");
+            assert_eq!(waits[0].summary, "Waiting on outcome of PRODUCER");
+            assert!(
+                waits[0]
+                    .release_condition
+                    .starts_with("Complete and accept PRODUCER")
+            );
+        }
+        // Completed work releases its dependents; nothing to wait for.
+        assert!(consumer_waits("completed", false, true).is_empty());
+
+        // Cancelled work never finishes by itself: its own kind, with the two real ways out.
+        let cancelled = consumer_waits("cancelled", false, true);
+        assert_eq!(cancelled.len(), 1);
+        assert_eq!(cancelled[0].kind, "dependency_cancelled");
+        assert_eq!(
+            cancelled[0].summary,
+            "Required dependency PRODUCER was cancelled"
+        );
+        assert!(
+            cancelled[0]
+                .basis
+                .contains("readiness does not count it as completed")
+        );
+        assert_eq!(
+            cancelled[0].release_condition,
+            "Remove or replace PRODUCER in the dependencies of CONSUMER, or reopen PRODUCER and complete it"
+        );
+
+        // Readiness also refuses archived dependencies, whatever their lifecycle status.
+        let archived_done = consumer_waits("completed", true, true);
+        assert_eq!(archived_done.len(), 1);
+        assert_eq!(archived_done[0].kind, "dependency_outcome");
+        assert!(archived_done[0].basis.contains("is archived"));
+        assert!(
+            archived_done[0]
+                .release_condition
+                .starts_with("Restore PRODUCER from the archive")
+        );
+        let archived_open = consumer_waits("planned", true, true);
+        assert_eq!(archived_open[0].kind, "dependency_outcome");
+        assert!(archived_open[0].basis.contains("is archived"));
+        let archived_cancelled = consumer_waits("cancelled", true, true);
+        assert_eq!(archived_cancelled[0].kind, "dependency_cancelled");
+        assert!(
+            archived_cancelled[0]
+                .release_condition
+                .ends_with("or restore PRODUCER from the archive and reopen it")
+        );
+
+        // Optional edges never block.
+        for status in ["planned", "cancelled", "completed"] {
+            assert!(consumer_waits(status, false, false).is_empty(), "{status}");
+        }
+    }
+
+    #[test]
+    fn a_cancelled_cross_workstream_dependency_is_explained_even_outside_the_selected_scope() {
+        let producer = fact(
+            "EVO-11",
+            "Retired design",
+            "cancelled",
+            &["Design accepted"],
+        );
+        let consumer = fact(
+            "EVO-12",
+            "Build on the design",
+            "planned",
+            &["Build accepted"],
+        );
+        let project = project();
+        let link = edge(project.id, "EVO-12", "EVO-11");
+        let mut ownership = BTreeMap::new();
+        ownership.insert("EVO-11".into(), "stream-design".into());
+        ownership.insert("EVO-12".into(), "stream-build".into());
+        let snap = assemble_mainline_nav(
+            &project,
+            &MainlineNavScope {
+                workstream: Some("stream-build".into()),
+                ..Default::default()
+            },
+            None,
+            &[producer, consumer],
+            &[link],
+            &ownership,
+            &MainlineNavExtras::default(),
+        )
+        .unwrap();
+        // Only the consumer's stream is selected, yet the wait names the cancelled producer.
+        let nodes = snap["mainline_graph"]["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0]["work_key"], "EVO-12");
+        assert_eq!(
+            nodes[0]["explainable_waits"][0]["kind"],
+            "dependency_cancelled"
+        );
+        assert_eq!(snap["cross_dependencies"].as_array().unwrap().len(), 1);
+        assert_eq!(snap["cross_dependencies"][0]["from"], "EVO-11");
+        assert_eq!(snap["cross_dependencies"][0]["to"], "EVO-12");
+        // The additive kind changes neither the protocol nor the guidance contract.
+        assert_eq!(snap["protocol"], MAINLINE_NAV_PROTOCOL);
+        assert_eq!(snap["schema_version"], MAINLINE_NAV_SCHEMA_VERSION);
+        assert_eq!(
+            snap["guidance"]["when"],
+            "Selected mainline is waiting on an explainable condition"
+        );
     }
 }

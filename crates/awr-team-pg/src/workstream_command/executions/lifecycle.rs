@@ -214,15 +214,17 @@ pub(super) async fn start(
         return Err(PgError::RecoveryBlocked);
     }
     require_clear_of_selective_blocks(tx, tenant, project, &command.work_id).await?;
-    // Cross-stream receipts need explicit export/adoption. A grant to both
-    // streams does not implicitly create such a delivery contract.
-    for upstream in &contract.required_dependencies {
-        let row = tx.query_opt("SELECT workstream_id FROM awr_team.workstream_snapshot_ownership
-            WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND scope_id='main' AND work_id=$4",
-            &[&tenant,&project,&auth.snapshot,upstream]).await?;
-        if row.is_none_or(|r| r.get::<_, String>(0) != command.workstream_id.to_string()) {
-            return Err(PgError::BindingInvalid);
-        }
+    if !crate::cross_workstream_adoption::dependency_streams_match(
+        tx,
+        tenant,
+        project,
+        &auth.snapshot,
+        &command.workstream_id.to_string(),
+        contract,
+    )
+    .await?
+    {
+        return Err(PgError::BindingInvalid);
     }
     let (covered, dependencies) = crate::review::required_dependencies_covered(
         tx,

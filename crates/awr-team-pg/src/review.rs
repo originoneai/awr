@@ -710,6 +710,25 @@ impl ReviewStore {
         let (binding_valid, dependency_links) =
             required_dependencies_covered(&tx, tenant_id, project_id, work_id, scope_id, &contract)
                 .await?;
+        if binding_valid
+            && dependency_policy(&contract)?
+                .1
+                .values()
+                .any(|mode| matches!(mode, awr_team::DependencyAcceptanceMode::CrossWorkstream(_)))
+        {
+            let parsed =
+                serde_json::from_value(contract.clone()).map_err(|_| PgError::SourceDivergence)?;
+            crate::cross_workstream_adoption::require_execution_inputs(
+                &tx,
+                tenant_id,
+                project_id,
+                work_id,
+                &parsed,
+                evidence.execution_id.as_deref(),
+                &dependency_links,
+            )
+            .await?;
+        }
         let pinned_round: Option<String> = tx
             .query_opt(
                 "SELECT id FROM awr_team.review_rounds
@@ -1552,8 +1571,8 @@ async fn current_contract(
 /// contract must have a completion receipt for ITS current contract; the
 /// actual (upstream_work, receipt) pairs are returned for the completion
 /// mapping. An empty required set passes; "no invalid binding rows" is NOT
-/// proof of coverage (CR #42 P2-6). Agent review requires the consumer's V2
-/// contract to explicitly select that assurance basis for this predecessor.
+/// proof of coverage (CR #42 P2-6). Agent and simulated-member review require
+/// an explicit versioned assurance basis on each required predecessor.
 pub(crate) async fn required_dependencies_covered(
     tx: &tokio_postgres::Transaction<'_>,
     tenant_id: &str,
@@ -1576,9 +1595,34 @@ pub(crate) async fn required_dependencies_covered(
     let (required, modes) = dependency_policy(contract)?;
     let mut links = Vec::new();
     for upstream in &required {
+        if let Some(awr_team::DependencyAcceptanceMode::CrossWorkstream(policy)) =
+            modes.get(upstream)
+        {
+            if scope_id != "main" {
+                return Ok((false, vec![]));
+            }
+            let snapshot: String = tx
+                .query_one(
+                    "SELECT active_snapshot_id FROM awr_team.projects WHERE tenant_id=$1 AND id=$2",
+                    &[&tenant_id, &project_id],
+                )
+                .await?
+                .get(0);
+            match crate::cross_workstream_adoption::adopted_receipt(
+                tx, tenant_id, project_id, &snapshot, work_id, upstream, *policy,
+            )
+            .await?
+            {
+                Some(receipt) => links.push((upstream.clone(), receipt)),
+                None => return Ok((false, vec![])),
+            }
+            continue;
+        }
         let receipt = tx
             .query_opt(
-                "SELECT r.id,r.independence_kind,r.policy,r.approved_by_json
+                "SELECT r.id,r.independence_kind,r.policy,r.approved_by_json,
+                    r.contract_hash,r.evidence_id,p.active_snapshot_id,r.execution_id,
+                    e.execution_id,r.evidence_bundle_hash,e.digest,r.result_digest
                  FROM awr_team.completion_receipts r
                  JOIN awr_team.work_runtime w
                    ON w.tenant_id=r.tenant_id AND w.project_id=r.project_id
@@ -1591,6 +1635,10 @@ pub(crate) async fn required_dependencies_covered(
                  JOIN awr_team.projects p
                    ON p.tenant_id=c.tenant_id AND p.id=c.project_id
                   AND p.active_snapshot_id=c.snapshot_id
+                 LEFT JOIN awr_team.evidence e
+                   ON e.tenant_id=r.tenant_id AND e.project_id=r.project_id
+                  AND e.id=r.evidence_id AND e.work_id=r.work_id
+                  AND e.contract_hash=r.contract_hash
                  WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.work_id=$3
                    AND r.scope_id=$4",
                 &[&tenant_id, &project_id, upstream, &scope_id],
@@ -1599,13 +1647,23 @@ pub(crate) async fn required_dependencies_covered(
         match receipt {
             Some(row) => {
                 let kind: Option<String> = row.get(1);
+                let mode = modes.get(upstream).copied();
+                let basis: Value = row.get(3);
                 let accepted = dependency_receipt_accepted(
-                    modes.get(upstream).copied(),
+                    mode,
                     kind.as_deref(),
                     &row.get::<_, String>(2),
-                    &row.get::<_, Value>(3),
+                    &basis,
                 );
                 if !accepted {
+                    return Ok((false, vec![]));
+                }
+                if mode == Some(awr_team::DependencyAcceptanceMode::SimulatedMemberIndependent)
+                    && !simulated_dependency_verified(
+                        tx, tenant_id, project_id, upstream, &row, &basis,
+                    )
+                    .await?
+                {
                     return Ok((false, vec![]));
                 }
                 links.push((upstream.clone(), row.get(0)));
@@ -1614,6 +1672,61 @@ pub(crate) async fn required_dependencies_covered(
         }
     }
     Ok((true, links))
+}
+
+pub(crate) async fn simulated_dependency_verified(
+    tx: &tokio_postgres::Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    upstream: &str,
+    receipt: &tokio_postgres::Row,
+    basis: &Value,
+) -> PgResult<bool> {
+    let (Some(round), Some(decision), Some(evidence)) = (
+        basis["review_round_id"].as_str(),
+        basis["review_decision_id"].as_str(),
+        receipt.get::<_, Option<String>>(5),
+    ) else {
+        return Ok(false);
+    };
+    let execution: Option<String> = receipt.get(7);
+    let original_execution: Option<String> = receipt.get(8);
+    let original_digest: Option<String> = receipt.get(10);
+    let evidence_digest: String = receipt.get(9);
+    if execution.is_none()
+        || execution != original_execution
+        || original_digest.as_deref() != Some(evidence_digest.as_str())
+        || receipt.get::<_, String>(11) != evidence_digest
+    {
+        return Ok(false);
+    }
+    let contract_hash: String = receipt.get(4);
+    let snapshot: String = receipt.get(6);
+    let actual = simulated_member::verify_completion(
+        tx,
+        tenant,
+        project,
+        simulated_member::CompletionBind {
+            work: upstream,
+            contract_hash: &contract_hash,
+            evidence: &evidence,
+            round,
+            decision,
+            snapshot: &snapshot,
+        },
+    )
+    .await;
+    match actual {
+        Ok(actual) => Ok(basis["member_review_basis"] == actual),
+        Err(
+            PgError::ReviewRequired
+            | PgError::EvidenceInvalid
+            | PgError::AuthorCannotReview
+            | PgError::Forbidden,
+        ) => Ok(false),
+        // A failed database read is not an ordinary waiting dependency.
+        Err(error) => Err(error),
+    }
 }
 
 fn dependency_policy(
@@ -1652,14 +1765,18 @@ fn dependency_policy(
     ))
 }
 
-fn dependency_receipt_accepted(
+pub(crate) fn dependency_receipt_accepted(
     mode: Option<awr_team::DependencyAcceptanceMode>,
     kind: Option<&str>,
     policy: &str,
     basis: &Value,
 ) -> bool {
     match mode {
-        None => kind != Some("agent_review"),
+        None => {
+            !matches!(kind, Some("agent_review" | "simulated_member_independent"))
+                && policy != simulated_member::POLICY
+                && basis["approval_basis"] != simulated_member::APPROVAL_BASIS
+        }
         Some(awr_team::DependencyAcceptanceMode::AgentReviewedCallerAssertedReconciled) => {
             kind == Some("agent_review")
                 && policy == AGENT_REVIEW_POLICY
@@ -1668,12 +1785,68 @@ fn dependency_receipt_accepted(
                 && basis["human_approval"] == false
                 && basis["team_independent_acceptance"] == false
         }
+        Some(awr_team::DependencyAcceptanceMode::SimulatedMemberIndependent) => {
+            kind == Some(simulated_member::INDEPENDENCE)
+                && policy == simulated_member::POLICY
+                && basis["approval_basis"] == simulated_member::APPROVAL_BASIS
+                && matches!(
+                    basis["execution_basis"].as_str(),
+                    Some("caller_asserted_reconciled" | "caller_asserted_workspace_settled")
+                )
+                && basis["human_approval"] == false
+                && basis["team_independent_acceptance"] == false
+        }
+        // A declared cross-stream edge needs an authenticated, version-bound
+        // export adoption. This same-stream receipt shortcut cannot grant it.
+        Some(awr_team::DependencyAcceptanceMode::CrossWorkstream(_)) => false,
     }
 }
 
 #[cfg(test)]
 mod dependency_policy_tests {
     use super::*;
+    #[test]
+    fn cross_stream_declaration_cannot_use_the_same_stream_receipt_shortcut() {
+        for review_assurance in [
+            awr_team::CrossWorkstreamReviewAssurance::TeamIndependent,
+            awr_team::CrossWorkstreamReviewAssurance::SimulatedMemberIndependent,
+        ] {
+            for version_policy in [
+                awr_core::DeliveryVersionPolicy::FixedDelivery,
+                awr_core::DeliveryVersionPolicy::CurrentContract,
+            ] {
+                let mode = Some(awr_team::DependencyAcceptanceMode::CrossWorkstream(
+                    awr_team::CrossWorkstreamDependencyPolicy {
+                        review_assurance,
+                        version_policy,
+                    },
+                ));
+                for kind in [
+                    None,
+                    Some("team_independent"),
+                    Some("agent_review"),
+                    Some(simulated_member::INDEPENDENCE),
+                ] {
+                    for policy in [
+                        "independent_review",
+                        AGENT_REVIEW_POLICY,
+                        simulated_member::POLICY,
+                    ] {
+                        for basis in [
+                            json!({}),
+                            json!({
+                                "approval_basis":simulated_member::APPROVAL_BASIS,
+                                "execution_basis":"caller_asserted_workspace_settled",
+                                "human_approval":false,"team_independent_acceptance":false
+                            }),
+                        ] {
+                            assert!(!dependency_receipt_accepted(mode, kind, policy, &basis));
+                        }
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn reconciled_only_dependency_mode_refuses_workspace_settlement_basis() {
         let basis = json!({"approval_basis":"agent_review","execution_basis":"caller_asserted_workspace_settled",
@@ -1745,6 +1918,82 @@ mod dependency_policy_tests {
         );
         contract["unrecognized_field"] = json!(true);
         assert!(dependency_policy(&contract).is_err());
+    }
+
+    #[test]
+    fn simulated_dependency_metadata_requires_opt_in_without_human_uplift() {
+        let mode = Some(awr_team::DependencyAcceptanceMode::SimulatedMemberIndependent);
+        for execution in [
+            "caller_asserted_reconciled",
+            "caller_asserted_workspace_settled",
+        ] {
+            let basis = json!({"approval_basis":simulated_member::APPROVAL_BASIS,
+                "execution_basis":execution,"human_approval":false,"team_independent_acceptance":false});
+            assert!(dependency_receipt_accepted(
+                mode,
+                Some(simulated_member::INDEPENDENCE),
+                simulated_member::POLICY,
+                &basis
+            ));
+            assert!(!dependency_receipt_accepted(
+                None,
+                Some(simulated_member::INDEPENDENCE),
+                simulated_member::POLICY,
+                &basis
+            ));
+            assert!(!dependency_receipt_accepted(
+                Some(awr_team::DependencyAcceptanceMode::AgentReviewedCallerAssertedReconciled),
+                Some(simulated_member::INDEPENDENCE),
+                simulated_member::POLICY,
+                &basis
+            ));
+            for field in ["human_approval", "team_independent_acceptance"] {
+                for value in [json!(true), Value::Null] {
+                    let mut changed = basis.clone();
+                    changed[field] = value;
+                    assert!(!dependency_receipt_accepted(
+                        mode,
+                        Some(simulated_member::INDEPENDENCE),
+                        simulated_member::POLICY,
+                        &changed
+                    ));
+                }
+            }
+            let mut changed = basis.clone();
+            changed["execution_basis"] = json!("server_attested");
+            assert!(!dependency_receipt_accepted(
+                mode,
+                Some(simulated_member::INDEPENDENCE),
+                simulated_member::POLICY,
+                &changed
+            ));
+            for kind in [None, Some("agent_review"), Some("team_independent")] {
+                assert!(!dependency_receipt_accepted(
+                    None,
+                    kind,
+                    simulated_member::POLICY,
+                    &basis
+                ));
+                assert!(!dependency_receipt_accepted(
+                    None,
+                    kind,
+                    "ordinary_confirm",
+                    &basis
+                ));
+                assert!(!dependency_receipt_accepted(
+                    mode,
+                    kind,
+                    simulated_member::POLICY,
+                    &basis
+                ));
+            }
+            assert!(!dependency_receipt_accepted(
+                mode,
+                Some(simulated_member::INDEPENDENCE),
+                AGENT_REVIEW_POLICY,
+                &basis
+            ));
+        }
     }
 
     #[test]

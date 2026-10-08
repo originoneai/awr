@@ -305,7 +305,8 @@ async fn planning_draft_create_via_mcp_uses_business_entrypoint() {
 )]
 async fn reviewed_workspace_declarations_publish_through_authenticated_mcp_to_work_prepare() {
     use awr_team::{
-        ExecutionSettlementMode, ExecutionSettlementPolicy as Policy, PLANNING_CODEC_V4,
+        DependencyAcceptanceMode as Mode, ExecutionSettlementMode,
+        ExecutionSettlementPolicy as Policy, PLANNING_CODEC_V4, PLANNING_CODEC_V5, WorkContract,
     };
     let (_g, admin, _db, store) = setup().await;
     enable_writes(&admin).await;
@@ -363,6 +364,20 @@ async fn reviewed_workspace_declarations_publish_through_authenticated_mcp_to_wo
             .as_array()
             .unwrap()
             .contains(&json!(PLANNING_CODEC_V4))
+    );
+    assert!(
+        caps["planning"]["supported_candidate_codecs"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(PLANNING_CODEC_V5))
+    );
+    assert_eq!(
+        caps["simulated_member_review"]["dependency_acceptance_mode"],
+        "simulated_member_independent"
+    );
+    assert_eq!(
+        caps["simulated_member_review"]["cross_workstream_adoption_supported"],
+        true
     );
     assert_eq!(
         caps["planning"]["execution_settlement"]["declaration_only"],
@@ -528,8 +543,849 @@ async fn reviewed_workspace_declarations_publish_through_authenticated_mcp_to_wo
             );
         }
     }
+    let mut dependent = draft("DEPENDENT-1");
+    dependent.workstream = Some("alpha".into());
+    dependent.definition_state = DraftDefinitionState::Enabled;
+    dependent.hard_rules = Some(vec!["Preserve recorded history".into()]);
+    dependent.verification_requirements = Some(vec!["Verify the integrated artifact".into()]);
+    dependent.required_dependencies = vec!["SIMULATED-1".into()];
+    dependent.dependency_acceptance = Some(std::collections::BTreeMap::from([(
+        "SIMULATED-1".into(),
+        Mode::SimulatedMemberIndependent,
+    )]));
+    let mut omitted = dependent.clone();
+    omitted.dependency_acceptance = None;
+    let mut renamed = omitted.clone();
+    renamed.title = "Retain the reviewed input".into();
+    let mut replacement = dependent.clone();
+    replacement.dependency_acceptance.as_mut().unwrap().insert(
+        "SIMULATED-1".into(),
+        Mode::AgentReviewedCallerAssertedReconciled,
+    );
+    for (index, change, mode) in [
+        (
+            0,
+            DraftChange {
+                op: DraftOpKind::CreateTask,
+                before: None,
+                after: dependent.clone(),
+            },
+            Mode::SimulatedMemberIndependent,
+        ),
+        (
+            1,
+            DraftChange {
+                op: DraftOpKind::EditFields,
+                before: Some(omitted),
+                after: renamed,
+            },
+            Mode::SimulatedMemberIndependent,
+        ),
+        (
+            2,
+            DraftChange {
+                op: DraftOpKind::EditFields,
+                before: Some(dependent),
+                after: replacement,
+            },
+            Mode::AgentReviewedCallerAssertedReconciled,
+        ),
+    ] {
+        let created = call(&client, "awr_team_planning_draft", json!({
+            "protocol_version":1,"request_id":format!("dependency-{index}-draft"),"mode":"create",
+            "changes":[change],"allowed_spec_roots":["specs"],"project_goal_keys":["delivery"],
+            "self_approve_policy":OrdinaryPlanningSelfApprovePolicy::ordinary_default(),
+        }), false).await;
+        let candidate = &created["result"]["candidate_id"];
+        let digest = &created["result"]["candidate_digest"];
+        let preview = call(
+            &client,
+            "awr_team_planning_preview",
+            json!({
+                "protocol_version":1,"candidate_id":candidate,
+            }),
+            false,
+        )
+        .await;
+        let policy_diff = preview["diff"]["field_diffs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["field"] == "dependency_acceptance");
+        assert_eq!(policy_diff, index != 1);
+        if policy_diff {
+            assert!(
+                preview["diff"]["review_requirements"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("explicit_dependency_assurance_review"))
+            );
+        }
+        call(
+            &client,
+            "awr_team_planning_approve",
+            json!({
+                "protocol_version":1,"request_id":format!("dependency-{index}-approve"),
+                "candidate_id":candidate,"candidate_digest":digest,
+            }),
+            false,
+        )
+        .await;
+        call(&client, "awr_team_planning_publish", json!({
+            "protocol_version":1,"request_id":format!("dependency-{index}-publish"),
+            "candidate_id":candidate,"candidate_digest":digest,"activate":true,"impact_proven":true,
+        }), false).await;
+        let prepared = call(
+            &client,
+            "awr_team_query",
+            json!({
+                "protocol_version":1,"op":"work.prepare","work_id":"DEPENDENT-1",
+            }),
+            false,
+        )
+        .await;
+        assert_eq!(prepared["data"]["context_complete"], true);
+        assert_eq!(
+            prepared["data"]["published_contract"]["dependency_acceptance"]["SIMULATED-1"],
+            json!(mode)
+        );
+        assert_eq!(
+            prepared["data"]["published_contract"]["completion_policy"],
+            "independent_review"
+        );
+        assert_eq!(
+            prepared["data"]["published_contract"]["codec"],
+            if mode == Mode::SimulatedMemberIndependent {
+                WorkContract::CODEC_V5
+            } else {
+                WorkContract::CODEC_V2
+            }
+        );
+        let written = awr_source::prepare_publish_from_server_directory(
+            &root,
+            "ledger.yaml",
+            PROJECT,
+            &Default::default(),
+        )
+        .unwrap()
+        .bundle()
+        .unwrap();
+        let contract = &written
+            .contracts
+            .iter()
+            .find(|w| w.contract.external_key == "DEPENDENT-1")
+            .unwrap()
+            .contract;
+        assert_eq!(contract.dependency_acceptance["SIMULATED-1"], mode);
+    }
     client.cancel().await.unwrap();
     std::fs::remove_dir_all(root).unwrap();
+}
+
+async fn member_command(
+    client: &Client,
+    work: &str,
+    request: &str,
+    op: &str,
+    args: Value,
+    error: bool,
+) -> Value {
+    let prepared = call(
+        client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.prepare","work_id":work}),
+        false,
+    )
+    .await;
+    call(
+        client,
+        "awr_team_command",
+        serde_json::to_value(command(&prepared, request, op, args)).unwrap(),
+        error,
+    )
+    .await
+}
+
+#[tokio::test]
+#[expect(
+    clippy::await_holding_lock,
+    reason = "The guard serializes the shared PostgreSQL fixture for this entire async test."
+)]
+async fn simulated_dependency_supports_complete_ordinary_member_mcp_workflow() {
+    ordinary_member_mcp_workflow(ConsumerWorkflow::SameStream).await;
+}
+
+#[tokio::test]
+async fn approved_artifact_exports_work_over_authenticated_mcp_without_upstream_access() {
+    ordinary_member_mcp_workflow(ConsumerWorkflow::Disclosure).await;
+}
+
+#[tokio::test]
+async fn current_cross_stream_adoption_supports_complete_pool_member_mcp_workflow() {
+    ordinary_member_mcp_workflow(ConsumerWorkflow::PoolAdoption).await;
+}
+
+#[tokio::test]
+async fn current_cross_stream_adoption_supports_complete_assigned_member_mcp_workflow() {
+    ordinary_member_mcp_workflow(ConsumerWorkflow::AssignedAdoption).await;
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConsumerWorkflow {
+    SameStream,
+    Disclosure,
+    PoolAdoption,
+    AssignedAdoption,
+}
+
+#[expect(
+    clippy::await_holding_lock,
+    reason = "Serial isolated PostgreSQL fixture"
+)]
+async fn ordinary_member_mcp_workflow(mode: ConsumerWorkflow) {
+    let disclose = mode != ConsumerWorkflow::SameStream;
+    let adopt = matches!(
+        mode,
+        ConsumerWorkflow::PoolAdoption | ConsumerWorkflow::AssignedAdoption
+    );
+    const CONSUMER_AGENT: &str =
+        "awr1.consumer-agent.cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    use awr_core::{
+        AgentAuthorization, AuthorizationScope, AuthorizationStatus, AuthorizedAction,
+        ExecutionSubjectKind, IssueAuthorizationRequest, PersonId,
+    };
+    use awr_team::{
+        DependencyAcceptanceMode, ExecutionSettlementMode, ExecutionSettlementPolicy, WorkContract,
+    };
+    use awr_team_pg::AuthorizationStore;
+    use std::collections::BTreeSet;
+
+    let (_g, admin, db, store) = setup().await;
+    // Provision distinct simulated members before starting the loopback service.
+    // Subsequent workflow mutations use authenticated MCP, never direct SQL.
+    admin.batch_execute(r#"UPDATE awr_team.actors SET kind='agent' WHERE id IN ('agent','reviewer');
+        UPDATE awr_team.project_memberships SET role='developer',agent_review=true,membership_version=membership_version+1;
+        INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status) VALUES
+          ('reader-tenant','member-author','agent','Author member','active'),
+          ('reader-tenant','member-reviewer','agent','Reviewer member','active'),
+          ('reader-tenant','supervisor','human','Supervisor','active');
+        INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role) VALUES
+          ('reader-tenant','reader-project','member-author','developer'),
+          ('reader-tenant','reader-project','member-reviewer','developer'),
+          ('reader-tenant','reader-project','supervisor','admin');
+        INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status,member_identity) VALUES
+          ('reader-tenant','reader-project','member-author','Author','active','{"kind":"simulated_member","controller_ref":"one-controller"}'),
+          ('reader-tenant','reader-project','member-reviewer','Reviewer','active','{"kind":"simulated_member","controller_ref":"one-controller"}'),
+          ('reader-tenant','reader-project','supervisor','Supervisor','active',NULL);
+        INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status) VALUES
+          ('reader-tenant','reader-project','author-binding','member-author','agent','active'),
+          ('reader-tenant','reader-project','reviewer-binding','member-reviewer','reviewer','active');
+        UPDATE awr_team.credentials SET actor_id='reviewer' WHERE client_id='cli-b';
+        UPDATE awr_team.credentials SET actor_id='supervisor' WHERE client_id='unscoped';
+        UPDATE awr_team.workstream_grants SET can_write=true WHERE client_id='cli-a';
+        UPDATE awr_team.workstream_grants SET actor_id='reviewer' WHERE client_id='cli-b';"#).await.unwrap();
+    let stream: String = admin
+        .query_one(
+            "SELECT workstream_id FROM awr_team.sessions WHERE id='session-a'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    for (actor, client) in [("reviewer", "cli-b"), ("supervisor", "unscoped")] {
+        admin.execute("INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,can_write)
+            VALUES($1,$2,$3,$4,$5,1,true,true)", &[&TENANT,&PROJECT,&actor,&client,&stream]).await.unwrap();
+    }
+    let authorizations =
+        AuthorizationStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let mut delegated_members = vec![
+        ("member-author", "agent", "cli-a", "author-binding"),
+        ("member-reviewer", "reviewer", "cli-b", "reviewer-binding"),
+    ];
+    if adopt {
+        admin.batch_execute("INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status) VALUES
+            ('reader-tenant','member-consumer','agent','Consumer member','active'),
+            ('reader-tenant','consumer-agent','agent','Consumer Agent','active');
+            INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role) VALUES
+            ('reader-tenant','reader-project','member-consumer','developer'),
+            ('reader-tenant','reader-project','consumer-agent','developer');
+            INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status,member_identity) VALUES
+            ('reader-tenant','reader-project','member-consumer','Consumer','active','{\"kind\":\"simulated_member\",\"controller_ref\":\"one-controller\"}');
+            INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status) VALUES
+            ('reader-tenant','reader-project','consumer-binding','member-consumer','consumer-agent','active');
+            UPDATE awr_team.project_memberships SET assignment_grant=true,membership_version=membership_version+1 WHERE actor_id='supervisor'").await.unwrap();
+        admin.execute("INSERT INTO awr_team.credentials(tenant_id,id,actor_id,client_id,secret_hash) VALUES($1,'consumer-agent','consumer-agent','consumer-cli',$2)",
+            &[&TENANT,&awr_team_pg::workstream_credential_hash(CONSUMER_AGENT).unwrap()]).await.unwrap();
+        for (actor, client) in [
+            ("consumer-agent", "consumer-cli"),
+            ("reviewer", "cli-b"),
+            ("supervisor", "unscoped"),
+        ] {
+            admin.execute("INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,can_write)
+                VALUES($1,$2,$3,$4,$5,1,true,true)
+                ON CONFLICT(tenant_id,project_id,actor_id,client_id,workstream_id)
+                DO UPDATE SET can_read=true,can_write=true,grant_version=awr_team.workstream_grants.grant_version+1",
+                &[&TENANT,&PROJECT,&actor,&client,&awr_core::Id::from(2).to_string()]).await.unwrap();
+        }
+        delegated_members.push((
+            "member-consumer",
+            "consumer-agent",
+            "consumer-cli",
+            "consumer-binding",
+        ));
+    }
+    for (member, actor, client, binding) in delegated_members {
+        authorizations
+            .issue(
+                TENANT,
+                PROJECT,
+                &IssueAuthorizationRequest {
+                    request_key: format!("issue-{member}"),
+                    authorization: AgentAuthorization {
+                        id: format!("grant-{member}"),
+                        authorizer_person_id: PersonId::new("supervisor").unwrap(),
+                        responsible_person_id: PersonId::new(member).unwrap(),
+                        subject_kind: ExecutionSubjectKind::Agent,
+                        subject_id: actor.into(),
+                        client_id: client.into(),
+                        session_id: None,
+                        model_id: None,
+                        scope: AuthorizationScope::Project {
+                            project_id: PROJECT.into(),
+                        },
+                        actions: BTreeSet::from([
+                            AuthorizedAction::Inspect,
+                            AuthorizedAction::StartWork,
+                            AuthorizedAction::ClaimCoordination,
+                            AuthorizedAction::Review,
+                        ]),
+                        expires_at_ms: None,
+                        status: AuthorizationStatus::Active,
+                        revoked_at_ms: None,
+                        revoked_by: None,
+                        verifiable_capabilities: vec![],
+                        self_reported_skill_hints: vec![],
+                        parent_authorization_id: None,
+                        maintainer_person_id: None,
+                        created_at_ms: 1000,
+                        binding_id: Some(binding.into()),
+                    },
+                },
+            )
+            .await
+            .unwrap();
+    }
+    for (work, dependency, scope) in [("a", None, "src/api"), ("c", Some("a"), "src/integration")] {
+        let mut contract: WorkContract = serde_json::from_value(
+            admin
+                .query_one(
+                    "SELECT contract_json FROM awr_team.work_contracts WHERE work_id=$1",
+                    &[&work],
+                )
+                .await
+                .unwrap()
+                .get(0),
+        )
+        .unwrap();
+        contract.codec = if dependency.is_some() {
+            WorkContract::CODEC_V5
+        } else {
+            WorkContract::CODEC_V4
+        }
+        .into();
+        contract.completion_policy =
+            ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY.into();
+        contract.execution_settlement = Some(ExecutionSettlementPolicy {
+            mode: ExecutionSettlementMode::IndependentWorkspaceV1,
+            workspace_id: format!("workspace-{work}"),
+        });
+        contract.scope_paths = vec![scope.into()];
+        contract.required_dependencies = dependency.into_iter().map(Into::into).collect();
+        contract.dependency_acceptance = dependency
+            .into_iter()
+            .map(|id| {
+                (
+                    id.into(),
+                    DependencyAcceptanceMode::SimulatedMemberIndependent,
+                )
+            })
+            .collect();
+        admin.execute("UPDATE awr_team.work_contracts SET contract_json=$1,contract_hash=$2 WHERE work_id=$3",
+            &[&json!(contract), &contract.hash().unwrap(), &work]).await.unwrap();
+    }
+    const EXPORT_READER: &str =
+        "awr1.export-reader.ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    if disclose {
+        admin.batch_execute("INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status) VALUES('reader-tenant','export-reader','human','Consumer','active');
+            INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role) VALUES('reader-tenant','reader-project','export-reader','reader')").await.unwrap();
+        let hash = awr_team_pg::workstream_credential_hash(EXPORT_READER).unwrap();
+        admin.execute("INSERT INTO awr_team.credentials(tenant_id,id,actor_id,client_id,secret_hash) VALUES($1,'export-reader','export-reader','export-reader-cli',$2)", &[&TENANT,&hash]).await.unwrap();
+        admin.execute("INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read) VALUES($1,$2,'export-reader','export-reader-cli',$3,1,true)", &[&TENANT,&PROJECT,&awr_core::Id::from(2).to_string()]).await.unwrap();
+        let mut consumer: WorkContract = serde_json::from_value(
+            admin
+                .query_one(
+                    "SELECT contract_json FROM awr_team.work_contracts WHERE work_id='b-private'",
+                    &[],
+                )
+                .await
+                .unwrap()
+                .get(0),
+        )
+        .unwrap();
+        consumer.codec = WorkContract::CODEC_V6.into();
+        consumer.required_dependencies = vec!["a".into()];
+        consumer.dependency_acceptance.insert(
+            "a".into(),
+            DependencyAcceptanceMode::CrossWorkstream(awr_team::CrossWorkstreamDependencyPolicy {
+                review_assurance:
+                    awr_team::CrossWorkstreamReviewAssurance::SimulatedMemberIndependent,
+                version_policy: awr_core::DeliveryVersionPolicy::CurrentContract,
+            }),
+        );
+        if adopt {
+            consumer.completion_policy =
+                ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY.into();
+            consumer.scope_paths = vec!["src/integration".into()];
+            consumer.verification_requirements = vec!["Verify the integrated artifact".into()];
+            consumer.execution_settlement = Some(ExecutionSettlementPolicy {
+                mode: ExecutionSettlementMode::IndependentWorkspaceV1,
+                workspace_id: "workspace-b-private".into(),
+            });
+        }
+        admin.execute("UPDATE awr_team.work_contracts SET contract_json=$1,contract_hash=$2 WHERE work_id='b-private'",&[&json!(consumer),&consumer.hash().unwrap()]).await.unwrap();
+    }
+    let server = start(store).await;
+    let author = connect(&server, A).await;
+    let reviewer = connect(&server, B).await;
+    let supervisor = connect(&server, NONE).await;
+    let adoption_client = if adopt {
+        Some(connect(&server, CONSUMER_AGENT).await)
+    } else {
+        None
+    };
+    let cross_session = if let Some(client) = &adoption_client {
+        member_command(
+            client,
+            "b-private",
+            "cross-consumer-start",
+            "session.start",
+            json!({"conversation_id":"cross-consumer"}),
+            false,
+        )
+        .await["receipt"]["data"]["session_id"]
+            .clone()
+    } else {
+        Value::Null
+    };
+    let mut cross_claim = Value::Null;
+    let consumer_session = if disclose {
+        Value::Null
+    } else {
+        let consumer_session = member_command(
+            &author,
+            "c",
+            "consumer-start",
+            "session.start",
+            json!({"conversation_id":"consumer"}),
+            false,
+        )
+        .await["receipt"]["data"]["session_id"]
+            .clone();
+        let prepare = call(
+            &author,
+            "awr_team_query",
+            json!({"protocol_version":1,"op":"work.prepare","work_id":"c"}),
+            false,
+        )
+        .await;
+        let claim_args = json!({"session_id":consumer_session,"expected_session_version":"1",
+        "expected_responsibility_version":prepare["data"]["responsibility"]["version"],"expected_work_version":"0","ttl_seconds":600});
+        let next = call(
+            &author,
+            "awr_team_query",
+            json!({"protocol_version":1,"op":"work.next"}),
+            false,
+        )
+        .await;
+        assert_eq!(
+            next["data"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["work_id"] == "c")
+                .unwrap()["navigation"],
+            "waiting_dependency"
+        );
+        assert_eq!(
+            member_command(
+                &author,
+                "c",
+                "blocked-consumer",
+                "task.claim_available",
+                claim_args,
+                true
+            )
+            .await["code"],
+            "Unavailable"
+        );
+        consumer_session
+    };
+    let mut upstream = Value::Null;
+    let works = match mode {
+        ConsumerWorkflow::Disclosure => vec![("a", "src/api")],
+        ConsumerWorkflow::SameStream => vec![("a", "src/api"), ("c", "src/integration")],
+        _ => vec![("a", "src/api"), ("b-private", "src/integration")],
+    };
+    for (work, scope) in works {
+        let worker = if work == "b-private" {
+            adoption_client.as_ref().unwrap()
+        } else {
+            &author
+        };
+        use sha2::Digest;
+        let artifact = format!("Synthetic artifact {work}");
+        let output: String = sha2::Sha256::digest(artifact.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let session = if work == "c" {
+            consumer_session.clone()
+        } else if work == "b-private" {
+            cross_session.clone()
+        } else {
+            member_command(
+                worker,
+                work,
+                "author-start",
+                "session.start",
+                json!({"conversation_id":work}),
+                false,
+            )
+            .await["receipt"]["data"]["session_id"]
+                .clone()
+        };
+        let mut sessions = Vec::new();
+        for (client, suffix) in [(&reviewer, "reviewer"), (&supervisor, "supervisor")] {
+            sessions.push(
+                member_command(
+                    client,
+                    work,
+                    &format!("{work}-{suffix}-start"),
+                    "session.start",
+                    json!({"conversation_id":format!("{work}-{suffix}")}),
+                    false,
+                )
+                .await["receipt"]["data"]["session_id"]
+                    .clone(),
+            );
+        }
+        let p = call(
+            worker,
+            "awr_team_query",
+            json!({"protocol_version":1,"op":"work.prepare","work_id":work}),
+            false,
+        )
+        .await;
+        assert_eq!(p["data"]["context_complete"], true);
+        let claim = if work == "b-private" {
+            cross_claim.clone()
+        } else {
+            member_command(worker,work,&format!("{work}-claim"),"task.claim_available",json!({
+                "session_id":session,"expected_session_version":"1","expected_responsibility_version":p["data"]["responsibility"]["version"],
+                "expected_work_version":"0","ttl_seconds":600,
+            }),false).await["receipt"]["data"].clone()
+        };
+        assert_eq!(
+            claim["responsibility"]["owner"],
+            if work == "b-private" {
+                "member-consumer"
+            } else {
+                "member-author"
+            }
+        );
+        let p = call(
+            worker,
+            "awr_team_query",
+            json!({"protocol_version":1,"op":"work.prepare","work_id":work}),
+            false,
+        )
+        .await;
+        let intent = member_command(worker,work,&format!("{work}-intent"),"execution.prepare",json!({
+            "session_id":session,"expected_session_version":"1","claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+            "expected_lease_version":claim["lease_version"],"expected_work_version":p["data"]["runtime"]["work_version"],
+            "input_digest":"a".repeat(64),"declared_scope":[scope],
+        }),false).await["receipt"]["data"].clone();
+        let p = call(
+            worker,
+            "awr_team_query",
+            json!({"protocol_version":1,"op":"work.prepare","work_id":work}),
+            false,
+        )
+        .await;
+        let started = member_command(worker,work,&format!("{work}-execute"),"execution.start",json!({
+            "session_id":session,"expected_session_version":"1","claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+            "expected_lease_version":claim["lease_version"],"expected_work_version":p["data"]["runtime"]["work_version"],
+            "execution_id":intent["execution_id"],"expected_execution_version":intent["execution_version"],"execution_mode":"caller_managed",
+        }),false).await["receipt"]["data"].clone();
+        let reported = member_command(worker,work,&format!("{work}-report"),"execution.report",json!({
+            "session_id":session,"expected_session_version":"1","execution_id":intent["execution_id"],
+            "expected_execution_version":started["execution_version"],"outcome":"succeeded","output_digest":output,
+            "observed_paths":[format!("{scope}/result.json")],"note":"Observed the synthetic artifact",
+            "workspace_settlement":{"workspace_id":format!("workspace-{work}"),"input_digest":"a".repeat(64),"environment_digest":"c".repeat(64),
+                "claim_id":claim["claim_id"],"expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
+                "executor_stopped":true,"no_external_effects":true},
+        }),false).await["receipt"]["data"].clone();
+        assert_eq!(reported["state"], "succeeded");
+        let evidence = member_command(worker,work,&format!("{work}-evidence"),"evidence.submit",json!({
+            "session_id":session,"expected_session_version":"1","execution_id":intent["execution_id"],"input_digest":"a".repeat(64),
+            "dirty_tree":false,"artifact_text":artifact,"payload":{"passed":true,"output_digest":output},
+        }),false).await["receipt"]["data"].clone();
+        let round = member_command(&supervisor,work,&format!("{work}-open"),"review.open",json!({
+            "session_id":sessions[1],"expected_session_version":"1","evidence_id":evidence["evidence_id"],
+        }),false).await["receipt"]["data"].clone();
+        member_command(&reviewer,work,&format!("{work}-review"),"review.decide",json!({
+            "session_id":sessions[0],"expected_session_version":"1","round_id":round["round_id"],
+            "decision":"approve","reason":"Reviewed the exact synthetic artifact",
+        }),false).await;
+        let finalized = member_command(&supervisor,work,&format!("{work}-finalize"),"delivery.finalize",json!({
+            "session_id":sessions[1],"expected_session_version":"1","evidence_id":evidence["evidence_id"],"context_complete":true,
+        }),false).await["receipt"]["data"].clone();
+        assert_eq!(
+            finalized["independence_kind"],
+            "simulated_member_independent"
+        );
+        assert_eq!(finalized["human_approval"], false);
+        assert_eq!(finalized["team_independent_acceptance"], false);
+        assert_eq!(
+            finalized["execution_basis"],
+            "caller_asserted_workspace_settled"
+        );
+        if disclose && work == "a" {
+            let consumer = connect(&server, EXPORT_READER).await;
+            let caps = call(
+                &consumer,
+                "awr_team_query",
+                json!({"protocol_version":1,"op":"capabilities"}),
+                false,
+            )
+            .await;
+            assert_eq!(
+                caps["approved_artifact_exports"]["adoption_available"],
+                true
+            );
+            let tools = consumer.list_all_tools().await.unwrap();
+            assert_eq!(
+                tools
+                    .iter()
+                    .find(|t| t.name == "awr_team_query")
+                    .unwrap()
+                    .input_schema["properties"]["export_id"]["type"],
+                "string"
+            );
+            let cp = call(
+                &consumer,
+                "awr_team_query",
+                json!({"protocol_version":1,"op":"work.prepare","work_id":"b-private"}),
+                false,
+            )
+            .await;
+            let publish_args = json!({"session_id":sessions[1],"expected_session_version":"1","consumer_work_id":"b-private",
+                "expected_consumer_contract_hash":cp["data"]["contract_hash"],"expected_consumer_ownership_version":cp["data"]["ownership_version"],
+                "receipt_id":finalized["receipt_id"],"expected_artifact_sha256":evidence["artifact_digest"]});
+            let mut author_args = publish_args.clone();
+            author_args["session_id"] = session.clone();
+            assert_eq!(
+                member_command(
+                    worker,
+                    "a",
+                    "export-no-finalize-delegation",
+                    "delivery.export.publish",
+                    author_args,
+                    true
+                )
+                .await["code"],
+                "Forbidden"
+            );
+            let p = call(
+                &supervisor,
+                "awr_team_query",
+                json!({"protocol_version":1,"op":"work.prepare","work_id":"a"}),
+                false,
+            )
+            .await;
+            let request = serde_json::to_value(command(
+                &p,
+                "publish-approved-artifact",
+                "delivery.export.publish",
+                publish_args,
+            ))
+            .unwrap();
+            let exported = call(&supervisor, "awr_team_command", request.clone(), false).await;
+            let found = call(
+                &consumer,
+                "awr_team_query",
+                json!({"protocol_version":1,"op":"delivery.exports","work_id":"b-private"}),
+                false,
+            )
+            .await;
+            assert_eq!(found["data"]["items"][0]["available"], true);
+            assert_eq!(found["data"]["items"][0]["review"]["human_approval"], false);
+            let args = json!({"protocol_version":1,"op":"artifact.content","work_id":"b-private",
+                "export_id":exported["receipt"]["data"]["export_id"],"expected_sha256":evidence["artifact_digest"]});
+            let result = call(&consumer, "awr_team_query", args.clone(), false).await;
+            assert_eq!(result["data"]["text"], artifact);
+            assert_eq!(result["data"]["execution_authorized"], false);
+            for key in ["member_origins_json", "open_loops", "session_id"] {
+                assert!(!result["data"].to_string().contains(key));
+            }
+            assert_eq!(
+                call(
+                    &consumer,
+                    "awr_team_query",
+                    json!({"protocol_version":1,"op":"work.snapshot","work_id":"a"}),
+                    true
+                )
+                .await["code"],
+                "Forbidden"
+            );
+            assert_eq!(call(&consumer,"awr_team_query",json!({"protocol_version":1,"op":"artifact.content","work_id":"b-private","artifact_id":evidence["artifact_id"]}),true).await["code"],"Forbidden");
+            let observed=call(&supervisor,"awr_team_query",json!({"protocol_version":1,"op":"command.inspect","work_id":"a","request_id":"publish-approved-artifact"}),false).await;
+            assert_eq!(observed["data"]["state"], "committed");
+            assert_eq!(observed["data"]["receipt"], exported["receipt"]);
+            if let Some(client) = &adoption_client {
+                let assigned = mode == ConsumerWorkflow::AssignedAdoption;
+                let mut p = call(
+                    client,
+                    "awr_team_query",
+                    json!({"protocol_version":1,"op":"work.prepare","work_id":"b-private"}),
+                    false,
+                )
+                .await;
+                if assigned {
+                    member_command(&supervisor,"b-private","cross-dispatch","task.assign",json!({
+                        "assignee_person_id":"member-consumer","expected_responsibility_version":p["data"]["responsibility"]["version"],
+                    }),false).await;
+                    p = call(
+                        client,
+                        "awr_team_query",
+                        json!({"protocol_version":1,"op":"work.prepare","work_id":"b-private"}),
+                        false,
+                    )
+                    .await;
+                }
+                let mut take = json!({"session_id":cross_session,"expected_session_version":"1",
+                    "expected_responsibility_version":p["data"]["responsibility"]["version"],"expected_work_version":"0","ttl_seconds":600});
+                let op = if assigned {
+                    take["assignment_request_key"] =
+                        p["data"]["responsibility"]["pending"]["transfer_request_key"].clone();
+                    "task.accept_assignment"
+                } else {
+                    "task.claim_available"
+                };
+                assert_eq!(
+                    member_command(
+                        client,
+                        "b-private",
+                        "cross-blocked-take",
+                        op,
+                        take.clone(),
+                        true
+                    )
+                    .await["code"],
+                    "Unavailable"
+                );
+                let adopt_args = json!({"session_id":cross_session,"expected_session_version":"1",
+                    "expected_responsibility_version":p["data"]["responsibility"]["version"],
+                    "export_id":exported["receipt"]["data"]["export_id"],"expected_export_version":exported["receipt"]["data"]["export_version"],
+                    "expected_disclosure_sha256":exported["receipt"]["data"]["disclosure_sha256"],
+                    "expected_adoption_version":p["data"]["adopted_dependencies"][0]["adoption_version"]});
+                assert_eq!(
+                    member_command(
+                        &consumer,
+                        "b-private",
+                        "reader-cannot-adopt",
+                        "delivery.adopt",
+                        adopt_args.clone(),
+                        true
+                    )
+                    .await["code"],
+                    "Forbidden"
+                );
+                let request = serde_json::to_value(command(
+                    &p,
+                    "adopt-current-artifact",
+                    "delivery.adopt",
+                    adopt_args,
+                ))
+                .unwrap();
+                let adopted = call(client, "awr_team_command", request.clone(), false).await;
+                assert_eq!(adopted["receipt"]["data"]["adopted"], true);
+                assert_eq!(adopted["execution_authorized"], false);
+                let inspected = call(client,"awr_team_query",json!({"protocol_version":1,"op":"command.inspect","work_id":"b-private","request_id":"adopt-current-artifact"}),false).await;
+                assert_eq!(inspected["data"]["receipt"], adopted["receipt"]);
+                let replay = call(client, "awr_team_command", request, false).await;
+                assert_eq!(replay["receipt"], adopted["receipt"]);
+                assert_eq!(replay["execution_authorized"], false);
+                let ready = call(
+                    client,
+                    "awr_team_query",
+                    json!({"protocol_version":1,"op":"work.prepare","work_id":"b-private"}),
+                    false,
+                )
+                .await;
+                assert_eq!(ready["data"]["context_complete"], true);
+                assert_eq!(
+                    ready["data"]["adopted_dependencies"][0]["receipt_id"],
+                    finalized["receipt_id"]
+                );
+                assert_eq!(
+                    call(client, "awr_team_query", args.clone(), false).await["data"]["adopted"],
+                    true
+                );
+                assert_eq!(
+                    call(
+                        client,
+                        "awr_team_query",
+                        json!({"protocol_version":1,"op":"work.snapshot","work_id":"a"}),
+                        true
+                    )
+                    .await["code"],
+                    "Forbidden"
+                );
+                cross_claim = member_command(client, "b-private", "cross-take", op, take, false)
+                    .await["receipt"]["data"]
+                    .clone();
+            }
+            if !adopt {
+                let revoke=member_command(&supervisor,"a","revoke-approved-artifact","delivery.export.revoke",json!({"session_id":sessions[1],"expected_session_version":"1",
+                "export_id":exported["receipt"]["data"]["export_id"],"expected_export_version":"1"}),false).await;
+                assert_eq!(revoke["receipt"]["data"]["status"], "revoked");
+                let replay = call(&supervisor, "awr_team_command", request, false).await;
+                assert_eq!(replay["receipt"], exported["receipt"]);
+                assert_eq!(replay["execution_authorized"], false);
+                assert_eq!(
+                    call(&consumer, "awr_team_query", args, true).await["code"],
+                    "Forbidden"
+                );
+            }
+            consumer.cancel().await.unwrap();
+        }
+        if work == "a" {
+            upstream = finalized["receipt_id"].clone();
+        } else {
+            let links = admin.query("SELECT predecessor_work_id,predecessor_completion_id FROM awr_team.completion_dependencies WHERE completion_id=$1",
+                &[&finalized["receipt_id"].as_str().unwrap()]).await.unwrap();
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].get::<_, String>(0), "a");
+            assert_eq!(links[0].get::<_, String>(1), upstream.as_str().unwrap());
+        }
+    }
+    if let Some(client) = adoption_client {
+        client.cancel().await.unwrap();
+    }
+    author.cancel().await.unwrap();
+    reviewer.cancel().await.unwrap();
+    supervisor.cancel().await.unwrap();
 }
 
 #[tokio::test]

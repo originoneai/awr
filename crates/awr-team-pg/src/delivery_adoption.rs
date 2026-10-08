@@ -1,6 +1,6 @@
 //! Team PG persistence for versioned delivery dependencies and adoption credentials (WS-030).
 use crate::error::{PgError, PgResult};
-use crate::tx::{bind_workstream_scope, new_id};
+use crate::tx::{bind_workstream_scope, lock_active_project, new_id};
 use awr_core::{
     AdoptDeliveryRequest, AdoptionCredential, CompletionAcceptanceProof, DeliveryAvailability,
     DeliveryCredentialReceipt, DeliveryError, DeliveryVersion, EvidenceLevel, ExportAuthorization,
@@ -9,7 +9,8 @@ use awr_core::{
     adopt_delivery_credential as core_adopt_delivery_credential, apply_export_revoke,
     apply_hard_dependency_revoke, validate_export_grant, validate_hard_dependency_registration,
 };
-use serde_json::Value;
+use serde::{Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
 use tokio_postgres::Transaction;
 
 fn map_delivery(err: DeliveryError) -> PgError {
@@ -95,33 +96,27 @@ impl DeliveryAdoptionStore {
         project: &str,
         req: &RegisterHardDependencyRequest,
     ) -> PgResult<(HardDeliveryDependency, DeliveryCredentialReceipt)> {
-        if project != req.provider.project_id || project != req.consumer.project_id {
-            return Err(PgError::Protocol(
-                "delivery dependency project must match tenant project".into(),
-            ));
-        }
+        let request_hash = request_digest(tenant, project, "register_dependency", req)?;
         let mut client = self.connect().await?;
         let tx = client.transaction().await?;
         bind_workstream_scope(&tx, tenant, project).await?;
-        if let Some(receipt) = load_receipt(
+        lock_active_project(&tx, tenant, project).await?;
+        if let Some(outcome) = load_receipt(
             &tx,
             tenant,
             project,
             &req.request_key,
             "register_dependency",
+            &request_hash,
         )
         .await?
         {
-            let dep = load_dep(&tx, tenant, project, &receipt.subject_id)
-                .await?
-                .ok_or_else(|| PgError::Protocol("dependency missing for receipt".into()))?;
             tx.commit().await?;
-            return Ok((
-                dep,
-                DeliveryCredentialReceipt {
-                    replayed: true,
-                    ..receipt
-                },
+            return Ok(outcome);
+        }
+        if project != req.provider.project_id || project != req.consumer.project_id {
+            return Err(PgError::Protocol(
+                "delivery dependency project must match tenant project".into(),
             ));
         }
         if load_dep(&tx, tenant, project, &req.dependency_id)
@@ -139,8 +134,9 @@ impl DeliveryAdoptionStore {
             tenant,
             project,
             &req.request_key,
-            &dep.id,
             "register_dependency",
+            &request_hash,
+            &dep,
         )
         .await?;
         tx.commit().await?;
@@ -153,23 +149,23 @@ impl DeliveryAdoptionStore {
         project: &str,
         req: &RevokeHardDependencyRequest,
     ) -> PgResult<(HardDeliveryDependency, DeliveryCredentialReceipt)> {
+        let request_hash = request_digest(tenant, project, "revoke_dependency", req)?;
         let mut client = self.connect().await?;
         let tx = client.transaction().await?;
         bind_workstream_scope(&tx, tenant, project).await?;
-        if let Some(receipt) =
-            load_receipt(&tx, tenant, project, &req.request_key, "revoke_dependency").await?
+        lock_active_project(&tx, tenant, project).await?;
+        if let Some(outcome) = load_receipt(
+            &tx,
+            tenant,
+            project,
+            &req.request_key,
+            "revoke_dependency",
+            &request_hash,
+        )
+        .await?
         {
-            let dep = load_dep(&tx, tenant, project, &receipt.subject_id)
-                .await?
-                .ok_or_else(|| PgError::Protocol("dependency missing for receipt".into()))?;
             tx.commit().await?;
-            return Ok((
-                dep,
-                DeliveryCredentialReceipt {
-                    replayed: true,
-                    ..receipt
-                },
-            ));
+            return Ok(outcome);
         }
         let current = load_dep(&tx, tenant, project, &req.dependency_id)
             .await?
@@ -181,8 +177,9 @@ impl DeliveryAdoptionStore {
             tenant,
             project,
             &req.request_key,
-            &dep.id,
             "revoke_dependency",
+            &request_hash,
+            &dep,
         )
         .await?;
         tx.commit().await?;
@@ -209,29 +206,27 @@ impl DeliveryAdoptionStore {
         project: &str,
         req: &GrantExportAuthorizationRequest,
     ) -> PgResult<(ExportAuthorization, DeliveryCredentialReceipt)> {
-        if project != req.project_id {
-            return Err(PgError::Protocol(
-                "export authorization project must match tenant project".into(),
-            ));
-        }
+        let request_hash = request_digest(tenant, project, "grant_export", req)?;
         let mut client = self.connect().await?;
         let tx = client.transaction().await?;
         bind_workstream_scope(&tx, tenant, project).await?;
-        if let Some(receipt) =
-            load_receipt(&tx, tenant, project, &req.request_key, "grant_export").await?
+        lock_active_project(&tx, tenant, project).await?;
+        if let Some(outcome) = load_receipt(
+            &tx,
+            tenant,
+            project,
+            &req.request_key,
+            "grant_export",
+            &request_hash,
+        )
+        .await?
         {
-            let auth = load_export(&tx, tenant, project, &receipt.subject_id)
-                .await?
-                .ok_or_else(|| {
-                    PgError::Protocol("export authorization missing for receipt".into())
-                })?;
             tx.commit().await?;
-            return Ok((
-                auth,
-                DeliveryCredentialReceipt {
-                    replayed: true,
-                    ..receipt
-                },
+            return Ok(outcome);
+        }
+        if project != req.project_id {
+            return Err(PgError::Protocol(
+                "export authorization project must match tenant project".into(),
             ));
         }
         if load_export(&tx, tenant, project, &req.authorization_id)
@@ -249,8 +244,9 @@ impl DeliveryAdoptionStore {
             tenant,
             project,
             &req.request_key,
-            &auth.id,
             "grant_export",
+            &request_hash,
+            &auth,
         )
         .await?;
         tx.commit().await?;
@@ -263,25 +259,23 @@ impl DeliveryAdoptionStore {
         project: &str,
         req: &RevokeExportAuthorizationRequest,
     ) -> PgResult<(ExportAuthorization, DeliveryCredentialReceipt)> {
+        let request_hash = request_digest(tenant, project, "revoke_export", req)?;
         let mut client = self.connect().await?;
         let tx = client.transaction().await?;
         bind_workstream_scope(&tx, tenant, project).await?;
-        if let Some(receipt) =
-            load_receipt(&tx, tenant, project, &req.request_key, "revoke_export").await?
+        lock_active_project(&tx, tenant, project).await?;
+        if let Some(outcome) = load_receipt(
+            &tx,
+            tenant,
+            project,
+            &req.request_key,
+            "revoke_export",
+            &request_hash,
+        )
+        .await?
         {
-            let auth = load_export(&tx, tenant, project, &receipt.subject_id)
-                .await?
-                .ok_or_else(|| {
-                    PgError::Protocol("export authorization missing for receipt".into())
-                })?;
             tx.commit().await?;
-            return Ok((
-                auth,
-                DeliveryCredentialReceipt {
-                    replayed: true,
-                    ..receipt
-                },
-            ));
+            return Ok(outcome);
         }
         let current = load_export(&tx, tenant, project, &req.authorization_id)
             .await?
@@ -293,8 +287,9 @@ impl DeliveryAdoptionStore {
             tenant,
             project,
             &req.request_key,
-            &auth.id,
             "revoke_export",
+            &request_hash,
+            &auth,
         )
         .await?;
         tx.commit().await?;
@@ -321,30 +316,29 @@ impl DeliveryAdoptionStore {
         project: &str,
         req: &AdoptDeliveryRequest,
     ) -> PgResult<(AdoptionCredential, DeliveryCredentialReceipt)> {
+        let request_hash = request_digest(tenant, project, "adopt", req)?;
+        let mut client = self.connect().await?;
+        let tx = client.transaction().await?;
+        bind_workstream_scope(&tx, tenant, project).await?;
+        lock_active_project(&tx, tenant, project).await?;
+        if let Some(outcome) = load_receipt(
+            &tx,
+            tenant,
+            project,
+            &req.request_key,
+            "adopt",
+            &request_hash,
+        )
+        .await?
+        {
+            tx.commit().await?;
+            return Ok(outcome);
+        }
         if project != req.dependency.provider.project_id
             || project != req.dependency.consumer.project_id
         {
             return Err(PgError::Protocol(
                 "adoption credential project must match tenant project".into(),
-            ));
-        }
-        let mut client = self.connect().await?;
-        let tx = client.transaction().await?;
-        bind_workstream_scope(&tx, tenant, project).await?;
-        if let Some(receipt) = load_receipt(&tx, tenant, project, &req.request_key, "adopt").await?
-        {
-            let cred = load_credential(&tx, tenant, project, &receipt.subject_id)
-                .await?
-                .ok_or_else(|| {
-                    PgError::Protocol("adoption credential missing for receipt".into())
-                })?;
-            tx.commit().await?;
-            return Ok((
-                cred,
-                DeliveryCredentialReceipt {
-                    replayed: true,
-                    ..receipt
-                },
             ));
         }
         let stored_dep = load_dep(&tx, tenant, project, &req.dependency.id)
@@ -395,8 +389,16 @@ impl DeliveryAdoptionStore {
         trusted_req.current_selection = current_selection;
         let cred = core_adopt_delivery_credential(&trusted_req).map_err(map_delivery)?;
         persist_credential(&tx, tenant, project, &cred).await?;
-        let receipt =
-            record_receipt(&tx, tenant, project, &req.request_key, &cred.id, "adopt").await?;
+        let receipt = record_receipt(
+            &tx,
+            tenant,
+            project,
+            &req.request_key,
+            "adopt",
+            &request_hash,
+            &cred,
+        )
+        .await?;
         tx.commit().await?;
         Ok((cred, receipt))
     }
@@ -792,53 +794,97 @@ async fn persist_credential(
     Ok(())
 }
 
-async fn load_receipt(
-    tx: &Transaction<'_>,
+// Bind even caller-supplied snapshots and observation times: replacing an ignored
+// proof field is still a different request, not an identical result recovery.
+fn request_digest<T: Serialize>(
     tenant: &str,
     project: &str,
-    request_key: &str,
     op: &str,
-) -> PgResult<Option<DeliveryCredentialReceipt>> {
-    let row = tx
-        .query_opt(
-            "SELECT subject_id,op,event_id,replayed FROM awr_team.delivery_credential_receipts
-             WHERE tenant_id=$1 AND project_id=$2 AND request_key=$3",
-            &[&tenant, &project, &request_key],
-        )
-        .await?;
-    match row {
-        None => Ok(None),
-        Some(r) => {
-            let subject_id: String = r.get(0);
-            let stored_op: String = r.get(1);
-            let event_id: String = r.get(2);
-            let _replayed: bool = r.get(3);
-            if stored_op != op {
-                return Err(PgError::Protocol(
-                    "delivery credential request_key reused with different op".into(),
-                ));
-            }
-            Ok(Some(DeliveryCredentialReceipt {
-                request_key: request_key.into(),
-                subject_id,
-                op: stored_op,
-                event_id: event_id
-                    .parse()
-                    .map_err(|_| PgError::Protocol("receipt event id is not a ulid".into()))?,
-                replayed: false,
-            }))
-        }
-    }
+    request: &T,
+) -> PgResult<String> {
+    awr_team::request_hash(&json!({
+        "domain": "awr-team-legacy-delivery-request-v1",
+        "tenant_id": tenant,
+        "project_id": project,
+        "op": op,
+        "request": request,
+    }))
+    .map_err(|_| PgError::Protocol("invalid delivery request binding".into()))
 }
 
-async fn record_receipt(
+async fn load_receipt<T: DeserializeOwned>(
     tx: &Transaction<'_>,
     tenant: &str,
     project: &str,
     request_key: &str,
-    subject_id: &str,
     op: &str,
+    request_hash: &str,
+) -> PgResult<Option<(T, DeliveryCredentialReceipt)>> {
+    let Some(row) = tx
+        .query_opt(
+            "SELECT subject_id,op,event_id,request_hash,result_json
+         FROM awr_team.delivery_credential_receipts
+         WHERE tenant_id=$1 AND project_id=$2 AND request_key=$3",
+            &[&tenant, &project, &request_key],
+        )
+        .await?
+    else {
+        return Ok(None);
+    };
+    let subject_id: String = row.get(0);
+    let stored_op: String = row.get(1);
+    let event_id: String = row.get(2);
+    let stored_hash: Option<String> = row.get(3);
+    let original: Option<Value> = row.get(4);
+    if stored_op != op {
+        return Err(PgError::IdempotencyConflict);
+    }
+    let (Some(stored_hash), Some(original)) = (stored_hash, original) else {
+        return Err(PgError::Protocol(
+            "legacy delivery receipt lacks its original request or result; inspect current dependency, export and credential records before a new validated operation".into(),
+        ));
+    };
+    if stored_hash != request_hash {
+        return Err(PgError::IdempotencyConflict);
+    }
+    if original.get("id").and_then(Value::as_str) != Some(subject_id.as_str()) {
+        return Err(PgError::Protocol(
+            "invalid original delivery result binding".into(),
+        ));
+    }
+    let result = serde_json::from_value(original)
+        .map_err(|_| PgError::Protocol("invalid original delivery result".into()))?;
+    // This is the original outcome, not live authority. Admission and current
+    // adoption validity must still read current dependency/export/proof records.
+    Ok(Some((
+        result,
+        DeliveryCredentialReceipt {
+            request_key: request_key.into(),
+            subject_id,
+            op: stored_op,
+            event_id: event_id
+                .parse()
+                .map_err(|_| PgError::Protocol("receipt event id is not a ulid".into()))?,
+            replayed: true,
+        },
+    )))
+}
+
+async fn record_receipt<T: Serialize>(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    request_key: &str,
+    op: &str,
+    request_hash: &str,
+    subject: &T,
 ) -> PgResult<DeliveryCredentialReceipt> {
+    let original = serde_json::to_value(subject)
+        .map_err(|_| PgError::Protocol("invalid original delivery result".into()))?;
+    let subject_id = original
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| PgError::Protocol("invalid original delivery result binding".into()))?;
     let event_id = new_id();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -846,19 +892,10 @@ async fn record_receipt(
         .unwrap_or(0);
     tx.execute(
         "INSERT INTO awr_team.delivery_credential_receipts(
-            tenant_id,project_id,request_key,subject_id,op,event_id,replayed,created_at_ms)
-         VALUES ($1,$2,$3,$4,$5,$6,false,$7)",
-        &[
-            &tenant,
-            &project,
-            &request_key,
-            &subject_id,
-            &op,
-            &event_id,
-            &now,
-        ],
-    )
-    .await?;
+            tenant_id,project_id,request_key,subject_id,op,event_id,replayed,created_at_ms,request_hash,result_json)
+         VALUES ($1,$2,$3,$4,$5,$6,false,$7,$8,$9)",
+        &[&tenant,&project,&request_key,&subject_id,&op,&event_id,&now,&request_hash,&original],
+    ).await?;
     Ok(DeliveryCredentialReceipt {
         request_key: request_key.into(),
         subject_id: subject_id.into(),

@@ -141,9 +141,9 @@ the project revision without changing the source state fingerprint. A response i
 its recorded revision; later events do not make its internally consistent facts false.
 Context hashes already bind their source and runtime snapshot identities.
 
-`status --cached`, `ready --cached`, `work show <key> --cached`, `object list <kind>
---cached` and `search --cached` read the last recorded projections without opening
-business files or writing project files. They explicitly return `read_only: true`,
+`status --cached`, `ready --cached`, `work show <key> --cached`, `work graph --cached`,
+`object list <kind> --cached` and `search --cached` read the last recorded projections
+without opening business files or writing project files. They explicitly return `read_only: true`,
 `source_refresh_performed: false`, `freshness_basis: last_recorded_source_state` and
 `snapshot.source_currentness_verified: false`. Cached facts do not establish current
 progress. The temporary capture is bounded to 256 MiB and may reject an active writer;
@@ -628,6 +628,10 @@ work_items = ["READ-1"]
 
 `minimal` explicitly omits separate rule/milestone requirements; configured rules,
 real goals, acceptance, next actions and dependencies remain required everywhere.
+The rendered hard-subset gaps and the structured `completeness` follow the same profile
+rule: under `minimal` a project without a rules source is complete and its context
+prints no missing-rules gap, while the same project under `standard` is refused with
+`rules_source_missing` in both.
 The policy and its fingerprint are returned by `intake inspect` and included in work
 context. Source configuration changes invalidate old previews. Work outside the exact
 scope retains strict engineering rules. No source status is upgraded by opting in.

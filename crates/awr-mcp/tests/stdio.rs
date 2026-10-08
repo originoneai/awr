@@ -761,6 +761,72 @@ async fn project_organization_guides_repairs_and_preserves_readonly_mcp_state() 
 }
 
 #[tokio::test]
+async fn minimal_profile_context_text_agrees_with_completeness_over_stdio() {
+    const RULES_SOURCE: &str = "[[sources]]\ndomain='rules'\nrole='primary'\npath='rules.md'\nadapter='markdown-rules-v1'\n";
+    let f = Fixture::new();
+    let rendered_gaps = |context: &Value| -> Vec<String> {
+        let text = context["work_context"]["rendered_context"]
+            .as_str()
+            .unwrap();
+        match text.split("[hard_context_gaps]\n").nth(1) {
+            Some(rest) => rest
+                .lines()
+                .take_while(|line| !line.starts_with('['))
+                .map(str::to_string)
+                .collect(),
+            None => vec![],
+        }
+    };
+    // No rules source under an explicit minimal profile: legitimate, so flags and text agree that nothing is missing.
+    let manifest = MANIFEST.replace(RULES_SOURCE, "");
+    assert_ne!(manifest, MANIFEST);
+    fs::write(
+        f.root.join(".awr/project.toml"),
+        manifest.replace("[project]\n", "[project]\ncontext_profile='minimal'\n"),
+    )
+    .unwrap();
+    f.reindex();
+    let client = f.client().await;
+    let minimal = success(call(&client, "awr_context_compile", json!({"work":"W"})).await);
+    assert_eq!(minimal["completeness"]["complete"], true);
+    assert_eq!(minimal["completeness"]["rules_complete"], true);
+    assert!(
+        minimal["work_context"]["rendered_context"]
+            .as_str()
+            .unwrap()
+            .contains("Context profile: minimal")
+    );
+    assert_eq!(rendered_gaps(&minimal), Vec::<String>::new());
+    client.cancel().await.unwrap();
+
+    // The same project under the standard profile is refused, in the flags and in the text.
+    fs::write(f.root.join(".awr/project.toml"), &manifest).unwrap();
+    f.reindex();
+    let client = f.client().await;
+    let refused = error(
+        call(&client, "awr_context_compile", json!({"work":"W"})).await,
+        "ContextIncomplete",
+    );
+    assert_eq!(refused["completeness"]["complete"], false);
+    assert_eq!(refused["completeness"]["rules_complete"], false);
+    assert!(
+        refused["completeness"]["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["code"] == "rules_source_missing")
+    );
+    assert_eq!(
+        rendered_gaps(&refused),
+        [
+            "CONTEXT INCOMPLETE (hard subset)",
+            "rules source is missing"
+        ]
+    );
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn stdio_discovers_tools_and_survives_protocol_and_argument_errors() {
     let f = Fixture::new();
     let before = f.logical_state();

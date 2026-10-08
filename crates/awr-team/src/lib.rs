@@ -26,8 +26,8 @@ pub use completion::{
     CompletionView, EvidenceBundle, EvidenceGrade, ReviewPolicy, current_completion,
 };
 pub use contract::{
-    DependencyAcceptanceMode, ExecutionSettlementMode, ExecutionSettlementPolicy, WorkContract,
-    WorkDefinitionState,
+    CrossWorkstreamDependencyPolicy, CrossWorkstreamReviewAssurance, DependencyAcceptanceMode,
+    ExecutionSettlementMode, ExecutionSettlementPolicy, WorkContract, WorkDefinitionState,
 };
 pub use error::{TeamError, TeamResult};
 pub use ids::{ActorId, ProjectId, RequestId, ScopeId, SessionId, TenantId, WorkId};
@@ -43,13 +43,13 @@ pub use planning::{
     AffectedTaskImpact, BaselineView, CandidateDiff, CandidateState, DraftChange,
     DraftDefinitionState, DraftOpKind, FORGE_COMPLETION_VIA_STATUS_ALLOWED, FieldDiff,
     HARD_DELETE_HISTORY_ALLOWED, OrdinaryPlanningSelfApprovePolicy, PLANNING_CODEC,
-    PLANNING_CODEC_V2, PLANNING_CODEC_V3, PLANNING_CODEC_V4, PlanningApproval, PlanningCandidate,
-    PlanningSuggestion, SUGGESTION_ADDS_FORMAL_WORK, SUGGESTION_API_WRITABLE_BY_READER,
-    SUGGESTION_CLAIMABLE, SUGGESTION_MUTATES_LIVE_ACCEPTANCE, SUGGESTION_MUTATES_LIVE_DEPS,
-    SuggestionState, TaskDraft, attested_actor_person, authorize_planning_action,
-    authorize_planning_approve, authorize_planning_publish, build_candidate_diff, edit_candidate,
-    ensure_independent_review_not_downgraded, planning_codec_for_changes,
-    refuse_reader_suggestion_write, validate_candidate,
+    PLANNING_CODEC_V2, PLANNING_CODEC_V3, PLANNING_CODEC_V4, PLANNING_CODEC_V5, PLANNING_CODEC_V6,
+    PlanningApproval, PlanningCandidate, PlanningSuggestion, SUGGESTION_ADDS_FORMAL_WORK,
+    SUGGESTION_API_WRITABLE_BY_READER, SUGGESTION_CLAIMABLE, SUGGESTION_MUTATES_LIVE_ACCEPTANCE,
+    SUGGESTION_MUTATES_LIVE_DEPS, SuggestionState, TaskDraft, attested_actor_person,
+    authorize_planning_action, authorize_planning_approve, authorize_planning_publish,
+    build_candidate_diff, edit_candidate, ensure_independent_review_not_downgraded,
+    planning_codec_for_changes, refuse_reader_suggestion_write, validate_candidate,
 };
 pub use snapshot::{
     ClaimPreconditions, LeaseProof, ProjectReadSnapshot, RequiredDependencyProof,

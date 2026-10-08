@@ -62,6 +62,14 @@ checkpoint, applicable hard rules and required dependency proofs. Unrelated
 active workstreams do not contribute their histories. Project-wide hard rules
 and administrative barriers still apply.
 
+The navigation goal selector (`awr nav --goal <key>`, MCP `awr_workstream` with
+`action: "nav"` and `args.goal`) selects work that declares the goal in its source,
+for example a ledger `goal:` field, and work that carries the key as a tag. Archived
+work is never shown; cancelled work is shown with its status. A goal key that nothing
+in the project defines or names is `NotFound` in the CLI (the shared MCP endpoint
+reports every nav failure through its opaque boundary error); a defined goal without
+work is an empty selection.
+
 ## Concurrent operations
 
 Ordinary writes validate their actual read set: authority, work and contract
@@ -115,6 +123,17 @@ cycle paths, atomic concurrent edge mutations, all-necessary-deps readiness, and
 shared outcome references (WS-031). Selective invalidation and prepare/dispatch/
 complete boundary revalidation are enforced with WS-030 adoption policies and
 scoped planning changes for newly discovered dependencies (WS-032).
+
+Navigation (`awr nav`, MCP `awr_workstream` with `action: "nav"`) lists the waits that
+explain why a work item cannot proceed, and it never shows a path as clear while `ready`
+still refuses it. A required dependency that readiness rejects (`dependency_not_completed`)
+is a `dependency_outcome` wait while the producer is unfinished or archived, and a
+`dependency_cancelled` wait when the producer was cancelled. A cancelled producer cannot
+finish by itself, so the release condition is to remove or replace the dependency, or to
+reopen the producer. Completed, unarchived producers and optional edges produce no wait.
+`explicit_blocker` and `user_wait` are the other kinds. The set of kinds is additive within
+`awr-mainline-nav` version 1; clients should show `summary` and `release_condition` for
+kinds they do not know.
 
 ## Accounting and compatibility
 

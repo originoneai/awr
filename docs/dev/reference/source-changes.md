@@ -13,7 +13,9 @@ executors and enforces its concurrency limit. AWR does not launch models or shel
 `awr_work_graph {"roots":["API"],"limit":100}` returns API, its transitive required
 dependents and all required ancestors of that affected set. Omit roots to inspect
 all work; use external keys, not titles. The same core query is available as
-`awr --json work graph --root API --limit 100` (CLI queries may refresh projections).
+`awr --json work graph --root API --limit 100` (CLI queries may refresh projections;
+add `--cached` to read the last recorded projection without opening business files or
+writing project files, see [host contract](host-contract.md)).
 MCP queries never persist a refresh; explicitly reindex stale sources first.
 
 The result includes source references and fingerprints, project revision, graph

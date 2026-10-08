@@ -1154,6 +1154,18 @@ async fn complete(
         &contract_value,
     )
     .await?;
+    if binding_valid {
+        crate::cross_workstream_adoption::require_execution_inputs(
+            tx,
+            tenant,
+            project,
+            &command.work_id,
+            contract,
+            execution_id.as_deref(),
+            &dependency_links,
+        )
+        .await?;
+    }
     let mut review = ReviewPolicy {
         required: policy != "ordinary_confirm",
         author_may_self_approve: self_review_permitted(policy),
@@ -1169,7 +1181,7 @@ async fn complete(
     let mut approver_person: Option<String> = None;
     let mut approver_client: Option<String> = None;
     let mut member_review_basis = None;
-    let mut simulated_review_ids = None;
+    let mut original_review_ids = None;
     if policy != "ordinary_confirm" {
         // Only a still-valid (non-invalidated) approved round may satisfy
         // completion. review.open invalidates prior approved rounds when a
@@ -1207,6 +1219,7 @@ async fn complete(
         approver_person = d.get(2);
         independence_kind = d.get(3);
         approver_client = d.get(4);
+        original_review_ids = Some((round_id.clone(), d.get::<_, String>(6)));
         if simulated_policy {
             let decision_id: String = d.get(6);
             member_review_basis = Some(
@@ -1225,7 +1238,6 @@ async fn complete(
                 )
                 .await?,
             );
-            simulated_review_ids = Some((round_id.clone(), decision_id));
         } else if agent_policy {
             let author: String = pinned.get(7);
             let author_client: Option<String> = pinned.get(8);
@@ -1376,8 +1388,12 @@ async fn complete(
         "reviewer_client_id": approver_client,
         "caller_execution_binding": caller_execution_binding,
     });
+    if let Some((round, decision)) = &original_review_ids {
+        approved_by["review_round_id"] = json!(round);
+        approved_by["review_decision_id"] = json!(decision);
+    }
     if let Some(basis) = &member_review_basis {
-        let (round, decision) = simulated_review_ids
+        let (round, decision) = original_review_ids
             .as_ref()
             .ok_or(PgError::ReviewRequired)?;
         let accepted: bool = tx.query_one(

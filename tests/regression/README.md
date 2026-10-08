@@ -2,7 +2,7 @@
 
 `contract.json` fixes the complete local gate for the workspace. It executes all
 eight Cargo workspace members, all targets and doctests, five current specialist
-contracts, all eight CLI/MCP tool parity checks, YAML intake, the copied manual
+contracts, all nine CLI/MCP tool parity checks, YAML intake, the copied manual
 Codex lifecycle, the legacy Doctor fixture and four developer entrypoints.
 
 Use the pinned Rust toolchain, `rtk`, and a Python interpreter with PyYAML. Commit
