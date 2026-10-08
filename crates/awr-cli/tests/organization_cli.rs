@@ -416,6 +416,95 @@ fn minimal_profile_is_revision_bound_and_preserves_configured_hard_rules() {
     );
 }
 
+/// The gap lines the rendered context prints for the hard subset (empty when it prints none).
+fn hard_gap_lines(context: &Value) -> Vec<String> {
+    let text = context["work_context"]["rendered_context"]
+        .as_str()
+        .unwrap();
+    match text.split("[hard_context_gaps]\n").nth(1) {
+        Some(rest) => rest
+            .lines()
+            .take_while(|line| !line.starts_with('['))
+            .map(str::to_string)
+            .collect(),
+        None => vec![],
+    }
+}
+
+#[test]
+fn rendered_hard_gaps_agree_with_completeness_for_the_minimal_and_standard_profiles() {
+    let f = Fixture::new();
+    f.init(&format!("{GOAL}{WORK}"));
+    // An explicit minimal profile may go without a rules source: neither the flags nor the text report a gap.
+    let minimal = f.ok(&["context", "compile", "--work", "W", "--detached"]);
+    assert_eq!(minimal["completeness"]["complete"], true);
+    assert_eq!(minimal["completeness"]["rules_complete"], true);
+    assert!(
+        minimal["work_context"]["rendered_context"]
+            .as_str()
+            .unwrap()
+            .contains("Context profile: minimal")
+    );
+    assert_eq!(hard_gap_lines(&minimal), Vec::<String>::new());
+
+    // A real gap of the hard subset is reported on its own; the missing rules source is not blamed for it.
+    f.write(
+        "work-ledger.yaml",
+        &format!(
+            "{GOAL}{}",
+            WORK.replace("  acceptance: [Readers find the requested document]\n", "")
+        ),
+    );
+    let refused = f.run(&["context", "compile", "--work", "W", "--detached"]);
+    assert!(!refused.status.success());
+    let body: Value = serde_json::from_slice(&refused.stdout).unwrap();
+    assert_eq!(body["completeness"]["rules_complete"], true);
+    assert_eq!(
+        hard_gap_lines(&body),
+        [
+            "CONTEXT INCOMPLETE (hard subset)",
+            "acceptance criteria are missing or blank"
+        ]
+    );
+    f.write("work-ledger.yaml", &format!("{GOAL}{WORK}"));
+
+    // The standard profile refuses the same project, in the flags and in the text.
+    let manifest = fs::read_to_string(f.0.join(".awr/project.toml")).unwrap();
+    f.write(
+        ".awr/project.toml",
+        &manifest.replace(
+            "context_profile = \"minimal\"",
+            "context_profile = \"standard\"",
+        ),
+    );
+    let refused = f.run(&["context", "compile", "--work", "W", "--detached"]);
+    assert!(!refused.status.success());
+    let body: Value = serde_json::from_slice(&refused.stdout).unwrap();
+    assert_eq!(body["completeness"]["complete"], false);
+    assert_eq!(body["completeness"]["rules_complete"], false);
+    assert!(
+        body["completeness"]["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["code"] == "rules_source_missing")
+    );
+    assert_eq!(
+        hard_gap_lines(&body),
+        [
+            "CONTEXT INCOMPLETE (hard subset)",
+            "rules source is missing"
+        ]
+    );
+
+    // With a rules source the standard profile is complete again and prints no gap.
+    f.write("rules.md", "# Preserve input {#keep severity=hard scope=project value=*}\nNever overwrite the imported source documents.\n");
+    f.write(".awr/project.toml", &format!("{manifest}\n[[sources]]\ndomain='rules'\nrole='primary'\npath='rules.md'\nadapter='markdown-rules-v1'\n").replace("context_profile = \"minimal\"", "context_profile = \"standard\""));
+    let standard = f.ok(&["context", "compile", "--work", "W", "--detached"]);
+    assert_eq!(standard["completeness"]["rules_complete"], true);
+    assert_eq!(hard_gap_lines(&standard), Vec::<String>::new());
+}
+
 #[test]
 fn finished_goal_with_open_work_and_completed_intake_cannot_imply_project_completion() {
     let f = Fixture::new();

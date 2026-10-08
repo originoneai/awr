@@ -628,6 +628,10 @@ work_items = ["READ-1"]
 
 `minimal` explicitly omits separate rule/milestone requirements; configured rules,
 real goals, acceptance, next actions and dependencies remain required everywhere.
+The rendered hard-subset gaps and the structured `completeness` follow the same profile
+rule: under `minimal` a project without a rules source is complete and its context
+prints no missing-rules gap, while the same project under `standard` is refused with
+`rules_source_missing` in both.
 The policy and its fingerprint are returned by `intake inspect` and included in work
 context. Source configuration changes invalidate old previews. Work outside the exact
 scope retains strict engineering rules. No source status is upgraded by opting in.
