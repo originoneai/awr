@@ -12,6 +12,25 @@ use std::collections::BTreeMap;
 pub enum DependencyAcceptanceMode {
     AgentReviewedCallerAssertedReconciled,
     SimulatedMemberIndependent,
+    /// V6 declaration only. A runtime must verify an exact adopted export;
+    /// an upstream completion receipt by itself never satisfies this mode.
+    CrossWorkstream(CrossWorkstreamDependencyPolicy),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CrossWorkstreamReviewAssurance {
+    TeamIndependent,
+    SimulatedMemberIndependent,
+}
+
+/// Review identity and version selection are separate from execution assurance
+/// and from the consumer's own completion policy. No field grants authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CrossWorkstreamDependencyPolicy {
+    pub review_assurance: CrossWorkstreamReviewAssurance,
+    pub version_policy: awr_core::DeliveryVersionPolicy,
 }
 
 /// An explicit agreement about workspace-local caller-managed effects. This
@@ -152,11 +171,11 @@ impl TryFrom<WireContract> for WorkContract {
         }
         if !matches!(
             wire.codec.as_str(),
-            Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5
+            Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5 | Self::CODEC_V6
         ) && wire.execution_settlement.is_some()
         {
             return Err(TeamError::InvalidContract(
-                "execution_settlement requires contract V3/V4/V5".into(),
+                "execution_settlement requires contract V3/V4/V5/V6".into(),
             ));
         }
         let dependency_acceptance = wire.dependency_acceptance.unwrap_or_default();
@@ -185,11 +204,17 @@ impl WorkContract {
     pub const CODEC_V3: &'static str = "awr-team-contract-v3";
     pub const CODEC_V4: &'static str = "awr-team-contract-v4";
     pub const CODEC_V5: &'static str = "awr-team-contract-v5";
+    pub const CODEC_V6: &'static str = "awr-team-contract-v6";
 
     pub fn validate(&self) -> TeamResult<()> {
         if !matches!(
             self.codec.as_str(),
-            Self::CODEC | Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5
+            Self::CODEC
+                | Self::CODEC_V2
+                | Self::CODEC_V3
+                | Self::CODEC_V4
+                | Self::CODEC_V5
+                | Self::CODEC_V6
         ) {
             return Err(TeamError::InvalidContract(
                 "unsupported contract codec".into(),
@@ -199,7 +224,7 @@ impl WorkContract {
             || (self.codec == Self::CODEC_V2 && self.dependency_acceptance.is_empty())
             || (matches!(
                 self.codec.as_str(),
-                Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5
+                Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5 | Self::CODEC_V6
             ) && self
                 .required_dependencies
                 .iter()
@@ -211,34 +236,46 @@ impl WorkContract {
             })
         {
             return Err(TeamError::InvalidContract(
-                "dependency_acceptance requires V2/V3/V4/V5 and unique existing required predecessors; V2 requires a nonempty map".into(),
+                "dependency_acceptance requires V2/V3/V4/V5/V6 and unique existing required predecessors; V2 requires a nonempty map".into(),
             ));
         }
         let simulated_dependency = self
             .dependency_acceptance
             .values()
             .any(|mode| *mode == DependencyAcceptanceMode::SimulatedMemberIndependent);
-        if simulated_dependency != (self.codec == Self::CODEC_V5) {
+        let cross_stream_dependency = self
+            .dependency_acceptance
+            .values()
+            .any(|mode| matches!(mode, DependencyAcceptanceMode::CrossWorkstream(_)));
+        if cross_stream_dependency != (self.codec == Self::CODEC_V6) {
+            return Err(TeamError::InvalidContract(
+                "cross_workstream dependencies require V6; V6 requires at least one explicit cross-stream predecessor".into(),
+            ));
+        }
+        if self.codec != Self::CODEC_V6 && simulated_dependency != (self.codec == Self::CODEC_V5) {
             return Err(TeamError::InvalidContract(
                 "simulated_member_independent dependencies require V5; V5 requires at least one explicit simulated predecessor".into(),
             ));
         }
         if self.completion_policy == ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
-            && !matches!(self.codec.as_str(), Self::CODEC_V4 | Self::CODEC_V5)
+            && !matches!(
+                self.codec.as_str(),
+                Self::CODEC_V4 | Self::CODEC_V5 | Self::CODEC_V6
+            )
         {
             return Err(TeamError::InvalidContract(
-                "simulated member review requires contract V4/V5".into(),
+                "simulated member review requires contract V4/V5/V6".into(),
             ));
         }
         match (&self.execution_settlement, self.codec.as_str()) {
-            (Some(policy), Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5) => {
+            (Some(policy), Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5 | Self::CODEC_V6) => {
                 policy.validate()?;
                 let supported_policy = match self.codec.as_str() {
                     Self::CODEC_V4 => {
                         self.completion_policy
                             == ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
                     }
-                    Self::CODEC_V5 => matches!(
+                    Self::CODEC_V5 | Self::CODEC_V6 => matches!(
                         self.completion_policy.as_str(),
                         ExecutionSettlementPolicy::COMPLETION_POLICY
                             | ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY
@@ -260,12 +297,12 @@ impl WorkContract {
                 }
             }
             (None, Self::CODEC | Self::CODEC_V2) => {}
-            (None, Self::CODEC_V5)
+            (None, Self::CODEC_V5 | Self::CODEC_V6)
                 if self.completion_policy
                     != ExecutionSettlementPolicy::SIMULATED_MEMBER_COMPLETION_POLICY => {}
             _ => {
                 return Err(TeamError::InvalidContract(
-                    "execution_settlement is required for V3/V4 and simulated completion, forbidden in V1/V2, and otherwise optional in V5".into(),
+                    "execution_settlement is required for V3/V4 and simulated completion, forbidden in V1/V2, and otherwise optional in V5/V6".into(),
                 ));
             }
         }
@@ -315,13 +352,13 @@ impl WorkContract {
         });
         if matches!(
             self.codec.as_str(),
-            Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5
+            Self::CODEC_V2 | Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5 | Self::CODEC_V6
         ) {
             value["dependency_acceptance"] = json!(self.dependency_acceptance);
         }
         if matches!(
             self.codec.as_str(),
-            Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5
+            Self::CODEC_V3 | Self::CODEC_V4 | Self::CODEC_V5 | Self::CODEC_V6
         ) {
             value["execution_settlement"] = json!(self.execution_settlement);
         }

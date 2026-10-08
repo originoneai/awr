@@ -698,6 +698,86 @@ work_items:
         );
     }
 
+    #[test]
+    fn cross_stream_writeback_retains_omissions_and_binds_exact_prior_choices() {
+        use awr_core::DeliveryVersionPolicy;
+        use awr_team::{
+            CrossWorkstreamDependencyPolicy, CrossWorkstreamReviewAssurance,
+            DependencyAcceptanceMode,
+        };
+        let mode = |review_assurance, version_policy| {
+            DependencyAcceptanceMode::CrossWorkstream(CrossWorkstreamDependencyPolicy {
+                review_assurance,
+                version_policy,
+            })
+        };
+        let mut before = draft("CLIENT-1", &["API-1"]);
+        before.workstream = Some("client".into());
+        before.dependency_acceptance = Some(BTreeMap::from([(
+            "API-1".into(),
+            mode(
+                CrossWorkstreamReviewAssurance::SimulatedMemberIndependent,
+                DeliveryVersionPolicy::FixedDelivery,
+            ),
+        )]));
+        let created = apply_planning_changes_to_ledger(
+            b"work_items: []\n",
+            &[DraftChange {
+                op: DraftOpKind::CreateTask,
+                before: None,
+                after: before.clone(),
+            }],
+        )
+        .unwrap();
+        let mut omitted_before = before.clone();
+        omitted_before.dependency_acceptance = None;
+        let mut omitted_after = omitted_before.clone();
+        omitted_after.title = "Rename integration".into();
+        let retained = apply_planning_changes_to_ledger(
+            &created.after_bytes,
+            &[DraftChange {
+                op: DraftOpKind::EditFields,
+                before: Some(omitted_before),
+                after: omitted_after,
+            }],
+        )
+        .unwrap();
+        let parsed: Value = serde_yaml_ng::from_slice(&retained.after_bytes).unwrap();
+        assert_eq!(
+            parsed["work_items"][0]["dependency_acceptance"],
+            json!(before.dependency_acceptance)
+        );
+        let mut after = before.clone();
+        after.dependency_acceptance = Some(BTreeMap::from([(
+            "API-1".into(),
+            mode(
+                CrossWorkstreamReviewAssurance::TeamIndependent,
+                DeliveryVersionPolicy::CurrentContract,
+            ),
+        )]));
+        let change = DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(before.clone()),
+            after,
+        };
+        let replaced =
+            apply_planning_changes_to_ledger(&created.after_bytes, &[change.clone()]).unwrap();
+        let parsed: Value = serde_yaml_ng::from_slice(&replaced.after_bytes).unwrap();
+        assert_eq!(
+            parsed["work_items"][0]["dependency_acceptance"],
+            json!(change.after.dependency_acceptance)
+        );
+        for prior in [None, change.after.dependency_acceptance.clone()] {
+            let mut stale = change.clone();
+            stale.before.as_mut().unwrap().dependency_acceptance = prior;
+            assert!(apply_planning_changes_to_ledger(&created.after_bytes, &[stale]).is_err());
+        }
+        let mut orphan = change;
+        orphan.after.dependency_acceptance = None;
+        orphan.after.required_dependencies.clear();
+        assert!(apply_planning_changes_to_ledger(&created.after_bytes, &[orphan]).is_err());
+    }
+
     fn modes(ids: &[&str]) -> BTreeMap<String, awr_team::DependencyAcceptanceMode> {
         ids.iter()
             .map(|id| {

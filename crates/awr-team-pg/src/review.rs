@@ -1754,12 +1754,57 @@ fn dependency_receipt_accepted(
                 && basis["human_approval"] == false
                 && basis["team_independent_acceptance"] == false
         }
+        // A declared cross-stream edge needs an authenticated, version-bound
+        // export adoption. This same-stream receipt shortcut cannot grant it.
+        Some(awr_team::DependencyAcceptanceMode::CrossWorkstream(_)) => false,
     }
 }
 
 #[cfg(test)]
 mod dependency_policy_tests {
     use super::*;
+    #[test]
+    fn cross_stream_declaration_cannot_use_the_same_stream_receipt_shortcut() {
+        for review_assurance in [
+            awr_team::CrossWorkstreamReviewAssurance::TeamIndependent,
+            awr_team::CrossWorkstreamReviewAssurance::SimulatedMemberIndependent,
+        ] {
+            for version_policy in [
+                awr_core::DeliveryVersionPolicy::FixedDelivery,
+                awr_core::DeliveryVersionPolicy::CurrentContract,
+            ] {
+                let mode = Some(awr_team::DependencyAcceptanceMode::CrossWorkstream(
+                    awr_team::CrossWorkstreamDependencyPolicy {
+                        review_assurance,
+                        version_policy,
+                    },
+                ));
+                for kind in [
+                    None,
+                    Some("team_independent"),
+                    Some("agent_review"),
+                    Some(simulated_member::INDEPENDENCE),
+                ] {
+                    for policy in [
+                        "independent_review",
+                        AGENT_REVIEW_POLICY,
+                        simulated_member::POLICY,
+                    ] {
+                        for basis in [
+                            json!({}),
+                            json!({
+                                "approval_basis":simulated_member::APPROVAL_BASIS,
+                                "execution_basis":"caller_asserted_workspace_settled",
+                                "human_approval":false,"team_independent_acceptance":false
+                            }),
+                        ] {
+                            assert!(!dependency_receipt_accepted(mode, kind, policy, &basis));
+                        }
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn reconciled_only_dependency_mode_refuses_workspace_settlement_basis() {
         let basis = json!({"approval_basis":"agent_review","execution_basis":"caller_asserted_workspace_settled",
