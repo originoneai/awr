@@ -928,6 +928,7 @@ mod agent_review_tests {
         include!("cases/simulated_member_dependencies.rs");
         include!("cases/cross_workstream_exports.rs");
         include!("cases/cross_workstream_adoption.rs");
+        include!("cases/cross_workstream_history.rs");
     }
 
     #[tokio::test]

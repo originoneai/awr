@@ -90,15 +90,6 @@ pub(crate) async fn apply(
     {
         return Err(PgError::PreconditionsChanged);
     }
-    let policy: CrossWorkstreamDependencyPolicy =
-        serde_json::from_value(manifest["policy"].clone())
-            .map_err(|_| PgError::SourceDivergence)?;
-    // Historical proof and selective source activation are a separate capability.
-    if policy.version_policy != awr_core::DeliveryVersionPolicy::CurrentContract {
-        return Err(PgError::Unsupported(
-            "fixed-delivery adoption is not available".into(),
-        ));
-    }
     let provider = manifest["provider_work_id"]
         .as_str()
         .ok_or(PgError::EvidenceInvalid)?;
@@ -193,9 +184,6 @@ pub(crate) async fn adopted_receipt(
     provider: &str,
     policy: CrossWorkstreamDependencyPolicy,
 ) -> PgResult<Option<String>> {
-    if policy.version_policy != awr_core::DeliveryVersionPolicy::CurrentContract {
-        return Ok(None);
-    }
     let Some(r) = selection(tx, tenant, project, consumer, provider).await? else {
         return Ok(None);
     };
@@ -297,7 +285,7 @@ pub(crate) async fn view(
             "adoption_id":current.as_ref().map(|r|r.get::<_,String>(0)),
             "export_id":current.as_ref().map(|r|r.get::<_,String>(2)),
             "receipt_id":receipt,"valid":receipt.is_some(),
-            "adoption_available":policy.version_policy==awr_core::DeliveryVersionPolicy::CurrentContract}));
+            "adoption_available":true}));
     }
     Ok(result)
 }

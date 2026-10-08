@@ -1,11 +1,11 @@
 # Cross-workstream dependency policies
 
-**Development capability: approved-artifact disclosure and current-contract adoption.**
+**Development capability: approved-artifact disclosure and version-bound adoption.**
 Contract, workstream bundle, planning and source codecs V6 can express a
 cross-workstream dependency. Ordinary authenticated MCP commands can publish a
 reviewed artifact to an explicit consumer, which can discover and read it under
-its own work permission. The consumer explicitly selects a valid current-contract
-export through `delivery.adopt`. Reading or publishing alone does not satisfy a
+its own work permission. The consumer explicitly selects a valid export under its declared
+`current_contract` or `fixed_delivery` policy through `delivery.adopt`. Reading or publishing alone does not satisfy a
 dependency; adoption never grants permission to run an execution.
 
 For example, a frontend integration task can require a backend delivery:
@@ -59,8 +59,8 @@ Ordinary authenticated intake, navigation, execution admission and completion
 share the same live adoption gate. An upstream task saying "completed", or
 possession of its receipt or readable body, is insufficient. Authenticated
 `capabilities.planning.cross_workstream_policy` and `approved_artifact_exports`
-report current-contract adoption and explicitly exclude fixed historical
-delivery. The planning-only declaration probe does not itself perform adoption.
+report adoption under both version policies. Fixed historical access requires
+a source-pinned export; legacy exports are not upgraded by inference. The planning-only declaration probe does not itself perform adoption.
 
 These are repository-neutral project rules. No GitHub identifier, webhook or
 fabricated repository revision is part of the policy.
@@ -103,12 +103,21 @@ fabricated repository revision is part of the policy.
    is unknown, inspect the original request ID with `command.inspect` before an
    exact retry. Replays retain the original receipt and grant no execution rights.
 
-Every read rechecks both tasks' current contract/ownership, policy, selected
-receipt, original review and actual bytes. This first disclosure implementation
-is **current-contract-only**, including when the declared eventual adoption
-policy is `fixed_delivery`. Historical fixed-version access and adoption are
-not available yet. Changing either relevant contract requires a suitable new
-publication; unrelated source changes do not grant extra access.
+Publication always verifies the provider's current selected completion and the
+consumer's current contract, ownership and policy. A `current_contract` export
+keeps the `awr-approved-artifact-export-v1` manifest and rechecks the provider's
+current contract, ownership and selection on every read or adoption.
+
+A `fixed_delivery` export uses `awr-approved-artifact-export-v2`. The server
+captures `provider_source_snapshot_id` while verifying publication; callers
+cannot choose or invent that historical source. Later reads recheck the exact
+archived provider contract and ownership, original execution inputs, evidence,
+review and artifact bytes. A newer upstream contract or selected result alone
+does not invalidate that accepted version. The consumer's current contract,
+ownership and explicit cross-stream edge must still match. Missing or changed
+archives, withdrawn exports, invalid original approvals or unavailable/changed
+bytes block access and new execution. Legacy fixed exports without a known
+source snapshot fail closed; the server never backfills their provenance.
 
 Default responses carry bounded review summaries. Explicit simulated members
 can satisfy the declared simulated assurance; their human-approval flags remain
@@ -117,7 +126,7 @@ retains its independent-person and trusted-execution requirements. A repository
 revision is unknown unless separately verified; no GitHub dependency or inferred
 SHA is introduced here.
 
-## Adopt a current-contract input
+## Adopt an accepted input
 
 Use the consumer's own permission and active session. An Agent requires current
 development authority and a live `start_work` delegation. The member can adopt
@@ -146,8 +155,9 @@ sequence: select the input, then claim the pool task or accept the assignment.
    }
    ```
 
-   The server rechecks both source-owned tasks, the explicit V6 edge, the selected
-   provider completion, original approval and actual artifact bytes. It archives
+   The server rechecks the consumer's current source and V6 edge, the provider
+   proof required by the version policy, original approval and actual artifact
+   bytes. It archives
    previous adoption generations and selects the new one in the same project
    transaction as the command receipt. Responsibility and action versions
    prevent competing assignments or adoptions from overwriting each other.
@@ -158,7 +168,9 @@ sequence: select the input, then claim the pool task or accept the assignment.
 Discovery and content reads report whether this exact live export is selected.
 They grant no upstream source/session access and no execution authority. Every
 gate revalidates the adoption: withdrawal, missing bytes, invalid original review
-or relevant contract/ownership/selection changes block new work and completion.
+or changes to the required source bindings block new work and completion.
+`current_contract` also requires the provider's current completion selection;
+`fixed_delivery` requires the exact accepted historical proof.
 Completion also matches the dependency receipts persisted by the evidence's
 original `execution.start`. A later adoption cannot relabel an older result or
 approval as using new inputs. Missing or different admission receipts require a
@@ -167,7 +179,24 @@ For an unknown command outcome, inspect its original request ID before an exact
 retry. Historical replay returns the original receipt; it cannot restore a
 revoked export or grant execution rights.
 
-`fixed_delivery` remains a valid declaration for the subsequent historical
-capability, but `delivery.adopt` explicitly rejects it in this implementation.
-Fixed historical proof and selective source activation are still pending; do not
-silently replace that policy with `current_contract`.
+## Preserve fixed history through a source update
+
+Source activation reopens completed selections whose own contract changed.
+Current and legacy dependency edges propagate a changed predecessor selection to
+its related downstream work. A fixed edge cuts that propagation only when the
+actual verified adoption still selects the predecessor receipt recorded by the
+consumer's original completion. Declaring `fixed_delivery` without such an
+adoption cannot preserve a completion. Mixed chains and diamonds follow each
+edge's policy; an unchanged fixed branch cannot hide a changed current branch.
+The source switch and affected selection updates share one project transaction.
+Completion receipts and adoption history remain archived on success or rollback.
+
+An approval referenced by an accepted completion remains historical evidence
+when a newer verification bundle or PR head opens another review. Unaccepted old
+approvals still expire on rework. A new result needs its own exact execution,
+evidence and review; historical approval cannot authorize it or relabel its
+original dependency inputs.
+
+Selective activation while unrelated work is running is a separate capability.
+The existing project activation barrier still applies here; fixed history does
+not claim that live-work isolation is complete.

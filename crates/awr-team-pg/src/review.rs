@@ -2257,7 +2257,10 @@ async fn invalidate_open_rounds(
     tx.execute(
         "UPDATE awr_team.review_rounds SET state='invalidated'
          WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3
-           AND state IN ('open','approved') AND bundle_hash <> $4",
+           AND state IN ('open','approved') AND bundle_hash <> $4
+           AND NOT EXISTS(SELECT 1 FROM awr_team.completion_receipts accepted
+             WHERE accepted.tenant_id=$1 AND accepted.project_id=$2 AND accepted.work_id=$3
+               AND accepted.approved_by_json->>'review_round_id'=awr_team.review_rounds.id)",
         &[&tenant_id, &project_id, &work_id, &new_bundle],
     )
     .await?;
