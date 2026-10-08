@@ -43,6 +43,7 @@ const QUERIES: &[&str] = &[
     "delivery.integration.inspect",
     "source.content",
     "artifact.content",
+    "delivery.exports",
     "planning.outcome",
     "audit.history",
     "audit.export",
@@ -75,6 +76,9 @@ pub struct WorkstreamQuery {
     /// Controlled artifact id (TMCP-023).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact_id: Option<String>,
+    /// An explicitly published artifact for this consumer; never an upstream selector.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export_id: Option<String>,
     /// Optional expected digest for content reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_sha256: Option<String>,
@@ -110,6 +114,7 @@ impl WorkstreamQuery {
             &self.evidence_id,
             &self.review_round_id,
             &self.artifact_id,
+            &self.export_id,
             &self.change_id,
             &self.member_actor_id,
             &self.category,
@@ -134,7 +139,12 @@ impl WorkstreamQuery {
         }
         let paged = matches!(
             self.op.as_str(),
-            "workstreams.list" | "work.list" | "work.search" | "events.list" | "work.next"
+            "workstreams.list"
+                | "work.list"
+                | "work.search"
+                | "events.list"
+                | "work.next"
+                | "delivery.exports"
         );
         let audit = matches!(
             self.op.as_str(),
@@ -175,7 +185,9 @@ impl WorkstreamQuery {
             || self.evidence_id.is_some() != (self.op == "evidence.inspect")
             || self.review_round_id.is_some() != (self.op == "review.inspect")
             || self.source_path.is_some() != (self.op == "source.content")
-            || self.artifact_id.is_some() != (self.op == "artifact.content")
+            || (self.artifact_id.is_some() || self.export_id.is_some())
+                != (self.op == "artifact.content")
+            || (self.artifact_id.is_some() && self.export_id.is_some())
             || self.expected_sha256.as_ref().is_some_and(|s| {
                 s.len() != 64
                     || !s
@@ -230,6 +242,7 @@ impl WorkstreamQuery {
                     | "completion.inspect"
                     | "delivery.inspect"
                     | "artifact.content"
+                    | "delivery.exports"
             ) && self.work_id.is_none()
                 && self.session_id.is_none()
         {
@@ -248,6 +261,56 @@ pub struct WorkstreamReadStore {
 #[cfg(test)]
 mod input_guidance_tests {
     use super::*;
+
+    #[test]
+    fn approved_export_discovery_is_an_ordinary_query() {
+        let q: WorkstreamQuery = serde_json::from_value(json!({
+            "protocol_version":1,"op":"delivery.exports","work_id":"consumer"
+        }))
+        .unwrap();
+        assert!(
+            q.validate().is_ok(),
+            "Approved export discovery must use the ordinary query protocol"
+        );
+    }
+
+    #[test]
+    fn export_content_rejects_ambiguous_invalid_and_unrelated_selectors() {
+        let base = json!({"protocol_version":1,"op":"artifact.content","work_id":"consumer","export_id":"approved-export"});
+        let valid: WorkstreamQuery = serde_json::from_value(base.clone()).unwrap();
+        assert!(valid.validate().is_ok());
+        for extra in [
+            json!({"artifact_id":"old-artifact"}),
+            json!({"export_id":""}),
+            json!({"export_id":"bad\nselector"}),
+            json!({"export_id":"x".repeat(129)}),
+            json!({"expected_sha256":"F".repeat(64)}),
+            json!({"op":"work.prepare"}),
+            json!({"max_context_bytes":262145}),
+            json!({"limit":1}),
+        ] {
+            let mut input = base.clone();
+            input
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            assert!(
+                serde_json::from_value::<WorkstreamQuery>(input)
+                    .unwrap()
+                    .validate()
+                    .is_err()
+            );
+        }
+        let legacy: WorkstreamQuery=serde_json::from_value(json!({"protocol_version":1,"op":"artifact.content","work_id":"work","artifact_id":"artifact"})).unwrap();
+        assert!(legacy.validate().is_ok());
+        assert!(
+            serde_json::to_value(legacy)
+                .unwrap()
+                .get("export_id")
+                .is_none(),
+            "Old queries must not serialize the new absent selector"
+        );
+    }
 
     #[test]
     fn work_next_rejects_selectors_with_specific_guidance() {
@@ -613,6 +676,15 @@ pub(crate) async fn read(
             "decision_id":"review.decide receipt or review.inspect decisions",
             "connector_versions":"delivery.neutral.inspect connectors"
         });
+        caps["approved_artifact_exports"] = json!({
+            "commands":["delivery.export.publish","delivery.export.revoke"],"query":"delivery.exports",
+            "content_query":"artifact.content","content_selector":"export_id",
+            "publication_action":"delivery.finalize","requires":"current_selected_receipt_and_exact_original_review",
+            "read_scope":"exact_consumer_work","upstream_source_access":false,"adoption_available":false,
+            "current_contract_only":true,"historical_fixed_delivery_available":false,
+            "publish_args":["session_id","expected_session_version","consumer_work_id","expected_consumer_contract_hash","expected_consumer_ownership_version","receipt_id","expected_artifact_sha256"],
+            "revoke_args":["session_id","expected_session_version","export_id","expected_export_version"]
+        });
         caps["agent_review"] = json!({
             "command":"review.decide", "policy":crate::review::AGENT_REVIEW_POLICY,
             "requires":["agent_actor","agent_review_membership_grant","live_review_delegation","distinct_author_actor_and_client"],
@@ -749,6 +821,17 @@ pub(crate) async fn read(
         &q.op,
     )?;
     let stream = resolved.workstream_id.to_string();
+    if q.op == "delivery.exports" {
+        // Export discovery owns a consumer-bound cursor. Do not parse it as a
+        // legacy work/event cursor before its own authority checks.
+        let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+        let data =
+            crate::cross_workstream_exports::list(tx, tenant, project, auth, work, q).await?;
+        return Ok(
+            json!({"protocol_version":1,"workstream_id":stream,"authority_version":resolved.authority_version.to_string(),"scope_id":"main","selection_basis":resolved.basis,
+            "coordinator_epoch":auth.epoch,"project_status":auth.project_status,"source_snapshot_id":auth.snapshot,"project_revision":auth.revision.to_string(),"data":data}),
+        );
+    }
     let binding = hash(
         &json!({"auth":auth.binding,"snapshot":auth.snapshot,"epoch":auth.epoch,"stream":stream,
         "authority":resolved.authority_version,"grant":auth.grant_versions[&resolved.workstream_id],"op":q.op,
@@ -1112,17 +1195,21 @@ pub(crate) async fn read(
         "artifact.content" => {
             let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
             let _ = work_binding(tx, tenant, project, auth, work).await?;
-            let artifact_id = q.artifact_id.as_deref().ok_or(PgError::Forbidden)?;
-            read_controlled_artifact_content(
-                tx,
-                tenant,
-                project,
-                work,
-                artifact_id,
-                q.expected_sha256.as_deref(),
-                q.max_context_bytes,
-            )
-            .await?
+            if q.export_id.is_some() {
+                crate::cross_workstream_exports::content(tx, tenant, project, auth, work, q).await?
+            } else {
+                let artifact_id = q.artifact_id.as_deref().ok_or(PgError::Forbidden)?;
+                read_controlled_artifact_content(
+                    tx,
+                    tenant,
+                    project,
+                    work,
+                    artifact_id,
+                    q.expected_sha256.as_deref(),
+                    q.max_context_bytes,
+                )
+                .await?
+            }
         }
         _ => return Err(PgError::Unsupported("workstream query operation".into())),
     };
@@ -1432,7 +1519,7 @@ async fn read_controlled_artifact_content(
     }))
 }
 
-fn base64_encode(bytes: &[u8]) -> String {
+pub(crate) fn base64_encode(bytes: &[u8]) -> String {
     // Minimal base64 without extra deps: use a simple alphabet encoder.
     const ALPH: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);

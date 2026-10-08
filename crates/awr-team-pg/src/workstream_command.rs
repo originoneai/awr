@@ -55,6 +55,8 @@ pub(crate) const COMMANDS: &[&str] = &[
     "delivery.register_pr",
     "delivery.observe_pr",
     "delivery.finalize",
+    "delivery.export.publish",
+    "delivery.export.revoke",
     "delivery.connector.configure",
     "delivery.candidate.select",
     "delivery.inspection.reserve",
@@ -119,6 +121,7 @@ enum Action {
     Review(reviews::Action),
     Intake(task_intake::Action),
     Delivery(delivery::Action),
+    Export(crate::cross_workstream_exports::Action),
 }
 
 struct Applied {
@@ -164,6 +167,14 @@ impl WorkstreamCommand {
         version(&self.expected_project_revision)?;
         if delivery::OPERATIONS.contains(&self.op.as_str()) {
             return Ok(Action::Delivery(delivery::Action::parse(self)?));
+        }
+        if matches!(
+            self.op.as_str(),
+            "delivery.export.publish" | "delivery.export.revoke"
+        ) {
+            return Ok(Action::Export(
+                crate::cross_workstream_exports::Action::parse(&self.op, self.args.clone())?,
+            ));
         }
         match self.op.as_str() {
             "task.assign" | "task.accept_assignment" | "task.claim_available" => Ok(
@@ -455,6 +466,23 @@ impl WorkstreamCommandStore {
             task_intake::lock_task(&tx, tenant, project, &auth, &command).await?;
         }
         let applied = match action {
+            Action::Export(a) => {
+                let data = crate::cross_workstream_exports::apply(
+                    &tx, tenant, project, &auth, &command, ownership, a,
+                )
+                .await?;
+                Applied {
+                    preceding_events: vec![(
+                        if command.op == "delivery.export.publish" {
+                            "artifact.export_published"
+                        } else {
+                            "artifact.export_revoked"
+                        },
+                        data.clone(),
+                    )],
+                    data,
+                }
+            }
             Action::Delivery(_) => {
                 unreachable!("neutral dispatch precedes the generic transaction")
             }
@@ -643,7 +671,8 @@ async fn apply(
         | Action::Handoff(_)
         | Action::Review(_)
         | Action::Intake(_)
-        | Action::Delivery(_) => Err(invalid()), // Specialized dispatch only.
+        | Action::Delivery(_)
+        | Action::Export(_) => Err(invalid()), // Specialized dispatch only.
         Action::Start(a) => {
             let active: bool = tx.query_one("SELECT EXISTS(SELECT 1 FROM awr_team.sessions
                 WHERE tenant_id=$1 AND project_id=$2 AND actor_id=$3 AND client_id=$4 AND conversation_id=$5 AND work_id=$6 AND state='active')",
@@ -745,7 +774,7 @@ async fn apply(
     }
 }
 
-async fn session(
+pub(crate) async fn session(
     tx: &Transaction<'_>,
     tenant: &str,
     project: &str,

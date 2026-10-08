@@ -450,7 +450,9 @@ pub fn command_business_action(op: &str) -> Option<awr_team::Action> {
         "work.complete"
         | "delivery.finalize"
         | "delivery.integration.prepare"
-        | "delivery.integration.reject_prepared" => DeliveryFinalize,
+        | "delivery.integration.reject_prepared"
+        | "delivery.export.publish"
+        | "delivery.export.revoke" => DeliveryFinalize,
         "planning.propose" => PlanningPropose,
         "planning.edit_draft" => PlanningEditDraft,
         "planning.approve" => PlanningApprove,
@@ -499,6 +501,7 @@ pub fn query_business_action(op: &str) -> Option<awr_team::Action> {
         "delivery.integration.inspect",
         "source.content",
         "artifact.content",
+        "delivery.exports",
         "planning.outcome",
         "audit.history",
         "audit.export",
@@ -647,6 +650,8 @@ pub(crate) fn command_authority(op: &str) -> Option<DomainAuthority> {
         | "review.decide"
         | "work.complete"
         | "delivery.finalize"
+        | "delivery.export.publish"
+        | "delivery.export.revoke"
         | "delivery.integration.prepare"
         | "delivery.integration.reject_prepared"
         | "delivery.submit_and_request_review"
