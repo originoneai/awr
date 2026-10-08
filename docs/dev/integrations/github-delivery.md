@@ -150,9 +150,10 @@ emails and account ids of commit authors other than the demo account are
 replaced), so the observer parses full-size real payloads, including a base64
 blob that ends in a newline and compare URLs spelled the way GitHub spells them.
 `tests/github_live.rs` runs the same candidates through the production HTTPS
-transport against the live API. It is ignored by default because it needs the
-network (`cargo test -p awr-server --test github_live -- --ignored`; about
-fifteen unauthenticated, read-only requests of the sixty an hour). The webhook
+transport against the live API. It needs the network, so it is behind the
+`github-live` feature (`cargo test -p awr-server --features github-live --test
+github_live`; about fifteen unauthenticated, read-only requests of the sixty an
+hour). The webhook
 verifier is also checked against the signature example GitHub documents. None
 of this exercises authenticated or write access: the guarded integration's
 receive-pack client is checked against a real `git receive-pack`, not against

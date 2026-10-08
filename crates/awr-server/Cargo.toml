@@ -32,6 +32,8 @@ libc = "0.2"
 
 [features]
 pg-tests = ["awr-team-pg/pg-tests"]
+# Opt-in network test against the public GitHub API (tests/github_live.rs).
+github-live = []
 # Production Team deploy: enable verified PostgreSQL TLS (sslmode=require).
 tls = ["awr-team-pg/tls"]
 
