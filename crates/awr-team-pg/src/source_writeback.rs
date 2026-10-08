@@ -2,11 +2,10 @@
 //!
 //! Consumes TMCP-021 publish receipts (`source_writeback_pending`), writes
 //! approved changes into the bound sole source under WS-022 fingerprint/
-//! recovery semantics, and activates one coherent PG snapshot. Impact gating
-//! reuses WS-032 selective replan rules and does not drop the project-wide
-//! active-claim barrier unless impact is proven.
+//! recovery semantics, and activates one coherent PG snapshot. Admission uses
+//! server-derived projection impact and persisted execution settlement before
+//! writing, then fences affected effects and dependency changes until commit.
 use super::{IngestRequest, PgError, PgResult, SourceFile, SourceStore};
-use crate::lock_order::lock_works_sorted;
 use crate::tx::{bind_workstream_scope, lock_active_project, new_id};
 use crate::workstream_auth::{authenticate, authenticate_writer};
 #[allow(unused_imports)]
@@ -14,17 +13,16 @@ use awr_source::SOURCE_BINDING_FILE;
 use awr_source::{
     LockedSourceFile, PublishPrepOptions, SoleSourceLocation, apply_planning_changes_to_ledger,
     fingerprint, prepare_publish_from_ledger_bytes, refuse_external_overwrite,
-    refuse_runtime_field_in_source_write, source_status_notes_are_completion_receipts,
+    source_status_notes_are_completion_receipts,
 };
 use awr_team::{DraftChange, SourceActivationPlan};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
 use std::path::PathBuf;
 use tokio_postgres::Transaction;
 
-/// Proven impact set supplied to activation. When `impact_proven` is false the
-/// historical project-wide claim barrier remains in force.
+/// Compatibility shape for impact observations. Positive caller declarations
+/// never grant admission; source activation independently derives actual impact.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActivationImpactGate {
@@ -32,7 +30,7 @@ pub struct ActivationImpactGate {
     pub allow_activation: bool,
     pub affected_work_ids: Vec<String>,
     pub unrelated_work_ids: Vec<String>,
-    /// Works with an explicit stop/reconcile recorded for this request.
+    /// Retained wire field; caller stop assertions are not settlement evidence.
     pub stopped_work_ids: Vec<String>,
     pub refuse_reason: Option<String>,
     pub recovery_actions: Vec<String>,
@@ -47,17 +45,22 @@ pub struct WritebackActivateRequest {
     pub source_root: PathBuf,
     /// Ledger path relative to `source_root`.
     pub ledger_relative_path: String,
-    /// When impact cannot be proven, leave false — activation conservatively refuses.
+    /// False is an explicit veto. True does not prove impact or settlement.
     pub impact_proven: bool,
-    /// Works for which an explicit external-process stop/reconcile was recorded.
+    /// Retained original-request metadata; never authority to stop or activate.
     #[serde(default)]
     pub stopped_work_ids: Vec<String>,
 }
 
+#[path = "source_writeback/admission.rs"]
+pub(crate) mod admission;
+#[path = "source_writeback/journal.rs"]
+pub(crate) mod journal;
+#[path = "source_writeback/request_binding.rs"]
+mod request_binding;
+
 impl SourceStore {
-    /// Activate a published planning candidate: write authoritative source bytes
-    /// then commit a consistent PG snapshot. Same `request_id` replays to one
-    /// effective activation.
+    /// Resume the same exact intent after inspecting physical source and PG state.
     pub async fn activate_planning_writeback(
         &self,
         tenant_id: &str,
@@ -65,301 +68,175 @@ impl SourceStore {
         bearer: &str,
         req: &WritebackActivateRequest,
     ) -> PgResult<Value> {
+        self.activate_planning_writeback_inner(tenant_id, project_id, bearer, req, None)
+            .await
+    }
+
+    /// Exercise real durable interruption boundaries; never a transport operation.
+    #[cfg(feature = "pg-tests")]
+    pub async fn activate_planning_writeback_abort_for_test(
+        &self,
+        tenant_id: &str,
+        project_id: &str,
+        bearer: &str,
+        req: &WritebackActivateRequest,
+        boundary: &str,
+    ) -> PgResult<Value> {
+        self.activate_planning_writeback_inner(tenant_id, project_id, bearer, req, Some(boundary))
+            .await
+    }
+
+    pub(super) async fn activate_planning_writeback_inner(
+        &self,
+        tenant: &str,
+        project: &str,
+        bearer: &str,
+        req: &WritebackActivateRequest,
+        abort: Option<&str>,
+    ) -> PgResult<Value> {
+        use request_binding::Intent;
         if req.request_id.trim().is_empty() || req.request_id.len() > 200 {
             return Err(PgError::Protocol(
                 "request_id required for idempotent writeback".into(),
             ));
         }
         assert!(!source_status_notes_are_completion_receipts());
-
         let mut client = self.connect().await?;
         crate::check_schema(&client).await?;
-
-        // Idempotent replay under a short read.
-        if let Some(existing) = self
-            .get_planning_activation_receipt(tenant_id, project_id, bearer, &req.request_id)
-            .await?
-        {
-            return Ok(json!({
-                "already_recorded": true,
-                "receipt": existing,
-            }));
-        }
-
-        let tx = client
-            .build_transaction()
-            .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
-            .start()
-            .await?;
-        let mut auth = authenticate_writer(&tx, tenant_id, project_id, bearer).await?;
-        crate::delegation_auth::authorize_project_action(
-            &tx,
-            &mut auth,
-            project_id,
-            awr_team::Action::PlanningPublish,
-        )
-        .await?;
-
-        // Lock order (WS-023): project barrier → sorted affected works → receipts.
-        bind_workstream_scope(&tx, tenant_id, project_id).await?;
-        lock_active_project(&tx, tenant_id, project_id).await?;
-
-        let publish = tx
-            .query_opt(
-                "SELECT id, candidate_id, candidate_digest, draft_revision, approval_id,
-                        publisher_actor_id, source_writeback_pending, activation_receipt_id
-                 FROM awr_team.planning_publish_receipts
-                 WHERE tenant_id=$1 AND project_id=$2 AND id=$3
-                 FOR UPDATE",
-                &[&tenant_id, &project_id, &req.publish_receipt_id],
-            )
-            .await?
-            .ok_or_else(|| PgError::Protocol("publish receipt not found".into()))?;
-        let candidate_id: String = publish.get(1);
-        let candidate_digest: String = publish.get(2);
-        let approval_id: String = publish.get(4);
-        let publisher_actor_id: String = publish.get(5);
-        let pending: bool = publish.get(6);
-        let existing_activation: Option<String> = publish.get(7);
-        if let Some(id) = existing_activation {
-            let receipt = load_activation_receipt(&tx, tenant_id, project_id, &id).await?;
-            tx.commit().await?;
-            return Ok(json!({"already_recorded": true, "receipt": receipt}));
-        }
-        if !pending {
-            return Err(PgError::Protocol(
-                "publish receipt is not pending source writeback".into(),
-            ));
-        }
-
-        let approval = tx
-            .query_one(
-                "SELECT approver_actor_id, candidate_digest FROM awr_team.planning_approvals
-                 WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
-                &[&tenant_id, &project_id, &approval_id],
-            )
-            .await?;
-        let approver_actor_id: String = approval.get(0);
-        let approved_digest: String = approval.get(1);
-        if approved_digest != candidate_digest {
-            return Err(PgError::StaleApproval);
-        }
-
-        let changes = load_published_changes(&tx, tenant_id, project_id, &candidate_id).await?;
-        // Source vs runtime field authority is enforced by TaskDraft schema and
-        // awr-source::planning_writeback; runtime-only keys never appear here.
-        debug_assert!(refuse_runtime_field_in_source_write("claim_id").is_err());
-
-        let all_works = load_all_work_ids(&tx, tenant_id, project_id).await?;
-        let mut affected: BTreeSet<String> = BTreeSet::new();
-        for change in &changes {
-            affected.insert(change.after.work_id.clone());
-            if let Some(before) = &change.before {
-                affected.insert(before.work_id.clone());
+        let tx = client.transaction().await?;
+        let auth = writer(&tx, tenant, project, bearer).await?;
+        let prior = journal::load(&tx, tenant, project, &req.request_id).await?;
+        if let Some(prior) = &prior {
+            prior.intent.require_original(req, &auth)?;
+            if prior.phase == "completed" {
+                let id = prior
+                    .receipt_id
+                    .as_deref()
+                    .ok_or(PgError::SourceDivergence)?;
+                let confirmed = journal::outcome_in_tx(&tx, tenant, project, &req.request_id)
+                    .await?
+                    .is_some_and(|outcome| {
+                        outcome["applied"] == true && outcome["activation_receipt_id"] == id
+                    });
+                if !confirmed {
+                    return Err(PgError::SourceDivergence);
+                }
+                let receipt = load_activation_receipt(&tx, tenant, project, id).await?;
+                tx.commit().await?;
+                return Ok(json!({"already_recorded":true,"receipt":receipt}));
             }
-            for child in &change.after.split_children {
-                affected.insert(child.clone());
+            if prior.phase == "refused" {
+                return Err(PgError::ActivationImpactUnproven("the original request explicitly refused activation; use a new reviewed request after inspection".into()));
             }
-        }
-        // Recheck read-sets: works that observed an affected work are affected.
-        for work_id in &all_works {
-            let rs = load_read_set_work_ids(&tx, tenant_id, project_id, work_id).await?;
-            if rs.iter().any(|w| affected.contains(w)) {
-                affected.insert(work_id.clone());
-            }
-        }
-        let unrelated: Vec<String> = all_works
-            .iter()
-            .filter(|w| !affected.contains(*w))
-            .cloned()
-            .collect();
-        let affected_vec: Vec<String> = affected.iter().cloned().collect();
-
-        lock_works_sorted(&tx, tenant_id, project_id, "main", &affected_vec).await?;
-
-        let gate = build_impact_gate(
-            &tx,
-            tenant_id,
-            project_id,
-            &affected_vec,
-            &unrelated,
-            &req.stopped_work_ids,
-            req.impact_proven,
-        )
-        .await?;
-
-        if !gate.allow_activation {
-            let journal_id_body = json!({
-                "gate": gate,
-                "candidate_id": candidate_id,
-                "candidate_digest": candidate_digest,
-            });
-            upsert_journal(
-                &tx,
-                tenant_id,
-                project_id,
-                &req.request_id,
-                &candidate_id,
-                &candidate_digest,
-                &req.publish_receipt_id,
-                "refused",
-                "",
-                "",
-                &publisher_actor_id,
-                Some(&approver_actor_id),
-                &affected_vec,
-                &unrelated,
-                &gate,
-                &journal_id_body,
-            )
-            .await?;
-            tx.commit().await?;
-            return Err(if !gate.impact_proven {
-                PgError::ActivationImpactUnproven(
-                    gate.refuse_reason
-                        .unwrap_or_else(|| "impact unproven".into()),
-                )
-            } else {
-                PgError::WritebackRefused(
-                    gate.refuse_reason
-                        .unwrap_or_else(|| "writeback refused".into()),
-                )
-            });
-        }
-
-        // --- Build + validate the complete candidate BEFORE any source mutation.
-        // `validated` is committed before the file write, so a crash after the
-        // write and before `source_written` must not apply the patch again.
-        // Resume source_written / pg_activating / validated without re-applying
-        // CreateTask. ---
-        let location =
-            SoleSourceLocation::server_directory(&req.source_root, &req.ledger_relative_path)
-                .map_err(|e| PgError::Protocol(e.to_string()))?;
-        // Shared with delivery metadata publication. Nonblocking acquisition
-        // avoids waiting on a filesystem lock while holding the project barrier.
-        let source_guard = LockedSourceFile::open(&req.source_root, &req.ledger_relative_path)
-            .map_err(source_write_error)?;
-
-        let prior = load_journal_row(&tx, tenant_id, project_id, &req.request_id).await?;
-        let prior_phase = prior.as_ref().map(|j| j.phase.as_str()).unwrap_or("");
-
-        let (before_fingerprint, after_fingerprint, after_bytes, package, source_already_written) =
-            if matches!(
-                prior_phase,
+            if !matches!(
+                prior.phase.as_str(),
                 "validated" | "source_written" | "pg_activating"
             ) {
-                let journal = prior.expect("phase implies journal row");
-                let disk = source_guard.read().map_err(source_write_error)?;
-                let disk_fp = fingerprint(&disk);
-                if disk_fp == journal.after_fingerprint {
-                    // Source write landed; resume activation without re-applying creates.
-                    let package = prepare_publish_from_ledger_bytes(
-                        &location,
-                        &req.source_root,
-                        &disk,
-                        project_id,
-                        &PublishPrepOptions::default(),
-                    )
-                    .map_err(|e| PgError::Protocol(e.to_string()))?;
-                    (
-                        journal.before_fingerprint,
-                        journal.after_fingerprint,
-                        disk,
-                        package,
-                        true,
-                    )
-                } else if disk_fp == journal.before_fingerprint {
-                    // Write never persisted; rebuild, validate, then write below.
-                    let patch = apply_planning_changes_to_ledger(&disk, &changes)
-                        .map_err(|e| PgError::Protocol(e.to_string()))?;
-                    if patch.after_fingerprint != journal.after_fingerprint {
-                        return Err(PgError::Protocol(
-                            "resume rebuild fingerprint diverged from journal intent".into(),
-                        ));
-                    }
-                    let package = prepare_publish_from_ledger_bytes(
-                        &location,
-                        &req.source_root,
-                        &patch.after_bytes,
-                        project_id,
-                        &PublishPrepOptions::default(),
-                    )
-                    .map_err(|e| PgError::Protocol(e.to_string()))?;
-                    (
-                        patch.before_fingerprint,
-                        patch.after_fingerprint,
-                        patch.after_bytes,
-                        package,
-                        false,
-                    )
-                } else {
-                    return Err(PgError::Protocol(
-                        "authoritative source changed externally; refusing overwrite of others' work"
-                            .into(),
-                    ));
-                }
-            } else {
-                // Fresh / planned / refused-retry: plan patch and validate fully
-                // before the first authoritative source mutation.
-                let before_bytes = source_guard.read().map_err(source_write_error)?;
-                let observed_fp = fingerprint(&before_bytes);
-                let patch = apply_planning_changes_to_ledger(&before_bytes, &changes)
-                    .map_err(|e| PgError::Protocol(e.to_string()))?;
-                refuse_external_overwrite(&patch.before_fingerprint, &observed_fp)
-                    .map_err(|e| PgError::Protocol(e.to_string()))?;
-
-                let package = prepare_publish_from_ledger_bytes(
-                    &location,
-                    &req.source_root,
-                    &patch.after_bytes,
-                    project_id,
-                    &PublishPrepOptions::default(),
-                )
-                .map_err(|e| PgError::Protocol(e.to_string()))?;
-                let files_preview: Vec<SourceFile> = package
-                    .files
-                    .iter()
-                    .map(|f| SourceFile {
-                        path: f.path.clone(),
-                        bytes: f.bytes.clone(),
-                    })
-                    .collect();
-                let _binding =
-                    SourceStore::validate_publish_package(&files_preview).map_err(|e| e)?;
-
-                upsert_journal(
-                    &tx,
-                    tenant_id,
-                    project_id,
-                    &req.request_id,
-                    &candidate_id,
-                    &candidate_digest,
-                    &req.publish_receipt_id,
-                    "validated",
-                    &patch.before_fingerprint,
-                    &patch.after_fingerprint,
-                    &publisher_actor_id,
-                    Some(&approver_actor_id),
-                    &affected_vec,
-                    &unrelated,
-                    &gate,
-                    &json!({
-                        "phase": "validated",
-                        "bundle_digest": package.bundle_digest,
-                    }),
-                )
+                return Err(PgError::WritebackRefused(
+                    "original journal is not safely resumable".into(),
+                ));
+            }
+        }
+        admission::require_source_available(&tx, tenant, project, Some(&req.request_id)).await?;
+        let (epoch, registered) = request_binding::baseline(&tx, tenant, project, req).await?;
+        let (publication, changes) =
+            request_binding::publication(&tx, tenant, project, &auth, &req.publish_receipt_id)
                 .await?;
-
+        let mut intent = if let Some(prior) = &prior {
+            prior.intent.require_baseline(&auth, &epoch, &registered)?;
+            if json!(prior.intent.publication) != json!(publication) {
+                return Err(PgError::StaleApproval);
+            }
+            prior.intent.clone()
+        } else {
+            let (planning_request, planning_request_hash) =
+                request_binding::command_origin(&tx, tenant, project, &auth, req, &publication)
+                    .await?;
+            Intent {
+                codec: "awr-planning-writeback-intent-v1".into(),
+                tenant_id: tenant.into(),
+                project_id: project.into(),
+                request: req.clone(),
+                planning_request,
+                planning_request_hash,
+                actor_id: auth.actor_id.clone(),
+                client_id: auth.client_id.clone(),
+                coordinator_epoch: auth.epoch.clone(),
+                publication,
+                base_snapshot_id: auth.snapshot.clone(),
+                base_authority_epoch: epoch,
+                registered_source: registered,
+                before_fingerprint: String::new(),
+                after_fingerprint: String::new(),
+                source_version: String::new(),
+                candidate: None,
+                affected_work_ids: vec![],
+                dependency_work_ids: vec![],
+            }
+        };
+        // False remains an explicit veto; true and stopped lists are never proof.
+        if !req.impact_proven {
+            let gate = ActivationImpactGate {
+                refuse_reason: Some("caller explicitly refused impact admission".into()),
+                recovery_actions: vec![
+                    "inspect the actual candidate and submit a new reviewed request".into(),
+                ],
+                ..Default::default()
+            };
+            journal::insert(&tx, tenant, project, &intent, &gate, "refused").await?;
+            tx.commit().await?;
+            return Err(PgError::ActivationImpactUnproven(
+                "caller explicitly refused activation".into(),
+            ));
+        }
+        let location =
+            SoleSourceLocation::server_directory(&req.source_root, &req.ledger_relative_path)
+                .map_err(|_| PgError::Protocol("invalid sole source location".into()))?;
+        let guard = LockedSourceFile::open(&req.source_root, &req.ledger_relative_path)
+            .map_err(source_write_error)?;
+        let disk = guard.read().map_err(source_write_error)?;
+        let observed = fingerprint(&disk);
+        let (before_fp, after_fp, after_bytes, source_written) = if prior.is_some() {
+            if observed == intent.after_fingerprint {
+                (
+                    intent.before_fingerprint.clone(),
+                    intent.after_fingerprint.clone(),
+                    disk,
+                    true,
+                )
+            } else if observed == intent.before_fingerprint {
+                let patch = apply_planning_changes_to_ledger(&disk, &changes)
+                    .map_err(|_| PgError::SourceDivergence)?;
+                if patch.after_fingerprint != intent.after_fingerprint {
+                    return Err(PgError::SourceDivergence);
+                }
                 (
                     patch.before_fingerprint,
                     patch.after_fingerprint,
                     patch.after_bytes,
-                    package,
                     false,
                 )
-            };
-
-        // Validate package files once more for the resume path that skipped preview.
+            } else {
+                return Err(PgError::WritebackRefused("authoritative source changed; preserve the external bytes and inspect the original intent".into()));
+            }
+        } else {
+            let patch = apply_planning_changes_to_ledger(&disk, &changes)
+                .map_err(|e| PgError::Protocol(e.to_string()))?;
+            (
+                patch.before_fingerprint,
+                patch.after_fingerprint,
+                patch.after_bytes,
+                false,
+            )
+        };
+        let package = prepare_publish_from_ledger_bytes(
+            &location,
+            &req.source_root,
+            &after_bytes,
+            project,
+            &PublishPrepOptions::default(),
+        )
+        .map_err(|e| PgError::Protocol(e.to_string()))?;
         let files: Vec<SourceFile> = package
             .files
             .iter()
@@ -368,130 +245,159 @@ impl SourceStore {
                 bytes: f.bytes.clone(),
             })
             .collect();
-        let _binding = SourceStore::validate_publish_package(&files)?;
-
-        // Release the SQL transaction before filesystem write; re-lock after.
+        Self::validate_publish_package(&files)?;
+        let raw_files: Vec<_> = files
+            .iter()
+            .map(|f| (f.path.clone(), f.bytes.clone()))
+            .collect();
+        let projection = super::SourceProjection::parse(&raw_files, project)?;
+        super::workstreams::reject_external_graph(&raw_files)?;
+        // This is the same server-derived gate as every direct source activation.
+        let affected = projection
+            .validate_transition_with_impact(&tx, tenant, project, Some(&auth.snapshot), None)
+            .await?;
+        let influence = projection
+            .dependency_influence(&tx, tenant, project, Some(&auth.snapshot))
+            .await?;
+        let all = tx
+            .query(
+                "SELECT id FROM awr_team.work_items WHERE tenant_id=$1 AND project_id=$2",
+                &[&tenant, &project],
+            )
+            .await?;
+        let gate = ActivationImpactGate {
+            impact_proven: true,
+            allow_activation: true,
+            affected_work_ids: affected.iter().cloned().collect(),
+            unrelated_work_ids: all
+                .iter()
+                .map(|r| r.get::<_, String>(0))
+                .filter(|id| !affected.contains(id))
+                .collect(),
+            stopped_work_ids: vec![],
+            refuse_reason: None,
+            recovery_actions: vec![
+                "query the durable phase before resuming the original request".into(),
+            ],
+        };
+        if prior.is_some() {
+            if intent.affected_work_ids != gate.affected_work_ids
+                || intent.dependency_work_ids != influence.into_iter().collect::<Vec<_>>()
+                || intent.source_version != package.source_version_digest
+            {
+                return Err(PgError::SourceDivergence);
+            };
+            let manifest = super::build_manifest(&package.parser_version, &raw_files)?;
+            let digest = super::sha256_hex(
+                &serde_json::to_vec(&manifest).map_err(|_| PgError::SourceDivergence)?,
+            );
+            if intent
+                .candidate
+                .as_ref()
+                .is_none_or(|c| c.manifest_digest != digest)
+            {
+                return Err(PgError::SourceDivergence);
+            };
+        } else {
+            intent.before_fingerprint = before_fp.clone();
+            intent.after_fingerprint = after_fp.clone();
+            intent.source_version = package.source_version_digest.clone();
+            intent.affected_work_ids = gate.affected_work_ids.clone();
+            intent.dependency_work_ids = influence.into_iter().collect();
+            let candidate = Self::ingest_in_tx(
+                &tx,
+                IngestRequest {
+                    tenant_id: tenant.into(),
+                    project_id: project.into(),
+                    actor_id: auth.actor_id.clone(),
+                    parser_version: package.parser_version.clone(),
+                    files,
+                },
+            )
+            .await?;
+            Self::record_writeback_source_approval_in_tx(
+                &tx,
+                tenant,
+                project,
+                &candidate.proposal_id,
+                &candidate.manifest_digest,
+                &intent.publication.approver_actor_id,
+                &intent.publication.approval_id,
+            )
+            .await?;
+            intent.candidate = Some(candidate);
+            journal::insert(&tx, tenant, project, &intent, &gate, "validated").await?;
+        }
+        let intent_hash = intent.hash()?;
+        let mut phase = prior.map(|p| p.phase).unwrap_or_else(|| "validated".into());
         tx.commit().await?;
-
-        if !source_already_written {
-            // Fingerprint re-check immediately before write (external race).
-            let recheck = source_guard.read().map_err(source_write_error)?;
-            refuse_external_overwrite(&before_fingerprint, &fingerprint(&recheck))
-                .map_err(|e| PgError::Protocol(e.to_string()))?;
-            source_guard
-                .replace(&before_fingerprint, &after_bytes)
+        injected(abort, "after_intent")?;
+        if !source_written {
+            if phase != "validated" {
+                return Err(PgError::SourceDivergence);
+            }
+            guard
+                .replace(&before_fp, &after_bytes)
                 .map_err(source_write_error)?;
         }
         refuse_external_overwrite(
-            &after_fingerprint,
-            &fingerprint(&source_guard.read().map_err(source_write_error)?),
+            &after_fp,
+            &fingerprint(&guard.read().map_err(source_write_error)?),
         )
-        .map_err(|e| PgError::Protocol(e.to_string()))?;
-
-        // Re-enter PG for activation.
-        let mut client = self.connect().await?;
-        let tx = client
-            .build_transaction()
-            .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
-            .start()
-            .await?;
-        let mut auth = authenticate_writer(&tx, tenant_id, project_id, bearer).await?;
-        crate::delegation_auth::authorize_project_action(
-            &tx,
-            &mut auth,
-            project_id,
-            awr_team::Action::PlanningPublish,
-        )
-        .await?;
-        bind_workstream_scope(&tx, tenant_id, project_id).await?;
-        lock_active_project(&tx, tenant_id, project_id).await?;
-        lock_works_sorted(&tx, tenant_id, project_id, "main", &affected_vec).await?;
-
-        // Another request may have completed meanwhile.
-        if let Some(row) = tx
-            .query_opt(
-                "SELECT id FROM awr_team.planning_activation_receipts
-                 WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
-                &[&tenant_id, &project_id, &req.request_id],
-            )
-            .await?
-        {
-            let id: String = row.get(0);
-            let receipt = load_activation_receipt(&tx, tenant_id, project_id, &id).await?;
+        .map_err(|_| {
+            PgError::WritebackRefused("source fingerprint changed before confirmation".into())
+        })?;
+        injected(abort, "after_source_write")?;
+        for next in ["source_written", "pg_activating"] {
+            if phase == "pg_activating" || phase == next {
+                continue;
+            }
+            let mut client = self.connect().await?;
+            let tx = client.transaction().await?;
+            bind_workstream_scope(&tx, tenant, project).await?;
+            lock_active_project(&tx, tenant, project).await?;
+            journal::transition(&tx, tenant, project, &req.request_id, &intent_hash, next).await?;
             tx.commit().await?;
-            return Ok(json!({"already_recorded": true, "receipt": receipt}));
+            phase = next.into();
+            injected(
+                abort,
+                if next == "source_written" {
+                    "after_source_written"
+                } else {
+                    "after_pg_activating"
+                },
+            )?;
         }
-
-        upsert_journal(
-            &tx,
-            tenant_id,
-            project_id,
-            &req.request_id,
-            &candidate_id,
-            &candidate_digest,
-            &req.publish_receipt_id,
-            "source_written",
-            &before_fingerprint,
-            &after_fingerprint,
-            &publisher_actor_id,
-            Some(&approver_actor_id),
-            &affected_vec,
-            &unrelated,
-            &gate,
-            &json!({"phase":"source_written"}),
+        let mut client = self.connect().await?;
+        let tx = client.transaction().await?;
+        let auth = writer(&tx, tenant, project, bearer).await?;
+        let saved = journal::load(&tx, tenant, project, &req.request_id)
+            .await?
+            .ok_or(PgError::SourceDivergence)?;
+        saved.intent.require_original(req, &auth)?;
+        if saved.hash != intent_hash || saved.phase != "pg_activating" {
+            return Err(PgError::SourceDivergence);
+        };
+        let (epoch, registered) = request_binding::baseline(&tx, tenant, project, req).await?;
+        intent.require_baseline(&auth, &epoch, &registered)?;
+        let (publication, _) =
+            request_binding::publication(&tx, tenant, project, &auth, &req.publish_receipt_id)
+                .await?;
+        if json!(publication) != json!(intent.publication) {
+            return Err(PgError::StaleApproval);
+        };
+        refuse_external_overwrite(
+            &after_fp,
+            &fingerprint(&guard.read().map_err(source_write_error)?),
         )
-        .await?;
-
-        upsert_journal(
-            &tx,
-            tenant_id,
-            project_id,
-            &req.request_id,
-            &candidate_id,
-            &candidate_digest,
-            &req.publish_receipt_id,
-            "pg_activating",
-            &before_fingerprint,
-            &after_fingerprint,
-            &publisher_actor_id,
-            Some(&approver_actor_id),
-            &affected_vec,
-            &unrelated,
-            &gate,
-            &json!({"phase":"pg_activating", "bundle_digest": package.bundle_digest}),
-        )
-        .await?;
-
-        // Ingest + approve + activate via helpers that open their own txs.
-        drop(tx);
-        let (candidate, _binding) = self
-            .ingest_publish_candidate(IngestRequest {
-                tenant_id: tenant_id.into(),
-                project_id: project_id.into(),
-                actor_id: publisher_actor_id.clone(),
-                parser_version: package.parser_version.clone(),
-                files,
-            })
-            .await
-            .map_err(|e| e)?;
-        // Bind source approval to the already-verified planning approval.
-        // Self-approved ordinary planning is allowed under project policy; do not
-        // re-impose author!=reviewer for the derived source proposal.
-        self.record_writeback_source_approval(
-            tenant_id,
-            project_id,
-            &candidate.proposal_id,
-            &candidate.manifest_digest,
-            &approver_actor_id,
-            &approval_id,
-        )
-        .await
-        .map_err(|e| e)?;
+        .map_err(|_| PgError::WritebackRefused("source changed before atomic activation".into()))?;
+        let candidate = intent.candidate.as_ref().ok_or(PgError::SourceDivergence)?;
         let current = self
-            .activate_workstreams_with_impact(
-                tenant_id,
-                project_id,
-                &publisher_actor_id,
+            .activate_in_tx(
+                &tx,
+                tenant,
+                project,
+                &auth.actor_id,
                 &candidate.proposal_id,
                 &SourceActivationPlan {
                     candidate_digest: candidate.manifest_digest.clone(),
@@ -499,140 +405,70 @@ impl SourceStore {
                     expected_authority_epoch: candidate.base_epoch.clone(),
                     approved_candidate_digest: candidate.manifest_digest.clone(),
                 },
-                &gate,
+                true,
+                false,
+                None,
+                Some(&req.request_id),
             )
-            .await
-            .map_err(|e| e)?;
-        // Finalize receipts.
-        let mut client = self.connect().await?;
-        let tx = client.transaction().await?;
-        bind_workstream_scope(&tx, tenant_id, project_id).await?;
-        lock_active_project(&tx, tenant_id, project_id).await?;
-        let activation_id = new_id();
-        let audit = json!({
-            "request_id": req.request_id,
-            "publish_receipt_id": req.publish_receipt_id,
-            "candidate_id": candidate_id,
-            "candidate_digest": candidate_digest,
-            "approval_id": approval_id,
-            "approver_actor_id": approver_actor_id,
-            "publisher_actor_id": publisher_actor_id,
-            "source_version": package.source_version_digest,
-            "activated_snapshot_id": current.snapshot_id,
-            "authority_epoch": current.authority_epoch,
-            "affected_work_ids": affected_vec,
-            "unrelated_work_ids": unrelated,
-            "before_fingerprint": before_fingerprint,
-            "after_fingerprint": after_fingerprint,
-            "recovery_actions": gate.recovery_actions,
-        });
-        tx.execute(
-            "INSERT INTO awr_team.planning_activation_receipts(
-                tenant_id, project_id, id, request_id, candidate_id, candidate_digest,
-                publish_receipt_id, approval_id, approver_actor_id, publisher_actor_id,
-                source_version, activated_snapshot_id, authority_epoch,
-                before_fingerprint, after_fingerprint, affected_work_ids, unrelated_work_ids,
-                audit_json)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17::jsonb,$18::jsonb)",
-            &[
-                &tenant_id,
-                &project_id,
-                &activation_id,
-                &req.request_id,
-                &candidate_id,
-                &candidate_digest,
-                &req.publish_receipt_id,
-                &approval_id,
-                &approver_actor_id,
-                &publisher_actor_id,
-                &package.source_version_digest,
-                &current.snapshot_id,
-                &current.authority_epoch,
-                &before_fingerprint,
-                &after_fingerprint,
-                &json!(affected_vec),
-                &json!(unrelated),
-                &audit,
-            ],
-        )
-        .await?;
-        tx.execute(
-            "UPDATE awr_team.planning_publish_receipts
-             SET source_writeback_pending=false,
-                 activation_receipt_id=$4,
-                 source_version=$5,
-                 activated_snapshot_id=$6
-             WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
-            &[
-                &tenant_id,
-                &project_id,
-                &req.publish_receipt_id,
-                &activation_id,
-                &package.source_version_digest,
-                &current.snapshot_id,
-            ],
-        )
-        .await?;
-        upsert_journal(
-            &tx,
-            tenant_id,
-            project_id,
-            &req.request_id,
-            &candidate_id,
-            &candidate_digest,
-            &req.publish_receipt_id,
-            "completed",
-            &before_fingerprint,
-            &after_fingerprint,
-            &publisher_actor_id,
-            Some(&approver_actor_id),
-            &affected_vec,
-            &unrelated,
-            &gate,
-            &audit,
-        )
-        .await?;
-        // Mark journal audit_receipt_id
-        tx.execute(
-            "UPDATE awr_team.planning_writeback_journals
-             SET audit_receipt_id=$4, source_version=$5, activated_snapshot_id=$6,
-                 authority_epoch=$7, updated_at=clock_timestamp()
-             WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
-            &[
-                &tenant_id,
-                &project_id,
-                &req.request_id,
-                &activation_id,
-                &package.source_version_digest,
-                &current.snapshot_id,
-                &current.authority_epoch,
-            ],
-        )
-        .await?;
+            .await?;
+        let id = new_id();
+        let p = &intent.publication;
+        let audit = json!({"request_id":req.request_id,"intent_hash":intent_hash,"actor_id":intent.actor_id,"client_id":intent.client_id,
+            "publish_receipt_id":req.publish_receipt_id,"candidate_id":p.candidate_id,"candidate_digest":p.candidate_digest,
+            "approval_id":p.approval_id,"approver_actor_id":p.approver_actor_id,"publisher_actor_id":p.publisher_actor_id,
+            "source_version":intent.source_version,"activated_snapshot_id":current.snapshot_id,"authority_epoch":current.authority_epoch,
+            "affected_work_ids":intent.affected_work_ids,"unrelated_work_ids":gate.unrelated_work_ids,
+            "before_fingerprint":before_fp,"after_fingerprint":after_fp,"source_synchronized_at_commit":true});
+        tx.execute("INSERT INTO awr_team.planning_activation_receipts(
+            tenant_id,project_id,id,request_id,candidate_id,candidate_digest,publish_receipt_id,approval_id,
+            approver_actor_id,publisher_actor_id,source_version,activated_snapshot_id,authority_epoch,
+            before_fingerprint,after_fingerprint,affected_work_ids,unrelated_work_ids,audit_json)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)",
+            &[&tenant,&project,&id,&req.request_id,&p.candidate_id,&p.candidate_digest,&req.publish_receipt_id,&p.approval_id,
+              &p.approver_actor_id,&p.publisher_actor_id,&intent.source_version,&current.snapshot_id,&current.authority_epoch,
+              &before_fp,&after_fp,&json!(intent.affected_work_ids),&json!(gate.unrelated_work_ids),&audit]).await?;
+        if tx.execute("UPDATE awr_team.planning_publish_receipts SET source_writeback_pending=false,activation_receipt_id=$4,
+            source_version=$5,activated_snapshot_id=$6 WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND source_writeback_pending",
+            &[&tenant,&project,&req.publish_receipt_id,&id,&intent.source_version,&current.snapshot_id]).await? != 1 {return Err(PgError::PreconditionsChanged)};
+        if tx.execute("UPDATE awr_team.planning_writeback_journals SET phase='completed',audit_receipt_id=$4,source_version=$5,
+            activated_snapshot_id=$6,authority_epoch=$7,body_json=$8,updated_at=clock_timestamp()
+            WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3 AND intent_hash=$9 AND phase='pg_activating'",
+            &[&tenant,&project,&req.request_id,&id,&intent.source_version,&current.snapshot_id,&current.authority_epoch,&audit,&intent_hash]).await? != 1 {return Err(PgError::PreconditionsChanged)};
+        let mut receipt = load_activation_receipt(&tx, tenant, project, &id).await?;
+        injected(abort, "before_final_commit")?;
         tx.commit().await?;
-
-        Ok(json!({
-            "already_recorded": false,
-            "receipt_id": activation_id,
-            "request_id": req.request_id,
-            "candidate_id": candidate_id,
-            "candidate_digest": candidate_digest,
-            "approver_actor_id": approver_actor_id,
-            "source_version": package.source_version_digest,
-            "activated_snapshot_id": current.snapshot_id,
-            "authority_epoch": current.authority_epoch,
-            "before_fingerprint": before_fingerprint,
-            "after_fingerprint": after_fingerprint,
-            "affected_work_ids": affected_vec,
-            "unrelated_work_ids": unrelated,
-            "source_bytes_written": true,
-            "source_writeback_pending": false,
-            "audit": audit,
-        }))
+        injected(abort, "after_final_commit")?;
+        receipt["already_recorded"] = json!(false);
+        receipt["source_bytes_written"] = json!(true);
+        receipt["source_writeback_pending"] = json!(false);
+        Ok(receipt)
     }
 
-    async fn record_writeback_source_approval(
+    pub async fn get_planning_writeback_status(
         &self,
+        tenant: &str,
+        project: &str,
+        bearer: &str,
+        request: &str,
+    ) -> PgResult<Option<Value>> {
+        let mut client = self.connect().await?;
+        crate::check_schema(&client).await?;
+        let tx = client.transaction().await?;
+        let mut auth = authenticate(&tx, tenant, project, bearer).await?;
+        crate::delegation_auth::authorize_project_action(
+            &tx,
+            &mut auth,
+            project,
+            awr_team::Action::PlanningPublish,
+        )
+        .await?;
+        let outcome = journal::outcome_in_tx(&tx, tenant, project, request).await?;
+        tx.commit().await?;
+        Ok(outcome)
+    }
+
+    async fn record_writeback_source_approval_in_tx(
+        tx: &Transaction<'_>,
         tenant_id: &str,
         project_id: &str,
         proposal_id: &str,
@@ -640,10 +476,8 @@ impl SourceStore {
         approver_actor_id: &str,
         planning_approval_id: &str,
     ) -> PgResult<String> {
-        let mut client = self.connect().await?;
-        let tx = client.transaction().await?;
-        crate::tx::bind_workstream_scope(&tx, tenant_id, project_id).await?;
-        lock_active_project(&tx, tenant_id, project_id).await?;
+        crate::tx::bind_workstream_scope(tx, tenant_id, project_id).await?;
+        lock_active_project(tx, tenant_id, project_id).await?;
         let row = tx
             .query_opt(
                 "SELECT p.state, s.manifest_digest
@@ -699,7 +533,6 @@ impl SourceStore {
             &[&tenant_id, &project_id, &proposal_id],
         )
         .await?;
-        tx.commit().await?;
         Ok(approval_id)
     }
 
@@ -749,249 +582,46 @@ impl SourceStore {
         Ok(Some(receipt))
     }
 
-    /// Capability probe for TMCP-022 writeback/activation.
     pub fn planning_writeback_capabilities() -> Value {
-        json!({
-            "source_writeback": "tmcp_022",
-            "precise_patch_fingerprint_recovery": true,
-            "barrier_lock_order": "ws023",
-            "selective_replan": "ws032",
-            "project_claim_barrier_retained_when_unproven": true,
-            "cancel_expiry_session_end_prove_process_stopped": false,
-            "runtime_fields_writable_via_source": false,
-            "source_status_is_completion_receipt": false,
-            "idempotent_request_id": true,
-            "queryable_activation_receipt": true
-        })
+        json!({"source_writeback":"tmcp_022","precise_patch_fingerprint_recovery":true,
+            "barrier_lock_order":"ws023","selective_replan":"ws032",
+            "project_claim_barrier_retained_when_unproven":true,
+            "cancel_expiry_session_end_prove_process_stopped":false,
+            "runtime_fields_writable_via_source":false,"source_status_is_completion_receipt":false,
+            "idempotent_request_id":true,"queryable_activation_receipt":true,
+            "server_derived_preflight_before_source_write":true,"durable_selective_admission":true,
+            "original_request_identity_bound":true,"atomic_activation_and_receipt":true})
     }
 }
 
-async fn load_published_changes(
+async fn writer(
     tx: &Transaction<'_>,
-    tenant_id: &str,
-    project_id: &str,
-    candidate_id: &str,
-) -> PgResult<Vec<DraftChange>> {
-    let row = tx
-        .query_opt(
-            "SELECT changes_json, state FROM awr_team.planning_candidates
-             WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
-            &[&tenant_id, &project_id, &candidate_id],
-        )
-        .await?
-        .ok_or_else(|| PgError::Protocol("planning candidate not found".into()))?;
-    let state: String = row.get(1);
-    if state != "published" {
-        return Err(PgError::Protocol(
-            "writeback requires a published planning candidate".into(),
-        ));
-    }
-    serde_json::from_value(row.get(0)).map_err(|e| PgError::Protocol(e.to_string()))
-}
-
-async fn load_all_work_ids(
-    tx: &Transaction<'_>,
-    tenant_id: &str,
-    project_id: &str,
-) -> PgResult<Vec<String>> {
-    let rows = tx
-        .query(
-            "SELECT id FROM awr_team.work_items
-             WHERE tenant_id=$1 AND project_id=$2 ORDER BY id",
-            &[&tenant_id, &project_id],
-        )
-        .await?;
-    Ok(rows.into_iter().map(|r| r.get(0)).collect())
-}
-
-async fn load_read_set_work_ids(
-    tx: &Transaction<'_>,
-    tenant_id: &str,
-    project_id: &str,
-    work_id: &str,
-) -> PgResult<Vec<String>> {
-    // Optional table from WS-020; tolerate absence by returning empty (impact
-    // then relies on explicit candidate diffs only).
-    let exists: bool = tx
-        .query_one(
-            "SELECT EXISTS(
-                SELECT 1 FROM information_schema.tables
-                WHERE table_schema='awr_team' AND table_name='operation_readsets')",
-            &[],
-        )
-        .await?
-        .get(0);
-    if !exists {
-        return Ok(Vec::new());
-    }
-    let rows = tx
-        .query(
-            "SELECT observed_work_id FROM awr_team.operation_readsets
-             WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3",
-            &[&tenant_id, &project_id, &work_id],
-        )
-        .await
-        .unwrap_or_default();
-    Ok(rows.into_iter().map(|r| r.get(0)).collect())
-}
-
-async fn build_impact_gate(
-    tx: &Transaction<'_>,
-    tenant_id: &str,
-    project_id: &str,
-    affected: &[String],
-    unrelated: &[String],
-    stopped: &[String],
-    impact_proven: bool,
-) -> PgResult<ActivationImpactGate> {
-    let stopped_set: BTreeSet<_> = stopped.iter().cloned().collect();
-    let mut recovery = vec![
-        "recompute affected set from planning candidate diffs".into(),
-        "recheck operation read-sets for live claims and nonterminal executions".into(),
-        "explicitly stop/reconcile/replan affected works before retry".into(),
-    ];
-    if !impact_proven {
-        return Ok(ActivationImpactGate {
-            impact_proven: false,
-            allow_activation: false,
-            affected_work_ids: affected.to_vec(),
-            unrelated_work_ids: unrelated.to_vec(),
-            stopped_work_ids: stopped.to_vec(),
-            refuse_reason: Some(
-                "activation impact cannot be proven; retaining project-wide active-claim barrier"
-                    .into(),
-            ),
-            recovery_actions: recovery,
-        });
-    }
-
-    let mut allow = true;
-    let mut refuse = None;
-    for work_id in affected {
-        let active_claim: i64 = tx
-            .query_one(
-                "SELECT count(*) FROM awr_team.claims
-                 WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3
-                   AND state='active' AND expires_at > clock_timestamp()",
-                &[&tenant_id, &project_id, &work_id],
-            )
-            .await?
-            .get(0);
-        // Cancelled/expired claims do not prove process stop — only explicit stopped set does.
-        let nonterminal: i64 = tx
-            .query_one(
-                "SELECT count(*) FROM awr_team.executions
-                 WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3
-                   AND state NOT IN ('succeeded','failed','cancelled')",
-                &[&tenant_id, &project_id, &work_id],
-            )
-            .await?
-            .get(0);
-        let live = active_claim > 0 || nonterminal > 0;
-        if live && !stopped_set.contains(work_id) {
-            allow = false;
-            refuse = Some(format!(
-                "affected work {work_id} requires explicit stop/reconcile/replan (cancel/expiry/end-session do not prove process stopped)"
-            ));
-            recovery.push(format!("stop and reconcile work {work_id}"));
-        }
-    }
-
-    Ok(ActivationImpactGate {
-        impact_proven: true,
-        allow_activation: allow,
-        affected_work_ids: affected.to_vec(),
-        unrelated_work_ids: unrelated.to_vec(),
-        stopped_work_ids: stopped.to_vec(),
-        refuse_reason: refuse,
-        recovery_actions: recovery,
-    })
-}
-
-#[derive(Clone, Debug)]
-struct JournalRow {
-    phase: String,
-    before_fingerprint: String,
-    after_fingerprint: String,
-}
-
-async fn load_journal_row(
-    tx: &Transaction<'_>,
-    tenant_id: &str,
-    project_id: &str,
-    request_id: &str,
-) -> PgResult<Option<JournalRow>> {
-    let row = tx
-        .query_opt(
-            "SELECT phase, before_fingerprint, after_fingerprint
-             FROM awr_team.planning_writeback_journals
-             WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
-            &[&tenant_id, &project_id, &request_id],
-        )
-        .await?;
-    Ok(row.map(|r| JournalRow {
-        phase: r.get(0),
-        before_fingerprint: r.get(1),
-        after_fingerprint: r.get(2),
-    }))
-}
-
-async fn upsert_journal(
-    tx: &Transaction<'_>,
-    tenant_id: &str,
-    project_id: &str,
-    request_id: &str,
-    candidate_id: &str,
-    candidate_digest: &str,
-    publish_receipt_id: &str,
-    phase: &str,
-    before_fp: &str,
-    after_fp: &str,
-    publisher_actor_id: &str,
-    approver_actor_id: Option<&str>,
-    affected: &[String],
-    unrelated: &[String],
-    gate: &ActivationImpactGate,
-    body: &Value,
-) -> PgResult<()> {
-    tx.execute(
-        "INSERT INTO awr_team.planning_writeback_journals(
-            tenant_id, project_id, request_id, candidate_id, candidate_digest,
-            publish_receipt_id, phase, before_fingerprint, after_fingerprint,
-            approver_actor_id, publisher_actor_id, affected_work_ids, unrelated_work_ids,
-            recovery_actions, refuse_reason, body_json)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb,$14::jsonb,$15,$16::jsonb)
-         ON CONFLICT (tenant_id, project_id, request_id) DO UPDATE SET
-            phase=EXCLUDED.phase,
-            before_fingerprint=EXCLUDED.before_fingerprint,
-            after_fingerprint=EXCLUDED.after_fingerprint,
-            approver_actor_id=EXCLUDED.approver_actor_id,
-            affected_work_ids=EXCLUDED.affected_work_ids,
-            unrelated_work_ids=EXCLUDED.unrelated_work_ids,
-            recovery_actions=EXCLUDED.recovery_actions,
-            refuse_reason=EXCLUDED.refuse_reason,
-            body_json=EXCLUDED.body_json,
-            updated_at=clock_timestamp()",
-        &[
-            &tenant_id,
-            &project_id,
-            &request_id,
-            &candidate_id,
-            &candidate_digest,
-            &publish_receipt_id,
-            &phase,
-            &before_fp,
-            &after_fp,
-            &approver_actor_id,
-            &publisher_actor_id,
-            &json!(affected),
-            &json!(unrelated),
-            &json!(gate.recovery_actions),
-            &gate.refuse_reason,
-            &body,
-        ],
+    tenant: &str,
+    project: &str,
+    bearer: &str,
+) -> PgResult<crate::workstream_auth::ReaderAuthority> {
+    bind_workstream_scope(tx, tenant, project).await?;
+    // Retain source activation's mode -> project lock order.
+    tx.query_opt("SELECT enabled FROM awr_team.workstream_modes WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
+        &[&tenant,&project]).await?.ok_or(PgError::ProjectNotAvailable)?;
+    lock_active_project(tx, tenant, project).await?;
+    let mut auth = authenticate_writer(tx, tenant, project, bearer).await?;
+    crate::delegation_auth::authorize_project_action(
+        tx,
+        &mut auth,
+        project,
+        awr_team::Action::PlanningPublish,
     )
     .await?;
+    Ok(auth)
+}
+
+fn injected(selected: Option<&str>, boundary: &str) -> PgResult<()> {
+    if selected == Some(boundary) {
+        return Err(PgError::Protocol(format!(
+            "injected writeback interruption: {boundary}"
+        )));
+    }
     Ok(())
 }
 

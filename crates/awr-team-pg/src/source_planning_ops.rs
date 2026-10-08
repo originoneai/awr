@@ -113,7 +113,7 @@ fn require_request_id(id: &str) -> PgResult<()> {
     Ok(())
 }
 
-fn intent_hash(op: &str, body: &Value) -> PgResult<String> {
+pub(super) fn intent_hash(op: &str, body: &Value) -> PgResult<String> {
     awr_team::request_hash(&json!({"protocol": RECEIPT_PROTOCOL, "op": op, "body": body}))
         .map_err(|_| PgError::Protocol("planning request hash failed".into()))
 }
@@ -246,7 +246,21 @@ pub(crate) async fn read_planning_command_receipt(
     let Some(row) = row else {
         return Ok(None);
     };
-    if row.get::<_, String>(6) != "completed" {
+    let completed = row.get::<_, String>(6) == "completed";
+    if row.get::<_, String>(0) == "planning.activate" {
+        let outcome =
+            super::writeback::journal::outcome_in_tx(tx, tenant_id, project_id, request_id)
+                .await?
+                .ok_or(PgError::SourceDivergence)?;
+        if !completed || outcome["applied"] != true {
+            return Ok(Some(
+                json!({"protocol":RECEIPT_PROTOCOL,"request_id":request_id,"op":"planning.activate",
+                "already_recorded":false,"result":null,"writeback":outcome,
+                "next_step":"inspect the durable phase and original confirmation before recovery; unconfirmed phases are not applied"}),
+            ));
+        }
+    }
+    if !completed {
         return Ok(None);
     }
     Ok(Some(json!({
@@ -261,6 +275,23 @@ pub(crate) async fn read_planning_command_receipt(
         "already_recorded": true,
         "next_step": "reuse this receipt; do not resubmit with a new request_id"
     })))
+}
+
+async fn require_activation_confirmation(
+    tx: &tokio_postgres::Transaction<'_>,
+    tenant_id: &str,
+    project_id: &str,
+    request_id: &str,
+    op: &str,
+) -> PgResult<()> {
+    if op == "planning.activate"
+        && !super::writeback::journal::outcome_in_tx(tx, tenant_id, project_id, request_id)
+            .await?
+            .is_some_and(|outcome| outcome["applied"] == true)
+    {
+        return Err(PgError::SourceDivergence);
+    }
+    Ok(())
 }
 
 impl SourceStore {
@@ -328,7 +359,7 @@ impl SourceStore {
         bind_workstream_scope(&tx, tenant_id, project_id).await?;
         let existing = tx
             .query_opt(
-                "SELECT request_hash, status, result_json
+                "SELECT request_hash, status, result_json, actor_id, client_id
                  FROM awr_team.planning_command_receipts
                  WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3
                  FOR UPDATE",
@@ -337,12 +368,16 @@ impl SourceStore {
             .await?;
         if let Some(row) = existing {
             let prior_hash: String = row.get(0);
-            if prior_hash != hash {
+            if prior_hash != hash
+                || row.get::<_, String>(3) != auth.actor_id
+                || row.get::<_, String>(4) != auth.client_id
+            {
                 return Err(PgError::IdempotencyConflict);
             }
             let status: String = row.get(1);
             let prior: Value = row.get(2);
             if status == "completed" {
+                require_activation_confirmation(&tx, tenant_id, project_id, request_id, op).await?;
                 let mut prior = prior;
                 if let Some(obj) = prior.as_object_mut() {
                     obj.insert("already_recorded".into(), Value::Bool(true));
@@ -404,18 +439,25 @@ impl SourceStore {
                 reserve_sp.rollback().await?;
                 let row = tx
                     .query_one(
-                        "SELECT request_hash, status, result_json
+                        "SELECT request_hash, status, result_json, actor_id, client_id
                          FROM awr_team.planning_command_receipts
                          WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
                         &[&tenant_id, &project_id, &request_id],
                     )
                     .await?;
                 let prior_hash: String = row.get(0);
-                if prior_hash != hash {
+                if prior_hash != hash
+                    || row.get::<_, String>(3) != auth.actor_id
+                    || row.get::<_, String>(4) != auth.client_id
+                {
                     return Err(PgError::IdempotencyConflict);
                 }
                 let status: String = row.get(1);
                 let prior: Value = row.get(2);
+                if status == "completed" {
+                    require_activation_confirmation(&tx, tenant_id, project_id, request_id, op)
+                        .await?;
+                }
                 tx.commit().await?;
                 if status == "completed" {
                     let mut prior = prior;
@@ -459,6 +501,7 @@ impl SourceStore {
         let tx = client.transaction().await?;
         let _auth = authenticate(&tx, tenant_id, project_id, bearer).await?;
         bind_workstream_scope(&tx, tenant_id, project_id).await?;
+        require_activation_confirmation(&tx, tenant_id, project_id, request_id, op).await?;
         let wrapped = json!({
             "protocol": RECEIPT_PROTOCOL,
             "request_id": request_id,
@@ -807,7 +850,36 @@ impl SourceStore {
             tenant_id,
             project_id,
             &req.request_id,
-            self.planning_publish_locked(tenant_id, project_id, bearer, req),
+            // Keep the durable source workflow out of the transport dispatcher's
+            // inline future; unrelated commands share that dispatch boundary.
+            Box::pin(self.planning_publish_locked(tenant_id, project_id, bearer, req, None)),
+        )
+        .await
+    }
+
+    /// Interrupt the authenticated command at a real durable writeback boundary.
+    /// This is only compiled into the isolated PostgreSQL regression harness.
+    #[cfg(feature = "pg-tests")]
+    pub async fn planning_publish_abort_for_test(
+        &self,
+        tenant_id: &str,
+        project_id: &str,
+        bearer: &str,
+        req: &PlanningPublishRequest,
+        boundary: &str,
+    ) -> PgResult<Value> {
+        require_request_id(&req.request_id)?;
+        self.with_planning_command_lock(
+            tenant_id,
+            project_id,
+            &req.request_id,
+            Box::pin(self.planning_publish_locked(
+                tenant_id,
+                project_id,
+                bearer,
+                req,
+                Some(boundary),
+            )),
         )
         .await
     }
@@ -818,6 +890,7 @@ impl SourceStore {
         project_id: &str,
         bearer: &str,
         req: &PlanningPublishRequest,
+        abort: Option<&str>,
     ) -> PgResult<Value> {
         let intent = serde_json::to_value(req).map_err(|e| PgError::Protocol(e.to_string()))?;
         require_request_id(&req.request_id)?;
@@ -837,7 +910,7 @@ impl SourceStore {
                 op,
                 &hash,
                 &req.candidate_id,
-                &json!({}),
+                &json!({"canonical_request":intent}),
             )
             .await?;
         if let PlanningReservation::Completed(existing) = reserved {
@@ -846,6 +919,24 @@ impl SourceStore {
         let result = if req.activate {
             let receipt_id = if let Some(id) = req.publish_receipt_id.as_deref() {
                 id.to_string()
+            } else if let Some(original) = self
+                .get_planning_activation_receipt(tenant_id, project_id, bearer, &req.request_id)
+                .await?
+            {
+                // Activation may have committed before this command's reply was
+                // finalized. Its baseline has moved; recover the original
+                // publication instead of republishing the now-stale candidate.
+                // Reservation already bound the complete request and identity;
+                // writeback still verifies the immutable original intent.
+                if original["candidate_id"] != req.candidate_id
+                    || original["candidate_digest"] != req.candidate_digest
+                {
+                    return Err(PgError::SourceDivergence);
+                }
+                original["publish_receipt_id"]
+                    .as_str()
+                    .ok_or(PgError::SourceDivergence)?
+                    .to_string()
             } else {
                 let published = self
                     .publish_or_existing(
@@ -862,7 +953,7 @@ impl SourceStore {
                     .to_string()
             };
             let activated = self
-                .activate_planning_writeback_registered(
+                .activate_planning_writeback_registered_inner(
                     tenant_id,
                     project_id,
                     bearer,
@@ -870,6 +961,7 @@ impl SourceStore {
                     &receipt_id,
                     req.impact_proven,
                     &req.stopped_work_ids,
+                    abort,
                 )
                 .await?;
             json!({
@@ -916,6 +1008,30 @@ impl SourceStore {
         impact_proven: bool,
         stopped_work_ids: &[String],
     ) -> PgResult<Value> {
+        self.activate_planning_writeback_registered_inner(
+            tenant_id,
+            project_id,
+            bearer,
+            request_id,
+            publish_receipt_id,
+            impact_proven,
+            stopped_work_ids,
+            None,
+        )
+        .await
+    }
+
+    async fn activate_planning_writeback_registered_inner(
+        &self,
+        tenant_id: &str,
+        project_id: &str,
+        bearer: &str,
+        request_id: &str,
+        publish_receipt_id: &str,
+        impact_proven: bool,
+        stopped_work_ids: &[String],
+        abort: Option<&str>,
+    ) -> PgResult<Value> {
         let binding = self
             .load_registered_sole_source(tenant_id, project_id, bearer)
             .await?;
@@ -940,7 +1056,7 @@ impl SourceStore {
                     impact_proven,
                     stopped_work_ids: stopped_work_ids.to_vec(),
                 };
-                self.activate_planning_writeback(tenant_id, project_id, bearer, &req)
+                self.activate_planning_writeback_inner(tenant_id, project_id, bearer, &req, abort)
                     .await
             }
             SoleSourceKind::PrivateManagementRepo => Err(PgError::Unsupported(

@@ -1782,7 +1782,10 @@ async fn storage_failure_http_mcp_and_original_request_recovery() {
     .await;
     assert_eq!(unknown["already_recorded"], false);
     assert!(unknown["result"].is_null());
-    assert!(unknown["next_step"].as_str().unwrap().contains("unknown"));
+    assert_eq!(unknown["writeback"]["phase"], "validated");
+    assert_eq!(unknown["writeback"]["pending"], true);
+    assert_eq!(unknown["writeback"]["applied"], false);
+    assert_eq!(unknown["writeback"]["original_intent_bound"], true);
     let reserved = admin
         .query_one(
             "SELECT c.request_hash,c.status,j.phase FROM awr_team.planning_command_receipts c
@@ -1823,4 +1826,324 @@ async fn storage_failure_http_mcp_and_original_request_recovery() {
         .get(0);
     assert_eq!(receipts, 1);
     std::fs::remove_dir_all(root).unwrap();
+}
+
+struct RegisteredPlanningSource {
+    root: std::path::PathBuf,
+}
+impl Drop for RegisteredPlanningSource {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+async fn registered_planning_source(source: &awr_team_pg::SourceStore) -> RegisteredPlanningSource {
+    let root = std::env::temp_dir().join(format!("awr-mcp-writeback-{}", common::nonce(0)));
+    std::fs::create_dir(&root).unwrap();
+    let root = std::fs::canonicalize(root).unwrap();
+    let definitions:Vec<_>=[("00000000000000000000000001","alpha"),("00000000000000000000000002","private-beta")]
+        .into_iter().map(|(id,key)|json!({"id":id,"external_key":key,"title":key,"state":"active","authority_version":1,"goal_keys":[key],"acceptance_contracts":[]})).collect();
+    let works: Vec<_> = [
+        ("a", "alpha", vec![]),
+        ("b-private", "private-beta", vec![]),
+        ("c", "alpha", vec!["b-private"]),
+    ]
+    .into_iter()
+    .map(|(id, stream, deps)| {
+        json!({"id":id,"title":id,"status":"planned","workstream":stream,
+            "goals":[stream],"acceptance":["verified"],"paths":["src"],"depends_on":deps})
+    })
+    .collect();
+    let bytes=serde_json::to_vec(&json!({"workstreams":{"version":1,"definitions":definitions},
+        "goals":[{"id":"alpha","title":"Alpha","status":"active"},{"id":"private-beta","title":"Private","status":"active"}],"work_items":works})).unwrap();
+    std::fs::write(root.join("ledger.yaml"), &bytes).unwrap();
+    let location = awr_source::SoleSourceLocation::server_directory(&root, "ledger.yaml").unwrap();
+    let package = awr_source::prepare_publish_from_ledger_bytes(
+        &location,
+        &root,
+        &bytes,
+        PROJECT,
+        &awr_source::PublishPrepOptions::default(),
+    )
+    .unwrap();
+    let (candidate, _) = source
+        .ingest_publish_candidate(awr_team_pg::IngestRequest {
+            tenant_id: TENANT.into(),
+            project_id: PROJECT.into(),
+            actor_id: "agent".into(),
+            parser_version: package.parser_version,
+            files: package
+                .files
+                .into_iter()
+                .map(|f| awr_team_pg::SourceFile {
+                    path: f.path,
+                    bytes: f.bytes,
+                })
+                .collect(),
+        })
+        .await
+        .unwrap();
+    source
+        .approve(
+            TENANT,
+            PROJECT,
+            &candidate.proposal_id,
+            "reviewer",
+            &candidate.manifest_digest,
+        )
+        .await
+        .unwrap();
+    source
+        .activate_workstreams(
+            TENANT,
+            PROJECT,
+            "agent",
+            &candidate.proposal_id,
+            &awr_team::SourceActivationPlan {
+                candidate_digest: candidate.manifest_digest.clone(),
+                approved_candidate_digest: candidate.manifest_digest,
+                parser_version: candidate.parser_version,
+                expected_authority_epoch: candidate.base_epoch,
+            },
+        )
+        .await
+        .unwrap();
+    RegisteredPlanningSource { root }
+}
+async fn reviewed_mcp_draft(client: &Client, key: &str) -> Value {
+    let mut after = draft(key);
+    after.workstream = Some("alpha".into());
+    after.goals = vec!["alpha".into()];
+    let created=call(client,"awr_team_planning_draft",json!({"protocol_version":1,"request_id":format!("draft-{key}"),"mode":"create",
+        "changes":[DraftChange {op:DraftOpKind::CreateTask,before:None,after}],"allowed_spec_roots":["specs"],
+        "project_goal_keys":["alpha"],"self_approve_policy":OrdinaryPlanningSelfApprovePolicy::ordinary_default()}),false).await;
+    let selection = created["result"].clone();
+    call(
+        client,
+        "awr_team_planning_approve",
+        json!({"protocol_version":1,"request_id":format!("approve-{key}"),
+        "candidate_id":selection["candidate_id"],"candidate_digest":selection["candidate_digest"]}),
+        false,
+    )
+    .await;
+    selection
+}
+async fn mcp_activation_facts(admin: &tokio_postgres::Client) -> (String, i64, i64, i64) {
+    let row=admin.query_one("SELECT active_snapshot_id,authority_epoch,
+        (SELECT count(*) FROM awr_team.events WHERE tenant_id=$1 AND project_id=$2 AND event_type='source.activated'),
+        (SELECT count(*) FROM awr_team.planning_activation_receipts WHERE tenant_id=$1 AND project_id=$2)
+        FROM awr_team.projects WHERE tenant_id=$1 AND id=$2", &[&TENANT,&PROJECT]).await.unwrap();
+    (row.get(0), row.get(1), row.get(2), row.get(3))
+}
+
+#[tokio::test]
+async fn authenticated_mcp_queries_real_durable_phases_and_resumes_after_service_restart() {
+    Box::pin(mcp_writeback_restart_cases()).await;
+}
+
+// Keep the compound source/service workflow off the test thread's small stack.
+async fn mcp_writeback_restart_cases() {
+    for (boundary, phase, completed) in [
+        ("after_intent", "validated", false),
+        ("after_source_write", "validated", false),
+        ("after_source_written", "source_written", false),
+        ("after_pg_activating", "pg_activating", false),
+        ("before_final_commit", "pg_activating", false),
+        ("after_final_commit", "completed", true),
+    ] {
+        eprintln!("Testing durable MCP writeback boundary: {boundary}");
+        let (_g, admin, db, read) = Box::pin(setup()).await;
+        enable_writes(&admin).await;
+        let source = awr_team_pg::SourceStore::from_config(common::with_app_role(
+            &common::test_config(),
+            &db,
+        ));
+        let bound = Box::pin(registered_planning_source(&source)).await;
+        let server = Box::pin(start(read)).await;
+        let client = connect(&server, A).await;
+        let selection = reviewed_mcp_draft(&client, "NEW-RECOVERY").await;
+        let body = json!({"protocol_version":1,"request_id":"mcp-original-activation",
+            "candidate_id":selection["candidate_id"],"candidate_digest":selection["candidate_digest"],"activate":true,"impact_proven":true});
+        let req: awr_team_pg::PlanningPublishRequest =
+            serde_json::from_value(body.clone()).unwrap();
+        let baseline = mcp_activation_facts(&admin).await;
+        // Fault injection calls the same authenticated command path; it does
+        // not create journal rows, receipts, affected sets or activation facts.
+        let error =
+            Box::pin(source.planning_publish_abort_for_test(TENANT, PROJECT, A, &req, boundary))
+                .await
+                .unwrap_err();
+        assert!(
+            matches!(error,awr_team_pg::PgError::Protocol(ref text) if text.contains("injected")),
+            "{boundary}: {error:?}"
+        );
+        let intent: Value = admin
+            .query_one(
+                "SELECT intent_json FROM awr_team.planning_writeback_journals WHERE request_id=$1",
+                &[&req.request_id],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(
+            intent["planning_request"],
+            serde_json::to_value(&req).unwrap()
+        );
+        assert_eq!(
+            intent["registered_source"]["locator"],
+            bound.root.to_str().unwrap()
+        );
+        client.cancel().await.unwrap();
+        drop(server);
+        let restarted =
+            WorkstreamReadStore::from_config(common::with_app_role(&common::test_config(), &db));
+        let server = Box::pin(start(restarted)).await;
+        let client = connect(&server, A).await;
+        let outcome = call(
+            &client,
+            "awr_team_planning_outcome",
+            json!({"protocol_version":1,"request_id":req.request_id}),
+            false,
+        )
+        .await;
+        assert_eq!(outcome["already_recorded"], false);
+        assert!(outcome["result"].is_null());
+        assert_eq!(outcome["writeback"]["phase"], phase);
+        assert_eq!(outcome["writeback"]["pending"], !completed);
+        assert_eq!(outcome["writeback"]["applied"], completed);
+        assert!(!outcome.to_string().contains(bound.root.to_str().unwrap()));
+        let bytes = std::fs::read(bound.root.join("ledger.yaml")).unwrap();
+        let different = connect(&server, B).await;
+        let denied = call(&different, "awr_team_planning_publish", body.clone(), true).await;
+        assert_eq!(denied["code"], "IdempotencyConflict");
+        different.cancel().await.unwrap();
+        let mut changed = body.clone();
+        changed["stopped_work_ids"] = json!(["a"]);
+        assert_eq!(
+            call(&client, "awr_team_planning_publish", changed, true).await["code"],
+            "IdempotencyConflict"
+        );
+        assert_eq!(
+            std::fs::read(bound.root.join("ledger.yaml")).unwrap(),
+            bytes
+        );
+        let recovered = call(&client, "awr_team_planning_publish", body.clone(), false).await;
+        let receipt = source
+            .get_planning_activation_receipt(TENANT, PROJECT, A, &req.request_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let final_facts = mcp_activation_facts(&admin).await;
+        assert_eq!(
+            (final_facts.1, final_facts.2, final_facts.3),
+            (baseline.1 + 1, baseline.2 + 1, baseline.3 + 1)
+        );
+        assert_eq!(receipt["activated_snapshot_id"], final_facts.0);
+        let replay = call(&client, "awr_team_planning_publish", body.clone(), false).await;
+        assert_eq!(replay["already_recorded"], true);
+        assert_eq!(replay["result"], recovered["result"]);
+        assert_eq!(mcp_activation_facts(&admin).await, final_facts);
+        assert_eq!(
+            std::fs::read_to_string(bound.root.join("ledger.yaml"))
+                .unwrap()
+                .matches("id: NEW-RECOVERY")
+                .count(),
+            1
+        );
+        let final_outcome = call(
+            &client,
+            "awr_team_planning_outcome",
+            json!({"protocol_version":1,"request_id":req.request_id}),
+            false,
+        )
+        .await;
+        assert_eq!(final_outcome["already_recorded"], true);
+        if completed {
+            let bytes = std::fs::read(bound.root.join("ledger.yaml")).unwrap();
+            let fingerprint = receipt["after_fingerprint"].as_str().unwrap();
+            admin.execute(
+                "UPDATE awr_team.planning_activation_receipts SET after_fingerprint=$2 WHERE request_id=$1",
+                &[&req.request_id, &"changed-confirmation"],
+            ).await.unwrap();
+            let diagnostic = source
+                .get_planning_writeback_status(TENANT, PROJECT, A, &req.request_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(diagnostic["applied"], false);
+            let inconsistent = call(
+                &client,
+                "awr_team_planning_outcome",
+                json!({"protocol_version":1,"request_id":req.request_id}),
+                false,
+            )
+            .await;
+            assert_eq!(inconsistent["already_recorded"], false);
+            assert!(inconsistent["result"].is_null());
+            assert_eq!(inconsistent["writeback"]["applied"], false);
+            let refused = call(&client, "awr_team_planning_publish", body.clone(), true).await;
+            // Corrupt internal source provenance remains unavailable on the wire.
+            assert_eq!(refused["code"], "Unavailable");
+            assert!(matches!(
+                Box::pin(source.planning_publish(TENANT, PROJECT, A, &req)).await,
+                Err(awr_team_pg::PgError::SourceDivergence)
+            ));
+            assert_eq!(
+                std::fs::read(bound.root.join("ledger.yaml")).unwrap(),
+                bytes
+            );
+            assert_eq!(mcp_activation_facts(&admin).await, final_facts);
+            admin.execute(
+                "UPDATE awr_team.planning_activation_receipts SET after_fingerprint=$2 WHERE request_id=$1",
+                &[&req.request_id, &fingerprint],
+            ).await.unwrap();
+            let restored = call(&client, "awr_team_planning_publish", body, false).await;
+            assert_eq!(restored["already_recorded"], true);
+            assert_eq!(restored["result"], recovered["result"]);
+        }
+        client.cancel().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn mcp_explicit_publication_must_match_the_complete_candidate_selection() {
+    Box::pin(mcp_publication_selection_case()).await;
+}
+
+async fn mcp_publication_selection_case() {
+    let (_g, admin, db, read) = Box::pin(setup()).await;
+    enable_writes(&admin).await;
+    let source =
+        awr_team_pg::SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let bound = Box::pin(registered_planning_source(&source)).await;
+    let server = Box::pin(start(read)).await;
+    let client = connect(&server, A).await;
+    let first = reviewed_mcp_draft(&client, "FIRST").await;
+    let second = reviewed_mcp_draft(&client, "SECOND").await;
+    let publication=call(&client,"awr_team_planning_publish",json!({"request_id":"second-publish",
+        "candidate_id":second["candidate_id"],"candidate_digest":second["candidate_digest"],"activate":false}),false).await;
+    let receipt = &publication["result"]["publish"]["receipt_id"];
+    let baseline = mcp_activation_facts(&admin).await;
+    let bytes = std::fs::read(bound.root.join("ledger.yaml")).unwrap();
+    for (i, id, digest) in [
+        (
+            0,
+            first["candidate_id"].clone(),
+            first["candidate_digest"].clone(),
+        ),
+        (
+            1,
+            second["candidate_id"].clone(),
+            first["candidate_digest"].clone(),
+        ),
+    ] {
+        let response=call(&client,"awr_team_planning_publish",json!({"request_id":format!("mismatched-selection-{i}"),
+            "candidate_id":id,"candidate_digest":digest,"publish_receipt_id":receipt,"activate":true,"impact_proven":true}),true).await;
+        assert_eq!(response["code"], "IdempotencyConflict");
+        assert_eq!(mcp_activation_facts(&admin).await, baseline);
+        assert_eq!(
+            std::fs::read(bound.root.join("ledger.yaml")).unwrap(),
+            bytes
+        );
+    }
+    client.cancel().await.unwrap();
 }

@@ -4,6 +4,141 @@ use awr_team_pg::{EXPECTED_SCHEMA_VERSION, check_schema, migrate};
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn schema52_writeback_intent_upgrade_is_atomic_preserves_unknown_history_and_rls() {
+    let (_g, admin, db) = common::historical_team_schema(52).await;
+    // Retained legacy data is a migration fixture, never recovery authority.
+    admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('upgrade-tenant','Upgrade','active');
+        INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+            VALUES('upgrade-tenant','upgrade-project','upgrade','team','old-epoch','active');
+        INSERT INTO awr_team.planning_candidates(tenant_id,project_id,id,author_person_id,author_actor_id,author_client_id,
+            baseline_digest,baseline_epoch,draft_revision,candidate_digest,state,changes_json,self_approve_policy_json,delivery_completion_policy)
+            VALUES('upgrade-tenant','upgrade-project','legacy-candidate','author','author','author-client',
+                'old-base','1',1,'old-candidate','published','[]','{}','ordinary_confirm');
+        INSERT INTO awr_team.planning_approvals(tenant_id,project_id,id,candidate_id,candidate_digest,draft_revision,
+            approver_person_id,approver_actor_id,approver_client_id,self_approved)
+            VALUES('upgrade-tenant','upgrade-project','legacy-approval','legacy-candidate','old-candidate',1,
+                'reviewer','reviewer','reviewer-client',false);
+        INSERT INTO awr_team.planning_publish_receipts(tenant_id,project_id,id,candidate_id,candidate_digest,draft_revision,
+            approval_id,publisher_actor_id,publisher_client_id)
+            VALUES('upgrade-tenant','upgrade-project','legacy-publication','legacy-candidate','old-candidate',1,
+                'legacy-approval','publisher','publisher-client');
+        INSERT INTO awr_team.planning_writeback_journals(tenant_id,project_id,request_id,candidate_id,candidate_digest,
+            publish_receipt_id,phase,before_fingerprint,after_fingerprint,publisher_actor_id,body_json)
+            VALUES('upgrade-tenant','upgrade-project','legacy-request','legacy-candidate','old-candidate',
+                'legacy-publication','source_written','old-before','old-after','publisher','{\"retained\":true}')")
+        .await.unwrap();
+    let original: Value = admin
+        .query_one(
+            "SELECT to_jsonb(j) FROM awr_team.planning_writeback_journals j",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let ddl = include_str!("../migrations/20261008000053_planning_writeback_intent.sql");
+    assert!(
+        admin
+            .batch_execute(&ddl.replace(
+                "UPDATE awr_team.schema_state",
+                "SELECT 1/0; UPDATE awr_team.schema_state"
+            ))
+            .await
+            .is_err()
+    );
+    admin.batch_execute("ROLLBACK").await.unwrap();
+    let rollback=admin.query_one("SELECT (SELECT version FROM awr_team.schema_state),
+        (SELECT count(*) FROM information_schema.columns WHERE table_schema='awr_team' AND table_name='planning_writeback_journals'
+         AND column_name IN ('intent_hash','intent_json','dependency_work_ids'))",&[]).await.unwrap();
+    assert_eq!(rollback.get::<_, i32>(0), 52);
+    assert_eq!(rollback.get::<_, i64>(1), 0);
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT to_jsonb(j) FROM awr_team.planning_writeback_journals j",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, Value>(0),
+        original
+    );
+    migrate(&admin).await.unwrap();
+    migrate(&admin).await.unwrap();
+    check_schema(&admin).await.unwrap();
+    let mut upgraded: Value = admin
+        .query_one(
+            "SELECT to_jsonb(j) FROM awr_team.planning_writeback_journals j",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let fields = upgraded.as_object_mut().unwrap();
+    assert_eq!(fields.remove("intent_hash"), Some(Value::Null));
+    assert_eq!(fields.remove("intent_json"), Some(Value::Null));
+    assert_eq!(fields.remove("dependency_work_ids"), Some(json!([])));
+    assert_eq!(
+        upgraded, original,
+        "Migration must not infer original identity, request or affected dependency authority"
+    );
+    let rls=admin.query_one("SELECT relrowsecurity,relforcerowsecurity FROM pg_class WHERE oid='awr_team.planning_writeback_journals'::regclass",&[]).await.unwrap();
+    assert!(rls.get::<_, bool>(0) && rls.get::<_, bool>(1));
+    awr_team_pg::Bootstrap::grant_app(&admin, "awr_app")
+        .await
+        .unwrap();
+    let app = common::app_client(&db).await;
+    for settings in [
+        "SELECT set_config('awr.tenant_id','other-tenant',false),set_config('awr.project_id','upgrade-project',false)",
+        "SELECT set_config('awr.tenant_id','upgrade-tenant',false),set_config('awr.project_id','other-project',false)",
+    ] {
+        app.batch_execute(settings).await.unwrap();
+        assert_eq!(
+            app.query_one(
+                "SELECT count(*) FROM awr_team.planning_writeback_journals",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+            0
+        );
+        assert_eq!(app.execute("UPDATE awr_team.planning_writeback_journals SET phase='completed' WHERE request_id='legacy-request'",&[]).await.unwrap(),0);
+    }
+    app.batch_execute("SELECT set_config('awr.tenant_id','upgrade-tenant',false),set_config('awr.project_id','upgrade-project',false)").await.unwrap();
+    assert_eq!(
+        app.query_one(
+            "SELECT count(*) FROM awr_team.planning_writeback_journals",
+            &[]
+        )
+        .await
+        .unwrap()
+        .get::<_, i64>(0),
+        1
+    );
+    assert_eq!(
+        app.execute(
+            "UPDATE awr_team.planning_writeback_journals SET intent_hash=repeat('a',64)",
+            &[]
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Some(&tokio_postgres::error::SqlState::CHECK_VIOLATION)
+    );
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT phase,intent_hash,intent_json FROM awr_team.planning_writeback_journals",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "source_written"
+    );
+}
+
+#[tokio::test]
 async fn schema51_artifact_adoptions_upgrade_atomically_preserve_exports_and_enforce_rls() {
     let (_g, admin, db) = common::historical_team_schema(51).await;
     admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('upgrade-tenant','Upgrade','active');
@@ -285,7 +420,7 @@ async fn schema49_delivery_requests_upgrade_atomically_without_fabricating_legac
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
     migrate(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 52);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 53);
     for (table, original) in tables.into_iter().zip(originals) {
         let mut rows = admin.query_one(&format!("SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM awr_team.{table} t"), &[])
             .await.unwrap().get::<_,Value>(0);
@@ -972,7 +1107,7 @@ async fn schema40_upgrade_preserves_legacy_provenance_and_is_atomic_and_repeatab
     assert_eq!(before, unchanged);
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 52);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 53);
     let after: Value = admin
         .query_one(
             "SELECT to_jsonb(e) FROM awr_team.executions e WHERE id='legacy-run'",

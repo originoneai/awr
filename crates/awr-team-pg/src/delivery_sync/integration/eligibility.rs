@@ -15,6 +15,8 @@ pub(super) async fn resolve(
         ));
     }
     let set = &request.read_set;
+    crate::source::writeback::admission::require_effect_clear(tx, tenant, project, &set.work_id)
+        .await?;
     crate::workstream_command::task_intake::require_admissible(
         tx,
         tenant,
