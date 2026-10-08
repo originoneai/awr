@@ -1154,6 +1154,18 @@ async fn complete(
         &contract_value,
     )
     .await?;
+    if binding_valid {
+        crate::cross_workstream_adoption::require_execution_inputs(
+            tx,
+            tenant,
+            project,
+            &command.work_id,
+            contract,
+            execution_id.as_deref(),
+            &dependency_links,
+        )
+        .await?;
+    }
     let mut review = ReviewPolicy {
         required: policy != "ordinary_confirm",
         author_may_self_approve: self_review_permitted(policy),

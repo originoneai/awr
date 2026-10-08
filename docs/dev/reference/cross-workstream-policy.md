@@ -1,11 +1,12 @@
 # Cross-workstream dependency policies
 
-**Development capability: approved-artifact disclosure; adoption is pending.**
+**Development capability: approved-artifact disclosure and current-contract adoption.**
 Contract, workstream bundle, planning and source codecs V6 can express a
 cross-workstream dependency. Ordinary authenticated MCP commands can publish a
 reviewed artifact to an explicit consumer, which can discover and read it under
-its own work permission. Reading or publishing does not adopt an artifact,
-satisfy a dependency or allow execution.
+its own work permission. The consumer explicitly selects a valid current-contract
+export through `delivery.adopt`. Reading or publishing alone does not satisfy a
+dependency; adoption never grants permission to run an execution.
 
 For example, a frontend integration task can require a backend delivery:
 
@@ -20,7 +21,7 @@ work_items:
       BACKEND-API:
         cross_workstream:
           review_assurance: simulated_member_independent
-          version_policy: fixed_delivery
+          version_policy: current_contract
 ```
 
 Both tasks must exist in the same project's source-owned workstream catalog,
@@ -54,11 +55,12 @@ replacement must include the exact prior map; changing the candidate invalidates
 its approval. Source preview shows the full review and version policy so a
 reviewer can assess the change before preserving writeback and publication.
 
-Until authenticated adoption is connected, the ordinary dependency receipt gate
-rejects this new mode. An upstream task saying "completed", or possession of its
-receipt or readable body, is insufficient. The planning capability continues to report
-`declaration_only: true` and `adoption_available: false`; the separate
-`approved_artifact_exports` capability describes disclosure.
+Ordinary authenticated intake, navigation, execution admission and completion
+share the same live adoption gate. An upstream task saying "completed", or
+possession of its receipt or readable body, is insufficient. Authenticated
+`capabilities.planning.cross_workstream_policy` and `approved_artifact_exports`
+report current-contract adoption and explicitly exclude fixed historical
+delivery. The planning-only declaration probe does not itself perform adoption.
 
 These are repository-neutral project rules. No GitHub identifier, webhook or
 fabricated repository revision is part of the policy.
@@ -114,3 +116,58 @@ false and caller-managed execution remains caller asserted. Human Team review
 retains its independent-person and trusted-execution requirements. A repository
 revision is unknown unless separately verified; no GitHub dependency or inferred
 SHA is introduced here.
+
+## Adopt a current-contract input
+
+Use the consumer's own permission and active session. An Agent requires current
+development authority and a live `start_work` delegation. The member can adopt
+for an unassigned task, its own task, or its own pending supervisor assignment.
+Another member's assignment or execution, terminal work, unfinished execution
+intents and unknown effects cannot be replaced. Cancel an undispatched prepared
+intent before changing its input; dispatched or unknown effects require recovery. This lets both intake paths follow the same
+sequence: select the input, then claim the pool task or accept the assignment.
+
+1. Consume the consumer's fresh `work.prepare`. Its bounded
+   `adopted_dependencies` entries show the current adoption generation, validity
+   and supported version policy. Discover suitable exports with
+   `delivery.exports` and consume their exact bytes with `artifact.content`.
+2. Send `delivery.adopt` with the normal command preconditions and a stable
+   request ID. Use the actual returned selectors:
+
+   ```json
+   {
+     "session_id": "consumer-session",
+     "expected_session_version": "1",
+     "expected_responsibility_version": "<current responsibility version>",
+     "export_id": "<discovered export ID>",
+     "expected_export_version": "<discovered export version>",
+     "expected_disclosure_sha256": "<exact disclosure SHA-256>",
+     "expected_adoption_version": "<current adoption generation, initially 0>"
+   }
+   ```
+
+   The server rechecks both source-owned tasks, the explicit V6 edge, the selected
+   provider completion, original approval and actual artifact bytes. It archives
+   previous adoption generations and selects the new one in the same project
+   transaction as the command receipt. Responsibility and action versions
+   prevent competing assignments or adoptions from overwriting each other.
+3. Re-prepare, then use `task.claim_available` or `task.accept_assignment`. Only
+   a fresh successful `execution.start` with `execution_authorized: true`
+   permits a run. Finalization records the exact predecessor completion receipt.
+
+Discovery and content reads report whether this exact live export is selected.
+They grant no upstream source/session access and no execution authority. Every
+gate revalidates the adoption: withdrawal, missing bytes, invalid original review
+or relevant contract/ownership/selection changes block new work and completion.
+Completion also matches the dependency receipts persisted by the evidence's
+original `execution.start`. A later adoption cannot relabel an older result or
+approval as using new inputs. Missing or different admission receipts require a
+fresh execution, evidence and review before delivery.
+For an unknown command outcome, inspect its original request ID before an exact
+retry. Historical replay returns the original receipt; it cannot restore a
+revoked export or grant execution rights.
+
+`fixed_delivery` remains a valid declaration for the subsequent historical
+capability, but `delivery.adopt` explicitly rejects it in this implementation.
+Fixed historical proof and selective source activation are still pending; do not
+silently replace that policy with `current_contract`.
