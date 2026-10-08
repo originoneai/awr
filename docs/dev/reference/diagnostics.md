@@ -29,6 +29,14 @@ YAML block scalars; valid Chinese text and paths with spaces remain supported.
 Keep the work record focused on intent, acceptance and current progress; reference
 design documents and reports when their bodies are not needed in every query.
 
+A colon followed by a space inside an unquoted list item has the same effect:
+`- Report.java: section 2` under `evidence:` is a mapping whose key is `Report.java`,
+so the entry has no locator and fails with `ledger.evidence_locator`; the repair text
+says so. Quote the whole entry (`- "Report.java: section 2"`) or write
+`locator: Report.java` with an optional `summary:`. Text after ` #` in an unquoted
+entry is a YAML comment and is dropped without any diagnostic, so quote entries that
+contain it as well.
+
 `awr source reindex` prints operation success, projection completeness, source
 location, rule and repair from the same index report serialized by `--json` and
 returned by MCP `awr_source_reindex`. A successful `source scan` can still have an
