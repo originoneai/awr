@@ -3,7 +3,7 @@ use crate::common;
 use awr_core::{Id, Workstream, WorkstreamCatalog, WorkstreamState};
 use awr_team::{SourceActivationPlan, WorkContract, WorkId, WorkstreamBundle, WorkstreamContract};
 use awr_team_pg::{
-    GraphStore, IngestRequest, SourceFile, SourceStore, WorkstreamQuery, WorkstreamReadStore,
+    IngestRequest, SourceFile, SourceStore, WorkstreamQuery, WorkstreamReadStore,
     workstream_credential_hash,
 };
 use std::sync::MutexGuard;
@@ -117,23 +117,6 @@ async fn setup_inner(
             .await
             .unwrap();
     }
-    let legacy = if legacy_resource {
-        admin
-            .batch_execute(
-                "INSERT INTO awr_team.work_items(tenant_id,project_id,id,external_key)
-                 VALUES('reader-tenant','reader-project','a','a')",
-            )
-            .await
-            .unwrap();
-        Some(
-            GraphStore::from_config(common::with_db(&common::test_config(), &db))
-                .reserve(TENANT, PROJECT, "a", "named", "legacy-resource")
-                .await
-                .unwrap(),
-        )
-    } else {
-        None
-    };
     let mut stream_definitions = vec![(1, "alpha"), (2, "private-beta")];
     if third_stream {
         stream_definitions.push((3, "hidden-gamma"));
@@ -239,6 +222,18 @@ async fn setup_inner(
         )
         .await
         .unwrap();
+    // Seed retained, unbound legacy state after the initial source activation.
+    // Activation must not silently adopt or clear such unresolved resources;
+    // this fixture tests later report/recovery isolation, not source migration.
+    let legacy = if legacy_resource {
+        Some(admin.query_one(
+            "INSERT INTO awr_team.resource_reservations(tenant_id,project_id,id,work_id,resource_kind,canonical_key,state)
+             VALUES($1,$2,'legacy-fixture-reservation','a','named','legacy-resource','reserved') RETURNING id",
+            &[&TENANT,&PROJECT],
+        ).await.unwrap().get::<_,String>(0))
+    } else {
+        None
+    };
     for (client, stream) in [("cli-a", 1), ("cli-b", 2)] {
         admin.execute("INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read)
             VALUES($1,$2,'agent',$3,$4,1,true)", &[&TENANT,&PROJECT,&client,&Id::from(stream).to_string()]).await.unwrap();

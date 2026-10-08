@@ -197,6 +197,36 @@ approvals still expire on rework. A new result needs its own exact execution,
 evidence and review; historical approval cannot authorize it or relabel its
 original dependency inputs.
 
-Selective activation while unrelated work is running is a separate capability.
-The existing project activation barrier still applies here; fixed history does
-not claim that live-work isolation is complete.
+## Activate a source without interrupting unrelated work
+
+Approved projection activation derives its impact on the server while holding
+the same project barrier as execution admission, adoption and withdrawal. It
+compares archived contracts, catalog and ownership with the actual candidate,
+then walks both required-dependency graphs transitively. A changed consumer is
+an independent seed; only a currently verified fixed adoption can stop upstream
+version changes from propagating through an unchanged consumer.
+
+Unrelated sessions, responsibility, claims, executions and accepted history
+remain usable. For affected work, an undispatched preparation with no exposure
+or retained resources is cancelled atomically, its old admission becomes stale,
+and unaccepted review rounds are invalidated. Accepted historical approvals and
+completion receipts remain auditable.
+
+Running or unknown effects, retained reservations, unresolved recovery and
+pending dispatch require actual persisted settlement before activation. A
+terminal state, expired claim, disconnect, cancellation request or caller's
+`affected_work_ids` / `stopped_work_ids` list is insufficient. The legacy
+impact-assisted entry shares structural and effect validation; an explicit
+refusal remains a veto. Missing ownership/provenance and database errors cannot
+produce an empty impact set or silently migrate a legacy executor.
+
+Settlement retains its original assurance. A caller-managed workspace assertion
+only covers its exact admitted workspace paths; privileged recovery remains an
+authorized assertion about its bound resources. Neither proves independently
+observed process shutdown, physical isolation or work acceptance.
+
+This gate protects the atomic PostgreSQL projection switch. Durable planning
+writeback preflight, fencing and recovery across the source-file/PostgreSQL gap
+are a separate delivery boundary; this mechanism does not claim that gap is
+closed. Native client and complete business acceptance remain separate from
+PostgreSQL and authenticated loopback MCP regressions.

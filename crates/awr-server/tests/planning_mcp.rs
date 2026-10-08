@@ -752,6 +752,24 @@ async fn fixed_cross_stream_adoption_supports_complete_assigned_member_mcp_workf
     .await;
 }
 
+#[tokio::test]
+async fn unrelated_source_update_preserves_live_assigned_member_mcp_delivery() {
+    Box::pin(ordinary_member_mcp_workflow_with_update(
+        ConsumerWorkflow::AssignedAdoption(awr_core::DeliveryVersionPolicy::CurrentContract),
+        Some(LiveSourceUpdate::Unrelated),
+    ))
+    .await;
+}
+
+#[tokio::test]
+async fn fixed_source_update_preserves_live_pool_member_mcp_delivery() {
+    Box::pin(ordinary_member_mcp_workflow_with_update(
+        ConsumerWorkflow::PoolAdoption(awr_core::DeliveryVersionPolicy::FixedDelivery),
+        Some(LiveSourceUpdate::FixedProvider),
+    ))
+    .await;
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ConsumerWorkflow {
     SameStream,
@@ -760,11 +778,105 @@ enum ConsumerWorkflow {
     AssignedAdoption(awr_core::DeliveryVersionPolicy),
 }
 
+#[derive(Clone, Copy)]
+enum LiveSourceUpdate {
+    Unrelated,
+    FixedProvider,
+}
+
+async fn ordinary_member_mcp_workflow(mode: ConsumerWorkflow) {
+    Box::pin(ordinary_member_mcp_workflow_with_update(mode, None)).await;
+}
+
+async fn activate_during_mcp_execution(
+    admin: &tokio_postgres::Client,
+    db: &str,
+    update: LiveSourceUpdate,
+) {
+    use awr_team::{SourceActivationPlan, WorkstreamBundle, WorkstreamContract};
+    use awr_team_pg::{IngestRequest, SourceFile, SourceStore};
+    let snapshot: String = admin
+        .query_one(
+            "SELECT active_snapshot_id FROM awr_team.projects WHERE tenant_id=$1 AND id=$2",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let catalog = serde_json::from_value(admin.query_one("SELECT catalog_json FROM awr_team.workstream_catalogs WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3", &[&TENANT,&PROJECT,&snapshot]).await.unwrap().get(0)).unwrap();
+    let mut contracts: Vec<WorkstreamContract> = admin.query(
+        "SELECT c.contract_json,o.workstream_id FROM awr_team.work_contracts c JOIN awr_team.workstream_snapshot_ownership o
+         ON o.tenant_id=c.tenant_id AND o.project_id=c.project_id AND o.snapshot_id=c.snapshot_id AND o.scope_id=c.scope_id AND o.work_id=c.work_id
+         WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.snapshot_id=$3 AND c.scope_id='main' ORDER BY c.work_id",
+        &[&TENANT,&PROJECT,&snapshot],
+    ).await.unwrap().into_iter().map(|row| WorkstreamContract {
+        contract: serde_json::from_value(row.get(0)).unwrap(),workstream_id: row.get::<_,String>(1).parse().unwrap(),
+    }).collect();
+    let work = match update {
+        LiveSourceUpdate::Unrelated => "c",
+        LiveSourceUpdate::FixedProvider => "a",
+    };
+    contracts
+        .iter_mut()
+        .find(|e| e.contract.work_id.as_str() == work)
+        .unwrap()
+        .contract
+        .acceptance
+        .push("Verify the updated interface condition".into());
+    let bundle = WorkstreamBundle {
+        codec: WorkstreamBundle::CODEC_V6.into(),
+        catalog,
+        contracts,
+    };
+    let source = SourceStore::from_config(common::with_app_role(&common::test_config(), db));
+    let candidate = source
+        .ingest(IngestRequest {
+            tenant_id: TENANT.into(),
+            project_id: PROJECT.into(),
+            actor_id: "agent".into(),
+            parser_version: "workstreams/6".into(),
+            files: vec![SourceFile {
+                path: "workstreams.json".into(),
+                bytes: serde_json::to_vec(&bundle).unwrap(),
+            }],
+        })
+        .await
+        .unwrap();
+    source
+        .approve(
+            TENANT,
+            PROJECT,
+            &candidate.proposal_id,
+            "supervisor",
+            &candidate.manifest_digest,
+        )
+        .await
+        .unwrap();
+    source
+        .activate_workstreams(
+            TENANT,
+            PROJECT,
+            "supervisor",
+            &candidate.proposal_id,
+            &SourceActivationPlan {
+                candidate_digest: candidate.manifest_digest.clone(),
+                approved_candidate_digest: candidate.manifest_digest.clone(),
+                parser_version: candidate.parser_version,
+                expected_authority_epoch: candidate.base_epoch,
+            },
+        )
+        .await
+        .expect("An unrelated or verified fixed-input update must preserve the running consumer");
+}
+
 #[expect(
     clippy::await_holding_lock,
     reason = "Serial isolated PostgreSQL fixture"
 )]
-async fn ordinary_member_mcp_workflow(mode: ConsumerWorkflow) {
+async fn ordinary_member_mcp_workflow_with_update(
+    mode: ConsumerWorkflow,
+    update: Option<LiveSourceUpdate>,
+) {
     let disclose = mode != ConsumerWorkflow::SameStream;
     let adopt = matches!(
         mode,
@@ -791,7 +903,9 @@ async fn ordinary_member_mcp_workflow(mode: ConsumerWorkflow) {
     // Heap-bound nested fixture futures preserve the ordinary test stack.
     let (_g, admin, db, store) = Box::pin(setup()).await;
     // Provision distinct simulated members before starting the loopback service.
-    // Subsequent workflow mutations use authenticated MCP, never direct SQL.
+    // Member workflow mutations use authenticated MCP. Optional source-update
+    // regression cases exercise the trusted coordinator API during a live run;
+    // neither this fixture nor that API is native business acceptance.
     admin.batch_execute(r#"UPDATE awr_team.actors SET kind='agent' WHERE id IN ('agent','reviewer');
         UPDATE awr_team.project_memberships SET role='developer',agent_review=true,membership_version=membership_version+1;
         INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status) VALUES
@@ -1156,6 +1270,53 @@ async fn ordinary_member_mcp_workflow(mode: ConsumerWorkflow) {
             "expected_lease_version":claim["lease_version"],"expected_work_version":p["data"]["runtime"]["work_version"],
             "execution_id":intent["execution_id"],"expected_execution_version":intent["execution_version"],"execution_mode":"caller_managed",
         }),false).await["receipt"]["data"].clone();
+        if work == "b-private"
+            && let Some(update) = update
+        {
+            let before = call(
+                worker,
+                "awr_team_query",
+                json!({"protocol_version":1,"op":"work.prepare","work_id":work}),
+                false,
+            )
+            .await;
+            let execution: Value = admin
+                .query_one(
+                    "SELECT to_jsonb(e) FROM awr_team.executions e WHERE id=$1",
+                    &[&intent["execution_id"].as_str().unwrap()],
+                )
+                .await
+                .unwrap()
+                .get(0);
+            activate_during_mcp_execution(&admin, &db, update).await;
+            let after = call(
+                worker,
+                "awr_team_query",
+                json!({"protocol_version":1,"op":"work.prepare","work_id":work}),
+                false,
+            )
+            .await;
+            assert_eq!(
+                before["data"]["context_hash"],
+                after["data"]["context_hash"]
+            );
+            assert_eq!(before["data"]["runtime"], after["data"]["runtime"]);
+            assert_eq!(
+                before["data"]["responsibility"],
+                after["data"]["responsibility"]
+            );
+            assert_eq!(
+                execution,
+                admin
+                    .query_one(
+                        "SELECT to_jsonb(e) FROM awr_team.executions e WHERE id=$1",
+                        &[&intent["execution_id"].as_str().unwrap()]
+                    )
+                    .await
+                    .unwrap()
+                    .get::<_, Value>(0)
+            );
+        }
         let reported = member_command(worker,work,&format!("{work}-report"),"execution.report",json!({
             "session_id":session,"expected_session_version":"1","execution_id":intent["execution_id"],
             "expected_execution_version":started["execution_version"],"outcome":"succeeded","output_digest":output,

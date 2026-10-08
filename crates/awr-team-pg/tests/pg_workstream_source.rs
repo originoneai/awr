@@ -2,6 +2,8 @@
 //! Source coordination on a real isolated database. This is not authenticated
 //! transport or business acceptance; the fixtures use trusted operator APIs.
 mod common;
+#[path = "cases/source_activation_impact.rs"]
+mod source_activation_impact;
 #[path = "cases/source_completion_invalidation.rs"]
 mod source_completion_invalidation;
 use awr_core::{Id, Workstream, WorkstreamCatalog, WorkstreamState};

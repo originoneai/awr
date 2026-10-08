@@ -10,6 +10,9 @@ use tokio_postgres::Transaction;
 #[path = "source_workstreams/completion_invalidation.rs"]
 mod completion_invalidation;
 
+#[path = "source_workstreams/activation_impact.rs"]
+mod activation_impact;
+
 pub(super) struct SourceProjection {
     pub contracts: Vec<WorkContract>,
     pub bundle: Option<WorkstreamBundle>,
@@ -99,7 +102,7 @@ impl SourceProjection {
         })
     }
 
-    pub async fn validate_transition(
+    async fn validate_structure(
         &self,
         tx: &Transaction<'_>,
         tenant: &str,
@@ -132,6 +135,17 @@ impl SourceProjection {
                     next.validate_successor(&stream)?;
                 }
             } else {
+                let enabled: bool = tx
+                    .query_one(
+                        "SELECT enabled FROM awr_team.workstream_modes
+                    WHERE tenant_id=$1 AND project_id=$2",
+                        &[&tenant, &project],
+                    )
+                    .await?
+                    .get(0);
+                if enabled {
+                    return Err(PgError::SourceDivergence);
+                }
                 let history: bool = tx
                     .query_one(
                         "SELECT EXISTS(SELECT 1 FROM awr_team.sessions
@@ -145,22 +159,6 @@ impl SourceProjection {
                         "legacy session history requires explicit workstream migration".into(),
                     ));
                 }
-            }
-            // Catalog/ownership switching cannot silently invalidate an active
-            // executor. Narrower read-set activation is a separate protocol.
-            let live: bool = tx
-                .query_one(
-                    "SELECT
-                EXISTS(SELECT 1 FROM awr_team.claims WHERE tenant_id=$1 AND project_id=$2
-                    AND state='active' AND expires_at > clock_timestamp()) OR
-                EXISTS(SELECT 1 FROM awr_team.executions WHERE tenant_id=$1 AND project_id=$2
-                    AND state NOT IN ('succeeded','failed','cancelled'))",
-                    &[&tenant, &project],
-                )
-                .await?
-                .get(0);
-            if live {
-                return Err(PgError::RecoveryBlocked);
             }
             let ownership = tx
                 .query(
@@ -205,7 +203,7 @@ impl SourceProjection {
         Ok(())
     }
 
-    /// Selective activation gate (TMCP-022). See `ActivationImpactGate`.
+    /// Caller declarations can refuse activation, but cannot prove impact or stop.
     pub async fn validate_transition_with_impact(
         &self,
         tx: &Transaction<'_>,
@@ -213,126 +211,39 @@ impl SourceProjection {
         project: &str,
         previous_snapshot: Option<&str>,
         impact: Option<&crate::source::writeback::ActivationImpactGate>,
-    ) -> PgResult<()> {
-        match impact {
-            None => {
-                self.validate_transition(tx, tenant, project, previous_snapshot)
-                    .await
+    ) -> PgResult<BTreeSet<String>> {
+        self.validate_structure(tx, tenant, project, previous_snapshot)
+            .await?;
+        if let Some(gate) = impact {
+            if !gate.impact_proven {
+                return Err(PgError::ActivationImpactUnproven(
+                    gate.refuse_reason
+                        .clone()
+                        .unwrap_or_else(|| "impact unproven".into()),
+                ));
             }
-            Some(gate) if !gate.impact_proven => Err(PgError::ActivationImpactUnproven(
-                gate.refuse_reason
-                    .clone()
-                    .unwrap_or_else(|| "impact unproven".into()),
-            )),
-            Some(gate) if !gate.allow_activation => Err(PgError::WritebackRefused(
-                gate.refuse_reason
-                    .clone()
-                    .unwrap_or_else(|| "writeback refused by activation gate".into()),
-            )),
-            Some(gate) => {
-                // Structural catalog/ownership checks via the existing path's
-                // non-live portions: call full validate only for non-bundle, and
-                // for bundle skip the project-wide live OR by re-checking selectively.
-                if self.bundle.is_some() {
-                    // Catalog immutability still required — reuse full validate
-                    // only when there is no live activity; otherwise selective.
-                    let live: bool = tx
-                        .query_one(
-                            "SELECT
-                            EXISTS(SELECT 1 FROM awr_team.claims WHERE tenant_id=$1 AND project_id=$2
-                                AND state='active' AND expires_at > clock_timestamp()) OR
-                            EXISTS(SELECT 1 FROM awr_team.executions WHERE tenant_id=$1 AND project_id=$2
-                                AND state NOT IN ('succeeded','failed','cancelled'))",
-                            &[&tenant, &project],
-                        )
-                        .await?
-                        .get(0);
-                    if !live {
-                        return self
-                            .validate_transition(tx, tenant, project, previous_snapshot)
-                            .await;
-                    }
-                    // Live activity exists: run validate_transition's catalog checks by
-                    // temporarily relying on selective claim/exec filtering below.
-                    // Catalog checks:
-                    if let Some(bundle) = &self.bundle {
-                        let previous = tx
-                            .query_opt(
-                                "SELECT catalog_json FROM awr_team.workstream_catalogs
-                            WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3",
-                                &[&tenant, &project, &previous_snapshot],
-                            )
-                            .await?;
-                        if let Some(row) = previous {
-                            let old: WorkstreamCatalog = serde_json::from_value(row.get(0))
-                                .map_err(|e| PgError::Protocol(e.to_string()))?;
-                            old.validate()?;
-                            if old.legacy_default != bundle.catalog.legacy_default {
-                                return Err(PgError::Protocol(
-                                    "legacy workstream binding is immutable".into(),
-                                ));
-                            }
-                            for stream in old.workstreams {
-                                let next = bundle.catalog.get(stream.id).map_err(|_| {
-                                    PgError::Protocol(
-                                        "retained workstreams must be archived, not removed".into(),
-                                    )
-                                })?;
-                                next.validate_successor(&stream)?;
-                            }
-                        }
-                    }
-                }
-                let affected: std::collections::BTreeSet<_> =
-                    gate.affected_work_ids.iter().cloned().collect();
-                let claimed = tx
-                    .query(
-                        "SELECT DISTINCT work_id FROM awr_team.claims
-                        WHERE tenant_id=$1 AND project_id=$2 AND state='active'
-                          AND expires_at > clock_timestamp()",
-                        &[&tenant, &project],
-                    )
-                    .await?;
-                for row in claimed {
-                    let work: String = row.get(0);
-                    if !affected.contains(&work) {
-                        continue;
-                    }
-                    if gate.stopped_work_ids.contains(&work) {
-                        continue;
-                    }
-                    let old: Option<String> = tx
-                        .query_opt(
-                            "SELECT contract_hash FROM awr_team.work_contracts
-                            WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3
-                              AND scope_id='main' AND work_id=$4",
-                            &[&tenant, &project, &previous_snapshot, &work],
-                        )
-                        .await?
-                        .map(|r| r.get(0));
-                    if old.as_ref() != self.hashes.get(&work) {
-                        return Err(PgError::ClaimBlocksActivation);
-                    }
-                }
-                let live_exec = tx
-                    .query(
-                        "SELECT DISTINCT work_id FROM awr_team.executions
-                        WHERE tenant_id=$1 AND project_id=$2
-                          AND state NOT IN ('succeeded','failed','cancelled')",
-                        &[&tenant, &project],
-                    )
-                    .await?;
-                for row in live_exec {
-                    let work: String = row.get(0);
-                    if affected.contains(&work) && !gate.stopped_work_ids.contains(&work) {
-                        return Err(PgError::WritebackRefused(format!(
-                            "affected work {work} has nonterminal execution; stop/reconcile/replan required"
-                        )));
-                    }
-                }
-                Ok(())
+            if !gate.allow_activation {
+                return Err(PgError::WritebackRefused(
+                    gate.refuse_reason
+                        .clone()
+                        .unwrap_or_else(|| "writeback refused by activation gate".into()),
+                ));
             }
         }
+        let affected =
+            activation_impact::derive(self, tx, tenant, project, previous_snapshot).await?;
+        activation_impact::require_settled(tx, tenant, project, &affected).await?;
+        Ok(affected)
+    }
+
+    pub async fn invalidate_affected_preparations(
+        &self,
+        tx: &Transaction<'_>,
+        tenant: &str,
+        project: &str,
+        affected: &BTreeSet<String>,
+    ) -> PgResult<Value> {
+        activation_impact::invalidate(tx, tenant, project, affected).await
     }
 
     pub async fn install(
