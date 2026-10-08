@@ -227,6 +227,60 @@ fn an_unquoted_colon_in_an_evidence_entry_is_diagnosed_as_missing_quotes() {
     }
 }
 
+fn dependency_ledger(entry: &str) -> String {
+    format!("work_items:\n- id: W\n  title: Waiting work\n  depends_on:\n    {entry}\n")
+}
+
+#[test]
+fn a_note_after_a_dependency_id_is_diagnosed_as_an_unquoted_mapping() {
+    // YAML reads `- OTHER: waits for the API` as a mapping with the key OTHER: no id, although the author wrote one.
+    let report = parse(
+        &dependency_ledger("- OTHER: waits for the API"),
+        "yaml-ledger-v1",
+        "",
+    )
+    .unwrap_err()
+    .report();
+    assert_eq!(report.code, "InvalidInput");
+    let d = report.details.unwrap();
+    assert_eq!(d["rule"], "ledger.dependency_identity");
+    assert_eq!(d["location"]["pointer"], "/work_items/0/depends_on/0");
+    assert_eq!(d["location"]["line"], 5);
+    assert!(report.message.contains("mapping"));
+    let repair = d["repair"].as_str().unwrap();
+    assert!(repair.contains("work ID alone"));
+    // The rejected text is not echoed back.
+    assert!(!report.message.contains("OTHER") && !repair.contains("OTHER"));
+    assert!(!report.message.contains("waits for the API") && !repair.contains("waits for the API"));
+
+    // A mapping that only misses its id keeps the plain repair.
+    for entry in ["- required: false", "- {}"] {
+        let report = parse(&dependency_ledger(entry), "yaml-ledger-v1", "")
+            .unwrap_err()
+            .report();
+        let d = report.details.unwrap();
+        assert_eq!(d["rule"], "ledger.dependency_identity", "{entry}");
+        assert_eq!(d["repair"], "Supply a stable work ID.", "{entry}");
+    }
+
+    // The spellings that work keep naming the dependency and its requirement.
+    for (entry, required) in [
+        ("- OTHER", true),
+        ("- id: OTHER", true),
+        ("- id: OTHER\n      required: false", false),
+        ("- key: OTHER\n      required: true", true),
+        (r#"- "OTHER""#, true),
+    ] {
+        let batch = parse(&dependency_ledger(entry), "yaml-ledger-v1", "").unwrap();
+        let edge = batch
+            .edges
+            .iter()
+            .find(|e| e.to_key == "OTHER")
+            .unwrap_or_else(|| panic!("no dependency edge for {entry}"));
+        assert_eq!(edge.required, required, "{entry}");
+    }
+}
+
 #[test]
 fn syntax_diagnostics_and_valid_long_chinese_yaml_are_not_confused() {
     let report = parse(
