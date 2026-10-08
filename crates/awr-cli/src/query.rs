@@ -17,6 +17,9 @@ pub enum WorkCommand {
         branch: Option<String>,
         #[arg(long, default_value_t = 100)]
         limit: usize,
+        /// Read last recorded facts without refreshing files; currentness is not verified.
+        #[arg(long)]
+        cached: bool,
     },
     /// Explain management requirements without changing execution or completion policy.
     Assess(crate::management::AssessArgs),
@@ -577,8 +580,9 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
             root: roots,
             branch,
             limit,
+            cached,
         } => {
-            let query = QueryProject::open_read(root, false)?;
+            let query = QueryProject::open_read(root, *cached)?;
             let mut value = awr_runtime::work_graph(
                 &query.store,
                 root,

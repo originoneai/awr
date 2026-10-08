@@ -241,6 +241,52 @@ class Parity(unittest.TestCase):
         claim = self.cli(["work", "show", "W"])["work"]["active_claims"][0]
         self.assertEqual(len(claim["id"]), 26)
 
+    def test_work_graph_recorded_and_verified_reads_agree_without_writing(self):
+        self.session()  # A live claim is runtime state every read path must report.
+
+        def graph_content(value):
+            # The evaluation clock and the way the projection was obtained are the only allowed differences.
+            return {k: v for k, v in value.items() if k not in TRANSPORT_FIELDS and k != "evaluated_at"}
+
+        refreshed = self.cli(["work", "graph"])
+        self.assertEqual(refreshed["freshness_basis"], "source_refresh")
+        self.assertTrue(refreshed["source_refresh_performed"])
+        self.assertFalse(refreshed["read_only"])
+        before = self.state()
+        cached = self.cli(["work", "graph", "--cached"])
+        self.assertEqual(self.state(), before, "cached CLI read changed persisted state or source files")
+        self.assertEqual(cached["freshness_basis"], "last_recorded_source_state")
+        self.assertFalse(cached["source_refresh_performed"])
+        self.assertTrue(cached["read_only"])
+        self.assertTrue(cached["snapshot"]["coherent"])
+        self.assertFalse(cached["snapshot"]["source_currentness_verified"])
+        self.assertIsNone(cached["snapshot"]["source_refresh_revision"])
+        mcp = self.tool("awr_work_graph", {}, readonly=True)
+        self.assertEqual(mcp["freshness_basis"], "source_verified_readonly")
+        self.assertFalse(mcp["source_refresh_performed"])
+        self.assertTrue(mcp["read_only"])
+        self.assertTrue(mcp["snapshot"]["source_currentness_verified"])
+        for other in (cached, mcp):
+            self.assertEqual(other["project_revision"], refreshed["project_revision"])
+            self.assertEqual(other["snapshot"]["source_state_fingerprint"], refreshed["snapshot"]["source_state_fingerprint"])
+            self.assertEqual(graph_content(other), graph_content(refreshed))
+        node = next(n for n in cached["nodes"] if n["key"] == "W")
+        self.assertEqual(len(node["active_claims"]), 1)
+
+        # A source edit that no refresh has recorded yet: the recorded read keeps serving what was recorded,
+        # while the verified MCP read refuses to answer from facts that no longer match the files.
+        (self.root / "work.yaml").write_text(WORK.replace("Prepare customer analysis", "Changed source title"))
+        before = self.state()
+        stale = self.cli(["work", "graph", "--cached"])
+        self.assertEqual(graph_content(stale), graph_content(refreshed))
+        self.assertEqual(self.state(), before)
+        self.assertEqual(self.tool("awr_work_graph", {}, error=True, readonly=True)["code"], "SourceStale")
+        recorded = self.cli(["work", "graph"])
+        self.assertGreater(recorded["project_revision"], refreshed["project_revision"])
+        self.assertEqual(next(n for n in recorded["nodes"] if n["key"] == "W")["title"], "Changed source title")
+        self.assertEqual(graph_content(self.cli(["work", "graph", "--cached"])), graph_content(recorded))
+        self.assertEqual(graph_content(self.tool("awr_work_graph", {}, readonly=True)), graph_content(recorded))
+
     def test_context_hash_gaps_and_budget_parity(self):
         for work in ["W", "ABSENT"]:
             args = {"work": work, "detached": True, "budget": 5000}
