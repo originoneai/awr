@@ -14,6 +14,27 @@ pub(super) async fn derive(
     project: &str,
     previous: Option<&str>,
 ) -> PgResult<BTreeSet<String>> {
+    derive_inner(candidate, tx, tenant, project, previous, true).await
+}
+
+pub(super) async fn dependency_influence(
+    candidate: &SourceProjection,
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    previous: Option<&str>,
+) -> PgResult<BTreeSet<String>> {
+    derive_inner(candidate, tx, tenant, project, previous, false).await
+}
+
+async fn derive_inner(
+    candidate: &SourceProjection,
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    previous: Option<&str>,
+    preserve_fixed: bool,
+) -> PgResult<BTreeSet<String>> {
     let Some(snapshot) = previous else {
         require_known_effects(
             tx,
@@ -162,7 +183,7 @@ pub(super) async fn derive(
                     _ => None,
                 }
             });
-            let preserved = if let Some(policy) = fixed {
+            let preserved = if let Some(policy) = fixed.filter(|_| preserve_fixed) {
                 crate::cross_workstream_adoption::adopted_receipt(
                     tx, tenant, project, snapshot, consumer, &upstream, policy,
                 )
@@ -195,7 +216,11 @@ async fn require_known_effects(
           OR EXISTS(SELECT 1 FROM awr_team.work_runtime
             WHERE tenant_id=$1 AND project_id=$2 AND recovery_blocked AND NOT work_id=ANY($3))
           OR EXISTS(SELECT 1 FROM awr_team.resource_reservations
-            WHERE tenant_id=$1 AND project_id=$2 AND state IN ('reserved','unknown') AND NOT work_id=ANY($3))",
+            WHERE tenant_id=$1 AND project_id=$2 AND state IN ('reserved','unknown') AND NOT work_id=ANY($3))
+          OR EXISTS(SELECT 1 FROM awr_team.delivery_integration_intents i
+            LEFT JOIN awr_team.workstream_ownership o ON o.tenant_id=i.tenant_id AND o.project_id=i.project_id AND o.work_id=i.work_id
+            WHERE i.tenant_id=$1 AND i.project_id=$2 AND i.state IN ('prepared','leased','dispatched','unknown')
+              AND (NOT i.work_id=ANY($3) OR ($4 AND i.request_json->'prepare'->'read_set'->>'workstream_id' IS DISTINCT FROM o.workstream_id)))",
         &[&tenant,&project,&known,&scoped],
     ).await?.get(0);
     if blocked {
@@ -218,7 +243,12 @@ pub(super) async fn require_settled(
             WHERE tenant_id=$1 AND project_id=$2 AND work_id=ANY($3) AND state IN ('reserved','unknown'))
           OR EXISTS(SELECT 1 FROM awr_team.outbox o JOIN awr_team.executions e
             ON e.tenant_id=o.tenant_id AND e.project_id=o.project_id AND e.id=o.aggregate_id
-            WHERE e.tenant_id=$1 AND e.project_id=$2 AND e.work_id=ANY($3) AND o.state IN ('pending','sending'))",
+            WHERE e.tenant_id=$1 AND e.project_id=$2 AND e.work_id=ANY($3) AND o.state IN ('pending','sending'))
+          OR EXISTS(SELECT 1 FROM awr_team.delivery_integration_intents
+            WHERE tenant_id=$1 AND project_id=$2 AND work_id=ANY($3) AND state IN ('prepared','leased','dispatched','unknown'))
+          OR EXISTS(SELECT 1 FROM awr_team.delivery_integration_target_guards g
+            JOIN awr_team.delivery_integration_intents i ON i.tenant_id=g.tenant_id AND i.project_id=g.project_id AND i.id=g.intent_id
+            WHERE i.tenant_id=$1 AND i.project_id=$2 AND i.work_id=ANY($3))",
         &[&tenant,&project,&ids],
     ).await?.get(0);
     if blocked {

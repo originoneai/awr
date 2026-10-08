@@ -57,7 +57,14 @@ pub struct IngestRequest {
     pub files: Vec<SourceFile>,
 }
 
-#[derive(Clone, Debug, serde::Serialize)]
+struct PreparedIngest {
+    files: Vec<(String, Vec<u8>)>,
+    preview_hash: String,
+    manifest: Value,
+    manifest_digest: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CandidateRecord {
     pub snapshot_id: String,
     pub proposal_id: String,
@@ -216,6 +223,24 @@ impl SourceStore {
     }
 
     pub async fn ingest(&self, request: IngestRequest) -> PgResult<CandidateRecord> {
+        // Preserve offline validation and its diagnostics before acquiring PG.
+        let prepared = Self::prepare_ingest(&request)?;
+        let mut client = self.connect().await?;
+        let tx = client.transaction().await?;
+        let candidate = Self::ingest_prepared_in_tx(&tx, request, prepared).await?;
+        tx.commit().await?;
+        Ok(candidate)
+    }
+
+    pub(super) async fn ingest_in_tx(
+        tx: &tokio_postgres::Transaction<'_>,
+        request: IngestRequest,
+    ) -> PgResult<CandidateRecord> {
+        let prepared = Self::prepare_ingest(&request)?;
+        Self::ingest_prepared_in_tx(tx, request, prepared).await
+    }
+
+    fn prepare_ingest(request: &IngestRequest) -> PgResult<PreparedIngest> {
         if request.parser_version.trim().is_empty() {
             return Err(PgError::Protocol("parser_version required".into()));
         }
@@ -232,10 +257,28 @@ impl SourceStore {
             &serde_json::to_vec(&manifest).map_err(|e| PgError::Protocol(e.to_string()))?,
         );
 
-        let mut client = self.connect().await?;
-        let tx = client.transaction().await?;
-        bind_workstream_scope(&tx, &request.tenant_id, &request.project_id).await?;
-        crate::tx::lock_active_project(&tx, &request.tenant_id, &request.project_id).await?;
+        Ok(PreparedIngest {
+            files,
+            preview_hash,
+            manifest,
+            manifest_digest,
+        })
+    }
+
+    async fn ingest_prepared_in_tx(
+        tx: &tokio_postgres::Transaction<'_>,
+        request: IngestRequest,
+        prepared: PreparedIngest,
+    ) -> PgResult<CandidateRecord> {
+        let PreparedIngest {
+            files,
+            preview_hash,
+            manifest,
+            manifest_digest,
+        } = prepared;
+
+        bind_workstream_scope(tx, &request.tenant_id, &request.project_id).await?;
+        crate::tx::lock_active_project(tx, &request.tenant_id, &request.project_id).await?;
         let project = tx
             .query_opt(
                 "SELECT authority_epoch FROM awr_team.projects
@@ -319,7 +362,6 @@ impl SourceStore {
             ],
         )
         .await?;
-        tx.commit().await?;
         Ok(CandidateRecord {
             snapshot_id,
             proposal_id,
@@ -535,8 +577,39 @@ impl SourceStore {
     ) -> PgResult<CurrentWorkstreamSource> {
         let mut client = self.connect().await?;
         let tx = client.transaction().await?;
+        let current = self
+            .activate_in_tx(
+                &tx,
+                tenant_id,
+                project_id,
+                actor_id,
+                proposal_id,
+                plan,
+                scoped,
+                abort,
+                impact,
+                None,
+            )
+            .await?;
+        tx.commit().await?;
+        Ok(current)
+    }
+
+    pub(super) async fn activate_in_tx(
+        &self,
+        tx: &tokio_postgres::Transaction<'_>,
+        tenant_id: &str,
+        project_id: &str,
+        actor_id: &str,
+        proposal_id: &str,
+        plan: &SourceActivationPlan,
+        scoped: bool,
+        abort: bool,
+        impact: Option<&crate::source::writeback::ActivationImpactGate>,
+        pending_request: Option<&str>,
+    ) -> PgResult<CurrentWorkstreamSource> {
         if scoped {
-            bind_workstream_scope(&tx, tenant_id, project_id).await?;
+            bind_workstream_scope(tx, tenant_id, project_id).await?;
             // Serialize enablement with every legacy entrypoint before taking
             // the project lock. Ordinary legacy updates share the mode row.
             tx.query_opt(
@@ -547,9 +620,11 @@ impl SourceStore {
             .await?
             .ok_or(PgError::ProjectNotAvailable)?;
         } else {
-            bind_scope(&tx, tenant_id, project_id).await?;
+            bind_scope(tx, tenant_id, project_id).await?;
         }
-        crate::tx::lock_active_project(&tx, tenant_id, project_id).await?;
+        crate::tx::lock_active_project(tx, tenant_id, project_id).await?;
+        writeback::admission::require_source_available(tx, tenant_id, project_id, pending_request)
+            .await?;
         let locked = tx
             .query_opt(
                 "SELECT authority_epoch, active_snapshot_id, project_revision
@@ -623,7 +698,7 @@ impl SourceStore {
         // Approvals written before reviewer validation existed (or by any
         // legacy path) must not activate: the consumed approval is checked
         // with the SAME rules as a fresh one (CR #54 P2).
-        validate_reviewer(&tx, tenant_id, project_id, &approval_reviewer).await?;
+        validate_reviewer(tx, tenant_id, project_id, &approval_reviewer).await?;
 
         let files = files_from_ref(&source_ref)?;
         validate_package(&files)?;
@@ -644,7 +719,7 @@ impl SourceStore {
         workstreams::reject_external_graph(&files)?;
         let affected = projection
             .validate_transition_with_impact(
-                &tx,
+                tx,
                 tenant_id,
                 project_id,
                 previous_snapshot.as_deref(),
@@ -652,7 +727,7 @@ impl SourceStore {
             )
             .await?;
         projection
-            .install(&tx, tenant_id, project_id, &snapshot_id)
+            .install(tx, tenant_id, project_id, &snapshot_id)
             .await?;
         let work_id = if scoped {
             None
@@ -660,17 +735,16 @@ impl SourceStore {
             Some(projection.contracts[0].work_id.as_str().to_string())
         };
         if abort {
-            tx.rollback().await?;
             return Err(PgError::Protocol("injected activate abort".into()));
         }
         let preparation_invalidations = projection
-            .invalidate_affected_preparations(&tx, tenant_id, project_id, &affected)
+            .invalidate_affected_preparations(tx, tenant_id, project_id, &affected)
             .await?;
         let next_epoch = epoch + 1;
         let next_revision = revision + 1;
         let completion_invalidations = if scoped {
             projection
-                .invalidate_stale_completions(&tx, tenant_id, project_id, &snapshot_id)
+                .invalidate_stale_completions(tx, tenant_id, project_id, &snapshot_id)
                 .await?
         } else {
             Vec::new()
@@ -720,7 +794,6 @@ impl SourceStore {
             ],
         )
         .await?;
-        tx.commit().await?;
         Ok(CurrentWorkstreamSource {
             snapshot_id,
             manifest_digest: digest,

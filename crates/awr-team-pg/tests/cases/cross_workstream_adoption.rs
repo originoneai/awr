@@ -1040,3 +1040,119 @@ async fn adoption_execution_completion_and_original_inputs(fixed: bool) {
         upstream["receipt_id"].as_str().unwrap()
     );
 }
+
+// The source is generated from the actual current contracts, then registered
+// and activated normally before executing the member workflow. No journal or
+// affected set is planted by this fixture.
+struct PendingPlanningSource { root: std::path::PathBuf, source: awr_team_pg::SourceStore }
+impl Drop for PendingPlanningSource {
+    fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.root); }
+}
+async fn register_member_planning_source(admin:&Client,db:&str)->PendingPlanningSource {
+    let bundle=history_source_bundle(admin).await;
+    let root=std::env::temp_dir().join(format!("awr-dependency-writeback-{}",ulid::Ulid::new()));
+    std::fs::create_dir(&root).unwrap();
+    let root=std::fs::canonicalize(root).unwrap();
+    let keys:std::collections::BTreeMap<_,_>=bundle.catalog.workstreams.iter().map(|s|(s.id,s.external_key.clone())).collect();
+    let tasks:Vec<Value>=bundle.contracts.iter().map(|e| {
+        let c=&e.contract;
+        let mut task=json!({"id":c.external_key,"title":c.external_key,"status":"planned","workstream":keys[&e.workstream_id],
+            "goals":c.goals,"paths":c.scope_paths,"acceptance":c.acceptance,"depends_on":c.required_dependencies,
+            "completion_policy":c.completion_policy,"hard_rules":c.hard_rules,"verification_requirements":c.verification_requirements});
+        if !c.dependency_acceptance.is_empty() {task["dependency_acceptance"]=json!(c.dependency_acceptance);}
+        if let Some(policy)=&c.execution_settlement {task["execution_settlement"]=json!(policy);}
+        task
+    }).collect();
+    let goals:std::collections::BTreeSet<_>=bundle.contracts.iter().flat_map(|e|e.contract.goals.iter().cloned())
+        .chain(bundle.catalog.workstreams.iter().flat_map(|s|s.goal_keys.iter().cloned())).collect();
+    let ledger=json!({"workstreams":{"version":bundle.catalog.version,"definitions":bundle.catalog.workstreams},
+        "goals":goals.iter().map(|key|json!({"id":key,"title":key,"status":"active"})).collect::<Vec<_>>(),"work_items":tasks});
+    let bytes=serde_json::to_vec(&ledger).unwrap();
+    std::fs::write(root.join("ledger.yaml"),&bytes).unwrap();
+    let location=awr_source::SoleSourceLocation::server_directory(&root,"ledger.yaml").unwrap();
+    let package=awr_source::prepare_publish_from_ledger_bytes(&location,&root,&bytes,PROJECT,&awr_source::PublishPrepOptions::default()).unwrap();
+    let source=awr_team_pg::SourceStore::from_config(common::with_app_role(&common::test_config(),db));
+    let (candidate,_)=source.ingest_publish_candidate(awr_team_pg::IngestRequest {
+        tenant_id:TENANT.into(),project_id:PROJECT.into(),actor_id:"agent".into(),parser_version:package.parser_version,
+        files:package.files.into_iter().map(|f|awr_team_pg::SourceFile {path:f.path,bytes:f.bytes}).collect(),
+    }).await.unwrap();
+    source.approve(TENANT,PROJECT,&candidate.proposal_id,"runner",&candidate.manifest_digest).await.unwrap();
+    source.activate_workstreams(TENANT,PROJECT,"runner",&candidate.proposal_id,&awr_team::SourceActivationPlan {
+        candidate_digest:candidate.manifest_digest.clone(),approved_candidate_digest:candidate.manifest_digest,
+        parser_version:candidate.parser_version,expected_authority_epoch:candidate.base_epoch,
+    }).await.unwrap();
+    PendingPlanningSource {root,source}
+}
+async fn stage_member_source_edit(admin:&Client,source:&awr_team_pg::SourceStore,work:&str)->String {
+    let contract:WorkContract=serde_json::from_value(admin.query_one(
+        "SELECT c.contract_json FROM awr_team.work_contracts c JOIN awr_team.projects p
+         ON p.tenant_id=c.tenant_id AND p.id=c.project_id AND p.active_snapshot_id=c.snapshot_id
+         WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.work_id=$3", &[&TENANT,&PROJECT,&work],
+    ).await.unwrap().get(0)).unwrap();
+    let stream=if work=="b-private" {"private-beta"} else {"alpha"};
+    let before=awr_team::TaskDraft {work_id:work.into(),external_key:work.into(),title:work.into(),goals:contract.goals.clone(),
+        scope_paths:contract.scope_paths.clone(),acceptance:contract.acceptance.clone(),required_dependencies:contract.required_dependencies.clone(),
+        completion_policy:contract.completion_policy.clone(),dependency_acceptance:if contract.dependency_acceptance.is_empty() {None} else {Some(contract.dependency_acceptance.clone())},
+        hard_rules:Some(contract.hard_rules.clone()),verification_requirements:Some(contract.verification_requirements.clone()),
+        execution_settlement:contract.execution_settlement.clone(),definition_state:awr_team::DraftDefinitionState::Enabled,
+        workstream:Some(stream.into()),split_from:None,split_children:vec![]};
+    let mut after=before.clone();after.scope_paths=vec!["src/revised".into()];
+    let created=source.create_planning_candidate(TENANT,PROJECT,RUNNER,&awr_team_pg::DraftCandidateCreate {
+        changes:vec![awr_team::DraftChange {op:awr_team::DraftOpKind::EditFields,before:Some(before),after}],
+        suggestion_ids:vec![],allowed_spec_roots:vec!["src".into()],project_goal_keys:contract.goals,
+        self_approve_policy:Some(awr_team::OrdinaryPlanningSelfApprovePolicy::ordinary_default()),
+        author_person_id:Some("runner".into()),predetermined_candidate_id:None,
+    }).await.unwrap();
+    let id=created["candidate_id"].as_str().unwrap();let digest=created["candidate_digest"].as_str().unwrap();
+    source.approve_planning_candidate(TENANT,PROJECT,RUNNER,id,digest,Some("runner")).await.unwrap();
+    source.publish_planning_candidate(TENANT,PROJECT,RUNNER,id,digest).await.unwrap()["receipt_id"].as_str().unwrap().into()
+}
+async fn dependency_selection_facts(admin:&Client)->Value {
+    admin.query_one("SELECT jsonb_build_object(
+        'adoptions',(SELECT coalesce(jsonb_agg(to_jsonb(a) ORDER BY id),'[]') FROM awr_team.workstream_artifact_adoptions a),
+        'exports',(SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY id),'[]') FROM awr_team.workstream_artifact_exports e))",&[])
+        .await.unwrap().get(0)
+}
+
+#[tokio::test]
+async fn actual_pending_source_intent_fences_dependency_mutation_and_preserves_unrelated_adoption() {
+    for (fixed,selected,related) in [(false,false,true),(false,true,true),(true,true,true),(false,false,false)] {
+        let (_g,admin,db,store)=setup().await;
+        seed_simulated_members(&admin,&db).await;
+        if fixed {fixed_export_consumer(&admin,&store,&db).await;} else {exported_consumer(&admin,&store,&db).await;}
+        adoption_roles(&admin).await;
+        let bound=register_member_planning_source(&admin,&db).await;
+        let upstream=complete_simulated_upstream(&store).await;
+        let consumer:WorkContract=serde_json::from_value(admin.query_one("SELECT c.contract_json FROM awr_team.work_contracts c JOIN awr_team.projects p ON p.tenant_id=c.tenant_id AND p.id=c.project_id AND p.active_snapshot_id=c.snapshot_id WHERE c.work_id='b-private'",&[]).await.unwrap().get(0)).unwrap();
+        let session=adoption_session(&store,"pending-consumer-session").await;
+        let export=publish_export(&store,&consumer,&upstream,"pending-export").await;
+        if selected {adopt_export(&store,&session,&export,"before-pending-adoption").await;}
+        let receipt=stage_member_source_edit(&admin,&bound.source,if related {"a"} else {"c"}).await;
+        let req=awr_team_pg::WritebackActivateRequest {request_id:"dependency-gap".into(),publish_receipt_id:receipt,
+            source_root:bound.root.clone(),ledger_relative_path:"ledger.yaml".into(),impact_proven:true,stopped_work_ids:vec![]};
+        let interrupted=bound.source.activate_planning_writeback_abort_for_test(TENANT,PROJECT,RUNNER,&req,"after_source_written").await.unwrap_err();
+        assert!(matches!(interrupted,PgError::Protocol(ref text) if text.contains("injected")),"{interrupted:?}");
+        let intent:Value=admin.query_one("SELECT intent_json FROM awr_team.planning_writeback_journals WHERE request_id='dependency-gap'",&[]).await.unwrap().get(0);
+        assert_eq!(intent["dependency_work_ids"].as_array().unwrap().iter().any(|id|id=="b-private"),related);
+        if fixed && selected {assert!(!intent["affected_work_ids"].as_array().unwrap().iter().any(|id|id=="b-private"),"fixed adoption must cut execution impact while its metadata remains fenced");}
+        let before=dependency_selection_facts(&admin).await;
+        let adoption=cross_execute(&store,B,adoption_request(&store,&session,&export,"during-pending-adoption").await).await;
+        if related && !selected {
+            assert!(matches!(adoption,Err(PgError::ActionBlockedByInvalidation(_))),"{adoption:?}");
+        } else {
+            assert_eq!(adoption.unwrap()["receipt"]["data"]["already_adopted"],selected);
+        }
+        let p=prepare(&store,RUNNER,"a").await;
+        let revoke=command(&p,"during-pending-revoke","delivery.export.revoke",json!({
+            "session_id":"session-runner","expected_session_version":"1","export_id":export["receipt"]["data"]["export_id"],
+            "expected_export_version":export["receipt"]["data"]["export_version"]}));
+        let revoked=cross_execute(&store,RUNNER,revoke).await;
+        if related {
+            assert!(matches!(revoked,Err(PgError::ActionBlockedByInvalidation(_))),"{revoked:?}");
+            assert_eq!(dependency_selection_facts(&admin).await,before);
+        } else {assert!(revoked.is_ok(),"{revoked:?}");}
+        let restarted=awr_team_pg::SourceStore::from_config(common::with_app_role(&common::test_config(),&db));
+        restarted.activate_planning_writeback(TENANT,PROJECT,RUNNER,&req).await.unwrap();
+        assert_eq!(restarted.get_planning_writeback_status(TENANT,PROJECT,RUNNER,&req.request_id).await.unwrap().unwrap()["phase"],"completed");
+    }
+}

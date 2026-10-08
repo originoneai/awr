@@ -11,6 +11,68 @@ use awr_team_pg::{DraftCandidateCreate, PgError, SourceStore, WritebackActivateR
 use fixture::*;
 use std::path::PathBuf;
 
+#[tokio::test]
+async fn completed_writeback_rejects_changed_original_request() {
+    let (_g, _admin, _db, store) = store_and_roles().await;
+    let (_, _, receipt) = publish_candidate_with_workstream(&store, "alpha").await;
+    let tmp = tempfile_ledger();
+    let request = workspace_activation(&tmp, receipt, "bound-original-request");
+    store
+        .activate_planning_writeback(TENANT, PROJECT, A, &request)
+        .await
+        .unwrap();
+    let mut different = request.clone();
+    different.stopped_work_ids.push("a".into());
+    assert!(
+        store
+            .activate_planning_writeback(TENANT, PROJECT, A, &different)
+            .await
+            .is_err(),
+        "a completed receipt must not authorize a different canonical request"
+    );
+}
+
+#[tokio::test]
+async fn writeback_checks_actual_live_projection_before_source_bytes() {
+    use awr_team_pg::WorkstreamReadStore;
+    use serde_json::json;
+    let (_g, _admin, db, store) = store_and_roles().await;
+    let read = WorkstreamReadStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let (_, _, receipt) = publish_candidate_with_workstream(&store, "alpha").await;
+    let p = prepare(&read, A, "a").await;
+    let claim = read.commands().execute(TENANT, PROJECT, A, command(&p, "preflight-claim", "claim.acquire",
+        json!({"session_id":"session-a","expected_session_version":"1","expected_work_version":"0","ttl_seconds":600})))
+        .await.unwrap()["receipt"]["data"].clone();
+    let p = prepare(&read, A, "a").await;
+    let execution = read.commands().execute(TENANT, PROJECT, A, command(&p, "preflight-intent", "execution.prepare",
+        json!({"session_id":"session-a","expected_session_version":"1","claim_id":claim["claim_id"],
+        "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
+        "expected_work_version":p["data"]["runtime"]["work_version"],"input_digest":"a".repeat(64),"declared_scope":["src/api"]})))
+        .await.unwrap()["receipt"]["data"].clone();
+    let p = prepare(&read, A, "a").await;
+    read.commands().execute(TENANT, PROJECT, A, command(&p, "preflight-start", "execution.start",
+        json!({"session_id":"session-a","expected_session_version":"1","execution_id":execution["execution_id"],
+        "expected_execution_version":execution["execution_version"],"claim_id":claim["claim_id"],
+        "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
+        "expected_work_version":p["data"]["runtime"]["work_version"],"execution_mode":"caller_managed"})))
+        .await.unwrap();
+    let tmp = tempfile_ledger();
+    let before = std::fs::read(tmp.root.join("ledger.yaml")).unwrap();
+    let mut request = workspace_activation(&tmp, receipt, "preflight-live-source");
+    request.stopped_work_ids = vec!["a".into(), "CLIENT-1".into()];
+    assert!(
+        store
+            .activate_planning_writeback(TENANT, PROJECT, A, &request)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        awr_source::fingerprint(&std::fs::read(tmp.root.join("ledger.yaml")).unwrap()),
+        awr_source::fingerprint(&before),
+        "the real live-effect gate must run before the first source-byte write"
+    );
+}
+
 fn draft(id: &str, deps: &[&str], state: DraftDefinitionState) -> TaskDraft {
     TaskDraft {
         work_id: id.into(),
@@ -558,46 +620,34 @@ async fn unproven_impact_conservatively_refuses_with_recovery_actions() {
 }
 
 #[tokio::test]
-async fn affected_live_claim_requires_explicit_stop() {
-    let (_g, admin, _db, store) = store_and_roles().await;
-    let (_cid, _digest, receipt_id) = publish_candidate(&store).await;
-    // Plant an active claim on CLIENT-1 (affected).
-    admin
-        .batch_execute(
-            "INSERT INTO awr_team.work_runtime(tenant_id,project_id,scope_id,work_id,state,last_fence)
-             VALUES ('reader-tenant','reader-project','main','CLIENT-1','claimed',0)
-             ON CONFLICT DO NOTHING;
-             INSERT INTO awr_team.sessions(
-                tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state)
-             VALUES ('reader-tenant','reader-project','sess-wb','main','CLIENT-1','agent','cli-a','c','active')
-             ON CONFLICT DO NOTHING;
-             INSERT INTO awr_team.claims(
-                tenant_id,project_id,id,scope_id,work_id,session_id,actor_id,fence,state,expires_at)
-             VALUES (
-                'reader-tenant','reader-project','claim-wb','main','CLIENT-1','sess-wb','agent',1,
-                'active', clock_timestamp() + interval '1 hour')
-             ON CONFLICT DO NOTHING;",
-        )
-        .await
-        .unwrap();
+async fn an_unstarted_claim_is_not_an_external_effect_or_client_stop_proof() {
+    use awr_team_pg::WorkstreamReadStore;
+    use serde_json::json;
+    let (_g, _admin, db, store) = store_and_roles().await;
+    let (_, _, receipt) = publish_candidate_with_workstream(&store, "alpha").await;
+    let read = WorkstreamReadStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let prepared = prepare(&read, A, "a").await;
+    read.commands().execute(TENANT, PROJECT, A, command(&prepared, "unstarted-claim", "claim.acquire",
+        json!({"session_id":"session-a","expected_session_version":"1","expected_work_version":"0","ttl_seconds":600})))
+        .await.unwrap();
     let tmp = tempfile_ledger();
-    let err = store
+    let result = store
         .activate_planning_writeback(
             TENANT,
             PROJECT,
             A,
-            &WritebackActivateRequest {
-                request_id: "req-live-claim-1".into(),
-                publish_receipt_id: receipt_id,
-                source_root: tmp.root.clone(),
-                ledger_relative_path: "ledger.yaml".into(),
-                impact_proven: true,
-                stopped_work_ids: vec![],
-            },
+            &workspace_activation(&tmp, receipt, "claim-is-not-effect"),
         )
         .await
-        .unwrap_err();
-    assert!(matches!(err, PgError::WritebackRefused(_)), "{err:?}");
+        .unwrap();
+    assert_eq!(result["source_writeback_pending"], false);
+    assert!(
+        result["affected_work_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|id| id == "a")
+    );
 }
 
 struct TmpLedger {
@@ -1387,321 +1437,791 @@ async fn planning_preserves_existing_delivery_reference_notes_in_the_sole_source
     );
 }
 
-#[tokio::test]
-async fn source_written_phase_resumes_without_reapplying_creates() {
-    use awr_source::{apply_planning_changes_to_ledger, fingerprint};
-    let (_g, admin, _db, store) = store_and_roles().await;
-    let (candidate_id, digest, receipt_id) =
-        publish_candidate_with_workstream(&store, "alpha").await;
-    let tmp = tempfile_ledger();
-    let before_bytes = std::fs::read(tmp.root.join("ledger.yaml")).unwrap();
-    let mut create_task = draft("SHARED-1", &[], DraftDefinitionState::Draft);
-    create_task.workstream = Some("alpha".into());
-    let changes = vec![
-        DraftChange {
-            op: DraftOpKind::CreateTask,
-            before: None,
-            after: create_task,
-        },
-        DraftChange {
-            op: DraftOpKind::EditFields,
-            before: Some(draft("CLIENT-1", &["API-1"], DraftDefinitionState::Enabled)),
-            after: draft(
-                "CLIENT-1",
-                &["API-1", "SHARED-1"],
-                DraftDefinitionState::Enabled,
-            ),
-        },
-    ];
-    let patch = apply_planning_changes_to_ledger(&before_bytes, &changes).unwrap();
-    // Simulate crash after authoritative source write: ledger already contains
-    // CreateTask, journal durable at source_written, PG snapshot not activated.
-    std::fs::write(tmp.root.join("ledger.yaml"), &patch.after_bytes).unwrap();
-    assert_eq!(fingerprint(&patch.after_bytes), patch.after_fingerprint);
-
-    let body = serde_json::json!({"phase": "source_written"});
-    admin
-        .execute(
-            "INSERT INTO awr_team.planning_writeback_journals(
-                tenant_id, project_id, request_id, candidate_id, candidate_digest,
-                publish_receipt_id, phase, before_fingerprint, after_fingerprint,
-                publisher_actor_id, affected_work_ids, unrelated_work_ids,
-                recovery_actions, body_json)
-             VALUES (
-                'reader-tenant','reader-project','req-resume-1',$1,$2,$3,
-                'source_written',$4,$5,'agent','[]'::jsonb,'[]'::jsonb,
-                '[]'::jsonb,$6)",
-            &[
-                &candidate_id,
-                &digest,
-                &receipt_id,
-                &patch.before_fingerprint,
-                &patch.after_fingerprint,
-                &body,
-            ],
-        )
-        .await
-        .unwrap();
-
-    let req = WritebackActivateRequest {
-        request_id: "req-resume-1".into(),
-        publish_receipt_id: receipt_id,
-        source_root: tmp.root.clone(),
-        ledger_relative_path: "ledger.yaml".into(),
-        impact_proven: true,
-        stopped_work_ids: vec![],
-    };
-    let resumed = store
-        .activate_planning_writeback(TENANT, PROJECT, A, &req)
-        .await
-        .expect("resume from source_written must complete without re-applying creates");
-    assert_eq!(resumed["already_recorded"], false);
-    assert_eq!(resumed["after_fingerprint"], patch.after_fingerprint);
-    // Ledger still has exactly one SHARED-1 identity (no duplicate create on resume).
-    let text = std::fs::read_to_string(tmp.root.join("ledger.yaml")).unwrap();
-    assert_eq!(
-        text.matches("id: SHARED-1").count(),
-        1,
-        "CreateTask must not be re-applied on resume: {text}"
-    );
+// Capture durable facts separately from the source bytes. A retained intent is
+// not an activation, and a lost response must not increment either fact twice.
+async fn activation_facts(admin: &tokio_postgres::Client) -> (String, i64, i64, i64) {
+    let row = admin.query_one(
+        "SELECT active_snapshot_id, authority_epoch,
+          (SELECT count(*) FROM awr_team.events WHERE tenant_id=$1 AND project_id=$2 AND event_type='source.activated'),
+          (SELECT count(*) FROM awr_team.planning_activation_receipts WHERE tenant_id=$1 AND project_id=$2)
+         FROM awr_team.projects WHERE tenant_id=$1 AND id=$2",
+        &[&TENANT, &PROJECT],
+    ).await.unwrap();
+    (row.get(0), row.get(1), row.get(2), row.get(3))
 }
 
 #[tokio::test]
-async fn validated_phase_with_written_ledger_does_not_reapply_creates() {
-    use awr_source::{apply_planning_changes_to_ledger, fingerprint};
-    let (_g, admin, _db, store) = store_and_roles().await;
-    let (candidate_id, digest, receipt_id) =
-        publish_candidate_with_workstream(&store, "alpha").await;
-    let tmp = tempfile_ledger();
-    let before_bytes = std::fs::read(tmp.root.join("ledger.yaml")).unwrap();
-    let mut create_task = draft("SHARED-1", &[], DraftDefinitionState::Draft);
-    create_task.workstream = Some("alpha".into());
-    let changes = vec![
-        DraftChange {
-            op: DraftOpKind::CreateTask,
-            before: None,
-            after: create_task,
-        },
-        DraftChange {
-            op: DraftOpKind::EditFields,
-            before: Some(draft("CLIENT-1", &["API-1"], DraftDefinitionState::Enabled)),
-            after: draft(
-                "CLIENT-1",
-                &["API-1", "SHARED-1"],
-                DraftDefinitionState::Enabled,
-            ),
-        },
-    ];
-    let patch = apply_planning_changes_to_ledger(&before_bytes, &changes).unwrap();
-    // Crash window: journal committed as validated, then the ledger write landed,
-    // but phase never advanced to source_written.
-    std::fs::write(tmp.root.join("ledger.yaml"), &patch.after_bytes).unwrap();
-    assert_eq!(fingerprint(&patch.after_bytes), patch.after_fingerprint);
-
-    let body = serde_json::json!({"phase": "validated"});
-    admin
-        .execute(
-            "INSERT INTO awr_team.planning_writeback_journals(
-                tenant_id, project_id, request_id, candidate_id, candidate_digest,
-                publish_receipt_id, phase, before_fingerprint, after_fingerprint,
-                publisher_actor_id, affected_work_ids, unrelated_work_ids,
-                recovery_actions, body_json)
-             VALUES (
-                'reader-tenant','reader-project','req-resume-validated',$1,$2,$3,
-                'validated',$4,$5,'agent','[]'::jsonb,'[]'::jsonb,
-                '[]'::jsonb,$6)",
-            &[
-                &candidate_id,
-                &digest,
-                &receipt_id,
-                &patch.before_fingerprint,
-                &patch.after_fingerprint,
-                &body,
-            ],
-        )
-        .await
-        .unwrap();
-
-    let req = WritebackActivateRequest {
-        request_id: "req-resume-validated".into(),
-        publish_receipt_id: receipt_id,
-        source_root: tmp.root.clone(),
-        ledger_relative_path: "ledger.yaml".into(),
-        impact_proven: true,
-        stopped_work_ids: vec![],
-    };
-    let resumed = store
-        .activate_planning_writeback(TENANT, PROJECT, A, &req)
-        .await
-        .expect("resume from validated+written ledger must not re-apply creates");
-    assert_eq!(resumed["already_recorded"], false);
-    assert_eq!(resumed["after_fingerprint"], patch.after_fingerprint);
-    let text = std::fs::read_to_string(tmp.root.join("ledger.yaml")).unwrap();
-    assert_eq!(
-        text.matches("id: SHARED-1").count(),
-        1,
-        "CreateTask must not be re-applied after validated write: {text}"
-    );
+async fn durable_boundaries_recover_original_intent_and_commit_activation_once() {
+    use awr_source::fingerprint;
+    for (boundary, phase, written, completed) in [
+        ("after_intent", "validated", false, false),
+        ("after_source_write", "validated", true, false),
+        ("after_source_written", "source_written", true, false),
+        ("after_pg_activating", "pg_activating", true, false),
+        ("before_final_commit", "pg_activating", true, false),
+        ("after_final_commit", "completed", true, true),
+    ] {
+        let (_g, admin, db, store) = store_and_roles().await;
+        let (_, _, receipt) = publish_candidate_with_workstream(&store, "alpha").await;
+        let tmp = tempfile_ledger();
+        let req = workspace_activation(&tmp, receipt, boundary);
+        let path = tmp.root.join("ledger.yaml");
+        let before = fingerprint(&std::fs::read(&path).unwrap());
+        let baseline = activation_facts(&admin).await;
+        let error = store
+            .activate_planning_writeback_abort_for_test(TENANT, PROJECT, A, &req, boundary)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, PgError::Protocol(ref text) if text.contains("injected writeback interruption")),
+            "{boundary}: {error:?}"
+        );
+        // A new store has no in-memory recovery knowledge.
+        let restarted =
+            SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+        let status = restarted
+            .get_planning_writeback_status(TENANT, PROJECT, A, &req.request_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(status["phase"], phase, "{boundary}");
+        assert_eq!(status["original_intent_bound"], true, "{boundary}");
+        assert_eq!(status["pending"], !completed, "{boundary}");
+        assert_eq!(status["applied"], completed, "{boundary}");
+        let journal = admin.query_one(
+            "SELECT before_fingerprint, after_fingerprint, intent_json FROM awr_team.planning_writeback_journals
+             WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
+            &[&TENANT, &PROJECT, &req.request_id],
+        ).await.unwrap();
+        assert_eq!(journal.get::<_, String>(0), before);
+        let after: String = journal.get(1);
+        let intent: serde_json::Value = journal.get(2);
+        assert_eq!(intent["request"], serde_json::to_value(&req).unwrap());
+        assert_eq!(intent["actor_id"], "agent");
+        assert_eq!(intent["client_id"], "cli-a");
+        assert_eq!(
+            fingerprint(&std::fs::read(&path).unwrap()),
+            if written { after.clone() } else { before }
+        );
+        let interrupted = activation_facts(&admin).await;
+        if completed {
+            assert_ne!(interrupted.0, baseline.0);
+            assert_eq!(
+                (interrupted.1, interrupted.2, interrupted.3),
+                (baseline.1 + 1, baseline.2 + 1, baseline.3 + 1)
+            );
+        } else {
+            assert_eq!(
+                interrupted, baseline,
+                "activation/event/receipt must roll back together at {boundary}"
+            );
+            assert!(
+                restarted
+                    .get_planning_activation_receipt(TENANT, PROJECT, A, &req.request_id)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        let pending: bool = admin.query_one(
+            "SELECT source_writeback_pending FROM awr_team.planning_publish_receipts WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+            &[&TENANT, &PROJECT, &req.publish_receipt_id],
+        ).await.unwrap().get(0);
+        assert_eq!(pending, !completed, "{boundary}");
+        let resumed = restarted
+            .activate_planning_writeback(TENANT, PROJECT, A, &req)
+            .await
+            .unwrap();
+        assert_eq!(resumed["already_recorded"], completed);
+        let final_facts = activation_facts(&admin).await;
+        assert_eq!(
+            (final_facts.1, final_facts.2, final_facts.3),
+            (baseline.1 + 1, baseline.2 + 1, baseline.3 + 1)
+        );
+        let canonical_receipt = restarted
+            .get_planning_activation_receipt(TENANT, PROJECT, A, &req.request_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(canonical_receipt["activated_snapshot_id"], final_facts.0);
+        let file_time = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let replay = restarted
+            .activate_planning_writeback(TENANT, PROJECT, A, &req)
+            .await
+            .unwrap();
+        assert_eq!(replay["already_recorded"], true);
+        assert_eq!(
+            replay["receipt"], canonical_receipt,
+            "the exact stored receipt is returned"
+        );
+        assert_eq!(activation_facts(&admin).await, final_facts);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            file_time,
+            "completed replay must not rewrite the source"
+        );
+        assert_eq!(fingerprint(&std::fs::read(&path).unwrap()), after);
+        assert_eq!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .matches("id: SHARED-1")
+                .count(),
+            1
+        );
+    }
 }
 
 #[tokio::test]
-async fn validated_phase_with_unwritten_ledger_applies_the_patch_once() {
-    use awr_source::{apply_planning_changes_to_ledger, fingerprint};
+async fn pending_and_completed_writeback_bind_every_request_field_and_actual_client() {
     let (_g, admin, _db, store) = store_and_roles().await;
-    let (candidate_id, digest, receipt_id) =
-        publish_candidate_with_workstream(&store, "alpha").await;
+    // The alternative client has the same live publisher permission and scope;
+    // rejection must result from identity binding, not a missing grant.
+    admin.batch_execute(
+        "INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,can_write)
+         VALUES('reader-tenant','reader-project','agent','cli-b','00000000000000000000000001',1,true,true);",
+    ).await.unwrap();
+    let (_, _, receipt) = publish_candidate_with_workstream(&store, "alpha").await;
     let tmp = tempfile_ledger();
-    let before_bytes = std::fs::read(tmp.root.join("ledger.yaml")).unwrap();
-    let mut create_task = draft("SHARED-1", &[], DraftDefinitionState::Draft);
-    create_task.workstream = Some("alpha".into());
-    let changes = vec![
-        DraftChange {
-            op: DraftOpKind::CreateTask,
-            before: None,
-            after: create_task,
-        },
-        DraftChange {
-            op: DraftOpKind::EditFields,
-            before: Some(draft("CLIENT-1", &["API-1"], DraftDefinitionState::Enabled)),
-            after: draft(
-                "CLIENT-1",
-                &["API-1", "SHARED-1"],
-                DraftDefinitionState::Enabled,
-            ),
-        },
-    ];
-    let patch = apply_planning_changes_to_ledger(&before_bytes, &changes).unwrap();
-    assert_eq!(fingerprint(&before_bytes), patch.before_fingerprint);
-    assert_ne!(fingerprint(&before_bytes), patch.after_fingerprint);
-
-    let body = serde_json::json!({"phase": "validated"});
-    admin
-        .execute(
-            "INSERT INTO awr_team.planning_writeback_journals(
-                tenant_id, project_id, request_id, candidate_id, candidate_digest,
-                publish_receipt_id, phase, before_fingerprint, after_fingerprint,
-                publisher_actor_id, affected_work_ids, unrelated_work_ids,
-                recovery_actions, body_json)
-             VALUES (
-                'reader-tenant','reader-project','req-resume-unwritten',$1,$2,$3,
-                'validated',$4,$5,'agent','[]'::jsonb,'[]'::jsonb,
-                '[]'::jsonb,$6)",
-            &[
-                &candidate_id,
-                &digest,
-                &receipt_id,
-                &patch.before_fingerprint,
-                &patch.after_fingerprint,
-                &body,
-            ],
-        )
-        .await
-        .unwrap();
-
-    let resumed = store
-        .activate_planning_writeback(
-            TENANT,
-            PROJECT,
-            A,
-            &WritebackActivateRequest {
-                request_id: "req-resume-unwritten".into(),
-                publish_receipt_id: receipt_id,
-                source_root: tmp.root.clone(),
-                ledger_relative_path: "ledger.yaml".into(),
-                impact_proven: true,
-                stopped_work_ids: vec![],
-            },
-        )
-        .await
-        .expect("resume from validated+unwritten ledger must write the patch once");
-    assert_eq!(resumed["after_fingerprint"], patch.after_fingerprint);
-    let text = std::fs::read_to_string(tmp.root.join("ledger.yaml")).unwrap();
-    assert_eq!(
-        text.matches("id: SHARED-1").count(),
-        1,
-        "CreateTask must be applied once when the validated write never landed: {text}"
-    );
-    assert_eq!(fingerprint(text.as_bytes()), patch.after_fingerprint);
-}
-
-#[tokio::test]
-async fn validated_phase_refuses_ledger_bytes_matching_neither_fingerprint() {
-    use awr_source::{apply_planning_changes_to_ledger, fingerprint};
-    let (_g, admin, _db, store) = store_and_roles().await;
-    let (candidate_id, digest, receipt_id) =
-        publish_candidate_with_workstream(&store, "alpha").await;
-    let tmp = tempfile_ledger();
-    let before_bytes = std::fs::read(tmp.root.join("ledger.yaml")).unwrap();
-    let mut create_task = draft("SHARED-1", &[], DraftDefinitionState::Draft);
-    create_task.workstream = Some("alpha".into());
-    let changes = vec![
-        DraftChange {
-            op: DraftOpKind::CreateTask,
-            before: None,
-            after: create_task,
-        },
-        DraftChange {
-            op: DraftOpKind::EditFields,
-            before: Some(draft("CLIENT-1", &["API-1"], DraftDefinitionState::Enabled)),
-            after: draft(
-                "CLIENT-1",
-                &["API-1", "SHARED-1"],
-                DraftDefinitionState::Enabled,
-            ),
-        },
-    ];
-    let patch = apply_planning_changes_to_ledger(&before_bytes, &changes).unwrap();
-    let foreign = b"workstreams:\n  version: 9\n  definitions: []\nitems: []\n";
-    std::fs::write(tmp.root.join("ledger.yaml"), foreign).unwrap();
-    assert_ne!(fingerprint(foreign), patch.before_fingerprint);
-    assert_ne!(fingerprint(foreign), patch.after_fingerprint);
-
-    let body = serde_json::json!({"phase": "validated"});
-    admin
-        .execute(
-            "INSERT INTO awr_team.planning_writeback_journals(
-                tenant_id, project_id, request_id, candidate_id, candidate_digest,
-                publish_receipt_id, phase, before_fingerprint, after_fingerprint,
-                publisher_actor_id, affected_work_ids, unrelated_work_ids,
-                recovery_actions, body_json)
-             VALUES (
-                'reader-tenant','reader-project','req-resume-foreign',$1,$2,$3,
-                'validated',$4,$5,'agent','[]'::jsonb,'[]'::jsonb,
-                '[]'::jsonb,$6)",
-            &[
-                &candidate_id,
-                &digest,
-                &receipt_id,
-                &patch.before_fingerprint,
-                &patch.after_fingerprint,
-                &body,
-            ],
-        )
-        .await
-        .unwrap();
-
-    let err = store
-        .activate_planning_writeback(
-            TENANT,
-            PROJECT,
-            A,
-            &WritebackActivateRequest {
-                request_id: "req-resume-foreign".into(),
-                publish_receipt_id: receipt_id,
-                source_root: tmp.root.clone(),
-                ledger_relative_path: "ledger.yaml".into(),
-                impact_proven: true,
-                stopped_work_ids: vec![],
-            },
-        )
+    let alternate = tempfile_ledger();
+    let req = workspace_activation(&tmp, receipt, "request-and-client-binding");
+    store
+        .activate_planning_writeback_abort_for_test(TENANT, PROJECT, A, &req, "after_intent")
         .await
         .unwrap_err();
+    for completed in [false, true] {
+        let original = std::fs::read(tmp.root.join("ledger.yaml")).unwrap();
+        let alternate_bytes = std::fs::read(alternate.root.join("ledger.yaml")).unwrap();
+        let baseline = activation_facts(&admin).await;
+        let mut variants = vec![];
+        let mut changed = req.clone();
+        changed.source_root = alternate.root.clone();
+        variants.push(changed);
+        let mut changed = req.clone();
+        changed.ledger_relative_path = "other.yaml".into();
+        variants.push(changed);
+        let mut changed = req.clone();
+        changed.publish_receipt_id = "another-publication".into();
+        variants.push(changed);
+        let mut changed = req.clone();
+        changed.impact_proven = false;
+        variants.push(changed);
+        let mut changed = req.clone();
+        changed.stopped_work_ids.push("CLIENT-1".into());
+        variants.push(changed);
+        for changed in variants {
+            let error = store
+                .activate_planning_writeback(TENANT, PROJECT, A, &changed)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(error, PgError::WritebackRefused(ref text) if text.contains("different original intent or identity")),
+                "completed={completed}: {error:?}"
+            );
+        }
+        let error = store
+            .activate_planning_writeback(TENANT, PROJECT, B, &req)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, PgError::WritebackRefused(ref text) if text.contains("different original intent or identity")),
+            "completed={completed}: {error:?}"
+        );
+        assert_eq!(activation_facts(&admin).await, baseline);
+        assert_eq!(
+            std::fs::read(tmp.root.join("ledger.yaml")).unwrap(),
+            original
+        );
+        assert_eq!(
+            std::fs::read(alternate.root.join("ledger.yaml")).unwrap(),
+            alternate_bytes
+        );
+        if !completed {
+            store
+                .activate_planning_writeback(TENANT, PROJECT, A, &req)
+                .await
+                .unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn pending_writeback_preserves_drift_and_rechecks_revoked_permission_after_restart() {
+    for drift in [false, true] {
+        let (_g, admin, db, store) = store_and_roles().await;
+        let (_, _, receipt) = publish_candidate_with_workstream(&store, "alpha").await;
+        let tmp = tempfile_ledger();
+        let req = workspace_activation(&tmp, receipt, "recovery-live-authority");
+        store
+            .activate_planning_writeback_abort_for_test(
+                TENANT,
+                PROJECT,
+                A,
+                &req,
+                "after_source_written",
+            )
+            .await
+            .unwrap_err();
+        let baseline = activation_facts(&admin).await;
+        let path = tmp.root.join("ledger.yaml");
+        if drift {
+            let mut bytes = std::fs::read(&path).unwrap();
+            bytes.extend_from_slice(b"\n# A concurrent author's content must remain intact.\n");
+            std::fs::write(&path, bytes).unwrap();
+        } else {
+            admin.batch_execute("UPDATE awr_team.project_memberships SET role='reader',membership_version=membership_version+1 WHERE actor_id='agent'").await.unwrap();
+        }
+        let bytes = std::fs::read(&path).unwrap();
+        let restarted =
+            SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+        let error = restarted
+            .activate_planning_writeback(TENANT, PROJECT, A, &req)
+            .await
+            .unwrap_err();
+        if drift {
+            assert!(matches!(error, PgError::WritebackRefused(_)), "{error:?}");
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(activation_facts(&admin).await, baseline);
+        let phase: String = admin.query_one("SELECT phase FROM awr_team.planning_writeback_journals WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3", &[&TENANT,&PROJECT,&req.request_id]).await.unwrap().get(0);
+        assert_eq!(phase, "source_written");
+        if !drift {
+            admin.batch_execute("UPDATE awr_team.project_memberships SET role='admin',membership_version=membership_version+1 WHERE actor_id='agent'").await.unwrap();
+            restarted
+                .activate_planning_writeback(TENANT, PROJECT, A, &req)
+                .await
+                .unwrap();
+            let facts = activation_facts(&admin).await;
+            assert_eq!(
+                (facts.1, facts.2, facts.3),
+                (baseline.1 + 1, baseline.2 + 1, baseline.3 + 1)
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn legacy_pending_journals_without_original_provenance_never_authorize_recovery() {
+    use awr_source::apply_planning_changes_to_ledger;
+    let (_g, admin, _db, store) = store_and_roles().await;
+    let (candidate_id, digest, receipt) = publish_candidate_with_workstream(&store, "alpha").await;
+    let tmp = tempfile_ledger();
+    let path = tmp.root.join("ledger.yaml");
+    let before = std::fs::read(&path).unwrap();
+    let mut created = draft("SHARED-1", &[], DraftDefinitionState::Draft);
+    created.workstream = Some("alpha".into());
+    let changes = vec![
+        DraftChange {
+            op: DraftOpKind::CreateTask,
+            before: None,
+            after: created,
+        },
+        DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(draft("CLIENT-1", &["API-1"], DraftDefinitionState::Enabled)),
+            after: draft(
+                "CLIENT-1",
+                &["API-1", "SHARED-1"],
+                DraftDefinitionState::Enabled,
+            ),
+        },
+    ];
+    let patch = apply_planning_changes_to_ledger(&before, &changes).unwrap();
+    for (i, (phase, bytes)) in [
+        ("validated", before.as_slice()),
+        ("validated", patch.after_bytes.as_slice()),
+        ("source_written", patch.after_bytes.as_slice()),
+        ("pg_activating", patch.after_bytes.as_slice()),
+        ("completed", patch.after_bytes.as_slice()),
+        (
+            "validated",
+            b"# preserve unknown external bytes\n".as_slice(),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        std::fs::write(&path, bytes).unwrap();
+        let request = format!("legacy-unknown-{i}");
+        // This deliberately retains an old unbound row; it is not a crash
+        // fixture with fabricated new provenance and earns no recovery credit.
+        admin.execute(
+            "INSERT INTO awr_team.planning_writeback_journals(tenant_id,project_id,request_id,candidate_id,candidate_digest,
+             publish_receipt_id,phase,before_fingerprint,after_fingerprint,publisher_actor_id,affected_work_ids,
+             unrelated_work_ids,recovery_actions,body_json)
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'agent','[]','[]','[]','{}')",
+            &[&TENANT,&PROJECT,&request,&candidate_id,&digest,&receipt,&phase,&patch.before_fingerprint,&patch.after_fingerprint],
+        ).await.unwrap();
+        let baseline = activation_facts(&admin).await;
+        let req = workspace_activation(&tmp, receipt.clone(), &request);
+        let error = store
+            .activate_planning_writeback(TENANT, PROJECT, A, &req)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, PgError::WritebackRefused(ref text) if text.contains("original writeback intent is unknown")),
+            "{error:?}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(activation_facts(&admin).await, baseline);
+        let outcome = store
+            .get_planning_writeback_status(TENANT, PROJECT, A, &request)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(outcome["phase"], phase);
+        assert_eq!(outcome["original_intent_bound"], false);
+        assert_eq!(outcome["applied"], false);
+        assert_eq!(outcome["source_writeback_pending"], true);
+        assert!(outcome["activation_receipt_id"].is_null());
+    }
+}
+
+#[tokio::test]
+async fn completed_outcome_requires_valid_intent_and_matching_activation_confirmation() {
+    let (_g, admin, _db, store) = store_and_roles().await;
+    let (_, _, publication) = publish_candidate_with_workstream(&store, "alpha").await;
+    let tmp = tempfile_ledger();
+    let req = workspace_activation(&tmp, publication, "outcome-provenance");
+    let activated = store
+        .activate_planning_writeback(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    let first = store
+        .get_planning_writeback_status(TENANT, PROJECT, A, &req.request_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first["applied"], true);
+    let original_id = first["activation_receipt_id"].as_str().unwrap();
+    let bytes = std::fs::read(tmp.root.join("ledger.yaml")).unwrap();
+    let baseline = activation_facts(&admin).await;
+    admin.execute("UPDATE awr_team.planning_activation_receipts SET after_fingerprint=$2 WHERE request_id=$1",
+        &[&req.request_id,&"changed-confirmation"]).await.unwrap();
+    let inconsistent = store
+        .get_planning_writeback_status(TENANT, PROJECT, A, &req.request_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(inconsistent["original_intent_bound"], true);
+    assert_eq!(inconsistent["applied"], false);
+    assert!(matches!(
+        store
+            .activate_planning_writeback(TENANT, PROJECT, A, &req)
+            .await
+            .unwrap_err(),
+        PgError::SourceDivergence
+    ));
+    admin.execute("UPDATE awr_team.planning_activation_receipts SET after_fingerprint=$2 WHERE request_id=$1",
+        &[&req.request_id,&activated["after_fingerprint"].as_str().unwrap()]).await.unwrap();
+    let snapshot = activated["activated_snapshot_id"].as_str().unwrap();
+    let manifest: String = admin
+        .query_one(
+            "SELECT manifest_digest FROM awr_team.source_snapshots WHERE id=$1",
+            &[&snapshot],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    admin
+        .execute(
+            "UPDATE awr_team.source_snapshots SET manifest_digest=$2 WHERE id=$1",
+            &[&snapshot, &"changed-snapshot"],
+        )
+        .await
+        .unwrap();
+    let inconsistent = store
+        .get_planning_writeback_status(TENANT, PROJECT, A, &req.request_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(inconsistent["original_intent_bound"], true);
+    assert_eq!(inconsistent["applied"], false);
+    assert!(matches!(
+        store
+            .activate_planning_writeback(TENANT, PROJECT, A, &req)
+            .await
+            .unwrap_err(),
+        PgError::SourceDivergence
+    ));
+    admin
+        .execute(
+            "UPDATE awr_team.source_snapshots SET manifest_digest=$2 WHERE id=$1",
+            &[&snapshot, &manifest],
+        )
+        .await
+        .unwrap();
+    // Corrupt diagnostics must not promote a phase label to confirmed delivery.
+    admin.execute("UPDATE awr_team.planning_writeback_journals SET audit_receipt_id=NULL WHERE request_id=$1",&[&req.request_id]).await.unwrap();
+    let missing = store
+        .get_planning_writeback_status(TENANT, PROJECT, A, &req.request_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(missing["original_intent_bound"], true);
+    assert_eq!(missing["applied"], false);
+    assert!(missing["activation_receipt_id"].is_null());
+    admin.execute("UPDATE awr_team.planning_writeback_journals SET audit_receipt_id=$2,intent_hash=$3 WHERE request_id=$1",
+        &[&req.request_id,&original_id,&"f".repeat(64)]).await.unwrap();
+    let invalid = store
+        .get_planning_writeback_status(TENANT, PROJECT, A, &req.request_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(invalid["original_intent_bound"], false);
+    assert_eq!(invalid["applied"], false);
     assert!(
-        matches!(err, PgError::Protocol(ref message) if message.contains("refusing overwrite")),
-        "{err:?}"
+        store
+            .activate_planning_writeback(TENANT, PROJECT, A, &req)
+            .await
+            .is_err()
+    );
+    assert_eq!(std::fs::read(tmp.root.join("ledger.yaml")).unwrap(), bytes);
+    assert_eq!(activation_facts(&admin).await, baseline);
+}
+
+async fn register_actual_ledger_baseline(store: &SourceStore, tmp: &TmpLedger) {
+    use awr_source::{PublishPrepOptions, SoleSourceLocation, prepare_publish_from_ledger_bytes};
+    use awr_team::SourceActivationPlan;
+    use awr_team_pg::{IngestRequest, SourceFile};
+    let location = SoleSourceLocation::server_directory(&tmp.root, "ledger.yaml").unwrap();
+    let package = prepare_publish_from_ledger_bytes(
+        &location,
+        &tmp.root,
+        &std::fs::read(tmp.root.join("ledger.yaml")).unwrap(),
+        PROJECT,
+        &PublishPrepOptions::default(),
+    )
+    .unwrap();
+    let (candidate, _) = store
+        .ingest_publish_candidate(IngestRequest {
+            tenant_id: TENANT.into(),
+            project_id: PROJECT.into(),
+            actor_id: "agent".into(),
+            parser_version: package.parser_version,
+            files: package
+                .files
+                .into_iter()
+                .map(|f| SourceFile {
+                    path: f.path,
+                    bytes: f.bytes,
+                })
+                .collect(),
+        })
+        .await
+        .unwrap();
+    store
+        .approve(
+            TENANT,
+            PROJECT,
+            &candidate.proposal_id,
+            "reviewer",
+            &candidate.manifest_digest,
+        )
+        .await
+        .unwrap();
+    store
+        .activate_workstreams(
+            TENANT,
+            PROJECT,
+            "agent",
+            &candidate.proposal_id,
+            &SourceActivationPlan {
+                candidate_digest: candidate.manifest_digest.clone(),
+                approved_candidate_digest: candidate.manifest_digest,
+                parser_version: candidate.parser_version,
+                expected_authority_epoch: candidate.base_epoch,
+            },
+        )
+        .await
+        .unwrap();
+}
+
+async fn publish_real_scope_change(store: &SourceStore, admin: &tokio_postgres::Client) -> String {
+    let contract = activated_contract(admin, "a").await;
+    let mut before = draft("a", &[], DraftDefinitionState::Enabled);
+    before.title = "Alpha work".into();
+    before.goals = contract.goals;
+    before.scope_paths = contract.scope_paths;
+    before.acceptance = contract.acceptance;
+    before.completion_policy = contract.completion_policy;
+    before.workstream = Some("alpha".into());
+    let mut after = before.clone();
+    after.scope_paths = vec!["src/api".into()];
+    let candidate = store
+        .create_planning_candidate(
+            TENANT,
+            PROJECT,
+            A,
+            &DraftCandidateCreate {
+                changes: vec![DraftChange {
+                    op: DraftOpKind::EditFields,
+                    before: Some(before),
+                    after,
+                }],
+                suggestion_ids: vec![],
+                allowed_spec_roots: vec!["src".into()],
+                project_goal_keys: vec!["alpha".into(), "private-beta".into()],
+                self_approve_policy: Some(OrdinaryPlanningSelfApprovePolicy::ordinary_default()),
+                author_person_id: Some("agent".into()),
+                predetermined_candidate_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    approve_workspace_candidate(store, &candidate).await
+}
+
+async fn claim_and_prepare_scope(
+    read: &awr_team_pg::WorkstreamReadStore,
+    token: &str,
+    work: &str,
+    session: &str,
+    key: &str,
+    scope: &str,
+) -> (serde_json::Value, serde_json::Value) {
+    let claim = claim_scope(read, token, work, session, key).await;
+    let prepared = read
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            token,
+            scope_prepare_command(read, token, work, session, key, scope, &claim).await,
+        )
+        .await
+        .unwrap()["receipt"]["data"]
+        .clone();
+    (claim, prepared)
+}
+
+async fn claim_scope(
+    read: &awr_team_pg::WorkstreamReadStore,
+    token: &str,
+    work: &str,
+    session: &str,
+    key: &str,
+) -> serde_json::Value {
+    use serde_json::json;
+    let p = prepare(read, token, work).await;
+    read.commands().execute(TENANT, PROJECT, token, command(&p, &format!("{key}-claim"), "claim.acquire",
+        json!({"session_id":session,"expected_session_version":"1","expected_work_version":p["data"]["runtime"]["work_version"].as_str().unwrap_or("0"),"ttl_seconds":600})))
+        .await.unwrap()["receipt"]["data"].clone()
+}
+
+async fn scope_prepare_command(
+    read: &awr_team_pg::WorkstreamReadStore,
+    token: &str,
+    work: &str,
+    session: &str,
+    key: &str,
+    scope: &str,
+    claim: &serde_json::Value,
+) -> awr_team_pg::WorkstreamCommand {
+    let p = prepare(read, token, work).await;
+    command(
+        &p,
+        &format!("{key}-prepare"),
+        "execution.prepare",
+        serde_json::json!({
+            "session_id":session,"expected_session_version":"1","claim_id":claim["claim_id"],
+            "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
+            "expected_work_version":p["data"]["runtime"]["work_version"],"input_digest":"a".repeat(64),"declared_scope":[scope]
+        }),
+    )
+}
+
+async fn scope_start_command(
+    read: &awr_team_pg::WorkstreamReadStore,
+    token: &str,
+    work: &str,
+    session: &str,
+    key: &str,
+    claim: &serde_json::Value,
+    execution: &serde_json::Value,
+) -> awr_team_pg::WorkstreamCommand {
+    let p = prepare(read, token, work).await;
+    command(
+        &p,
+        &format!("{key}-start"),
+        "execution.start",
+        serde_json::json!({
+            "session_id":session,"expected_session_version":"1","claim_id":claim["claim_id"],
+            "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
+            "expected_work_version":p["data"]["runtime"]["work_version"],"execution_id":execution["execution_id"],
+            "expected_execution_version":execution["execution_version"],"execution_mode":"caller_managed"
+        }),
+    )
+}
+
+#[tokio::test]
+async fn pending_intent_fences_related_prepare_start_and_source_replacement_but_preserves_unrelated_execution()
+ {
+    use awr_team_pg::WorkstreamReadStore;
+    for (boundary, prepared_before) in [
+        ("after_intent", false),
+        ("after_intent", true),
+        ("after_source_written", false),
+        ("after_source_written", true),
+        ("after_pg_activating", false),
+        ("after_pg_activating", true),
+    ] {
+        let (_g, admin, db, store) = store_and_roles().await;
+        let tmp = tempfile_ledger();
+        // Align the actual source first. Initial fixture differences must not
+        // falsely classify unrelated work as affected by this later change.
+        register_actual_ledger_baseline(&store, &tmp).await;
+        admin.batch_execute("UPDATE awr_team.workstream_grants SET can_write=true,grant_version=grant_version+1 WHERE client_id='cli-b'").await.unwrap();
+        let read =
+            WorkstreamReadStore::from_config(common::with_app_role(&common::test_config(), &db));
+        let claim_a = claim_scope(&read, A, "a", "session-a", "related").await;
+        let prepared_a = if prepared_before {
+            Some(
+                read.commands()
+                    .execute(
+                        TENANT,
+                        PROJECT,
+                        A,
+                        scope_prepare_command(
+                            &read,
+                            A,
+                            "a",
+                            "session-a",
+                            "before",
+                            "src/api",
+                            &claim_a,
+                        )
+                        .await,
+                    )
+                    .await
+                    .unwrap()["receipt"]["data"]
+                    .clone(),
+            )
+        } else {
+            None
+        };
+        let publication = publish_real_scope_change(&store, &admin).await;
+        let req = workspace_activation(&tmp, publication, boundary);
+        store
+            .activate_planning_writeback_abort_for_test(TENANT, PROJECT, A, &req, boundary)
+            .await
+            .unwrap_err();
+        let intent: serde_json::Value = admin.query_one("SELECT intent_json FROM awr_team.planning_writeback_journals WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3", &[&TENANT,&PROJECT,&req.request_id]).await.unwrap().get(0);
+        assert_eq!(intent["affected_work_ids"], serde_json::json!(["a"]));
+        assert_eq!(intent["dependency_work_ids"], serde_json::json!(["a"]));
+        let before = activation_facts(&admin).await;
+        let cmd = if let Some(execution) = &prepared_a {
+            scope_start_command(&read, A, "a", "session-a", "blocked", &claim_a, execution).await
+        } else {
+            scope_prepare_command(&read, A, "a", "session-a", "blocked", "src/api", &claim_a).await
+        };
+        let error = read
+            .commands()
+            .execute(TENANT, PROJECT, A, cmd)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error,PgError::ActionBlockedByInvalidation(ref key) if key==&format!("source_writeback:{boundary}")),
+            "{boundary}: {error:?}"
+        );
+        // A different request cannot replace the same authority while the
+        // original file intent is pending, even with identical caller flags.
+        let mut competing = req.clone();
+        competing.request_id = "competing-source-request".into();
+        assert!(matches!(
+            store
+                .activate_planning_writeback(TENANT, PROJECT, A, &competing)
+                .await,
+            Err(PgError::WritebackRefused(_))
+        ));
+        assert_eq!(activation_facts(&admin).await, before);
+        let (claim_b, prepared_b) =
+            claim_and_prepare_scope(&read, B, "b-private", "session-b", "unrelated", "src/other")
+                .await;
+        let started_b = read
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                B,
+                scope_start_command(
+                    &read,
+                    B,
+                    "b-private",
+                    "session-b",
+                    "unrelated",
+                    &claim_b,
+                    &prepared_b,
+                )
+                .await,
+            )
+            .await
+            .unwrap()["receipt"]["data"]
+            .clone();
+        assert_eq!(started_b["state"], "running");
+        let restarted =
+            SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+        restarted
+            .activate_planning_writeback(TENANT, PROJECT, A, &req)
+            .await
+            .unwrap();
+        let states = admin
+            .query("SELECT id,state FROM awr_team.executions ORDER BY id", &[])
+            .await
+            .unwrap();
+        if let Some(execution) = &prepared_a {
+            assert!(states.iter().any(|r| r.get::<_, String>(0)
+                == execution["execution_id"].as_str().unwrap()
+                && r.get::<_, String>(1) == "cancelled"));
+        }
+        assert!(states.iter().any(|r| r.get::<_, String>(0)
+            == prepared_b["execution_id"].as_str().unwrap()
+            && r.get::<_, String>(1) == "running"));
+    }
+}
+
+#[tokio::test]
+async fn concurrent_fresh_stores_recover_one_original_intent_without_duplicate_activation() {
+    let (_g, admin, db, store) = store_and_roles().await;
+    let (_, _, publication) = publish_candidate_with_workstream(&store, "alpha").await;
+    let tmp = tempfile_ledger();
+    let req = workspace_activation(&tmp, publication, "concurrent-recovery");
+    store
+        .activate_planning_writeback_abort_for_test(TENANT, PROJECT, A, &req, "after_intent")
+        .await
+        .unwrap_err();
+    let baseline = activation_facts(&admin).await;
+    let second = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let (a, b) = tokio::join!(
+        store.activate_planning_writeback(TENANT, PROJECT, A, &req),
+        second.activate_planning_writeback(TENANT, PROJECT, A, &req)
+    );
+    assert!(
+        a.is_ok() || b.is_ok(),
+        "at least one original request must finish: {a:?}, {b:?}"
+    );
+    // A nonblocking source-lock loser queries the durable outcome before a
+    // replay. Once the winner completes, the original receipt is observable.
+    let outcome = second
+        .get_planning_writeback_status(TENANT, PROJECT, A, &req.request_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(outcome["phase"], "completed");
+    let replay = second
+        .activate_planning_writeback(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    assert_eq!(replay["already_recorded"], true);
+    let current = activation_facts(&admin).await;
+    assert_eq!(
+        (current.1, current.2, current.3),
+        (baseline.1 + 1, baseline.2 + 1, baseline.3 + 1)
     );
     assert_eq!(
-        std::fs::read(tmp.root.join("ledger.yaml")).unwrap(),
-        foreign
+        std::fs::read_to_string(tmp.root.join("ledger.yaml"))
+            .unwrap()
+            .matches("id: SHARED-1")
+            .count(),
+        1
     );
 }

@@ -225,8 +225,61 @@ only covers its exact admitted workspace paths; privileged recovery remains an
 authorized assertion about its bound resources. Neither proves independently
 observed process shutdown, physical isolation or work acceptance.
 
-This gate protects the atomic PostgreSQL projection switch. Durable planning
-writeback preflight, fencing and recovery across the source-file/PostgreSQL gap
-are a separate delivery boundary; this mechanism does not claim that gap is
-closed. Native client and complete business acceptance remain separate from
-PostgreSQL and authenticated loopback MCP regressions.
+Repository integration is also an external-effect boundary. Related prepared
+or leased integrations and retained target guards must be rejected through the
+authorized integration workflow before replacing their source. Dispatched or
+unknown integrations require a mapped observation that confirms their result;
+an expired lease or caller stop list cannot release the target. Unrelated
+integration records and target ownership remain intact.
+
+## Recover planning source writeback
+
+Registered-source planning publication checks the actual projected transition
+and the same settlement gate **before the first source-byte write**. Client
+impact and stop declarations never prove admission. The server chooses the
+registered source; MCP callers cannot supply a filesystem path.
+
+The durable intent pins the complete original request, authenticated actor and
+client, coordinator epoch, publication and exact approval, registered source,
+baseline snapshot, before/after fingerprints and staged source candidate. It
+also records the actual effect set and the dependency influence read-set.
+Positive assertions cannot replace these facts. Missing legacy provenance is
+retained as unknown, never reconstructed into new authority.
+
+| Durable phase | Meaning |
+| --- | --- |
+| `validated` | Original intent and admission fences are durable. Read the actual source fingerprint; interruption can occur before or after the byte write. |
+| `source_written` | The original after-fingerprint has been observed. PG installation is still unconfirmed. |
+| `pg_activating` | The original source is written; the final activation transaction is still unconfirmed. |
+| `completed` | A matching original intent and activation receipt confirm the source installation, event and publication in one PG transaction. |
+| `refused` | The request explicitly vetoed activation. Inspect the refusal before preparing a new reviewed request. |
+
+Pending phases block affected new execution and repository-integration effects.
+They also freeze adoption, publication and withdrawal that would change the
+dependency influence read-set. A verified fixed input can exclude a consumer
+from the effect set without removing it from that read-set. Unrelated work and
+dependency operations continue; content reads grant no new effect authority.
+
+After an unknown `awr_team_planning_publish` result:
+
+1. Query `awr_team_planning_outcome` with the **original request ID**. The
+   bounded response exposes the durable phase, `original_intent_bound`,
+   `pending`, `applied` and the confirmed activation receipt ID, without source
+   paths or source bodies. A phase label alone does not establish application;
+   unknown or inconsistent provenance and receipts never report `applied: true`.
+2. For a safely pending original intent, resume the **same complete request**
+   using the same actor and client. Recovery rechecks current permission,
+   original approval and baseline, persisted settlement and actual physical
+   source fingerprints under the cooperative source lock. Source drift is
+   preserved and refused; the server does not overwrite it or infer a new base.
+3. Reuse the resulting original receipt. The source snapshot, activation event,
+   activation receipt, publication confirmation and completed journal commit
+   atomically. A lost reply after that commit restores the original publication
+   and command receipt without republishing a stale candidate, activating again
+   or repeating task creation.
+
+A completed receipt is historical evidence, not permission to execute. A retry
+with different content, identity or selectors is refused. Unknown legacy or
+inconsistent journals require inspection; ordinary retry cannot repair their
+missing provenance. Native client and complete business acceptance remain
+separate from PostgreSQL and authenticated loopback MCP regressions.
