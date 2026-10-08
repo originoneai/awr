@@ -40,10 +40,28 @@ fn parent_contract() -> WorkContract {
     }
 }
 
+/// A valid contract for a graph node. Source admission derives its impact from the
+/// persisted contracts and refuses rows whose stored hash does not match their
+/// content, so the fixture rows must be real contracts, not placeholders.
+fn node_contract(work: &str, external_key: &str) -> WorkContract {
+    WorkContract {
+        work_id: WorkId::new(work).unwrap(),
+        external_key: external_key.into(),
+        acceptance: vec!["child".into()],
+        ..parent_contract()
+    }
+}
+
 async fn setup() -> (MutexGuard<'static, ()>, Client, GraphStore, String) {
     let (guard, admin, db) = fresh_team_schema().await;
     let contract_json = serde_json::to_string(&parent_contract()).unwrap();
     let contract_hash = parent_contract().hash().unwrap();
+    let (work_b, work_c) = (node_contract("work-b", "X"), node_contract("work-c", "Y"));
+    let (hash_b, hash_c) = (work_b.hash().unwrap(), work_c.hash().unwrap());
+    let (json_b, json_c) = (
+        serde_json::to_string(&work_b).unwrap(),
+        serde_json::to_string(&work_c).unwrap(),
+    );
     admin
         .batch_execute(&format!(
             "INSERT INTO awr_team.tenants(id,name,status) VALUES ('tenant-a','A','active');
@@ -70,9 +88,11 @@ async fn setup() -> (MutexGuard<'static, ()>, Client, GraphStore, String) {
                 definition_state, title, contract_json)
                 VALUES
                 ('tenant-a','project-a','snap-1','main','work-a','{contract_hash}','enabled','W','{}'),
-                ('tenant-a','project-a','snap-1','main','work-b','hash-b','enabled','X','{{\"acceptance\":[\"child\"]}}'),
-                ('tenant-a','project-a','snap-1','main','work-c','hash-c','enabled','Y','{{\"acceptance\":[\"child\"]}}');",
-            contract_json.replace('\'', "''")
+                ('tenant-a','project-a','snap-1','main','work-b','{hash_b}','enabled','X','{json_b}'),
+                ('tenant-a','project-a','snap-1','main','work-c','{hash_c}','enabled','Y','{json_c}');",
+            contract_json.replace('\'', "''"),
+            json_b = json_b.replace('\'', "''"),
+            json_c = json_c.replace('\'', "''"),
         ))
         .await
         .unwrap();

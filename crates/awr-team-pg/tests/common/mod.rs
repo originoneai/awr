@@ -9,7 +9,7 @@
 #![cfg(feature = "pg-tests")]
 #![allow(dead_code)]
 
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_postgres::config::{Config, Host};
 use tokio_postgres::{Client, NoTls};
@@ -134,7 +134,10 @@ pub async fn gate_db_name() -> String {
 /// own database, apply migrations and grants. The returned admin client is
 /// connected to that database. Callers seed their own rows afterwards.
 pub async fn fresh_team_schema() -> (MutexGuard<'static, ()>, Client, String) {
-    let guard = DB.lock().expect("db fixture lock");
+    // The lock guards no data: every holder rebuilds the schema from scratch. A test
+    // that panicked while holding it must not fail every later test of the binary
+    // with a PoisonError that hides which test failed first.
+    let guard = DB.lock().unwrap_or_else(PoisonError::into_inner);
     let name = gate_db_name().await;
     let admin = connect_config(&with_db(&test_config(), &name)).await;
     // Safe: `name` was created by this process in create_gate_db(); a

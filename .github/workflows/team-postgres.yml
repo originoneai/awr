@@ -1,0 +1,76 @@
+name: Team PostgreSQL verification
+
+# The PostgreSQL-backed suites sit behind the `pg-tests` feature, so the native
+# platform workflow never runs them. This workflow runs them against a throwaway
+# PostgreSQL 17 service container on a GitHub-hosted Linux runner: nothing is
+# shared between jobs, no credentials or secrets are involved, and the suites'
+# loopback-only guard is satisfied because the container is published on the
+# runner itself.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'crates/**'
+      - '.github/workflows/team-postgres.yml'
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'crates/**'
+      - '.github/workflows/team-postgres.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: team-postgres-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  postgres:
+    name: ${{ matrix.package }} (PostgreSQL 17)
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [awr-team-pg, awr-server]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: never
+      # Throwaway container credentials; the fixture refuses any non-loopback host.
+      AWR_TEAM_TEST_DATABASE_URL: postgres://postgres:awr-test@127.0.0.1:5432/postgres
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: awr-test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install 1.93.1 --profile minimal --component rustfmt --component clippy
+      - name: Run the PostgreSQL-backed tests
+        # One test thread: the suites share one PostgreSQL server and lock-order
+        # sensitive tests must not race each other for it.
+        run: cargo test -p '${{ matrix.package }}' --features pg-tests --locked --no-fail-fast -- --test-threads=1
+      - name: Show the PostgreSQL log tail
+        if: failure()
+        run: docker logs --tail 300 '${{ job.services.postgres.id }}'

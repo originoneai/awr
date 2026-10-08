@@ -7,9 +7,29 @@ SQLite and do not link this store.
 
 ```sh
 docker compose -f docker/team-postgres.yml up -d
+export AWR_TEAM_TEST_DATABASE_URL='postgres://postgres:awr-test@127.0.0.1:55432/postgres'
+cargo test -p awr-team-pg --features pg-tests -- --test-threads=1
+cargo test -p awr-server --features pg-tests -- --test-threads=1
+```
+
+The PostgreSQL-backed suites read `AWR_TEAM_TEST_DATABASE_URL` only, never the
+service's `AWR_TEAM_DATABASE_URL`, and refuse a non-loopback host. Each test
+process creates its own database, but the fixture also creates the cluster-wide
+role `awr_app` with a fixed test password and tests drop and rebuild schemas, so
+use a throwaway PostgreSQL 17 (the compose file above, or the service container
+of the CI workflow) and never a shared, Beta or production server, even through
+a tunnel that makes it look like loopback. Use one test thread. A failing test
+no longer poisons the shared fixture lock, so the first failure in the output is
+the real one.
+
+CI runs the same two commands in `.github/workflows/team-postgres.yml` against a
+PostgreSQL 17 service container, for every change under `crates/`.
+
+To run the service itself against that database:
+
+```sh
 export AWR_TEAM_DATABASE_URL='postgres://postgres:awr-test@127.0.0.1:55432/awr_team_test?sslmode=disable'
 cargo run -p awr-server -- migrate
-cargo test -p awr-team-pg --features pg-tests
 ```
 
 `awr-server check` exits non-zero when `awr_team.schema_state` is missing or
