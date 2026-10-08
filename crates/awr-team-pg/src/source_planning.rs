@@ -992,7 +992,7 @@ struct KnownWork {
     keys: Vec<String>,
 }
 
-fn ensure_baseline_current(
+pub(super) fn ensure_baseline_current(
     candidate: &PlanningCandidate,
     live_digest: &str,
     live_epoch: &str,
@@ -1052,7 +1052,7 @@ async fn authorize_candidate_writable_scope(
 
 /// Fail closed unless every exposed affected task is inside the client's readable
 /// workstream grants. Membership template WorkRead alone is insufficient.
-async fn authorize_candidate_readable_scope(
+pub(super) async fn authorize_candidate_readable_scope(
     tx: &Transaction<'_>,
     auth: &ReaderAuthority,
     tenant_id: &str,
@@ -1206,7 +1206,7 @@ async fn lock_candidate(
     Ok(())
 }
 
-async fn load_candidate(
+pub(super) async fn load_candidate(
     tx: &Transaction<'_>,
     tenant_id: &str,
     project_id: &str,

@@ -396,6 +396,13 @@ pub(crate) async fn apply(
     session(tx, tenant, project, auth, command, sid, version, ownership).await?;
     match action {
         Action::Publish(a) => {
+            crate::source::writeback::admission::require_dependency_clear(
+                tx,
+                tenant,
+                project,
+                &a.consumer_work_id,
+            )
+            .await?;
             let provider =
                 source_work(tx, tenant, project, &auth.snapshot, &command.work_id).await?;
             let consumer =
@@ -476,6 +483,19 @@ pub(crate) async fn apply(
             )
         }
         Action::Revoke(a) => {
+            let consumer: String = tx
+                .query_opt(
+                    "SELECT consumer_work_id FROM awr_team.workstream_artifact_exports
+                 WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND provider_work_id=$4",
+                    &[&tenant, &project, &a.export_id, &command.work_id],
+                )
+                .await?
+                .ok_or(PgError::PreconditionsChanged)?
+                .get(0);
+            crate::source::writeback::admission::require_dependency_clear(
+                tx, tenant, project, &consumer,
+            )
+            .await?;
             let r = tx.query_opt("UPDATE awr_team.workstream_artifact_exports SET status='revoked',version=version+1,
                 revoked_by_actor_id=$6,revoked_by_client_id=$7,revoked_at=clock_timestamp()
                 WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND provider_work_id=$4 AND version=$5 AND status='active' RETURNING version,disclosure_sha256",

@@ -246,6 +246,18 @@ impl SourceProjection {
         activation_impact::invalidate(tx, tenant, project, affected).await
     }
 
+    /// Metadata influencing a fixed cut is frozen while source bytes are pending.
+    /// This larger read-set does not fence unrelated fixed-consumer execution.
+    pub async fn dependency_influence(
+        &self,
+        tx: &Transaction<'_>,
+        tenant: &str,
+        project: &str,
+        previous: Option<&str>,
+    ) -> PgResult<BTreeSet<String>> {
+        activation_impact::dependency_influence(self, tx, tenant, project, previous).await
+    }
+
     pub async fn install(
         &self,
         tx: &Transaction<'_>,

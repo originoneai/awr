@@ -12,6 +12,315 @@ use fixture::*;
 use integration_fixture::*;
 use serde_json::{Value, json};
 
+struct IntegrationPlanningSource {
+    root: std::path::PathBuf,
+}
+
+impl Drop for IntegrationPlanningSource {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+// Register the physical contract before execution, evidence or business review.
+// The normal source and member APIs create every journal and integration fact.
+async fn integration_planning_fixture() -> (IntegrationPlanningSource, Fixture) {
+    use sha2::{Digest, Sha256};
+    let root =
+        std::env::temp_dir().join(format!("awr-integration-writeback-{}", ulid::Ulid::new()));
+    std::fs::create_dir(&root).unwrap();
+    let bound = IntegrationPlanningSource {
+        root: std::fs::canonicalize(root).unwrap(),
+    };
+    let definitions: Vec<_> = [(1, "alpha"), (2, "private-beta")]
+        .into_iter()
+        .map(|(id, key)| json!({"id":awr_core::Id::from(id),"external_key":key,
+            "title":key,"state":"active","authority_version":2,"goal_keys":[key],"acceptance_contracts":[]}))
+        .collect();
+    let tasks: Vec<_> = [("a", "alpha", vec![]), ("b-private", "private-beta", vec![]),
+        ("c", "alpha", vec!["b-private"])]
+        .into_iter().map(|(id, stream, dependencies)| {
+            let mut task=json!({"id":id,"title":id,"status":"planned","workstream":stream,
+                "goals":[stream],"paths":["src/api"],"acceptance":["verified"],"depends_on":dependencies,
+                "hard_rules":["preserve compatibility"],"verification_requirements":["report"],"completion_policy":"review"});
+            if id=="a" {
+                task["completion_policy"]=json!(POLICY);
+                task["execution_settlement"]=json!({"mode":"independent_workspace_v1","workspace_id":"synthetic-workspace-a"});
+            }
+            task
+        }).collect();
+    std::fs::write(
+        bound.root.join("ledger.yaml"),
+        serde_json::to_vec(&json!({
+        "workstreams":{"version":1,"definitions":definitions},
+        "goals":[{"id":"alpha","title":"Alpha","status":"active"},
+            {"id":"private-beta","title":"Private","status":"active"}],"work_items":tasks}))
+        .unwrap(),
+    )
+    .unwrap();
+    let manifest = ArtifactManifest {
+        entries: vec![ArtifactEntry {
+            artifact_id: "package".into(),
+            sha256: format!("{:x}", Sha256::digest(CONTENT)),
+            byte_length: CONTENT.len().to_string(),
+            locator: "git-path:src/api/result.json".into(),
+        }],
+    };
+    // Synthetic repository-neutral candidate; this regression performs no Git effects.
+    let candidate:DeliveryCandidate=serde_json::from_value(json!({"binding":{
+        "tenant_id":TENANT,"project_id":PROJECT,"scope_id":"main","workstream_id":awr_core::Id::from(1),"work_id":"a",
+        "candidate_id":"candidate-a","candidate_version":"1","contract_hash":"a".repeat(64),
+        "manifest_digest":manifest.digest().unwrap(),"source_revision":{"resource":RESOURCE,"format":"git_sha256","value":"a".repeat(64)},
+        "required_checks":["report"],"target":{"resource":RESOURCE,"reference":"main","precondition":{"kind":"missing"}}},"manifest":manifest})).unwrap();
+    let mut fixture = Box::pin(setup_source_integration_with_checks(
+        candidate,
+        &bound.root,
+        &["report".into()],
+    ))
+    .await;
+    fixture
+        .check("initial-physical-check", VerificationOutcome::Passed)
+        .await;
+    fixture.approve_source_review().await;
+    // Explicit operator scope is fixture identity infrastructure, not a source
+    // contract, approval, journal or settlement supplied through SQL.
+    fixture.admin.execute("INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,can_write,can_manage)
+        VALUES($1,$2,'integrator','cli-worker',$3,2,true,true,true)",
+        &[&TENANT,&PROJECT,&awr_core::Id::from(2).to_string()]).await.unwrap();
+    (bound, fixture)
+}
+
+async fn stage_integration_source_change(
+    f: &Fixture,
+    bound: &IntegrationPlanningSource,
+    work: &str,
+    key: &str,
+) -> (SourceStore, WritebackActivateRequest) {
+    let source = SourceStore::from_config(f.config.clone());
+    let contract: awr_team::WorkContract = serde_json::from_value(
+        f.admin
+            .query_one(
+                "SELECT c.contract_json FROM awr_team.work_contracts c JOIN awr_team.projects p
+         ON p.tenant_id=c.tenant_id AND p.id=c.project_id AND p.active_snapshot_id=c.snapshot_id
+         WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.work_id=$3",
+                &[&TENANT, &PROJECT, &work],
+            )
+            .await
+            .unwrap()
+            .get(0),
+    )
+    .unwrap();
+    let before = awr_team::TaskDraft {
+        work_id: work.into(),
+        external_key: work.into(),
+        title: work.into(),
+        goals: contract.goals,
+        scope_paths: contract.scope_paths,
+        acceptance: contract.acceptance,
+        required_dependencies: contract.required_dependencies,
+        completion_policy: contract.completion_policy,
+        dependency_acceptance: None,
+        hard_rules: Some(contract.hard_rules),
+        verification_requirements: Some(contract.verification_requirements),
+        execution_settlement: contract.execution_settlement,
+        definition_state: awr_team::DraftDefinitionState::Enabled,
+        workstream: Some(if work == "a" { "alpha" } else { "private-beta" }.into()),
+        split_from: None,
+        split_children: vec![],
+    };
+    let mut after = before.clone();
+    after.scope_paths = vec!["src/revised".into()];
+    let created = source
+        .create_planning_candidate(
+            TENANT,
+            PROJECT,
+            WORKER,
+            &DraftCandidateCreate {
+                changes: vec![awr_team::DraftChange {
+                    op: awr_team::DraftOpKind::EditFields,
+                    before: Some(before),
+                    after,
+                }],
+                suggestion_ids: vec![],
+                allowed_spec_roots: vec!["src".into()],
+                project_goal_keys: vec!["alpha".into(), "private-beta".into()],
+                self_approve_policy: Some(
+                    awr_team::OrdinaryPlanningSelfApprovePolicy::ordinary_default(),
+                ),
+                author_person_id: Some("integrator".into()),
+                predetermined_candidate_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let id = created["candidate_id"].as_str().unwrap();
+    let digest = created["candidate_digest"].as_str().unwrap();
+    source
+        .approve_planning_candidate(TENANT, PROJECT, WORKER, id, digest, Some("integrator"))
+        .await
+        .unwrap();
+    let published = source
+        .publish_planning_candidate(TENANT, PROJECT, WORKER, id, digest)
+        .await
+        .unwrap();
+    (
+        source,
+        WritebackActivateRequest {
+            request_id: key.into(),
+            publish_receipt_id: published["receipt_id"].as_str().unwrap().into(),
+            source_root: bound.root.clone(),
+            ledger_relative_path: "ledger.yaml".into(),
+            impact_proven: true,
+            stopped_work_ids: vec![],
+        },
+    )
+}
+
+#[tokio::test]
+async fn actual_pending_source_intent_fences_related_integration_and_preserves_unrelated_dispatch()
+{
+    Box::pin(pending_source_integration_cases()).await;
+}
+
+async fn pending_source_integration_cases() {
+    for boundary in [
+        "after_intent",
+        "after_source_written",
+        "after_pg_activating",
+    ] {
+        for changed_work in ["a", "b-private"] {
+            let (bound, f) = Box::pin(integration_planning_fixture()).await;
+            let (source, request) = Box::pin(stage_integration_source_change(
+                &f,
+                &bound,
+                changed_work,
+                boundary,
+            ))
+            .await;
+            let error = Box::pin(source.activate_planning_writeback_abort_for_test(
+                TENANT, PROJECT, WORKER, &request, boundary,
+            ))
+            .await
+            .unwrap_err();
+            assert!(
+                matches!(error,PgError::Protocol(ref text) if text.contains("injected")),
+                "{boundary}/{changed_work}: {error:?}"
+            );
+            let intent:Value=f.admin.query_one("SELECT intent_json FROM awr_team.planning_writeback_journals WHERE request_id=$1",
+                &[&request.request_id]).await.unwrap().get(0);
+            let affected = intent["affected_work_ids"].as_array().unwrap();
+            assert_eq!(affected.contains(&json!("a")), changed_work == "a");
+            let prepared = f
+                .store
+                .prepare_integration(TENANT, PROJECT, SUPERVISOR, f.request.clone())
+                .await;
+            if changed_work == "a" {
+                assert!(
+                    matches!(prepared,Err(PgError::ActionBlockedByInvalidation(ref id)) if id==&format!("source_writeback:{boundary}")),
+                    "{prepared:?}"
+                );
+                assert_eq!(f.guards().await, 0);
+            } else {
+                let prepared = prepared.unwrap();
+                let id = prepared["data"]["integration_id"].as_str().unwrap();
+                let lease = f.leased(id).await;
+                assert!(
+                    f.dispatched(id, lease["lease_id"].as_str().unwrap())
+                        .await
+                        .permit
+                        .is_some()
+                );
+                assert_eq!(f.guards().await, 1);
+            }
+            Box::pin(source.activate_planning_writeback(TENANT, PROJECT, WORKER, &request))
+                .await
+                .unwrap();
+            let outcome = source
+                .get_planning_writeback_status(TENANT, PROJECT, WORKER, &request.request_id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(outcome["applied"], true);
+            assert_eq!(f.guards().await, if changed_work == "a" { 0 } else { 1 });
+        }
+    }
+}
+
+#[tokio::test]
+async fn actual_unsettled_repository_integration_refuses_source_write_before_first_byte() {
+    Box::pin(unsettled_source_integration_cases()).await;
+}
+
+async fn unsettled_source_integration_cases() {
+    for state in ["prepared", "leased", "dispatched", "unknown"] {
+        let (bound, f) = Box::pin(integration_planning_fixture()).await;
+        let prepared = f.prepared().await;
+        let id = prepared["integration_id"].as_str().unwrap();
+        if state != "prepared" {
+            let lease = f.leased(id).await;
+            if state != "leased" {
+                assert!(
+                    f.dispatched(id, lease["lease_id"].as_str().unwrap())
+                        .await
+                        .permit
+                        .is_some()
+                );
+                if state == "unknown" {
+                    let fact = f
+                        .ingest_record(
+                            "unknown-before-source",
+                            f.observation(id, IntegrationOutcome::Unknown),
+                        )
+                        .await;
+                    f.store
+                        .confirm_integration(
+                            TENANT,
+                            PROJECT,
+                            WORKER,
+                            f.confirm_request("confirm-before-source", id, &fact),
+                        )
+                        .await
+                        .unwrap();
+                }
+            }
+        }
+        let (source, request) =
+            Box::pin(stage_integration_source_change(&f, &bound, "a", state)).await;
+        let before = std::fs::read(bound.root.join("ledger.yaml")).unwrap();
+        let result =
+            Box::pin(source.activate_planning_writeback(TENANT, PROJECT, WORKER, &request)).await;
+        assert!(
+            matches!(result, Err(PgError::RecoveryBlocked)),
+            "{state}: {result:?}"
+        );
+        assert_eq!(
+            std::fs::read(bound.root.join("ledger.yaml")).unwrap(),
+            before
+        );
+        assert_eq!(f.guards().await, 1);
+        let retained: String = f
+            .admin
+            .query_one(
+                "SELECT state FROM awr_team.delivery_integration_intents WHERE id=$1",
+                &[&id],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(retained, state);
+        let count: i64 = f
+            .admin
+            .query_one(
+                "SELECT count(*) FROM awr_team.planning_writeback_journals",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(count, 0);
+    }
+}
+
 #[tokio::test]
 async fn applied_different_revision_requires_complete_content_proof() {
     let f = setup_integration().await;

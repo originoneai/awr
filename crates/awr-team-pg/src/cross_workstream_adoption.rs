@@ -110,6 +110,13 @@ pub(crate) async fn apply(
             );
         }
     }
+    crate::source::writeback::admission::require_dependency_clear(
+        tx,
+        tenant,
+        project,
+        &command.work_id,
+    )
+    .await?;
     tx.execute("UPDATE awr_team.workstream_artifact_adoptions SET selected=false
         WHERE tenant_id=$1 AND project_id=$2 AND consumer_work_id=$3 AND provider_work_id=$4 AND selected",
         &[&tenant,&project,&command.work_id,&provider]).await?;

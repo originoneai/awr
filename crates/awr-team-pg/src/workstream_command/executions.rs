@@ -339,6 +339,7 @@ pub(crate) async fn require_clear_of_selective_blocks(
     project: &str,
     work: &str,
 ) -> PgResult<()> {
+    crate::source::writeback::admission::require_effect_clear(tx, tenant, project, work).await?;
     if let Some(change_id) = tx
         .query_opt(
             "SELECT change_id FROM awr_team.planning_change_action_blocks
