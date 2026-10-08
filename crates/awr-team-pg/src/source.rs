@@ -423,7 +423,7 @@ impl SourceStore {
         })
     }
 
-    /// Activate a workstream bundle under a proven TMCP-022 impact gate.
+    /// Activate with server-derived impact; a caller gate can only veto the operation.
     pub async fn activate_workstreams_with_impact(
         &self,
         tenant_id: &str,
@@ -642,7 +642,7 @@ impl SourceStore {
             ));
         }
         workstreams::reject_external_graph(&files)?;
-        projection
+        let affected = projection
             .validate_transition_with_impact(
                 &tx,
                 tenant_id,
@@ -663,6 +663,9 @@ impl SourceStore {
             tx.rollback().await?;
             return Err(PgError::Protocol("injected activate abort".into()));
         }
+        let preparation_invalidations = projection
+            .invalidate_affected_preparations(&tx, tenant_id, project_id, &affected)
+            .await?;
         let next_epoch = epoch + 1;
         let next_revision = revision + 1;
         let completion_invalidations = if scoped {
@@ -699,6 +702,7 @@ impl SourceStore {
             "parser_version": parser_version,
             "manifest_digest": digest,
             "completion_invalidations": completion_invalidations,
+            "activation_impact": preparation_invalidations,
         });
         tx.execute(
             "INSERT INTO awr_team.events(
