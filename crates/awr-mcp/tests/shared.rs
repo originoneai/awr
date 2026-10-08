@@ -1869,3 +1869,69 @@ async fn workstream_pending_enablement_cannot_use_old_shared_mutations() {
     assert_eq!(a.revision(), before);
     server.stop().await;
 }
+
+#[tokio::test]
+async fn work_graph_nodes_carry_the_newest_event_time_of_their_work() {
+    let a = ProjectFixture::new("Continue the guide");
+    let b = ProjectFixture::new("Separate guide");
+    let mut server = Server::start(&registry(&a, &b)).await;
+    let graph = ok(server
+        .call(READER, "awr_work_graph", json!({"project":"alpha"}))
+        .await);
+    // Present and null while nothing happened to any work.
+    for node in graph["nodes"].as_array().unwrap() {
+        assert!(node["last_event_at"].is_null(), "{node}");
+    }
+    let event = ok(server
+        .call(
+            WRITER,
+            "awr_event_append",
+            json!({"project":"alpha","expected_revision":a.revision(),"event_type":"work.observed","work":"W","summary":"Reviewed the guide outline"}),
+        )
+        .await);
+    let created_at = event["event"]["created_at"].as_i64().unwrap();
+    let graph = ok(server
+        .call(READER, "awr_work_graph", json!({"project":"alpha"}))
+        .await);
+    let at = |key: &str| {
+        graph["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["key"] == key)
+            .unwrap()["last_event_at"]
+            .clone()
+    };
+    assert_eq!(at("W"), json!(created_at));
+    assert!(at("NEXT").is_null());
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn workstream_nav_nodes_carry_the_newest_event_time_for_an_authorized_reader() {
+    let a = ProjectFixture::workstreams();
+    let b = ProjectFixture::new("Unchanged legacy project");
+    let created_at = {
+        let mut store = Store::open_existing(&a.root.join(".awr/state.db")).unwrap();
+        let work = store.work_item(a.id, "API-1").unwrap().item.meta.id;
+        let mut draft = EventDraft::new("work.observed", "Reviewed the interface");
+        draft.work_item_id = Some(work);
+        store
+            .append_event(a.id, a.revision(), draft)
+            .unwrap()
+            .created_at
+    };
+    let mut server = Server::start(&scoped_registry(&a, &b)).await;
+    let before = a.revision();
+    let mut request = scoped("nav", None, json!({}));
+    request["workstream"] = json!(API_SCOPE);
+    let nav = ok(server.call(READER, "awr_workstream", request).await);
+    let nodes = nav["mainline_graph"]["nodes"].as_array().unwrap();
+    let at =
+        |key: &str| nodes.iter().find(|n| n["work_key"] == key).unwrap()["last_event_at"].clone();
+    assert_eq!(at("API-1"), json!(created_at));
+    // The other work of the stream has no event: the field is present and null.
+    assert!(at("API-2").is_null());
+    assert_eq!(a.revision(), before);
+    server.stop().await;
+}

@@ -342,3 +342,85 @@ fn named_branch_filter_does_not_mix_unbranched_events() {
         .unwrap();
     assert_eq!(all.events.len(), 2);
 }
+
+#[test]
+fn newest_event_time_per_work_spans_sessions_and_branches_and_skips_unattributed_events() {
+    let mut f = Fixture::new();
+    let (a, b, quiet) = (work(&f, "A"), work(&f, "B"), work(&f, "QUIET"));
+    let (aid, bid, quiet_id) = (a.meta.id, b.meta.id, quiet.meta.id);
+    f.commit(ProjectionBatch {
+        work_items: vec![a, b, quiet],
+        ..Default::default()
+    });
+    // Projection receipts are not attributed to any work.
+    assert!(f.store.last_event_times(f.project.id).unwrap().is_empty());
+
+    let revision = f.store.project(f.project.id).unwrap().project_revision;
+    let mut draft = session();
+    draft.work_item_key = Some("A".into());
+    let (_, started) = f
+        .store
+        .start_session(f.project.id, revision, draft)
+        .unwrap();
+    // A session event alone attributes the work and dates it.
+    assert_eq!(
+        f.store.last_event_times(f.project.id).unwrap()[&aid],
+        started.created_at
+    );
+
+    let branch = Id::new();
+    let db = rusqlite::Connection::open(f.root.join("state.db")).unwrap();
+    db.execute("INSERT INTO branches(id,project_id,name,fork_project_revision,status,revision) VALUES(?1,?2,'review',0,'active',1)",rusqlite::params![branch.to_string(),f.project.id.to_string()]).unwrap();
+    let mut revision = started.project_revision;
+    for (work, branch_id) in [(Some(aid), None), (Some(bid), Some(branch)), (None, None)] {
+        let mut draft = EventDraft::new("work.observed", "Observation");
+        draft.work_item_id = work;
+        draft.branch_id = branch_id;
+        revision = f
+            .store
+            .append_event(f.project.id, revision, draft)
+            .unwrap()
+            .project_revision;
+    }
+
+    // Every work equals the newest `created_at` that event history shows for it on any branch.
+    let last = f.store.last_event_times(f.project.id).unwrap();
+    for (id, name) in [(aid, "A"), (bid, "B")] {
+        let newest = f
+            .store
+            .query_events(
+                f.project.id,
+                &EventQuery {
+                    work_item_id: Some(id),
+                    branch: BranchFilter::Any,
+                    limit: 1000,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .events
+            .iter()
+            .map(|e| e.created_at)
+            .max()
+            .unwrap();
+        assert_eq!(last[&id], newest, "{name}");
+    }
+    // The branch event counts for B although the main line has none for it; the unattributed event counts for nobody.
+    assert!(
+        f.store
+            .query_events(
+                f.project.id,
+                &EventQuery {
+                    work_item_id: Some(bid),
+                    branch: BranchFilter::Main,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .events
+            .is_empty()
+    );
+    assert!(last.contains_key(&bid));
+    assert!(!last.contains_key(&quiet_id));
+    assert_eq!(last.len(), 2);
+}

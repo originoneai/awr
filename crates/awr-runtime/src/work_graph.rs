@@ -276,13 +276,15 @@ pub fn work_graph(store: &Store, root: &Path, request: &WorkGraphRequest) -> Res
         });
     }
     let at = now_millis()?;
+    let last_events = store.last_event_times(project.id)?;
     let mut nodes = vec![];
     for key in &selected {
         if !works.contains_key(key) {
             continue;
         }
         let r = store.work_readiness(project.id, key, branch, at)?;
-        nodes.push(json!({"key":key,"id":r.work.item.meta.id,"title":r.work.item.title,"status":r.work.item.status,"archived":r.work.item.archived,"ready":r.ready,"paths":r.work.item.paths,"diagnostics":r.diagnostics,"active_claims":r.active_claims,"source_ref":r.work.item.meta.source_ref}));
+        let last_event_at = last_events.get(&r.work.item.meta.id).copied();
+        nodes.push(json!({"key":key,"id":r.work.item.meta.id,"title":r.work.item.title,"status":r.work.item.status,"archived":r.work.item.archived,"ready":r.ready,"paths":r.work.item.paths,"diagnostics":r.diagnostics,"active_claims":r.active_claims,"last_event_at":last_event_at,"source_ref":r.work.item.meta.source_ref}));
     }
     let selected_edges: Vec<_> = edges.iter().filter(|e| selected.contains(&e.from_key)).map(|e| json!({"from":e.from_key,"to":e.to_key,"required":e.required,"source_ref":e.source_ref})).collect();
     let missing: BTreeSet<_> = edges

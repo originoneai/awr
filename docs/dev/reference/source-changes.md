@@ -17,9 +17,11 @@ all work; use external keys, not titles. The same core query is available as
 MCP queries never persist a refresh; explicitly reindex stale sources first.
 
 The result includes source references and fingerprints, project revision, graph
-fingerprint, readiness diagnostics and active claims. `affected` identifies the
-changed roots and dependents, while `nodes` also includes prerequisites. Required
-missing references and a real cycle are explicit. Optional edges remain visible
+fingerprint, readiness diagnostics and active claims. Each node also has
+`last_event_at`, the newest event time of that work in milliseconds over every branch
+and session (null without events); it never enters the graph fingerprint. `affected`
+identifies the changed roots and dependents, while `nodes` also includes
+prerequisites. Required missing references and a real cycle are explicit. Optional edges remain visible
 but do not block execution or participate in required dependency cycles.
 If the closure exceeds the selected limit, the query returns `BudgetExceeded`;
 it never labels a truncated plan complete. The default limit is 100, maximum 1000.
