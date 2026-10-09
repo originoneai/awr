@@ -14,9 +14,9 @@
 //! 7. **Receipts / events** — operations and events (append under held locks)
 //!
 //! Every store that writes responsibility or handoff rows takes the barrier first
-//! (`agent_authorization::lock_project`), including the direct store APIs
-//! (`ResponsibilityStore`, `HandoffStore`), not only the authenticated command
-//! path. A store call that took the task lock first and reached the barrier later,
+//! (`agent_authorization::lock_project`, or the identical `FOR UPDATE` of the project
+//! row in `team_handoff`), including the direct store APIs (`ResponsibilityStore`,
+//! `HandoffStore`), not only the authenticated command path. A store call that took the task lock first and reached the barrier later,
 //! through the foreign key of `task_responsibilities` (a KEY SHARE on the project
 //! row), deadlocked against a command that already held the barrier and was waiting
 //! for the same task lock. PostgreSQL reports such a conflict as SQLSTATE 40P01;
