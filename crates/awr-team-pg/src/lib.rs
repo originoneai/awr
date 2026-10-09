@@ -126,7 +126,7 @@ pub use source::{
     WORKSTREAMS_FILE,
 };
 pub use team_handoff::HandoffStore;
-pub use tx::{CommandOutcome, CommandRequest, TeamStore};
+pub use tx::{CommandOutcome, CommandRequest, TeamStore, retry_rolled_back};
 pub use workstream_auth::{
     command_business_action, map_membership_role, query_business_action, workstream_credential_hash,
 };
