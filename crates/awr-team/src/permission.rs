@@ -315,17 +315,18 @@ impl BusinessRole {
         match self {
             Self::Observer => BTreeSet::from([WorkRead]),
             Self::Developer => template_actions(RoleTemplate::Developer),
-            Self::Reviewer => BTreeSet::from([WorkRead, ReviewDecide]),
+            Self::Reviewer => BTreeSet::from([WorkRead, SessionMaintainOwn, ReviewDecide]),
             Self::Supervisor => BTreeSet::from([
                 WorkRead,
                 WorkAssign,
+                SessionMaintainOwn,
                 PlanningPropose,
                 PlanningEditDraft,
                 PlanningApprove,
                 PlanningPublish,
                 AuditReadProject,
             ]),
-            Self::Deliverer => BTreeSet::from([WorkRead, DeliveryFinalize]),
+            Self::Deliverer => BTreeSet::from([WorkRead, SessionMaintainOwn, DeliveryFinalize]),
             Self::Administrator => {
                 BTreeSet::from([WorkRead, AccessManageProject, AuditReadProject])
             }
@@ -381,13 +382,14 @@ mod business_role_tests {
             ),
             (
                 BusinessRole::Reviewer,
-                BTreeSet::from([WorkRead, ReviewDecide]),
+                BTreeSet::from([WorkRead, SessionMaintainOwn, ReviewDecide]),
             ),
             (
                 BusinessRole::Supervisor,
                 BTreeSet::from([
                     WorkRead,
                     WorkAssign,
+                    SessionMaintainOwn,
                     PlanningPropose,
                     PlanningEditDraft,
                     PlanningApprove,
@@ -397,7 +399,7 @@ mod business_role_tests {
             ),
             (
                 BusinessRole::Deliverer,
-                BTreeSet::from([WorkRead, DeliveryFinalize]),
+                BTreeSet::from([WorkRead, SessionMaintainOwn, DeliveryFinalize]),
             ),
             (
                 BusinessRole::Administrator,

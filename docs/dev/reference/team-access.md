@@ -119,9 +119,9 @@ six business duties. Several duties can be explicitly approved together:
 | --- | --- |
 | `observer` | Read authorized work |
 | `developer` | Maintain own work, claim, execute/report, propose planning and submit delivery |
-| `reviewer` | Read and decide review, with the existing separate review grant |
-| `supervisor` | Read, propose/edit/approve/publish planning and read project audit |
-| `deliverer` | Read and finalize accepted delivery |
+| `reviewer` | Read, maintain own session and decide review, with the existing separate review grant |
+| `supervisor` | Read, maintain own session, assign work, propose/edit/approve/publish planning and read project audit |
+| `deliverer` | Read, maintain own session and finalize accepted delivery |
 | `administrator` | Read, manage project access and read project audit |
 
 The live policy is **existing membership grants intersect the declared duty
@@ -130,6 +130,16 @@ create grants, combine separate delegations, or bypass task/workstream scope.
 For example, `administrator` alone does not authorize development or review;
 declare additional duties explicitly when the member needs them. Supervisor
 assignment and Agent approval/finalization require their separate action grants.
+
+For Agents, `review`, `assign_work` and `finalize_delivery` each include the
+supporting `session.maintain_own` action. With a session-capable membership
+template, the declared duty and a current covering delegation, these participants
+can start, checkpoint and end their own session without a `start_work` grant or
+a pre-created session. This records their activity; it grants no development,
+claim, execution or evidence-submission authority. Current client ownership,
+resource scope, write access, expiry and revocation still apply to every call.
+An `inspect`-only delegation, reader/observer membership or administrator-only
+duty does not acquire session authority from this support.
 
 `review.decide` still needs the eligible independent-review or Agent-review
 grant and the review policy's independence checks. Special execution attestation
