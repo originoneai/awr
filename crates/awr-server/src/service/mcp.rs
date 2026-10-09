@@ -387,7 +387,7 @@ fn catalog() -> Vec<Tool> {
         "expected_authority_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
         "expected_ownership_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
         "expected_contract_hash":{"type":"string"},
-        "args":{"type":"object","description":"session.start: conversation_id, optional client_info. session.checkpoint: session_id, expected_session_version, context_hash, next_action, open_loops; optional client_info, progress, usage (schemas below). Batch feedback at meaningful boundaries; execution.report is terminal-only. session.end: session_id, expected_session_version. All claim/execution actions: session_id, expected_session_version. claim.acquire adds expected_work_version (0 when runtime absent), ttl_seconds (1..3600). claim.renew/release add claim_id, expected_fence, expected_lease_version; renew also ttl_seconds. execution.prepare adds claim_id, expected_fence, expected_lease_version, expected_work_version, input_digest (64 lowercase hex), declared_scope (canonical relative paths). execution.cancel adds execution_id, expected_execution_version. execution.start adds execution_id, expected_execution_version, claim_id, expected_fence, expected_lease_version, expected_work_version, execution_mode (caller_managed or reference_write_v1), optional expected_input_digest. reference_write_v1 requires the prepared input digest and system attestation authority; the service does not dispatch the local runner. execution.report adds execution_id, expected_execution_version, outcome (succeeded/failed/cancelled/unknown), optional output_digest (required for success), observed_paths, note. execution.attest adds execution_id, expected_execution_version, facts; optional reviewed_receipt_id (latest inspected caller receipt) and facts.executor_stopped=true may clear only its attributed reference_write_v1 report barrier with unchanged admission authority and exact resources. Missing confirmation fields preserve legacy settlement without automatic recovery clearing. execution.reconcile also adds expected_work_version, reviewed_receipt_id (latest inspected ID or null), clear_recovery_block, optional previous_epoch_recovery. Old-epoch recovery requires {execution_epoch (exact inspected epoch), executor_stopped (true to settle), review_reference (nonempty, <=2048 bytes, no controls)}; this is an authorized operator assertion, not independently verified fencing. facts: outcome, input_digest, optional output_digest (required for success), environment_digest, observed_paths, note. Digests are 64 lowercase hex. Versions are decimal strings; unknown fields fail. handoff.propose: session_id, expected_session_version, handoff_id, kind (execution|responsibility), to_person_id; the server derives the package from the latest actual checkpoint, artifacts and dependencies. Optional supplied package selectors must match. handoff.inspect returns the complete package, prepared context and consumption receipt; a read-only query is not consumption. handoff.accept adds acceptor_person_id, successor_execution, inspection_request_id from this member/client/session's actual inspection, and current runtime.last_fence as expected_current_fence whenever runtime exists. Read the returned package and context, then accept; reinspect after related facts, session or authority changes. The server verifies execution settlement and expiry using its database clock. Legacy now_ms and assurance booleans are optional annotations and confer no authority. All handoff receiving/closing commands use session_id, expected_session_version, handoff_id, expected_handoff_version; inspect adds inspector_person_id, reject/cancel add by_person_id and reason. Timeout closes the proposal only and does not stop execution. evidence.submit: session_id, expected_session_version, payload, dirty_tree (required boolean); optional claimed_trust/input_digest/execution_id and one of artifact_text or legacy artifact_hex (schemas below). Agent completion requires payload.passed=true, payload.output_digest matching execution.report, input_digest matching execution.prepare, execution_id and artifact bytes. The server hashes artifact bytes separately; never substitute that hash for the execution output digest. Inspect evidence and artifact.content before review. review.open / delivery.submit_and_request_review: session_id, expected_session_version, evidence_id. review.accept/return: session_id, expected_session_version, round_id, reason. review.decide: session_id, expected_session_version, round_id, decision (approve|reject), reason — requires the matching human or Agent review grant and policy. work.rework: session_id, expected_session_version, round_id, note. work.complete / delivery.finalize: session_id, expected_session_version, evidence_id, context_complete, optional requested_policy. Finalization needs maintainer/project_admin permission and, for an Agent, an explicit finalize_delivery delegation; independent review and current evidence remain required. delivery.register_pr: session_id, expected_session_version, repository, pr_number, pr_url, head_sha, fact_source (authorized_human_github_verification|operator_recorded_observation), observed_at (RFC3339), optional merge_sha/test_evidence_id/gh_* flags — v1 manual GitHub verification, not webhook sync. delivery.observe_pr: session_id, expected_session_version, delivery_id, expected_head_sha, fact_source, observed_at, optional gh_approved/gh_merged/merge_sha. Query delivery.inspect separates GitHub submitted/approved/merged from AWR acceptance complete."}
+        "args":{"type":"object","description":"session.start: conversation_id, optional client_info. session.checkpoint: session_id, expected_session_version, context_hash, next_action, open_loops; optional client_info, progress, usage (schemas below). Batch feedback at meaningful boundaries; execution.report is terminal-only. session.end: session_id, expected_session_version. All claim/execution actions: session_id, expected_session_version. claim.acquire adds expected_work_version (0 when runtime absent), ttl_seconds (1..3600). claim.renew/release add claim_id, expected_fence, expected_lease_version; renew also ttl_seconds. execution.prepare adds claim_id, expected_fence, expected_lease_version, expected_work_version, input_digest (64 lowercase hex), declared_scope (canonical relative paths). execution.cancel adds execution_id, expected_execution_version. execution.start adds execution_id, expected_execution_version, claim_id, expected_fence, expected_lease_version, expected_work_version, execution_mode (caller_managed or reference_write_v1), optional expected_input_digest. reference_write_v1 requires the prepared input digest and system attestation authority; the service does not dispatch the local runner. execution.report adds execution_id, expected_execution_version, outcome (succeeded/failed/cancelled/unknown), optional output_digest (required for success), observed_paths, note, optional workspace_settlement (schema below). Include its explicit stop/effect declaration only for an admitted caller_managed independent_workspace_v1 run; omission keeps conservative recovery. execution.attest adds execution_id, expected_execution_version, facts; optional reviewed_receipt_id (latest inspected caller receipt) and facts.executor_stopped=true may clear only its attributed reference_write_v1 report barrier with unchanged admission authority and exact resources. Missing confirmation fields preserve legacy settlement without automatic recovery clearing. execution.reconcile also adds expected_work_version, reviewed_receipt_id (latest inspected ID or null), clear_recovery_block, optional previous_epoch_recovery. Old-epoch recovery requires {execution_epoch (exact inspected epoch), executor_stopped (true to settle), review_reference (nonempty, <=2048 bytes, no controls)}; this is an authorized operator assertion, not independently verified fencing. facts: outcome, input_digest, optional output_digest (required for success), environment_digest, observed_paths, note. Digests are 64 lowercase hex. Versions are decimal strings; unknown fields fail. handoff.propose: session_id, expected_session_version, handoff_id, kind (execution|responsibility), to_person_id; the server derives the package from the latest actual checkpoint, artifacts and dependencies. Optional supplied package selectors must match. handoff.inspect returns the complete package, prepared context and consumption receipt; a read-only query is not consumption. handoff.accept adds acceptor_person_id, successor_execution, inspection_request_id from this member/client/session's actual inspection, and current runtime.last_fence as expected_current_fence whenever runtime exists. Read the returned package and context, then accept; reinspect after related facts, session or authority changes. The server verifies execution settlement and expiry using its database clock. Legacy now_ms and assurance booleans are optional annotations and confer no authority. All handoff receiving/closing commands use session_id, expected_session_version, handoff_id, expected_handoff_version; inspect adds inspector_person_id, reject/cancel add by_person_id and reason. Timeout closes the proposal only and does not stop execution. evidence.submit: session_id, expected_session_version, payload, dirty_tree (required boolean); optional claimed_trust/input_digest/execution_id and one of artifact_text or legacy artifact_hex (schemas below). Agent completion requires payload.passed=true, payload.output_digest matching execution.report, input_digest matching execution.prepare, execution_id and artifact bytes. For workspace-settled success, execution output_digest and payload.output_digest bind the SHA-256 of the exact submitted artifact bytes. Other policies retain separate output/artifact digest semantics. Inspect evidence and artifact.content before review. review.open / delivery.submit_and_request_review: session_id, expected_session_version, evidence_id. review.accept/return: session_id, expected_session_version, round_id, reason. review.decide: session_id, expected_session_version, round_id, decision (approve|reject), reason — requires the matching human or Agent review grant and policy. work.rework: session_id, expected_session_version, round_id, note. work.complete / delivery.finalize: session_id, expected_session_version, evidence_id, context_complete, optional requested_policy. Finalization needs maintainer/project_admin permission and, for an Agent, an explicit finalize_delivery delegation; independent review and current evidence remain required. delivery.register_pr: session_id, expected_session_version, repository, pr_number, pr_url, head_sha, fact_source (authorized_human_github_verification|operator_recorded_observation), observed_at (RFC3339), optional merge_sha/test_evidence_id/gh_* flags — v1 manual GitHub verification, not webhook sync. delivery.observe_pr: session_id, expected_session_version, delivery_id, expected_head_sha, fact_source, observed_at, optional gh_approved/gh_merged/merge_sha. Query delivery.inspect separates GitHub submitted/approved/merged from AWR acceptance complete."}
     }});
     command["properties"]["args"]["properties"] = json!({
         "conversation_id":{"type":"string","minLength":1,"maxLength":128,
@@ -443,6 +443,21 @@ fn catalog() -> Vec<Tool> {
                 "cached_input_tokens":{"type":["integer","null"],"minimum":0,"maximum":9007199254740991u64}
             }}
     });
+    command["properties"]["args"]["properties"]["output_digest"] = json!({"type":["string","null"],"pattern":"^[0-9a-f]{64}$",
+            "description":"execution.report: required for success. For workspace-settled success, SHA-256 of the exact artifact bytes subsequently submitted as artifact_text or decoded artifact_hex. Other execution policies retain their output digest semantics."});
+    command["properties"]["args"]["properties"]["workspace_settlement"] = json!({"type":["object","null"],"additionalProperties":false,
+    "description":"execution.report only: optional declaration for an admitted caller_managed run whose current contract selects independent_workspace_v1. Explicit true stop/effect assertions can settle only admitted workspace paths under a live matching claim. Omitted, null, false or unknown declarations keep conservative recovery; no trusted execution, external-effect settlement or approval is inferred. Recheck contract, execution, claim and actual effects before reporting.",
+    "required":["workspace_id","input_digest","environment_digest","claim_id","expected_fence","expected_lease_version"],
+    "properties":{
+        "workspace_id":{"type":"string","description":"Exact workspace_id from the admitted execution's settlement_policy; an opaque identity, not a filesystem path."},
+        "input_digest":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"Exact input_digest supplied to execution.prepare for this run."},
+        "environment_digest":{"type":"string","pattern":"^[0-9a-f]{64}$","description":"SHA-256 of a measured non-sensitive environment description; keep secrets and environment dumps outside the record."},
+        "claim_id":{"type":"string","description":"This execution's currently live owned claim."},
+        "expected_fence":{"type":"string","pattern":"^[1-9][0-9]*$"},
+        "expected_lease_version":{"type":"string","pattern":"^[1-9][0-9]*$","description":"Current claim lease version, including same-fence renewals."},
+        "executor_stopped":{"type":["boolean","null"],"description":"Explicit caller assertion that this execution has actually stopped; never infer from tests or disconnection."},
+        "no_external_effects":{"type":["boolean","null"],"description":"Explicit caller assertion that the run has no external effects to settle; repository delivery remains a separate flow."}
+    }});
     command["allOf"] = json!([
         {
             "if":{
@@ -1267,6 +1282,59 @@ mod tests {
         assert!(note.contains("dirty_tree (required boolean)"));
         assert!(note.contains("payload.output_digest matching execution.report"));
         assert!(!note.contains("optional claimed_trust/artifact_hex/input_digest/dirty_tree"));
+    }
+
+    #[test]
+    fn discovery_exposes_optional_workspace_terminal_report_without_asserting_settlement() {
+        let tool = catalog()
+            .into_iter()
+            .find(|tool| tool.name == "awr_team_command")
+            .unwrap();
+        let args = &tool.input_schema["properties"]["args"];
+        let fields = &args["properties"];
+        let settlement = &fields["workspace_settlement"];
+        assert_eq!(settlement["type"], json!(["object", "null"]));
+        assert_eq!(settlement["additionalProperties"], false);
+        assert!(args.get("required").is_none());
+        let required = settlement["required"].as_array().unwrap();
+        assert_eq!(required.len(), 6);
+        for name in [
+            "workspace_id",
+            "input_digest",
+            "environment_digest",
+            "claim_id",
+            "expected_fence",
+            "expected_lease_version",
+        ] {
+            assert!(required.contains(&json!(name)), "{name}");
+        }
+        for name in ["input_digest", "environment_digest"] {
+            assert_eq!(settlement["properties"][name]["type"], "string");
+            assert_eq!(settlement["properties"][name]["pattern"], "^[0-9a-f]{64}$");
+        }
+        for name in ["expected_fence", "expected_lease_version"] {
+            assert_eq!(settlement["properties"][name]["type"], "string");
+            assert_eq!(settlement["properties"][name]["pattern"], "^[1-9][0-9]*$");
+        }
+        for name in ["executor_stopped", "no_external_effects"] {
+            let declaration = &settlement["properties"][name];
+            assert_eq!(declaration["type"], json!(["boolean", "null"]));
+            assert!(!required.contains(&json!(name)));
+            for inference in ["const", "default", "enum"] {
+                assert!(declaration.get(inference).is_none());
+            }
+        }
+        let note = args["description"].as_str().unwrap();
+        assert!(note.contains("optional workspace_settlement"));
+        assert!(note.contains("workspace-settled success"));
+        assert!(!note.contains("never substitute that hash for the execution output digest"));
+        assert_eq!(fields["output_digest"]["pattern"], "^[0-9a-f]{64}$");
+        assert!(
+            fields["output_digest"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("exact artifact bytes")
+        );
     }
 
     #[test]
