@@ -3,6 +3,23 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { mapObservation, pullRequestReference, createGithubObserver } = require('../team-progress');
 
+test('neutral delivery facts and authorized guidance survive without a repository provider', () => {
+  const collaboration = { candidate: { digest: 'candidate-binding', selection_version: '4', current: false,
+    required_checks: ['search'] }, verification: [], review: { state: 'approved', id: 'round' },
+    integration: { state: 'unknown', id: 'request' }, publication: { phase: 'source_written' },
+    facts_truncated: true, acceptance_inferred: false, source_synchronized: false };
+  const guidance = { code: 'integration_unknown', when: 'Outcome unknown', because: ['Original request unsettled'],
+    action: { op: 'delivery.integration.inspect', query: { protocol_version: 1, op: 'delivery.integration.inspect',
+      work_id: 'WORK', workstream_id: 'stream', request_id: 'request' }, note: 'Inspect the original request' },
+    recheck_on: 'New integration observation' };
+  const mapped = mapObservation({ runtime: { state: 'in_progress' }, collaboration, guidance });
+  assert.deepEqual(mapped.collaboration, collaboration);
+  assert.deepEqual(mapped.guidance, guidance);
+  assert.equal(mapped.pr_reference, null);
+  assert.equal(mapped.status, 'in_progress');
+  assert.equal(mapObservation({}).collaboration, null);
+});
+
 test('execution report, artifact, scoped settlement and recovery remain separate including legacy unknowns', () => {
   const mapped = mapObservation({ runtime: { state: 'in_progress' }, execution: {
     state: 'succeeded', terminal_reported: true, artifact_verified: false, effects_settled: true,

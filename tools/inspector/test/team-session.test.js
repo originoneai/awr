@@ -265,6 +265,68 @@ test('live browsing and copied Agent instructions do not create sessions or clai
   }
 });
 
+for (const locale of ['en', 'zh-CN']) {
+  test(`neutral delivery stages and current guidance remain distinct in ${locale}`, async () => {
+    i18n.setLocale(locale);
+    const query = { protocol_version: 1, op: 'delivery.integration.inspect', work_id: work.key,
+      workstream_id: 'stream', request_id: 'original-integration' };
+    const liveWork = { ...work, workstream_id: 'stream', detail_loaded: true, context_complete: true,
+      status: 'in_progress', owner_person: 'Responsible member', agent: 'Execution Agent', client_id: 'actual-client',
+      contract_hash: 'requirements-version', snapshot: { project_revision: '44', source_snapshot_id: 'source-version',
+        queried_at_unix_ms: 1234, consistency: 'repeatable_read' },
+      guidance: { code: 'integration_unknown', when: 'Integration has no confirmed outcome',
+        because: ['Original request is unsettled'], action: { op: query.op, query }, recheck_on: 'Integration observation changes' },
+      collaboration: { candidate: { digest: 'neutral-binding', current: true, selection_version: '2', required_checks: ['search'] },
+        verification: [{ check: 'search', run_id: 'search-run', outcome: 'passed' }],
+        review: { state: 'approved' }, integration: { state: 'unknown' }, publication: { phase: 'source_written' }, facts_truncated: true } };
+    const calls = mock((url) => url.includes('/projects?') ? projects
+      : { ...overview, works: [liveWork], interaction_mode: 'mcp' });
+    await ui.refresh(); await ui._selectWork(work.key);
+    const text = node('teamDetail').textContent;
+    for (const value of ['Responsible member', 'Execution Agent', 'actual-client', 'neutral-binding', 'source-version',
+      'requirements-version', 'Integration has no confirmed outcome', 'Original request is unsettled', 'Integration observation changes'])
+      assert.ok(text.includes(value), value);
+    for (const key of ['feedback.review_approved', 'feedback.integration_unknown', 'feedback.publication_source_written',
+      'feedback.check_passed', 'feedback.delivery_dimensions', 'feedback.delivery_truncated', 'feedback.guidance_integration_unknown'])
+      assert.ok(text.includes(i18n.t(key)), key);
+    const selector = node('teamDetail').find(e => e.tagName === 'PRE' && e.textContent.includes('original-integration'));
+    assert.deepEqual(JSON.parse(selector.textContent), query);
+    assert.equal(button('teamDetail', 'Claim task'), null);
+    assert.equal(button('teamDetail', 'Accept responsibility'), null);
+    assert.ok(calls.every(({ options }) => !options.method || options.method === 'GET'));
+  });
+}
+
+test('missing, stale and new delivery states cannot imply successful delivery', async () => {
+  for (const collaboration of [null, { candidate: { current: false }, verification: [], review: null,
+    integration: { state: 'new-provider-state' }, publication: null }]) {
+    const liveWork = { ...work, workstream_id: 'stream', detail_loaded: true, context_complete: true, collaboration };
+    mock(url => url.includes('/projects?') ? projects : { ...overview, works: [liveWork], interaction_mode: 'mcp' });
+    await ui.refresh(); await ui._selectWork(work.key);
+    const text = node('teamDetail').textContent;
+    assert.ok(text.includes(i18n.t(collaboration ? 'feedback.binding_changed_help' : 'feedback.delivery_unavailable')));
+    assert.ok(!text.includes(i18n.t('feedback.review_approved')));
+    assert.ok(!text.includes(i18n.t('feedback.publication_confirmed')));
+    if (collaboration) assert.ok(text.includes('Unrecognized recorded state: new-provider-state'));
+  }
+});
+
+test('guidance query disclosure survives refresh only for the same identity and source binding', async () => {
+  const liveWork = { ...work, workstream_id: 'stream', detail_loaded: true, context_complete: true,
+    contract_hash: 'current', snapshot: { source_snapshot_id: 'source', coordinator_epoch: 'epoch' },
+    guidance: { code: 'assignment', action: { query: { op: 'work.prepare', work_id: work.key } } } };
+  mock(url => url.includes('/projects?') ? projects : { ...overview, works: [liveWork], interaction_mode: 'mcp' });
+  await ui.refresh(); await ui._selectWork(work.key);
+  const disclosure = () => node('teamDetail').find(e => e.tagName === 'DETAILS'
+    && e.textContent.includes('Read selector for the connected Agent'));
+  const initial = disclosure(); initial.open = true;
+  initial.listeners.toggle[0]();
+  ui.render(); assert.equal(disclosure().open, true);
+  liveWork.snapshot = { ...liveWork.snapshot, source_snapshot_id: 'new-source' };
+  await ui.refresh(); assert.equal(disclosure().open, false);
+  assert.ok(!node('teamDetail').textContent.includes('GitHub PR'));
+});
+
 test('late details for a previously selected work never replace the latest selection', async () => {
   const a = { ...work, workstream_id: 'stream' };
   const b = { key: 'WORK-2', title: 'Second work', workstream_id: 'stream' };

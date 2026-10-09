@@ -640,6 +640,10 @@ function atomicWorkFixture() {
       execution: { state: 'succeeded', terminal_reported: true, artifact_verified: false, effects_settled: true,
         settlement_basis: 'caller_asserted', settlement_scope: 'admitted_workspace_paths' },
       guidance: { code: 'inspect_delivery', action: { note: 'Inspect the current candidate' } }, pr_deliveries: [],
+      collaboration: { candidate: { digest: 'neutral-binding', current: true, selection_version: '2', required_checks: ['search'] },
+        verification: [{ check: 'search', run_id: 'check-run', outcome: 'passed' }], review: { id: 'round', state: 'open' },
+        integration: { id: 'original-request', state: 'unknown' }, publication: { id: 'publication', phase: 'pending' },
+        facts_truncated: false, acceptance_inferred: false, source_synchronized: false },
     },
   } };
 }
@@ -680,6 +684,8 @@ for (const scenario of ['normal', 'incomplete', 'forbidden', 'context_error', 'b
         assert.equal(work.progress_report.client_observed_at_unix_ms, null);
         assert.equal(work.execution.terminal_reported, true); assert.equal(work.execution.artifact_verified, false);
         assert.equal(work.execution.settlement_basis, 'caller_asserted');
+        assert.deepEqual(work.collaboration, fixture.data.observation.collaboration);
+        assert.equal(work.pr_reference, null);
         if (scenario === 'incomplete') assert.equal(work.guidance.code, 'restore_context');
       } else {
         assert.equal(result.json.ok, false); assert.equal(result.json.work, undefined);
