@@ -1009,7 +1009,9 @@ mod agent_review_tests {
             .await
             .unwrap();
         let prepared = prepare(&store, REVIEWER_TOKEN, "a").await;
-        let denied = store
+        // The independent live Review grant still supports its own session.
+        // That lifecycle support must not restore the parent's StartWork.
+        let started = store
             .commands()
             .execute(
                 TENANT,
@@ -1019,7 +1021,27 @@ mod agent_review_tests {
                     &prepared,
                     "narrowed-start",
                     "session.start",
-                    json!({"conversation_id":"forbidden"}),
+                    json!({"conversation_id":"review-support"}),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(started["receipt"]["execution_authorized"], false);
+        let session = started["receipt"]["data"]["session_id"].as_str().unwrap();
+        let prepared = prepare(&store, REVIEWER_TOKEN, "a").await;
+        let denied = store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                REVIEWER_TOKEN,
+                command(
+                    &prepared,
+                    "narrowed-no-claim",
+                    "claim.acquire",
+                    json!({"session_id":session,"expected_session_version":"1",
+                        "expected_work_version":prepared["data"]["runtime"]["work_version"].as_str().unwrap_or("0"),
+                        "ttl_seconds":60}),
                 ),
             )
             .await
@@ -1033,6 +1055,22 @@ mod agent_review_tests {
             .await
             .unwrap();
         let prepared = prepare(&store, REVIEWER_TOKEN, "a").await;
+        let denied = store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                REVIEWER_TOKEN,
+                command(
+                    &prepared,
+                    "revoked-no-support-session",
+                    "session.start",
+                    json!({"conversation_id":"revoked-review"}),
+                ),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(denied, PgError::Forbidden), "{denied:?}");
         let round = open_round(&admin, &store, POLICY, "separate-revoked").await;
         let denied = store
             .commands()

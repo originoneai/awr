@@ -124,6 +124,23 @@ async fn advice_changes_never_change_required_context_or_grant_commands() {
     bind_agent(&admin).await;
     issue(&db, "read-a", "a", &[AuthorizedAction::Inspect]).await;
     let before = read(&store, "work.prepare").await;
+    assert!(matches!(
+        store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                command(
+                    &before,
+                    "inspect-only-no-session",
+                    "session.start",
+                    json!({"conversation_id":"inspect-only"})
+                )
+            )
+            .await,
+        Err(PgError::Forbidden)
+    ));
     issue(&db, "review-c", "c", &[AuthorizedAction::Review]).await;
     round(&admin, "open").await;
     assert_eq!(
@@ -141,23 +158,58 @@ async fn advice_changes_never_change_required_context_or_grant_commands() {
         before["data"]["context_complete"],
         after["data"]["context_complete"]
     );
-    assert!(matches!(
-        store
-            .commands()
-            .execute(
-                TENANT,
-                PROJECT,
-                A,
-                command(
-                    &after,
-                    "no-development-grant",
-                    "session.start",
-                    json!({"conversation_id":"not-authorized"})
-                )
-            )
-            .await,
-        Err(PgError::Forbidden)
-    ));
+    let started = store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            command(
+                &after,
+                "review-support-session",
+                "session.start",
+                json!({"conversation_id":"review-support"}),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(started["receipt"]["execution_authorized"], false);
+    let session = started["receipt"]["data"]["session_id"].as_str().unwrap();
+    let current = read(&store, "work.prepare").await;
+    for (key, op, args) in [
+        (
+            "no-development-claim",
+            "claim.acquire",
+            json!({"session_id":session,"expected_session_version":"1",
+                "expected_work_version":current["data"]["runtime"]["work_version"].as_str().unwrap_or("0"),
+                "ttl_seconds":60}),
+        ),
+        (
+            "no-development-execution",
+            "execution.prepare",
+            json!({"session_id":session,"expected_session_version":"1","claim_id":"missing",
+                "expected_fence":"1","expected_lease_version":"1","expected_work_version":"1",
+                "input_digest":"a".repeat(64),"declared_scope":["src/example.rs"]}),
+        ),
+    ] {
+        assert!(matches!(
+            store
+                .commands()
+                .execute(TENANT, PROJECT, A, command(&current, key, op, args))
+                .await,
+            Err(PgError::Forbidden)
+        ));
+    }
+    let counts = admin
+        .query_one(
+            "SELECT (SELECT count(*) FROM awr_team.claims),
+                    (SELECT count(*) FROM awr_team.executions)",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(counts.get::<_, i64>(0), 0);
+    assert_eq!(counts.get::<_, i64>(1), 0);
     admin
         .batch_execute(
             "UPDATE awr_team.agent_authorizations SET status='revoked' WHERE id='review-a'",
@@ -170,6 +222,23 @@ async fn advice_changes_never_change_required_context_or_grant_commands() {
         before["data"]["context_hash"]
     );
     assert_eq!(revoked["data"]["guidance"]["code"], "inspect_only");
+    assert!(matches!(
+        store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                command(
+                    &revoked,
+                    "revoked-review-no-session",
+                    "session.start",
+                    json!({"conversation_id":"revoked-review"})
+                )
+            )
+            .await,
+        Err(PgError::Forbidden)
+    ));
     assert!(
         inbox_hint(
             &store
