@@ -23,6 +23,41 @@ acting through an Agent, a matching assignment delegation.
 
 ## Agent workflow
 
+Supervisors discover work through `work.inbox`, consume the selected task's
+`work.prepare`, then find eligible recipients through `task.assignees`:
+
+```json
+{
+  "protocol_version": 1,
+  "op": "task.assignees",
+  "work_id": "current-work-reference",
+  "search": "Mei",
+  "limit": 25
+}
+```
+
+This read requires current assignment permission and write scope. An Agent needs
+**one live covering delegation with both Inspect and AssignWork**; separate
+read/assignment grants cannot be combined. No project-admin permission is needed.
+Only active registered members eligible for this workstream are returned, as
+`name` and `assignee_person_id`. Duplicate names retain separate identities;
+never guess which member a duplicate name denotes. Credentials, Agent labels,
+administrative configuration and unrelated members are not returned.
+
+`search` is an optional, case-insensitive literal name substring (at most 512
+UTF-8 bytes). Page size defaults to 25, with a maximum of 100. Each response scans
+at most 100 members. Follow `next_cursor` even when `items` is empty; one empty
+page does not establish that no recipients exist. Cursors contain ordinal
+positions, not hidden member IDs, and expire after relevant identity, authority,
+source, ownership, contract or project-revision changes. Refresh instead of
+combining pages from different snapshots.
+
+The result is advisory. Refresh `work.prepare` before `task.assign`; assignment
+rechecks current recipient eligibility and task ownership atomically. The read
+does not reserve work, authorize execution or replace dependency admission.
+Single-task dispatch guidance gives this lookup as its one next query, while
+recovery and missing mandatory context retain priority.
+
 1. Query `work.next` for current-client continuation and scoped tasks.
 2. Consume `work.prepare`; keep its contract, ownership and responsibility versions.
 3. Start your own AWR session when one does not exist.

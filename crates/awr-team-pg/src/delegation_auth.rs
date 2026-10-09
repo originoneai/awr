@@ -649,6 +649,49 @@ pub(crate) fn navigation_authority(
     Ok(scoped)
 }
 
+/// A member directory requires one grant containing both read and assignment.
+/// An earlier action-only grant must not mask a later covering combined grant.
+pub(crate) fn assignment_read_authority(
+    auth: &ReaderAuthority,
+    stream: awr_core::Id,
+    work: &str,
+) -> PgResult<ReaderAuthority> {
+    let mut scoped = auth.clone();
+    if let Some(candidates) = &auth.read_delegations {
+        let chosen = candidates
+            .iter()
+            .find(|candidate| {
+                [Action::WorkRead, Action::WorkAssign]
+                    .iter()
+                    .all(|action| candidate.actions.contains(action))
+                    && candidate.grant.covers_task(
+                        &auth.access.project_id,
+                        work,
+                        Some(&stream.to_string()),
+                    )
+            })
+            .ok_or(PgError::Forbidden)?;
+        install_delegation(&mut scoped, Some(chosen));
+        scoped.binding = awr_team::request_hash(&serde_json::json!({
+            "identity":auth.binding,"assignment_read_authorization":chosen.grant
+        }))
+        .map_err(|_| PgError::Forbidden)?;
+    }
+    crate::workstream_auth::authorize_domain_action(
+        &scoped,
+        Action::WorkRead,
+        Some(stream),
+        Some(work),
+    )?;
+    for phase in [
+        crate::workstream_auth::CommandAuthPhase::Admission,
+        crate::workstream_auth::CommandAuthPhase::Effect,
+    ] {
+        crate::workstream_auth::authorize_command(&scoped, stream, work, "task.assign", phase)?;
+    }
+    Ok(scoped)
+}
+
 /// Keep selector-free discovery inside the selected delegation, not merely
 /// inside the broader access grant. Task/pool reads require an explicit work ID;
 /// the query's normal validation still rejects selectors on project-wide ops.

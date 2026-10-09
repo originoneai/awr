@@ -482,6 +482,7 @@ pub fn query_business_action(op: &str) -> Option<awr_team::Action> {
         "work.observe",
         "work.next",
         "work.inbox",
+        "task.assignees",
         "audit.requests",
         "audit.development",
         "events.list",

@@ -350,7 +350,7 @@ fn catalog() -> Vec<Tool> {
             "description":"Optional category filter for audit.history, audit.export or audit.count."},
         "include_denies":{"type":"boolean",
             "description":"Optional for audit.history, audit.export or audit.count; authorization still applies."},
-        "search":{"type":"string","maxLength":512},"cursor":{"type":"string","maxLength":4096},
+        "search":{"type":"string","maxLength":512,"description":"Required for work.search; optional literal, case-insensitive member-name substring for task.assignees."},"cursor":{"type":"string","maxLength":4096},
         "limit":{"type":"integer","minimum":1,"maximum":100},
         "max_context_bytes":{"type":"integer","minimum":1,"maximum":262144},
         "source_path":{"type":"string","maxLength":512},
@@ -362,7 +362,18 @@ fn catalog() -> Vec<Tool> {
         {"if":{"properties":{"op":{"enum":["delivery.neutral.inspect","delivery.neutral.outcome","delivery.source.status","delivery.integration.inspect"]}},"required":["op"]},
             "then":{"required":["work_id"],"not":{"required":["session_id"]}}},
         {"if":{"properties":{"op":{"enum":["delivery.neutral.outcome","delivery.integration.inspect"]}},"required":["op"]},
-            "then":{"required":["request_id"]}}
+            "then":{"required":["request_id"]}},
+        {"if":{"properties":{"op":{"const":"task.assignees"}},"required":["op"]},
+            "then":{"required":["work_id"],"not":{"anyOf":[
+                {"required":["session_id"]},{"required":["request_id"]},
+                {"required":["claim_id"]},{"required":["execution_id"]},
+                {"required":["handoff_id"]},{"required":["evidence_id"]},
+                {"required":["review_round_id"]},{"required":["source_path"]},
+                {"required":["artifact_id"]},{"required":["export_id"]},
+                {"required":["expected_sha256"]},{"required":["max_context_bytes"]},
+                {"required":["change_id"]},{"required":["member_actor_id"]},
+                {"required":["category"]},{"required":["include_denies"]}
+            ]}}}
     ]);
     let mut command = json!({"type":"object","additionalProperties":false,
     "required":["protocol_version","request_id","op","workstream_id","work_id","coordinator_epoch","expected_project_revision","expected_authority_version","expected_ownership_version","expected_contract_hash","args"],
@@ -1128,6 +1139,41 @@ mod tests {
                     op == "task.accept_assignment"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn assignee_query_schema_requires_task_scope_and_omits_admin_filters() {
+        let tool = catalog()
+            .into_iter()
+            .find(|t| t.name == "awr_team_query")
+            .unwrap();
+        assert!(
+            tool.input_schema["properties"]["op"]["enum"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("task.assignees"))
+        );
+        let condition = tool.input_schema["allOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["if"]["properties"]["op"]["const"] == "task.assignees")
+            .unwrap();
+        assert_eq!(condition["then"]["required"], json!(["work_id"]));
+        for key in [
+            "session_id",
+            "member_actor_id",
+            "include_denies",
+            "expected_sha256",
+        ] {
+            assert!(
+                condition["then"]["not"]["anyOf"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|v| v["required"] == json!([key]))
+            );
         }
     }
 

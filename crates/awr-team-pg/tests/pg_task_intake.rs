@@ -17,6 +17,567 @@ const OTHER_AGENT: &str =
 const OTHER_CLIENT: &str =
     "awr1.other-client.ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
 
+mod assignee_directory {
+    use super::*;
+
+    fn lookup(work: &str) -> awr_team_pg::WorkstreamQuery {
+        let mut q = query("task.assignees");
+        q.work_id = Some(work.into());
+        q
+    }
+
+    async fn read(store: &WorkstreamReadStore, q: awr_team_pg::WorkstreamQuery) -> Value {
+        store.query(TENANT, PROJECT, SUPERVISOR, q).await.unwrap()
+    }
+
+    async fn issue(admin: &Client, db: &str, id: &str, actions: &[AuthorizedAction], created: i64) {
+        let grant = AgentAuthorization {
+            id: id.into(),
+            authorizer_person_id: PersonId::new("manager-person").unwrap(),
+            responsible_person_id: PersonId::new("manager-person").unwrap(),
+            subject_kind: ExecutionSubjectKind::Agent,
+            subject_id: "reviewer".into(),
+            client_id: "supervisor-client".into(),
+            session_id: None,
+            model_id: None,
+            scope: AuthorizationScope::Task {
+                project_id: PROJECT.into(),
+                work_item_id: "a".into(),
+            },
+            actions: actions.iter().copied().collect(),
+            expires_at_ms: None,
+            status: AuthorizationStatus::Active,
+            revoked_at_ms: None,
+            revoked_by: None,
+            verifiable_capabilities: vec![],
+            self_reported_skill_hints: vec![],
+            parent_authorization_id: None,
+            maintainer_person_id: None,
+            created_at_ms: created,
+            binding_id: Some("manager-binding".into()),
+        };
+        let auths =
+            AuthorizationStore::from_config(common::with_app_role(&common::test_config(), db));
+        auths
+            .issue(
+                TENANT,
+                PROJECT,
+                &IssueAuthorizationRequest {
+                    request_key: format!("issue-{id}"),
+                    authorization: grant,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            admin
+                .query_one(
+                    "SELECT count(*) FROM awr_team.agent_authorizations WHERE id=$1",
+                    &[&id]
+                )
+                .await
+                .unwrap()
+                .get::<_, i64>(0),
+            1
+        );
+    }
+
+    async fn agent_supervisor(admin: &Client) {
+        admin.batch_execute("UPDATE awr_team.actors SET kind='agent' WHERE id='reviewer';
+            INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status,member_identity)
+              VALUES('reader-tenant','reader-project','manager-person','Manager','active',
+                '{\"kind\":\"simulated_member\",\"controller_ref\":\"shared-controller\"}'::jsonb);
+            INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status)
+              VALUES('reader-tenant','reader-project','manager-binding','manager-person','reviewer','active')").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn names_are_scoped_literal_unambiguous_and_read_only() {
+        let (_guard, admin, db, store) = setup().await;
+        enable_writes(&admin).await;
+        members(&admin, &db).await;
+        assert!(matches!(
+            store
+                .project_access()
+                .inspect(TENANT, PROJECT, SUPERVISOR, "alice", "cli-a")
+                .await,
+            Err(PgError::Forbidden)
+        ));
+        let before = snapshot(&admin).await;
+        let first = read(&store, lookup("a")).await;
+        assert_eq!(
+            first["data"]["items"],
+            json!([
+                {"name":"Alice","assignee_person_id":"alice"},
+                {"name":"Bob","assignee_person_id":"bob"},
+            ])
+        );
+        assert!(first["data"]["next_cursor"].is_null());
+        assert_eq!(snapshot(&admin).await, before);
+        for forbidden in [
+            "secret_hash",
+            "worker-b",
+            "PRIVATE NEXT ACTION",
+            "private-beta",
+        ] {
+            assert!(!first.to_string().contains(forbidden));
+        }
+        assert!(
+            store
+                .query(TENANT, PROJECT, SUPERVISOR, lookup("b-private"))
+                .await
+                .is_err()
+        );
+        assert!(matches!(
+            store.query(TENANT, PROJECT, A, lookup("a")).await,
+            Err(PgError::Forbidden)
+        ));
+        admin
+            .batch_execute(
+                "UPDATE awr_team.persons SET display_name='Mei%_ UI' WHERE id='alice';
+            UPDATE awr_team.persons SET display_name='Mei plain' WHERE id='bob'",
+            )
+            .await
+            .unwrap();
+        let mut q = lookup("a");
+        q.search = Some("%_".into());
+        assert_eq!(
+            read(&store, q).await["data"]["items"][0]["assignee_person_id"],
+            "alice"
+        );
+        admin
+            .batch_execute(
+                "UPDATE awr_team.persons SET display_name='MEI' WHERE id IN ('alice','bob')",
+            )
+            .await
+            .unwrap();
+        let mut q = lookup("a");
+        q.search = Some("mei".into());
+        assert_eq!(
+            read(&store, q).await["data"]["items"],
+            json!([
+                {"name":"MEI","assignee_person_id":"alice"},
+                {"name":"MEI","assignee_person_id":"bob"},
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn one_combined_live_grant_is_required_and_action_only_grants_do_not_mask_it() {
+        let (_guard, admin, db, store) = setup().await;
+        enable_writes(&admin).await;
+        members(&admin, &db).await;
+        agent_supervisor(&admin).await;
+        issue(
+            &admin,
+            &db,
+            "earlier-assignment",
+            &[AuthorizedAction::AssignWork],
+            500,
+        )
+        .await;
+        issue(
+            &admin,
+            &db,
+            "separate-reader",
+            &[AuthorizedAction::Inspect],
+            1000,
+        )
+        .await;
+        let before = snapshot(&admin).await;
+        assert!(matches!(
+            store.query(TENANT, PROJECT, SUPERVISOR, lookup("a")).await,
+            Err(PgError::Forbidden)
+        ));
+        assert_ne!(
+            prepare(&store, SUPERVISOR, "a").await["data"]["guidance"]["action"]["op"],
+            "task.assignees"
+        );
+        assert_eq!(snapshot(&admin).await, before);
+        issue(
+            &admin,
+            &db,
+            "combined-directory",
+            &[AuthorizedAction::Inspect, AuthorizedAction::AssignWork],
+            2000,
+        )
+        .await;
+        let result = read(&store, lookup("a")).await;
+        assert_eq!(result["data"]["items"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            prepare(&store, SUPERVISOR, "a").await["data"]["guidance"]["action"]["op"],
+            "task.assignees"
+        );
+        assert!(
+            store
+                .query(TENANT, PROJECT, SUPERVISOR, lookup("b-private"))
+                .await
+                .is_err()
+        );
+        let mut q = lookup("a");
+        q.limit = Some(1);
+        q.cursor = Some(
+            read(&store, q.clone()).await["data"]["next_cursor"]
+                .as_str()
+                .unwrap()
+                .into(),
+        );
+        AuthorizationStore::from_config(common::with_app_role(&common::test_config(), &db))
+            .revoke(
+                TENANT,
+                PROJECT,
+                &RevokeAuthorizationRequest {
+                    request_key: "revoke-directory".into(),
+                    authorization_id: "combined-directory".into(),
+                    revoked_by: PersonId::new("manager-person").unwrap(),
+                    revoked_at_ms: 3000,
+                    reason: "assignment scope ended".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let before = snapshot(&admin).await;
+        assert!(matches!(
+            store.query(TENANT, PROJECT, SUPERVISOR, q).await,
+            Err(PgError::Forbidden)
+        ));
+        assert_eq!(snapshot(&admin).await, before);
+    }
+
+    #[tokio::test]
+    async fn bounded_scanning_can_return_an_empty_page_without_exposing_hidden_ids() {
+        let (_guard, admin, db, store) = setup().await;
+        enable_writes(&admin).await;
+        members(&admin, &db).await;
+        admin.batch_execute("INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+            SELECT 'reader-tenant','reader-project','00-hidden-'||lpad(n::text,3,'0'),'Withheld name','active'
+            FROM generate_series(1,100) n").await.unwrap();
+        let before = snapshot(&admin).await;
+        let first = read(&store, lookup("a")).await;
+        assert_eq!(first["data"]["items"], json!([]));
+        let cursor = first["data"]["next_cursor"].as_str().unwrap();
+        assert!(!cursor.contains("00-hidden") && !first.to_string().contains("Withheld name"));
+        let mut q = lookup("a");
+        q.cursor = Some(cursor.into());
+        q.limit = Some(1);
+        let second = read(&store, q.clone()).await;
+        assert_eq!(second["data"]["items"][0]["assignee_person_id"], "alice");
+        q.cursor = Some(second["data"]["next_cursor"].as_str().unwrap().into());
+        let third = read(&store, q).await;
+        assert_eq!(third["data"]["items"][0]["assignee_person_id"], "bob");
+        assert!(third["data"]["next_cursor"].is_null());
+        assert_eq!(snapshot(&admin).await, before);
+    }
+
+    #[tokio::test]
+    async fn current_target_policy_is_shared_and_assignment_rechecks_after_lookup() {
+        let (_guard, admin, db, store) = setup().await;
+        enable_writes(&admin).await;
+        members(&admin, &db).await;
+        for (disable, restore) in [
+            (
+                "UPDATE awr_team.workstream_grants SET active=false WHERE actor_id='worker-b'",
+                "UPDATE awr_team.workstream_grants SET active=true WHERE actor_id='worker-b'",
+            ),
+            (
+                "UPDATE awr_team.person_agent_bindings SET status='disabled' WHERE id='bind-b'",
+                "UPDATE awr_team.person_agent_bindings SET status='active' WHERE id='bind-b'",
+            ),
+            (
+                "UPDATE awr_team.actors SET status='disabled' WHERE id='bob'",
+                "UPDATE awr_team.actors SET status='active' WHERE id='bob'",
+            ),
+            (
+                "UPDATE awr_team.persons SET status='disabled' WHERE id='bob'",
+                "UPDATE awr_team.persons SET status='active' WHERE id='bob'",
+            ),
+            (
+                "UPDATE awr_team.project_memberships SET business_roles='[\"observer\"]'::jsonb WHERE actor_id='bob'",
+                "UPDATE awr_team.project_memberships SET business_roles='[\"developer\"]'::jsonb WHERE actor_id='bob'",
+            ),
+            (
+                "UPDATE awr_team.workstream_grants SET authority_version=2 WHERE actor_id='worker-b'",
+                "UPDATE awr_team.workstream_grants SET authority_version=1 WHERE actor_id='worker-b'",
+            ),
+        ] {
+            assert_eq!(
+                read(&store, lookup("a")).await["data"]["items"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                2
+            );
+            let command = assign(&store, "a", "lookup-then-assign", "bob").await;
+            admin.batch_execute(disable).await.unwrap();
+            let before = snapshot(&admin).await;
+            assert_eq!(
+                read(&store, lookup("a")).await["data"]["items"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1
+            );
+            assert!(matches!(
+                store
+                    .commands()
+                    .execute(TENANT, PROJECT, SUPERVISOR, command)
+                    .await,
+                Err(PgError::Forbidden)
+            ));
+            assert_eq!(snapshot(&admin).await, before);
+            admin.batch_execute(restore).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn typed_access_change_invalidates_cursor_and_rejects_stale_assignment_atomically() {
+        let (_guard, admin, db, store) = setup().await;
+        enable_writes(&admin).await;
+        members(&admin, &db).await;
+        let mut q = lookup("a");
+        q.limit = Some(1);
+        q.cursor = Some(
+            read(&store, q.clone()).await["data"]["next_cursor"]
+                .as_str()
+                .unwrap()
+                .into(),
+        );
+        let old_command = assign(&store, "a", "assign-before-access-change", "bob").await;
+        let mut owner = common::connect_config(&common::with_db(&common::test_config(), &db)).await;
+        let plan = awr_team_pg::AccessPlan {
+            protocol_version: 1,
+            tenant_id: TENANT.into(),
+            project_id: PROJECT.into(),
+            actor: awr_team_pg::AccessActor {
+                id: "worker-b".into(),
+                kind: "agent".into(),
+                display_name: "Worker B".into(),
+            },
+            client_id: "cli-b".into(),
+            role: "developer".into(),
+            business_roles: Some(BTreeSet::from([awr_team::BusinessRole::Developer])),
+            assignment_grant: None,
+            grants: vec![],
+            credential: None,
+            revoke_credentials: vec![],
+            independent_review: false,
+            agent_review: false,
+        };
+        let preview = awr_team_pg::OperatorAccess::preview(&mut owner, &plan)
+            .await
+            .unwrap();
+        awr_team_pg::OperatorAccess::apply(
+            &mut owner,
+            &plan,
+            "revoke-target-scope",
+            preview["state_digest"].as_str().unwrap(),
+            preview["plan_digest"].as_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        let before = snapshot(&admin).await;
+        assert!(matches!(
+            store.query(TENANT, PROJECT, SUPERVISOR, q).await,
+            Err(PgError::CursorExpired)
+        ));
+        assert!(
+            store
+                .commands()
+                .execute(TENANT, PROJECT, SUPERVISOR, old_command)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            read(&store, lookup("a")).await["data"]["items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(snapshot(&admin).await, before);
+    }
+
+    #[tokio::test]
+    async fn activated_task_contract_change_expires_directory_cursor_and_stale_assignment() {
+        let (_guard, admin, db, store) = setup().await;
+        enable_writes(&admin).await;
+        members(&admin, &db).await;
+        let mut q = lookup("a");
+        q.limit = Some(1);
+        let first = read(&store, q.clone()).await;
+        q.cursor = Some(first["data"]["next_cursor"].as_str().unwrap().into());
+        let old_command = assign(&store, "a", "assign-before-source-change", "bob").await;
+        let mut bundle: Value = admin.query_one("SELECT jsonb_build_object(
+            'codec',$3::text,'catalog',c.catalog_json,'contracts',(
+              SELECT jsonb_agg(jsonb_build_object('workstream_id',o.workstream_id,'contract',w.contract_json) ORDER BY w.work_id)
+              FROM awr_team.work_contracts w JOIN awr_team.workstream_snapshot_ownership o
+                ON o.tenant_id=w.tenant_id AND o.project_id=w.project_id
+                AND o.snapshot_id=w.snapshot_id AND o.scope_id=w.scope_id AND o.work_id=w.work_id
+              WHERE w.tenant_id=p.tenant_id AND w.project_id=p.id AND w.snapshot_id=p.active_snapshot_id))
+            FROM awr_team.projects p JOIN awr_team.workstream_catalogs c
+              ON c.tenant_id=p.tenant_id AND c.project_id=p.id AND c.snapshot_id=p.active_snapshot_id
+            WHERE p.tenant_id=$1 AND p.id=$2",
+            &[&TENANT,&PROJECT,&awr_team::WorkstreamBundle::CODEC]).await.unwrap().get(0);
+        // Assignment fences the selected task contract, not unrelated project
+        // changes. Change that contract through reviewed source activation.
+        bundle["contracts"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|entry| entry["contract"]["work_id"] == "a")
+            .unwrap()["contract"]["acceptance"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("record verified member dispatch"));
+        admin
+            .batch_execute(
+                "INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status) VALUES
+            ('reader-tenant','source-author','agent','Source author','active'),
+            ('reader-tenant','source-reviewer','human','Source reviewer','active');
+            INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role) VALUES
+            ('reader-tenant','reader-project','source-reviewer','reviewer')",
+            )
+            .await
+            .unwrap();
+        let source = awr_team_pg::SourceStore::from_config(common::with_app_role(
+            &common::test_config(),
+            &db,
+        ));
+        let candidate = source
+            .ingest(awr_team_pg::IngestRequest {
+                tenant_id: TENANT.into(),
+                project_id: PROJECT.into(),
+                actor_id: "source-author".into(),
+                parser_version: "workstreams/1".into(),
+                files: vec![
+                    awr_team_pg::SourceFile {
+                        path: "workstreams.json".into(),
+                        bytes: serde_json::to_vec(&bundle).unwrap(),
+                    },
+                    awr_team_pg::SourceFile {
+                        path: "docs/public-notes.md".into(),
+                        bytes: b"# Public notes\nMember dispatch is part of acceptance.\n".to_vec(),
+                    },
+                ],
+            })
+            .await
+            .unwrap();
+        source
+            .approve(
+                TENANT,
+                PROJECT,
+                &candidate.proposal_id,
+                "source-reviewer",
+                &candidate.manifest_digest,
+            )
+            .await
+            .unwrap();
+        source
+            .activate_workstreams(
+                TENANT,
+                PROJECT,
+                "source-author",
+                &candidate.proposal_id,
+                &awr_team::SourceActivationPlan {
+                    candidate_digest: candidate.manifest_digest.clone(),
+                    parser_version: candidate.parser_version.clone(),
+                    expected_authority_epoch: candidate.base_epoch.clone(),
+                    approved_candidate_digest: candidate.manifest_digest.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        let before = snapshot(&admin).await;
+        assert!(matches!(
+            store.query(TENANT, PROJECT, SUPERVISOR, q).await,
+            Err(PgError::CursorExpired)
+        ));
+        assert!(
+            store
+                .commands()
+                .execute(TENANT, PROJECT, SUPERVISOR, old_command)
+                .await
+                .is_err()
+        );
+        let fresh = read(&store, lookup("a")).await;
+        assert_ne!(fresh["source_snapshot_id"], first["source_snapshot_id"]);
+        assert_eq!(fresh["data"]["items"].as_array().unwrap().len(), 2);
+        assert_eq!(snapshot(&admin).await, before);
+        let refreshed_command = assign(&store, "a", "assign-after-source-change", "bob").await;
+        assert!(
+            store
+                .commands()
+                .execute(TENANT, PROJECT, SUPERVISOR, refreshed_command)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn cursor_and_guidance_respect_identity_search_recovery_and_context_boundaries() {
+        let (_guard, admin, db, store) = setup().await;
+        enable_writes(&admin).await;
+        members(&admin, &db).await;
+        let mut q = lookup("a");
+        q.limit = Some(1);
+        q.cursor = Some(
+            read(&store, q.clone()).await["data"]["next_cursor"]
+                .as_str()
+                .unwrap()
+                .into(),
+        );
+        let mut changed = q.clone();
+        changed.search = Some("Bob".into());
+        assert!(matches!(
+            store.query(TENANT, PROJECT, SUPERVISOR, changed).await,
+            Err(PgError::CursorExpired)
+        ));
+        let alternate =
+            "awr1.directory-alt.1111111111111111111111111111111111111111111111111111111111111111";
+        admin
+            .execute(
+                "INSERT INTO awr_team.credentials(tenant_id,id,actor_id,client_id,secret_hash)
+            VALUES($1,'directory-alt','reviewer','supervisor-client',$2)",
+                &[
+                    &TENANT,
+                    &awr_team_pg::workstream_credential_hash(alternate).unwrap(),
+                ],
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            store.query(TENANT, PROJECT, alternate, q.clone()).await,
+            Err(PgError::CursorExpired)
+        ));
+        let mut forged: Value = serde_json::from_str(q.cursor.as_ref().unwrap()).unwrap();
+        forged["key"] = json!("hidden-member-selector");
+        q.cursor = Some(forged.to_string());
+        assert!(matches!(
+            store.query(TENANT, PROJECT, SUPERVISOR, q).await,
+            Err(PgError::CursorExpired)
+        ));
+        let p = prepare(&store, SUPERVISOR, "a").await;
+        let hint = &p["data"]["guidance"];
+        assert_eq!(hint["action"]["op"], "task.assignees");
+        assert_eq!(hint["action"]["query"]["work_id"], "a");
+        assert!(hint.to_string().len() < 900);
+        admin.batch_execute("INSERT INTO awr_team.work_runtime(tenant_id,project_id,scope_id,work_id,state,recovery_blocked)
+            VALUES('reader-tenant','reader-project','main','a','in_progress',true)").await.unwrap();
+        assert_eq!(
+            prepare(&store, SUPERVISOR, "a").await["data"]["guidance"]["action"]["op"],
+            "work.recovery"
+        );
+        let mut tiny = query("work.prepare");
+        tiny.work_id = Some("a".into());
+        tiny.max_context_bytes = Some(1);
+        let incomplete = store.query(TENANT, PROJECT, SUPERVISOR, tiny).await;
+        assert!(
+            incomplete.is_err()
+                || incomplete.unwrap()["data"]["guidance"]["action"]["op"] != "task.assignees"
+        );
+    }
+}
+
 async fn members(admin: &Client, db: &str) {
     admin.batch_execute("UPDATE awr_team.actors SET kind='agent' WHERE id='agent';
         UPDATE awr_team.project_memberships SET role='developer',business_roles='[\"developer\"]'::jsonb WHERE actor_id='agent';
