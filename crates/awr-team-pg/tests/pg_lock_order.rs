@@ -193,6 +193,76 @@ async fn a_handoff_call_waits_for_the_barrier_before_it_writes_anything() {
     call.await.unwrap().unwrap();
 }
 
+/// Hold the barrier, start `call` with a handoff store and check that it stops at the barrier
+/// before it looks at any row. The handoffs these calls name do not exist: finding that out takes
+/// a row lookup, so a call that did not wait at the barrier would not be waiting for a lock at all.
+async fn waits_at_the_barrier<F, Fut>(f: &Fixture, call: F)
+where
+    F: FnOnce(HandoffStore) -> Fut,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    let store = HandoffStore::from_config(with_app_role(&test_config(), &f.db));
+    f.hold_the_barrier().await;
+    let task = tokio::spawn(call(store));
+    let (query, _) = f.blocked_backend().await;
+    assert!(
+        blocked_on_the_barrier(&query),
+        "the call must wait at the project barrier before it looks at any row: {query}"
+    );
+    f.release_the_barrier().await;
+    task.await.unwrap();
+}
+
+#[tokio::test]
+async fn accept_and_the_shared_mutation_path_wait_for_the_barrier_before_they_look_at_a_row() {
+    let f = setup().await;
+    let receiver = PersonId::new("receiver").unwrap();
+    waits_at_the_barrier(&f, |store| async move {
+        let _ = store
+            .accept(
+                TENANT,
+                PROJECT,
+                &AcceptHandoffRequest {
+                    request_key: "accept-order".into(),
+                    handoff_id: "handoff-missing".into(),
+                    expected_version: 1,
+                    acceptor_person_id: receiver.clone(),
+                    successor_execution: ExecutionInstance::Person {
+                        person_id: receiver,
+                    },
+                    prior_execution_stopped: true,
+                    prior_reconciled: true,
+                    context_reprepared: true,
+                    expected_current_fence: None,
+                    live_fence: None,
+                    unknown_executions_open: false,
+                    now_ms: 1_000,
+                },
+            )
+            .await;
+    })
+    .await;
+    // `inspect`, `reject`, `cancel` and `timeout` share one transaction body (`mutate`).
+    let sender = PersonId::new("sender").unwrap();
+    waits_at_the_barrier(&f, |store| async move {
+        let _ = store
+            .cancel(
+                TENANT,
+                PROJECT,
+                &CancelHandoffRequest {
+                    request_key: "cancel-order".into(),
+                    handoff_id: "handoff-missing".into(),
+                    expected_version: 1,
+                    by_person_id: sender,
+                    reason: "no longer needed".into(),
+                    now_ms: 1_000,
+                },
+            )
+            .await;
+    })
+    .await;
+}
+
 /// Two sessions that lock two rows in opposite order: PostgreSQL rolls one back
 /// with SQLSTATE 40P01 after `deadlock_timeout`.
 async fn provoke_deadlock(f: &Fixture) -> tokio_postgres::Error {
