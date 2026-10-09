@@ -782,3 +782,48 @@ test('member administration and activity proxies allow only designed operations 
     assert.equal(calls.length,3);
   } finally {await bridge.close();await upstream.close();}
 });
+
+
+for (const revoked of [false, true]) test(`the complete workspace refresh ${revoked ? 'clears changed' : 'retains unchanged'} protected member state`, async () => {
+  const { install } = require('./fixtures/dom-stub'); install();
+  const { createTeamWeb } = require('../public/team-web');
+  const i18n = require('../public/i18n'); i18n.setLocale('en');
+  const node = id => document.getElementById(id);
+  const button = (id, text) => node(id).find(n => n.tagName === 'BUTTON' && n.textContent === text);
+  const identity = { actor_id: 'manager', client_id: 'manager-client', role: 'project_admin', can_manage_members: true, can_read_project_audit: true };
+  const view = { ok: true, works: [], identity, mcp_url: 'https://team.example/v1/projects/example/mcp' };
+  let waitForProjects = null, applyPayload = null;
+  const previousFetch = global.fetch;
+  global.fetch = async (url, options) => {
+    let body;
+    if (url.includes('/projects?')) body = waitForProjects ? await waitForProjects : { ok: true, projects: [{ key: 'example', title: 'Example' }], session: { session_id: 'web-session' } };
+    else if (url.includes('/overview?')) body = view;
+    else {
+      const { operation, payload } = JSON.parse(options.body);
+      if (operation === 'inspect') body = { ok: true, data: { items: [{ actor_id: 'member', kind: 'human', display_name: 'Member', role: 'developer',
+        independent_review: false, agent_review: false, clients: [{ client_id: 'member-agent', grants: [{ workstream_id: 'stream', authority_version: '1', read: true, write: true, manage: false, active: true }], credentials: [] }] }], workstreams: [], next_cursor: null } };
+      else if (operation === 'preview') body = { ok: true, data: { applied: false, state_digest: 'before', plan_digest: 'plan', desired: payload.plan } };
+      else {
+        applyPayload = payload;
+        body = { ok: true, data: { replayed: false, receipt: { protocol: 'awr-project-admin-access-v1', request_id: payload.request_id,
+          admin_actor_id: identity.actor_id, admin_client_id: identity.client_id, subject_actor_id: payload.plan.subject.id,
+          subject_client_id: payload.plan.subject_client_id, before_digest: payload.expected_state, plan_digest: payload.expected_plan,
+          after_digest: 'after', project_revision: '2', desired: payload.plan } } };
+      }
+    }
+    return { ok: true, json: async () => body };
+  };
+  try {
+    const ui = createTeamWeb({ i18n, $: node }); await ui.refresh();
+    await button('teamConsoleTabs', 'Members').click(); await button('teamConsolePanel', 'Generate connection instructions').click();
+    const text = node('teamConsolePanel').find(n => n.tagName === 'TEXTAREA').value;
+    let resolve; waitForProjects = new Promise(r => { resolve = r; });
+    const refreshing = ui.refresh();
+    assert.equal(node('teamConsolePanel').hidden, true); assert.equal(node('teamConsolePanel').find(n => n.tagName === 'TEXTAREA'), null);
+    if (revoked) view.identity = { ...identity, can_read_project_audit: false };
+    resolve({ ok: true, projects: [{ key: 'example' }], session: { session_id: 'web-session' } }); await refreshing;
+    const area = node('teamConsolePanel').find(n => n.tagName === 'TEXTAREA');
+    if (revoked) assert.equal(area, null); else assert.equal(area.value, text);
+    assert.ok(applyPayload); assert.ok(!JSON.stringify(ui.state).includes('awr1.'));
+  } finally { global.fetch = previousFetch; }
+});

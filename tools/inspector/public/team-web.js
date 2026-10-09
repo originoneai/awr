@@ -986,10 +986,13 @@
           if (card) card.focus({ preventScroll: true });
         }
       }
-      if (admin) admin.setContext(signedIn && state.raw && state.raw.identity ? {
-        project: state.projectKey, session: state.session.session_id, identity: state.raw.identity,
-        mcpUrl: state.raw.mcp_url,
-      } : null);
+      if (admin) {
+        if (state.loading) admin.suspend();
+        else admin.setContext(signedIn && state.raw && state.raw.identity ? {
+          project: state.projectKey, session: state.session.session_id, identity: state.raw.identity,
+          mcpUrl: state.raw.mcp_url,
+        } : null);
+      }
       const raw = $('rawTeamBody');
       if (raw) {
         // The upstream session identifier is a cookie credential, not debug data.
