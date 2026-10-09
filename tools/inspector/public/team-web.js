@@ -12,6 +12,14 @@
   const GUARD = 'X-AWR-Inspector';
   const PROGRESS_REFRESH_MS = 5000;
   const DETAIL_TIMEOUT_MS = 5000;
+  const INBOX_ITEM_LIMIT = 100;
+  const INBOX_PAGE_LIMIT = 100;
+  const emptyInbox = () => ({ items: [], next: null, binding: null, cursors: [], read: false,
+    loading: false, error: null, detail: null, detailLoading: false, selected: null });
+  const canonical = value => JSON.stringify(value, function (_key, v) {
+    return v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(Object.keys(v).sort().map(k => [k, v[k]])) : v;
+  });
 
   function el(tag, attrs, text) {
     const node = document.createElement(tag);
@@ -63,6 +71,7 @@
       guidanceDisclosure: null,
       lastRefreshedAt: null,
       refreshing: false,
+      inbox: emptyInbox(),
     };
     let generation = 0;
     let detailGeneration = 0;
@@ -73,6 +82,8 @@
     const detailReadOrder = new WeakMap();
     let detailSequence = 0;
     let refreshTimer = null;
+    let inboxGeneration = 0;
+    let inboxInteraction = 0;
     const adminModule = root.AWR_TEAM_ADMIN || (typeof require === 'function' ? require('./team-admin') : null);
     const admin = adminModule && adminModule.createTeamAdmin({ $, i18n, api, onAuthError: failed });
 
@@ -93,6 +104,8 @@
       state.connectOpen = false;
       state.handoffOpen = Object.create(null);
       state.lastRefreshedAt = null;
+      ++inboxGeneration;
+      state.inbox = emptyInbox();
     }
 
     function failed(body) {
@@ -174,6 +187,189 @@
     }
 
     const time = value => Number.isFinite(value) ? new Date(value).toLocaleString() : '—';
+
+    function inboxContext() {
+      return canonical([state.projectKey, state.session?.session_id, state.raw?.identity]);
+    }
+
+    function inboxBinding(page) {
+      if (page?.protocol_version !== 1 || page.scope_id !== 'main'
+        || !['project_revision', 'source_snapshot_id', 'coordinator_epoch'].every(k => typeof page[k] === 'string' && page[k])
+        || !/^\d+$/.test(page.project_revision)) return null;
+      return canonical([inboxContext(), page.project_revision, page.source_snapshot_id, page.coordinator_epoch]);
+    }
+
+    function inboxFailed(error, partial) {
+      if (['Unauthenticated', 'SessionExpired', 'Forbidden'].includes(error?.code)) {
+        failed({ error });
+        return;
+      }
+      state.inbox = { ...emptyInbox(), items: partial ? state.inbox.items : [],
+        read: partial, error: error || { code: 'InvalidResponse', message: 'Invalid coordination response' } };
+      render();
+    }
+
+    async function loadInbox(more = false, background = false) {
+      if (!isLive() || !state.projectKey || state.inbox.loading || state.inbox.detailLoading) return;
+      if (more && (!state.inbox.next || state.inbox.error || state.inbox.detailNewer || state.inbox.items.length >= INBOX_ITEM_LIMIT
+        || state.inbox.cursors.length >= INBOX_PAGE_LIMIT - 1)) return;
+      if (!background) ++inboxInteraction;
+      const current = generation, context = inboxContext(), request = ++inboxGeneration;
+      const cursor = more ? state.inbox.next : null;
+      if (!more) state.inbox = emptyInbox();
+      state.inbox.loading = true;
+      state.inbox.detail = null;
+      state.inbox.selected = null;
+      render();
+      const params = new URLSearchParams({ project: state.projectKey });
+      if (cursor) params.set('cursor', cursor);
+      const body = await api('/api/team/inbox?' + params, {
+        signal: typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(DETAIL_TIMEOUT_MS) : undefined,
+      });
+      if (current !== generation || context !== inboxContext() || request !== inboxGeneration) return;
+      const page = body?.result, data = page?.data, binding = inboxBinding(page);
+      if (!body?.ok) { inboxFailed(body?.error, more); return; }
+      if (!binding || data?.state_basis !== 'current_persistent_facts' || data.deduplicate_by !== 'item_key'
+        || data.execution_authorized !== false || data.refresh_from_first_page_on_change !== true
+        || !Array.isArray(data.items) || data.items.length > 20
+        || data.items.some(item => !item?.item_key || !item.work_id || !item.workstream_id || !item.guidance || !item.next_query)
+        || !(data.next_cursor === null || typeof data.next_cursor === 'string' && data.next_cursor.length > 0 && data.next_cursor.length <= 4096)) {
+        inboxFailed({ code: 'InvalidResponse', message: t(i18n, 'inbox.invalid') }, false); return;
+      }
+      if (canonical(data.identity) !== canonical(state.raw?.identity)) {
+        inboxFailed({ code: 'Forbidden', message: t(i18n, 'inbox.identity_changed') }, false); return;
+      }
+      if (more && binding !== state.inbox.binding) {
+        inboxFailed({ code: 'SourceChanged', message: t(i18n, 'inbox.changed') }, false); return;
+      }
+      const cursors = more ? [...state.inbox.cursors, cursor] : [];
+      if (data.next_cursor && cursors.includes(data.next_cursor)) {
+        inboxFailed({ code: 'InvalidCursor', message: t(i18n, 'inbox.changed') }, more); return;
+      }
+      const items = new Map((more ? state.inbox.items : []).map(item => [item.item_key, item]));
+      for (const item of data.items) items.set(item.item_key, item);
+      state.inbox = { ...emptyInbox(), items: [...items.values()].slice(0, INBOX_ITEM_LIMIT), next: data.next_cursor, binding,
+        displayLimited: items.size > INBOX_ITEM_LIMIT, cursors, read: true, context, page, readAt: Date.now() };
+      render();
+    }
+
+    async function readInboxItem(item) {
+      item = state.inbox.items.find(v => v.item_key === item.item_key);
+      if (state.inbox.loading || state.inbox.detailLoading || state.inbox.error || state.inbox.detailNewer
+        || !item) return;
+      ++inboxInteraction;
+      const current = generation, context = inboxContext(), binding = state.inbox.binding, request = ++inboxGeneration;
+      state.inbox.detailLoading = true;
+      state.inbox.selected = item.item_key;
+      state.inbox.detail = null;
+      render();
+      const body = await api('/api/team/inbox-detail', { method: 'POST',
+        body: JSON.stringify({ project: state.projectKey, query: item.next_query }),
+        signal: typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(DETAIL_TIMEOUT_MS) : undefined,
+      });
+      if (current !== generation || context !== inboxContext() || binding !== state.inbox.binding || request !== inboxGeneration) return;
+      state.inbox.detailLoading = false;
+      if (!body?.ok) {
+        if (['Unauthenticated', 'SessionExpired', 'Forbidden'].includes(body?.error?.code)) inboxFailed(body.error, false);
+        else { state.inbox.detail = { error: body?.error || { code: 'InvalidResponse', message: t(i18n, 'inbox.invalid') } }; render(); }
+        return;
+      }
+      if (canonical(body.query) !== canonical(item.next_query) || !inboxBinding(body.result)
+        || body.result.source_snapshot_id !== state.inbox.page.source_snapshot_id
+        || body.result.coordinator_epoch !== state.inbox.page.coordinator_epoch
+        || BigInt(body.result.project_revision) < BigInt(state.inbox.page.project_revision)
+        || body.result.workstream_id !== item.workstream_id || !body.result.data) {
+        inboxFailed({ code: 'SourceChanged', message: t(i18n, 'inbox.changed') }, false); return;
+      }
+      // Concurrent member feedback may advance the project without changing this
+      // source. Preserve the new authorized read, but never relabel older inbox
+      // conditions or reuse their cursor as if they belonged to that revision.
+      state.inbox.detailNewer = body.result.project_revision !== state.inbox.page.project_revision;
+      state.inbox.detail = body.result;
+      render();
+    }
+
+    function renderInbox(host) {
+      const inbox = state.inbox;
+      const panel = el('section', { 'aria-label': t(i18n, 'inbox.title'), id: 'teamInbox' });
+      panel.appendChild(el('h3', null, t(i18n, 'inbox.title')));
+      panel.appendChild(el('p', { class: 'sub' }, t(i18n, 'inbox.note')));
+      const toolbar = el('div', { class: 'team-toolbar' });
+      const refresh = el('button', { class: 'btn', type: 'button', dataset: { inboxFocus: 'refresh' } }, t(i18n, 'inbox.refresh'));
+      refresh.disabled = inbox.loading || inbox.detailLoading;
+      refresh.addEventListener('click', () => loadInbox()); toolbar.appendChild(refresh); panel.appendChild(toolbar);
+      if (inbox.error) panel.appendChild(el('p', { class: 'team-error', role: 'alert' },
+        inbox.error.code + ' · ' + inbox.error.message + ' · ' + t(i18n, inbox.items.length ? 'inbox.partial' : 'inbox.failed')));
+      if (inbox.detailNewer) panel.appendChild(el('p', { class: 'sub', role: 'status' }, t(i18n, 'inbox.newer')));
+      if (inbox.cursors.length || inbox.detail) panel.appendChild(el('p', { class: 'sub' }, t(i18n, 'inbox.paused')));
+      if (inbox.loading || inbox.detailLoading) panel.appendChild(el('p', { class: 'sub', role: 'status' }, t(i18n, 'ui.team_loading')));
+      if (!inbox.loading && !inbox.error && !inbox.items.length) panel.appendChild(el('p', { class: 'sub', role: 'status' },
+        t(i18n, !inbox.read ? 'inbox.unread' : inbox.next ? 'inbox.empty_page' : 'inbox.empty')));
+      if (inbox.read && !inbox.error) panel.appendChild(el('p', { class: 'sub' },
+        t(i18n, 'inbox.coverage', { count: inbox.items.length, time: time(inbox.readAt) })));
+      const list = el('div', { class: 'team-card-grid' });
+      for (const item of inbox.items) {
+        const card = el('article', { class: 'team-card', dataset: { itemKey: item.item_key } });
+        card.appendChild(el('h3', null, item.title || item.work_id));
+        card.appendChild(el('p', { class: 'sub' }, item.work_id + (item.title_truncated ? ' · ' + t(i18n, 'inbox.truncated') : '')));
+        card.appendChild(el('p', null, nextStep({ guidance: item.guidance })));
+        const inspect = el('button', { class: 'btn', type: 'button', dataset: { inboxFocus: item.item_key } }, t(i18n, 'inbox.inspect'));
+        inspect.disabled = Boolean(inbox.error || inbox.loading || inbox.detailLoading || inbox.detailNewer);
+        inspect.addEventListener('click', () => readInboxItem(item)); card.appendChild(inspect);
+        const basis = el('details', { class: 'feedback-history' });
+        basis.appendChild(el('summary', null, t(i18n, 'ui.network_guidance')));
+        for (const [label, value] of [['when', item.guidance.when], ['because', item.guidance.because?.join(' · ')], ['recheck', item.guidance.recheck_on]])
+          basis.appendChild(el('p', null, t(i18n, 'ui.network_' + label) + ' · ' + (value || '—')));
+        basis.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.agent_query')));
+        basis.appendChild(el('pre', { class: 'raw' }, JSON.stringify(item.next_query, null, 2))); card.appendChild(basis);
+        list.appendChild(card);
+      }
+      panel.appendChild(list);
+      if ((inbox.next || inbox.displayLimited) && !inbox.error) {
+        if (inbox.displayLimited || inbox.items.length >= INBOX_ITEM_LIMIT || inbox.cursors.length >= INBOX_PAGE_LIMIT - 1)
+          panel.appendChild(el('p', { class: 'sub', role: 'status' }, t(i18n, 'inbox.limit')));
+        else {
+          const more = el('button', { class: 'btn', type: 'button', dataset: { inboxFocus: 'more' } }, t(i18n, 'inbox.more'));
+          more.disabled = Boolean(inbox.loading || inbox.detailLoading || inbox.detailNewer);
+          more.addEventListener('click', () => loadInbox(true)); panel.appendChild(more);
+        }
+      }
+      const detail = inbox.detail;
+      if (detail) {
+        const group = el('section', { class: 'detail-section', 'aria-label': t(i18n, 'inbox.facts') });
+        group.appendChild(el('h4', null, t(i18n, 'inbox.facts')));
+        if (detail.error) group.appendChild(el('p', { class: 'team-error', role: 'alert' }, detail.error.code + ' · ' + detail.error.message));
+        else {
+          const data = detail.data, collaboration = data.collaboration || data;
+          const op = inbox.items.find(item => item.item_key === inbox.selected)?.next_query.op;
+          const integration = op === 'delivery.integration.inspect' ? data : collaboration.integration;
+          if (data.guidance) group.appendChild(el('p', null, nextStep({ guidance: data.guidance })));
+          for (const [label, value, prefix] of [['review', collaboration.review?.state, 'review_'],
+            ['integration', integration?.state, 'integration_'], ['publication', collaboration.publication?.phase, 'publication_']]) {
+            const key = 'feedback.' + prefix + value;
+            const translated = t(i18n, key);
+            group.appendChild(el('p', null, t(i18n, 'ui.network_' + label) + ' · ' +
+              (value == null ? t(i18n, 'inbox.absent') : translated === key ? t(i18n, 'feedback.state_unknown', { state: value }) : translated)));
+          }
+          if (op === 'delivery.source.status') {
+            if (data.pending_publication_id) group.appendChild(el('p', { role: 'status' }, t(i18n, 'inbox.publication_waiting')));
+            for (const record of Array.isArray(data.history) ? data.history.slice(0, 32) : []) {
+              const key = 'feedback.publication_' + record.phase, translated = t(i18n, key);
+              group.appendChild(el('p', null, t(i18n, 'inbox.publication_record') + ' · ' +
+                (translated === key ? t(i18n, 'feedback.state_unknown', { state: record.phase }) : translated)
+                + ' · ' + t(i18n, record.source_current === true ? 'inbox.record_current' : 'inbox.record_historical')));
+            }
+            if (data.history_truncated) group.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.delivery_truncated')));
+          }
+          group.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.delivery_dimensions')));
+          const raw = el('details', { class: 'feedback-history' });
+          raw.appendChild(el('summary', null, t(i18n, 'inbox.response')));
+          raw.appendChild(el('pre', { class: 'raw' }, JSON.stringify(detail, null, 2))); group.appendChild(raw);
+        }
+        panel.appendChild(group);
+      }
+      host.appendChild(panel);
+    }
 
     // The website task-node structure; project data remains text, never HTML.
     function workCard(w, lane) {
@@ -292,6 +488,12 @@
         layouts.appendChild(cardsBtn); layouts.appendChild(listBtn);
         toolbar.appendChild(layouts);
       }
+      if (isLive()) {
+        const inbox = el('button', { class: 'btn' + (state.layout === 'inbox' ? ' primary' : ''), type: 'button',
+          'aria-pressed': String(state.layout === 'inbox'), dataset: { inboxFocus: 'open' } }, t(i18n, 'inbox.title'));
+        inbox.addEventListener('click', async () => { state.layout = 'inbox'; render(); if (!state.inbox.read) await loadInbox(); });
+        toolbar.appendChild(inbox);
+      }
       header.appendChild(toolbar);
       host.appendChild(header);
       if (state.lastRefreshedAt && isLive()) host.appendChild(el('p', { class: 'sub', role: 'status' },
@@ -310,6 +512,7 @@
       }
 
       if (state.raw && !isLive()) host.appendChild(el('p', { class: 'network-demo-note' }, t(i18n, 'ui.network_demo')));
+      if (isLive() && state.layout === 'inbox') { net = null; renderInbox(host); return; }
       if (!state.works.length && !state.streams.length) {
         host.appendChild(el('p', { class: 'network-empty', role: 'status' },
           t(i18n, state.loading ? 'ui.team_loading' : state.projectKey ? 'ui.network_empty' : 'ui.network_no_projects')));
@@ -968,9 +1171,10 @@
       const rawSection = $('teamRaw');
       if (rawSection) rawSection.hidden = !signedIn || !state.raw;
       if (projects) projects.hidden = !signedIn || !state.projects.length;
-      if (detail) detail.hidden = !signedIn || !state.works.length;
+      if (detail) detail.hidden = !signedIn || !state.works.length || state.layout === 'inbox';
       const active = typeof document !== 'undefined' ? document.activeElement : null;
       const activeKey = active && active.dataset && active.dataset.key;
+      const inboxFocus = active?.dataset?.inboxFocus;
       const frame = overview && overview.querySelector('.scene-frame');
       const scroll = frame ? [frame.scrollLeft, frame.scrollTop] : [0, 0];
       if (auth) { auth.classList.toggle('signed-in', signedIn); renderAuth(auth); }
@@ -986,6 +1190,8 @@
           if (card) card.focus({ preventScroll: true });
         }
       }
+      if (inboxFocus && overview) [...overview.querySelectorAll('[data-inbox-focus]')]
+        .find(n => n.dataset.inboxFocus === inboxFocus)?.focus({ preventScroll: true });
       if (admin) {
         if (state.loading) admin.suspend();
         else admin.setContext(signedIn && state.raw && state.raw.identity ? {
@@ -1013,6 +1219,8 @@
       state.raw = null;
       state.detailLoading = false;
       state.detailResponse = null;
+      ++inboxGeneration;
+      state.inbox = emptyInbox();
       render();
       const projects = await api('/api/team/projects?view=' + encodeURIComponent(state.viewMode));
       if (current !== generation) return;
@@ -1056,6 +1264,7 @@
           if (!state.selected && state.works.length) state.selected = state.works[0].key;
         }
         if (state.selected) await selectWork(state.selected);
+        if (current === generation && state.layout === 'inbox') await loadInbox();
       }
       if (!state.error && current === generation && state.session) {
         state.lastRefreshedAt = Date.now();
@@ -1071,6 +1280,8 @@
 
     function canRefreshProgress() {
       return state.session && isLive() && !state.loading && !state.graphLoading && !state.detailLoading && !state.refreshing
+        && !state.inbox.loading && !state.inbox.detailLoading
+        && !(state.layout === 'inbox' && (state.inbox.cursors.length || state.inbox.detail))
         && !root.document?.hidden && !$('teamWorkspaceGrid')?.hidden
         && (!root.location?.hash || root.location.hash === '#team')
         && !editing();
@@ -1091,12 +1302,15 @@
     async function refreshProgress() {
       if (!canRefreshProgress()) return;
       const current = ++generation, project = state.projectKey, selection = detailGeneration;
+      const interaction = inboxInteraction;
+      // Foreground inbox reads supersede a project poll already in flight.
+      const observationCurrent = () => current === generation && interaction === inboxInteraction;
       state.refreshing = true;
       state.error = null;
       pendingDetails = new Map();
       try {
         const overview = await api('/api/team/overview?project=' + encodeURIComponent(project) + '&view=team');
-        if (current !== generation) return;
+        if (!observationCurrent()) return;
         if (!overview?.ok || !Array.isArray(overview.works)) { failed(overview); return; }
         const works = overview.works.map(work => ({ ...work }));
         const queue = works.slice(0, 60);
@@ -1108,7 +1322,7 @@
         }
         let redrawPending = false;
         const publish = () => {
-          if (current !== generation || state.error || $('teamWorkspaceGrid')?.hidden || editing()) return;
+          if (!observationCurrent() || state.error || $('teamWorkspaceGrid')?.hidden || editing()) return;
           const foreground = selectedWork();
           state.works = works.map(work => {
             if (selection !== detailGeneration && foreground?.key === work.key
@@ -1120,13 +1334,17 @@
           state.streams = overview.workstreams || [];
           state.raw = overview;
           state.session = overview.session || state.session;
+          if (state.inbox.context && state.inbox.context !== inboxContext()) {
+            ++inboxGeneration;
+            state.inbox = emptyInbox();
+          }
           state.disconnect = false;
           if (!selectedWork()) state.selected = works[0]?.key || null;
           state.detailResponse = selectedWork()?.detail_loaded ? { ok: true, work: selectedWork() } : null;
           if (!state.detailLoading && !redrawPending) {
             const redraw = () => {
               redrawPending = false;
-              if (current === generation && !state.detailLoading && !$('teamWorkspaceGrid')?.hidden && !editing()) render();
+              if (observationCurrent() && !state.detailLoading && !$('teamWorkspaceGrid')?.hidden && !editing()) render();
             };
             if (typeof root.requestAnimationFrame === 'function') { redrawPending = true; root.requestAnimationFrame(redraw); }
             else redraw();
@@ -1134,20 +1352,22 @@
         };
         let index = 0;
         await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
-          while (current === generation && index < queue.length) {
+          while (observationCurrent() && index < queue.length) {
             await readWork(queue[index++]);
             publish();
           }
         }));
         // A new selection may be outside this bounded batch. Keep its foreground
         // detail rather than replacing it with an unread object from the poll.
-        if (current !== generation || state.error || $('teamWorkspaceGrid')?.hidden || editing()) return;
+        if (!observationCurrent() || state.error || $('teamWorkspaceGrid')?.hidden || editing()) return;
         publish();
+        if (state.layout === 'inbox') await loadInbox(false, true);
+        if (!observationCurrent()) return;
         state.lastRefreshedAt = Date.now();
       } finally {
         state.refreshing = false;
         // An in-flight observation must never redraw a newly opened member form.
-        if (current === generation && !state.detailLoading && !$('teamWorkspaceGrid')?.hidden && !editing()) render();
+        if (observationCurrent() && !state.detailLoading && !$('teamWorkspaceGrid')?.hidden && !editing()) render();
       }
     }
 
@@ -1173,6 +1393,8 @@
       _selectWork: selectWork,
       _loadGraphDetails: loadGraphDetails,
       _refreshProgress: refreshProgress,
+      _loadInbox: loadInbox,
+      _readInboxItem: readInboxItem,
     };
   }
 

@@ -10,6 +10,20 @@ const { createTeamBridge } = require('../team-bridge');
 const FIXTURE_DIR = path.resolve(__dirname, '../../../tests/fixtures/workstreams/team-web-loop');
 const GUARD = { 'x-awr-inspector': '1', origin: 'http://127.0.0.1' };
 
+function coordinationPage(items = [], next = null) {
+  return { protocol_version: 1, scope_id: 'main', project_revision: '20', source_snapshot_id: 'source', coordinator_epoch: 'epoch',
+    data: { identity: { actor_id: 'member', client_id: 'member-agent', role: 'reviewer' }, items, next_cursor: next,
+      state_basis: 'current_persistent_facts', deduplicate_by: 'item_key', refresh_from_first_page_on_change: true, execution_authorized: false } };
+}
+function coordinationItem(op = 'review.inspect') {
+  const query = { protocol_version: 1, op, work_id: 'WORK', workstream_id: 'stream',
+    ...(op === 'review.inspect' ? { review_round_id: 'round' } : op === 'delivery.integration.inspect' ? { request_id: 'integration' } : {}) };
+  return { item_key: 'semantic-key', work_id: 'WORK', workstream_id: 'stream', contract_hash: 'requirements',
+    title: 'Review the integration', title_truncated: false, next_query: query,
+    guidance: { code: 'review', when: 'Review is open', because: ['The current round needs a decision'],
+      action: { op, query }, recheck_on: 'Requirements, review or permissions change' } };
+}
+
 function startBridge() {
   const bridge = createTeamBridge({ teamFixtureDir: FIXTURE_DIR, port: 0 });
   const server = http.createServer(async (req, res) => {
@@ -781,6 +795,170 @@ test('member administration and activity proxies allow only designed operations 
     assert.deepEqual(calls.at(-1).body,{protocol_version:1,op:'audit.requests',limit:50,cursor:'page',member_actor_id:'alex'});
     assert.equal(calls.length,3);
   } finally {await bridge.close();await upstream.close();}
+});
+
+test('coordination proxies a single scoped page and preserves empty-page cursors and semantic items', async () => {
+  const calls = [];
+  const item = coordinationItem();
+  const upstream = await startMockUpstream((request, response) => {
+    const chunks = []; request.on('data', c => chunks.push(c)); request.on('end', () => {
+      const query = JSON.parse(Buffer.concat(chunks).toString());
+      calls.push({ path: request.url, cookie: request.headers.cookie, query });
+      response.end(JSON.stringify(query.cursor ? coordinationPage([item]) : coordinationPage([], 'opaque-next')));
+    });
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const first = await req(bridge.base, 'GET', '/api/team/inbox?project=demo', { cookie: 'awr_web_session=member-session' });
+    assert.deepEqual(first.json, { ok: true, result: coordinationPage([], 'opaque-next') });
+    assert.equal(calls.length, 1, 'The bridge must not drain all pages or query providers');
+    const next = await req(bridge.base, 'GET', '/api/team/inbox?project=demo&cursor=opaque-next', { cookie: 'awr_web_session=member-session' });
+    assert.deepEqual(next.json.result.data.items, [item]);
+    assert.deepEqual(calls.map(c => c.query), [{ protocol_version: 1, op: 'work.inbox', limit: 20 },
+      { protocol_version: 1, op: 'work.inbox', limit: 20, cursor: 'opaque-next' }]);
+    assert.ok(calls.every(c => c.path === '/v1/web/projects/demo/query' && c.cookie === 'awr_web_session=member-session'));
+  } finally { await bridge.close(); await upstream.close(); }
+});
+
+for (const code of ['Forbidden', 'Unauthenticated', 'CursorExpired', 'SourceChanged', 'Unsupported']) {
+  test(`coordination preserves ${code} without treating it as an empty page`, async () => {
+    const upstream = await startMockUpstream((_request, response) => {
+      response.writeHead(403); response.end(JSON.stringify({ code, message: 'Current read refused' }));
+    });
+    const bridge = await startLiveBridge(upstream.base);
+    try {
+      const result = await req(bridge.base, 'GET', '/api/team/inbox?project=demo&cursor=old');
+      assert.deepEqual(result.json, { ok: false, error: { code, message: 'Current read refused' } });
+      assert.equal(result.json.result, undefined);
+    } finally { await bridge.close(); await upstream.close(); }
+  });
+}
+
+for (const kind of ['oversized', 'repeated_cursor', 'too_many', 'missing_versions', 'missing_cursor',
+  'authorized', 'wrong_work', 'write_selector', 'mismatched_selector', 'bad_identity', 'invalid_guidance']) {
+  test(`coordination refuses the ${kind} page without publishing its items`, async () => {
+    const page = coordinationPage([coordinationItem()]);
+    if (kind === 'oversized') page.data.padding = 'x'.repeat(65537);
+    if (kind === 'repeated_cursor') page.data.next_cursor = 'old';
+    if (kind === 'too_many') page.data.items = Array.from({ length: 21 }, coordinationItem);
+    if (kind === 'missing_versions') delete page.coordinator_epoch;
+    if (kind === 'missing_cursor') delete page.data.next_cursor;
+    if (kind === 'authorized') page.data.execution_authorized = true;
+    if (kind === 'wrong_work') page.data.items[0].work_id = 'OTHER';
+    if (kind === 'write_selector') { page.data.items[0].next_query.op = 'review.decide'; page.data.items[0].guidance.action.op = 'review.decide'; }
+    if (kind === 'mismatched_selector') page.data.items[0].guidance.action.query = { ...page.data.items[0].next_query, review_round_id: 'OTHER' };
+    if (kind === 'bad_identity') page.data.identity = {};
+    if (kind === 'invalid_guidance') delete page.data.items[0].guidance.because;
+    const upstream = await startMockUpstream((_request, response) => response.end(JSON.stringify(page)));
+    const bridge = await startLiveBridge(upstream.base);
+    try {
+      const result = await req(bridge.base, 'GET', '/api/team/inbox?project=demo&cursor=old');
+      assert.equal(result.json.ok, false); assert.equal(result.json.result, undefined);
+      assert.equal(result.json.error.code, kind === 'oversized' ? 'ResponseTooLarge' : 'BadGateway');
+    } finally { await bridge.close(); await upstream.close(); }
+  });
+}
+
+test('coordination accepts only its bounded page parameters and never falls back to demo', async () => {
+  let calls = 0;
+  const upstream = await startMockUpstream((_request, response) => { calls++; response.end('{}'); });
+  const bridge = await startLiveBridge(upstream.base), demo = await startBridge();
+  try {
+    for (const path of ['/api/team/inbox', '/api/team/inbox?project=demo&limit=100',
+      '/api/team/inbox?project=demo&work=private', '/api/team/inbox?project=demo&cursor=',
+      '/api/team/inbox?project=demo&cursor=' + 'x'.repeat(4097)]) {
+      const result = await req(bridge.base, 'GET', path); assert.equal(result.json.error.code, 'InvalidInput');
+    }
+    assert.equal(calls, 0);
+    assert.equal((await req(demo.base, 'GET', '/api/team/inbox?project=demo')).json.error.code, 'Unsupported');
+  } finally { await bridge.close(); await demo.close(); await upstream.close(); }
+});
+
+for (const op of ['work.prepare', 'work.observe', 'work.recovery', 'review.inspect',
+  'delivery.neutral.inspect', 'delivery.integration.inspect', 'delivery.source.status']) {
+  test(`coordination detail forwards the exact ${op} selector as an authorized read`, async () => {
+    const calls = [], query = coordinationItem(op).next_query;
+    const result = { protocol_version: 1, scope_id: 'main', project_revision: '20', source_snapshot_id: 'source',
+      coordinator_epoch: 'epoch', workstream_id: 'stream', data: { work_id: 'WORK', execution_authorized: false } };
+    const upstream = await startMockUpstream((request, response) => {
+      const chunks = []; request.on('data', c => chunks.push(c)); request.on('end', () => {
+        calls.push({ path: request.url, query: JSON.parse(Buffer.concat(chunks).toString()) }); response.end(JSON.stringify(result));
+      });
+    });
+    const bridge = await startLiveBridge(upstream.base);
+    try {
+      const read = await req(bridge.base, 'POST', '/api/team/inbox-detail', { body: { project: 'demo', query } });
+      assert.deepEqual(read.json, { ok: true, query, result });
+      assert.deepEqual(calls, [{ path: '/v1/web/projects/demo/query', query }]);
+    } finally { await bridge.close(); await upstream.close(); }
+  });
+}
+
+test('coordination detail rejects commands, additional authority selectors and incomplete references', async () => {
+  let calls = 0;
+  const upstream = await startMockUpstream((_request, response) => { calls++; response.end('{}'); });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const query = coordinationItem().next_query;
+    for (const candidate of [{ ...query, op: 'review.decide' }, { ...query, actor_id: 'administrator' },
+      { ...query, review_round_id: undefined }, { ...query, review_round_id: '' }, { ...query, session_id: 'other' },
+      { ...query, protocol_version: 2 }, { ...query, max_context_bytes: 262144 }]) {
+      const read = await req(bridge.base, 'POST', '/api/team/inbox-detail', { body: { project: 'demo', query: candidate } });
+      assert.equal(read.json.error.code, 'InvalidInput');
+    }
+    assert.equal(calls, 0);
+  } finally { await bridge.close(); await upstream.close(); }
+});
+
+test('coordination detail refuses a mismatched work or response envelope without exposing data', async () => {
+  let result;
+  const upstream = await startMockUpstream((_request, response) => response.end(JSON.stringify(result)));
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const query = coordinationItem().next_query;
+    const base = { protocol_version: 1, scope_id: 'main', workstream_id: 'stream', source_snapshot_id: 'source',
+      project_revision: '20', coordinator_epoch: 'epoch', data: { work_id: 'WORK' } };
+    for (const fixture of [{ ...base, workstream_id: 'private-stream' }, { ...base, data: { review: { work_id: 'OTHER' } } },
+      { ...base, data: { work_id: 'OTHER' } }, { ...base, data: { execution_authorized: true } }, { ...base, data: null },
+      { ...base, coordinator_epoch: undefined }, { ...base, protocol_version: 2 }]) {
+      result = fixture;
+      const read = await req(bridge.base, 'POST', '/api/team/inbox-detail', { body: { project: 'demo', query } });
+      assert.equal(read.json.error.code, 'BadGateway'); assert.equal(read.json.result, undefined);
+    }
+  } finally { await bridge.close(); await upstream.close(); }
+});
+
+test('a stalled coordination read is bounded and never retries or issues a write', async () => {
+  const calls = [];
+  const upstream = await startMockUpstream((request, _response) => { calls.push(request.url); });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const started = Date.now();
+    const result = await req(bridge.base, 'GET', '/api/team/inbox?project=demo');
+    assert.equal(result.json.error.code, 'ReadTimeout'); assert.equal(result.json.result, undefined);
+    assert.ok(Date.now() - started < 6500);
+    assert.deepEqual(calls, ['/v1/web/projects/demo/query']);
+  } finally { await bridge.close(); await upstream.close(); }
+});
+
+test('coordination detail rejects a different review round or integration request', async () => {
+  let result;
+  const upstream = await startMockUpstream((_request, response) => response.end(JSON.stringify(result)));
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    for (const op of ['review.inspect', 'delivery.integration.inspect']) {
+      const query = coordinationItem(op).next_query;
+      result = { protocol_version: 1, scope_id: 'main', workstream_id: 'stream', source_snapshot_id: 'source',
+        project_revision: '20', coordinator_epoch: 'epoch', data: { work_id: 'WORK',
+          ...(op === 'review.inspect' ? { review: { work_id: 'WORK', round_id: 'OTHER' } } : { integration_id: 'OTHER' }) } };
+      const rejected = await req(bridge.base, 'POST', '/api/team/inbox-detail', { body: { project: 'demo', query } });
+      assert.equal(rejected.json.error.code, 'BadGateway'); assert.equal(rejected.json.result, undefined);
+      if (op === 'review.inspect') result.data.review.round_id = query.review_round_id;
+      else result.data.integration_id = query.request_id;
+      const accepted = await req(bridge.base, 'POST', '/api/team/inbox-detail', { body: { project: 'demo', query } });
+      assert.deepEqual(accepted.json, { ok: true, query, result });
+    }
+  } finally { await bridge.close(); await upstream.close(); }
 });
 
 

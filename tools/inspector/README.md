@@ -421,3 +421,32 @@ actions. Project auditors can filter by member or task; ordinary members have a
 personal view. Queries and grant checks run on the server, including pagination.
 The connected Agent uses `work.next` to continue or discover work; the browser
 does not claim tasks or choose an Agent product on the member's behalf.
+
+### Current coordination
+
+The live workspace's **Coordination** view reads the same permission-filtered
+`work.inbox` as a connected Agent. It retains server semantic item keys, exact
+read selectors, source versions and opaque authorization-bound cursors. The
+bridge requests one bounded page at a time, including empty pages with a next
+cursor. Loaded conditions are not a project-wide count. The display caps both
+items and pages and states when further pages remain.
+
+**Read current details** executes only the returned read selector. Review,
+repository integration and source-publication states remain separate; missing
+facts are not success. Reads never claim work, acknowledge an item, approve a
+review or write to a repository. Agent intake and supervisor assignment continue
+through MCP. No repository provider connection is required.
+
+Refresh starts at the first page and removes resolved conditions. Changed source
+or authority bindings require a fresh read; expired, denied, malformed, partial
+and failed reads are explicit. Late responses cannot restore another project's
+or identity's conditions. Detail receipts retain their actual source, project
+revision and coordinator epoch. Newer authorized reads on the same source remain
+visible with their own version; older page conditions and pagination are
+suspended until refresh. Earlier or different-source detail responses are
+discarded rather than mixed with current pages.
+The first page participates in normal background refresh. Automatic updates
+pause while later pages or detail receipts are being read, so polling cannot
+discard a user's position. A foreground coordination read also supersedes an
+already-started project poll. An explicit coordination refresh returns to current
+first-page conditions and resumes normal observation.
