@@ -360,14 +360,15 @@ pub(super) async fn start(
     )
     .await?;
     let work_version = advance_work(tx, tenant, project, &command.work_id).await?;
-    let remaining: i64 = tx
+    let remaining = tx
         .query_one(
-            "SELECT floor(extract(epoch FROM (expires_at-clock_timestamp()))*1000)::bigint
+            "SELECT floor(extract(epoch FROM (expires_at-clock_timestamp()))*1000)::bigint,expires_at::text
         FROM awr_team.claims WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
             &[&tenant, &project, &a.claim_id],
         )
-        .await?
-        .get(0);
+        .await?;
+    let expires_at: String = remaining.get(1);
+    let remaining: i64 = remaining.get(0);
     if remaining <= 0 {
         return Err(PgError::PreconditionsChanged);
     }
@@ -378,6 +379,7 @@ pub(super) async fn start(
         "admission":"granted_at_commit","execution_mode":a.execution_mode,"dispatched":false,
         "input_digest":r.get::<_,Option<String>>("input_digest"),"declared_scope":paths,
         "lease_remaining_ms":remaining.to_string(),
+        "lease_guidance":claims::lease_guidance(&a.claim_id,&a.expected_fence,&a.expected_lease_version,&expires_at),
         "fencing_class":"uncontrolled","exactly_once_supported":false,"scope_validation":"lexical_contract_only",
         "physical_isolation":"unverified_without_host_capability",
         "dependency_receipts":dependencies,"resources":resources,
@@ -418,7 +420,7 @@ pub(super) async fn report(
             .iter()
             .any(|s| canonical_path(s) && crate::graph::path_within_scope(s, p))
     });
-    let settled = settlement::evaluate(
+    let mut settled = settlement::evaluate(
         tx,
         tenant,
         project,
@@ -452,18 +454,12 @@ pub(super) async fn report(
         "workstream_id":command.workstream_id,"ownership_version":ownership.to_string(),
         "execution_version":a.expected_execution_version,"coordinator_epoch":auth.epoch,
         "contract_hash":r.get::<_,String>("contract_hash"),"scope_violation":exceeded});
-    if let Some(settled) = &settled {
-        settled.bind_payload(&mut payload, &r, &a.expected_session_version);
-    } else if a.workspace_settlement.is_some() {
+    if settled.is_none() && a.workspace_settlement.is_some() {
         payload["workspace_settlement"] = json!(a.workspace_settlement);
         payload["terminal_reported"] = json!(terminal_reported);
         payload["effects_settled"] = json!(false);
         payload["artifact_verified"] = json!(false);
     }
-    let hash = awr_team::request_hash(&payload).map_err(|_| invalid())?;
-    tx.execute("INSERT INTO awr_team.execution_receipts(tenant_id,project_id,id,execution_id,reporter_actor_id,receipt_kind,digest,payload_json)
-        VALUES($1,$2,$3,$4,$5,'caller_asserted',$6,$7)",
-        &[&tenant,&project,&id,&a.execution_id,&auth.actor_id,&hash,&payload]).await?;
     let next = if effects_settled {
         a.outcome.as_str()
     } else {
@@ -507,26 +503,21 @@ pub(super) async fn report(
              WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND execution_id=$4 AND state='reserved'",
             &[&tenant, &project, &command.work_id, &a.execution_id],
         ).await?;
-        if attributable {
-            recovery_cause::attribute(tx, tenant, project, &r, &id).await?;
-        }
     }
     let work_version = advance_work(tx, tenant, project, &command.work_id).await?;
-    if let Some(settled) = &settled {
-        // The lease may expire while exact-resource and receipt checks execute.
-        claims::require_live(
-            tx,
-            tenant,
-            project,
-            auth,
-            command,
-            ownership,
-            &a.session_id,
-            &settled.declaration.claim_id,
-            &settled.declaration.expected_fence,
-            &settled.declaration.expected_lease_version,
-        )
-        .await?;
+    if let Some(settled) = &mut settled {
+        // Observe expiry again after resource writes and before the immutable receipt.
+        settled
+            .recheck_lease(tx, tenant, project, auth, command, ownership, &r)
+            .await?;
+        settled.bind_payload(&mut payload, &r, &a.expected_session_version);
+    }
+    let hash = awr_team::request_hash(&payload).map_err(|_| invalid())?;
+    tx.execute("INSERT INTO awr_team.execution_receipts(tenant_id,project_id,id,execution_id,reporter_actor_id,receipt_kind,digest,payload_json)
+        VALUES($1,$2,$3,$4,$5,'caller_asserted',$6,$7)",
+        &[&tenant,&project,&id,&a.execution_id,&auth.actor_id,&hash,&payload]).await?;
+    if attributable {
+        recovery_cause::attribute(tx, tenant, project, &r, &id).await?;
     }
     Ok(
         json!({"execution_id":a.execution_id,"execution_version":(r.get::<_,i64>("execution_version")+1).to_string(),

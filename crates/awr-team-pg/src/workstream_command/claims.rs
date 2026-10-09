@@ -118,7 +118,7 @@ pub(super) async fn apply(
             return Err(PgError::PreconditionsChanged);
         }
     }
-    match action {
+    let mut applied = match action {
         Action::Acquire(a) => acquire(tx, tenant, project, auth, command, ownership, a).await,
         Action::Renew(a) => {
             let r = owned(
@@ -189,7 +189,25 @@ pub(super) async fn apply(
                 preceding_events: vec![],
             })
         }
+    }?;
+    if matches!(command.op.as_str(), "claim.acquire" | "claim.renew") {
+        applied.data["lease_guidance"] = lease_guidance(
+            applied.data["claim_id"].as_str().unwrap(),
+            applied.data["fence"].as_str().unwrap(),
+            applied.data["lease_version"].as_str().unwrap(),
+            applied.data["expires_at"].as_str().unwrap(),
+        );
     }
+    Ok(applied)
+}
+
+pub(super) fn lease_guidance(claim: &str, fence: &str, lease: &str, expires_at: &str) -> Value {
+    json!({
+        "condition": "While the matching owned claim remains live.",
+        "basis": {"claim_id":claim,"fence":fence,"lease_version":lease,"expires_at":expires_at},
+        "next_action": "Renew with claim.renew before expires_at if work continues; use execution.report when stopped. After expiry, inspect the run and obtain a fresh claim before new admission.",
+        "recheck": "Before admission/report; after renewal, disconnection or ownership/contract change."
+    })
 }
 
 pub(super) async fn require_resolved_effects(
@@ -382,6 +400,49 @@ pub(super) async fn require_live(
         return Err(PgError::LeaseExpired);
     }
     Ok(r.get(3))
+}
+
+pub(super) struct TerminalLeaseObservation {
+    pub live: bool,
+    pub expires_at: String,
+    pub observed_at: String,
+}
+
+/// Only the opted-in terminal workspace report may relax elapsed lease time.
+/// An inactive/replaced claim, ended session or changed fence still fails.
+pub(super) async fn current_terminal_lease(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    auth: &ReaderAuthority,
+    command: &WorkstreamCommand,
+    ownership: i64,
+    session: &str,
+    claim: &str,
+    fence: &str,
+    lease: &str,
+) -> PgResult<TerminalLeaseObservation> {
+    let r = owned(
+        tx, tenant, project, auth, command, ownership, session, claim, fence, lease,
+    )
+    .await?;
+    if r.get::<_, String>(13) != "active" {
+        return Err(PgError::PreconditionsChanged);
+    }
+    let observed = tx
+        .query_one(
+            "WITH observation AS MATERIALIZED (SELECT clock_timestamp() AS at)
+         SELECT c.expires_at>o.at,c.expires_at::text,o.at::text
+         FROM awr_team.claims c CROSS JOIN observation o
+         WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.id=$3",
+            &[&tenant, &project, &claim],
+        )
+        .await?;
+    Ok(TerminalLeaseObservation {
+        live: observed.get(0),
+        expires_at: observed.get(1),
+        observed_at: observed.get(2),
+    })
 }
 
 pub(crate) async fn inspect(

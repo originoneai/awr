@@ -4,6 +4,10 @@ async fn caller_chain(admin: &Client, db: &str, store: &WorkstreamReadStore) -> 
 }
 
 async fn caller_chain_in_workspace(admin: &Client, db: &str, store: &WorkstreamReadStore, workspace: Option<&str>) -> Value {
+    caller_chain_with_policy(admin, db, store, workspace, awr_team::ExecutionSettlementMode::IndependentWorkspaceV1, false).await
+}
+
+async fn caller_chain_with_policy(admin: &Client, db: &str, store: &WorkstreamReadStore, workspace: Option<&str>, mode: awr_team::ExecutionSettlementMode, late: bool) -> Value {
     use sha2::Digest;
     seed_agent_reviewer(admin, db).await;
     admin.batch_execute("UPDATE awr_team.actors SET kind='agent' WHERE id='agent';
@@ -44,7 +48,7 @@ async fn caller_chain_in_workspace(admin: &Client, db: &str, store: &WorkstreamR
     if let Some(workspace) = workspace {
         contract.codec = WorkContract::CODEC_V3.into();
         contract.execution_settlement = Some(awr_team::ExecutionSettlementPolicy {
-            mode: awr_team::ExecutionSettlementMode::IndependentWorkspaceV1,
+            mode,
             workspace_id: workspace.into(),
         });
     }
@@ -75,6 +79,9 @@ async fn caller_chain_in_workspace(admin: &Client, db: &str, store: &WorkstreamR
         report_args["workspace_settlement"] = json!({"workspace_id":workspace,"input_digest":INPUT,
             "environment_digest":"c".repeat(64),"claim_id":claim["claim_id"],"expected_fence":claim["fence"],
             "expected_lease_version":claim["lease_version"],"executor_stopped":true,"no_external_effects":true});
+    }
+    if late {
+        admin.batch_execute("UPDATE awr_team.claims SET expires_at=clock_timestamp()-interval '1 second'").await.unwrap();
     }
     let reported=run(store,A,"caller-report","execution.report",report_args).await;
     assert_eq!(reported["state"], if workspace.is_some() {"succeeded"} else {"unknown"});

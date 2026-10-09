@@ -1,5 +1,45 @@
 // Shares the established caller/evidence/independent Agent-review fixture.
 #[tokio::test]
+async fn v2_live_and_expired_reports_keep_artifact_and_independent_review_gates() {
+    for late in [false, true] {
+        let (_g, admin, db, store) = setup().await;
+        let chain = caller_chain_with_policy(&admin, &db, &store, Some("clone-author"),
+            awr_team::ExecutionSettlementMode::IndependentWorkspaceV2, late).await;
+        let complete = run(&store, RUNNER, "v2-complete", "work.complete", completion_args(&chain)).await;
+        assert_eq!(complete["task_complete"], true);
+        assert_eq!(complete["caller_execution_binding"]["settlement_mode"], "independent_workspace_v2");
+        assert_eq!(complete["approval_basis"], "agent_review");
+        assert_eq!(complete["human_approval"], false);
+        assert_eq!(complete["team_independent_acceptance"], false);
+        let reconciliations: i64 = admin.query_one("SELECT count(*) FROM awr_team.execution_receipts WHERE receipt_kind<>'caller_asserted'", &[]).await.unwrap().get(0);
+        assert_eq!(reconciliations, 0);
+    }
+}
+
+#[tokio::test]
+async fn v2_completion_refuses_missing_inconsistent_or_malformed_lease_observations() {
+    for mutation in ["missing", "null", "basis", "time", "extra"] {
+        let (_g, admin, db, store) = setup().await;
+        let chain = caller_chain_with_policy(&admin, &db, &store, Some("clone-author"),
+            awr_team::ExecutionSettlementMode::IndependentWorkspaceV2, true).await;
+        let id = chain["caller_receipt_id"].as_str().unwrap();
+        let mut payload: Value = admin.query_one("SELECT payload_json FROM awr_team.execution_receipts WHERE id=$1", &[&id]).await.unwrap().get(0);
+        match mutation {
+            "missing" => { payload.as_object_mut().unwrap().remove("lease_observation"); }
+            "null" => { payload["lease_observation"] = Value::Null; }
+            "basis" => { payload["lease_observation"]["basis"] = json!("live"); }
+            "time" => { payload["lease_observation"]["observed_at"] = json!("invalid time"); }
+            _ => { payload["lease_observation"]["trusted_executor"] = json!(true); }
+        }
+        let digest = awr_team::request_hash(&payload).unwrap();
+        admin.execute("UPDATE awr_team.execution_receipts SET payload_json=$1,digest=$2 WHERE id=$3", &[&payload,&digest,&id]).await.unwrap();
+        assert!(matches!(run_err(&store, RUNNER, mutation, "work.complete", completion_args(&chain)).await, PgError::EvidenceInvalid), "{mutation}");
+        let count: i64 = admin.query_one("SELECT count(*) FROM awr_team.completion_receipts", &[]).await.unwrap().get(0);
+        assert_eq!(count, 0);
+    }
+}
+
+#[tokio::test]
 async fn workspace_completion_verifies_artifact_without_reconciliation_or_trust_upgrade() {
     let (_g, admin, db, store) = setup().await;
     let chain = caller_chain_in_workspace(&admin, &db, &store, Some("clone-author")).await;

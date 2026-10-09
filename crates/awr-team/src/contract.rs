@@ -39,6 +39,9 @@ pub struct CrossWorkstreamDependencyPolicy {
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionSettlementMode {
     IndependentWorkspaceV1,
+    /// Allows only the original current claim's terminal report after expiry.
+    /// Admission, renewal and review retain their existing authority checks.
+    IndependentWorkspaceV2,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

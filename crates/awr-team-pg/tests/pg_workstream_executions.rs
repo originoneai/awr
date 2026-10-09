@@ -16,6 +16,21 @@ mod workspace_settlement_tests {
     use awr_team::{ExecutionSettlementMode, ExecutionSettlementPolicy, WorkContract};
 
     async fn policy(admin: &Client, work: &str, workspace: &str) {
+        policy_mode(
+            admin,
+            work,
+            workspace,
+            ExecutionSettlementMode::IndependentWorkspaceV1,
+        )
+        .await;
+    }
+
+    async fn policy_mode(
+        admin: &Client,
+        work: &str,
+        workspace: &str,
+        mode: ExecutionSettlementMode,
+    ) {
         let mut contract: WorkContract = serde_json::from_value(admin.query_one(
             "SELECT contract_json FROM awr_team.work_contracts WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3",
             &[&TENANT,&PROJECT,&work],
@@ -23,7 +38,7 @@ mod workspace_settlement_tests {
         contract.codec = WorkContract::CODEC_V3.into();
         contract.completion_policy = ExecutionSettlementPolicy::COMPLETION_POLICY.into();
         contract.execution_settlement = Some(ExecutionSettlementPolicy {
-            mode: ExecutionSettlementMode::IndependentWorkspaceV1,
+            mode,
             workspace_id: workspace.into(),
         });
         admin.execute("UPDATE awr_team.work_contracts SET contract_json=$1,contract_hash=$2 WHERE tenant_id=$3 AND project_id=$4 AND work_id=$5",
@@ -166,9 +181,23 @@ mod workspace_settlement_tests {
 
     #[tokio::test]
     async fn declaration_rejects_malformed_trust_and_wrong_bindings_without_writes() {
+        for mode in [
+            ExecutionSettlementMode::IndependentWorkspaceV1,
+            ExecutionSettlementMode::IndependentWorkspaceV2,
+        ] {
+            check_declaration_rejects_malformed_trust_and_wrong_bindings_without_writes_policy(
+                mode,
+            )
+            .await;
+        }
+    }
+
+    async fn check_declaration_rejects_malformed_trust_and_wrong_bindings_without_writes_policy(
+        mode: ExecutionSettlementMode,
+    ) {
         let (_g, admin, _, store) = setup().await;
         enable_writes(&admin).await;
-        policy(&admin, "a", "clone-alpha").await;
+        policy_mode(&admin, "a", "clone-alpha", mode).await;
         let (c, e) = ready_intent(&store).await;
         let started = start(&store, &c, &e).await;
         let base = declaration(&store, &c, &started, "valid", "succeeded").await;
@@ -206,6 +235,18 @@ mod workspace_settlement_tests {
 
     #[tokio::test]
     async fn uncertain_or_incomplete_terminal_declarations_keep_caller_protection() {
+        for mode in [
+            ExecutionSettlementMode::IndependentWorkspaceV1,
+            ExecutionSettlementMode::IndependentWorkspaceV2,
+        ] {
+            check_uncertain_or_incomplete_terminal_declarations_keep_caller_protection_policy(mode)
+                .await;
+        }
+    }
+
+    async fn check_uncertain_or_incomplete_terminal_declarations_keep_caller_protection_policy(
+        mode: ExecutionSettlementMode,
+    ) {
         for case in [
             "omitted",
             "not-stopped",
@@ -215,12 +256,15 @@ mod workspace_settlement_tests {
             "scope",
             "expired",
         ] {
+            if mode == ExecutionSettlementMode::IndependentWorkspaceV2 && case == "expired" {
+                continue;
+            }
             let (_g, admin, _, store) = setup().await;
             enable_writes(&admin).await;
-            policy(&admin, "a", "clone-alpha").await;
+            policy_mode(&admin, "a", "clone-alpha", mode).await;
             let (c, e) = ready_intent(&store).await;
             let started = start(&store, &c, &e).await;
-            if case == "expired" {
+            if case == "expired" || mode == ExecutionSettlementMode::IndependentWorkspaceV2 {
                 admin.batch_execute("UPDATE awr_team.claims SET expires_at=clock_timestamp()-interval '1 second'").await.unwrap();
             }
             let mut cmd = declaration(&store, &c, &started, case, "succeeded").await;
@@ -263,6 +307,20 @@ mod workspace_settlement_tests {
 
     #[tokio::test]
     async fn mismatched_resources_barriers_and_exposed_intents_never_partially_settle() {
+        for mode in [
+            ExecutionSettlementMode::IndependentWorkspaceV1,
+            ExecutionSettlementMode::IndependentWorkspaceV2,
+        ] {
+            check_mismatched_resources_barriers_and_exposed_intents_never_partially_settle_policy(
+                mode,
+            )
+            .await;
+        }
+    }
+
+    async fn check_mismatched_resources_barriers_and_exposed_intents_never_partially_settle_policy(
+        mode: ExecutionSettlementMode,
+    ) {
         for case in [
             "missing",
             "extra",
@@ -279,9 +337,12 @@ mod workspace_settlement_tests {
         ] {
             let (_g, admin, _, store) = setup().await;
             enable_writes(&admin).await;
-            policy(&admin, "a", "clone-alpha").await;
+            policy_mode(&admin, "a", "clone-alpha", mode).await;
             let (c, e) = ready_intent(&store).await;
             let started = start(&store, &c, &e).await;
+            if mode == ExecutionSettlementMode::IndependentWorkspaceV2 {
+                expire(&admin).await;
+            }
             match case {
                 "missing" => {
                     admin
@@ -291,11 +352,11 @@ mod workspace_settlement_tests {
                 }
                 "extra" => {
                     admin.execute("INSERT INTO awr_team.resource_reservations(tenant_id,project_id,id,work_id,resource_kind,canonical_key,state,execution_id,worktree_id,lease_generation,fence)
-                    VALUES($1,$2,'extra','a','dir','src/extra','reserved',$3,'clone-alpha',1,1)",&[&TENANT,&PROJECT,&e["execution_id"].as_str().unwrap()]).await.unwrap();
+                VALUES($1,$2,'extra','a','dir','src/extra','reserved',$3,'clone-alpha',1,1)",&[&TENANT,&PROJECT,&e["execution_id"].as_str().unwrap()]).await.unwrap();
                 }
                 "shared" => {
                     admin.execute("INSERT INTO awr_team.resource_reservations(tenant_id,project_id,id,work_id,resource_kind,canonical_key,state,execution_id)
-                    VALUES($1,$2,'shared','a','external','external-test-target','reserved',$3)",&[&TENANT,&PROJECT,&e["execution_id"].as_str().unwrap()]).await.unwrap();
+                VALUES($1,$2,'shared','a','external','external-test-target','reserved',$3)",&[&TENANT,&PROJECT,&e["execution_id"].as_str().unwrap()]).await.unwrap();
                 }
                 "unbound" => {
                     admin
@@ -328,12 +389,12 @@ mod workspace_settlement_tests {
                 }
                 "outbox" => {
                     admin.execute("INSERT INTO awr_team.outbox(tenant_id,project_id,id,state,payload_json,action_kind,aggregate_id)
-                    VALUES($1,$2,'exposed','sending','{}','execution.dispatch',$3)",&[&TENANT,&PROJECT,&e["execution_id"].as_str().unwrap()]).await.unwrap();
+                VALUES($1,$2,'exposed','sending','{}','execution.dispatch',$3)",&[&TENANT,&PROJECT,&e["execution_id"].as_str().unwrap()]).await.unwrap();
                 }
                 "other-run" => {
                     admin.execute("INSERT INTO awr_team.executions(tenant_id,project_id,id,work_id,fence,contract_hash,executor_actor_id,state)
-                    SELECT tenant_id,project_id,'other-run',work_id,fence,contract_hash,executor_actor_id,'unknown' FROM awr_team.executions WHERE id=$1",
-                    &[&e["execution_id"].as_str().unwrap()]).await.unwrap();
+                SELECT tenant_id,project_id,'other-run',work_id,fence,contract_hash,executor_actor_id,'unknown' FROM awr_team.executions WHERE id=$1",
+                &[&e["execution_id"].as_str().unwrap()]).await.unwrap();
                 }
                 _ => {
                     policy(&admin, "a", "changed-workspace").await;
@@ -486,6 +547,8 @@ mod workspace_settlement_tests {
             }
         }
     }
+
+    include!("cases/late_workspace_reports.rs");
 }
 
 #[tokio::test]
@@ -611,6 +674,7 @@ async fn inspect(store: &WorkstreamReadStore, e: &Value) -> Value {
 }
 async fn snapshot(admin: &Client) -> Value {
     admin.query_one("SELECT jsonb_build_object(
+        'claims',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM awr_team.claims c),
         'execution',(SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM awr_team.executions e),
         'work',(SELECT jsonb_agg(to_jsonb(w) ORDER BY work_id) FROM awr_team.work_runtime w),
         'outbox',(SELECT jsonb_agg(to_jsonb(o) ORDER BY id) FROM awr_team.outbox o),

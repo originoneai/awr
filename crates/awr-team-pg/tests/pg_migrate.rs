@@ -4,6 +4,79 @@ use awr_team_pg::{EXPECTED_SCHEMA_VERSION, check_schema, migrate};
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn schema54_late_policy_upgrade_is_atomic_and_preserves_v1_history() {
+    let (_g, admin, _) = common::historical_team_schema(53).await;
+    admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('upgrade-tenant','Upgrade','active');
+        INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+          VALUES('upgrade-tenant','upgrade-project','upgrade','team','old-epoch','active');
+        INSERT INTO awr_team.work_scopes(tenant_id,project_id,id,name,status)
+          VALUES('upgrade-tenant','upgrade-project','main','Main','active');
+        INSERT INTO awr_team.work_items(tenant_id,project_id,id,external_key)
+          VALUES('upgrade-tenant','upgrade-project','old-work','old-work');
+        INSERT INTO awr_team.executions(tenant_id,project_id,id,work_id,fence,contract_hash,executor_actor_id,state,settlement_policy_json)
+          VALUES('upgrade-tenant','upgrade-project','old-run','old-work',1,'old-contract','old-actor','unknown',
+                 '{\"mode\":\"independent_workspace_v1\",\"workspace_id\":\"old-workspace\"}');
+        INSERT INTO awr_team.execution_receipts(tenant_id,project_id,id,execution_id,reporter_actor_id,receipt_kind,digest,payload_json)
+          VALUES('upgrade-tenant','upgrade-project','old-receipt','old-run','old-actor','caller_asserted','old-digest','{\"note\":\"Preserved unknown observation\"}')")
+        .await.unwrap();
+    let observe =
+        "SELECT jsonb_build_object('execution',(SELECT to_jsonb(e) FROM awr_team.executions e),
+                   'receipt',(SELECT to_jsonb(r) FROM awr_team.execution_receipts r))";
+    let before: Value = admin.query_one(observe, &[]).await.unwrap().get(0);
+    let v2 = json!({"mode":"independent_workspace_v2","workspace_id":"new-workspace"});
+    let update = "UPDATE awr_team.executions SET settlement_policy_json=$1 WHERE id='old-run'";
+    assert!(admin.execute(update, &[&v2]).await.is_err());
+    let ddl = include_str!("../migrations/20261009000054_late_workspace_reports.sql");
+    assert!(
+        admin
+            .batch_execute(&ddl.replace(
+                "UPDATE awr_team.schema_state",
+                "SELECT 1/0; UPDATE awr_team.schema_state"
+            ))
+            .await
+            .is_err()
+    );
+    admin.batch_execute("ROLLBACK").await.unwrap();
+    let version: i32 = admin
+        .query_one("SELECT version FROM awr_team.schema_state", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(version, 53);
+    assert!(admin.execute(update, &[&v2]).await.is_err());
+    assert_eq!(
+        admin
+            .query_one(observe, &[])
+            .await
+            .unwrap()
+            .get::<_, Value>(0),
+        before
+    );
+    migrate(&admin).await.unwrap();
+    migrate(&admin).await.unwrap();
+    check_schema(&admin).await.unwrap();
+    assert_eq!(
+        admin
+            .query_one(observe, &[])
+            .await
+            .unwrap()
+            .get::<_, Value>(0),
+        before
+    );
+    for malformed in [
+        json!({"mode":"future","workspace_id":"workspace"}),
+        json!({"mode":"independent_workspace_v2"}),
+        json!({"mode":"independent_workspace_v2","workspace_id":"../shared"}),
+        json!({"mode":"independent_workspace_v2","workspace_id":"workspace","trusted_executor":true}),
+    ] {
+        assert!(admin.execute(update, &[&malformed]).await.is_err());
+    }
+    // This administrative fixture write tests only the closed database constraint.
+    // Product commands cannot reinterpret a previously admitted V1 run.
+    assert_eq!(admin.execute(update, &[&v2]).await.unwrap(), 1);
+}
+
+#[tokio::test]
 async fn schema52_writeback_intent_upgrade_is_atomic_preserves_unknown_history_and_rls() {
     let (_g, admin, db) = common::historical_team_schema(52).await;
     // Retained legacy data is a migration fixture, never recovery authority.
@@ -420,7 +493,7 @@ async fn schema49_delivery_requests_upgrade_atomically_without_fabricating_legac
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
     migrate(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 53);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 54);
     for (table, original) in tables.into_iter().zip(originals) {
         let mut rows = admin.query_one(&format!("SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM awr_team.{table} t"), &[])
             .await.unwrap().get::<_,Value>(0);
@@ -1107,7 +1180,7 @@ async fn schema40_upgrade_preserves_legacy_provenance_and_is_atomic_and_repeatab
     assert_eq!(before, unchanged);
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 53);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 54);
     let after: Value = admin
         .query_one(
             "SELECT to_jsonb(e) FROM awr_team.executions e WHERE id='legacy-run'",

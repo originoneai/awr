@@ -53,6 +53,80 @@ pub(super) struct Settled {
     pub policy: ExecutionSettlementPolicy,
     pub declaration: Declaration,
     pub resources: Vec<ResourceProof>,
+    lease_observation: Option<LeaseObservation>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LeaseObservation {
+    basis: LeaseBasis,
+    expires_at: String,
+    observed_at: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum LeaseBasis {
+    Live,
+    ExpiredCurrent,
+}
+
+async fn terminal_lease(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    auth: &ReaderAuthority,
+    command: &WorkstreamCommand,
+    ownership: i64,
+    run: &Row,
+    policy: &ExecutionSettlementPolicy,
+    declaration: &Declaration,
+) -> PgResult<Option<LeaseObservation>> {
+    let session = run
+        .get::<_, Option<String>>("session_id")
+        .ok_or(PgError::Forbidden)?;
+    match policy.mode {
+        ExecutionSettlementMode::IndependentWorkspaceV1 => {
+            claims::require_live(
+                tx,
+                tenant,
+                project,
+                auth,
+                command,
+                ownership,
+                &session,
+                &declaration.claim_id,
+                &declaration.expected_fence,
+                &declaration.expected_lease_version,
+            )
+            .await?;
+            Ok(None)
+        }
+        ExecutionSettlementMode::IndependentWorkspaceV2 => {
+            let observed = claims::current_terminal_lease(
+                tx,
+                tenant,
+                project,
+                auth,
+                command,
+                ownership,
+                &session,
+                &declaration.claim_id,
+                &declaration.expected_fence,
+                &declaration.expected_lease_version,
+            )
+            .await?;
+            Ok(Some(LeaseObservation {
+                basis: if observed.live {
+                    LeaseBasis::Live
+                } else {
+                    LeaseBasis::ExpiredCurrent
+                },
+                expires_at: observed.expires_at,
+                observed_at: observed.observed_at,
+            }))
+        }
+    }
 }
 
 pub(super) fn normalized_scope(paths: &[String]) -> PgResult<Vec<String>> {
@@ -162,6 +236,10 @@ pub(super) async fn evaluate(
         || run.get::<_, Option<String>>("claim_id").as_deref() != Some(&declaration.claim_id)
         || run.get::<_, i64>("fence") != version(&declaration.expected_fence)?
         || run.get::<_, i64>("claim_lease_version") != version(&declaration.expected_lease_version)?
+        || (stored.mode == ExecutionSettlementMode::IndependentWorkspaceV2
+            && run
+                .get::<_, Option<String>>("environment_digest")
+                .is_some_and(|digest| digest != declaration.environment_digest))
     {
         return Err(PgError::PreconditionsChanged);
     }
@@ -177,32 +255,30 @@ pub(super) async fn evaluate(
         || scope_violation
         || run.get::<_, String>("state") != "running"
         || run.get::<_, bool>("recovery_blocked")
-        || !run.get::<_, bool>("lease_live")
+        || (stored.mode == ExecutionSettlementMode::IndependentWorkspaceV1
+            && !run.get::<_, bool>("lease_live"))
         || run.get::<_, String>("contract_hash") != command.expected_contract_hash
         || contract.execution_settlement.as_ref() != Some(&stored)
     {
         return Ok(None);
     }
-    match claims::require_live(
+    let lease_observation = match terminal_lease(
         tx,
         tenant,
         project,
         auth,
         command,
         ownership,
-        run.get::<_, Option<String>>("session_id")
-            .as_deref()
-            .ok_or(PgError::Forbidden)?,
-        &declaration.claim_id,
-        &declaration.expected_fence,
-        &declaration.expected_lease_version,
+        run,
+        &stored,
+        declaration,
     )
     .await
     {
-        Ok(_) => {}
+        Ok(observation) => observation,
         Err(PgError::LeaseExpired) => return Ok(None),
         Err(error) => return Err(error),
-    }
+    };
     let protected: bool = tx.query_one(
         "SELECT
           NOT EXISTS(SELECT 1 FROM awr_team.work_contracts c JOIN awr_team.work_scopes s
@@ -227,6 +303,7 @@ pub(super) async fn evaluate(
         policy: stored,
         declaration: declaration.clone(),
         resources,
+        lease_observation,
     }))
 }
 
@@ -263,6 +340,31 @@ pub(super) async fn release(
 }
 
 impl Settled {
+    pub(super) async fn recheck_lease(
+        &mut self,
+        tx: &Transaction<'_>,
+        tenant: &str,
+        project: &str,
+        auth: &ReaderAuthority,
+        command: &WorkstreamCommand,
+        ownership: i64,
+        run: &Row,
+    ) -> PgResult<()> {
+        self.lease_observation = terminal_lease(
+            tx,
+            tenant,
+            project,
+            auth,
+            command,
+            ownership,
+            run,
+            &self.policy,
+            &self.declaration,
+        )
+        .await?;
+        Ok(())
+    }
+
     pub(super) fn bind_payload(&self, payload: &mut Value, run: &Row, session_version: &str) {
         let fields = json!({
             "execution_id": run.get::<_, String>("id"), "work_id": run.get::<_, String>("work_id"),
@@ -278,6 +380,10 @@ impl Settled {
             .as_object_mut()
             .expect("caller payload")
             .extend(fields.as_object().unwrap().clone());
+        // V1 receipts keep their original closed shape and canonical digest.
+        if let Some(observation) = &self.lease_observation {
+            payload["lease_observation"] = json!(observation);
+        }
     }
 }
 
@@ -312,6 +418,8 @@ struct WorkspaceReceipt {
     artifact_verified: bool,
     settlement_scope: String,
     resource_proof: Vec<ResourceProof>,
+    #[serde(default)]
+    lease_observation: Option<LeaseObservation>,
 }
 
 /// The caller supplies a digest only after re-reading and verifying artifact bytes.
@@ -338,6 +446,33 @@ pub(crate) async fn verify_receipt(
     let stored = policy(run)
         .map_err(|_| PgError::EvidenceInvalid)?
         .ok_or(PgError::EvidenceInvalid)?;
+    match (stored.mode, &receipt.lease_observation) {
+        (ExecutionSettlementMode::IndependentWorkspaceV1, None)
+            if payload.get("lease_observation").is_none() => {}
+        (ExecutionSettlementMode::IndependentWorkspaceV2, Some(observation)) => {
+            let valid: bool = tx
+                .query_one(
+                    "SELECT CASE WHEN $1='live' THEN $2::text::timestamptz>$3::text::timestamptz
+                 ELSE $2::text::timestamptz<=$3::text::timestamptz END",
+                    &[
+                        &if observation.basis == LeaseBasis::Live {
+                            "live"
+                        } else {
+                            "expired_current"
+                        },
+                        &observation.expires_at,
+                        &observation.observed_at,
+                    ],
+                )
+                .await
+                .map_err(|_| PgError::EvidenceInvalid)?
+                .get(0);
+            if !valid {
+                return Err(PgError::EvidenceInvalid);
+            }
+        }
+        _ => return Err(PgError::EvidenceInvalid),
+    }
     let declaration = &receipt.workspace_settlement;
     let terminal_version = version(&receipt.execution_version)
         .map_err(|_| PgError::EvidenceInvalid)?
@@ -433,7 +568,7 @@ pub(crate) async fn verify_receipt(
         return Err(PgError::EvidenceInvalid);
     }
     Ok(
-        json!({"execution_basis": "caller_asserted_workspace_settled", "settlement_mode": "independent_workspace_v1",
+        json!({"execution_basis": "caller_asserted_workspace_settled", "settlement_mode": stored.mode,
         "workspace_id": stored.workspace_id, "terminal_reported": true, "artifact_verified": true,
         "effects_settled": true, "settlement_scope": "admitted_workspace_paths"}),
     )
