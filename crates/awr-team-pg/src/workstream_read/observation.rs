@@ -73,7 +73,7 @@ pub(super) async fn read(
           AND cl.expires_at>clock_timestamp()) DESC, (s.state='active') DESC,
           c.created_at DESC NULLS LAST, s.id DESC LIMIT 1",
         &[&tenant,&project,&work,&stream,&ownership,&requested_session,&auth.epoch]).await?;
-    let mut data = json!({"work_id":work,"contract_hash":contract,"observed_at_unix_ms":observed,
+    let mut data = json!({"work_id":work,"workstream_id":stream,"contract_hash":contract,"observed_at_unix_ms":observed,
         "definition_state":definition_state,
         "runtime":runtime,"responsibility":responsibility,"session":null,"checkpoint":null,"claim":null,
         "execution":null,"pr_deliveries":[],"client":null,"progress":null,"model":null,"usage":null,
@@ -140,9 +140,24 @@ pub(super) async fn read(
     );
     let owns_session = data["session"]["actor_id"] == auth.actor_id
         && data["session"]["client_id"] == auth.client_id;
-    data["guidance"] = crate::workstream_command::task_intake::guidance(
+    // Keep the added read futures on the heap. Preparation is nested inside
+    // handoff/recovery commands; inlining optional advice into those futures
+    // otherwise enlarges their caller's stack even when no fact is returned.
+    data["collaboration"] = Box::pin(super::inbox::facts(
+        tx, tenant, project, auth, work, &contract, ownership,
+    ))
+    .await?;
+    let ready = Box::pin(crate::workstream_command::task_intake::dependencies_ready(
+        tx, tenant, project, auth, work, stream,
+    ))
+    .await?;
+    data["dependencies_ready_advisory"] = json!(ready);
+    let stream_id = stream.parse().map_err(|_| PgError::SourceDivergence)?;
+    let role_hint = super::inbox::condition(auth, &data, stream_id, work, ready);
+    let hint = crate::workstream_command::task_intake::guidance(
         &data,
-        super::guidance::select(&data, true, owns_session),
+        super::guidance::with_collaboration(&data, true, owns_session, role_hint),
     );
+    data["guidance"] = super::guidance::authorized(auth, stream_id, work, hint);
     Ok(data)
 }

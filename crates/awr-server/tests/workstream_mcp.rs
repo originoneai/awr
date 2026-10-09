@@ -19,6 +19,86 @@ use std::time::Duration;
 
 type Client = RunningService<RoleClient, ()>;
 
+#[tokio::test]
+async fn shared_role_guidance_has_http_mcp_reconnect_and_revocation_parity() {
+    let (_guard, admin, _db, store) = setup().await;
+    enable_writes(&admin).await;
+    admin.batch_execute("UPDATE awr_team.project_memberships SET assignment_grant=true WHERE actor_id='agent';
+        INSERT INTO awr_team.review_rounds(tenant_id,project_id,id,work_id,round_index,bundle_hash,contract_hash,author_actor_id,state)
+        SELECT tenant_id,project_id,'round-a',work_id,1,'bundle-a',contract_hash,'reviewer','open' FROM awr_team.work_contracts WHERE work_id='a'").await.unwrap();
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let caps = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"capabilities"}),
+        false,
+    )
+    .await;
+    assert_eq!(
+        caps["work_guidance"]["optional_advice_in_context_hash"],
+        false
+    );
+    let page = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.inbox"}),
+        false,
+    )
+    .await;
+    let expected = page["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["work_id"] == "a")
+        .unwrap()["guidance"]
+        .clone();
+    assert_eq!(expected["code"], "review");
+    for op in ["work.observe", "work.prepare", "work.snapshot"] {
+        let args = json!({"protocol_version":1,"op":op,"work_id":"a","max_context_bytes":65536});
+        let response = call(&client, "awr_team_query", args.clone(), false).await;
+        let hint = if op == "work.snapshot" {
+            &response["data"]["observation"]["guidance"]
+        } else {
+            &response["data"]["guidance"]
+        };
+        assert_eq!(hint, &expected);
+        let via_http: Value = http()
+            .post(format!("{}/one/query", server.url))
+            .bearer_auth(A)
+            .json(&args)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(via_http["data"]["guidance"], response["data"]["guidance"]);
+    }
+    call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.observe","work_id":"a","max_context_bytes":1}),
+        true,
+    )
+    .await;
+    client.cancel().await.unwrap();
+    let resumed = connect(&server, "one", A).await.unwrap();
+    let args = json!({"protocol_version":1,"op":"work.observe","work_id":"a"});
+    let before = call(&resumed, "awr_team_query", args.clone(), false).await;
+    assert_eq!(before["data"]["guidance"], expected);
+    admin.batch_execute("UPDATE awr_team.workstream_grants SET can_write=false,grant_version=grant_version+1 WHERE client_id='cli-a'").await.unwrap();
+    let after = call(&resumed, "awr_team_query", args, false).await;
+    assert_eq!(after["data"]["guidance"]["code"], "inspect_only");
+    assert_eq!(
+        after["data"]["collaboration"],
+        before["data"]["collaboration"]
+    );
+    resumed.cancel().await.unwrap();
+}
+
 struct Server {
     url: String,
     task: tokio::task::JoinHandle<()>,
@@ -829,7 +909,8 @@ async fn mcp_feedback_is_discoverable_nonterminal_and_does_not_change_consumed_c
         after["data"]["context_hash"],
         before["data"]["context_hash"]
     );
-    assert_eq!(after["data"]["guidance"]["code"], "wait_for_change");
+    assert_eq!(after["data"]["guidance"]["code"], "blocked");
+    assert_eq!(after["data"]["guidance"]["action"]["op"], "work.observe");
     assert!(after["data"]["guidance"].to_string().len() < 900);
     let observation = call(
         &client,
@@ -839,6 +920,21 @@ async fn mcp_feedback_is_discoverable_nonterminal_and_does_not_change_consumed_c
     )
     .await;
     assert_eq!(observation["data"]["progress"]["phase"], "waiting_user");
+    assert_eq!(observation["data"]["guidance"], after["data"]["guidance"]);
+    let inbox = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.inbox"}),
+        false,
+    )
+    .await;
+    let waiting = inbox["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["work_id"] == "a")
+        .unwrap();
+    assert_eq!(waiting["guidance"], after["data"]["guidance"]);
     assert_eq!(
         observation["data"]["missing"]["model"],
         "client_collection_unsupported"
