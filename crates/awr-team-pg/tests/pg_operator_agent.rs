@@ -72,6 +72,367 @@ async fn apply(admin: &mut Client, p: &AgentProvisionPlan, request: &str) -> Val
     .unwrap()
 }
 
+async fn apply_access(admin: &mut Client, plan: &AccessPlan, request: &str) {
+    let preview = OperatorAccess::preview(admin, plan).await.unwrap();
+    OperatorAccess::apply(
+        admin,
+        plan,
+        request,
+        preview["state_digest"].as_str().unwrap(),
+        preview["plan_digest"].as_str().unwrap(),
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn pure_business_duties_can_start_checkpoint_and_end_without_development_authority() {
+    use awr_team::BusinessRole;
+    use std::collections::BTreeSet;
+
+    for (duty, action, template) in [
+        (
+            BusinessRole::Reviewer,
+            AuthorizedAction::Review,
+            "developer",
+        ),
+        (
+            BusinessRole::Supervisor,
+            AuthorizedAction::AssignWork,
+            "maintainer",
+        ),
+        (
+            BusinessRole::Deliverer,
+            AuthorizedAction::FinalizeDelivery,
+            "maintainer",
+        ),
+    ] {
+        let (_guard, mut admin, _, store) = setup().await;
+        let mut access = access_plan();
+        access.role = template.into();
+        access.business_roles = Some(BTreeSet::from([duty]));
+        access.agent_review = duty == BusinessRole::Reviewer;
+        access.assignment_grant = Some(duty == BusinessRole::Supervisor);
+        apply_access(&mut admin, &access, "pure-duty-access").await;
+        let mut provision = plan(&admin).await;
+        provision.authorization.actions = BTreeSet::from([AuthorizedAction::Inspect, action]);
+        apply(&mut admin, &provision, "pure-duty-provision").await;
+        let count: i64 = admin
+            .query_one(
+                "SELECT count(*) FROM awr_team.sessions WHERE actor_id='native-agent'",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(count, 0, "the participant must have no preseeded session");
+        let current = prepare(&store, TOKEN, "a").await;
+        let started = store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                TOKEN,
+                command(
+                    &current,
+                    "pure-duty-start",
+                    "session.start",
+                    json!({"conversation_id":"pure-business-duty"}),
+                ),
+            )
+            .await
+            .expect("the duty must support its own first-use session");
+        assert_eq!(started["receipt"]["execution_authorized"], false);
+        let session = started["receipt"]["data"]["session_id"].as_str().unwrap();
+        let current = prepare(&store, TOKEN, "a").await;
+        for (request, op, args) in [
+            (
+                "pure-duty-no-claim",
+                "claim.acquire",
+                json!({"session_id":session,"expected_session_version":"1",
+                    "expected_work_version":current["data"]["runtime"]["work_version"].as_str().unwrap_or("0"),
+                    "ttl_seconds":60}),
+            ),
+            (
+                "pure-duty-no-execution",
+                "execution.prepare",
+                json!({"session_id":session,"expected_session_version":"1","claim_id":"missing",
+                    "expected_fence":"1","expected_lease_version":"1","expected_work_version":"1",
+                    "input_digest":"a".repeat(64),"declared_scope":["src/example.rs"]}),
+            ),
+            (
+                "pure-duty-no-other-session",
+                "session.end",
+                json!({"session_id":"session-a","expected_session_version":"1"}),
+            ),
+        ] {
+            let before = snapshot(&admin).await;
+            assert!(
+                matches!(
+                    store
+                        .commands()
+                        .execute(TENANT, PROJECT, TOKEN, command(&current, request, op, args))
+                        .await,
+                    Err(PgError::Forbidden)
+                ),
+                "{duty:?}: {op} must not gain unrelated authority"
+            );
+            assert_eq!(snapshot(&admin).await, before);
+        }
+        let mut outside = query("work.prepare");
+        outside.work_id = Some("c".into());
+        assert!(matches!(
+            store.query(TENANT, PROJECT, TOKEN, outside).await,
+            Err(PgError::Forbidden)
+        ));
+        let saved = store.commands().execute(TENANT, PROJECT, TOKEN,
+            command(&current, "pure-duty-checkpoint", "session.checkpoint",
+                json!({"session_id":session,"expected_session_version":"1",
+                    "context_hash":current["data"]["context_hash"],
+                    "next_action":"Inspect the pending business result","open_loops":[],
+                    "progress":{"phase":"reviewing","summary":"Read the current material; waiting for a submitted result."}}))).await.unwrap();
+        assert_eq!(saved["receipt"]["data"]["session_version"], "2");
+        let current = prepare(&store, TOKEN, "a").await;
+        let ended = store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                TOKEN,
+                command(
+                    &current,
+                    "pure-duty-end",
+                    "session.end",
+                    json!({"session_id":session,"expected_session_version":"2"}),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ended["receipt"]["data"]["state"], "ended");
+        let row = admin
+            .query_one(
+                "SELECT actor_id,client_id,(SELECT count(*) FROM awr_team.claims),
+                (SELECT count(*) FROM awr_team.executions),
+                (SELECT count(*) FROM awr_team.evidence)
+             FROM awr_team.sessions WHERE id=$1",
+                &[&session],
+            )
+            .await
+            .unwrap();
+        assert_eq!(row.get::<_, String>(0), "native-agent");
+        assert_eq!(row.get::<_, String>(1), "native-client");
+        for column in 2..5 {
+            assert_eq!(row.get::<_, i64>(column), 0);
+        }
+    }
+}
+
+#[tokio::test]
+async fn pure_review_session_ownership_stays_bound_to_the_credential_client() {
+    use awr_team::BusinessRole;
+    use std::collections::BTreeSet;
+
+    let (_guard, mut admin, db, store) = setup().await;
+    let mut access = access_plan();
+    access.business_roles = Some(BTreeSet::from([BusinessRole::Reviewer]));
+    access.agent_review = true;
+    apply_access(&mut admin, &access, "reviewer-first-client").await;
+    let mut provision = plan(&admin).await;
+    provision.authorization.actions =
+        BTreeSet::from([AuthorizedAction::Inspect, AuthorizedAction::Review]);
+    apply(&mut admin, &provision, "reviewer-first-delegation").await;
+    let started = store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            TOKEN,
+            command(
+                &prepare(&store, TOKEN, "a").await,
+                "reviewer-first-session",
+                "session.start",
+                json!({"conversation_id":"first-client"}),
+            ),
+        )
+        .await
+        .unwrap();
+    let session = started["receipt"]["data"]["session_id"].as_str().unwrap();
+
+    let other_token = format!("awr1.native-other.{}", "e".repeat(64));
+    access.client_id = "native-other-client".into();
+    let credential = access.credential.as_mut().unwrap();
+    credential.id = "native-other".into();
+    credential.secret_hash = workstream_credential_hash(&other_token).unwrap();
+    apply_access(&mut admin, &access, "reviewer-second-client").await;
+    let mut other_grant = provision.authorization.clone();
+    other_grant.id = "native-other-authorization".into();
+    other_grant.client_id = access.client_id.clone();
+    let authorizations =
+        AuthorizationStore::from_config(common::with_app_role(&common::test_config(), &db));
+    authorizations
+        .issue(
+            TENANT,
+            PROJECT,
+            &IssueAuthorizationRequest {
+                request_key: "reviewer-second-delegation".into(),
+                authorization: other_grant,
+            },
+        )
+        .await
+        .unwrap();
+    let current = prepare(&store, &other_token, "a").await;
+    let before = snapshot(&admin).await;
+    assert!(matches!(
+        store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                &other_token,
+                command(
+                    &current,
+                    "reviewer-other-client-end",
+                    "session.end",
+                    json!({"session_id":session,"expected_session_version":"1"})
+                )
+            )
+            .await,
+        Err(PgError::Forbidden)
+    ));
+    assert_eq!(snapshot(&admin).await, before);
+    // The second client really has session authority, but only over its own session.
+    let other = store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            &other_token,
+            command(
+                &current,
+                "reviewer-other-client-start",
+                "session.start",
+                json!({"conversation_id":"second-client"}),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_ne!(other["receipt"]["data"]["session_id"], json!(session));
+}
+
+#[tokio::test]
+async fn pure_review_session_rechecks_live_access_and_delegation_on_commands_and_replays() {
+    use awr_team::BusinessRole;
+    use std::collections::BTreeSet;
+
+    let (_guard, mut admin, db, store) = setup().await;
+    let mut access = access_plan();
+    access.agent_review = true;
+    access.business_roles = Some(BTreeSet::from([BusinessRole::Reviewer]));
+    apply_access(&mut admin, &access, "reviewer-access").await;
+    let mut provision = plan(&admin).await;
+    provision.authorization.actions =
+        BTreeSet::from([AuthorizedAction::Inspect, AuthorizedAction::Review]);
+    apply(&mut admin, &provision, "reviewer-delegation").await;
+    let start = command(
+        &prepare(&store, TOKEN, "a").await,
+        "reviewer-session",
+        "session.start",
+        json!({"conversation_id":"reviewer"}),
+    );
+    let started = store
+        .commands()
+        .execute(TENANT, PROJECT, TOKEN, start.clone())
+        .await
+        .unwrap();
+    let session = started["receipt"]["data"]["session_id"].as_str().unwrap();
+    let end = command(
+        &prepare(&store, TOKEN, "a").await,
+        "reviewer-end",
+        "session.end",
+        json!({"session_id":session,"expected_session_version":"1"}),
+    );
+
+    for (change, undo) in [
+        (
+            "UPDATE awr_team.workstream_grants SET can_write=false WHERE actor_id='native-agent'",
+            "UPDATE awr_team.workstream_grants SET can_write=true WHERE actor_id='native-agent'",
+        ),
+        (
+            "UPDATE awr_team.agent_authorizations SET body_json=jsonb_set(body_json,'{expires_at_ms}','0'),expires_at_ms=0 WHERE id='native-authorization'",
+            "UPDATE awr_team.agent_authorizations SET body_json=jsonb_set(body_json,'{expires_at_ms}',to_jsonb($1::bigint)),expires_at_ms=$1 WHERE id='native-authorization'",
+        ),
+        (
+            "UPDATE awr_team.person_agent_bindings SET status='disabled' WHERE id='native-binding'",
+            "UPDATE awr_team.person_agent_bindings SET status='active' WHERE id='native-binding'",
+        ),
+    ] {
+        admin.batch_execute(change).await.unwrap();
+        let before = snapshot(&admin).await;
+        for request in [&end, &start] {
+            assert!(
+                matches!(
+                    store
+                        .commands()
+                        .execute(TENANT, PROJECT, TOKEN, request.clone())
+                        .await,
+                    Err(PgError::Forbidden)
+                ),
+                "{change}"
+            );
+        }
+        assert_eq!(snapshot(&admin).await, before);
+        if undo.contains("$1") {
+            admin
+                .execute(undo, &[&provision.authorization.expires_at_ms.unwrap()])
+                .await
+                .unwrap();
+        } else {
+            admin.batch_execute(undo).await.unwrap();
+        }
+    }
+    access.credential = None;
+    access.business_roles = Some(BTreeSet::from([BusinessRole::Observer]));
+    apply_access(&mut admin, &access, "reviewer-duty-narrowed").await;
+    for request in [&end, &start] {
+        assert!(matches!(
+            store
+                .commands()
+                .execute(TENANT, PROJECT, TOKEN, request.clone())
+                .await,
+            Err(PgError::Forbidden)
+        ));
+    }
+    access.business_roles = Some(BTreeSet::from([BusinessRole::Reviewer]));
+    apply_access(&mut admin, &access, "reviewer-duty-restored").await;
+    let authorizations =
+        AuthorizationStore::from_config(common::with_app_role(&common::test_config(), &db));
+    authorizations
+        .revoke(
+            TENANT,
+            PROJECT,
+            &RevokeAuthorizationRequest {
+                request_key: "reviewer-revoked".into(),
+                authorization_id: provision.authorization.id.clone(),
+                revoked_by: provision.authorization.responsible_person_id.clone(),
+                revoked_at_ms: provision.authorization.created_at_ms + 1,
+                reason: "review duty ended".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let before = snapshot(&admin).await;
+    for request in [&end, &start] {
+        assert!(matches!(
+            store
+                .commands()
+                .execute(TENANT, PROJECT, TOKEN, request.clone())
+                .await,
+            Err(PgError::Forbidden)
+        ));
+    }
+    assert_eq!(snapshot(&admin).await, before);
+}
+
 #[tokio::test]
 async fn supervisor_project_provisioning_requires_explicit_membership_ceiling_and_all_streams() {
     let (_guard, mut admin, _, _) = setup().await;

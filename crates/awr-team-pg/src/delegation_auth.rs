@@ -42,12 +42,14 @@ pub fn tmcp_actions_for_authorized(action: AuthorizedAction) -> BTreeSet<Action>
             // Independent review still needs `independent_review_grant` on the
             // TMCP scope; mapping alone never sets that flag.
             out.insert(ReviewDecide);
+            out.insert(SessionMaintainOwn);
         }
         AuthorizedAction::ProposePlanning => {
             out.insert(PlanningPropose);
         }
         AuthorizedAction::AssignWork => {
             out.insert(WorkAssign);
+            out.insert(SessionMaintainOwn);
         }
         AuthorizedAction::EditPlanning => {
             out.insert(PlanningEditDraft);
@@ -60,6 +62,7 @@ pub fn tmcp_actions_for_authorized(action: AuthorizedAction) -> BTreeSet<Action>
         }
         AuthorizedAction::FinalizeDelivery => {
             out.insert(DeliveryFinalize);
+            out.insert(SessionMaintainOwn);
         }
         AuthorizedAction::ManageAuthorization => {}
     }
@@ -757,17 +760,34 @@ mod tests {
 
     #[test]
     fn supervisor_actions_are_explicit_separate_and_round_trip() {
-        for (authorized, product) in [
-            (AuthorizedAction::AssignWork, Action::WorkAssign),
-            (AuthorizedAction::EditPlanning, Action::PlanningEditDraft),
-            (AuthorizedAction::ApprovePlanning, Action::PlanningApprove),
-            (AuthorizedAction::PublishPlanning, Action::PlanningPublish),
-            (AuthorizedAction::FinalizeDelivery, Action::DeliveryFinalize),
+        for (authorized, product, supports_session) in [
+            (AuthorizedAction::AssignWork, Action::WorkAssign, true),
+            (
+                AuthorizedAction::EditPlanning,
+                Action::PlanningEditDraft,
+                false,
+            ),
+            (
+                AuthorizedAction::ApprovePlanning,
+                Action::PlanningApprove,
+                false,
+            ),
+            (
+                AuthorizedAction::PublishPlanning,
+                Action::PlanningPublish,
+                false,
+            ),
+            (
+                AuthorizedAction::FinalizeDelivery,
+                Action::DeliveryFinalize,
+                true,
+            ),
         ] {
-            assert_eq!(
-                tmcp_actions_for_authorized(authorized),
-                BTreeSet::from([product])
-            );
+            let mut expected = BTreeSet::from([product]);
+            if supports_session {
+                expected.insert(Action::SessionMaintainOwn);
+            }
+            assert_eq!(tmcp_actions_for_authorized(authorized), expected);
             assert_eq!(
                 AuthorizedAction::parse(authorized.as_str()).unwrap(),
                 authorized
@@ -791,6 +811,24 @@ mod tests {
                     .contains(&Action::WorkAssign)
             );
         }
+    }
+
+    #[test]
+    fn business_session_support_never_maps_to_development_or_extra_duties() {
+        for (authorized, product) in [
+            (AuthorizedAction::Review, Action::ReviewDecide),
+            (AuthorizedAction::AssignWork, Action::WorkAssign),
+            (AuthorizedAction::FinalizeDelivery, Action::DeliveryFinalize),
+        ] {
+            assert_eq!(
+                tmcp_actions_for_authorized(authorized),
+                BTreeSet::from([product, Action::SessionMaintainOwn])
+            );
+        }
+        assert_eq!(
+            tmcp_actions_for_authorized(AuthorizedAction::Inspect),
+            BTreeSet::from([Action::WorkRead])
+        );
     }
 
     #[test]
