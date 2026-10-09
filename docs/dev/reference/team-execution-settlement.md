@@ -114,6 +114,14 @@ digest references the measured environment; keep credentials and environment
 dumps outside the record. For a successful workspace run, `output_digest` is
 the digest of the artifact bundle that will be submitted for review.
 
+MCP command discovery exposes this optional declaration and its closed fields.
+Construct the review artifact before reporting success, hash its exact bytes,
+then submit the same bytes through `artifact_text` or decoded `artifact_hex`.
+Keep `payload.output_digest` and the execution report bound to that hash. The
+server separately checks the submitted bytes; passing tests alone cannot supply
+the stopped/effect assertions. Other execution policies retain their distinct
+output and artifact digest semantics.
+
 Settlement requires a running caller-managed V3 execution, a current matching
 contract, the live claim and fence, and the exact admitted path reservations.
 The admitted scope must be nonempty and unique. Unknown or shared resources,

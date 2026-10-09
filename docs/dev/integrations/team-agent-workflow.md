@@ -137,6 +137,18 @@ Replayed receipts are historical facts, not permission to run effects again.
 Unknown execution effects require inspection and authorized reconciliation;
 creating a new session does not bypass that requirement.
 
+For an admitted `caller_managed` execution whose current contract selects
+`independent_workspace_v1`, a terminal `execution.report` can include the explicit
+`workspace_settlement` declaration exposed in MCP discovery. Use the admitted
+workspace and input digest, a measured non-sensitive environment digest, and the
+current owned claim/fence/lease versions. Assert `executor_stopped` and
+`no_external_effects` only when both facts hold. For success, compute
+`output_digest` from the exact artifact bytes you will submit as evidence and
+retain those bytes unchanged. An omitted or unknown declaration records the
+outcome conservatively and requires recovery; it does not settle the workspace.
+Recheck after contract, lease, execution or effect changes. See the
+[ordinary workspace report](../reference/team-execution-settlement.md#report-an-ordinary-workspace-outcome).
+
 Reconnecting MCP does not end a durable work session or renew its lease. A second
 Agent belonging to the same person is not an independent reviewer. Keep
 implementation, verification, GitHub merge and AWR acceptance as separate facts.
