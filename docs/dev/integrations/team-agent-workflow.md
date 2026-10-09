@@ -77,12 +77,20 @@ arguments. Each query/command rechecks the caller's current permissions.
 | Finishing execution or stopping | Use `execution.report` only for a terminal outcome, then follow inspection/reconciliation. Attach version-bound evidence. Release claims and end sessions after active work and unknown outcomes are settled. | Interruption, handoff, unknown effects or changed context. |
 | Delivering | Submit evidence and request review through `delivery.submit_and_request_review` or `review.open`. An authorized independent person reviews; authorized finalization follows acceptance policy. | PR head, contract or artifact changes; returned review. |
 
-`work.prepare` and `work.observe` return one short `guidance` item with its
-condition (`when`), factual basis (`because`), next action and reevaluation
-trigger (`recheck_on`). It does not grant execution rights. Recovery and registered
-deliveries take precedence over old checkpoint instructions. Small context budgets
-may omit this optional advice while preserving the required context; query
-`work.observe` for it when needed.
+`work.prepare`, `work.snapshot` and `work.observe` share the inbox's current
+repository-neutral candidate, check, review, integration and source-publication
+facts. Each returns one short `guidance` item: condition (`when`), at most three
+factual basis entries (`because`), one action and reevaluation trigger
+(`recheck_on`). Keep following `action.op`; `action.query`, when present, supplies
+the authorized detail selector. Read authority and each action's covering grant
+are checked separately. Advice grants no rights and never changes the required
+context hash. Unknown effects, expired execution and incomplete required context
+retain priority; employee intake keeps its own session and responsibility chain.
+Small preparation budgets may omit optional advice without removing required
+context. `work.observe` bounds the complete UTF-8 JSON response with
+`max_context_bytes` (default 65,536); increase the budget on `ResponseTooLarge`.
+Passed external checks remain observations, never AWR approval. For an unknown
+integration, inspect its original request instead of repeating the effect.
 
 ## Current team inbox
 

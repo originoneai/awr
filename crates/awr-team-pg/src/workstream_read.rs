@@ -175,6 +175,7 @@ impl WorkstreamQuery {
                     self.op.as_str(),
                     "work.prepare"
                         | "work.snapshot"
+                        | "work.observe"
                         | "work.inbox"
                         | "source.content"
                         | "artifact.content"
@@ -677,6 +678,9 @@ pub(crate) async fn read(
             "deduplication":"semantic_item_key","handled_items":"disappear_on_refresh",
             "pagination":"last_evaluated_visible_work","max_basis_items":3,
             "default_max_bytes":65536,"advisory_only":true,"provider_webhook_required":false});
+        caps["work_guidance"] = json!({"version":1,"queries":["work.prepare","work.snapshot","work.observe","work.inbox"],
+            "basis":"shared_current_collaboration_facts","max_basis_items":3,"action_permissions":"one_current_covering_grant",
+            "optional_advice_in_context_hash":false,"observe_default_max_bytes":65536,"provider_webhook_required":false});
         caps["neutral_delivery"] = json!({
             "protocol":"awr-delivery-sync-v1",
             "facts_query":"delivery.neutral.inspect",
@@ -1144,6 +1148,7 @@ pub(crate) async fn read(
                 hint = guidance::select(&observed, false, false);
             }
             hint = crate::workstream_command::task_intake::guidance(&observed, hint);
+            hint = guidance::authorized(auth, resolved.workstream_id, work, hint);
             let mut with_hint = data.clone();
             with_hint["guidance"] = hint.clone();
             if serde_json::to_vec(&with_hint)
@@ -1273,10 +1278,17 @@ pub(crate) async fn read(
         }
         _ => return Err(PgError::Unsupported("workstream query operation".into())),
     };
-    Ok(
-        json!({"protocol_version":1,"workstream_id":stream,"authority_version":resolved.authority_version.to_string(),"scope_id":"main","selection_basis":resolved.basis,
-        "coordinator_epoch":auth.epoch,"project_status":auth.project_status,"source_snapshot_id":auth.snapshot,"project_revision":auth.revision.to_string(),"data":data}),
-    )
+    let result = json!({"protocol_version":1,"workstream_id":stream,"authority_version":resolved.authority_version.to_string(),"scope_id":"main","selection_basis":resolved.basis,
+        "coordinator_epoch":auth.epoch,"project_status":auth.project_status,"source_snapshot_id":auth.snapshot,"project_revision":auth.revision.to_string(),"data":data});
+    if q.op == "work.observe"
+        && serde_json::to_vec(&result)
+            .map_err(|_| PgError::SourceDivergence)?
+            .len()
+            > q.max_context_bytes.unwrap_or(65_536)
+    {
+        return Err(PgError::ResponseTooLarge);
+    }
+    Ok(result)
 }
 
 fn safe_relative_source_path(path: &str) -> PgResult<()> {

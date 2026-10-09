@@ -135,7 +135,13 @@ pub(super) async fn facts(
     Ok(data)
 }
 
-fn permits(auth: &ReaderAuthority, action: Action, op: &str, stream: Id, work: &str) -> bool {
+pub(super) fn permits(
+    auth: &ReaderAuthority,
+    action: Action,
+    op: &str,
+    stream: Id,
+    work: &str,
+) -> bool {
     crate::delegation_auth::navigation_authority(auth, action, stream, work).is_ok_and(|scoped| {
         [
             crate::workstream_auth::CommandAuthPhase::Admission,
@@ -146,6 +152,39 @@ fn permits(auth: &ReaderAuthority, action: Action, op: &str, stream: Id, work: &
             crate::workstream_auth::authorize_command(&scoped, stream, work, op, phase).is_ok()
         })
     })
+}
+
+/// Single-work reads and discovery use the same role and covering-grant checks.
+pub(super) fn condition(
+    auth: &ReaderAuthority,
+    data: &Value,
+    stream: Id,
+    work: &str,
+    dependencies_ready: bool,
+) -> Option<Value> {
+    let enabled = data["definition_state"] == "enabled";
+    select(
+        data,
+        enabled && permits(auth, Action::WorkAssign, "task.assign", stream, work),
+        enabled
+            && permits(
+                auth,
+                Action::ClaimManageOwn,
+                "task.claim_available",
+                stream,
+                work,
+            ),
+        permits(auth, Action::ReviewDecide, "review.decide", stream, work)
+            && data["collaboration"]["review"]["author_actor_id"] != auth.actor_id,
+        permits(
+            auth,
+            Action::DeliveryFinalize,
+            "delivery.finalize",
+            stream,
+            work,
+        ),
+        dependencies_ready,
+    )
 }
 
 /// One current condition and one authorized inspection. Commands reauthorize
@@ -326,7 +365,7 @@ fn select(
         next["request_id"] = c["integration"]["id"].clone();
     }
     Some(json!({"code":code,"when":when,"because":[basis],
-        "action":{"query":next,"note":note},
+        "action":{"op":op,"query":next,"note":note},
         "recheck_on":"responsibility, blocker, dependency, candidate, evidence, review, effect, source or permission changes"}))
 }
 
@@ -368,7 +407,7 @@ pub(super) async fn read(
         // Resolve reading separately from the covering grant for each action.
         let reader =
             crate::delegation_auth::navigation_authority(auth, Action::WorkRead, stream_id, &work)?;
-        let mut observed = observation::read(
+        let observed = observation::read(
             tx,
             tenant,
             project,
@@ -379,49 +418,8 @@ pub(super) async fn read(
             None,
         )
         .await?;
-        observed["workstream_id"] = json!(stream);
-        observed["collaboration"] = facts(
-            tx,
-            tenant,
-            project,
-            &reader,
-            &work,
-            &row.get::<_, String>(2),
-            row.get(4),
-        )
-        .await?;
-        let ready = crate::workstream_command::task_intake::dependencies_ready(
-            tx, tenant, project, &reader, &work, &stream,
-        )
-        .await?;
-        let enabled = row.get::<_, String>(5) == "enabled";
-        let hint = select(
-            &observed,
-            enabled && permits(auth, Action::WorkAssign, "task.assign", stream_id, &work),
-            enabled
-                && permits(
-                    auth,
-                    Action::ClaimManageOwn,
-                    "task.claim_available",
-                    stream_id,
-                    &work,
-                ),
-            permits(
-                auth,
-                Action::ReviewDecide,
-                "review.decide",
-                stream_id,
-                &work,
-            ) && observed["collaboration"]["review"]["author_actor_id"] != auth.actor_id,
-            permits(
-                auth,
-                Action::DeliveryFinalize,
-                "delivery.finalize",
-                stream_id,
-                &work,
-            ),
-            ready,
-        );
+        let ready = observed["dependencies_ready_advisory"] == true;
+        let hint = condition(auth, &observed, stream_id, &work, ready);
         if let Some(hint) = hint {
             let semantic = json!({"work":work,"contract":observed["contract_hash"],"code":hint["code"],
                 "responsibility":observed["responsibility"]["version"],"runtime":observed["runtime"],

@@ -110,6 +110,12 @@ pub(crate) async fn resolve_agent_delegation(
     }
 
     let candidates = effective_delegations(tx, auth, project_id, session_id, now_ms).await?;
+    if requested_action == Some(Action::WorkRead) && work_id.is_some() {
+        // Keep action candidates only for advice on this read. The selected
+        // WorkRead grant still binds disclosure and consumed context; commands
+        // resolve their own grant afresh and never union these candidates.
+        auth.read_delegations = Some(candidates.clone());
+    }
     let task_stream = if let Some(work) = work_id.filter(|w| !w.is_empty()) {
         crate::tx::bind_workstream_scope(tx, &auth.tenant_id, project_id).await?;
         tx.query_opt(

@@ -1,6 +1,81 @@
 //! One bounded, deterministic next-step hint. Advice never grants execution.
 use serde_json::{Value, json};
 
+/// Protective execution advice retains priority over coordination and delivery.
+pub(super) fn with_collaboration(
+    data: &Value,
+    context_complete: bool,
+    owns_session: bool,
+    role_hint: Option<Value>,
+) -> Value {
+    let fallback = select(data, context_complete, owns_session);
+    if matches!(
+        fallback["code"].as_str(),
+        Some(
+            "restore_context"
+                | "confirm_controlled_execution"
+                | "reconcile_execution"
+                | "inspect_recovery"
+                | "refresh_execution"
+                | "inspect_expired_claim"
+        )
+    ) {
+        return fallback;
+    }
+    if fallback["code"] == "renew_claim"
+        && !role_hint.as_ref().is_some_and(|hint| {
+            matches!(
+                hint["code"].as_str(),
+                Some("recovery" | "integration_unknown")
+            )
+        })
+    {
+        return fallback;
+    }
+    // Employee intake needs its actual session and responsibility chain. The
+    // shared condition's preparation query remains discovery's entry point.
+    match role_hint {
+        Some(hint) if hint["code"] != "intake" => hint,
+        _ => fallback,
+    }
+}
+
+/// Preserve legacy action.op while keeping one bounded factual basis. A read
+/// grant must not suggest an unauthorized session or lease mutation.
+pub(super) fn authorized(
+    auth: &super::ReaderAuthority,
+    stream: awr_core::Id,
+    work: &str,
+    mut hint: Value,
+) -> Value {
+    use awr_team::Action;
+    let action = match hint["action"]["op"].as_str() {
+        Some("session.start" | "session.checkpoint") => Some(Action::SessionMaintainOwn),
+        Some(
+            "claim.acquire" | "claim.renew" | "task.accept_assignment" | "task.claim_available",
+        ) => Some(Action::ClaimManageOwn),
+        _ => None,
+    };
+    if action.is_some_and(|a| {
+        !super::inbox::permits(
+            auth,
+            a,
+            hint["action"]["op"].as_str().unwrap(),
+            stream,
+            work,
+        )
+    }) {
+        hint = json!({"code":"inspect_only","when":"the suggested mutation is outside current authority",
+            "because":"no current covering action and write grant","action":{"op":"work.next",
+            "note":"Inspect your visible work; obtain the required scoped grant before starting a session or taking responsibility."},
+            "recheck_on":"member, delegation, source or workstream permissions change"});
+    }
+    if let Some(basis) = hint["because"].as_str() {
+        hint["because"] = json!([basis]);
+    }
+    hint
+}
+
 pub(super) fn select(data: &Value, context_complete: bool, owns_session: bool) -> Value {
     let runtime = &data["runtime"];
     let execution = &data["execution"];
