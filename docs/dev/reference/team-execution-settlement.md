@@ -123,7 +123,8 @@ the stopped/effect assertions. Other execution policies retain their distinct
 output and artifact digest semantics.
 
 Settlement requires a running caller-managed V3 execution, a current matching
-contract, the live claim and fence, and the exact admitted path reservations.
+contract, the original current claim and fence, and the exact admitted path
+reservations. The `independent_workspace_v1` policy also requires a live lease.
 The admitted scope must be nonempty and unique. Unknown or shared resources,
 another unresolved run, prior receipts or outbox exposure, dependency/planning
 blocks, a preexisting recovery barrier, or observed paths outside admission keep
@@ -134,8 +135,8 @@ without writing a report.
 Success, failure and cancellation can release only the exact admitted workspace
 resources. All remain `caller_asserted`; failure and cancellation leave the task
 unfinished. An omitted, false or unknown stop/effect declaration, an unknown
-outcome, or an expired lease records the caller's observations without claiming
-settlement. The live lease is checked again before the transaction finishes.
+outcome, or an expired V1 lease records the caller's observations without claiming
+settlement. V1 checks the live lease again before the transaction finishes.
 After a same-fence renewal, the report binds the current lease version while
 reservations retain their original admission generation.
 
@@ -161,6 +162,55 @@ If a report response is lost, inspect the run/receipt or repeat the exact same
 request. A replay returns the committed receipt and does not authorize another
 physical execution. Do not invent a new request or rerun work to resolve an
 unknown outcome.
+
+## Explicit late terminal reports
+
+`independent_workspace_v2` is a separate source opt-in in the same closed policy
+shape. Set it before preparing and admitting an execution:
+
+```json
+{
+  "mode": "independent_workspace_v2",
+  "workspace_id": "worker-a"
+}
+```
+
+V2 permits a terminal report after elapsed lease time only. The originating claim
+must still be the active, current claim, with the same authenticated actor,
+client, active session, responsibility, epoch, contract, fence and current lease
+version. Explicit stop and no-external-effects assertions and every resource,
+scope, dependency and recovery check above remain required. Released or replaced
+claims, controlled/shared effects, old unknown reports and revoked authority
+cannot use this path. The policy cannot be added to an old execution afterward.
+
+The immutable caller receipt includes the selected V2 policy and a
+`lease_observation` with `basis` (`live` or `expired_current`), `expires_at` and
+`observed_at`, measured using the database clock immediately before writing the
+receipt. This remains a caller assertion about workspace effects. It does not
+verify process termination, upgrade artifact trust or provide approval.
+
+V2 never renews or revives the old lease. Further execution requires a fresh
+claim and normal admission. Exact-request replay retrieves the same receipt;
+it never starts another run. Readable artifact verification and independent
+review remain necessary before finalization. Workspace settlement still cannot
+settle a push, merge, deployment or other external operation.
+
+Claim acquisition, renewal and execution admission return a bounded
+`lease_guidance`: its condition, current claim/version/deadline basis, next action
+and recheck trigger. Renew before the deadline when work continues; report the
+actual terminal outcome when stopped. Refresh the facts after renewal,
+disconnection or ownership/contract changes. These instructions do not install
+a heartbeat, mutate query state or replace the host's process supervision.
+
+V1 behavior, wire representation and contract hashes stay unchanged. Selecting
+V2 changes the contract hash, and runtimes that only know V1 reject the new mode.
+No historical contract, execution or receipt is automatically upgraded.
+
+Team schema 54 updates only the closed execution-policy and Agent completion
+constraints to recognize V2. It performs no provenance backfill. Upgrade with
+the matching server binary and a recoverable database snapshot; older runtimes
+reject schema 54. A rollback needs the matching pre-upgrade snapshot and binary,
+rather than changing the recorded schema number.
 
 ## Confirm a controlled execution
 
@@ -243,8 +293,9 @@ separate contracts.
   default to false. Migration does not guess old provenance or upgrade trust.
 
 Ordinary settlement never replaces process supervision or physical isolation.
-Old contracts, expired attempts, scope violations and unknown effects retain
-their recovery protection.
+Old contracts, V1 expired attempts, scope violations and unknown effects retain
+their recovery protection. V2 relaxes only elapsed time for the explicitly
+admitted, otherwise unchanged terminal workspace report described above.
 
 A controlled adapter follows its separately delegated authority and may attest
 only to runs it controls. CI can verify an artifact; it cannot prove a process

@@ -169,6 +169,33 @@ fn strict_policy_wire_rejects_unknown_modes_trust_fields_and_duplicate_keys() {
 fn v3_hash_binds_workspace_scope_verification_and_dependency_policy() {
     let base = opted_in();
     let hash = base.hash().unwrap();
+    let mut late_policy = base.clone();
+    late_policy.execution_settlement.as_mut().unwrap().mode =
+        ExecutionSettlementMode::IndependentWorkspaceV2;
+    assert_ne!(late_policy.hash().unwrap(), hash);
+    let wire = json!(late_policy);
+    assert_eq!(
+        wire["execution_settlement"]["mode"],
+        "independent_workspace_v2"
+    );
+    assert_eq!(
+        serde_json::from_value::<WorkContract>(wire).unwrap(),
+        late_policy
+    );
+    // The prior closed mode codec cannot deserialize the new explicit opt-in.
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum PriorMode {
+        IndependentWorkspaceV1,
+    }
+    assert!(
+        serde_json::from_value::<PriorMode>(json!(ExecutionSettlementMode::IndependentWorkspaceV1))
+            .is_ok()
+    );
+    assert!(
+        serde_json::from_value::<PriorMode>(json!(ExecutionSettlementMode::IndependentWorkspaceV2))
+            .is_err()
+    );
     let mut workspace = base.clone();
     workspace
         .execution_settlement
