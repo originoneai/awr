@@ -862,6 +862,155 @@ async fn discovered_review_and_evidence_selectors_reach_scoped_records() {
 }
 
 #[tokio::test]
+async fn rework_field_and_lifecycle_rejections_share_http_mcp_facts_without_mutation() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let evidence = call(&client, "awr_team_command", serde_json::to_value(command(
+        &prepared(&client).await, "rework-evidence", "evidence.submit",
+        json!({"session_id":"session-a","expected_session_version":"1","payload":{},"dirty_tree":false})
+    )).unwrap(), false).await;
+    let opened = call(&client, "awr_team_command", serde_json::to_value(command(
+        &prepared(&client).await, "rework-open", "review.open",
+        json!({"session_id":"session-a","expected_session_version":"1","evidence_id":evidence["receipt"]["data"]["evidence_id"]})
+    )).unwrap(), false).await;
+    let round_id = opened["receipt"]["data"]["round_id"].as_str().unwrap();
+    let base = prepared(&client).await;
+    let args = json!({"session_id":"session-a","expected_session_version":"1","round_id":round_id,"note":"private-value-sentinel"});
+    for case in [
+        "reason",
+        "extra",
+        "numeric",
+        "missing-version",
+        "open",
+        "approved",
+        "invalidated",
+        "unavailable",
+    ] {
+        if matches!(case, "open" | "approved" | "invalidated") {
+            // An isolated state fixture; authorized review transitions have their own regression coverage.
+            admin
+                .execute(
+                    "UPDATE awr_team.review_rounds SET state=$1 WHERE id=$2",
+                    &[&case, &round_id],
+                )
+                .await
+                .unwrap();
+        }
+        let mut selected = args.clone();
+        match case {
+            "reason" => {
+                selected.as_object_mut().unwrap().remove("note");
+                selected["reason"] = json!("private-value-sentinel");
+            }
+            "extra" => {
+                selected["private-key-sentinel"] = json!("private-value-sentinel");
+            }
+            "numeric" => {
+                selected["expected_session_version"] = json!(1);
+            }
+            "missing-version" => {
+                selected
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("expected_session_version");
+            }
+            "unavailable" => {
+                selected["round_id"] = json!("private-round-sentinel");
+            }
+            _ => {}
+        }
+        let input = serde_json::to_value(command(
+            &base,
+            &format!("rework-state-{case}"),
+            "work.rework",
+            selected,
+        ))
+        .unwrap();
+        let before: Value = admin
+            .query_one(
+                "SELECT jsonb_build_object(
+            'reviews',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM awr_team.review_rounds r),
+            'operations',(SELECT jsonb_agg(to_jsonb(o) ORDER BY id) FROM awr_team.operations o),
+            'events',(SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM awr_team.events e))",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        let mcp = call(&client, "awr_team_command", input.clone(), true).await;
+        let response = http()
+            .post(format!("{}/one/command", server.url))
+            .bearer_auth(A)
+            .json(&input)
+            .send()
+            .await
+            .unwrap();
+        let expected = match case {
+            "open" | "approved" | "invalidated" => (
+                reqwest::StatusCode::CONFLICT,
+                "ReworkRequiresReturnedReview",
+            ),
+            "unavailable" => (reqwest::StatusCode::NOT_FOUND, "ReviewUnavailable"),
+            _ => (reqwest::StatusCode::BAD_REQUEST, "InvalidInput"),
+        };
+        assert_eq!(response.status(), expected.0, "{case}");
+        assert_eq!(mcp, response.json::<Value>().await.unwrap(), "{case}");
+        assert_eq!(mcp["code"], expected.1, "{case}");
+        assert!(!mcp.to_string().contains("private-"), "{case}");
+        assert!(mcp.to_string().len() < 1024);
+        if expected.1 == "InvalidInput" {
+            assert_eq!(
+                mcp["invalid_field"],
+                match case {
+                    "reason" => "/args/note",
+                    "extra" => "/args",
+                    _ => "/args/expected_session_version",
+                }
+            );
+        } else {
+            assert!(mcp.get("invalid_field").is_none());
+            assert_eq!(mcp["action_guidance"]["basis"]["inspect"], "review.inspect");
+            assert!(mcp.to_string().len() < 700);
+        }
+        assert_eq!(
+            prepared(&client).await["project_revision"],
+            base["project_revision"]
+        );
+        let after: Value = admin
+            .query_one(
+                "SELECT jsonb_build_object(
+            'reviews',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM awr_team.review_rounds r),
+            'operations',(SELECT jsonb_agg(to_jsonb(o) ORDER BY id) FROM awr_team.operations o),
+            'events',(SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM awr_team.events e))",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(after, before, "{case}");
+    }
+    admin
+        .execute(
+            "UPDATE awr_team.review_rounds SET state='rejected' WHERE id=$1",
+            &[&round_id],
+        )
+        .await
+        .unwrap();
+    let input = serde_json::to_value(command(&base, "returned-acknowledgment", "work.rework",
+        json!({"session_id":"session-a","expected_session_version":"1","round_id":round_id,"note":"Addressing the independent return"}))).unwrap();
+    let accepted = call(&client, "awr_team_command", input.clone(), false).await;
+    assert_eq!(accepted["receipt"]["data"]["rework_acknowledged"], true);
+    assert_eq!(accepted["receipt"]["data"]["history_retained"], true);
+    assert_eq!(accepted["receipt"]["data"]["task_complete"], false);
+    let replay = call(&client, "awr_team_command", input, false).await;
+    assert_eq!(replay["receipt"], accepted["receipt"]);
+    assert_eq!(replay["replayed"], true);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn mcp_snapshot_is_discoverable_consumable_and_keeps_feedback_separate_from_authority() {
     let (_guard, admin, _, store) = setup().await;
     enable_writes(&admin).await;

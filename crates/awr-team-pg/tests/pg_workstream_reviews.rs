@@ -208,6 +208,134 @@ async fn put_contract(admin: &Client, contract: &WorkContract) {
         .unwrap();
 }
 
+async fn rework_business_snapshot(admin: &Client) -> Value {
+    admin.query_one("SELECT jsonb_build_object(
+        'project',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM awr_team.projects p),
+        'work',(SELECT jsonb_agg(to_jsonb(w) ORDER BY work_id) FROM awr_team.work_runtime w),
+        'reviews',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM awr_team.review_rounds r),
+        'decisions',(SELECT jsonb_agg(to_jsonb(d) ORDER BY id) FROM awr_team.review_decisions d),
+        'evidence',(SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM awr_team.evidence e),
+        'operations',(SELECT jsonb_agg(to_jsonb(o) ORDER BY id) FROM awr_team.operations o),
+        'events',(SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM awr_team.events e),
+        'completion',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM awr_team.completion_receipts c))", &[])
+        .await.unwrap().get(0)
+}
+
+#[tokio::test]
+async fn rework_distinguishes_review_state_from_input_without_mutation_or_history_loss() {
+    for state in ["open", "approved", "invalidated", "unavailable", "rejected"] {
+        let (_g, admin, _, store) = setup().await;
+        enable_writes(&admin).await;
+        let evidence = run(&store, A, "state-evidence", "evidence.submit",
+            json!({"session_id":"session-a","expected_session_version":"1","payload":{},"dirty_tree":false})).await;
+        let opened = run(&store, A, "state-open", "review.open",
+            json!({"session_id":"session-a","expected_session_version":"1","evidence_id":evidence["evidence_id"]})).await;
+        let round_id = opened["round_id"].as_str().unwrap();
+        // These are isolated historical-state fixtures, never client approval authority.
+        if state != "unavailable" {
+            admin
+                .execute(
+                    "UPDATE awr_team.review_rounds SET state=$1 WHERE id=$2",
+                    &[&state, &round_id],
+                )
+                .await
+                .unwrap();
+        }
+        let selected = if state == "unavailable" {
+            "unavailable-review-sentinel"
+        } else {
+            round_id
+        };
+        let args = json!({"session_id":"session-a","expected_session_version":"1",
+            "round_id":selected,"note":"private-rework-value-sentinel"});
+        let p = prepare(&store, A, "a").await;
+        let command = command(&p, "state-rework", "work.rework", args);
+        let before = rework_business_snapshot(&admin).await;
+        let result = store
+            .commands()
+            .execute(TENANT, PROJECT, A, command.clone())
+            .await;
+        if state == "rejected" {
+            let result = result.unwrap();
+            assert_eq!(result["receipt"]["data"]["rework_acknowledged"], true);
+            assert_eq!(result["receipt"]["data"]["history_retained"], true);
+            assert_eq!(result["receipt"]["data"]["task_complete"], false);
+            let after = rework_business_snapshot(&admin).await;
+            assert_eq!(before["reviews"], after["reviews"]);
+            assert_eq!(before["decisions"], after["decisions"]);
+            let replay = store
+                .commands()
+                .execute(TENANT, PROJECT, A, command)
+                .await
+                .unwrap();
+            assert_eq!(replay["receipt"], result["receipt"]);
+            assert_eq!(rework_business_snapshot(&admin).await, after);
+        } else {
+            let error = result.unwrap_err();
+            if state == "unavailable" {
+                assert!(matches!(error, PgError::ReviewUnavailable));
+            } else {
+                assert!(
+                    matches!(error, PgError::ReworkRequiresReturnedReview),
+                    "{state}"
+                );
+            }
+            assert!(!error.to_string().contains("private-rework-value-sentinel"));
+            assert!(!error.is_invalid_command_fields());
+            assert_eq!(rework_business_snapshot(&admin).await, before, "{state}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn malformed_rework_fields_stay_input_errors_and_cannot_change_review_history() {
+    let (_g, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let before = rework_business_snapshot(&admin).await;
+    for case in [
+        "missing-note",
+        "reason",
+        "extra",
+        "numeric-version",
+        "null-round",
+        "missing-version",
+    ] {
+        let mut args = json!({"session_id":"session-a","expected_session_version":"1",
+            "round_id":"private-round-value-sentinel","note":"private-note-value-sentinel"});
+        match case {
+            "missing-note" => {
+                args.as_object_mut().unwrap().remove("note");
+            }
+            "reason" => {
+                args.as_object_mut().unwrap().remove("note");
+                args["reason"] = json!("private-reason-value-sentinel");
+            }
+            "extra" => {
+                args["private-key-sentinel"] = json!("private-value-sentinel");
+            }
+            "numeric-version" => {
+                args["expected_session_version"] = json!(1);
+            }
+            "null-round" => {
+                args["round_id"] = Value::Null;
+            }
+            _ => {
+                args.as_object_mut()
+                    .unwrap()
+                    .remove("expected_session_version");
+            }
+        }
+        let error = run_err(&store, A, case, "work.rework", args).await;
+        if case == "missing-version" {
+            assert!(error.is_missing_review_session_version());
+        } else {
+            assert!(error.is_invalid_command_fields(), "{case}");
+        }
+        assert!(!error.to_string().contains("private-"));
+        assert_eq!(rework_business_snapshot(&admin).await, before, "{case}");
+    }
+}
+
 #[tokio::test]
 async fn mainline_submit_open_accept_complete_is_team_independent() {
     let (_g, admin, _, store) = setup().await;

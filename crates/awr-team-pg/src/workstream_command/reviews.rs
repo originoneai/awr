@@ -915,7 +915,7 @@ async fn rework(
             &[&tenant, &project, &a.round_id],
         )
         .await?
-        .ok_or_else(|| PgError::Protocol("review round not found".into()))?;
+        .ok_or(PgError::ReviewUnavailable)?;
     let work_id: String = row.get(0);
     let state: String = row.get(1);
     let round_index: i32 = row.get(2);
@@ -923,9 +923,7 @@ async fn rework(
         return Err(PgError::Forbidden);
     }
     if state != "rejected" {
-        return Err(PgError::Protocol(
-            "rework requires a returned/rejected review round".into(),
-        ));
+        return Err(PgError::ReworkRequiresReturnedReview);
     }
     let actor_person = resolve_person_id(tx, tenant, project, &auth.actor_id)
         .await

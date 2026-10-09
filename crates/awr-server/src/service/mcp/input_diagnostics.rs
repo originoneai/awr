@@ -258,4 +258,61 @@ mod tests {
         add_input_diagnostic(&mut forbidden, &json!({}), true);
         assert_eq!(forbidden, json!({"code":"Forbidden"}));
     }
+
+    #[test]
+    fn review_rejections_point_to_note_reason_and_current_session_version_without_values() {
+        for (op, args, field, constraint) in [
+            (
+                "work.rework",
+                json!({"session_id":"session","expected_session_version":"1","round_id":"round","reason":"private-value-sentinel"}),
+                "/args/note",
+                "required",
+            ),
+            (
+                "review.return",
+                json!({"session_id":"session","expected_session_version":"1","round_id":"round","note":"private-value-sentinel"}),
+                "/args/reason",
+                "required",
+            ),
+            (
+                "review.decide",
+                json!({"session_id":"session","expected_session_version":"1","round_id":"round","reason":"reviewed","decision":"private-value-sentinel"}),
+                "/args/decision",
+                "enum",
+            ),
+            (
+                "work.complete",
+                json!({"session_id":"session","expected_session_version":"1","evidence_id":"evidence","context_complete":"private-value-sentinel"}),
+                "/args/context_complete",
+                "type",
+            ),
+            (
+                "work.rework",
+                json!({"session_id":"session","expected_session_version":2,"round_id":"round","note":"revised"}),
+                "/args/expected_session_version",
+                "type",
+            ),
+        ] {
+            let mut input = command(args);
+            input["op"] = json!(op);
+            let error = rejected(input, true);
+            assert_eq!(error["invalid_field"], field, "{op}");
+            assert_eq!(error["constraint"], constraint, "{op}");
+            assert!(!error.to_string().contains("private-value-sentinel"));
+            assert!(error.to_string().len() < 1024);
+        }
+        let mut input = command(
+            json!({"session_id":"session","expected_session_version":"1","round_id":"round","note":"revised","private-key-sentinel":"private-value-sentinel"}),
+        );
+        input["op"] = json!("work.rework");
+        let error = rejected(input.clone(), true);
+        assert_eq!(error["invalid_field"], "/args");
+        assert_eq!(error["constraint"], "unexpected_field");
+        assert_eq!(error["expected_fields"].as_array().unwrap().len(), 4);
+        assert!(!error.to_string().contains("private-"));
+        let mut state = json!({"code":"ReworkRequiresReturnedReview","action_guidance":{"next_action":"Inspect review.inspect"}});
+        let before = state.clone();
+        add_input_diagnostic(&mut state, &input, true);
+        assert_eq!(state, before);
+    }
 }
