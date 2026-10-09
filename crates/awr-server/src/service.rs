@@ -297,8 +297,9 @@ pub(crate) async fn dispatch_authorized(
         Command(WorkstreamCommand),
     }
     // Body/selectors never supply identity or grants (TMCP-011).
-    if let Ok(raw) = serde_json::from_slice::<Value>(&body) {
-        if reject_forged_authority_fields(&raw).is_err() {
+    let raw = serde_json::from_slice::<Value>(&body).ok();
+    if let Some(raw) = &raw {
+        if reject_forged_authority_fields(raw).is_err() {
             return denied();
         }
     }
@@ -310,10 +311,15 @@ pub(crate) async fn dispatch_authorized(
     let request = match parsed {
         Ok(r) => r,
         Err(_) => {
-            return response(
-                StatusCode::BAD_REQUEST,
-                json!({"code":"InvalidInput","message":"invalid workstream request"}),
-            );
+            let (_, mut error) = public_error(if write {
+                PgError::invalid_command_fields()
+            } else {
+                PgError::Protocol("invalid query".into())
+            });
+            if let Some(raw) = &raw {
+                mcp::add_input_diagnostic(&mut error, raw, write);
+            }
+            return response(StatusCode::BAD_REQUEST, error);
         }
     };
     let Ok(_permit) = state.permits.try_acquire() else {
@@ -359,7 +365,13 @@ pub(crate) async fn dispatch_authorized(
     .await;
     match result {
         Ok(Ok(value)) => response(StatusCode::OK, value),
-        Ok(Err(error)) => error_response(error),
+        Ok(Err(error)) => {
+            let (status, mut value) = public_error(error);
+            if let Some(raw) = &raw {
+                mcp::add_input_diagnostic(&mut value, raw, write);
+            }
+            response(status, value)
+        }
         Err(_) => unavailable(),
     }
 }

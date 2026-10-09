@@ -131,6 +131,23 @@ or renew a claim. Submit usage only from host data with known scope/source; an
 unsupported host leaves it absent. Checkpoint summaries are shared with authorized
 work readers; keep raw sensitive logs out of them.
 
+For `evidence.submit`, discovery exposes the exact closed argument shape and
+required session/version, `payload` and `dirty_tree` fields. Submit the measured
+`artifact_text` bytes (or legacy `artifact_hex`); the server computes their
+`artifact_digest`. Do not invent `artifact_sha256` or other argument fields.
+Generic payloads remain arbitrary JSON; Agent-completion evidence additionally
+needs the current successful execution's input/output bindings. An artifact digest
+or reported readiness alone does not verify, approve or complete the work.
+For `review.inspect`, use the actual `review_round_id`; `evidence.inspect` requires
+the actual `evidence_id`. These are record selectors, not event or checkpoint IDs.
+
+When a supported input mismatch is rejected, HTTP and MCP return a bounded
+`invalid_field` JSON pointer and `constraint`. Unknown names and submitted values
+are never echoed: an unexpected evidence argument identifies `/args` and lists
+the operation's known `expected_fields`. Correct the field using current
+discovery; after an uncertain command outcome, inspect its original request first.
+Diagnostics are advice on a rejection, not a second validator or an approval.
+
 Persist a stable request ID and exact command envelope before a write. After a
 timeout, inspect the original `command.inspect` result before an exact retry.
 Replayed receipts are historical facts, not permission to run effects again.
