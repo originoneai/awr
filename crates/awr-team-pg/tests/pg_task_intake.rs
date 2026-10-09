@@ -831,31 +831,32 @@ async fn controlled_accepted_handoff_allows_a_successor_agent_to_continue_owners
         )
         .await
         .unwrap();
-    let p = prepare(&store, A, "a").await;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
+    let mut q = query("work.prepare");
+    q.work_id = Some("a".into());
+    q.session_id = Some("session-a".into());
+    q.max_context_bytes = Some(262144);
+    let p = store.query(TENANT, PROJECT, A, q).await.unwrap();
     let checkpoint = store.commands().execute(TENANT,PROJECT,A,command(&p,"checkpoint","session.checkpoint",json!({
         "session_id":"session-a","expected_session_version":"1","context_hash":p["data"]["context_hash"],
         "next_action":"Hand over implementation to the alternate Agent","open_loops":[]}))).await.unwrap();
     let successor = json!({"kind":"agent_run","person_id":"alice","agent_id":"worker-alt","binding_id":"bind-alt"});
     let proposed = store.commands().execute(TENANT,PROJECT,A,command(&prepare(&store,A,"a").await,"propose","handoff.propose",json!({
         "session_id":"session-a","expected_session_version":checkpoint["receipt"]["data"]["session_version"],
-        "handoff_id":"agent-transfer","kind":"execution","to_person_id":"alice","now_ms":now,
-        "proposed_successor":successor,"package":{"task_id":"a","contract_version":"fixture-contract-v1",
-            "contract_hash":p["data"]["contract_hash"],"current_person_id":"alice",
-            "current_execution":{"kind":"agent_run","person_id":"alice","agent_id":"agent","binding_id":"bind-a"},
-            "consumed_context_digest":p["data"]["context_hash"],"checkpoint_ids":[checkpoint["receipt"]["data"]["checkpoint_id"]],
-            "artifact_versions":[],"dependency_ids":[],"todos":["Continue the implementation"],"awaiting_replies":[],"unknown_side_effects":[]}}))).await.unwrap();
+        "handoff_id":"agent-transfer","kind":"execution","to_person_id":"alice",
+        "proposed_successor":successor}))).await.unwrap();
     let inspected = store.commands().execute(TENANT,PROJECT,OTHER_AGENT,command(&prepare(&store,OTHER_AGENT,"a").await,"inspect","handoff.inspect",json!({
         "session_id":alt,"expected_session_version":"1","handoff_id":"agent-transfer","expected_handoff_version":proposed["receipt"]["data"]["version"],
-        "inspector_person_id":"alice","now_ms":now+1}))).await.unwrap();
+        "inspector_person_id":"alice"}))).await.unwrap();
+    assert_eq!(
+        inspected["receipt"]["data"]["prepared_context"]["data"]["context_complete"],
+        true
+    );
     let p = prepare(&store, OTHER_AGENT, "a").await;
     let accepted = store.commands().execute(TENANT,PROJECT,OTHER_AGENT,command(&p,"accept-handoff","handoff.accept",json!({
         "session_id":alt,"expected_session_version":"1","handoff_id":"agent-transfer","expected_handoff_version":inspected["receipt"]["data"]["version"],
-        "acceptor_person_id":"alice","successor_execution":successor,"prior_execution_stopped":true,"prior_reconciled":true,
-        "context_reprepared":true,"expected_current_fence":p["data"]["runtime"]["last_fence"],"now_ms":now+2}))).await.unwrap();
+        "acceptor_person_id":"alice","successor_execution":successor,
+        "inspection_request_id":inspected["receipt"]["data"]["inspection_request_id"],
+        "expected_current_fence":p["data"]["runtime"]["last_fence"]}))).await.unwrap();
     assert_eq!(accepted["receipt"]["data"]["status"], "accepted");
     let p = prepare(&store, OTHER_AGENT, "a").await;
     let claimed = store.commands().execute(TENANT,PROJECT,OTHER_AGENT,command(&p,"successor-claim","claim.acquire",json!({

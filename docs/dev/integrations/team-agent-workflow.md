@@ -257,13 +257,20 @@ version adoption requires its separate capability and workflow.
 
 Use the actual `handoff.id` returned by the proposal receipt. An `events.list`
 item ID identifies an event; it cannot be used as a session, handoff, evidence or
-artifact selector. Query `handoff.inspect` with the selected work and handoff ID
-to read the current proposal, package and receiver duties. Use your own active,
-task-bound session for receiving commands.
+artifact selector. A read-only `handoff.inspect` query shows the proposal and
+duties. Execute the `handoff.inspect` command with your own active, task-bound
+session to receive the complete package, current prepared context and consumption
+receipt. Read that response before accepting. The receipt proves delivery to
+the authenticated client; it does not claim to prove the model's cognition.
 
-The tool schema describes every nested package field. `artifact_versions` holds
-objects with `artifact_id` and `version`; checkpoint, dependency and unfinished
-work lists remain separate. `current_execution`, `proposed_successor` and
+The server derives the package from the sender's latest recorded checkpoint,
+current contract, artifacts, dependencies, waits and unknown outcomes. A real
+checkpoint is required. `package` is optional on `handoff.propose`; any supplied
+factual selectors must match the server's facts. `artifact_versions` uses each
+artifact's immutable content SHA256 as its version. The inspection also returns
+the authorized dependency/adoption versions. Checkpoint prose and optional
+branch/directory annotations remain reported information, not verified execution
+or repository facts. `current_execution`, `proposed_successor` and
 `successor_execution` use the same execution identity format:
 
 ```json
@@ -278,19 +285,32 @@ An explicitly bound Agent run uses:
 
 Use actual identities and existing bindings. Free-text plans, `kind: "agent"`,
 client names and working-directory fields cannot substitute for execution
-identity. Two Agents controlled by one person do not establish independent
-human ownership or acceptance.
+identity. Distinct, explicitly registered simulated members can collaborate with
+independent credentials even under one human controller. Their simulation and
+approval assurance remain explicit; no human approval is inferred.
 
-Every handoff command requires `now_ms`, the current Unix time in milliseconds.
-Receiving commands additionally use the current handoff and owned session
-versions. When work runtime exists, set `expected_current_fence` to the current
+All handoff transitions and expiry use the database clock. `now_ms`,
+`prior_execution_stopped`, `prior_reconciled` and `context_reprepared` are optional
+compatibility annotations; they cannot authorize transfer. Receiving commands
+use the current handoff and owned session versions. Acceptance must supply
+`inspection_request_id`, the original request ID of this member/client/session's
+actual inspection command. When work runtime exists, set `expected_current_fence` to the current
 `runtime.last_fence` returned by `work.prepare`, even when the sender is terminal
 or its claim has expired. Omit it only when no runtime exists. Before acceptance,
-consume fresh `work.prepare` context and verify that the original execution has
-stopped or its effects have been reconciled;
-disconnection or lease expiry alone does not establish that fact. The server
-rechecks these prerequisites. Acceptance does not replace the fresh claim and
+read the complete inspection response. The server rechecks the original
+execution's terminal provenance, pending effects, resource reservations and
+recovery state. Disconnection, cancellation or lease expiry alone cannot prove
+stopping or settlement. Reinspect after relevant context, artifact, dependency,
+checkpoint, session, permission or lease changes. Unrelated audit/source cursor
+movement does not invalidate unchanged selected facts. Acceptance does not replace the fresh claim and
 execution admission required before the successor runs local effects.
+
+Execution handoff preserves the original owner; responsibility handoff transfers
+ownership and clears the settled predecessor's execution admission. Both fence
+the predecessor and retain original execution/evidence attribution. Exact replay
+returns historical facts and grants no new lease or execution. The lower-level
+`HandoffStore` is a trusted operator persistence API; it is not a remote member
+entry point and does not establish authenticated package consumption.
 
 ## Optional workspace view
 

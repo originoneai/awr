@@ -11,6 +11,7 @@ use std::sync::Arc;
 #[path = "source_workstreams.rs"]
 mod workstreams;
 use workstreams::SourceProjection;
+pub(crate) use workstreams::require_work_settled;
 
 #[path = "source_planning.rs"]
 pub mod planning;

@@ -13,6 +13,17 @@ mod completion_invalidation;
 #[path = "source_workstreams/activation_impact.rs"]
 mod activation_impact;
 
+/// Shared settlement admission for source changes and confirmed handoffs.
+/// Lease expiry and caller stopping assertions do not establish settlement.
+pub(crate) async fn require_work_settled(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    work: &str,
+) -> PgResult<()> {
+    activation_impact::require_settled(tx, tenant, project, &BTreeSet::from([work.into()])).await
+}
+
 pub(super) struct SourceProjection {
     pub contracts: Vec<WorkContract>,
     pub bundle: Option<WorkstreamBundle>,
