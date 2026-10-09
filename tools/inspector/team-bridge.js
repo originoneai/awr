@@ -13,6 +13,45 @@ const path = require('path');
 /** Owned Inspector path so browsers attach the session to /api/team/* routes. */
 const OWNED_COOKIE_PATH = '/api/team';
 const UPSTREAM_COOKIE_PATH = '/v1/web';
+const INBOX_PAGE_SIZE = 20;
+const INBOX_READ_OPS = new Set(['work.prepare', 'work.observe', 'work.recovery',
+  'review.inspect', 'delivery.neutral.inspect', 'delivery.integration.inspect', 'delivery.source.status']);
+
+function inboxSelector(query) {
+  if (!query || Array.isArray(query) || query.protocol_version !== 1 || !INBOX_READ_OPS.has(query.op)) return false;
+  const extra = query.op === 'review.inspect' ? 'review_round_id'
+    : query.op === 'delivery.integration.inspect' ? 'request_id' : null;
+  const keys = ['protocol_version', 'op', 'work_id', 'workstream_id', ...(extra ? [extra] : [])];
+  return Object.keys(query).length === keys.length && keys.every(key => key in query)
+    && ['work_id', 'workstream_id', ...(extra ? [extra] : [])]
+      .every(key => typeof query[key] === 'string' && query[key].length > 0
+        && query[key].length <= 128 && !/[\x00-\x1f\x7f]/.test(query[key]));
+}
+
+function validInboxPage(reply, cursor) {
+  const data = reply?.data;
+  return reply?.protocol_version === 1 && reply.scope_id === 'main'
+    && ['source_snapshot_id', 'project_revision', 'coordinator_epoch'].every(k => typeof reply[k] === 'string' && reply[k])
+    && /^\d+$/.test(reply.project_revision)
+    && typeof data?.identity?.actor_id === 'string' && data.identity.actor_id
+    && typeof data.identity.client_id === 'string' && data.identity.client_id
+    && data.state_basis === 'current_persistent_facts' && data.deduplicate_by === 'item_key'
+    && data.refresh_from_first_page_on_change === true && data.execution_authorized === false
+    && Array.isArray(data.items) && data.items.length <= INBOX_PAGE_SIZE
+    && (data.next_cursor === null || typeof data.next_cursor === 'string'
+      && data.next_cursor.length > 0 && data.next_cursor.length <= 4096 && data.next_cursor !== cursor)
+    && data.items.every(item => typeof item?.item_key === 'string' && item.item_key
+      && typeof item.contract_hash === 'string' && item.contract_hash
+      && typeof item.title === 'string' && [...item.title].length <= 160
+      && typeof item.title_truncated === 'boolean' && inboxSelector(item.next_query)
+      && item.next_query.work_id === item.work_id && item.next_query.workstream_id === item.workstream_id
+      && item.guidance?.action?.op === item.next_query.op
+      && inboxSelector(item.guidance.action.query)
+      && Object.keys(item.next_query).every(k => item.guidance.action.query[k] === item.next_query[k])
+      && typeof item.guidance.code === 'string' && typeof item.guidance.when === 'string'
+      && Array.isArray(item.guidance.because) && item.guidance.because.every(v => typeof v === 'string')
+      && typeof item.guidance.recheck_on === 'string');
+}
 
 function asObject(body) {
   if (body == null) return {};
@@ -212,6 +251,22 @@ function createTeamBridge(opts) {
     return { error: { code: 'OverviewLimitExceeded', message: 'Team overview exceeded the page limit' } };
   }
 
+  async function inboxRead(project, query, req, res, maxBytes) {
+    const signal = AbortSignal.timeout(4000);
+    try {
+      const upstream = await proxyTeam(`/v1/web/projects/${encodeURIComponent(project)}/query`, req, query, 'POST', signal);
+      applyProxiedCookies(res, upstream?.setCookie);
+      if (!upstream || upstream.status >= 400 || upstream.json?.ok === false || upstream.json?.code || upstream.json?.error)
+        return liveError(upstream);
+      if (Buffer.byteLength(JSON.stringify(upstream.json), 'utf8') > maxBytes)
+        return { ok: false, error: { code: 'ResponseTooLarge', message: 'Coordination read exceeded its response limit' } };
+      return { ok: true, result: upstream.json };
+    } catch (error) {
+      return { ok: false, error: { code: signal.aborted ? 'ReadTimeout' : 'BadGateway',
+        message: signal.aborted ? 'Coordination read timed out; retry this read' : 'Coordination service is unreachable' } };
+    }
+  }
+
   const routes = {
     'GET /api/team/projects': async (url, _body, req, res) => {
       if (TEAM.live) {
@@ -304,6 +359,45 @@ function createTeamBridge(opts) {
         reviews: data.reviews || [],
         schema: data.schema,
       };
+    },
+
+    'GET /api/team/inbox': async (url, _body, req, res) => {
+      if (!TEAM.live) return { ok: false, error: { code: 'Unsupported', message: 'Live Team coordination required' } };
+      const project = url.searchParams.get('project'), cursor = url.searchParams.get('cursor');
+      if (!project || project.length > 128 || (cursor != null && (!cursor || cursor.length > 4096))
+        || [...url.searchParams.keys()].some(k => !['project', 'cursor'].includes(k)))
+        return { ok: false, error: { code: 'InvalidInput', message: 'Project and optional bounded inbox cursor required' } };
+      const reply = await inboxRead(project, { protocol_version: 1, op: 'work.inbox', limit: INBOX_PAGE_SIZE,
+        ...(cursor == null ? {} : { cursor }) }, req, res, 65536);
+      if (reply.ok && !validInboxPage(reply.result, cursor))
+        return { ok: false, error: { code: 'BadGateway', message: 'Invalid current coordination page' } };
+      return reply;
+    },
+
+    'POST /api/team/inbox-detail': async (_url, body, req, res) => {
+      if (!TEAM.live) return { ok: false, error: { code: 'Unsupported', message: 'Live Team coordination required' } };
+      const input = asObject(body);
+      if (!input || typeof input.project !== 'string' || !input.project || input.project.length > 128
+        || !inboxSelector(input.query) || Object.keys(input).some(k => !['project', 'query'].includes(k)))
+        return { ok: false, error: { code: 'InvalidInput', message: 'Project and an exact coordination read selector required' } };
+      // The upstream reauthorizes this read. No command, acknowledgement or provider lookup is issued.
+      const reply = await inboxRead(input.project, input.query, req, res, 262144);
+      if (reply.ok) {
+        const result = reply.result;
+        if (result.protocol_version !== 1 || result.scope_id !== 'main' || result.workstream_id !== input.query.workstream_id
+          || !['source_snapshot_id', 'project_revision', 'coordinator_epoch'].every(k => typeof result[k] === 'string' && result[k])
+          || !/^\d+$/.test(result.project_revision)
+          || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)
+          || result.data.execution_authorized === true
+          || [result.data.work_id, result.data.review?.work_id].some(id => id != null && id !== input.query.work_id)
+          || (input.query.op === 'review.inspect' && result.data.review?.round_id != null
+            && result.data.review.round_id !== input.query.review_round_id)
+          || (input.query.op === 'delivery.integration.inspect' && result.data.integration_id != null
+            && result.data.integration_id !== input.query.request_id))
+          return { ok: false, error: { code: 'BadGateway', message: 'Invalid coordination detail response' } };
+        return { ...reply, query: input.query };
+      }
+      return reply;
     },
 
     'GET /api/team/work': async (url, _body, req, res) => {

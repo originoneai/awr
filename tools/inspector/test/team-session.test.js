@@ -14,6 +14,31 @@ const overview = { ok: true, works: [work], members: [] };
 const node = (id) => document.getElementById(id);
 const button = (id, label) => node(id).find((el) => el.tagName === 'BUTTON' && el.textContent === label);
 
+const inboxIdentity = { actor_id: 'member', client_id: 'member-agent', role: 'reviewer' };
+const inboxItem = (key = 'semantic-one') => {
+  const query = { protocol_version: 1, op: 'review.inspect', work_id: work.key, workstream_id: 'stream', review_round_id: 'current-round' };
+  return { item_key: key, work_id: work.key, workstream_id: 'stream', contract_hash: 'requirements',
+    title: 'Review the current delivery', title_truncated: false, next_query: query,
+    guidance: { code: 'review', when: 'The current review is open', because: ['Version-bound evidence is recorded'],
+      action: { op: query.op, query }, recheck_on: 'Requirements, review or permissions change' } };
+};
+const inboxPage = (items = [], next = null) => ({ protocol_version: 1, scope_id: 'main',
+  project_revision: '20', source_snapshot_id: 'source', coordinator_epoch: 'epoch',
+  data: { identity: inboxIdentity, items, next_cursor: next, state_basis: 'current_persistent_facts',
+    deduplicate_by: 'item_key', refresh_from_first_page_on_change: true, execution_authorized: false } });
+const inboxOverview = { ...overview, works: [{ ...work, workstream_id: 'stream', detail_loaded: true }],
+  interaction_mode: 'mcp', identity: inboxIdentity };
+
+async function readyInbox(handler) {
+  ui.state.layout = 'cards';
+  const calls = mock((url, options) => url.includes('/projects?') ? projects
+    : url.includes('/overview?') ? inboxOverview
+      : url.endsWith('/logout') ? { ok: true } : handler(url, options));
+  await ui.refresh();
+  ui.state.layout = 'inbox';
+  return calls;
+}
+
 function mock(handler) {
   const calls = [];
   global.fetch = async (url, options) => {
@@ -48,6 +73,279 @@ test('successful login loads projects and work immediately and clears the creden
   assert.equal(calls.length, 3);
   assert.ok(!JSON.stringify(ui.state).includes('synthetic-login-value'));
 });
+
+test('coordination reads through empty pages and deduplicates only server semantic keys', async () => {
+  const first = inboxItem(), second = { ...inboxItem('semantic-two'), title: 'Coordinate another delivery' };
+  const calls = await readyInbox(url => ({ ok: true, result: url.includes('cursor=last') ? inboxPage([first, second])
+    : url.includes('cursor=empty-next') ? inboxPage([first], 'last') : inboxPage([], 'empty-next') }));
+  await ui._loadInbox();
+  assert.match(node('teamOverview').textContent, /This page has no current conditions. More pages remain/);
+  assert.ok(button('teamOverview', 'Read next page'));
+  await button('teamOverview', 'Read next page').click();
+  await button('teamOverview', 'Read next page').click();
+  assert.deepEqual(ui.state.inbox.items.map(v => v.item_key), ['semantic-one', 'semantic-two']);
+  assert.equal(ui.state.inbox.next, null);
+  assert.equal(button('teamOverview', 'Read next page'), null);
+  assert.deepEqual(calls.filter(c => c.url.includes('/inbox?')).map(c => c.url), [
+    '/api/team/inbox?project=example', '/api/team/inbox?project=example&cursor=empty-next', '/api/team/inbox?project=example&cursor=last']);
+  assert.ok(!calls.some(c => c.url.includes('/action') || c.url.includes('/command')));
+});
+
+test('coordination refresh removes resolved conditions without an acknowledgement or write', async () => {
+  let resolved = false;
+  const calls = await readyInbox(() => ({ ok: true, result: inboxPage(resolved ? [] : [inboxItem()]) }));
+  await ui._loadInbox();
+  assert.equal(ui.state.inbox.items.length, 1);
+  resolved = true;
+  await button('teamOverview', 'Refresh coordination').click();
+  assert.equal(ui.state.inbox.items.length, 0);
+  assert.match(node('teamOverview').textContent, /No current conditions in the pages read for your access/);
+  assert.ok(!node('teamOverview').textContent.includes('Review the current delivery'));
+  assert.ok(calls.every(c => !c.options?.method || c.options.method === 'GET'));
+});
+
+test('coordination partial failures retain marked observations but disable detail and cursor reuse', async () => {
+  let fail = false;
+  await readyInbox(url => url.includes('cursor=next') ? { ok: false, error: { code: 'ReadTimeout', message: 'Page timed out' } }
+    : { ok: true, result: inboxPage(fail ? [] : [inboxItem()], fail ? null : 'next') });
+  await ui._loadInbox(); await ui._loadInbox(true);
+  assert.equal(ui.state.inbox.items.length, 1);
+  assert.match(node('teamOverview').textContent, /Earlier pages are incomplete and details are disabled/);
+  assert.equal(button('teamOverview', 'Read current details').disabled, true);
+  assert.equal(ui.state.inbox.next, null);
+  fail = true; await ui._loadInbox();
+  assert.equal(ui.state.inbox.error, null); assert.deepEqual(ui.state.inbox.items, []);
+});
+
+for (const version of ['source_snapshot_id', 'project_revision', 'coordinator_epoch']) {
+  test(`coordination refuses mixed ${version} pages and refreshes from the first page`, async () => {
+    await readyInbox(url => ({ ok: true, result: url.includes('cursor=next')
+      ? { ...inboxPage([inboxItem('changed')]), [version]: version === 'project_revision' ? '21' : 'changed' } : inboxPage([inboxItem()], 'next') }));
+    await ui._loadInbox(); await ui._loadInbox(true);
+    assert.equal(ui.state.inbox.error.code, 'SourceChanged');
+    assert.deepEqual(ui.state.inbox.items, []);
+    assert.equal(ui.state.inbox.detail, null); assert.equal(ui.state.inbox.next, null);
+    assert.match(node('teamOverview').textContent, /Refresh from the first page/);
+  });
+}
+
+test('coordination catches a cursor cycle even when intermediate pages are empty', async () => {
+  await readyInbox(url => ({ ok: true, result: url.includes('cursor=one') ? inboxPage([], 'two') : inboxPage([], 'one') }));
+  await ui._loadInbox(); await ui._loadInbox(true); await ui._loadInbox(true);
+  assert.equal(ui.state.inbox.error.code, 'InvalidCursor'); assert.equal(ui.state.inbox.next, null);
+});
+
+for (const code of ['Unauthenticated', 'SessionExpired', 'Forbidden']) {
+  test(`coordination ${code} clears protected data including earlier pages`, async () => {
+    let denied = false;
+    await readyInbox(() => denied ? { ok: false, error: { code, message: 'Current access refused' } }
+      : { ok: true, result: inboxPage([inboxItem()], 'next') });
+    await ui._loadInbox(); denied = true; await ui._loadInbox(true);
+    assert.deepEqual(ui.state.inbox.items, []); assert.deepEqual(ui.state.works, []);
+    assert.equal(ui.state.projectKey, null); assert.equal(ui.state.inbox.detail, null);
+    assert.match(node('teamAuth').textContent, /Current access refused/);
+  });
+}
+
+test('coordination rejects a different authenticated identity even on the same source', async () => {
+  await readyInbox(() => ({ ok: true, result: { ...inboxPage([inboxItem()]),
+    data: { ...inboxPage().data, identity: { ...inboxIdentity, client_id: 'other-agent' }, items: [inboxItem()] } } }));
+  await ui._loadInbox();
+  assert.equal(ui.state.error.code, 'Forbidden'); assert.equal(ui.state.projectKey, null);
+  assert.deepEqual(ui.state.inbox.items, []);
+});
+
+test('a late coordination response cannot restore conditions after logout', async () => {
+  let release; const gate = new Promise(resolve => { release = resolve; });
+  await readyInbox(() => gate);
+  const pending = ui._loadInbox();
+  await button('teamAuth', 'Log out').click();
+  release({ ok: true, result: inboxPage([inboxItem()]) }); await pending;
+  assert.equal(ui.state.session, null); assert.deepEqual(ui.state.inbox.items, []);
+});
+
+test('a late coordination response cannot restore a previous project after refresh', async () => {
+  let release; const gate = new Promise(resolve => { release = resolve; });
+  await readyInbox(() => gate);
+  const pending = ui._loadInbox();
+  mock(url => url.includes('/projects?') ? { ...projects, projects: [{ key: 'another' }] }
+    : url.includes('/overview?') ? { ...inboxOverview, works: [] } : { ok: true, result: inboxPage() });
+  await ui.refresh(); release({ ok: true, result: inboxPage([inboxItem()]) }); await pending;
+  assert.equal(ui.state.projectKey, 'another'); assert.deepEqual(ui.state.inbox.items, []);
+});
+
+test('coordination detail uses the exact review selector and keeps delivery dimensions separate', async () => {
+  const item = inboxItem();
+  const detail = { ...inboxPage(), workstream_id: 'stream', data: { work_id: work.key,
+    review: { state: 'approved' }, integration: { state: 'unknown' }, publication: { phase: 'conflict' } } };
+  const calls = await readyInbox(url => url.endsWith('/inbox-detail')
+    ? { ok: true, query: item.next_query, result: detail } : { ok: true, result: inboxPage([item]) });
+  await ui._loadInbox(); await button('teamOverview', 'Read current details').click();
+  const sent = calls.find(c => c.url.endsWith('/inbox-detail'));
+  assert.deepEqual(JSON.parse(sent.options.body), { project: project.key, query: item.next_query });
+  assert.match(node('teamOverview').textContent, /Approved for the recorded review basis/);
+  assert.match(node('teamOverview').textContent, /Outcome unknown; inspect the original request/);
+  assert.match(node('teamOverview').textContent, /Source conflict requires resolution/);
+  assert.ok(!calls.some(c => c.url.includes('/command') || c.url.includes('/action')));
+  assert.equal(node('teamDetail').hidden, true);
+});
+
+for (const mutation of ['wrong_query', 'wrong_source', 'wrong_revision', 'wrong_epoch', 'wrong_stream']) {
+  test(`coordination refuses the ${mutation} detail without showing its facts`, async () => {
+    const item = inboxItem(), result = { ...inboxPage(), workstream_id: 'stream', data: { private_marker: 'Do not display' } };
+    const query = { ...item.next_query };
+    if (mutation === 'wrong_query') query.review_round_id = 'other';
+    if (mutation === 'wrong_source') result.source_snapshot_id = 'other';
+    if (mutation === 'wrong_revision') result.project_revision = '19';
+    if (mutation === 'wrong_epoch') result.coordinator_epoch = 'other';
+    if (mutation === 'wrong_stream') result.workstream_id = 'other';
+    await readyInbox(url => url.endsWith('/inbox-detail') ? { ok: true, query, result } : { ok: true, result: inboxPage([item]) });
+    await ui._loadInbox(); await ui._readInboxItem(item);
+    assert.equal(ui.state.inbox.error.code, 'SourceChanged'); assert.equal(ui.state.inbox.detail, null);
+    assert.ok(!node('teamOverview').textContent.includes('Do not display'));
+  });
+}
+
+test('coordination detail failure stays a read failure and absent stages stay unreported', async () => {
+  const item = inboxItem(); let fail = true;
+  await readyInbox(url => url.endsWith('/inbox-detail') ? fail
+    ? { ok: false, error: { code: 'ReadTimeout', message: 'Current detail timed out' } }
+    : { ok: true, query: item.next_query, result: { ...inboxPage(), workstream_id: 'stream', data: {} } }
+    : { ok: true, result: inboxPage([item]) });
+  await ui._loadInbox(); await ui._readInboxItem(item);
+  assert.match(node('teamOverview').textContent, /ReadTimeout.*Current detail timed out/);
+  assert.equal(ui.state.inbox.detail.project_revision, undefined);
+  fail = false; await ui._readInboxItem(item);
+  assert.equal(ui.state.inbox.detail.error, undefined);
+  assert.match(node('teamOverview').textContent, /This read does not include this fact/);
+});
+
+test('background refresh updates coordination from the first page and clears resolved items', async () => {
+  let resolved = false;
+  const calls = await readyInbox(() => ({ ok: true, result: inboxPage(resolved ? [] : [inboxItem()]) }));
+  await ui._loadInbox(); resolved = true; await ui._refreshProgress();
+  assert.deepEqual(ui.state.inbox.items, []);
+  assert.equal(calls.filter(c => c.url.includes('/inbox?')).length, 2);
+  assert.ok(calls.filter(c => c.url.includes('/inbox?')).every(c => !c.url.includes('cursor=')));
+});
+
+test('late coordination details cannot restore protected facts after workspace identity changes', async () => {
+  const item = inboxItem(); let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  await readyInbox(url => url.endsWith('/inbox-detail') ? gate : { ok: true, result: inboxPage([item]) });
+  await ui._loadInbox(); const pending = ui._readInboxItem(item);
+  mock(url => url.includes('/projects?') ? projects
+    : url.includes('/overview?') ? { ...inboxOverview, identity: { ...inboxIdentity, client_id: 'new-agent' } }
+      : { ok: true, result: { ...inboxPage(), data: { ...inboxPage().data, identity: { ...inboxIdentity, client_id: 'new-agent' } } } });
+  await ui.refresh();
+  release({ ok: true, query: item.next_query, result: { ...inboxPage(), workstream_id: 'stream', data: { secret_marker: 'Old protected detail' } } });
+  await pending;
+  assert.equal(ui.state.raw.identity.client_id, 'new-agent'); assert.equal(ui.state.inbox.detail, null);
+  assert.ok(!node('teamOverview').textContent.includes('Old protected detail'));
+});
+
+test('coordination shows actual integration and source publication reads without inventing current confirmation', async () => {
+  const query = { protocol_version: 1, op: 'delivery.source.status', work_id: work.key, workstream_id: 'stream' };
+  const item = { ...inboxItem(), next_query: query, guidance: { ...inboxItem().guidance,
+    code: 'source_publication', action: { op: query.op, query } } };
+  const result = { ...inboxPage(), workstream_id: 'stream', data: { pending_publication_id: 'original-request',
+    history: [{ phase: 'conflict', source_current: false }, { phase: 'confirmed', source_current: false }], history_truncated: true } };
+  await readyInbox(url => url.endsWith('/inbox-detail') ? { ok: true, query, result } : { ok: true, result: inboxPage([item]) });
+  await ui._loadInbox(); await ui._readInboxItem(item);
+  assert.match(node('teamOverview').textContent, /source publication request remains pending/);
+  assert.match(node('teamOverview').textContent, /Source conflict requires resolution/);
+  assert.match(node('teamOverview').textContent, /Historical record; current confirmation not established/);
+  assert.match(node('teamOverview').textContent, /Some delivery facts were omitted/);
+  assert.ok(!node('teamOverview').textContent.includes('Current source confirmed'));
+
+  const integrationQuery = { protocol_version: 1, op: 'delivery.integration.inspect', work_id: work.key,
+    workstream_id: 'stream', request_id: 'existing-request' };
+  const integrationItem = { ...item, next_query: integrationQuery };
+  mock(url => url.includes('/inbox?') ? { ok: true, result: inboxPage([integrationItem]) }
+    : { ok: true, query: integrationQuery, result: { ...result, data: { state: 'dispatched' } } });
+  await ui._loadInbox(); await ui._readInboxItem(integrationItem);
+  assert.match(node('teamOverview').textContent, /Requested; outcome pending/);
+  assert.ok(!node('teamOverview').textContent.includes('Integration confirmation recorded'));
+});
+
+test('coordination bounds item display and sparse pages without claiming all work was read', async () => {
+  let page = 0;
+  await readyInbox(() => ({ ok: true, result: inboxPage(Array.from({ length: 20 }, (_, n) => inboxItem('key-' + (page * 20 + n))), 'next-' + ++page) }));
+  await ui._loadInbox();
+  for (let n = 0; n < 4; n++) await ui._loadInbox(true);
+  assert.equal(ui.state.inbox.items.length, 100);
+  const prior = page; await ui._loadInbox(true); assert.equal(page, prior);
+  assert.match(node('teamOverview').textContent, /display limit was reached; more pages remain/);
+  assert.equal(button('teamOverview', 'Read next page'), null);
+
+  page = 0;
+  await readyInbox(() => ({ ok: true, result: inboxPage([], 'sparse-' + ++page) }));
+  await ui._loadInbox();
+  for (let n = 0; n < 99; n++) await ui._loadInbox(true);
+  assert.equal(page, 100); await ui._loadInbox(true); assert.equal(page, 100);
+  assert.match(node('teamOverview').textContent, /display limit was reached; more pages remain/);
+  assert.equal(button('teamOverview', 'Read next page'), null);
+});
+
+test('newer same-source coordination details retain their receipt and suspend old page conditions', async () => {
+  const item = inboxItem();
+  const detail = { ...inboxPage(), project_revision: '21', workstream_id: 'stream', data: { review: { state: 'invalidated' } } };
+  const calls = await readyInbox(url => url.endsWith('/inbox-detail') ? { ok: true, query: item.next_query, result: detail }
+    : { ok: true, result: inboxPage([item], 'next') });
+  await ui._loadInbox(); await ui._readInboxItem(item);
+  assert.equal(ui.state.inbox.error, null); assert.equal(ui.state.inbox.detail.project_revision, '21');
+  assert.equal(ui.state.inbox.page.project_revision, '20'); assert.equal(ui.state.inbox.detailNewer, true);
+  assert.match(node('teamOverview').textContent, /Previous review no longer applies/);
+  assert.match(node('teamOverview').textContent, /detail read contains newer facts from the same source/);
+  assert.equal(button('teamOverview', 'Read next page').disabled, true);
+  assert.equal(button('teamOverview', 'Read current details').disabled, true);
+  const previous = calls.length;
+  await ui._loadInbox(true); await ui._readInboxItem(item); assert.equal(calls.length, previous);
+  await ui._loadInbox(); assert.equal(ui.state.inbox.detailNewer, undefined);
+  assert.equal(ui.state.inbox.detail, null); assert.equal(button('teamOverview', 'Read next page').disabled, false);
+});
+
+test('background polling does not discard later coordination pages or a detail receipt', async () => {
+  const item = inboxItem();
+  const calls = await readyInbox(url => url.endsWith('/inbox-detail')
+    ? { ok: true, query: item.next_query, result: { ...inboxPage(), workstream_id: 'stream', data: {} } }
+    : { ok: true, result: url.includes('cursor=next') ? inboxPage([item]) : inboxPage([], 'next') });
+  await ui._loadInbox(); await ui._loadInbox(true);
+  const prior = calls.length; await ui._refreshProgress(); assert.equal(calls.length, prior);
+  assert.match(node('teamOverview').textContent, /Automatic updates pause while you read later pages/);
+  await ui._readInboxItem(item);
+  const receipt = ui.state.inbox.detail;
+  await ui._refreshProgress(); assert.equal(ui.state.inbox.detail, receipt);
+  await ui._loadInbox(); assert.equal(ui.state.inbox.detail, null);
+  await ui._refreshProgress(); assert.ok(calls.length > prior);
+});
+
+for (const read of ['next-page', 'detail']) {
+  test(`an already-started project poll cannot replace a foreground coordination ${read} read`, async () => {
+    const item = inboxItem();
+    await readyInbox(() => ({ ok: true, result: inboxPage([item], 'next') }));
+    await ui._loadInbox();
+    let release, started;
+    const gate = new Promise(resolve => { release = resolve; });
+    const entered = new Promise(resolve => { started = resolve; });
+    const calls = mock(url => {
+      if (url.includes('/overview?')) { started(); return gate; }
+      if (url.endsWith('/inbox-detail')) return { ok: true, query: item.next_query,
+        result: { ...inboxPage(), workstream_id: 'stream', data: { review: { state: 'awaiting_review' } } } };
+      return { ok: true, result: url.includes('cursor=next') ? inboxPage([item]) : inboxPage([item], 'next') };
+    });
+    const pending = ui._refreshProgress();
+    await entered;
+    if (read === 'next-page') await button('teamOverview', 'Read next page').click();
+    else await button('teamOverview', 'Read current details').click();
+    const observed = ui.state.inbox;
+    release(inboxOverview); await pending;
+    assert.equal(ui.state.inbox, observed);
+    assert.equal(calls.filter(call => call.url.includes('/inbox?')).length, read === 'next-page' ? 1 : 0);
+    assert.equal(ui.state.refreshing, false);
+    assert.match(node('teamOverview').textContent, /Automatic updates pause while you read later pages/);
+  });
+}
 
 test('failed login displays an error instead of silently returning to the form', async () => {
   mock(() => ({ ok: false, error: { code: 'Forbidden', message: 'access denied' } }));
