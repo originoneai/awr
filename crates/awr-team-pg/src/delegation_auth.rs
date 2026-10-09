@@ -481,6 +481,7 @@ pub(crate) async fn resolve_agent_read_delegation(
             "capabilities"
                 | "workstreams.list"
                 | "work.next"
+                | "work.inbox"
                 | "work.list"
                 | "work.search"
                 | "events.list"
@@ -517,7 +518,7 @@ pub(crate) async fn resolve_agent_read_delegation(
                 )
         })
         .collect();
-    if request.op == "work.next" {
+    if matches!(request.op.as_str(), "work.next" | "work.inbox") {
         let mut scope = NavigationReadScope::default();
         for stream in &auth.catalog.workstreams {
             if readers

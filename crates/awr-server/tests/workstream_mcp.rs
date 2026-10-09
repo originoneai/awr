@@ -109,6 +109,90 @@ fn raw(server: &Server, token: &str) -> reqwest::RequestBuilder {
 }
 
 #[tokio::test]
+async fn mcp_inbox_discovery_reconnect_and_http_reads_share_current_scoped_conditions() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    admin
+        .batch_execute(
+            "UPDATE awr_team.project_memberships SET assignment_grant=true WHERE actor_id='agent'",
+        )
+        .await
+        .unwrap();
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let tools = client.list_all_tools().await.unwrap();
+    let schema = &tools
+        .iter()
+        .find(|t| t.name == "awr_team_query")
+        .unwrap()
+        .input_schema;
+    assert!(
+        schema["properties"]["op"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("work.inbox"))
+    );
+    let caps = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"capabilities"}),
+        false,
+    )
+    .await;
+    assert_eq!(caps["work_inbox"]["provider_webhook_required"], false);
+    let args = json!({"protocol_version":1,"op":"work.inbox","limit":1,"max_context_bytes":16384});
+    let page = call(&client, "awr_team_query", args.clone(), false).await;
+    assert_eq!(page["data"]["items"][0]["guidance"]["code"], "assignment");
+    assert!(!page.to_string().contains("b-private"));
+    assert_eq!(page["data"]["execution_authorized"], false);
+    let response = http()
+        .post(format!("{}/one/query", server.url))
+        .bearer_auth(A)
+        .json(&args)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let via_http: Value = response.json().await.unwrap();
+    assert_eq!(via_http["data"]["items"], page["data"]["items"]);
+    let next = page["data"]["items"][0]["next_query"].clone();
+    assert_eq!(
+        call(&client, "awr_team_query", next, false).await["data"]["work_id"],
+        "a"
+    );
+    let error = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.inbox","work_id":"a"}),
+        true,
+    )
+    .await;
+    assert!(!error.to_string().contains("PRIVATE NEXT ACTION"));
+    client.cancel().await.unwrap();
+    let resumed = connect(&server, "one", A).await.unwrap();
+    assert_eq!(
+        call(&resumed, "awr_team_query", args, false).await["data"]["items"],
+        page["data"]["items"]
+    );
+    admin.batch_execute("UPDATE awr_team.workstream_grants SET can_write=false,grant_version=grant_version+1 WHERE client_id='cli-a'").await.unwrap();
+    let now = call(
+        &resumed,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.inbox"}),
+        false,
+    )
+    .await;
+    assert!(now["data"]["items"].as_array().unwrap().is_empty());
+    let count: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.claims", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 0);
+    resumed.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn task_assignment_acceptance_and_replay_share_http_mcp_responsibility() {
     let (_guard, admin, _, store) = setup().await;
     enable_writes(&admin).await;

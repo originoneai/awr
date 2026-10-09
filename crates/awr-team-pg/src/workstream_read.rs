@@ -14,6 +14,7 @@ use tokio_postgres::{IsolationLevel, Transaction};
 mod activity;
 mod delivery;
 mod guidance;
+mod inbox;
 mod navigation;
 mod observation;
 
@@ -23,6 +24,7 @@ const QUERIES: &[&str] = &[
     "work.list",
     "work.search",
     "work.next",
+    "work.inbox",
     "work.prepare",
     "work.snapshot",
     "work.observe",
@@ -137,6 +139,13 @@ impl WorkstreamQuery {
         {
             return Err(PgError::work_next_selectors());
         }
+        if self.op == "work.inbox"
+            && (self.workstream_id.is_some() || self.work_id.is_some() || self.session_id.is_some())
+        {
+            return Err(PgError::Protocol(
+                "work.inbox does not accept workstream_id, work_id, or session_id; follow the returned next_query".into(),
+            ));
+        }
         let paged = matches!(
             self.op.as_str(),
             "workstreams.list"
@@ -144,6 +153,7 @@ impl WorkstreamQuery {
                 | "work.search"
                 | "events.list"
                 | "work.next"
+                | "work.inbox"
                 | "delivery.exports"
         );
         let audit = matches!(
@@ -163,7 +173,11 @@ impl WorkstreamQuery {
             || self.max_context_bytes.is_some()
                 && !matches!(
                     self.op.as_str(),
-                    "work.prepare" | "work.snapshot" | "source.content" | "artifact.content"
+                    "work.prepare"
+                        | "work.snapshot"
+                        | "work.inbox"
+                        | "source.content"
+                        | "artifact.content"
                 )
             || (!audit
                 && self.request_id.is_some()
@@ -596,6 +610,9 @@ pub(crate) async fn read(
     if q.op == "work.next" {
         return navigation::next(tx, tenant, project, auth, q).await;
     }
+    if q.op == "work.inbox" {
+        return inbox::read(tx, tenant, project, auth, q).await;
+    }
     if matches!(q.op.as_str(), "audit.requests" | "audit.development") {
         return activity::read(tx, tenant, project, auth, q).await;
     }
@@ -656,6 +673,10 @@ pub(crate) async fn read(
                 "non_repudiation": "not_claimed_against_db_owner"
             }
         });
+        caps["work_inbox"] = json!({"version":1,"query":"work.inbox","basis":"current_persistent_facts",
+            "deduplication":"semantic_item_key","handled_items":"disappear_on_refresh",
+            "pagination":"last_evaluated_visible_work","max_basis_items":3,
+            "default_max_bytes":65536,"advisory_only":true,"provider_webhook_required":false});
         caps["neutral_delivery"] = json!({
             "protocol":"awr-delivery-sync-v1",
             "facts_query":"delivery.neutral.inspect",
