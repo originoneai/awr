@@ -74,6 +74,47 @@ fn session_cookie(set_cookie: &reqwest::header::HeaderValue) -> String {
         .to_string()
 }
 
+fn assert_no_project_metadata(body: &Value, forbidden: &str) {
+    let mut metadata = body.clone();
+    // The opaque session identifier can randomly contain a short project key.
+    // Keep every other field in the disclosure check, including unexpected ones.
+    if let Some(session_id) = metadata.as_object_mut().unwrap().remove("session_id") {
+        assert!(
+            session_id.is_string(),
+            "session identifier must be opaque text"
+        );
+    }
+    assert!(
+        !metadata.to_string().contains(forbidden),
+        "unauthorized project metadata"
+    );
+}
+
+#[test]
+fn opaque_session_substrings_are_not_project_metadata() {
+    let body = json!({"session_id":"synthetic-aaa-other", "projects":["zzz"]});
+    assert_no_project_metadata(&body, "aaa");
+    assert_no_project_metadata(&body, "other");
+}
+
+#[test]
+#[should_panic(expected = "unauthorized project metadata")]
+fn unauthorized_project_key_is_still_rejected() {
+    assert_no_project_metadata(
+        &json!({"session_id":"synthetic-aaa", "projects":["zzz","aaa"]}),
+        "aaa",
+    );
+}
+
+#[test]
+#[should_panic(expected = "unauthorized project metadata")]
+fn unexpected_project_metadata_is_still_rejected() {
+    assert_no_project_metadata(
+        &json!({"session_id":"synthetic-aaa", "projects":["zzz"], "extra":{"tenant":"other-tenant"}}),
+        "other-tenant",
+    );
+}
+
 /// Lexicographically first binding is unauthorized; member only on later project.
 #[tokio::test]
 async fn login_discovers_second_project_only_member_without_exposing_first() {
@@ -116,7 +157,7 @@ async fn login_discovers_second_project_only_member_without_exposing_first() {
     let projects = body["projects"].as_array().unwrap();
     assert_eq!(projects.len(), 1);
     assert_eq!(projects[0], "zzz");
-    assert!(!body.to_string().contains("aaa"));
+    assert_no_project_metadata(&body, "aaa");
 
     let cookie = session_cookie(&set);
     let listed = http()
@@ -134,7 +175,7 @@ async fn login_discovers_second_project_only_member_without_exposing_first() {
         .map(|p| p["key"].as_str().unwrap())
         .collect();
     assert_eq!(keys, vec!["zzz"]);
-    assert!(!listed.to_string().contains("other-tenant"));
+    assert_no_project_metadata(&listed, "other-tenant");
 }
 
 #[tokio::test]
@@ -281,5 +322,5 @@ async fn disjoint_project_credentials_do_not_enumerate_peer_projects() {
     assert_eq!(login.status(), 200);
     let body: Value = login.json().await.unwrap();
     assert_eq!(body["projects"], json!(["one"]));
-    assert!(!body.to_string().contains("other"));
+    assert_no_project_metadata(&body, "other");
 }
