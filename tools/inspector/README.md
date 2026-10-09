@@ -348,6 +348,21 @@ test/
 
 ### Agent-first Team onboarding
 
+Task details preserve the repository-neutral collaboration facts from the same
+atomic `work.snapshot`: selected candidate digest/version, current binding,
+reported verification runs, AWR review, repository integration and source
+publication phase. Missing or truncated facts remain explicit. These stages do
+not imply each other, and a recorded integration may refer to an earlier request;
+inspect its bound receipt before relying on it. No GitHub connection is required.
+Optional public PR observations retain their own provenance and timestamp.
+
+Current guidance shows its applicable condition, recorded basis, one next step
+and reevaluation trigger. An expandable read selector preserves the server's
+authorized query for a connected Agent; the page does not execute it or acquire
+tasks. Snapshot project/source versions and task requirements are available with
+the reporting sources. Older services without neutral facts display their
+absence rather than inferring completion from a PR or progress report.
+
 Members connect their Agent directly to the project's remote MCP endpoint using
 an administrator-provisioned personal credential. The Agent refreshes tasks,
 recovers its own sessions, claims eligible work, obtains execution admission,

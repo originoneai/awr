@@ -57,6 +57,8 @@ function mapObservation(data) {
       } : null,
     } : null,
     attention, status: runtime.state ?? null,
+    // These are authorized AWR facts, independent of optional public PR reads.
+    collaboration: data.collaboration || null,
     guidance: data.guidance || null,
     // Checkpoint prose is historical handoff context, not current advice.
     next_step: data.guidance?.action?.note || null,

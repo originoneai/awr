@@ -60,6 +60,7 @@
       detailResponse: null,
       connectOpen: false,
       handoffOpen: Object.create(null),
+      guidanceDisclosure: null,
       lastRefreshedAt: null,
       refreshing: false,
     };
@@ -676,6 +677,51 @@
         ['agent', agent || missing(w, 'model')],
         ['model', w.model || missing(w, 'model', 'ui.team_progress_model_missing')]]);
       section('progress', [['status', workStatus(w)], ['next', nextStep(w)]]);
+      if (w.guidance) {
+        const hint = w.guidance;
+        const basis = Array.isArray(hint.because) ? hint.because : hint.because ? [hint.because] : [];
+        const group = section('guidance', [['when', hint.when], ['because', basis.join(' · ')],
+          ['recheck', hint.recheck_on]]);
+        if (hint.action?.query) {
+          const selector = el('details', { class: 'feedback-history' });
+          const key = JSON.stringify([state.session?.session_id, state.projectKey, w.key, w.contract_hash,
+            w.snapshot?.source_snapshot_id, w.snapshot?.coordinator_epoch, hint.action.query]);
+          selector.open = state.guidanceDisclosure?.key === key && state.guidanceDisclosure.open;
+          selector.addEventListener('toggle', () => { state.guidanceDisclosure = { key, open: selector.open }; });
+          selector.appendChild(el('summary', null, t(i18n, 'feedback.agent_query')));
+          selector.appendChild(el('pre', { class: 'raw' }, JSON.stringify(hint.action.query, null, 2)));
+          group.appendChild(selector);
+        }
+      }
+      const collaboration = w.collaboration;
+      if (collaboration) {
+        const recorded = (prefix, value) => {
+          if (!value) return unknown;
+          const key = 'feedback.' + prefix + value, translated = t(i18n, key);
+          return translated === key ? t(i18n, 'feedback.state_unknown', { state: value }) : translated;
+        };
+        const candidate = collaboration.candidate;
+        const group = section('delivery', [
+          ['candidate', candidate?.digest], ['selection', candidate?.selection_version],
+          ['binding', candidate ? t(i18n, candidate.current === true ? 'feedback.binding_current'
+            : candidate.current === false ? 'feedback.binding_changed' : 'feedback.dimension_unknown') : null],
+          ['required_checks', candidate?.required_checks?.join(' · ')],
+          ['review', recorded('review_', collaboration.review?.state)],
+          ['integration', recorded('integration_', collaboration.integration?.state)],
+          ['publication', recorded('publication_', collaboration.publication?.phase)],
+        ]);
+        group.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.delivery_dimensions')));
+        group.appendChild(el('h6', null, t(i18n, 'feedback.delivery_checks')));
+        const checks = el('ul');
+        for (const check of collaboration.verification || [])
+          checks.appendChild(el('li', null, [check.check, recorded('check_', check.outcome), check.run_id].filter(Boolean).join(' · ')));
+        if (!checks.firstChild) checks.appendChild(el('li', null, unknown));
+        group.appendChild(checks);
+        if (candidate && candidate.current !== true)
+          group.appendChild(el('p', { class: 'team-error' }, t(i18n, 'feedback.binding_changed_help')));
+        if (collaboration.facts_truncated)
+          group.appendChild(el('p', { class: 'team-error' }, t(i18n, 'feedback.delivery_truncated')));
+      } else if (isLive()) section('delivery', [['summary', t(i18n, 'feedback.delivery_unavailable')]]);
       const report = w.progress_report;
       if (report) {
         const group = section('agent_report', [['phase', t(i18n, 'feedback.phase_' + report.phase)],
@@ -702,7 +748,7 @@
         group.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.usage_scope')));
         if (usage.stale) group.appendChild(el('p', { class: 'team-error' }, t(i18n, 'feedback.stale')));
       } else section('usage', [['tokens', missing(w, 'usage', 'ui.team_progress_usage_missing')]]);
-      section('related', [['pr', w.pr_reference?.url],
+      if (w.pr_reference || w.github) section('related', [['pr', w.pr_reference?.url],
         ['ci', w.github ? w.pr_reference?.expected_head && w.github.head_sha
           && w.pr_reference.expected_head !== w.github.head_sha ? t(i18n, 'feedback.other_revision')
           : w.github.pending && !w.github.ci ? t(i18n, 'feedback.repository_pending')
@@ -764,6 +810,8 @@
         ['client_observed_at', time(w.progress_report?.client_observed_at_unix_ms)],
         ['usage_recorded_revision', w.usage?.recorded_project_revision],
         ['query_revision', w.snapshot?.project_revision],
+        ['source_snapshot', w.snapshot?.source_snapshot_id],
+        ['contract', w.contract_hash],
         ['queried_at', time(w.snapshot?.queried_at_unix_ms ?? w.observed_at_ms)],
         ['usage_source', w.usage ? [w.usage.source, w.usage.source_ref, w.usage.counter_id].join(' · ') : null]], provenance);
       if (w.snapshot?.consistency === 'unconfirmed_legacy')
