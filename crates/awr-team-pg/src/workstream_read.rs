@@ -667,6 +667,16 @@ pub(crate) async fn read(
             "background_scheduling":false,"repository_effects":false,
             "domain_finalization":false,"read_consistency":"repeatable_read"
         });
+        caps["handoff"] = json!({
+            "protocol":"awr-team-handoff-consumption-v1","clock":"database",
+            "package_source":"current_recorded_checkpoint_and_scoped_facts",
+            "inspection_command":"handoff.inspect","accept_selector":"inspection_request_id",
+            "query_is_consumption_receipt":false,"caller_assurances_are_authority":false,
+            "consumption_proof":"delivered_to_authenticated_client_not_model_cognition",
+            "acceptance_rechecks":["actual_settlement","member_client_session","package_version",
+                "current_context","artifact_and_dependency_versions","authority","fence"],
+            "handoff_starts_execution":false,
+        });
         caps["neutral_delivery"]["integration"] = json!({
             "commands":["delivery.integration.prepare","delivery.integration.reject_prepared"],
             "query":"delivery.integration.inspect","action":"delivery.finalize",

@@ -11,6 +11,16 @@ use awr_core::{
 use serde_json::Value;
 use tokio_postgres::Transaction;
 
+pub(crate) async fn server_now_ms(tx: &Transaction<'_>) -> PgResult<i64> {
+    Ok(tx
+        .query_one(
+            "SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint",
+            &[],
+        )
+        .await?
+        .get(0))
+}
+
 fn map_core(err: awr_core::Error) -> PgError {
     match err {
         awr_core::Error::RevisionConflict { .. } => PgError::PreconditionsChanged,
@@ -40,6 +50,8 @@ fn kind_str(k: HandoffKind) -> &'static str {
     }
 }
 
+/// Trusted operator persistence API, not an authenticated member entry point.
+/// Remote members use WorkstreamCommandStore and its actual inspection receipt.
 pub struct HandoffStore {
     pool: crate::PgPool,
 }
@@ -93,13 +105,17 @@ impl HandoffStore {
         tenant: &str,
         project: &str,
         handoff_id: &str,
-        now_ms: i64,
+        _reported_now_ms: i64,
     ) -> PgResult<HandoffDuty> {
         let h = self
             .get(tenant, project, handoff_id)
             .await?
             .ok_or_else(|| PgError::Protocol("handoff not found".into()))?;
-        h.duty_at(now_ms).map_err(map_core)
+        let mut client = self.connect().await?;
+        let tx = client.transaction().await?;
+        let duty = h.duty_at(server_now_ms(&tx).await?).map_err(map_core)?;
+        tx.commit().await?;
+        Ok(duty)
     }
 
     pub async fn propose(
@@ -113,6 +129,7 @@ impl HandoffStore {
         let mut client = self.connect().await?;
         let tx = client.transaction().await?;
         bind_workstream_scope(&tx, tenant, project).await?;
+        lock_project(&tx, tenant, project).await?;
         if let Some(receipt) =
             load_receipt(&tx, tenant, project, &req.request_key, "propose").await?
         {
@@ -124,8 +141,10 @@ impl HandoffStore {
         }
         ensure_person(&tx, tenant, project, from_person.as_str()).await?;
         ensure_person(&tx, tenant, project, req.to_person_id.as_str()).await?;
+        let mut live = req.clone();
+        live.now_ms = server_now_ms(&tx).await?;
         let handoff =
-            apply_handoff_propose(project, work_id, from_person, req).map_err(map_core)?;
+            apply_handoff_propose(project, work_id, from_person, &live).map_err(map_core)?;
         persist(&tx, tenant, project, &handoff).await?;
         let receipt = record(&tx, tenant, project, &handoff, &req.request_key, "propose").await?;
         tx.commit().await?;
@@ -144,7 +163,14 @@ impl HandoffStore {
             &req.request_key,
             "inspect",
             &req.handoff_id,
-            |before| apply_handoff_inspect(before, req).map_err(map_core),
+            |before, now| {
+                if before.expires_at_ms.is_some_and(|expires| now >= expires) {
+                    return Err(PgError::PreconditionsChanged);
+                }
+                let mut live = req.clone();
+                live.now_ms = now;
+                apply_handoff_inspect(before, &live).map_err(map_core)
+            },
         )
         .await
     }
@@ -158,6 +184,7 @@ impl HandoffStore {
         let mut client = self.connect().await?;
         let tx = client.transaction().await?;
         bind_workstream_scope(&tx, tenant, project).await?;
+        lock_project(&tx, tenant, project).await?;
         if let Some(receipt) =
             load_receipt(&tx, tenant, project, &req.request_key, "accept").await?
         {
@@ -178,10 +205,15 @@ impl HandoffStore {
             .await?
             .ok_or_else(|| PgError::Protocol("handoff not found".into()))?;
         let mut live_req = req.clone();
+        crate::source::require_work_settled(&tx, tenant, project, &before.work_item_id).await?;
+        live_req.now_ms = server_now_ms(&tx).await?;
+        live_req.prior_execution_stopped = true;
+        live_req.prior_reconciled = true;
         live_req.unknown_executions_open =
             unknown_open(&tx, tenant, project, &before.work_item_id).await?;
-        if req.expected_current_fence.is_some() {
-            live_req.live_fence = live_fence(&tx, tenant, project, &before.work_item_id).await?;
+        live_req.live_fence = live_fence(&tx, tenant, project, &before.work_item_id).await?;
+        if live_req.live_fence.is_some() && live_req.expected_current_fence.is_none() {
+            return Err(PgError::missing_handoff_fence());
         }
         let was_open = before.status.is_open();
         let next = apply_handoff_accept(&before, &live_req).map_err(map_core)?;
@@ -206,7 +238,11 @@ impl HandoffStore {
             &req.request_key,
             "reject",
             &req.handoff_id,
-            |before| apply_handoff_reject(before, req).map_err(map_core),
+            |before, now| {
+                let mut live = req.clone();
+                live.now_ms = now;
+                apply_handoff_reject(before, &live).map_err(map_core)
+            },
         )
         .await
     }
@@ -223,7 +259,11 @@ impl HandoffStore {
             &req.request_key,
             "cancel",
             &req.handoff_id,
-            |before| apply_handoff_cancel(before, req).map_err(map_core),
+            |before, now| {
+                let mut live = req.clone();
+                live.now_ms = now;
+                apply_handoff_cancel(before, &live).map_err(map_core)
+            },
         )
         .await
     }
@@ -240,7 +280,11 @@ impl HandoffStore {
             &req.request_key,
             "timeout",
             &req.handoff_id,
-            |before| apply_handoff_timeout(before, req).map_err(map_core),
+            |before, now| {
+                let mut live = req.clone();
+                live.now_ms = now;
+                apply_handoff_timeout(before, &live).map_err(map_core)
+            },
         )
         .await
     }
@@ -255,11 +299,12 @@ impl HandoffStore {
         transition: F,
     ) -> PgResult<(TeamHandoff, HandoffReceipt)>
     where
-        F: FnOnce(&TeamHandoff) -> PgResult<TeamHandoff>,
+        F: FnOnce(&TeamHandoff, i64) -> PgResult<TeamHandoff>,
     {
         let mut client = self.connect().await?;
         let tx = client.transaction().await?;
         bind_workstream_scope(&tx, tenant, project).await?;
+        lock_project(&tx, tenant, project).await?;
         if let Some(receipt) = load_receipt(&tx, tenant, project, request_key, op).await? {
             if receipt.handoff_id != handoff_id {
                 return Err(PgError::IdempotencyConflict);
@@ -273,12 +318,22 @@ impl HandoffStore {
         let before = load_for_update(&tx, tenant, project, handoff_id)
             .await?
             .ok_or_else(|| PgError::Protocol("handoff not found".into()))?;
-        let next = transition(&before)?;
+        let next = transition(&before, server_now_ms(&tx).await?)?;
         persist(&tx, tenant, project, &next).await?;
         let receipt = record(&tx, tenant, project, &next, request_key, op).await?;
         tx.commit().await?;
         Ok((next, receipt))
     }
+}
+
+async fn lock_project(tx: &Transaction<'_>, tenant: &str, project: &str) -> PgResult<()> {
+    tx.query_opt(
+        "SELECT id FROM awr_team.projects WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+        &[&tenant, &project],
+    )
+    .await?
+    .ok_or(PgError::ProjectNotAvailable)?;
+    Ok(())
 }
 
 /// Apply authoritative responsibility / execution effects after a newly accepted handoff.
@@ -331,6 +386,12 @@ pub(crate) async fn commit_accepted_transfer(
                 version + 1,
             )
             .await?;
+            // Ownership transfer does not start a successor execution. Release
+            // the settled predecessor's admission so the new owner may claim.
+            tx.execute("UPDATE awr_team.claims SET state='handed_off'
+                WHERE tenant_id=$1 AND project_id=$2 AND scope_id='main' AND work_id=$3 AND state='active'",
+                &[&tenant, &project, &work_id]).await?;
+            bump_fence(tx, tenant, project, work_id).await?;
         }
         HandoffKind::Execution => {
             if let Some(r) = &row {
@@ -380,7 +441,8 @@ async fn upsert_responsibility_owner(
             tenant_id,project_id,work_id,owner_person_id,version,personal_mode_default)
          VALUES($1,$2,$3,$4,$5,false)
          ON CONFLICT(tenant_id,project_id,work_id) DO UPDATE SET
-            owner_person_id=EXCLUDED.owner_person_id,
+             owner_person_id=EXCLUDED.owner_person_id,
+             executor_kind=NULL,executor_person_id=NULL,executor_agent_id=NULL,executor_binding_id=NULL,
             pending_kind=NULL,
             pending_person_id=NULL,
             pending_legacy_ref=NULL,
@@ -502,7 +564,8 @@ async fn bump_fence(
 ) -> PgResult<()> {
     let _ = tx
         .execute(
-            "UPDATE awr_team.work_runtime SET last_fence = last_fence + 1
+            "UPDATE awr_team.work_runtime SET last_fence = last_fence + 1,work_version=work_version+1,
+                state=CASE WHEN state='claimed' THEN 'unclaimed' ELSE state END
              WHERE tenant_id=$1 AND project_id=$2 AND scope_id='main' AND work_id=$3",
             &[&tenant, &project, &work_id],
         )

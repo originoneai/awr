@@ -547,7 +547,9 @@ pub(crate) async fn require_executor(
     let task = current(tx, tenant, project, &command.work_id).await?;
     if task.pending.is_some()
         || task.owner.as_ref().is_some_and(|p| {
-            p != actor.person_id() && !task.collaborators.contains(actor.person_id())
+            p != actor.person_id()
+                && !task.collaborators.contains(actor.person_id())
+                && task.current_executor.as_ref() != Some(&actor)
         })
         || task.current_executor.as_ref().is_some_and(|e| e != &actor)
     {
