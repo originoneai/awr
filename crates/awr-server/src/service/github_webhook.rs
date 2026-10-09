@@ -355,3 +355,66 @@ async fn notification(
     recent.push_back((delivery.to_owned(), now));
     reply(StatusCode::ACCEPTED, "QueryWakeupRequested")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    // GitHub's own documented example ("Validating webhook deliveries"). The tests
+    // in tests/github_webhook.rs sign with the same HMAC code the verifier uses, so
+    // only a value computed by GitHub shows that the two agree with the provider.
+    const SECRET: &str = "It's a Secret to Everybody";
+    const BODY: &[u8] = b"Hello, World!";
+    const SIGNATURE: &str =
+        "sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17";
+
+    fn headers(values: &[&str]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for value in values {
+            map.append("x-hub-signature-256", HeaderValue::from_str(value).unwrap());
+        }
+        map
+    }
+
+    #[test]
+    fn the_signature_documented_by_github_verifies() {
+        assert!(signature(&headers(&[SIGNATURE]), BODY, SECRET));
+    }
+
+    #[test]
+    fn anything_other_than_that_exact_delivery_is_refused() {
+        let valid = headers(&[SIGNATURE]);
+        assert!(!signature(&valid, b"Hello, World?", SECRET), "changed body");
+        assert!(
+            !signature(&valid, BODY, "It's a Secret to Everybody!"),
+            "changed secret"
+        );
+        assert!(!signature(&valid, b"", SECRET), "empty body");
+        for refused in [
+            // The legacy SHA-1 header format and a missing prefix are not accepted.
+            SIGNATURE.replace("sha256=", "sha1="),
+            SIGNATURE.replace("sha256=", ""),
+            // GitHub sends lowercase hexadecimal only.
+            SIGNATURE.to_uppercase().replace("SHA256=", "sha256="),
+            // Wrong length, trailing text, non-hexadecimal digits.
+            SIGNATURE[..SIGNATURE.len() - 1].to_owned(),
+            format!("{SIGNATURE}0"),
+            format!("{SIGNATURE} "),
+            SIGNATURE.replace('7', "g"),
+        ] {
+            assert!(
+                !signature(&headers(&[&refused]), BODY, SECRET),
+                "must be refused: {refused}"
+            );
+        }
+        assert!(
+            !signature(&HeaderMap::new(), BODY, SECRET),
+            "missing header"
+        );
+        assert!(
+            !signature(&headers(&[SIGNATURE, SIGNATURE]), BODY, SECRET),
+            "a repeated header is ambiguous"
+        );
+    }
+}
