@@ -533,7 +533,7 @@ impl WorkstreamCommandStore {
                 claims::apply(&tx, tenant, project, &auth, &command, ownership, a).await?
             }
             Action::Handoff(a) => {
-                handoffs::apply(&tx, tenant, project, &auth, &command, ownership, a).await?
+                handoffs::apply(&tx, tenant, project, bearer, &auth, &command, ownership, a).await?
             }
             Action::Review(a) => {
                 reviews::apply(
