@@ -321,23 +321,46 @@ async fn prepared_integration_executes_once_and_restart_preserves_terminal_histo
 #[tokio::test]
 async fn concurrent_runtimes_share_one_durable_guard_and_one_actual_receive_pack_post() {
     let (repo, f) = setup_github().await;
-    f.prepared().await;
+    let integration_id = f.prepared().await["integration_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let one = start(&f, &repo, config(&repo, "one", true)).await;
     let two = start(&f, &repo, config(&repo, "two", true)).await;
-    tokio::time::timeout(Duration::from_secs(20), async {
+    let observed = tokio::time::timeout(Duration::from_secs(20), async {
         loop {
-            if one.monitor().snapshots()[0].confirmed + two.monitor().snapshots()[0].confirmed == 1
+            // Each runtime can observe the same durable confirmation. The real
+            // receive-pack count below establishes uniqueness of the effect.
+            if one.monitor().snapshots()[0].confirmed > 0
+                || two.monitor().snapshots()[0].confirmed > 0
             {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
-    .await
-    .unwrap();
+    .await;
+    assert!(
+        observed.is_ok(),
+        "confirmation not observed: one={:?}, two={:?}, receive_pack_posts={}",
+        one.monitor().snapshots(),
+        two.monitor().snapshots(),
+        repo.receive.posts.load(Ordering::SeqCst)
+    );
     one.shutdown().await;
     two.shutdown().await;
     assert_eq!(repo.receive.posts.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        repo.repo.bare(&["rev-parse", "refs/heads/main"]),
+        repo.repo.source
+    );
+    let persisted = f
+        .store
+        .inspect_integration(TENANT, PROJECT, WORKER, "a", &integration_id)
+        .await
+        .unwrap();
+    assert_eq!(persisted["state"], "confirmed");
+    assert_eq!(persisted["confirmation_current"], true);
     assert_eq!(f.guards().await, 0);
     no_completion(&f).await;
 }
