@@ -20,7 +20,8 @@ use a throwaway PostgreSQL 17 (the compose file above, or the service container
 of the CI workflow) and never a shared, Beta or production server, even through
 a tunnel that makes it look like loopback. Use one test thread. A failing test
 no longer poisons the shared fixture lock, so the first failure in the output is
-the real one.
+the real one. Each test process leaves its `awr_team_gate_*` database behind (a
+full run of both packages adds a few GB), so remove the server when you are done.
 
 CI runs the same two commands in `.github/workflows/team-postgres.yml` against a
 PostgreSQL 17 service container, for every change under `crates/`.
