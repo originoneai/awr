@@ -84,6 +84,36 @@ deliveries take precedence over old checkpoint instructions. Small context budge
 may omit this optional advice while preserving the required context; query
 `work.observe` for it when needed.
 
+## Current team inbox
+
+Supervisors use `awr_team_query` with `op="work.inbox"` after checking
+capabilities. Omit work, workstream and session selectors. The same entry serves
+members, reviewers and deliverers within their actual permissions. Follow one
+item's `next_query` to inspect its current condition before taking action.
+
+The inbox projects persistent assignment, blocker, review and repository-neutral
+delivery facts. Each task has at most one current primary item, with a condition,
+at most three short basis entries, one action and a reevaluation trigger. Provider
+events do not become approval or instructions. GitHub and webhooks are optional.
+
+Page until `next_cursor` is null, including empty pages. Use `item_key` to deduplicate;
+refresh from the first page after a relevant change. Handled conditions disappear
+and changed conditions receive a new key. Cursors expire when reader, source or
+authority bindings change. `limit` bounds evaluated visible tasks; optional
+`max_context_bytes` bounds the complete JSON response (default 65,536 bytes).
+Reduce the page size or increase the budget if the response is too large.
+Display titles are limited to 160 Unicode characters with `title_truncated`
+reported explicitly; the task's required context remains in `work.prepare`.
+
+An item is advisory: reading it reserves nothing, acknowledges no unknown effect,
+and grants no execution, review, repository or publication authority. Commands
+check their own current permissions and versions. Source publication stages here
+are recorded facts; `delivery.source.status` checks actual source synchronization.
+Read-only members can inspect unresolved effects or waits, including paused work,
+without receiving an action grant. An author is never offered its own review as
+a reviewer decision; the selected review's remaining independence checks still
+run at command admission.
+
 Use the [feedback contract](../reference/team-session-feedback.md) when advertised
 in capabilities. Batch reports with checkpoints, not every tool call or page
 refresh. Lease renewal is separate: use host scheduling if available and renew
