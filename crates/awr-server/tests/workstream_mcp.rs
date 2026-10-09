@@ -657,6 +657,102 @@ async fn missing_session_start_conversation_id_is_actionable_and_does_not_mutate
 }
 
 #[tokio::test]
+async fn evidence_input_diagnostics_are_safe_and_identical_over_http_and_mcp() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let before = prepared(&client).await;
+    let args = json!({"session_id":"session-a","expected_session_version":"1",
+        "payload":{},"artifact_text":"Measured report\r\n","dirty_tree":false});
+    let body = serde_json::to_value(command(
+        &before,
+        "rejected-evidence",
+        "evidence.submit",
+        args,
+    ))
+    .unwrap();
+    let cases = [
+        ("missing", "/args/dirty_tree", "required"),
+        ("extra", "/args", "unexpected_field"),
+        ("type", "/args/dirty_tree", "type"),
+        ("version", "/args/expected_session_version", "pattern"),
+        ("header", "/expected_project_revision", "type"),
+    ];
+    for (case, field, constraint) in cases {
+        let mut input = body.clone();
+        match case {
+            "missing" => {
+                input["args"].as_object_mut().unwrap().remove("dirty_tree");
+            }
+            "extra" => {
+                input["args"]["synthetic-secret-key"] = json!("synthetic-secret-value");
+            }
+            "type" => {
+                input["args"]["dirty_tree"] = json!("synthetic-secret-value");
+            }
+            "version" => {
+                input["args"]["expected_session_version"] = json!("synthetic-secret-value");
+            }
+            "header" => {
+                input["expected_project_revision"] = json!(1);
+            }
+            _ => unreachable!(),
+        }
+        let mcp = call(&client, "awr_team_command", input.clone(), true).await;
+        let response = http()
+            .post(format!("{}/one/command", server.url))
+            .bearer_auth(A)
+            .json(&input)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let http: Value = response.json().await.unwrap();
+        assert_eq!(mcp, http);
+        assert_eq!(mcp["code"], "InvalidInput");
+        assert_eq!(mcp["invalid_field"], field);
+        assert_eq!(mcp["constraint"], constraint);
+        assert!(!mcp.to_string().contains("synthetic-secret"));
+        assert!(mcp.to_string().len() < 1024);
+    }
+    for (op, selector) in [
+        ("review.inspect", "review_round_id"),
+        ("evidence.inspect", "evidence_id"),
+    ] {
+        let input = json!({"protocol_version":1,"op":op,"work_id":"a"});
+        let mcp = call(&client, "awr_team_query", input.clone(), true).await;
+        let response = http()
+            .post(format!("{}/one/query", server.url))
+            .bearer_auth(A)
+            .json(&input)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        assert_eq!(mcp, response.json::<Value>().await.unwrap());
+        assert_eq!(mcp["invalid_field"], format!("/{selector}"));
+    }
+    assert_eq!(
+        prepared(&client).await["project_revision"],
+        before["project_revision"]
+    );
+    // Corrected input uses the original request ID: refused inputs never became
+    // business receipts. Successful exact replay still returns the same evidence.
+    let accepted = call(&client, "awr_team_command", body.clone(), false).await;
+    assert!(
+        !accepted["receipt"]["data"]["evidence_id"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
+    let replay = call(&client, "awr_team_command", body, false).await;
+    assert_eq!(replay["receipt"], accepted["receipt"]);
+    assert_eq!(replay["replayed"], true);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn discovered_review_and_evidence_selectors_reach_scoped_records() {
     let (_guard, admin, _, store) = setup().await;
     enable_writes(&admin).await;

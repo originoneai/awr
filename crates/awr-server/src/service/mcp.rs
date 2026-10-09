@@ -17,6 +17,46 @@ use rmcp::{
 };
 use tokio::{sync::OwnedSemaphorePermit, time::Instant};
 
+mod input_diagnostics;
+pub(super) use input_diagnostics::add_input_diagnostic;
+
+fn add_evidence_input_schema(command: &mut Value, query: &mut Value) {
+    let fields = command["properties"]["args"]["properties"]
+        .as_object_mut()
+        .unwrap();
+    fields.insert("claimed_trust".into(), json!({"type":["string","null"],
+        "description":"Optional reported trust label; never grants authority or upgrades evidence."}));
+    let names = [
+        "session_id",
+        "expected_session_version",
+        "claimed_trust",
+        "payload",
+        "artifact_hex",
+        "artifact_text",
+        "input_digest",
+        "dirty_tree",
+        "execution_id",
+    ];
+    let properties: serde_json::Map<String, Value> = names
+        .into_iter()
+        .map(|name| (name.to_owned(), fields[name].clone()))
+        .collect();
+    command["allOf"].as_array_mut().unwrap().push(json!({
+        "if":{"properties":{"op":{"const":"evidence.submit"}},"required":["op"]},
+        "then":{"properties":{"args":{"type":"object","additionalProperties":false,
+            "required":["session_id","expected_session_version","payload","dirty_tree"],
+            "properties":properties,
+            "description":"Submit measured artifact_text (or legacy artifact_hex). The service computes artifact_digest from these bytes; do not add artifact_sha256. Generic payload remains arbitrary JSON. For Agent completion, use payload.passed=true and the actual execution output_digest; keep input_digest and execution_id in args. Inspection does not approve the evidence."}}}}));
+    for (op, selector) in [
+        ("review.inspect", "review_round_id"),
+        ("evidence.inspect", "evidence_id"),
+    ] {
+        query["allOf"].as_array_mut().unwrap().push(json!({
+            "if":{"properties":{"op":{"const":op}},"required":["op"]},
+            "then":{"required":[selector]}}));
+    }
+}
+
 #[derive(Clone)]
 struct Endpoint {
     state: Arc<StateData>,
@@ -480,6 +520,7 @@ fn catalog() -> Vec<Tool> {
     ]);
     add_handoff_input_schema(&mut command);
     add_neutral_delivery_schema(&mut command);
+    add_evidence_input_schema(&mut command, &mut query);
     command["properties"]["args"]["properties"]["assignee_person_id"] = json!({"type":"string","minLength":1,"maxLength":128,
         "description":"task.assign: active eligible project member. This is a target, never the acting identity."});
     command["properties"]["args"]["properties"]["expected_responsibility_version"] = json!({"type":"string","pattern":"^(0|[1-9][0-9]*)$",
@@ -792,6 +833,10 @@ impl ServerHandler for Endpoint {
             .get("work_id")
             .and_then(Value::as_str)
             .map(str::to_owned);
+        let diagnostic_input =
+            matches!(request.name.as_ref(), "awr_team_query" | "awr_team_command")
+                .then(|| args.clone());
+        let write = request.name == "awr_team_command";
         let result = tokio::time::timeout_at(access.deadline, super::audited(&self.state, &self.project, &access.bearer, &action, work.as_deref(), async {
             match request.name.as_ref() {
                 "awr_team_query" => {
@@ -991,7 +1036,13 @@ impl ServerHandler for Endpoint {
         .await;
         let result = match result {
             Ok(Ok(value)) => CallToolResult::structured(value),
-            Ok(Err(error)) => CallToolResult::structured_error(public_error(error).1),
+            Ok(Err(error)) => {
+                let mut value = public_error(error).1;
+                if let Some(input) = diagnostic_input {
+                    add_input_diagnostic(&mut value, &input, write);
+                }
+                CallToolResult::structured_error(value)
+            }
             Err(_) => CallToolResult::structured_error(unavailable_value()),
         };
         Ok(result.into())
@@ -1255,6 +1306,58 @@ mod tests {
                 .unwrap()
                 .contains("events.list")
         );
+    }
+
+    #[test]
+    fn evidence_discovery_closes_only_its_args_and_requires_current_selectors() {
+        let tools = catalog();
+        let command = &tools
+            .iter()
+            .find(|t| t.name == "awr_team_command")
+            .unwrap()
+            .input_schema;
+        let branch = command["allOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["if"]["properties"]["op"]["const"] == "evidence.submit")
+            .expect("Evidence submission must expose its operation-specific shape");
+        let args = &branch["then"]["properties"]["args"];
+        assert_eq!(args["additionalProperties"], false);
+        assert_eq!(
+            args["required"],
+            json!([
+                "session_id",
+                "expected_session_version",
+                "payload",
+                "dirty_tree"
+            ])
+        );
+        assert_eq!(args["properties"].as_object().unwrap().len(), 9);
+        assert!(args["properties"]["payload"].get("type").is_none());
+        assert!(args["properties"].get("artifact_sha256").is_none());
+        assert!(
+            command["properties"]["args"]
+                .get("additionalProperties")
+                .is_none()
+        );
+        let query = &tools
+            .iter()
+            .find(|t| t.name == "awr_team_query")
+            .unwrap()
+            .input_schema;
+        for (op, field) in [
+            ("review.inspect", "review_round_id"),
+            ("evidence.inspect", "evidence_id"),
+        ] {
+            let branch = query["allOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["if"]["properties"]["op"]["const"] == op)
+                .expect("Inspection must expose its required record selector");
+            assert_eq!(branch["then"]["required"], json!([field]));
+        }
     }
 
     #[test]
