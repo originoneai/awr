@@ -656,4 +656,322 @@ mod tests {
             Some(GitHubError::TimedOut)
         );
     }
+
+    // ---- A real `git receive-pack` is the oracle -------------------------------
+    //
+    // The tests above feed hand-written advertisements and reports to the parser, so
+    // a misunderstanding of the protocol would sit in both the code and its fixture.
+    // These run the actual `git receive-pack --stateless-rpc`, the program behind
+    // `git http-backend`, against a throw-away bare repository.
+    use awr_team::{ProjectId, RequestId, ScopeId, TenantId, WorkId};
+    use std::{
+        path::{Path, PathBuf},
+        process::{Command, Stdio},
+    };
+
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new(tag: &str) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("awr-receive-oracle-{tag}-{}", awr_core::Id::new()));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn git_command(dir: &Path) -> Command {
+        let mut command = Command::new("git");
+        command
+            .current_dir(dir)
+            .args([
+                "-c",
+                "user.name=oracle",
+                "-c",
+                "user.email=oracle@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "init.defaultBranch=main",
+            ])
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env(
+                "GIT_CONFIG_GLOBAL",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            );
+        command
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let output = git_command(dir)
+            .args(args)
+            .output()
+            .expect("git must be installed for the receive-pack oracle tests");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    /// Runs the real server side of the protocol; returns whether it exited cleanly and its stdout.
+    fn receive_pack(bare: &Path, advertise: bool, input: &[u8]) -> (bool, Vec<u8>) {
+        let mut command = git_command(bare);
+        command.arg("receive-pack").arg("--stateless-rpc");
+        if advertise {
+            command.arg("--advertise-refs");
+        }
+        let mut child = command
+            .arg(bare)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("git must be installed for the receive-pack oracle tests");
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(input).unwrap();
+        drop(stdin);
+        let output = child.wait_with_output().unwrap();
+        (output.status.success(), output.stdout)
+    }
+
+    /// What `GET info/refs?service=git-receive-pack` returns over smart HTTP.
+    fn http_advertisement(bare: &Path) -> Vec<u8> {
+        let mut framed = packet(b"# service=git-receive-pack\n");
+        framed.extend(b"0000");
+        let (ok, advertised) = receive_pack(bare, true, b"");
+        assert!(ok, "git receive-pack --advertise-refs failed");
+        framed.extend(advertised);
+        framed
+    }
+
+    struct Remote {
+        _scratch: Scratch,
+        bare: PathBuf,
+        /// The initial commit, the tip of `main`.
+        a: String,
+        /// A child of `a`.
+        b: String,
+        /// Another child of `a`, so `b` and `c` diverge.
+        c: String,
+    }
+
+    /// A bare repository holding three commits, `main` at `a`; `b` and `c` are only
+    /// reachable through side branches, like a commit that already exists on the provider.
+    fn remote() -> Remote {
+        let scratch = Scratch::new("remote");
+        let work = scratch.0.join("work");
+        let bare = scratch.0.join("remote.git");
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::create_dir_all(&bare).unwrap();
+        git(&work, &["init", "-q"]);
+        let commit = |content: &str| {
+            std::fs::write(work.join("file.txt"), content).unwrap();
+            git(&work, &["add", "file.txt"]);
+            git(&work, &["commit", "-q", "-m", content]);
+            git(&work, &["rev-parse", "HEAD"])
+        };
+        let a = commit("a");
+        git(&work, &["checkout", "-q", "-b", "side-b"]);
+        let b = commit("b");
+        git(&work, &["checkout", "-q", "main"]);
+        git(&work, &["checkout", "-q", "-b", "side-c"]);
+        let c = commit("c");
+        git(&bare, &["init", "-q", "--bare"]);
+        git(
+            &work,
+            &[
+                "push",
+                "-q",
+                bare.to_str().unwrap(),
+                "main:refs/heads/main",
+                "side-b:refs/heads/side-b",
+                "side-c:refs/heads/side-c",
+            ],
+        );
+        assert_eq!(git(&bare, &["rev-parse", REF]), a);
+        Remote {
+            _scratch: scratch,
+            bare,
+            a,
+            b,
+            c,
+        }
+    }
+
+    fn candidate(old: &str, new: &str) -> DeliveryCandidate {
+        let manifest = ArtifactManifest {
+            entries: vec![ArtifactEntry {
+                artifact_id: "result".into(),
+                sha256: "a".repeat(64),
+                byte_length: "1".into(),
+                locator: "git-blob:file.txt".into(),
+            }],
+        };
+        let revision = |value: &str| RevisionRef {
+            resource: "repo:oracle".into(),
+            format: RevisionFormat::GitSha1,
+            value: value.into(),
+        };
+        DeliveryCandidate {
+            binding: CandidateBinding {
+                tenant_id: TenantId::new("t").unwrap(),
+                project_id: ProjectId::new("p").unwrap(),
+                scope_id: ScopeId::new("main").unwrap(),
+                workstream_id: "1".into(),
+                work_id: WorkId::new("a").unwrap(),
+                candidate_id: RequestId::new("candidate").unwrap(),
+                candidate_version: "1".into(),
+                contract_hash: "e".repeat(64),
+                manifest_digest: manifest.digest().unwrap(),
+                source_revision: Some(revision(new)),
+                required_checks: vec![],
+                target: DeliveryTarget {
+                    resource: "repo:oracle".into(),
+                    reference: Some(REF.into()),
+                    precondition: TargetPrecondition::Exact(revision(old)),
+                },
+            },
+            manifest,
+        }
+    }
+
+    #[test]
+    fn a_real_receive_pack_accepts_our_advertisement_check_and_command() {
+        let remote = remote();
+        assert_eq!(
+            advertisement(&http_advertisement(&remote.bare), REF, &remote.a),
+            Ok(())
+        );
+        let (ok, report) = receive_pack(
+            &remote.bare,
+            false,
+            &payload(&candidate(&remote.a, &remote.b)).unwrap(),
+        );
+        assert!(ok);
+        assert_eq!(status(&report, REF), Ok(PushStatus::Accepted));
+        assert_eq!(git(&remote.bare, &["rev-parse", REF]), remote.b);
+    }
+
+    #[test]
+    fn a_real_receive_pack_enforces_the_old_object_even_after_a_good_advertisement() {
+        let remote = remote();
+        let advertised = http_advertisement(&remote.bare);
+        assert_eq!(advertisement(&advertised, REF, &remote.a), Ok(()));
+        // Someone else moves the reference after we looked and before we send the command.
+        git(&remote.bare, &["update-ref", REF, &remote.c]);
+        let (_, report) = receive_pack(
+            &remote.bare,
+            false,
+            &payload(&candidate(&remote.a, &remote.b)).unwrap(),
+        );
+        assert_eq!(status(&report, REF), Ok(PushStatus::Rejected));
+        assert_eq!(git(&remote.bare, &["rev-parse", REF]), remote.c);
+        // A fresh advertisement of the moved reference no longer matches the expectation.
+        assert_eq!(
+            advertisement(&http_advertisement(&remote.bare), REF, &remote.a),
+            Err(GitHubError::PreconditionsChanged)
+        );
+    }
+
+    #[test]
+    fn a_real_receive_pack_rejects_what_the_server_policy_refuses() {
+        let remote = remote();
+        git(&remote.bare, &["update-ref", REF, &remote.b]);
+        git(
+            &remote.bare,
+            &["config", "receive.denyNonFastForwards", "true"],
+        );
+        // b -> c is not a fast-forward and the server forbids it.
+        let (_, report) = receive_pack(
+            &remote.bare,
+            false,
+            &payload(&candidate(&remote.b, &remote.c)).unwrap(),
+        );
+        assert_eq!(status(&report, REF), Ok(PushStatus::Rejected));
+        assert_eq!(git(&remote.bare, &["rev-parse", REF]), remote.b);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_real_receive_pack_reports_a_declining_hook_as_rejected_without_its_text() {
+        use std::os::unix::fs::PermissionsExt;
+        let remote = remote();
+        let hook = remote.bare.join("hooks/pre-receive");
+        std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+        std::fs::write(&hook, "#!/bin/sh\necho 'private policy text' >&2\nexit 1\n").unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let (_, report) = receive_pack(
+            &remote.bare,
+            false,
+            &payload(&candidate(&remote.a, &remote.b)).unwrap(),
+        );
+        assert_eq!(status(&report, REF), Ok(PushStatus::Rejected));
+        assert_eq!(git(&remote.bare, &["rev-parse", REF]), remote.a);
+    }
+
+    #[test]
+    fn a_real_receive_pack_refuses_a_commit_the_provider_does_not_have() {
+        let remote = remote();
+        let missing = "9".repeat(40);
+        let (_, report) = receive_pack(
+            &remote.bare,
+            false,
+            &payload(&candidate(&remote.a, &missing)).unwrap(),
+        );
+        // Real git answers "unpack ok" and "ng ... missing necessary objects".
+        assert_eq!(status(&report, REF), Ok(PushStatus::Rejected));
+        assert_eq!(git(&remote.bare, &["rev-parse", REF]), remote.a);
+    }
+
+    #[test]
+    fn real_advertisements_of_other_repositories_are_refused_for_the_right_reason() {
+        let scratch = Scratch::new("advert");
+        // An empty repository has no reference to update.
+        let empty = scratch.0.join("empty.git");
+        std::fs::create_dir_all(&empty).unwrap();
+        git(&empty, &["init", "-q", "--bare"]);
+        assert_eq!(
+            advertisement(&http_advertisement(&empty), REF, &"a".repeat(40)),
+            Err(GitHubError::PreconditionsChanged)
+        );
+        // A SHA-256 repository cannot take our SHA-1 command.
+        let sha256 = scratch.0.join("sha256.git");
+        std::fs::create_dir_all(&sha256).unwrap();
+        git(&sha256, &["init", "-q", "--bare", "--object-format=sha256"]);
+        assert_eq!(
+            advertisement(&http_advertisement(&sha256), REF, &"a".repeat(40)),
+            Err(GitHubError::UnsupportedGuarantee)
+        );
+    }
+
+    #[test]
+    fn no_truncated_real_advertisement_or_report_is_ever_accepted() {
+        let remote = remote();
+        let advertised = http_advertisement(&remote.bare);
+        assert_eq!(advertisement(&advertised, REF, &remote.a), Ok(()));
+        for end in 0..advertised.len() {
+            assert!(
+                advertisement(&advertised[..end], REF, &remote.a).is_err(),
+                "a prefix of {end} bytes must not parse"
+            );
+        }
+        let (_, report) = receive_pack(
+            &remote.bare,
+            false,
+            &payload(&candidate(&remote.a, &remote.b)).unwrap(),
+        );
+        assert_eq!(status(&report, REF), Ok(PushStatus::Accepted));
+        for end in 0..report.len() {
+            assert!(
+                status(&report[..end], REF).is_err(),
+                "a prefix of {end} bytes must not parse as a report"
+            );
+        }
+    }
 }
