@@ -147,10 +147,35 @@ async fn require_target(
     command: &WorkstreamCommand,
     target: &str,
 ) -> PgResult<PersonId> {
+    // Commands retain their original membership/actor locks. Directory reads
+    // reuse eligibility below without taking locks on prospective recipients.
+    tx.query_opt("SELECT a.id FROM awr_team.actors a
+        JOIN awr_team.project_memberships m ON m.tenant_id=a.tenant_id AND m.actor_id=a.id
+        WHERE a.tenant_id=$1 AND m.project_id=$2 AND a.id=$3 AND a.status='active' FOR SHARE OF a,m",
+        &[&tenant,&project,&target]).await?.ok_or(PgError::Forbidden)?;
+    eligible_target(
+        tx,
+        tenant,
+        project,
+        command.workstream_id,
+        version(&command.expected_authority_version)?,
+        target,
+    )
+    .await
+}
+
+pub(crate) async fn eligible_target(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    stream: awr_core::Id,
+    authority: i64,
+    target: &str,
+) -> PgResult<PersonId> {
     let r = tx.query_opt("SELECT a.kind,m.role,m.independent_review,m.agent_review,m.assignment_grant,m.business_roles,p.status
         FROM awr_team.actors a JOIN awr_team.project_memberships m ON m.tenant_id=a.tenant_id AND m.actor_id=a.id
         LEFT JOIN awr_team.persons p ON p.tenant_id=m.tenant_id AND p.project_id=m.project_id AND p.id=a.id
-        WHERE a.tenant_id=$1 AND m.project_id=$2 AND a.id=$3 AND a.status='active' FOR SHARE OF a,m",
+        WHERE a.tenant_id=$1 AND m.project_id=$2 AND a.id=$3 AND a.status='active'",
         &[&tenant,&project,&target]).await?.ok_or(PgError::Forbidden)?;
     if r.get::<_, Option<String>>(6).is_some_and(|s| s != "active") {
         return Err(PgError::Forbidden);
@@ -178,10 +203,10 @@ async fn require_target(
     let scope: bool = tx.query_one("SELECT EXISTS(SELECT 1 FROM awr_team.workstream_grants g
         JOIN awr_team.actors a ON a.tenant_id=g.tenant_id AND a.id=g.actor_id AND a.status='active'
         WHERE g.tenant_id=$1 AND g.project_id=$2 AND g.workstream_id=$3 AND g.authority_version=$4
-          AND g.can_read AND g.can_write AND (g.actor_id=$5 OR EXISTS(
+          AND g.active AND g.can_read AND g.can_write AND (g.actor_id=$5 OR EXISTS(
             SELECT 1 FROM awr_team.person_agent_bindings b WHERE b.tenant_id=g.tenant_id AND b.project_id=g.project_id
               AND b.agent_id=g.actor_id AND b.person_id=$5 AND b.status='active')))",
-        &[&tenant,&project,&command.workstream_id.to_string(),&version(&command.expected_authority_version)?,&target]).await?.get(0);
+        &[&tenant,&project,&stream.to_string(),&authority,&target]).await?.get(0);
     if !scope {
         return Err(PgError::Forbidden);
     }

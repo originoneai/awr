@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use tokio_postgres::{IsolationLevel, Transaction};
 
 mod activity;
+mod assignees;
 mod delivery;
 mod guidance;
 mod inbox;
@@ -25,6 +26,7 @@ const QUERIES: &[&str] = &[
     "work.search",
     "work.next",
     "work.inbox",
+    "task.assignees",
     "work.prepare",
     "work.snapshot",
     "work.observe",
@@ -154,6 +156,7 @@ impl WorkstreamQuery {
                 | "events.list"
                 | "work.next"
                 | "work.inbox"
+                | "task.assignees"
                 | "delivery.exports"
         );
         let audit = matches!(
@@ -165,7 +168,9 @@ impl WorkstreamQuery {
                 | "audit.development"
         );
         if !paged && !audit && (self.cursor.is_some() || self.limit.is_some())
-            || self.search.is_some() != (self.op == "work.search")
+            || self.op == "work.search" && self.search.is_none()
+            || self.search.is_some()
+                && !matches!(self.op.as_str(), "work.search" | "task.assignees")
             || self
                 .search
                 .as_ref()
@@ -233,6 +238,10 @@ impl WorkstreamQuery {
                     || self.request_id.is_some()
                     || self.include_denies.is_some())
             || self.op == "session.inspect" && self.session_id.is_none()
+            || self.op == "task.assignees"
+                && (self.work_id.is_none()
+                    || self.session_id.is_some()
+                    || self.expected_sha256.is_some())
             || self.op == "planning.outcome"
                 && (self.work_id.is_some() || self.session_id.is_some())
             || matches!(
@@ -276,6 +285,56 @@ pub struct WorkstreamReadStore {
 #[cfg(test)]
 mod input_guidance_tests {
     use super::*;
+
+    #[test]
+    fn task_assignees_requires_exact_work_and_only_bounded_directory_filters() {
+        let base = json!({"protocol_version":1,"op":"task.assignees","work_id":"work"});
+        for extra in [
+            json!({}),
+            json!({"search":"Mei%_","limit":25,"cursor":"opaque"}),
+        ] {
+            let mut input = base.clone();
+            input
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            assert!(
+                serde_json::from_value::<WorkstreamQuery>(input)
+                    .unwrap()
+                    .validate()
+                    .is_ok()
+            );
+        }
+        for extra in [
+            json!({"work_id":null}),
+            json!({"session_id":"session"}),
+            json!({"search":""}),
+            json!({"search":"bad\nname"}),
+            json!({"search":"x".repeat(513)}),
+            json!({"limit":0}),
+            json!({"limit":101}),
+            json!({"cursor":"x".repeat(4097)}),
+            json!({"request_id":"unrelated"}),
+            json!({"max_context_bytes":1000}),
+            json!({"member_actor_id":"unrelated"}),
+            json!({"expected_sha256":"a".repeat(64)}),
+        ] {
+            let mut input = base.clone();
+            input
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            assert!(
+                serde_json::from_value::<WorkstreamQuery>(input)
+                    .unwrap()
+                    .validate()
+                    .is_err()
+            );
+        }
+        let missing_search: WorkstreamQuery =
+            serde_json::from_value(json!({"protocol_version":1,"op":"work.search"})).unwrap();
+        assert!(missing_search.validate().is_err());
+    }
 
     #[test]
     fn approved_export_discovery_is_an_ordinary_query() {
@@ -867,6 +926,26 @@ pub(crate) async fn read(
         &q.op,
     )?;
     let stream = resolved.workstream_id.to_string();
+    if q.op == "task.assignees" {
+        let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+        let (_, ownership) = work_binding(tx, tenant, project, auth, work).await?;
+        let data = assignees::read(
+            tx,
+            tenant,
+            project,
+            auth,
+            q,
+            resolved.workstream_id,
+            resolved.authority_version,
+            ownership,
+        )
+        .await?;
+        return Ok(json!({"protocol_version":1,"workstream_id":stream,
+            "authority_version":resolved.authority_version.to_string(),"scope_id":"main",
+            "selection_basis":resolved.basis,"coordinator_epoch":auth.epoch,
+            "project_status":auth.project_status,"source_snapshot_id":auth.snapshot,
+            "project_revision":auth.revision.to_string(),"data":data}));
+    }
     if q.op == "delivery.exports" {
         // Export discovery owns a consumer-bound cursor. Do not parse it as a
         // legacy work/event cursor before its own authority checks.

@@ -49,6 +49,13 @@ pub(super) fn authorized(
     mut hint: Value,
 ) -> Value {
     use awr_team::Action;
+    if hint["code"] == "assignment"
+        && crate::delegation_auth::assignment_read_authority(auth, stream, work).is_ok()
+    {
+        hint["action"] = json!({"op":"task.assignees",
+            "query":{"protocol_version":1,"op":"task.assignees","work_id":work,"workstream_id":stream},
+            "note":"Find an eligible member, then refresh work.prepare before assigning; leave work available for self-claim when appropriate."});
+    }
     let action = match hint["action"]["op"].as_str() {
         Some("session.start" | "session.checkpoint") => Some(Action::SessionMaintainOwn),
         Some(
