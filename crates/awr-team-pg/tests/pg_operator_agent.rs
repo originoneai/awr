@@ -96,6 +96,7 @@ async fn pure_business_duties_can_start_checkpoint_and_end_without_development_a
             AuthorizedAction::Review,
             "developer",
         ),
+        (BusinessRole::Reviewer, AuthorizedAction::Review, "reviewer"),
         (
             BusinessRole::Supervisor,
             AuthorizedAction::AssignWork,
@@ -228,12 +229,64 @@ async fn pure_business_duties_can_start_checkpoint_and_end_without_development_a
 }
 
 #[tokio::test]
+async fn pure_reviewer_requires_both_review_membership_and_session_delegation() {
+    use awr_team::BusinessRole;
+    use std::collections::BTreeSet;
+
+    for missing in ["membership", "delegation"] {
+        let (_guard, mut admin, _, store) = setup().await;
+        let mut access = access_plan();
+        access.role = "reviewer".into();
+        access.business_roles = Some(BTreeSet::from([BusinessRole::Reviewer]));
+        access.agent_review = missing != "membership";
+        apply_access(&mut admin, &access, "reviewer-access").await;
+        let mut provision = plan(&admin).await;
+        provision.authorization.actions = BTreeSet::from([AuthorizedAction::Inspect]);
+        if missing == "membership" {
+            provision
+                .authorization
+                .actions
+                .insert(AuthorizedAction::Review);
+            let before = snapshot(&admin).await;
+            assert!(matches!(
+                OperatorAgent::preview(&mut admin, &provision).await,
+                Err(PgError::Forbidden)
+            ));
+            assert_eq!(snapshot(&admin).await, before);
+        } else {
+            apply(&mut admin, &provision, "inspect-only-reviewer").await;
+            let current = prepare(&store, TOKEN, "a").await;
+            let before = snapshot(&admin).await;
+            assert!(matches!(
+                store
+                    .commands()
+                    .execute(
+                        TENANT,
+                        PROJECT,
+                        TOKEN,
+                        command(
+                            &current,
+                            "inspect-only-no-session",
+                            "session.start",
+                            json!({"conversation_id":"review-without-delegation"})
+                        )
+                    )
+                    .await,
+                Err(PgError::Forbidden)
+            ));
+            assert_eq!(snapshot(&admin).await, before);
+        }
+    }
+}
+
+#[tokio::test]
 async fn pure_review_session_ownership_stays_bound_to_the_credential_client() {
     use awr_team::BusinessRole;
     use std::collections::BTreeSet;
 
     let (_guard, mut admin, db, store) = setup().await;
     let mut access = access_plan();
+    access.role = "reviewer".into();
     access.business_roles = Some(BTreeSet::from([BusinessRole::Reviewer]));
     access.agent_review = true;
     apply_access(&mut admin, &access, "reviewer-first-client").await;
@@ -326,6 +379,7 @@ async fn pure_review_session_rechecks_live_access_and_delegation_on_commands_and
 
     let (_guard, mut admin, db, store) = setup().await;
     let mut access = access_plan();
+    access.role = "reviewer".into();
     access.agent_review = true;
     access.business_roles = Some(BTreeSet::from([BusinessRole::Reviewer]));
     apply_access(&mut admin, &access, "reviewer-access").await;

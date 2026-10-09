@@ -120,6 +120,9 @@ pub(crate) fn membership_action_ceiling(
     };
     if review {
         actions.insert(awr_team::Action::ReviewDecide);
+        // The reviewer project role uses the Reader template. Review authority
+        // must also cover its own supporting session before delegation narrows it.
+        actions.insert(awr_team::Action::SessionMaintainOwn);
     }
     if assignment_grant
         && matches!(
