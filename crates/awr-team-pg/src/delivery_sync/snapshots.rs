@@ -303,6 +303,18 @@ impl DeliverySyncStore {
         work: &str,
     ) -> PgResult<Value> {
         identity(work)?;
+        // A write to the project between this read's snapshot and its locks makes PostgreSQL
+        // roll the read back (serialization failure). It changes nothing, so it runs again.
+        crate::retry_rolled_back(|| self.inspect_once(tenant, project, bearer, work)).await
+    }
+
+    async fn inspect_once(
+        &self,
+        tenant: &str,
+        project: &str,
+        bearer: &str,
+        work: &str,
+    ) -> PgResult<Value> {
         let mut client = self.pool.get().await?;
         crate::check_schema(&client).await?;
         let tx = client

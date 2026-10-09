@@ -415,14 +415,22 @@ async fn simulated_members_share_a_controller_without_sharing_identity_or_creden
 
 #[tokio::test]
 async fn schema_upgrade_keeps_legacy_members_unspecified_and_validates_metadata_shape() {
-    let (_guard, admin, _, _) = setup().await;
+    // A real version-36 database built from the migration files themselves. The
+    // previous version of this test reverted the DDL of migrations 37-40 by hand,
+    // so every later migration broke it (migration 41 did, and it stayed red).
+    let (_guard, admin, _) = common::historical_team_schema(36).await;
     admin
-        .batch_execute(
-            "ALTER TABLE awr_team.persons DROP COLUMN member_identity;
-             ALTER TABLE awr_team.project_memberships DROP COLUMN business_roles;
-             ALTER TABLE awr_team.project_memberships DROP COLUMN assignment_grant;
-             ALTER TABLE awr_team.responsibility_receipts DROP COLUMN request_hash;
-             UPDATE awr_team.schema_state SET version=36 WHERE component='awr_team';",
+        .execute(
+            "INSERT INTO awr_team.tenants(id,name,status) VALUES($1,'Readers','active')",
+            &[&TENANT],
+        )
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+             VALUES($1,$2,'p','team','epoch-a','active')",
+            &[&TENANT, &PROJECT],
         )
         .await
         .unwrap();

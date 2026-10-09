@@ -33,8 +33,8 @@ INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status) VALUES
    ('tenant-a','runner-a','system','Runner','active');
 INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
    VALUES ('tenant-a','project-a','alpha','team','epoch-1','active');
-INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role)
-   VALUES ('tenant-a','project-a','reviewer-a','reviewer');
+INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role,independent_review)
+   VALUES ('tenant-a','project-a','reviewer-a','developer',true);
 INSERT INTO awr_team.work_scopes(tenant_id,project_id,id,name,status)
    VALUES ('tenant-a','project-a','main','main','active');
 INSERT INTO awr_team.work_items(tenant_id,project_id,id,external_key)
@@ -219,7 +219,20 @@ async fn two_actors_handoff_review_and_complete_with_independent_oracle() {
     );
     assert_eq!(
         saved.get::<_, serde_json::Value>("approved_by_json"),
-        json!({"approved_by": "reviewer-a", "submitted_by": "actor-b"})
+        // Derived from the scenario's actors, not from the code under test:
+        // runner-a recorded the evidence and reported the execution, actor-b
+        // opened the review and completed the work, reviewer-a approved it.
+        json!({
+            "approved_by": "reviewer-a",
+            "reviewer_actor_id": "reviewer-a",
+            "submitted_by": "actor-b",
+            "final_submitter_actor_id": "actor-b",
+            "author_actor_id": "runner-a",
+            "executor_actor_id": "runner-a",
+            "owner_person_id": null,
+            "pr_delivery_id": null,
+            "github_merged_does_not_complete": true
+        })
     );
     let linked = admin
         .query_one(

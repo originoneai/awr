@@ -5,10 +5,24 @@
 //!
 //! 1. **Project barrier** — `workstream_modes` (admission) then `projects`
 //! 2. **Auth / mainline** — tenants, actors, credentials, memberships, grants
-//! 3. **Graph coordination** — dependency / graph snapshot rows when needed
-//! 4. **Sorted tasks** — `work_runtime` rows ordered by `(scope_id, work_id)`
-//! 5. **Sorted resources** — `resource_reservations` by `(kind, key, worktree_id)`
-//! 6. **Receipts / events** — operations and events (append under held locks)
+//! 3. **Responsibility locks** — advisory locks for the request keys (sorted), then
+//!    the per-task lock (`responsibility::lock_transition_keys`); only with the
+//!    barrier held and before any `task_responsibilities` row is locked or written
+//! 4. **Graph coordination** — dependency / graph snapshot rows when needed
+//! 5. **Sorted tasks** — `work_runtime` rows ordered by `(scope_id, work_id)`
+//! 6. **Sorted resources** — `resource_reservations` by `(kind, key, worktree_id)`
+//! 7. **Receipts / events** — operations and events (append under held locks)
+//!
+//! Every store that writes responsibility or handoff rows takes the barrier first
+//! (`agent_authorization::lock_project`, or the identical `FOR UPDATE` of the project
+//! row in `team_handoff`), including the direct store APIs (`ResponsibilityStore`,
+//! `HandoffStore`), not only the authenticated command path. A store call that took
+//! the task lock first and reached the barrier later, through the foreign key of
+//! `task_responsibilities` (a KEY SHARE on the project row), deadlocked against a
+//! command that already held the barrier and was waiting for the same task lock.
+//! PostgreSQL reports such a conflict as SQLSTATE 40P01; `PgError::is_retryable`
+//! recognizes it (and 40001) because the transaction was rolled back and the request
+//! can be repeated with its original request ID.
 //!
 //! Freeze, import and restore take the project barrier exclusively and keep
 //! it for the whole transition. Ordinary writers use the same barrier (or a

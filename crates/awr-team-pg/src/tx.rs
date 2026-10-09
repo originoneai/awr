@@ -73,6 +73,32 @@ pub(crate) async fn emit_event(
     Ok(next)
 }
 
+/// Attempts of work that PostgreSQL may roll back with a serialization failure or a deadlock.
+const ROLLED_BACK_ATTEMPTS: u32 = 8;
+
+/// Run `attempt` again, with a short exponential back-off, while PostgreSQL reports that it rolled
+/// the transaction back (SQLSTATE 40001 or 40P01, see `PgError::is_retryable`). At most eight
+/// attempts and 635 ms of waiting, the bounds the workstream read store already uses.
+///
+/// Only for work that is safe to repeat: a read-only transaction, or a request keyed by an
+/// idempotency receipt. A repeatable-read transaction that locks a row another transaction updated
+/// after its snapshot started fails this way, and the project row is updated by every command.
+pub async fn retry_rolled_back<T, F, Fut>(mut attempt: F) -> PgResult<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = PgResult<T>>,
+{
+    for n in 0..ROLLED_BACK_ATTEMPTS {
+        match attempt().await {
+            Err(error) if n + 1 < ROLLED_BACK_ATTEMPTS && error.is_retryable() => {
+                tokio::time::sleep(std::time::Duration::from_millis(5 << n)).await;
+            }
+            other => return other,
+        }
+    }
+    unreachable!("the final attempt always returns")
+}
+
 /// Ordinary writes serialize with freeze/import/restore and require active state.
 pub(crate) async fn lock_active_project(
     tx: &tokio_postgres::Transaction<'_>,

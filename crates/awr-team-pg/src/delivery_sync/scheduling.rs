@@ -51,6 +51,18 @@ impl DeliverySyncStore {
         if query.cursor.as_ref().is_some_and(|c| c.len() > 4096) {
             return Err(PgError::CursorExpired);
         }
+        // A write to the project between this read's snapshot and its locks makes PostgreSQL
+        // roll the read back (serialization failure). It changes nothing, so it runs again.
+        crate::retry_rolled_back(|| self.schedule_once(tenant, project, bearer, &query)).await
+    }
+
+    async fn schedule_once(
+        &self,
+        tenant: &str,
+        project: &str,
+        bearer: &str,
+        query: &DeliveryScheduleQuery,
+    ) -> PgResult<Value> {
         let mut client = self.pool.get().await?;
         crate::check_schema(&client).await?;
         let tx = client

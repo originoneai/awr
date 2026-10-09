@@ -1,11 +1,11 @@
 #![cfg(feature = "pg-tests")]
 
-use awr_team_pg::{Bootstrap, CommandRequest, PgError, TeamStore, check_schema, migrate};
-use serde_json::json;
-use std::sync::{Mutex, MutexGuard};
-use tokio_postgres::{Client, NoTls};
+mod common;
 
-static DB: Mutex<()> = Mutex::new(());
+use awr_team_pg::{CommandRequest, PgError, TeamStore, check_schema, migrate};
+use serde_json::json;
+use std::sync::MutexGuard;
+use tokio_postgres::{Client, Config};
 
 const TENANT: &str = "tenant-a";
 const PROJECT: &str = "project-a";
@@ -15,44 +15,18 @@ const CLIENT: &str = "client-a";
 const SCOPE: &str = "main";
 const WORK: &str = "work-a";
 
-fn admin_url() -> String {
-    std::env::var("AWR_TEAM_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:awr-test@127.0.0.1:55432/awr_team_test".into())
-}
-
-fn app_url() -> String {
-    admin_url().replacen("postgres:awr-test", "awr_app:app-test", 1)
-}
-
-async fn connect(url: &str) -> Client {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
-        .await
-        .expect("postgres 17 must be running for TEAM-P2");
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    client
-}
-
-async fn setup() -> (MutexGuard<'static, ()>, Client, String) {
-    let guard = DB.lock().expect("db fixture lock");
-    let admin = connect(&admin_url()).await;
-    admin
-        .batch_execute("DROP SCHEMA IF EXISTS awr_team CASCADE")
-        .await
-        .unwrap();
-    migrate(&admin)
-        .await
-        .expect("migrations apply on a clean database");
-    admin
-        .batch_execute(
-            "DO $$ BEGIN CREATE ROLE awr_app LOGIN PASSWORD 'app-test' NOSUPERUSER NOBYPASSRLS; EXCEPTION WHEN duplicate_object THEN NULL; END $$",
-        )
-        .await
-        .unwrap();
-    Bootstrap::grant_app(&admin, "awr_app").await.unwrap();
+/// Uses the shared hardened fixture: a process-private database on a loopback
+/// target named by `AWR_TEAM_TEST_DATABASE_URL`. This suite used to read the
+/// runtime `AWR_TEAM_DATABASE_URL` and drop `awr_team` in whatever database it
+/// named, so a shell that had the runtime URL exported lost that schema.
+async fn setup() -> (MutexGuard<'static, ()>, Client, Config) {
+    let (guard, admin, db) = common::fresh_team_schema().await;
     seed(&admin).await;
-    (guard, admin, app_url())
+    (
+        guard,
+        admin,
+        common::with_app_role(&common::test_config(), &db),
+    )
 }
 
 async fn seed(admin: &Client) {
@@ -135,8 +109,8 @@ async fn app_role_is_not_owner_and_has_no_bypassrls() {
 
 #[tokio::test]
 async fn domain_transaction_rolls_back_partial_writes() {
-    let (_lock, admin, url) = setup().await;
-    let store = TeamStore::new(url);
+    let (_lock, admin, app) = setup().await;
+    let store = TeamStore::from_config(app);
     store
         .abort_after_partial_write(touch("partial"))
         .await
@@ -151,8 +125,8 @@ async fn domain_transaction_rolls_back_partial_writes() {
 
 #[tokio::test]
 async fn identical_request_replays_without_a_second_event() {
-    let (_lock, admin, url) = setup().await;
-    let store = TeamStore::new(url);
+    let (_lock, admin, app) = setup().await;
+    let store = TeamStore::from_config(app);
     let first = store.execute(touch("r1")).await.unwrap();
     assert!(!first.replayed);
     let second = store.execute(touch("r1")).await.unwrap();
@@ -171,8 +145,8 @@ async fn identical_request_replays_without_a_second_event() {
 
 #[tokio::test]
 async fn same_request_id_with_new_args_conflicts() {
-    let (_lock, _, url) = setup().await;
-    let store = TeamStore::new(url);
+    let (_lock, _, app) = setup().await;
+    let store = TeamStore::from_config(app);
     store.execute(touch("r2")).await.unwrap();
     let mut changed = touch("r2");
     changed.args = json!({"work_id": WORK, "scope_id": SCOPE, "extra": true});
@@ -182,8 +156,8 @@ async fn same_request_id_with_new_args_conflicts() {
 
 #[tokio::test]
 async fn rls_hides_other_projects_and_local_config_does_not_leak() {
-    let (_lock, _, url) = setup().await;
-    let mut app = connect(&url).await;
+    let (_lock, _, config) = setup().await;
+    let mut app = common::connect_config(&config).await;
     let tx = app.transaction().await.unwrap();
     tx.execute("SELECT set_config('awr.tenant_id', $1, true)", &[&TENANT])
         .await
@@ -215,10 +189,10 @@ async fn rls_hides_other_projects_and_local_config_does_not_leak() {
 
 #[tokio::test]
 async fn events_are_append_only_for_the_app_role() {
-    let (_lock, _, url) = setup().await;
-    let store = TeamStore::new(url.clone());
+    let (_lock, _, config) = setup().await;
+    let store = TeamStore::from_config(config.clone());
     store.execute(touch("r3")).await.unwrap();
-    let app = connect(&url).await;
+    let app = common::connect_config(&config).await;
     let update = app
         .execute("UPDATE awr_team.events SET event_type='tamper'", &[])
         .await;
@@ -227,8 +201,8 @@ async fn events_are_append_only_for_the_app_role() {
 
 #[tokio::test]
 async fn concurrent_commands_serialize_project_revisions() {
-    let (_lock, _, url) = setup().await;
-    let store = TeamStore::new(url);
+    let (_lock, _, app) = setup().await;
+    let store = TeamStore::from_config(app);
     let a = store.execute(touch("c1"));
     let b = store.execute(touch("c2"));
     let (ra, rb) = tokio::join!(a, b);

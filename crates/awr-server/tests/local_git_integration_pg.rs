@@ -881,7 +881,9 @@ async fn changed_source_and_connector_epoch_recover_the_original_version_as_hist
         .into_iter()
         .map(|r| {
             let mut contract: awr_team::WorkContract = serde_json::from_value(r.get(0)).unwrap();
-            if contract.work_id.as_str() == "a" {
+            // The dispatched integration belongs to `a`; changing `a` itself is refused
+            // until that integration is settled, so an unrelated work changes the source.
+            if contract.work_id.as_str() == "b-private" {
                 contract
                     .acceptance
                     .push("Verify the updated requirement".into());

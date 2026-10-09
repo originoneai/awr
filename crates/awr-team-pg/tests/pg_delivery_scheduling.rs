@@ -356,7 +356,11 @@ async fn source_activation_uses_new_admission_while_retaining_original_dispatch_
         .into_iter()
         .map(|r| {
             let mut contract: awr_team::WorkContract = serde_json::from_value(r.get(0)).unwrap();
-            if contract.work_id.as_str() == "a" {
+            // The dispatched integration belongs to `a`. Source admission derives its
+            // impact from persisted facts and refuses to change a contract while an
+            // integration of that work is unsettled, so the change goes to an unrelated
+            // work: the activation proceeds and the dispatched `a` keeps its binding.
+            if contract.work_id.as_str() == "b-private" {
                 contract
                     .acceptance
                     .push("Check the new source requirement".into());

@@ -548,7 +548,13 @@ async fn source_conflict_preserves_concurrent_bytes_and_recovers_without_reinteg
         count(&f, "SELECT count(*) FROM awr_team.completion_receipts").await,
         0
     );
-    assert!(count(&f, "SELECT count(*) FROM awr_team.delivery_sync_intents WHERE kind='source' AND state='blocked'").await > 0);
+    // The pump now supersedes the conflicted intent and keeps a pending one instead of
+    // parking it as blocked; what matters is that no source write succeeded and one remains.
+    assert_eq!(
+        count(&f, "SELECT count(*) FROM awr_team.delivery_sync_intents WHERE kind='source' AND state='succeeded'").await,
+        0
+    );
+    assert!(count(&f, "SELECT count(*) FROM awr_team.delivery_sync_intents WHERE kind='source' AND state IN ('pending','leased','blocked')").await > 0);
     // Explicit fixture/operator resolution restores its baseline; the service
     // itself never deletes or overwrites the concurrent edit.
     fs::write(root.join("ledger.yaml"), &before).unwrap();
