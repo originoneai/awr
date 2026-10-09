@@ -390,11 +390,31 @@ manage grants. Administrators can add members, change project roles/scopes,
 issue or rotate project credentials, and remove project access. Every change
 passes server preview/apply gates; browser visibility is not authorization.
 
+Choose explicit observer, developer, reviewer, supervisor, deliverer or
+administrator responsibilities, including several duties for one member.
+Responsibilities restrict the existing access template; they never grant an
+action or combine separate Agent delegations. Review and task assignment remain
+explicit opt-ins. Administrators are not automatically reviewers or deliverers.
+The expandable membership action ceiling is a limit, not effective authority.
+Work-area access, live delegation and current admission still apply.
+
+Existing members without declared responsibilities keep their original policy
+unless an administrator deliberately selects duties. Issuing, rotating or
+disabling a credential preserves both review flags, assignment, responsibilities
+and the selected connection's active work-area rights. Unedited work areas retain
+their exact rights. Special execution grants require the service administrator;
+the page refuses to silently discard them.
+
 The browser creates a random credential with Web Crypto and registers only its
 hash. After a confirmed commit, copy the complete personal Agent instruction
 once and send it privately. Clearing the panel, switching projects or logging
 out removes the plaintext. Unknown outcomes keep the original request ID and
-require inspection before an exact retry. There is no plaintext retrieval.
+require inspection before an exact retry. Only the server's recognized unknown
+outcome enables retry; malformed or mismatched confirmations remain unknown.
+The receipt must match the original request, subject, issuing administrator and
+preview digests before any credential is shown. Stable refreshes retain the
+committed handoff; an identity, role, permission or audit-access change clears
+protected state and ignores late responses. There is no plaintext retrieval.
 
 Activity separates authenticated access metadata from recorded development
 actions. Project auditors can filter by member or task; ordinary members have a
