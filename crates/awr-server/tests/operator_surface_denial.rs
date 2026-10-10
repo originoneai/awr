@@ -1,7 +1,8 @@
 //! WS-014 acceptance: real HTTP/MCP clients with provisioned workstream
 //! credentials cannot reach schema-owner operator surfaces. Those remain on
 //! `awr-server access` only (recovery-inspect, history migration, claim/
-//! execution quarantine, execution attribution, backup/fencing/rebuild).
+//! execution quarantine, planning writeback close, execution attribution,
+//! backup/fencing/rebuild).
 #![cfg(feature = "pg-tests")]
 #[path = "../../awr-team-pg/tests/common/mod.rs"]
 mod common;
@@ -41,6 +42,10 @@ const OPERATOR_OPS: &[&str] = &[
     "quarantine.preview",
     "quarantine.apply",
     "quarantine.outcome",
+    "writeback-inspect",
+    "writeback-abandon",
+    "writeback.inspect",
+    "writeback.abandon",
     "execution-attribution-preview",
     "execution-attribution-apply",
     "execution-attribution-outcome",
@@ -246,9 +251,13 @@ async fn http_and_mcp_clients_cannot_reach_operator_only_surfaces() {
         "one/access/recovery-inspect",
         "one/access/history-preview",
         "one/access/quarantine-preview",
+        "one/access/writeback-inspect",
+        "one/access/writeback-abandon",
         "one/access/execution-attribution-preview",
         "one/access/backup-create",
         "one/operator/recovery-inspect",
+        "one/operator/writeback-inspect",
+        "one/operator/writeback-abandon",
     ] {
         let response = http()
             .post(format!("{}/{path}", server.url))
@@ -319,18 +328,7 @@ async fn http_and_mcp_clients_cannot_reach_operator_only_surfaces() {
             tool.name
         );
     }
-    for op in [
-        "recovery-inspect",
-        "history-preview",
-        "history-apply",
-        "quarantine-preview",
-        "quarantine-apply",
-        "execution-attribution-preview",
-        "execution-attribution-apply",
-        "backup-create",
-        "backup-restore-apply",
-        "backup-rebuild-apply",
-    ] {
+    for op in OPERATOR_OPS {
         let denied = mcp_call(
             &mcp,
             "awr_team_query",
@@ -345,13 +343,19 @@ async fn http_and_mcp_clients_cannot_reach_operator_only_surfaces() {
         );
     }
     // Invented operator tool names are also unavailable.
-    let denied = mcp_call(
-        &mcp,
+    for name in [
         "awr_team_operator_recovery",
-        json!({"protocol_version": 1, "op": "recovery-inspect"}),
-    )
-    .await;
-    assert_eq!(denied["code"], "Unsupported");
+        "awr_team_writeback_inspect",
+        "awr_team_writeback_abandon",
+    ] {
+        let denied = mcp_call(
+            &mcp,
+            name,
+            json!({"protocol_version": 1, "op": "writeback-abandon"}),
+        )
+        .await;
+        assert_eq!(denied["code"], "Unsupported", "operator tool {name}");
+    }
     mcp.cancel().await.unwrap();
 
     // Cheap positive check: schema-owner CLI still reaches recovery-inspect /
@@ -384,4 +388,46 @@ async fn http_and_mcp_clients_cannot_reach_operator_only_surfaces() {
     assert_eq!(preview["protocol"], "awr-operator-history-migration-v1");
     assert!(preview["state_digest"].as_str().is_some());
     assert!(preview["plan_digest"].as_str().is_some());
+    // The planning-writeback commands are on the same owner CLI: listing works, and closing an
+    // unknown request is refused by the command itself (not by the argument parser).
+    let writeback = owner_cli(
+        &owner,
+        &[
+            "access",
+            "writeback-inspect",
+            "--tenant-id",
+            TENANT,
+            "--project-id",
+            PROJECT,
+        ],
+    );
+    assert_eq!(writeback["protocol"], "awr-operator-planning-writeback-v1");
+    assert_eq!(writeback["read_only"], true);
+    assert_eq!(writeback["items"], json!([]));
+    let refused = Command::new(env!("CARGO_BIN_EXE_awr-server"))
+        .env("AWR_TEAM_DATABASE_URL", &owner)
+        .args([
+            "access",
+            "writeback-abandon",
+            "--tenant-id",
+            TENANT,
+            "--project-id",
+            PROJECT,
+            "--request-id",
+            "never-existed",
+            "--expected-phase",
+            "validated",
+            "--expected-intent-hash",
+            "unbound",
+            "--expected-source-state",
+            "unknown",
+            "--retain-source",
+            "--reason",
+            "smoke",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let stderr: Value = serde_json::from_slice(&refused.stderr).unwrap();
+    assert_eq!(stderr["code"], "WritebackRefused");
 }

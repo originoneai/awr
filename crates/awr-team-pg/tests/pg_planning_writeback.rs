@@ -2180,6 +2180,192 @@ async fn pending_intent_fences_related_prepare_start_and_source_replacement_but_
 }
 
 #[tokio::test]
+async fn abandoning_an_untouched_pending_writeback_reopens_public_execution_admission() {
+    use awr_source::fingerprint;
+    use awr_team_pg::WorkstreamReadStore;
+    for prepared_before in [true, false] {
+        let (_guard, mut admin, db, store) = store_and_roles().await;
+        let tmp = tempfile_ledger();
+        register_actual_ledger_baseline(&store, &tmp).await;
+        let read =
+            WorkstreamReadStore::from_config(common::with_app_role(&common::test_config(), &db));
+        let case = if prepared_before {
+            "prepared-before"
+        } else {
+            "prepared-after"
+        };
+        let claim = claim_scope(&read, A, "a", "session-a", case).await;
+        let prepared = if prepared_before {
+            Some(
+                read.commands()
+                    .execute(
+                        TENANT,
+                        PROJECT,
+                        A,
+                        scope_prepare_command(
+                            &read,
+                            A,
+                            "a",
+                            "session-a",
+                            "before-close",
+                            "src/api",
+                            &claim,
+                        )
+                        .await,
+                    )
+                    .await
+                    .unwrap()["receipt"]["data"]
+                    .clone(),
+            )
+        } else {
+            None
+        };
+        let publication = publish_real_scope_change(&store, &admin).await;
+        let request_id = format!("post-close-{case}");
+        let request = workspace_activation(&tmp, publication, &request_id);
+        let source_before = fingerprint(&std::fs::read(tmp.root.join("ledger.yaml")).unwrap());
+        let activation_before = activation_facts(&admin).await;
+        store
+            .activate_planning_writeback_abort_for_test(
+                TENANT,
+                PROJECT,
+                A,
+                &request,
+                "after_intent",
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            fingerprint(&std::fs::read(tmp.root.join("ledger.yaml")).unwrap()),
+            source_before
+        );
+        assert_eq!(activation_facts(&admin).await, activation_before);
+
+        let blocked = if let Some(execution) = prepared.as_ref() {
+            scope_start_command(
+                &read,
+                A,
+                "a",
+                "session-a",
+                "while-pending",
+                &claim,
+                execution,
+            )
+            .await
+        } else {
+            scope_prepare_command(
+                &read,
+                A,
+                "a",
+                "session-a",
+                "while-pending",
+                "src/api",
+                &claim,
+            )
+            .await
+        };
+        let error = read
+            .commands()
+            .execute(TENANT, PROJECT, A, blocked)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, PgError::ActionBlockedByInvalidation(ref key)
+                if key == &format!("source_writeback:{request_id}")),
+            "{case}: {error:?}"
+        );
+
+        let page =
+            awr_team_pg::OperatorWriteback::inspect(&mut admin, TENANT, PROJECT, Some(&request_id))
+                .await
+                .unwrap();
+        let item = &page["items"][0];
+        assert_eq!(item["phase"], "validated");
+        assert_eq!(item["source_state"], "at_before");
+        assert_eq!(item["source_fingerprint"], source_before);
+        assert_eq!(item["abandon"]["allowed"], true);
+        assert_eq!(item["abandon"]["retain_source_required"], false);
+        let close = awr_team_pg::AbandonRequest {
+            request_id: request_id.clone(),
+            expected_phase: item["abandon"]["expected_phase"].as_str().unwrap().into(),
+            expected_intent_hash: item["abandon"]["expected_intent_hash"]
+                .as_str()
+                .unwrap()
+                .into(),
+            expected_source_state: item["abandon"]["expected_source_state"]
+                .as_str()
+                .unwrap()
+                .into(),
+            retain_source: false,
+            reason: "the original client cannot resume".into(),
+        };
+        let closed = awr_team_pg::OperatorWriteback::abandon(&mut admin, TENANT, PROJECT, &close)
+            .await
+            .unwrap();
+        assert_eq!(closed["journal_phase_after"], "refused");
+        assert_eq!(closed["decision"]["source_state"], "at_before");
+        assert_eq!(closed["source_modified"], false);
+        assert_eq!(closed["active_snapshot_modified"], false);
+        assert_eq!(
+            fingerprint(&std::fs::read(tmp.root.join("ledger.yaml")).unwrap()),
+            source_before
+        );
+        assert_eq!(activation_facts(&admin).await, activation_before);
+
+        let execution = match prepared {
+            Some(execution) => execution,
+            None => read
+                .commands()
+                .execute(
+                    TENANT,
+                    PROJECT,
+                    A,
+                    scope_prepare_command(
+                        &read,
+                        A,
+                        "a",
+                        "session-a",
+                        "after-close",
+                        "src/api",
+                        &claim,
+                    )
+                    .await,
+                )
+                .await
+                .unwrap()["receipt"]["data"]
+                .clone(),
+        };
+        let started = read
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                scope_start_command(
+                    &read,
+                    A,
+                    "a",
+                    "session-a",
+                    "after-close",
+                    &claim,
+                    &execution,
+                )
+                .await,
+            )
+            .await
+            .unwrap()["receipt"]["data"]
+            .clone();
+        assert_eq!(started["execution_id"], execution["execution_id"]);
+        assert_eq!(started["state"], "running");
+        assert_eq!(
+            fingerprint(&std::fs::read(tmp.root.join("ledger.yaml")).unwrap()),
+            source_before
+        );
+        assert_eq!(activation_facts(&admin).await, activation_before);
+    }
+}
+
+#[tokio::test]
 async fn concurrent_fresh_stores_recover_one_original_intent_without_duplicate_activation() {
     let (_g, admin, db, store) = store_and_roles().await;
     let (_, _, publication) = publish_candidate_with_workstream(&store, "alpha").await;
@@ -2224,4 +2410,705 @@ async fn concurrent_fresh_stores_recover_one_original_intent_without_duplicate_a
             .count(),
         1
     );
+}
+
+// ---- Closing a pending writeback that cannot be resumed (schema owner only) ----
+
+/// A pending journal as the given interruption boundary leaves it.
+struct Pending {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    admin: tokio_postgres::Client,
+    db: String,
+    store: SourceStore,
+    tmp: TmpLedger,
+    req: WritebackActivateRequest,
+    receipt: String,
+    /// Fingerprint of the ledger before the request started.
+    before: String,
+}
+
+async fn pending_at(boundary: &str) -> Pending {
+    use awr_source::fingerprint;
+    let (_guard, admin, db, store) = store_and_roles().await;
+    let (_, _, receipt) = publish_candidate_with_workstream(&store, "alpha").await;
+    let tmp = tempfile_ledger();
+    let req = workspace_activation(&tmp, receipt.clone(), "stuck-original");
+    let before = fingerprint(&std::fs::read(tmp.root.join("ledger.yaml")).unwrap());
+    store
+        .activate_planning_writeback_abort_for_test(TENANT, PROJECT, A, &req, boundary)
+        .await
+        .unwrap_err();
+    Pending {
+        _guard,
+        admin,
+        db,
+        store,
+        tmp,
+        req,
+        receipt,
+        before,
+    }
+}
+
+impl Pending {
+    fn ledger(&self) -> PathBuf {
+        self.tmp.root.join("ledger.yaml")
+    }
+
+    async fn inspect(&mut self) -> serde_json::Value {
+        awr_team_pg::OperatorWriteback::inspect(&mut self.admin, TENANT, PROJECT, None)
+            .await
+            .unwrap()
+    }
+
+    /// The close request an owner builds from the inspected item, exactly as shown.
+    async fn close_request(&mut self, retain_source: bool) -> awr_team_pg::AbandonRequest {
+        let page = self.inspect().await;
+        let item = &page["items"][0];
+        assert_eq!(item["request_id"], self.req.request_id);
+        awr_team_pg::AbandonRequest {
+            request_id: self.req.request_id.clone(),
+            expected_phase: item["abandon"]["expected_phase"].as_str().unwrap().into(),
+            expected_intent_hash: item["abandon"]["expected_intent_hash"]
+                .as_str()
+                .unwrap()
+                .into(),
+            expected_source_state: item["abandon"]["expected_source_state"]
+                .as_str()
+                .unwrap()
+                .into(),
+            retain_source,
+            reason: "the original client is gone".into(),
+        }
+    }
+
+    async fn close(
+        &mut self,
+        request: &awr_team_pg::AbandonRequest,
+    ) -> Result<serde_json::Value, PgError> {
+        awr_team_pg::OperatorWriteback::abandon(&mut self.admin, TENANT, PROJECT, request).await
+    }
+
+    async fn pending_journals(&self) -> i64 {
+        self.admin.query_one(
+            "SELECT count(*) FROM awr_team.planning_writeback_journals WHERE tenant_id=$1 AND project_id=$2
+               AND phase IN ('validated','source_written','pg_activating')",
+            &[&TENANT, &PROJECT],
+        ).await.unwrap().get(0)
+    }
+
+    async fn status(&self) -> serde_json::Value {
+        self.store
+            .get_planning_writeback_status(TENANT, PROJECT, A, &self.req.request_id)
+            .await
+            .unwrap()
+            .unwrap()
+    }
+}
+
+fn is_refused(error: &PgError, needle: &str) -> bool {
+    matches!(error, PgError::WritebackRefused(text) if text.contains(needle))
+}
+
+#[tokio::test]
+async fn the_owner_sees_each_pending_writeback_with_the_source_state_and_what_closing_needs() {
+    let mut p = pending_at("after_intent").await;
+    let page = p.inspect().await;
+    assert_eq!(page["protocol"], "awr-operator-planning-writeback-v1");
+    assert_eq!(page["read_only"], true);
+    assert_eq!(page["mutation"], false);
+    assert_eq!(page["source_modified"], false);
+    assert_eq!(page["truncated"], false);
+    assert_eq!(page["items"].as_array().unwrap().len(), 1);
+    let item = &page["items"][0];
+    assert_eq!(item["request_id"], "stuck-original");
+    assert_eq!(item["phase"], "validated");
+    assert_eq!(item["pending"], true);
+    assert_eq!(item["original_intent_bound"], true);
+    assert_eq!(item["source_state"], "at_before");
+    assert_eq!(item["source_fingerprint"], p.before);
+    assert_eq!(item["before_fingerprint"], p.before);
+    assert_eq!(item["publish_receipt_id"], p.receipt);
+    assert!(item["affected_work_count"].as_i64().unwrap() > 0);
+    assert_eq!(item["abandon"]["allowed"], true);
+    assert_eq!(item["abandon"]["retain_source_required"], false);
+    assert_eq!(item["abandon"]["expected_phase"], "validated");
+    let stored: String = p
+        .admin
+        .query_one(
+            "SELECT intent_hash FROM awr_team.planning_writeback_journals WHERE request_id='stuck-original'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(item["abandon"]["expected_intent_hash"], stored);
+    // One request can be asked for by id in any phase; reading never writes.
+    let one = awr_team_pg::OperatorWriteback::inspect(
+        &mut p.admin,
+        TENANT,
+        PROJECT,
+        Some("stuck-original"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(one["items"][0]["request_id"], "stuck-original");
+    assert_eq!(p.pending_journals().await, 1);
+    // A project member's application role is not the schema owner.
+    let mut app = common::app_client(&p.db).await;
+    assert!(matches!(
+        awr_team_pg::OperatorWriteback::inspect(&mut app, TENANT, PROJECT, None).await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
+async fn closing_an_untouched_writeback_ends_the_fences_and_leaves_the_publication_retryable() {
+    use awr_source::fingerprint;
+    let mut p = pending_at("after_intent").await;
+    let facts_before = activation_facts(&p.admin).await;
+    // Until it is closed the pending request blocks every other activation of the project.
+    let retry = workspace_activation(&p.tmp, p.receipt.clone(), "after-the-stuck-one");
+    let blocked = p
+        .store
+        .activate_planning_writeback(TENANT, PROJECT, A, &retry)
+        .await
+        .unwrap_err();
+    assert!(
+        is_refused(&blocked, "must be queried and recovered first"),
+        "{blocked:?}"
+    );
+    let close = p.close_request(false).await;
+    let revision_before: i64 = p
+        .admin
+        .query_one(
+            "SELECT project_revision FROM awr_team.projects WHERE tenant_id=$1 AND id=$2",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let closed = p.close(&close).await.unwrap();
+    assert_eq!(closed["replayed"], false);
+    assert_eq!(closed["journal_phase_after"], "refused");
+    assert_eq!(closed["source_modified"], false);
+    assert_eq!(closed["active_snapshot_modified"], false);
+    assert_eq!(closed["execution_authorized"], false);
+    assert_eq!(closed["decision"]["previous_phase"], "validated");
+    assert_eq!(closed["decision"]["source_state"], "at_before");
+    assert_eq!(closed["decision"]["source_retained"], false);
+    assert_eq!(closed["decision"]["reason"], "the original client is gone");
+    // Nothing but the journal moved: bytes, active snapshot, authority epoch, receipts.
+    assert_eq!(fingerprint(&std::fs::read(p.ledger()).unwrap()), p.before);
+    assert_eq!(activation_facts(&p.admin).await, facts_before);
+    assert_eq!(p.pending_journals().await, 0);
+    let revision_after: i64 = p
+        .admin
+        .query_one(
+            "SELECT project_revision FROM awr_team.projects WHERE tenant_id=$1 AND id=$2",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(revision_after, revision_before + 1);
+    let events: i64 = p
+        .admin
+        .query_one(
+            "SELECT count(*) FROM awr_team.events WHERE tenant_id=$1 AND project_id=$2
+               AND event_type='operator.planning_writeback_abandon' AND project_revision=$3",
+            &[&TENANT, &PROJECT, &revision_after],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(events, 1);
+    // The planning outcome says what happened without the owner's free text.
+    let status = p.status().await;
+    assert_eq!(status["phase"], "refused");
+    assert_eq!(status["pending"], false);
+    assert_eq!(status["applied"], false);
+    assert_eq!(status["operator_closed"], true);
+    assert!(!status.to_string().contains("the original client is gone"));
+    // The original request can no longer resume, and says why.
+    let resumed = p
+        .store
+        .activate_planning_writeback(TENANT, PROJECT, A, &p.req)
+        .await
+        .unwrap_err();
+    assert!(is_refused(&resumed, "schema owner closed"), "{resumed:?}");
+    // Asking again returns the recorded decision and changes nothing.
+    let replay = p.close(&close).await.unwrap();
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(replay["decision"], closed["decision"]);
+    let revision_replayed: i64 = p
+        .admin
+        .query_one(
+            "SELECT project_revision FROM awr_team.projects WHERE tenant_id=$1 AND id=$2",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(revision_replayed, revision_after);
+    let events_replayed: i64 = p
+        .admin
+        .query_one(
+            "SELECT count(*) FROM awr_team.events WHERE tenant_id=$1 AND project_id=$2
+               AND event_type='operator.planning_writeback_abandon' AND project_revision=$3",
+            &[&TENANT, &PROJECT, &revision_after],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        events_replayed, 1,
+        "replay must not add another audit event"
+    );
+    // The source was never written, so the same approved publication goes through under a new request.
+    let done = p
+        .store
+        .activate_planning_writeback(TENANT, PROJECT, A, &retry)
+        .await
+        .unwrap();
+    assert_eq!(done["already_recorded"], false);
+    let facts_after = activation_facts(&p.admin).await;
+    assert_eq!(
+        (facts_after.1, facts_after.2, facts_after.3),
+        (facts_before.1 + 1, facts_before.2 + 1, facts_before.3 + 1)
+    );
+}
+
+#[tokio::test]
+async fn closing_needs_the_inspected_facts_and_refuses_everything_else() {
+    let mut p = pending_at("after_intent").await;
+    let good = p.close_request(false).await;
+    // These changes happen after the owner inspected. The command must observe
+    // current source and journal facts instead of trusting the stale token.
+    let original_source = std::fs::read(p.ledger()).unwrap();
+    std::fs::write(p.ledger(), b"# changed after operator inspection\n").unwrap();
+    let mut stale_retained = good.clone();
+    stale_retained.retain_source = true;
+    assert!(matches!(
+        p.close(&stale_retained).await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    assert!(matches!(
+        p.close(&good).await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    std::fs::write(p.ledger(), &original_source).unwrap();
+    p.admin
+        .execute(
+            "UPDATE awr_team.planning_writeback_journals SET phase='source_written'
+             WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
+            &[&TENANT, &PROJECT, &p.req.request_id],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        p.close(&good).await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    p.admin
+        .execute(
+            "UPDATE awr_team.planning_writeback_journals SET phase='validated'
+             WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
+            &[&TENANT, &PROJECT, &p.req.request_id],
+        )
+        .await
+        .unwrap();
+    let changed_hash = if good.expected_intent_hash == "0".repeat(64) {
+        "1".repeat(64)
+    } else {
+        "0".repeat(64)
+    };
+    p.admin
+        .execute(
+            "UPDATE awr_team.planning_writeback_journals SET intent_hash=$1
+             WHERE tenant_id=$2 AND project_id=$3 AND request_id=$4",
+            &[&changed_hash, &TENANT, &PROJECT, &p.req.request_id],
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        p.close(&good).await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    p.admin
+        .execute(
+            "UPDATE awr_team.planning_writeback_journals SET intent_hash=$1
+             WHERE tenant_id=$2 AND project_id=$3 AND request_id=$4",
+            &[
+                &good.expected_intent_hash,
+                &TENANT,
+                &PROJECT,
+                &p.req.request_id,
+            ],
+        )
+        .await
+        .unwrap();
+    let mut wrong_phase = good.clone();
+    wrong_phase.expected_phase = "source_written".into();
+    let mut wrong_hash = good.clone();
+    wrong_hash.expected_intent_hash = "0".repeat(64);
+    let mut unbound = good.clone();
+    unbound.expected_intent_hash = "unbound".into();
+    let mut wrong_state = good.clone();
+    wrong_state.expected_source_state = "at_after".into();
+    for (name, request) in [
+        ("phase", &wrong_phase),
+        ("intent hash", &wrong_hash),
+        ("claimed unbound", &unbound),
+        ("source state", &wrong_state),
+    ] {
+        assert!(
+            matches!(p.close(request).await, Err(PgError::PreconditionsChanged)),
+            "a different {name} must not close the journal"
+        );
+    }
+    let mut malformed_hash = good.clone();
+    malformed_hash.expected_intent_hash = "not-a-hash".into();
+    let mut no_reason = good.clone();
+    no_reason.reason = "  ".into();
+    let mut unknown_phase = good.clone();
+    unknown_phase.expected_phase = "completed".into();
+    for request in [&malformed_hash, &no_reason, &unknown_phase] {
+        assert!(matches!(p.close(request).await, Err(PgError::Protocol(_))));
+    }
+    let mut missing = good.clone();
+    missing.request_id = "never-existed".into();
+    assert!(is_refused(
+        &p.close(&missing).await.unwrap_err(),
+        "no writeback journal"
+    ));
+    let mut app = common::app_client(&p.db).await;
+    assert!(matches!(
+        awr_team_pg::OperatorWriteback::abandon(&mut app, TENANT, PROJECT, &good).await,
+        Err(PgError::Forbidden)
+    ));
+    assert_eq!(
+        p.pending_journals().await,
+        1,
+        "no refused attempt closed it"
+    );
+    assert_eq!(p.status().await["phase"], "validated");
+    p.close(&good).await.unwrap();
+    assert_eq!(p.pending_journals().await, 0);
+}
+
+#[tokio::test]
+async fn a_finished_writeback_is_not_pending_and_cannot_be_closed() {
+    let mut done = pending_at("after_final_commit").await;
+    let page = awr_team_pg::OperatorWriteback::inspect(
+        &mut done.admin,
+        TENANT,
+        PROJECT,
+        Some("stuck-original"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(page["items"][0]["phase"], "completed");
+    assert!(page["items"][0].get("abandon").is_none());
+    let listed = done.inspect().await;
+    assert!(
+        listed["items"].as_array().unwrap().is_empty(),
+        "only pending journals are listed by default"
+    );
+    let finished = awr_team_pg::AbandonRequest {
+        request_id: "stuck-original".into(),
+        expected_phase: "pg_activating".into(),
+        expected_intent_hash: page["items"][0]["intent_hash"].as_str().unwrap().into(),
+        expected_source_state: "at_after".into(),
+        retain_source: true,
+        reason: "too late".into(),
+    };
+    assert!(is_refused(
+        &done.close(&finished).await.unwrap_err(),
+        "no longer pending"
+    ));
+    assert_eq!(done.status().await["applied"], true);
+}
+
+#[tokio::test]
+async fn a_writeback_refused_by_the_original_client_cannot_be_operator_closed() {
+    let (_guard, mut admin, _db, store) = store_and_roles().await;
+    let (_, _, receipt) = publish_candidate_with_workstream(&store, "alpha").await;
+    let tmp = tempfile_ledger();
+    let mut request = workspace_activation(&tmp, receipt, "client-refused");
+    request.impact_proven = false;
+    assert!(matches!(
+        store
+            .activate_planning_writeback(TENANT, PROJECT, A, &request)
+            .await,
+        Err(PgError::ActivationImpactUnproven(_))
+    ));
+    let page = awr_team_pg::OperatorWriteback::inspect(
+        &mut admin,
+        TENANT,
+        PROJECT,
+        Some("client-refused"),
+    )
+    .await
+    .unwrap();
+    let item = &page["items"][0];
+    assert_eq!(item["phase"], "refused");
+    assert_eq!(item["original_intent_bound"], true);
+    assert!(item.get("abandon").is_none());
+    let close = awr_team_pg::AbandonRequest {
+        request_id: "client-refused".into(),
+        expected_phase: "validated".into(),
+        expected_intent_hash: item["intent_hash"].as_str().unwrap().into(),
+        expected_source_state: "unknown".into(),
+        retain_source: true,
+        reason: "must stay a client refusal".into(),
+    };
+    assert!(is_refused(
+        &awr_team_pg::OperatorWriteback::abandon(&mut admin, TENANT, PROJECT, &close)
+            .await
+            .unwrap_err(),
+        "no longer pending"
+    ));
+    let status = store
+        .get_planning_writeback_status(TENANT, PROJECT, A, "client-refused")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(status["phase"], "refused");
+    assert!(status.get("operator_closed").is_none());
+}
+
+#[tokio::test]
+async fn a_source_the_server_may_already_have_written_is_only_kept_never_touched() {
+    use awr_source::fingerprint;
+    for (boundary, phase) in [
+        ("after_source_write", "validated"),
+        ("after_source_written", "source_written"),
+        ("after_pg_activating", "pg_activating"),
+    ] {
+        let mut p = pending_at(boundary).await;
+        let written = fingerprint(&std::fs::read(p.ledger()).unwrap());
+        assert_ne!(
+            written, p.before,
+            "{boundary}: the request wrote the source"
+        );
+        let facts = activation_facts(&p.admin).await;
+        let page = p.inspect().await;
+        let item = &page["items"][0];
+        assert_eq!(item["phase"], phase, "{boundary}");
+        assert_eq!(item["source_state"], "at_after", "{boundary}");
+        assert_eq!(
+            item["abandon"]["retain_source_required"], true,
+            "{boundary}"
+        );
+        let without = p.close_request(false).await;
+        let refused = p.close(&without).await.unwrap_err();
+        assert!(
+            is_refused(&refused, "retain_source"),
+            "{boundary}: {refused:?}"
+        );
+        assert_eq!(p.pending_journals().await, 1, "{boundary}");
+        let with = p.close_request(true).await;
+        let closed = p.close(&with).await.unwrap();
+        assert_eq!(closed["decision"]["source_retained"], true, "{boundary}");
+        assert_eq!(closed["decision"]["source_state"], "at_after", "{boundary}");
+        assert_eq!(closed["source_modified"], false, "{boundary}");
+        // The bytes the request wrote stay exactly as they are; the active snapshot did not move.
+        assert_eq!(
+            fingerprint(&std::fs::read(p.ledger()).unwrap()),
+            written,
+            "{boundary}"
+        );
+        assert_eq!(activation_facts(&p.admin).await, facts, "{boundary}");
+        assert_eq!(p.pending_journals().await, 0, "{boundary}");
+        assert_eq!(p.status().await["operator_closed"], true, "{boundary}");
+    }
+    // Bytes that match neither fingerprint were changed from outside: kept the same way.
+    let mut p = pending_at("after_intent").await;
+    std::fs::write(p.ledger(), b"# edited by someone else\n").unwrap();
+    let page = p.inspect().await;
+    assert_eq!(page["items"][0]["source_state"], "drifted");
+    let without = p.close_request(false).await;
+    assert!(is_refused(
+        &p.close(&without).await.unwrap_err(),
+        "retain_source"
+    ));
+    let with = p.close_request(true).await;
+    p.close(&with).await.unwrap();
+    assert_eq!(
+        std::fs::read(p.ledger()).unwrap(),
+        b"# edited by someone else\n"
+    );
+}
+
+#[tokio::test]
+async fn a_cooperating_writer_holding_the_source_blocks_closing() {
+    let mut p = pending_at("after_intent").await;
+    let writer = awr_source::LockedSourceFile::open(&p.tmp.root, "ledger.yaml").unwrap();
+    let page = p.inspect().await;
+    let item = &page["items"][0];
+    assert_eq!(item["source_state"], "writer_busy");
+    assert_eq!(item["abandon"]["allowed"], false);
+    let busy_request = awr_team_pg::AbandonRequest {
+        request_id: p.req.request_id.clone(),
+        expected_phase: item["abandon"]["expected_phase"].as_str().unwrap().into(),
+        expected_intent_hash: item["abandon"]["expected_intent_hash"]
+            .as_str()
+            .unwrap()
+            .into(),
+        expected_source_state: item["abandon"]["expected_source_state"]
+            .as_str()
+            .unwrap()
+            .into(),
+        retain_source: true,
+        reason: "the original client is gone".into(),
+    };
+    let busy = p.close(&busy_request).await.unwrap_err();
+    assert!(is_refused(&busy, "holds the source lock"), "{busy:?}");
+    assert_eq!(p.pending_journals().await, 1);
+    drop(writer);
+    assert!(matches!(
+        p.close(&busy_request).await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    let good = p.close_request(false).await;
+    p.close(&good).await.unwrap();
+    assert_eq!(p.pending_journals().await, 0);
+}
+
+#[tokio::test]
+async fn a_journal_without_a_recorded_intent_is_closed_only_by_naming_it_unbound() {
+    use awr_source::fingerprint;
+    let mut p = pending_at("after_source_written").await;
+    let written = fingerprint(&std::fs::read(p.ledger()).unwrap());
+    // How a journal written before the intent was recorded looks.
+    p.admin
+        .batch_execute(
+            "UPDATE awr_team.planning_writeback_journals SET intent_hash=NULL,intent_json=NULL",
+        )
+        .await
+        .unwrap();
+    let page = p.inspect().await;
+    let item = &page["items"][0];
+    assert_eq!(item["original_intent_bound"], false);
+    assert_eq!(item["source_state"], "unknown");
+    assert_eq!(item["abandon"]["expected_intent_hash"], "unbound");
+    assert_eq!(item["abandon"]["retain_source_required"], true);
+    assert_eq!(p.status().await["original_intent_bound"], false);
+    let mut real_hash = p.close_request(true).await;
+    real_hash.expected_intent_hash = "a".repeat(64);
+    assert!(matches!(
+        p.close(&real_hash).await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    let without = p.close_request(false).await;
+    assert!(is_refused(
+        &p.close(&without).await.unwrap_err(),
+        "retain_source"
+    ));
+    let with = p.close_request(true).await;
+    let closed = p.close(&with).await.unwrap();
+    assert_eq!(closed["decision"]["source_state"], "unknown");
+    assert_eq!(closed["decision"]["intent_hash"], serde_json::Value::Null);
+    assert_eq!(fingerprint(&std::fs::read(p.ledger()).unwrap()), written);
+    assert_eq!(p.pending_journals().await, 0);
+    // Source activation is open again for the rest of the project.
+    let other = workspace_activation(&p.tmp, p.receipt.clone(), "after-the-legacy-one");
+    let attempt = p
+        .store
+        .activate_planning_writeback(TENANT, PROJECT, A, &other)
+        .await;
+    assert!(
+        !matches!(&attempt, Err(error) if is_refused(error, "must be queried and recovered first")),
+        "the closed journal must not fence the project: {attempt:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_inconsistent_intent_with_a_valid_recorded_hash_uses_that_hash_only_as_the_close_token()
+{
+    use awr_source::fingerprint;
+    let mut p = pending_at("after_source_written").await;
+    let written = fingerprint(&std::fs::read(p.ledger()).unwrap());
+    let recorded_hash: String = p
+        .admin
+        .query_one(
+            "SELECT intent_hash FROM awr_team.planning_writeback_journals
+             WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
+            &[&TENANT, &PROJECT, &p.req.request_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    p.admin
+        .execute(
+            "UPDATE awr_team.planning_writeback_journals
+             SET intent_json=jsonb_build_object('codec','corrupt-intent')
+             WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
+            &[&TENANT, &PROJECT, &p.req.request_id],
+        )
+        .await
+        .unwrap();
+    let page = p.inspect().await;
+    let item = &page["items"][0];
+    assert_eq!(item["original_intent_bound"], false);
+    assert_eq!(item["intent_hash"], recorded_hash);
+    assert_eq!(item["source_state"], "unknown");
+    assert_eq!(item["source_fingerprint"], serde_json::Value::Null);
+    assert_eq!(item["abandon"]["allowed"], true);
+    assert_eq!(item["abandon"]["expected_intent_hash"], recorded_hash);
+    assert_eq!(item["abandon"]["retain_source_required"], true);
+    let without = p.close_request(false).await;
+    assert!(is_refused(
+        &p.close(&without).await.unwrap_err(),
+        "retain_source"
+    ));
+    let with = p.close_request(true).await;
+    let closed = p.close(&with).await.unwrap();
+    assert_eq!(closed["decision"]["intent_hash"], recorded_hash);
+    assert_eq!(closed["decision"]["source_state"], "unknown");
+    assert_eq!(closed["decision"]["source_retained"], true);
+    assert_eq!(fingerprint(&std::fs::read(p.ledger()).unwrap()), written);
+    assert_eq!(p.pending_journals().await, 0);
+    let status = p.status().await;
+    assert_eq!(status["original_intent_bound"], false);
+    assert_eq!(status["operator_closed"], true);
+}
+
+#[tokio::test]
+async fn a_malformed_recorded_hash_is_visible_but_not_advertised_as_a_close_token() {
+    let mut p = pending_at("after_intent").await;
+    p.admin
+        .execute(
+            "UPDATE awr_team.planning_writeback_journals SET intent_hash='not-a-hash'
+             WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
+            &[&TENANT, &PROJECT, &p.req.request_id],
+        )
+        .await
+        .unwrap();
+    let page = p.inspect().await;
+    let item = &page["items"][0];
+    assert_eq!(item["original_intent_bound"], false);
+    assert_eq!(item["intent_hash"], serde_json::Value::Null);
+    assert_eq!(item["source_state"], "unknown");
+    assert_eq!(item["abandon"]["allowed"], false);
+    assert_eq!(
+        item["abandon"]["blocked_by"],
+        "the recorded intent hash is malformed and cannot be used as a safe close token"
+    );
+    assert_eq!(
+        item["abandon"]["expected_intent_hash"],
+        serde_json::Value::Null
+    );
+    let close = awr_team_pg::AbandonRequest {
+        request_id: p.req.request_id.clone(),
+        expected_phase: "validated".into(),
+        expected_intent_hash: "unbound".into(),
+        expected_source_state: "unknown".into(),
+        retain_source: true,
+        reason: "the original client is gone".into(),
+    };
+    let error = p.close(&close).await.unwrap_err();
+    assert!(is_refused(&error, "recorded intent hash is malformed"));
+    assert_eq!(p.pending_journals().await, 1);
 }

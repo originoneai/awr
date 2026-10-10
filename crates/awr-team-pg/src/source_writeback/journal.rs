@@ -7,6 +7,8 @@ pub(super) struct Journal {
     pub intent: Intent,
     pub hash: String,
     pub receipt_id: Option<String>,
+    /// The schema owner closed this pending writeback without resuming it.
+    pub operator_closed: bool,
 }
 
 pub(super) async fn load(
@@ -17,7 +19,7 @@ pub(super) async fn load(
 ) -> PgResult<Option<Journal>> {
     let row = tx.query_opt(
         "SELECT phase,intent_hash,intent_json,audit_receipt_id,candidate_id,candidate_digest,publish_receipt_id,
-                before_fingerprint,after_fingerprint,affected_work_ids,dependency_work_ids
+                before_fingerprint,after_fingerprint,affected_work_ids,dependency_work_ids,body_json
          FROM awr_team.planning_writeback_journals WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3 FOR UPDATE",
         &[&tenant,&project,&request],
     ).await?;
@@ -25,7 +27,8 @@ pub(super) async fn load(
     parse(&row, tenant, project, request).map(Some)
 }
 
-fn parse(
+/// Columns 0..=10 are the journal facts in `load` order; column 11 is `body_json`.
+pub(super) fn parse(
     row: &tokio_postgres::Row,
     tenant: &str,
     project: &str,
@@ -55,7 +58,13 @@ fn parse(
         intent,
         hash,
         receipt_id: row.get(3),
+        operator_closed: operator_decision(&row.get::<_, Value>(11)).is_some(),
     })
+}
+
+/// The schema owner's recorded decision, when it closed the journal.
+pub(super) fn operator_decision(body: &Value) -> Option<&Value> {
+    body.get("operator_decision").filter(|d| d.is_object())
 }
 
 fn unknown() -> PgError {
@@ -118,7 +127,7 @@ pub(crate) async fn outcome_in_tx(
 ) -> PgResult<Option<Value>> {
     let row = tx.query_opt(
         "SELECT phase,intent_hash,intent_json,audit_receipt_id,candidate_id,candidate_digest,publish_receipt_id,
-                before_fingerprint,after_fingerprint,affected_work_ids,dependency_work_ids
+                before_fingerprint,after_fingerprint,affected_work_ids,dependency_work_ids,body_json
          FROM awr_team.planning_writeback_journals
          WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3 FOR SHARE", &[&tenant,&project,&request],
     ).await?;
@@ -161,14 +170,19 @@ pub(crate) async fn outcome_in_tx(
     } else {
         false
     };
-    Ok(Some(
-        json!({"request_id":request,"phase":phase,"original_intent_bound":bound,
+    // The schema owner closed a pending journal without resuming it. Nothing was activated.
+    let closed = phase == "refused" && operator_decision(&row.get::<_, Value>(11)).is_some();
+    let mut outcome = json!({"request_id":request,"phase":phase,"original_intent_bound":bound,
         "pending":matches!(phase.as_str(),"validated"|"source_written"|"pg_activating"),
         "source_writeback_pending":!applied,"applied":applied,
         "activation_receipt_id":if applied {row.get::<_,Option<String>>(3)} else {None},
-        "next_step":if !bound {"original intent is unknown or inconsistent; inspect retained facts without inferring authority"}
+        "next_step":if closed {"the schema owner closed this writeback without activating it; inspect the source and submit a new reviewed request"}
+            else if !bound {"original intent is unknown or inconsistent; inspect retained facts without inferring authority"}
             else if phase=="completed" && !applied {"activation confirmation is inconsistent; inspect retained source and receipts before recovery"}
             else if applied {"reuse the original receipt; do not activate again"}
-            else {"inspect the source and resume the same original request; pending is not applied"}}),
-    ))
+            else {"inspect the source and resume the same original request; pending is not applied"}});
+    if closed {
+        outcome["operator_closed"] = json!(true);
+    }
+    Ok(Some(outcome))
 }

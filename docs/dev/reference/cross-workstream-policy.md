@@ -252,7 +252,7 @@ retained as unknown, never reconstructed into new authority.
 | `source_written` | The original after-fingerprint has been observed. PG installation is still unconfirmed. |
 | `pg_activating` | The original source is written; the final activation transaction is still unconfirmed. |
 | `completed` | A matching original intent and activation receipt confirm the source installation, event and publication in one PG transaction. |
-| `refused` | The request explicitly vetoed activation. Inspect the refusal before preparing a new reviewed request. |
+| `refused` | The request explicitly vetoed activation, or the schema owner closed it (see below). Inspect the refusal before preparing a new reviewed request. |
 
 Pending phases block affected new execution and repository-integration effects.
 They also freeze adoption, publication and withdrawal that would change the
@@ -277,6 +277,59 @@ After an unknown `awr_team_planning_publish` result:
    atomically. A lost reply after that commit restores the original publication
    and command receipt without republishing a stale candidate, activating again
    or repeating task creation.
+
+### When the original request cannot be resumed
+
+A pending journal fences the whole project until its request completes: every
+other source activation is refused, and new executions, repository integrations
+and cross-workstream adoption or publication that touch the affected works are
+blocked. If the original client is gone, its permission was revoked, the source
+was changed from outside, or the journal predates the recorded intent, nothing
+can resume it. The schema owner closes it from the operator CLI. These commands
+are not reachable through HTTP or MCP.
+
+1. `awr-server access writeback-inspect --tenant-id T --project-id P` lists the
+   pending journals (`--request-id` shows one request in any phase). Each item
+   gives the phase, whether the original intent is bound, the recorded
+   fingerprints and the physical source state:
+
+   | `source_state` | Meaning |
+   | --- | --- |
+   | `at_before` | The file still has the bytes the request started from; nothing was written. |
+   | `at_after` | The file holds the bytes the request would install. |
+   | `drifted` | The file matches neither fingerprint; it was changed from outside. |
+   | `unreadable` | The registered source could not be opened or read. |
+   | `writer_busy` | A cooperating writer holds the source lock, so the original request may still be running. Closing is refused until it has finished. |
+   | `unknown` | The journal has no verifiable source intent, either because it predates recorded intents or its provenance is inconsistent. |
+
+2. `awr-server access writeback-abandon --tenant-id T --project-id P
+   --request-id R --expected-phase … --expected-intent-hash …
+   --expected-source-state … --reason "…"` closes it. Pass the item's
+   `abandon.expected_*` values exactly as shown (`unbound` as the hash for a
+   journal without a recorded intent). Any difference (the original request
+   moved on, the file changed, another owner got there first) refuses the close.
+   Unless the source is `at_before`, `--retain-source` must also be passed.
+
+   An intent hash retained on an inconsistent journal is only a compare token for
+   that journal; it does not verify the source intent. The source remains
+   `unknown` and requires `--retain-source`. A malformed stored hash is reported
+   as non-closable rather than advertised as a valid recovery request. A busy
+   source remains non-closable even if its state and retention flag are supplied.
+
+Closing only moves the journal to `refused` with the owner's decision, bumps the
+project revision and records an `operator.planning_writeback_abandon` event
+(with a digest of the reason, not its text). It never edits the source file,
+never changes the active snapshot and does not release claims or settle
+effects. The fences end. The original request can no longer resume and is told
+that the schema owner closed it; `awr_team_planning_outcome` reports
+`operator_closed` without the owner's text. Closing again returns the recorded
+decision. A journal that finished, was refused by its own client or does not
+exist is not closed.
+
+If the source was `at_before`, the publication is still pending and a new
+reviewed request can write it back. If the file keeps other bytes, closing does
+not decide what happens to them: restore them from version control, or ingest,
+approve and activate their current content through the normal source pipeline.
 
 A completed receipt is historical evidence, not permission to execute. A retry
 with different content, identity or selectors is refused. Unknown legacy or

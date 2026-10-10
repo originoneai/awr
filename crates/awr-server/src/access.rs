@@ -6,7 +6,8 @@
 use awr_team_pg::{
     AccessPlan, AgentAuthorizationIssuePlan, AgentProvisionPlan, AgentRenewPlan,
     ExecutionAttributionPlan, OperatorAccess, OperatorAgent, OperatorBackup,
-    OperatorExecutionAttribution, OperatorHistory, OperatorQuarantine, OperatorRecovery, PgError,
+    OperatorExecutionAttribution, OperatorHistory, OperatorQuarantine, OperatorRecovery,
+    OperatorWriteback, PgError,
 };
 use clap::Subcommand;
 use serde::Deserialize;
@@ -236,6 +237,41 @@ pub enum AccessCommand {
         request_id: String,
     },
 
+    /// List pending planning source writebacks, or show one request in any phase, with the
+    /// physical source state (owner only; no writes).
+    WritebackInspect {
+        #[arg(long)]
+        tenant_id: String,
+        #[arg(long)]
+        project_id: String,
+        /// Show this original request instead of every pending one.
+        #[arg(long)]
+        request_id: Option<String>,
+    },
+    /// Close one pending planning source writeback that cannot be resumed (owner only). Edits
+    /// neither the source file nor the active snapshot; pass the inspected `expected_*` values.
+    WritebackAbandon {
+        #[arg(long)]
+        tenant_id: String,
+        #[arg(long)]
+        project_id: String,
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        expected_phase: String,
+        /// The inspected intent hash, or `unbound` for a journal without a recorded intent.
+        #[arg(long)]
+        expected_intent_hash: String,
+        /// The inspected source state: at_before, at_after, drifted, unreadable or unknown.
+        #[arg(long)]
+        expected_source_state: String,
+        /// Required unless the source is at_before: leave the file exactly as it is.
+        #[arg(long)]
+        retain_source: bool,
+        #[arg(long)]
+        reason: String,
+    },
+
     /// Preview explicit execution attribution with reviewed executor_client_id (owner only; no writes).
     ExecutionAttributionPreview {
         #[arg(long)]
@@ -424,6 +460,10 @@ fn pg_error(e: PgError) -> Error {
         PgError::Unsupported(_) => (
             "Unsupported",
             "operation unsupported for this project state or refused by restore plan",
+        ),
+        PgError::WritebackRefused(_) => (
+            "WritebackRefused",
+            "the planning writeback is not pending, a cooperating writer holds its source, or retain_source is required; run writeback-inspect for the phase, the source state and what closing needs",
         ),
         PgError::RestoreIncomplete => (
             "RestoreIncomplete",
@@ -735,6 +775,39 @@ pub async fn run(command: AccessCommand) -> Result<Value, Error> {
             project_id,
             request_id,
         } => OperatorQuarantine::outcome(&mut client, &tenant_id, &project_id, &request_id).await,
+        AccessCommand::WritebackInspect {
+            tenant_id,
+            project_id,
+            request_id,
+        } => {
+            OperatorWriteback::inspect(&mut client, &tenant_id, &project_id, request_id.as_deref())
+                .await
+        }
+        AccessCommand::WritebackAbandon {
+            tenant_id,
+            project_id,
+            request_id,
+            expected_phase,
+            expected_intent_hash,
+            expected_source_state,
+            retain_source,
+            reason,
+        } => {
+            OperatorWriteback::abandon(
+                &mut client,
+                &tenant_id,
+                &project_id,
+                &awr_team_pg::AbandonRequest {
+                    request_id,
+                    expected_phase,
+                    expected_intent_hash,
+                    expected_source_state,
+                    retain_source,
+                    reason,
+                },
+            )
+            .await
+        }
 
         AccessCommand::ExecutionAttributionPreview { input } => {
             OperatorExecutionAttribution::preview(&mut client, &attribution_plan(&input)?).await

@@ -56,6 +56,8 @@ pub struct WritebackActivateRequest {
 pub(crate) mod admission;
 #[path = "source_writeback/journal.rs"]
 pub(crate) mod journal;
+#[path = "source_writeback/operator.rs"]
+pub mod operator;
 #[path = "source_writeback/request_binding.rs"]
 mod request_binding;
 
@@ -126,7 +128,11 @@ impl SourceStore {
                 return Ok(json!({"already_recorded":true,"receipt":receipt}));
             }
             if prior.phase == "refused" {
-                return Err(PgError::ActivationImpactUnproven("the original request explicitly refused activation; use a new reviewed request after inspection".into()));
+                return Err(if prior.operator_closed {
+                    PgError::WritebackRefused("the schema owner closed this pending writeback without activating it; inspect the source and use a new reviewed request".into())
+                } else {
+                    PgError::ActivationImpactUnproven("the original request explicitly refused activation; use a new reviewed request after inspection".into())
+                });
             }
             if !matches!(
                 prior.phase.as_str(),

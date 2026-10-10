@@ -58,8 +58,8 @@ file) and registered by `secret_hash` only; query/audit/MCP responses return
 redacted identity and auth metadata — never raw secrets.
 
 Owner-only surfaces (recovery-inspect, history migration, quarantine,
-execution attribution, backup/fencing/rebuild) stay on `awr-server access` and
-remain unreachable from client HTTP/MCP.
+planning writeback close, execution attribution, backup/fencing/rebuild) stay
+on `awr-server access` and remain unreachable from client HTTP/MCP.
 
 ---
 
@@ -330,6 +330,24 @@ awr-server access quarantine-outcome --tenant-id tenant-a --project-id project-a
 
 Use `--claim-disposition quarantine` to revoke active claims that cannot be
 attributed. Covered by `pg_operator_recovery` with `--features pg-tests`.
+
+A pending planning source writeback whose original request can no longer resume
+(client gone, permission revoked, source changed from outside, journal without a
+recorded intent) keeps fencing source activation and the affected works. The
+owner lists it and closes it against the inspected facts. Closing edits neither
+the source file nor the active snapshot; unless the source is still in its start
+state, `--retain-source` must say so:
+
+```sh
+awr-server access writeback-inspect --tenant-id tenant-a --project-id project-a
+awr-server access writeback-abandon --tenant-id tenant-a --project-id project-a \
+  --request-id <original planning request> --expected-phase <phase> \
+  --expected-intent-hash <hash, or unbound> --expected-source-state <state> \
+  [--retain-source] --reason "<why it cannot be resumed>"
+```
+
+See "Recover planning source writeback" in `cross-workstream-policy.md`. Covered
+by `pg_planning_writeback` with `--features pg-tests`.
 
 Explicit execution attribution binds CHECK-safe unattributed executions
 (`session_id` and `claim_id` present) using a reviewed `executor_client_id` that
