@@ -4,8 +4,9 @@ This is the **L0** operator path. It works from any coding agent's terminal
 tool, and from any MCP client that can start `awr-mcp` or reach the shared
 HTTP service. Host-specific merge paths live in [L1/L2 notes](README.md).
 
-AWR 0.4.0 packages include the CLI, stdio MCP, session/claim tools and the
-[shared HTTP service](../reference/mcp-service.md).
+Published AWR 0.5.1 packages include the CLI, stdio MCP, session/claim tools and
+the [shared HTTP service](../reference/mcp-service.md). The 0.4.0 package is not
+the current release.
 
 ## Bind the project
 

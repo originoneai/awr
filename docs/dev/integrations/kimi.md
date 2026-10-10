@@ -119,7 +119,7 @@ With MCP, pass `{"session":"<awr-session-id>","budget":5000}` to
 `awr_context_compile`. If its read-only source check reports `SourceStale`,
 inspect the source change and run `awr source reindex` before reading again.
 Use the refreshed revision for every mutation and inspect durable receipts after
-a lost response. For complete error semantics, see [the CLI workflow](codex.md).
+a lost response. For the shared command and error semantics, see the [L0 session workflow](session-workflow.md).
 
 ## Manual checkpoint and compact recovery
 

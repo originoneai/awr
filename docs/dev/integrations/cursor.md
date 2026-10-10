@@ -25,10 +25,11 @@ Do not copy the L0 tutorial here. Do not add `--client cursor`. Do not run
 
 ## MCP merge paths
 
-This note describes the **current source tree**. Packaged **0.4.0** does not
-expose grouped `awr_query`. Build `awr` and `awr-mcp` from this repository
-using [the repository instructions](../../../README.md), then point `command` at
-that binary (absolute path):
+This note describes published **AWR 0.5.1** and the current source tree. Both
+expose grouped `awr_query`. The **0.4.0** package does not. Install 0.5.1, or
+build `awr` and `awr-mcp` from this repository using
+[the repository instructions](../../../README.md), then point `command` at that
+binary (absolute path):
 
 ```sh
 cargo build --locked -p awr-cli -p awr-mcp

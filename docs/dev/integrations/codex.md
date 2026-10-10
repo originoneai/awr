@@ -1,40 +1,59 @@
 # Using AWR from Codex
 
-> **Layer: L2 optional adapter.** AWR is not a Codex runtime. Use the
-> [L0 session workflow](session-workflow.md) for host-agnostic CLI/MCP
-> commands. This page keeps Codex merge paths, `client install`, and dated
-> verification. See [host integration layers](README.md).
+> **Layers: L1 host note + L2 optional adapter.** Session start, claim, compile,
+> checkpoint and resume stay on the [L0 session workflow](session-workflow.md).
+> This page records Codex merge paths, grouped MCP discovery, identity and the
+> optional lifecycle adapter. See [host integration layers](README.md).
 
-WS-024 named adapter id: `codex_cli` (start/status/stop_confirmation/reconnect/forensics). See [named agent host](named-agent-host.md).
+Checked against **Codex CLI 0.155.0** and the official
+[MCP](https://learn.chatgpt.com/docs/extend/mcp) and
+[hooks](https://learn.chatgpt.com/docs/hooks) documentation on **2026-09-20**.
+The published package for this contract is **AWR 0.5.1**, not 0.4.0. This
+source tree uses that same grouped default. Codex owns its model, UI, native
+conversation IDs and compaction. AWR owns project facts, claims, checkpoints
+and evidence.
 
-AWR supplies current project facts, work context and recoverable session memory.
-Codex performs the work using its available tools. The local workflow below uses
-AWR's CLI and stdio MCP against the same initialized project. AWR 0.3.3
-also exposes session/claim lifecycle directly through MCP and a
-[shared HTTP service](../reference/mcp-service.md) for multiple projects and clients.
-Client configuration and native-client verification remain separate from
-server implementation.
+This page is the personal stdio path. The remote Team service uses a different
+server and tool family; see [Team MCP · Codex](team-mcp-codex-cli.md). The
+WS-024 named adapter id is `codex_cli`; see [named agent host](named-agent-host.md).
 
-## Build and bind the project
+## Why this is L1 plus L2
 
-Build both executables from an AWR checkout:
+L0 is enough to run AWR from any terminal or MCP client. Codex still has merge
+paths and lifecycle behavior that L0 cannot name:
+
+- stdio configuration is merged into `.codex/config.toml` or
+  `~/.codex/config.toml`; project configuration requires a trusted project
+- the published AWR 0.5.1 catalog, and this source tree, default to grouped
+  domain tools, so a flat child name is not the advertised top-level tool
+- Codex has a documented lifecycle hook envelope and an optional AWR installer
+
+L1 covers the MCP merge path and manual identity. L2 adds `awr client install`
+hooks and native lifecycle checkpoints. Do not copy the L0 session tutorial into
+this page. Do not add a second AWR runtime or client-private history access.
+
+## MCP merge paths
+
+Install published AWR 0.5.1, which includes the grouped MCP catalog, or build
+both executables from this checkout:
 
 ```sh
+npm install -g @originoneai/agent-work-runtime@0.5.1
+# or: python -m pip install agent-work-runtime==0.5.1
+command -v awr-mcp
+
+# Contributor/source path. This tree uses the same grouped default as 0.5.1.
 cargo build --locked -p awr-cli -p awr-mcp
+# binaries: target/debug/awr and target/debug/awr-mcp
 ```
 
 Use absolute executable and project paths. Initialize the target project with a
 reviewed source manifest as described in [the basic example](../../../examples/basic/README.md).
-For this repository, use its existing `.awr/project.toml` and database. Inspect
-`session list --active` before creating another session on the same work.
+Starting `awr-mcp` does not create or migrate a database.
 
-Merge [the MCP configuration template](../../../examples/codex/config.toml.example)
-into the target project's `.codex/config.toml`, replacing its two paths. Preserve
-existing configuration. Codex loads project configuration only for trusted
-projects; the local CLI, desktop and IDE clients share MCP configuration on the
-same host. [Official MCP documentation](https://learn.chatgpt.com/docs/extend/mcp)
-
-An alternative is the CLI's user-level registration command:
+Merge [the grouped stdio template](../../../examples/codex/config.toml.example)
+into the trusted project's `.codex/config.toml`, or use the user-level
+registration command:
 
 ```sh
 codex mcp add awr -- /absolute/path/to/awr-mcp \
@@ -43,201 +62,150 @@ codex mcp get awr --json
 ```
 
 Choose either project configuration or user-level registration for this server.
-`codex mcp add` changes shared user configuration; the template itself changes
-nothing. The server binds to one canonical project root at startup. Give servers
-for different projects distinct names and explicit roots.
+`codex mcp add` changes shared user configuration; the template changes nothing.
+The local CLI, desktop and IDE clients share MCP configuration on the same host.
+Give servers for different projects distinct names and explicit roots.
 
 `codex mcp get` checks configured values. In the receiving client's `/mcp` view,
 confirm a connected `awr` server, then request its project status and confirm the
-project identity before work. Restart/reconnect the client after configuration
-changes when required. A configured server is not proof of an active connection.
-The expected tools are:
+project identity before work. Restart or reconnect the client after configuration
+changes. A configured server is not proof of an active connection.
 
-| Read tools | Mutation tools |
-| --- | --- |
-| `awr_project_status` | `awr_work_transition` |
-| `awr_work_ready` | `awr_event_append` |
-| `awr_work_get` | `awr_evidence_record` |
-| `awr_context_compile` | |
-| `awr_search` | |
+## Grouped MCP discovery
 
-Their argument and error contracts are in [the MCP reference](../../../crates/awr-mcp/README.md).
-The server does not require a model API key. Provider/model labels in AWR session
-records do not configure or invoke Codex.
+Published AWR 0.5.1 and this source tree default to eight top-level domain tools:
 
-## Manual session workflow
+`awr_query`, `awr_context`, `awr_work`, `awr_evidence`, `awr_session`,
+`awr_continuity`, `awr_change`, `awr_compaction`.
 
-These are commands for Codex's terminal tool or the operator's terminal. Run one
-step at a time and inspect the response. The snippets use Bash, `jq`, an already
-initialized project, and a work key selected from `ready`. Replace the
-example identity with the current agent/provider/model. Keep the receipt
-directory in the handoff; it contains local work context.
-
-```sh
-AWR_BIN=/absolute/path/to/awr
-AWR_PROJECT=/absolute/path/to/initialized/project
-AWR_WORK=EXAMPLE-001
-AWR_AGENT=codex-primary
-AWR_MODEL=your-current-model
-AWR_NOTES=$(mktemp -d "${TMPDIR:-/tmp}/awr-codex.XXXXXX")
-awrj() { "$AWR_BIN" --project "$AWR_PROJECT" --json "$@"; }
-
-awrj session list --active
-awrj ready
-```
-
-If a session already exists for the current work, inspect it with `session show`
-and use its AWR session ID. For new work without a session, start and claim it:
-
-```sh
-AWR_REV=$(awrj status | jq -er '.project_revision')
-awrj session start --work "$AWR_WORK" --agent "$AWR_AGENT" \
-  --provider openai --model "$AWR_MODEL" --claim --ttl-ms 3600000 \
-  --expected-revision "$AWR_REV" > "$AWR_NOTES/start.json"
-AWR_SESSION=$(jq -er '.session.id' "$AWR_NOTES/start.json")
-```
-
-The returned claim is runtime ownership. It does not rewrite the source work's
-status or owner. Use the appropriate AWR work transition before progress; inspect
-conflicts rather than acquiring a competing claim. The AWR session ID is distinct
-from the Codex conversation ID.
-
-Read L0 for orientation, then L1 for execution:
-
-```sh
-awrj context bootstrap --session "$AWR_SESSION" --budget 1000 \
-  > "$AWR_NOTES/bootstrap.json"
-jq -e '.context.complete' "$AWR_NOTES/bootstrap.json"
-
-awrj context compile --work "$AWR_WORK" --session "$AWR_SESSION" \
-  --budget 5000 > "$AWR_NOTES/context.json"
-jq -e '.completeness.complete and (.work_context != null)' "$AWR_NOTES/context.json"
-```
-
-Read the actual context, required facts and gaps, not just the boolean printed by
-`jq`. L0 explicitly reports `execution_context_complete: false`. Supply concrete
-`--path`, `--tag` or `--goal` inputs when the rules need them. `--source-sha` can
-bind evidence currency to the full commit under review.
-
-If hard facts exceed a budget, the command fails with `BudgetExceeded`. Inspect
-its `required` count and explicitly increase the budget or clarify scope. Do not
-delete hard facts to make the call pass. For example, this repository's P8-002
-bootstrap needed 1,555 tokens on 2026-09-08; an explicit `--budget 2000` succeeded.
-That observation does not satisfy the V1 1,000-token benchmark.
-
-With a connected MCP server, the L1 read can instead use `awr_context_compile`
-with these arguments, substituting the real AWR session ID:
+Call `awr_query` with no arguments to discover its child schemas, then pass a
+child name and its arguments through the same domain. The status probe is:
 
 ```json
-{"session":"<awr-session-id>","budget":5000}
+{"child_tool": "awr_project_status", "arguments": {}}
 ```
 
-Check `completeness.complete`, `work_context.context_hash` and its gap/omission
-metadata. The five MCP read tools verify source freshness without refreshing the
-persistent index. On `SourceStale`, inspect the source change, run the CLI's
-`source reindex`, then read again. CLI context reads can refresh that index.
-Read-only refresh differences and changed-source conflicts are documented in the
-MCP reference. A transport's output limit is separate from AWR's token budget;
-incomplete or visibly truncated delivery must be recovered before execution.
+Flat names remain callable for existing integrations but are not in the default
+catalog. A host that builds its tool list from `tools/list` must use the domain
+route. Set `AWR_MCP_TOOL_EXPOSURE_MODE=flat` only when the receiving host cannot
+route through domains.
 
-## Checkpoint before handoff or planned compaction
+Codex's `enabled_tools` is an allow list for top-level names. Do not populate it
+with flat child names while AWR is in the default grouped mode: those names do
+not match the advertised domain entries. The grouped template selects the
+`awr_query`, `awr_context`, `awr_work` and `awr_evidence` domains. Add
+`awr_session`, `awr_continuity`, `awr_change` or `awr_compaction` only when the
+host needs those domains. A domain allow list permits every child inside that
+domain; it does not preserve child-level filtering.
 
-Save the hash of the last context actually used, a factual digest, the exact next
-action and every unresolved loop. Replace the illustrative text below with the
-current work's actual progress. Fetch the current revision after any source/work
-mutations, but do not replace the last-used context hash with an invented hash.
+For an exact flat-tool allowlist, use
+[the compatibility template](../../../examples/codex/config.flat.toml.example),
+which sets `AWR_MCP_TOOL_EXPOSURE_MODE=flat` and selects the eight original flat
+tools. Reconnect Codex after changing exposure mode so `tools/list` refreshes.
+See [the MCP reference](../../../crates/awr-mcp/README.md) for argument contracts.
+That reference still describes the older flat catalog in places; the domain list
+above is the default `tools/list` for 0.5.1 and this source tree.
+
+## Identity
+
+`--client` is required on every `client` subcommand. Use the L0 generic identity
+for a manual binding, prefixing the native Codex conversation UUID so unrelated
+hosts cannot collide:
 
 ```sh
-AWR_CONTEXT_HASH=$(jq -er '.work_context.context_hash' "$AWR_NOTES/context.json")
-AWR_REV=$(awrj status | jq -er '.project_revision')
-awrj session checkpoint --session "$AWR_SESSION" \
-  --context-hash "$AWR_CONTEXT_HASH" \
-  --digest "Implemented the selected change; review results are still pending." \
-  --next-action "Inspect the review result and address the remaining issue." \
-  --open-loop "Independent review is unfinished." \
-  --expected-revision "$AWR_REV" > "$AWR_NOTES/checkpoint.json"
-awrj session show "$AWR_SESSION"
+: "${CODEX_SESSION_ID:?set the Codex session UUID first}"
+AWR_EXTERNAL="codex:${CODEX_SESSION_ID}"
+awr --project /absolute/path/to/initialized/project client bind \
+  --client generic --external-session "$AWR_EXTERNAL" \
+  --work EXAMPLE-001 --session AWR_SESSION_ID
 ```
 
-Checkpointing automatically records observed source/runtime changes. The supplied
-digest and hash remain caller assertions; JSON reports `context_hash_verified:
-false`. A successful save advances the project revision twice. Always use the
-returned/current revision rather than adding one yourself. Incomplete save
-attempts are retained for inspection and are never valid recovery checkpoints.
+`AWR_SESSION_ID` comes from the [L0 session workflow](session-workflow.md).
+`--session` attaches to an active AWR session. For a handoff, follow the L0
+two-step path (`session resume`, then `bind --session`); `--from-session` creates
+a successor and does not carry the claim. Never invent a Codex session ID or bind
+the literal `codex:`.
 
-## Resume the work
+`--client codex` is the documented native dialect for the L2 hook envelope, not
+a prerequisite for manual MCP use. The native dialect receives the bare hook
+`session_id`; the manual generic identity prefixes that same UUID with `codex:`.
+`--provider openai` and `--model` on session start/resume are recorded labels;
+they do not configure or invoke Codex.
 
-For an actual handoff or new execution session, explicitly name the predecessor:
+## Optional L2 lifecycle adapter
+
+Codex is the only host with a built-in `awr client install` adapter. Preview the
+exact configuration, then accept it after review:
 
 ```sh
-AWR_REV=$(awrj status | jq -er '.project_revision')
-awrj session resume --from-session "$AWR_SESSION" \
-  --agent "$AWR_AGENT" --provider openai --model "$AWR_MODEL" \
-  --budget 5000 --expected-revision "$AWR_REV" > "$AWR_NOTES/resume.json"
-jq -e '.context_ready' "$AWR_NOTES/resume.json"
-AWR_PREDECESSOR=$AWR_SESSION
-AWR_SESSION=$(jq -er '.resumed.session.id' "$AWR_NOTES/resume.json")
-awrj session show "$AWR_SESSION"
-awrj context compile --session "$AWR_SESSION" --budget 5000 \
-  > "$AWR_NOTES/context.json"
-jq -e '.completeness.complete and (.work_context != null)' "$AWR_NOTES/context.json"
+awr --project /absolute/path/to/initialized/project client install \
+  --client codex --work EXAMPLE-001
+awr --project /absolute/path/to/initialized/project client install \
+  --client codex --work EXAMPLE-001 --accept
 ```
 
-Read the recovered context and verify the inherited checkpoint, next action,
-unresolved loops and current source changes. Resume creates a new AWR session;
-it does not start or switch a Codex conversation or model. Default resume
-transfers a still-live claim with its original expiration, without extending its
-TTL. After an expired/released claim, explicitly acquire a new claim when ready;
-do not infer ownership from a predecessor's history.
+The installer merges `SessionStart`, `PreCompact`, `PostCompact`, `Stop`,
+`SessionEnd` and `Interrupt` handlers into the project's `.codex/hooks.json`,
+preserving existing handlers. Project hooks load only for a trusted project.
+Review and trust the exact definitions in a fresh client's `/hooks` view.
+Installation reports `activation_verified: false`; a generated file or synthetic
+receiver call is not proof that the receiving client activated the hooks.
 
-If the same AWR session remains active after Codex compaction, reload context for
-that session. A new AWR session is not required for every compact. Use resume when
-there is a real session handoff. After a crash or lost response, inspect
-`session show <predecessor>` and its successor before retrying. Even a nonzero
-resume response can contain `resumed.session.id` with `context_ready: false`:
-that successor already exists. Fix its context inputs and compile for it instead
-of repeating the transition. No checkpoint means source/session-start recovery
-with explicit missing-memory gaps.
+The receiver binds the native Codex `session_id` to a work-bound AWR session.
+`SessionStart` and `PostCompact` return recovery context.
+`Stop`, `PreCompact`, `SessionEnd` and `Interrupt` checkpoint the persisted next
+action, open loops and observed AWR event/source delta. Shutdown hooks are
+advisory: they do not end the AWR session, release claims or kill processes.
+Explicit session end and handoff keep those responsibilities.
 
-When stopping work, checkpoint first, then close the session with the observed
-revision and an appropriate outcome:
+Record a changed next action before it is lost from the client:
 
 ```sh
-AWR_REV=$(awrj status | jq -er '.project_revision')
-awrj session end --session "$AWR_SESSION" --outcome incomplete \
-  --expected-revision "$AWR_REV"
+awr --project /absolute/path/to/initialized/project client progress \
+  --client codex --external-session "$CODEX_SESSION_ID" \
+  --next-action "Apply the reviewer corrections" \
+  --open-loop "Independent review remains"
+awr --project /absolute/path/to/initialized/project client show \
+  --client codex --external-session "$CODEX_SESSION_ID"
 ```
 
-An ended session releases its claims. It does not complete the source work;
-`work complete` still requires the task's evidence and acceptance bindings.
-
-## Automatic hooks: capability and verification boundary
-
-Current official Codex documentation describes `SessionStart` with
-`startup|resume|clear|compact`, `PreCompact` with `manual|auto`, and `SessionEnd`.
-Project hooks require a trusted project layer and review/trust of the exact hook
-definition. Use `/hooks` to inspect the receiving client's active definitions.
-Multiple matching command hooks may run concurrently. `SessionEnd` is advisory,
-has a short timeout, and does not fire immediately just because the user switches
-away from a conversation. [Official hook documentation](https://learn.chatgpt.com/docs/hooks)
-
-This integration supplies manual checkpoint/resume, an
-[agent-instruction snippet](../../../examples/codex/AGENTS.snippet.md), and a
-[project-local lifecycle adapter](../TAKEOVER.md#client-checkpoints). Use `awr client install`
-to preview its exact configuration before `--accept`. The receiver maps each native
-conversation to an AWR session and checkpoints persisted continuity on lifecycle events.
-Installation preserves existing hooks and never approves their trust automatically.
-Verify actual trigger delivery in the receiving client; configuration presence and
-synthetic receiver checks alone are insufficient evidence of native activation.
+The adapter does not read transcript bodies, infer facts from assistant prose or
+invoke a model. A checkpoint completed before a lost receipt is recovered by its
+delivery key; incomplete saves are never recovery checkpoints. See
+[client checkpoints](../TAKEOVER.md#client-checkpoints) for installation and
+recovery details.
 
 If the project root holds a `remote_workspace.toml`, the `SessionStart` receiver
-also takes what the other machines published before it renders the context, and
-names the paths it moved. That step never fails the session. It pulls, and it
-re-registers only the index entries this host already published that later
-dropped out; it never publishes half-finished local work:
-see the [exchange plane](../reference/workspace-exchange.md#会话开始时的自动取回).
+also takes what other machines published before it renders context and names the
+paths it moved. That step never fails the session, never publishes local work and
+only re-registers index entries this host already published:
+see [session-start exchange](../reference/workspace-exchange.md#会话开始时的自动取回).
 
-Use the [executable lifecycle example](../../../examples/codex/README.md) to check
-AWR behavior on a disposable project. Native MCP and hook activation must be
-verified in the actual receiving client. Configuration presence, synthetic
-receiver checks and local fixture results do not prove real business acceptance.
+Copying [the AGENTS snippet](../../../examples/codex/AGENTS.snippet.md) provides
+agent instructions only; it does not install hooks. The
+[executable lifecycle example](../../../examples/codex/README.md) checks AWR
+behavior on a disposable project but does not invoke Codex or activate hooks.
+
+## Dated check
+
+On 2026-09-20, Codex CLI `0.155.0` and AWR `0.5.0` (commit `7f5301a`) were
+checked under an isolated `CODEX_HOME`; no model turn was invoked. That check
+predates the 0.5.1 package and is not evidence for the current source tree:
+
+1. `codex mcp get awr --json` parsed both the grouped and flat templates.
+2. The Codex app-server returned the four selected grouped domains through
+   `mcpServerStatus/list`: `awr_query`, `awr_context`, `awr_work`, `awr_evidence`.
+3. The flat compatibility template returned the eight selected flat tools.
+4. `mcpServer/tool/call` routed `awr_query` with
+   `{"child_tool":"awr_project_status","arguments":{}}` and reported project
+   `AWR example`, `EXAMPLE-001` ready,
+   `freshness_basis: source_verified_readonly`.
+5. An independent stdio probe observed the full default catalog of eight domain
+   tools and the same status result; flat mode exposed 32 callable flat tools.
+
+That verifies Codex configuration parsing, live MCP startup and read routing
+through the grouped and flat paths against AWR 0.5.0. AWR 0.5.1 publishes the
+same grouped contract ([#66](https://github.com/originoneai/awr/pull/66),
+[#68](https://github.com/originoneai/awr/pull/68)). It is not lifecycle-hook
+activation, a model turn, Cloud execution or business acceptance, and it is not
+a fresh Codex CLI check of this later source tree.

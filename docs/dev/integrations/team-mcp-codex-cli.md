@@ -4,7 +4,7 @@
 > `awr team command` placeholders as a live remote transport
 > ([team-access.md](../reference/team-access.md)).
 >
-> WS-024 adapter id: [`codex_cli`](named-agent-host.md). Personal Codex L2 notes
+> WS-024 adapter id: [`codex_cli`](named-agent-host.md). Personal Codex L1 + L2 notes
 > remain in [codex.md](codex.md); this page is the **Team service** natural path.
 
 ## Prerequisites
