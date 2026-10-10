@@ -1,21 +1,68 @@
-# 原生平台验证
+# Native platform verification
 
-[合同](contract.json)定义五个目标：macOS arm64、macOS Intel x64、Linux x64、Linux arm64 和 Windows x64，均使用 Rust 1.93.1。每个平台需要独立运行 11 道检查；结果以本次绑定的实际运行证据为准。工作流存在、交叉编译通过或另一平台通过都不能作为该平台完成。
+The [contract](contract.json) defines five native targets: macOS arm64 and Intel
+x64, Linux x64 and arm64, and Windows x64, using Rust 1.93.1. Each platform runs
+all fourteen gates on its own recorded source commit. A workflow definition,
+cross compilation or another platform's result cannot supply that evidence.
 
-检查包含全 workspace/all-targets 构建、实际 Rust 测试、doctest、ignored 入口清单与进程终止后的真实 CLI 恢复、全部 8 项 CLI/MCP 对照、手动 checkpoint/resume，以及中文/空格路径、CRLF 来源、WAL/schema 完整性、持久化会话、源码写回回执、过期版本保护、硬规则更新与项目外来源拒绝。最后核对所有已跟踪文件及源码 SHA 没有变化。
+The gates include subprocess-runner regression, workspace/all-targets build and
+tests, doctests, ignored-test inventory and actual CLI crash recovery, all nine
+CLI/MCP parity checks, manual checkpoint/resume, and native CLI conditions. The
+conditions cover Unicode/space paths, CRLF, WAL/schema integrity, persisted
+sessions, source writes and receipts, stale-write rejection, changed hard rules,
+outside-source rejection and closed-session health. The final gate checks that
+tracked inputs and the source commit remain unchanged.
 
-从已提交且干净的工作区执行：
+Run from a committed, clean checkout with a fresh output directory:
 
 ```sh
 python tests/platform/verify.py --platform macos-arm64 --output .local/platform-local-v1
 ```
 
-Linux x64 使用 `linux-x64`，Linux arm64 使用 `linux-arm64`，Windows 使用 `windows-x64`。检查器验证实际系统、CPU 架构和 Rust host；不能以参数伪装平台。每次使用新目录，失败结果保留后再修复，避免覆盖现场。脚本使用标准库，设置 Python UTF-8 模式；本地存在 RTK 时经其调用外部命令，GitHub 托管环境直接执行工具。
+Use `macos-x64`, `linux-x64`, `linux-arm64` or `windows-x64` for other native
+targets. The runner checks the actual OS, CPU and Rust host. Parameters cannot
+pretend to be another platform. The scripts use Python's standard library and
+UTF-8 mode; locally installed RTK proxies external commands.
 
-`.github/workflows/platform.yml` 为合同中的每个平台各起一个独立原生 job，不因一个失败而取消其余结果。GitHub 官方 Actions 固定到已核实的提交，checkout 不保留凭据；工作流仅有 contents:read，上传范围限本次生成的合成 fixture 检查记录，不上传项目运行数据库或用户资料。构建工具链失败时无有效运行报告，该平台仍未验证。
+## Bounded processes and finalized evidence
 
-报告保存系统版本、实际架构、编译器、源码/输入/二进制哈希、GitHub run/attempt、每道检查及日志。Rust 数量按各平台实际执行记录；Windows 编译时排除的 Unix 专属测试不计通过。七个 ignored 入口必须有真实父测试或显式恢复命令，列出入口本身不等于执行。
+The default command deadline is 1,800 seconds. Only the Intel workspace gate has
+a 3,600-second deadline; its CI job has a 90-minute limit to include compilation
+and the remaining checks. Other platform job limits remain 45 minutes. Budgets
+are explicit in the contract and per-gate receipt, and do not skip any tests.
 
-CLI 探针和手动生命周期调用的是 AWR 程序，没有调用 Agent 模型，不计 E4、独立业务复核、性能指标或发布。支持边界仅限合同列出的架构与托管系统版本；UNC/网络盘、旧系统及其他架构仍未验证。
+Each command owns a POSIX process group or Windows Job Object. A Windows
+bootstrap joins its job before spawning the command. After normal exit or a
+timeout, the runner terminates remaining contained descendants and reaps the
+launcher. It then allows up to ten seconds for cleanup and output drainage.
+The runner alone writes the log; the output writer must finish before the log
+is hashed. Timeouts always fail. Failed cleanup stops later gates, and an
+unfinished log receives no final fingerprint. These checks cover descendants
+within the declared process boundary; POSIX children that deliberately create a
+new session are outside that boundary and cannot supply a finalized receipt if
+they retain its output pipe.
 
-运行器选择依据 [GitHub 官方托管运行器表](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。具体运行器镜像版本以每次 job 环境和日志为准，固定 runner 标签不等于固定底层镜像。
+The native subprocess regression gate exercises real child/grandchild processes,
+nonzero exits, missing commands, timeouts, orphaned output and stable final logs.
+Windows and Intel results require their own native jobs.
+
+## CI receipts and verification limits
+
+[The workflow](../../.github/workflows/platform.yml) runs every platform
+independently and uploads failures as well as successes. Actions are pinned;
+checkout keeps no credentials. Permissions are limited to `contents: read`.
+Uploads contain synthetic verification evidence, not private project state.
+
+Reports bind OS/architecture, compiler, source/tree/input/binary fingerprints,
+workflow run/attempt, command deadlines, actual exits, cleanup and finalized log
+digests. Rust counts come from executed test results. Unix-only tests omitted by
+Windows configuration are not credited there. Seven ignored entries require
+actual parent-test execution or the explicit recovery command; listing them does
+not prove execution. Partial stdout cannot replace a completed workspace gate.
+
+CLI probes and synthetic lifecycle checks make no Agent model calls. They do not
+establish native Agent-client activation, independent business review, E4,
+performance results or a release. Coverage is limited to the listed hosted
+platforms; older systems, other architectures and network filesystems remain
+unverified. Runner image versions are recorded for each job: a fixed hosted
+runner label does not freeze the underlying image.

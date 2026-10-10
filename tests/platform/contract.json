@@ -1,11 +1,13 @@
 {
   "contract_id": "awr-native-platforms",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "work_item": "AWR-QA-004",
   "rust_version": "1.93.1",
+  "command_timeout_seconds": 1800,
+  "cleanup_timeout_seconds": 10,
   "platforms": [
     {"id": "macos-arm64", "runner": "macos-15", "system": "Darwin", "machine": "arm64", "rust_host": "aarch64-apple-darwin"},
-    {"id": "macos-x64", "runner": "macos-15-intel", "system": "Darwin", "machine": "x86_64", "rust_host": "x86_64-apple-darwin"},
+    {"id": "macos-x64", "runner": "macos-15-intel", "system": "Darwin", "machine": "x86_64", "rust_host": "x86_64-apple-darwin", "gate_timeout_seconds": {"workspace": 3600}},
     {"id": "linux-x64", "runner": "ubuntu-24.04", "system": "Linux", "machine": "x86_64", "rust_host": "x86_64-unknown-linux-gnu"},
     {"id": "linux-arm64", "runner": "ubuntu-24.04-arm", "system": "Linux", "machine": "arm64", "rust_host": "aarch64-unknown-linux-gnu"},
     {"id": "windows-x64", "runner": "windows-2025", "system": "Windows", "machine": "x86_64", "rust_host": "x86_64-pc-windows-msvc"}
@@ -23,7 +25,7 @@
     "awr-team-pg",
     "awr-workspace"
   ],
-  "required_gates": ["environment", "build", "ignored_inventory", "workspace", "doctests", "crash_recovery", "cli_mcp_parity", "cli_lifecycle", "native_cli", "workflow_oracle", "workflow_scenarios", "format", "source_unchanged"],
+  "required_gates": ["environment", "runner_tests", "build", "ignored_inventory", "workspace", "doctests", "crash_recovery", "cli_mcp_parity", "cli_lifecycle", "native_cli", "workflow_oracle", "workflow_scenarios", "format", "source_unchanged"],
   "ignored_tests": [
     "fixture_contender",
     "fixture_wal_writer",
