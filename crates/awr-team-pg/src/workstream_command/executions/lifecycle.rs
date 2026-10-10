@@ -372,6 +372,13 @@ pub(super) async fn start(
     if remaining <= 0 {
         return Err(PgError::PreconditionsChanged);
     }
+    let terminal_reporting = if a.execution_mode == "caller_managed" {
+        settlement_policy
+            .as_ref()
+            .map(|policy| settlement::reporting_hint(&r, policy))
+    } else {
+        None
+    };
     Ok(
         json!({"execution_id":a.execution_id,"execution_version":(r.get::<_,i64>("execution_version")+1).to_string(),
         "session_id":a.session_id,"claim_id":a.claim_id,"state":"running","fence":a.expected_fence,
@@ -380,6 +387,7 @@ pub(super) async fn start(
         "input_digest":r.get::<_,Option<String>>("input_digest"),"declared_scope":paths,
         "lease_remaining_ms":remaining.to_string(),
         "lease_guidance":claims::lease_guidance(&a.claim_id,&a.expected_fence,&a.expected_lease_version,&expires_at),
+        "terminal_reporting":terminal_reporting,
         "fencing_class":"uncontrolled","exactly_once_supported":false,"scope_validation":"lexical_contract_only",
         "physical_isolation":"unverified_without_host_capability",
         "dependency_receipts":dependencies,"resources":resources,

@@ -514,11 +514,11 @@ async fn advance_work(
 }
 
 async fn load(tx: &Transaction<'_>, tenant: &str, project: &str, id: &str) -> PgResult<Row> {
-    tx.query_opt("SELECT e.*,s.actor_id AS session_actor,s.client_id AS session_client,
+    tx.query_opt("SELECT e.*,s.actor_id AS session_actor,s.client_id AS session_client,s.state AS session_state,
         s.work_id AS session_work,s.workstream_id AS session_stream,s.ownership_version AS session_ownership,
         c.work_id AS claim_work,c.session_id AS claim_session,c.actor_id AS claim_actor,
         c.workstream_id AS claim_stream,c.ownership_version AS claim_ownership,c.fence AS claim_fence,
-        c.coordinator_epoch AS claim_epoch,c.lease_version AS claim_lease_version,
+        c.coordinator_epoch AS claim_epoch,c.lease_version AS claim_lease_version,c.state AS claim_state,
         (c.state='active' AND c.expires_at>clock_timestamp() AND s.state='active' AND w.last_fence=e.fence) AS lease_live,
         w.recovery_blocked,w.recovery_execution_id,w.recovery_receipt_id,w.last_fence AS work_last_fence
         FROM awr_team.executions e
@@ -573,14 +573,14 @@ pub(crate) async fn inspect(
     }
     let epoch_matches =
         r.get::<_, Option<String>>("coordinator_epoch").as_deref() == Some(&auth.epoch);
-    let current_hash: String = tx
+    let current = tx
         .query_one(
-            "SELECT contract_hash FROM awr_team.work_contracts
+            "SELECT contract_hash,definition_state FROM awr_team.work_contracts
         WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND scope_id='main' AND work_id=$4",
             &[&tenant, &project, &auth.snapshot, &work],
         )
-        .await?
-        .get(0);
+        .await?;
+    let current_hash: String = current.get(0);
     let owned = r.get::<_, String>("executor_actor_id") == auth.actor_id
         && r.get::<_, Option<String>>("executor_client_id").as_deref() == Some(&auth.client_id);
     let stream_id: Id = stream.parse().map_err(|_| PgError::Forbidden)?;
@@ -624,6 +624,42 @@ pub(crate) async fn inspect(
     } else {
         None
     };
+    let terminal_reporting = if owned
+        && crate::delegation_auth::navigation_authority(
+            auth,
+            awr_team::Action::ExecutionRequestAndReportOwn,
+            stream_id,
+            work,
+        )
+        .and_then(|scoped| {
+            crate::workstream_auth::authorize_command(
+                &scoped,
+                stream_id,
+                work,
+                "execution.report",
+                crate::workstream_auth::CommandAuthPhase::Effect,
+            )
+        })
+        .is_ok()
+        && epoch_matches
+        && current.get::<_, String>(1) == "enabled"
+        && r.get::<_, String>("contract_hash") == current_hash
+        && r.get::<_, String>("state") == "running"
+        && r.get::<_, String>("session_state") == "active"
+        && r.get::<_, String>("claim_state") == "active"
+        && r.get::<_, i64>("work_last_fence") == r.get::<_, i64>("fence")
+        && !r.get::<_, bool>("recovery_blocked")
+        && r.get::<_, Option<String>>("admission_mode").as_deref() == Some("caller_managed")
+    {
+        settlement::policy(&r)?
+            .filter(|policy| {
+                r.get::<_, bool>("lease_live")
+                    || policy.mode == awr_team::ExecutionSettlementMode::IndependentWorkspaceV2
+            })
+            .map(|policy| settlement::reporting_hint(&r, &policy))
+    } else {
+        None
+    };
     Ok(
         json!({"execution_id":id,"execution_version":r.get::<_,i64>("execution_version").to_string(),
         "work_id":work,"session_id":r.get::<_,Option<String>>("session_id"),"claim_id":r.get::<_,Option<String>>("claim_id"),
@@ -643,6 +679,7 @@ pub(crate) async fn inspect(
         "settlement_scope":if workspace_settled {Some("admitted_workspace_paths")} else if confirmed_settled {Some("authorized_bound_resources")} else {None},
         "settlement_basis":if workspace_settled {Some("caller_asserted")} else if confirmed_settled {latest.as_ref().and_then(|v|v["receipt_kind"].as_str())} else {None},
         "controlled_confirmation_available":controlled_confirmation_available,
+        "terminal_reporting":terminal_reporting,
         "recovery_cause":if !r.get::<_,bool>("recovery_blocked") {"none"} else if r.get::<_,Option<String>>("recovery_execution_id").as_deref()==Some(id) {"attributed_execution_report"} else {"unattributed_or_other_execution"},
         "recovery_blocked":r.get::<_,bool>("recovery_blocked"),
         "execution_authorized":false,"automatic_resume":false}),

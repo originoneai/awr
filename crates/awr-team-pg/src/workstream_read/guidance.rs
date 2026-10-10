@@ -272,7 +272,11 @@ pub(super) fn select(data: &Value, context_complete: bool, owns_session: bool) -
             "phase, tests, blocker, user wait or delivery changes",
             "session is active and no higher-priority condition was found",
             "session.checkpoint",
-            "Batch progress with next_action/open_loops and available host usage; terminal outcomes alone use execution.report. Continue only under existing admission.",
+            if execution["terminal_reporting"].is_object() {
+                "Batch progress with next_action/open_loops. At actual termination follow execution.terminal_reporting: include workspace_settlement with a measured environment digest and truthful stop/effect assertions, even with a live V2 lease. Omission preserves recovery; tests do not prove settlement."
+            } else {
+                "Batch progress with next_action/open_loops and available host usage; terminal outcomes alone use execution.report. Continue only under existing admission."
+            },
             "material work change or lease expiry",
         )
     };
@@ -325,6 +329,28 @@ mod tests {
                 assert!(!hint[key].is_null());
             }
         }
+    }
+
+    #[test]
+    fn workspace_boundary_hint_preserves_protective_priority_and_single_action() {
+        let mut data = active();
+        data["execution"] = json!({"state":"running","lease_live":true,
+            "terminal_reporting":{"action":{"op":"execution.report"}}});
+        let hint = select(&data, true, true);
+        assert_eq!(hint["code"], "report_at_boundary");
+        assert_eq!(hint["action"]["op"], "session.checkpoint");
+        let note = hint["action"]["note"].as_str().unwrap();
+        assert!(note.contains("workspace_settlement"));
+        assert!(note.contains("live V2 lease"));
+        assert!(note.contains("tests do not prove settlement"));
+        assert!(hint.to_string().len() < 900);
+        assert_eq!(select(&data, true, false)["code"], "other_client_session");
+        assert_eq!(select(&data, false, true)["code"], "restore_context");
+        data["execution"]["state"] = json!("unknown");
+        assert_eq!(select(&data, true, true)["code"], "reconcile_execution");
+        data["execution"]["state"] = json!("running");
+        data["execution"]["lease_live"] = json!(false);
+        assert_eq!(select(&data, true, true)["code"], "inspect_expired_claim");
     }
 
     #[test]
