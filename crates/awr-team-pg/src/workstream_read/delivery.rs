@@ -14,6 +14,9 @@ pub(super) async fn read(
         "delivery.neutral.inspect" => {
             DeliverySyncStore::inspect_in_tx(tx, tenant, project, auth, work).await?
         }
+        "delivery.submission.describe" => {
+            DeliverySyncStore::describe_submission_in_tx(tx, tenant, project, auth, work).await?
+        }
         "delivery.source.status" => {
             DeliverySyncStore::source_publication_status_in_tx(tx, tenant, project, auth, work)
                 .await?

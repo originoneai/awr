@@ -341,6 +341,60 @@ impl DeliverySyncStore {
         Ok(result)
     }
 
+    pub(crate) async fn describe_submission_in_tx(
+        tx: &Transaction<'_>,
+        tenant: &str,
+        project: &str,
+        auth: &crate::workstream_auth::ReaderAuthority,
+        work: &str,
+    ) -> PgResult<Value> {
+        let (binding, ownership) =
+            crate::workstream_read::work_binding(tx, tenant, project, auth, work).await?;
+        crate::workstream_auth::authorize_domain_action(
+            auth,
+            Action::WorkRead,
+            Some(binding.workstream_id),
+            Some(work),
+        )?;
+        let row = tx
+            .query_one(
+                "SELECT contract_hash,contract_json->'verification_requirements'
+            FROM awr_team.work_contracts WHERE tenant_id=$1 AND project_id=$2
+            AND snapshot_id=$3 AND scope_id='main' AND work_id=$4",
+                &[&tenant, &project, &auth.snapshot, &work],
+            )
+            .await?;
+        let contract: String = row.get(0);
+        let checks: Value = row.get(1);
+        let selected = selection(tx, tenant, project, work).await?;
+        let current = selected
+            .as_ref()
+            .is_some_and(|(candidate, _, snapshot, owner, fence, _)| {
+                *snapshot == auth.snapshot
+                    && *owner == ownership
+                    && *fence
+                    && candidate.binding.contract_hash == contract
+            });
+        let (connectors, truncated) = submission_connectors(
+            tx,
+            tenant,
+            project,
+            work,
+            binding.workstream_id,
+            &auth.epoch,
+        )
+        .await?;
+        // Input discovery reads no artifact bytes, evidence, review rounds or fact history.
+        super::submission_contract::describe(json!({
+            "work_id":work,"workstream_id":binding.workstream_id,
+            "source_snapshot_id":auth.snapshot,"coordinator_epoch":auth.epoch,
+            "project_revision":auth.revision.to_string(),"selected_current":current,
+            "selection_version":selected.as_ref().map(|s|s.5.to_string()),
+            "candidate":selected.map(|s|s.0),"connectors":connectors,"connectors_truncated":truncated,
+            "submission":{"candidate_context":super::submission_contract::context(
+                tenant,project,binding.workstream_id,work,&contract,checks)}}))
+    }
+
     pub(crate) async fn inspect_in_tx(
         tx: &Transaction<'_>,
         tenant: &str,
@@ -403,21 +457,15 @@ impl DeliverySyncStore {
         let history: Vec<Value> = rows.into_iter().take(32).map(|r| r.get(0)).collect();
         // Work-scoped descriptions let supervisors obtain integration preconditions.
         // They reveal no credential or principal and grant no worker capability.
-        let rows = tx
-            .query(
-                "SELECT id,version,provider,resource,fact_source,enabled,coordinator_epoch
-            FROM awr_team.delivery_connectors WHERE tenant_id=$1 AND project_id=$2
-              AND work_id=$3 AND workstream_id=$4 ORDER BY id LIMIT 33",
-                &[&tenant, &project, &work, &binding.workstream_id.to_string()],
-            )
-            .await?;
-        let connectors_truncated = rows.len() > 32;
-        let connectors: Vec<Value> = rows.into_iter().take(32).map(|r| json!({
-            "connector_id":r.get::<_,String>(0),"connector_version":r.get::<_,i64>(1).to_string(),
-            "provider":r.get::<_,String>(2),"resource":r.get::<_,String>(3),
-            "fact_source":r.get::<_,String>(4),"enabled":r.get::<_,bool>(5),
-            "current_epoch":r.get::<_,String>(6)==auth.epoch
-        })).collect();
+        let (connectors, connectors_truncated) = submission_connectors(
+            tx,
+            tenant,
+            project,
+            work,
+            binding.workstream_id,
+            &auth.epoch,
+        )
+        .await?;
         let evidence = tx
             .query_opt(
                 "SELECT id FROM awr_team.evidence
@@ -444,6 +492,8 @@ impl DeliverySyncStore {
             "connectors":connectors,"connectors_truncated":connectors_truncated,
             "submission":submission,
             "acceptance_ready":false,"execution_authorized":false,"source_synchronized":false});
+        result["submission"]["describe_query"] = json!({"protocol_version":1,
+            "op":"delivery.submission.describe","work_id":work});
         if result["submission"]["delivery_required"] == true {
             let checks: Value = tx
                 .query_one(
@@ -454,21 +504,44 @@ impl DeliverySyncStore {
                 )
                 .await?
                 .get(0);
-            result["submission"]["candidate_context"] = json!({
-                "tenant_id":tenant,"project_id":project,"scope_id":"main",
-                "workstream_id":binding.workstream_id.to_string(),"work_id":work,
-                "contract_hash":current_contract,"required_checks":checks,
-                "candidate_command":"delivery.candidate.select",
-                "artifact_command":"evidence.submit",
-                "review_command":"delivery.submit_and_request_review",
-                "material_facts":"Observe the actual published source revision, target precondition and each manifest entry's bytes; never infer them from a progress summary.",
-                "manifest_hash_codec":{"algorithm":"sha256","json":"UTF-8 compact recursively sorted object keys; preserve array order",
-                    "envelope":{"codec":"awr-delivery-manifest-v1","manifest":"the actual manifest object"}}
-            });
+            result["submission"]["candidate_context"] = super::submission_contract::context(
+                tenant,
+                project,
+                binding.workstream_id,
+                work,
+                &current_contract,
+                checks,
+            );
         }
         if serde_json::to_vec(&result).map_err(|_| invalid())?.len() > 262144 {
             return Err(PgError::ResponseTooLarge);
         }
         Ok(result)
     }
+}
+
+async fn submission_connectors(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    work: &str,
+    workstream: Id,
+    epoch: &str,
+) -> PgResult<(Vec<Value>, bool)> {
+    let rows = tx
+        .query(
+            "SELECT id,version,provider,resource,fact_source,enabled,coordinator_epoch
+        FROM awr_team.delivery_connectors WHERE tenant_id=$1 AND project_id=$2
+        AND work_id=$3 AND workstream_id=$4 ORDER BY id LIMIT 33",
+            &[&tenant, &project, &work, &workstream.to_string()],
+        )
+        .await?;
+    let truncated = rows.len() > 32;
+    let connectors = rows.into_iter().take(32).map(|r| json!({
+        "connector_id":r.get::<_,String>(0),"connector_version":r.get::<_,i64>(1).to_string(),
+        "provider":r.get::<_,String>(2),"resource":r.get::<_,String>(3),
+        "fact_source":r.get::<_,String>(4),"enabled":r.get::<_,bool>(5),
+        "current_epoch":r.get::<_,String>(6)==epoch
+    })).collect();
+    Ok((connectors, truncated))
 }

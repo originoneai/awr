@@ -500,6 +500,7 @@ pub fn query_business_action(op: &str) -> Option<awr_team::Action> {
         "completion.inspect",
         "delivery.inspect",
         "delivery.neutral.inspect",
+        "delivery.submission.describe",
         "delivery.neutral.outcome",
         "delivery.source.status",
         "delivery.integration.inspect",
@@ -1065,6 +1066,7 @@ mod tests {
         }
         for op in [
             "delivery.neutral.inspect",
+            "delivery.submission.describe",
             "delivery.neutral.outcome",
             "delivery.source.status",
         ] {

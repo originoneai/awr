@@ -3,7 +3,7 @@ use super::*;
 use awr_team::delivery::{ArtifactEntry, ArtifactManifest, DeliveryCandidate, FactSource};
 use awr_team_pg::{
     ConfigureDeliveryConnector, DeliveryConnectorMapping, DeliveryReadSet, DeliverySyncStore,
-    ReviewStore, SelectDeliveryCandidate,
+    PgResult, ReviewStore, SelectDeliveryCandidate,
 };
 use sha2::{Digest, Sha256};
 
@@ -180,6 +180,204 @@ async fn inspect_round(reads: &WorkstreamReadStore, round: &Value) -> Value {
 fn decision(round: &Value, outcome: &str) -> Value {
     json!({"session_id":"session-reviewer","expected_session_version":"1",
         "round_id":round["round_id"],"decision":outcome,"reason":"Reviewed the exact submitted artifacts"})
+}
+
+async fn describe(reads: &WorkstreamReadStore, bearer: &str, work: &str) -> PgResult<Value> {
+    let mut q = query("delivery.submission.describe");
+    q.work_id = Some(work.into());
+    reads.query(TENANT, PROJECT, bearer, q).await
+}
+
+#[tokio::test]
+async fn discovered_submission_constructs_a_real_candidate_and_bound_readable_review() {
+    let (_guard, admin, db, reads) = setup().await;
+    seed_review_actors(&admin).await;
+    connector(&admin, &db, &reads, "configure", "0", true).await;
+    let before = rework_business_snapshot(&admin).await;
+    let description = describe(&reads, A, "a").await.unwrap()["data"].clone();
+    assert_eq!(rework_business_snapshot(&admin).await, before);
+    assert_eq!(description["contract"], "awr-delivery-submission-v1");
+    assert_eq!(description["stored_selection"], Value::Null);
+    assert_eq!(description["execution_authorized"], false);
+    assert_eq!(description["acceptance_ready"], false);
+    assert!(serde_json::to_vec(&description).unwrap().len() < 16384);
+    let schema = &description["command"]["args_schema"];
+    assert_eq!(schema["additionalProperties"], false);
+    assert!(schema["properties"].get("read_set").is_none());
+    assert_eq!(
+        schema["properties"]["candidate"]["properties"]["manifest"]["properties"]["entries"]["maxItems"],
+        128
+    );
+    let resource = description["connectors"][0]["resource"].clone();
+    let manifest = json!({"entries":[
+        {"artifact_id":"source-code","sha256":sha(CODE),"byte_length":CODE.len().to_string(),"locator":"git-blob:src/filter.js"},
+        {"artifact_id":"test-report","sha256":sha(REPORT),"byte_length":REPORT.len().to_string(),"locator":"git-blob:reports/result.txt"}]});
+    let codec = &description["manifest_hash_codec"]["envelope"]["codec"];
+    let manifest_digest =
+        awr_team::request_hash(&json!({"codec":codec,"manifest":manifest})).unwrap();
+    let mut binding = description["binding_values"].clone();
+    binding.as_object_mut().unwrap().extend(json!({
+        "candidate_id":"described-submission","candidate_version":"1","manifest_digest":manifest_digest,
+        "source_revision":{"resource":resource,"format":"git_sha256","value":"a".repeat(64)},
+        "target":{"resource":resource,"reference":"refs/heads/main","precondition":{"kind":"missing"}}
+    }).as_object().unwrap().clone());
+    let candidate: DeliveryCandidate =
+        serde_json::from_value(json!({"binding":binding,"manifest":manifest})).unwrap();
+    assert!(candidate.binding.validate().is_ok());
+    assert_eq!(candidate.manifest.digest().unwrap(), manifest_digest);
+    let claim = claim(&reads).await;
+    let p = prepare(&reads, A, "a").await;
+    let mut args = json!({"source_snapshot_id":p["source_snapshot_id"],
+        "session_id":"session-a","claim_id":claim["claim_id"],"fence":claim["fence"],
+        "lease_version":claim["lease_version"],"expected_selected_digest":null,"candidate":candidate});
+    let selected = reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            command(
+                &p,
+                "select-described",
+                description["command"]["op"].as_str().unwrap(),
+                args.clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    let digest = selected["receipt"]["data"]["candidate_digest"]
+        .as_str()
+        .unwrap();
+    assert_eq!(digest, candidate.binding.digest().unwrap());
+    let state = describe(&reads, A, "a").await.unwrap()["data"].clone();
+    assert_eq!(state["stored_selection"]["binding_digest"], digest);
+    assert_eq!(state["stored_selection"]["current"], true);
+    evidence(&reads, "described-code", CODE, Some(digest)).await;
+    let report = evidence(&reads, "described-report", REPORT, Some(digest)).await;
+    let round = run(
+        &reads,
+        A,
+        "described-review",
+        "delivery.submit_and_request_review",
+        opening(&report),
+    )
+    .await;
+    assert_eq!(round["state"], "open");
+    // Discovery never admitted a command or broadened its current ownership checks.
+    args["claim_id"] = json!("not-owned");
+    let p = prepare(&reads, A, "a").await;
+    assert!(
+        reads
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                command(
+                    &p,
+                    "invalid-described-claim",
+                    "delivery.candidate.select",
+                    args
+                )
+            )
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn submission_discovery_is_lazy_read_only_scoped_bounded_and_provider_neutral() {
+    let (_guard, admin, db, reads) = setup().await;
+    seed_review_actors(&admin).await;
+    let before = rework_business_snapshot(&admin).await;
+    let state = describe(&reads, A, "a").await.unwrap()["data"].clone();
+    assert_eq!(state["connectors"], json!([]));
+    assert_eq!(state["stored_selection"], Value::Null);
+    assert!(state.get("local_git").is_none());
+    assert!(
+        state["material_inputs"]["target"]
+            .as_str()
+            .unwrap()
+            .contains("never mean missing")
+    );
+    assert_eq!(rework_business_snapshot(&admin).await, before);
+    for (bearer, work) in [(B, "a"), (NONE, "a"), (A, "b-private"), (A, "missing")] {
+        assert!(matches!(
+            describe(&reads, bearer, work).await,
+            Err(PgError::Forbidden)
+        ));
+    }
+    let delivery = connector(&admin, &db, &reads, "configure", "0", true).await;
+    let selection = select(&admin, &reads, &delivery).await;
+    let before = rework_business_snapshot(&admin).await;
+    let state = describe(&reads, A, "a").await.unwrap()["data"].clone();
+    assert!(state.get("local_git").is_some());
+    let mut q = query("delivery.neutral.inspect");
+    q.work_id = Some("a".into());
+    let ordinary = reads.query(TENANT, PROJECT, A, q).await.unwrap();
+    for forbidden in [
+        "cli-runner",
+        "principal_actor_id",
+        "repository-workers.toml",
+        "args_schema",
+    ] {
+        // Private identities/configurations and the full contract are not eager.
+        assert!(!ordinary.to_string().contains(forbidden));
+    }
+    assert_eq!(
+        ordinary["data"]["submission"]["describe_query"],
+        json!({"protocol_version":1,"op":"delivery.submission.describe","work_id":"a"})
+    );
+    let mut q = query("delivery.submission.describe");
+    q.work_id = Some("a".into());
+    q.max_context_bytes = Some(64);
+    assert!(matches!(
+        reads.query(TENANT, PROJECT, A, q).await,
+        Err(PgError::ResponseTooLarge)
+    ));
+    assert_eq!(rework_business_snapshot(&admin).await, before);
+    connector(&admin, &db, &reads, "disable", "1", false).await;
+    let state = describe(&reads, A, "a").await.unwrap()["data"].clone();
+    assert_eq!(state["connectors"][0]["enabled"], false);
+    assert!(state.get("local_git").is_none());
+    // Make the selection stale without rewriting it; current binding values must differ.
+    admin
+        .execute(
+            "UPDATE awr_team.work_contracts SET contract_hash=$1 WHERE work_id='a'",
+            &[&"f".repeat(64)],
+        )
+        .await
+        .unwrap();
+    let state = describe(&reads, A, "a").await.unwrap()["data"].clone();
+    assert_eq!(state["binding_values"]["contract_hash"], "f".repeat(64));
+    assert_eq!(state["stored_selection"]["current"], false);
+    assert_eq!(
+        state["stored_selection"]["binding_digest"],
+        selection.candidate.binding.digest().unwrap()
+    );
+    assert!(state.get("candidate").is_none());
+}
+
+#[tokio::test]
+async fn submission_description_never_reads_artifact_evidence_review_or_fact_history() {
+    let (_guard, admin, db, reads) = setup().await;
+    seed_review_actors(&admin).await;
+    let delivery = connector(&admin, &db, &reads, "configure", "0", true).await;
+    select(&admin, &reads, &delivery).await;
+    let before = describe(&reads, A, "a").await.unwrap()["data"].clone();
+    // Scoped to this disposable fixture database; ordinary inspection still requires
+    // its normal table access. Description must use only current submission metadata.
+    admin
+        .batch_execute(
+            "REVOKE SELECT ON awr_team.artifacts, awr_team.evidence,
+        awr_team.review_rounds, awr_team.delivery_facts, awr_team.delivery_inbox FROM awr_app",
+        )
+        .await
+        .unwrap();
+    assert_eq!(describe(&reads, A, "a").await.unwrap()["data"], before);
+    let mut q = query("delivery.neutral.inspect");
+    q.work_id = Some("a".into());
+    assert!(reads.query(TENANT, PROJECT, A, q).await.is_err());
 }
 
 #[tokio::test]

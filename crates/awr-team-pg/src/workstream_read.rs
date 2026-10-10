@@ -42,6 +42,7 @@ const QUERIES: &[&str] = &[
     "completion.inspect",
     "delivery.inspect",
     "delivery.neutral.inspect",
+    "delivery.submission.describe",
     "delivery.neutral.outcome",
     "delivery.source.status",
     "delivery.integration.inspect",
@@ -196,6 +197,7 @@ impl WorkstreamQuery {
                         | "artifact.content"
                         | "review.inspect"
                         | "delivery.neutral.inspect"
+                        | "delivery.submission.describe"
                 )
             || (!audit
                 && self.request_id.is_some()
@@ -259,6 +261,7 @@ impl WorkstreamQuery {
             || matches!(
                 self.op.as_str(),
                 "delivery.neutral.inspect"
+                    | "delivery.submission.describe"
                     | "delivery.neutral.outcome"
                     | "delivery.source.status"
                     | "delivery.integration.inspect"
@@ -297,6 +300,28 @@ pub struct WorkstreamReadStore {
 #[cfg(test)]
 mod input_guidance_tests {
     use super::*;
+
+    #[test]
+    fn submission_description_requires_exact_work_without_runtime_or_history_selectors() {
+        let base =
+            json!({"protocol_version":1,"op":"delivery.submission.describe","work_id":"work"});
+        let query: WorkstreamQuery = serde_json::from_value(base.clone()).unwrap();
+        assert!(query.validate().is_ok());
+        for (field, value) in [
+            ("work_id", Value::Null),
+            ("session_id", json!("session")),
+            ("request_id", json!("request")),
+            ("evidence_id", json!("evidence")),
+            ("source_path", json!("private.toml")),
+            ("limit", json!(1)),
+            ("max_context_bytes", json!(262145)),
+        ] {
+            let mut input = base.clone();
+            input[field] = value;
+            let query: WorkstreamQuery = serde_json::from_value(input).unwrap();
+            assert!(query.validate().is_err(), "unexpected selector {field}");
+        }
+    }
 
     #[test]
     fn task_assignees_requires_exact_work_and_only_bounded_directory_filters() {
@@ -417,6 +442,7 @@ mod input_guidance_tests {
             "source.content",
             "review.inspect",
             "delivery.neutral.inspect",
+            "delivery.submission.describe",
         ] {
             let mut value = json!({"protocol_version":1,"op":op,"max_context_bytes":262144});
             if op != "work.inbox" {
@@ -810,6 +836,7 @@ pub(crate) async fn read(
         caps["neutral_delivery"] = json!({
             "protocol":"awr-delivery-sync-v1",
             "facts_query":"delivery.neutral.inspect",
+            "submission_query":"delivery.submission.describe",
             "outcome_query":"delivery.neutral.outcome",
             "source_status_query":"delivery.source.status",
             "command_source_snapshot":"args.source_snapshot_id",
@@ -1041,6 +1068,7 @@ pub(crate) async fn read(
     let limit = i64::from(q.limit.unwrap_or(50));
     let data = match q.op.as_str() {
         "delivery.neutral.inspect"
+        | "delivery.submission.describe"
         | "delivery.neutral.outcome"
         | "delivery.source.status"
         | "delivery.integration.inspect" => {

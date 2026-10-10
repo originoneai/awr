@@ -11,6 +11,7 @@ mod pump;
 pub(crate) mod review_submission;
 mod scheduling;
 mod snapshots;
+mod submission_contract;
 
 pub use integration::{
     ConfirmDeliveryIntegration, DeliveryIntegrationDispatch, DeliveryIntegrationPermit,
