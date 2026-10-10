@@ -154,6 +154,28 @@ pub(super) fn policy(run: &Row) -> PgResult<Option<ExecutionSettlementPolicy>> {
         .transpose()
 }
 
+/// Bind advice to recorded admission without asserting that the executor stopped.
+pub(super) fn reporting_hint(run: &Row, policy: &ExecutionSettlementPolicy) -> Value {
+    json!({
+        "when":"this admitted run has actually stopped and its original claim remains current",
+        "because":"caller_managed workspace settlement requires an explicit terminal declaration",
+        "action":{
+            "op":"execution.report",
+            "workspace_settlement":{
+                "workspace_id":policy.workspace_id,
+                "input_digest":run.get::<_,Option<String>>("input_digest"),
+                "environment_digest":run.get::<_,Option<String>>("environment_digest"),
+                "claim_id":run.get::<_,Option<String>>("claim_id"),
+                "expected_fence":run.get::<_,i64>("fence").to_string(),
+                "expected_lease_version":run.get::<_,i64>("claim_lease_version").to_string(),
+                "executor_stopped":null,"no_external_effects":null
+            },
+            "note":"Include this declaration even while the lease is live. Supply a measured non-sensitive environment digest and truthful stop/effect assertions; omission preserves recovery. V1 needs a live lease; V2 allows elapsed time, never further execution after expiry. Success binds the exact submitted artifact bytes. This advice grants no execution or approval."
+        },
+        "recheck_on":"contract, epoch, claim, execution or effects change"
+    })
+}
+
 async fn exact_resources(
     tx: &Transaction<'_>,
     tenant: &str,

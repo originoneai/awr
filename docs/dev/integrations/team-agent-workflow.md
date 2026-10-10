@@ -160,10 +160,18 @@ Unknown execution effects require inspection and authorized reconciliation;
 creating a new session does not bypass that requirement.
 
 For an admitted `caller_managed` execution whose current contract selects
-`independent_workspace_v1`, a terminal `execution.report` can include the explicit
-`workspace_settlement` declaration exposed in MCP discovery. Use the admitted
+`independent_workspace_v1` or `independent_workspace_v2`, include the explicit
+`workspace_settlement` declaration to settle a terminal `execution.report`, even
+while the lease is live. `execution.start` and an owned current
+`execution.inspect` return `terminal_reporting` with the recorded bindings;
+its null stop/effect assertions must be filled from actual observations. V1
+requires a live claim. V2 also permits only elapsed time on the unchanged original
+current claim; it never allows further execution after expiry. Use the admitted
 workspace and input digest, a measured non-sensitive environment digest, and the
-current owned claim/fence/lease versions. Assert `executor_stopped` and
+current owned claim/fence/lease versions. Inspection advice uses a currently
+covering execution delegation, even when a separate delegation grants the read;
+it is omitted after that execution grant is revoked or the run binding changes.
+Assert `executor_stopped` and
 `no_external_effects` only when both facts hold. For success, compute
 `output_digest` from the exact artifact bytes you will submit as evidence and
 retain those bytes unchanged. An omitted or unknown declaration records the

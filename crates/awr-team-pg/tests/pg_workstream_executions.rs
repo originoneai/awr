@@ -74,6 +74,305 @@ mod workspace_settlement_tests {
     }
 
     #[tokio::test]
+    async fn terminal_reporting_binds_live_workspace_runs_without_inferred_facts() {
+        for mode in [
+            ExecutionSettlementMode::IndependentWorkspaceV1,
+            ExecutionSettlementMode::IndependentWorkspaceV2,
+        ] {
+            let (_g, admin, _, store) = setup().await;
+            enable_writes(&admin).await;
+            policy_mode(&admin, "a", "clone-alpha", mode).await;
+            let (c, e) = ready_intent(&store).await;
+            let started = start(&store, &c, &e).await;
+            let before = snapshot(&admin).await;
+            let observed = inspect(&store, &e).await;
+            let hint = &started["terminal_reporting"];
+            assert_eq!(observed["terminal_reporting"], *hint);
+            assert!(hint.to_string().len() < 1500);
+            for field in ["when", "because", "recheck_on"] {
+                assert!(!hint[field].as_str().unwrap().is_empty());
+            }
+            assert_eq!(hint["action"]["op"], "execution.report");
+            let binding = &hint["action"]["workspace_settlement"];
+            assert_eq!(binding["workspace_id"], "clone-alpha");
+            assert_eq!(binding["input_digest"], "a".repeat(64));
+            assert_eq!(binding["claim_id"], c["claim_id"]);
+            assert_eq!(binding["expected_fence"], c["fence"]);
+            assert_eq!(binding["expected_lease_version"], c["lease_version"]);
+            for field in [
+                "environment_digest",
+                "executor_stopped",
+                "no_external_effects",
+            ] {
+                assert!(binding[field].is_null(), "{field} must remain unobserved");
+            }
+            assert_eq!(observed["effects_settled"], false);
+            assert_eq!(observed["artifact_verified"], false);
+            assert_eq!(observed["execution_authorized"], false);
+            assert_eq!(snapshot(&admin).await, before);
+            admin
+                .execute(
+                    "UPDATE awr_team.executions SET environment_digest=$1 WHERE id=$2",
+                    &[&"c".repeat(64), &e["execution_id"].as_str().unwrap()],
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                inspect(&store, &e).await["terminal_reporting"]["action"]["workspace_settlement"]["environment_digest"],
+                "c".repeat(64)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_reporting_uses_current_execution_delegation_on_read() {
+        use awr_core::*;
+        use awr_team_pg::AuthorizationStore;
+        use std::collections::BTreeSet;
+        let (_g, admin, db, store) = setup().await;
+        enable_writes(&admin).await;
+        policy_mode(
+            &admin,
+            "a",
+            "clone-alpha",
+            ExecutionSettlementMode::IndependentWorkspaceV2,
+        )
+        .await;
+        admin.batch_execute("UPDATE awr_team.actors SET kind='agent' WHERE id='agent';
+            INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+            VALUES('reader-tenant','reader-project','alice','Alice','active');
+            INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status)
+            VALUES('reader-tenant','reader-project','bind-agent','alice','agent','active')").await.unwrap();
+        let authz = AuthorizationStore::from_config(with_app_role(&test_config(), &db));
+        for (id, actions) in [
+            ("a-read", BTreeSet::from([AuthorizedAction::Inspect])),
+            (
+                "b-execute",
+                BTreeSet::from([
+                    AuthorizedAction::StartWork,
+                    AuthorizedAction::ClaimCoordination,
+                ]),
+            ),
+        ] {
+            let grant = AgentAuthorization {
+                id: id.into(),
+                authorizer_person_id: PersonId::new("alice").unwrap(),
+                responsible_person_id: PersonId::new("alice").unwrap(),
+                subject_kind: ExecutionSubjectKind::Agent,
+                subject_id: "agent".into(),
+                client_id: "cli-a".into(),
+                session_id: None,
+                model_id: None,
+                scope: AuthorizationScope::Task {
+                    project_id: PROJECT.into(),
+                    work_item_id: "a".into(),
+                },
+                actions,
+                expires_at_ms: None,
+                status: AuthorizationStatus::Active,
+                revoked_at_ms: None,
+                revoked_by: None,
+                verifiable_capabilities: vec![],
+                self_reported_skill_hints: vec![],
+                parent_authorization_id: None,
+                maintainer_person_id: None,
+                created_at_ms: 1_000,
+                binding_id: Some("bind-agent".into()),
+            };
+            authz
+                .issue(
+                    TENANT,
+                    PROJECT,
+                    &IssueAuthorizationRequest {
+                        request_key: format!("issue-{id}"),
+                        authorization: grant,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        let (c, e) = ready_intent(&store).await;
+        let started = start(&store, &c, &e).await;
+        assert!(started["terminal_reporting"].is_object());
+        let before = snapshot(&admin).await;
+        assert_eq!(
+            inspect(&store, &e).await["terminal_reporting"],
+            started["terminal_reporting"]
+        );
+        let mut q = query("work.observe");
+        q.work_id = Some("a".into());
+        let observed = store.query(TENANT, PROJECT, A, q).await.unwrap();
+        assert_eq!(
+            observed["data"]["execution"]["terminal_reporting"],
+            started["terminal_reporting"]
+        );
+        assert_eq!(snapshot(&admin).await, before);
+        admin
+            .batch_execute(
+                "UPDATE awr_team.agent_authorizations SET status='revoked' WHERE id='b-execute'",
+            )
+            .await
+            .unwrap();
+        let before = snapshot(&admin).await;
+        assert!(inspect(&store, &e).await["terminal_reporting"].is_null());
+        let cmd = declaration(&store, &c, &started, "revoked-report", "succeeded").await;
+        assert!(matches!(
+            store.commands().execute(TENANT, PROJECT, A, cmd).await,
+            Err(PgError::Forbidden)
+        ));
+        assert_eq!(snapshot(&admin).await, before);
+    }
+
+    #[tokio::test]
+    async fn terminal_reporting_is_omitted_for_nonowners_and_protected_runs() {
+        for case in [
+            "other_client",
+            "write_revoked",
+            "membership_read_only",
+            "claim_revoked",
+            "session_interrupted",
+            "new_fence",
+            "new_contract",
+            "archived_definition",
+            "new_epoch",
+            "unknown",
+            "recovery_blocked",
+        ] {
+            let (_g, admin, _, store) = setup().await;
+            enable_writes(&admin).await;
+            policy_mode(
+                &admin,
+                "a",
+                "clone-alpha",
+                ExecutionSettlementMode::IndependentWorkspaceV2,
+            )
+            .await;
+            let (c, e) = ready_intent(&store).await;
+            start(&store, &c, &e).await;
+            match case {
+                "other_client" => {
+                    admin.execute("INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,can_write)
+                    VALUES($1,$2,'agent','cli-b',$3,1,true,true)", &[&TENANT,&PROJECT,&awr_core::Id::from(1).to_string()]).await.unwrap();
+                }
+                "write_revoked" => {
+                    admin.batch_execute("UPDATE awr_team.workstream_grants SET can_write=false,grant_version=grant_version+1 WHERE client_id='cli-a'").await.unwrap();
+                }
+                "membership_read_only" => {
+                    admin
+                        .batch_execute("UPDATE awr_team.project_memberships SET role='reader'")
+                        .await
+                        .unwrap();
+                }
+                "claim_revoked" => {
+                    admin
+                        .batch_execute("UPDATE awr_team.claims SET state='revoked'")
+                        .await
+                        .unwrap();
+                }
+                "session_interrupted" => {
+                    admin
+                        .batch_execute("UPDATE awr_team.sessions SET state='interrupted'")
+                        .await
+                        .unwrap();
+                }
+                "new_fence" => {
+                    admin
+                        .batch_execute("UPDATE awr_team.work_runtime SET last_fence=last_fence+1")
+                        .await
+                        .unwrap();
+                }
+                "new_contract" => {
+                    admin
+                        .batch_execute("UPDATE awr_team.work_contracts SET contract_hash='changed'")
+                        .await
+                        .unwrap();
+                }
+                "archived_definition" => {
+                    admin
+                        .batch_execute(
+                            "UPDATE awr_team.work_contracts SET definition_state='archived'",
+                        )
+                        .await
+                        .unwrap();
+                }
+                "new_epoch" => {
+                    admin
+                        .batch_execute("UPDATE awr_team.projects SET coordinator_epoch='new-epoch'")
+                        .await
+                        .unwrap();
+                }
+                "unknown" => {
+                    admin
+                        .batch_execute("UPDATE awr_team.executions SET state='unknown'")
+                        .await
+                        .unwrap();
+                }
+                "recovery_blocked" => {
+                    admin
+                        .batch_execute("UPDATE awr_team.work_runtime SET recovery_blocked=true")
+                        .await
+                        .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            let before = snapshot(&admin).await;
+            let mut q = query("execution.inspect");
+            q.work_id = Some("a".into());
+            q.execution_id = Some(e["execution_id"].as_str().unwrap().into());
+            let observed = store
+                .query(
+                    TENANT,
+                    PROJECT,
+                    if case == "other_client" { B } else { A },
+                    q,
+                )
+                .await
+                .unwrap();
+            assert!(observed["data"]["terminal_reporting"].is_null(), "{case}");
+            assert_eq!(observed["data"]["execution_authorized"], false, "{case}");
+            assert_eq!(snapshot(&admin).await, before, "{case}");
+        }
+    }
+
+    #[tokio::test]
+    async fn expired_reporting_advice_is_only_for_v2_current_claim_and_does_not_authorize_execution()
+     {
+        for mode in [
+            ExecutionSettlementMode::IndependentWorkspaceV1,
+            ExecutionSettlementMode::IndependentWorkspaceV2,
+        ] {
+            let (_g, admin, _, store) = setup().await;
+            enable_writes(&admin).await;
+            policy_mode(&admin, "a", "clone-alpha", mode).await;
+            let (c, e) = ready_intent(&store).await;
+            start(&store, &c, &e).await;
+            admin
+                .batch_execute(
+                    "UPDATE awr_team.claims SET expires_at=clock_timestamp()-interval '1 second'",
+                )
+                .await
+                .unwrap();
+            let before = snapshot(&admin).await;
+            let observed = inspect(&store, &e).await;
+            assert_eq!(observed["lease_live"], false);
+            assert_eq!(observed["execution_authorized"], false);
+            assert_eq!(
+                observed["terminal_reporting"].is_object(),
+                mode == ExecutionSettlementMode::IndependentWorkspaceV2
+            );
+            if mode == ExecutionSettlementMode::IndependentWorkspaceV2 {
+                assert!(
+                    observed["terminal_reporting"]["action"]["note"]
+                        .as_str()
+                        .unwrap()
+                        .contains("never further execution after expiry")
+                );
+            }
+            assert_eq!(snapshot(&admin).await, before);
+        }
+    }
+
+    #[tokio::test]
     async fn ordinary_outcomes_settle_exact_resources_and_replay_without_acceptance() {
         for outcome in ["succeeded", "failed", "cancelled"] {
             let (_g, admin, _, store) = setup().await;
@@ -152,6 +451,11 @@ mod workspace_settlement_tests {
         let renewed=store.commands().execute(TENANT,PROJECT,A,command(&prepare(&store,A,"a").await,"renew-workspace","claim.renew",
             json!({"session_id":"session-a","expected_session_version":"1","claim_id":c["claim_id"],
                 "expected_fence":c["fence"],"expected_lease_version":c["lease_version"],"ttl_seconds":600}))).await.unwrap()["receipt"]["data"].clone();
+        let observed = inspect(&store, &e).await;
+        assert_eq!(
+            observed["terminal_reporting"]["action"]["workspace_settlement"]["expected_lease_version"],
+            "2"
+        );
         let stale = declaration(&store, &c, &started, "stale-renewal", "succeeded").await;
         let before = snapshot(&admin).await;
         assert!(matches!(
@@ -481,6 +785,8 @@ mod workspace_settlement_tests {
                 .await
                 .unwrap()["receipt"]["data"]
                 .clone();
+            assert!(started["terminal_reporting"].is_null());
+            assert!(inspect(&store, &e).await["terminal_reporting"].is_null());
             let cmd = declaration(&store, &c, &started, "injected-policy", "succeeded").await;
             let before = snapshot(&admin).await;
             assert!(matches!(
