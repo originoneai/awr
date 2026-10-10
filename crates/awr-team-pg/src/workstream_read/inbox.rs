@@ -26,11 +26,17 @@ pub(super) async fn facts(
         EXISTS(SELECT 1 FROM awr_team.resource_reservations WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND state='unknown'),
         EXISTS(SELECT 1 FROM awr_team.claims WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND state='active'
           AND (expires_at<=clock_timestamp() OR coordinator_epoch IS DISTINCT FROM $5)),
-        EXISTS(SELECT 1 FROM awr_team.claims WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND state='active')",
-        &[&tenant,&project,&work,&contract,&auth.epoch]).await?;
+        EXISTS(SELECT 1 FROM awr_team.claims WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND state='active'),
+        EXISTS(SELECT 1 FROM awr_team.claims c LEFT JOIN awr_team.work_runtime r
+          USING(tenant_id,project_id,scope_id,work_id)
+          WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.work_id=$3 AND c.state='active'
+            AND (c.expires_at<=clock_timestamp() OR c.coordinator_epoch IS DISTINCT FROM $5)
+            AND (c.coordinator_epoch IS DISTINCT FROM $5 OR c.workstream_id IS DISTINCT FROM $6
+              OR c.ownership_version IS DISTINCT FROM $7 OR c.fence IS DISTINCT FROM r.last_fence))",
+        &[&tenant,&project,&work,&contract,&auth.epoch,&binding.workstream_id.to_string(),&ownership]).await?;
     let mut data = json!({"review":null,"candidate":null,"verification":[],
         "recovery":{"unsettled_execution":barriers.get::<_,bool>(0),"unknown_resource":barriers.get::<_,bool>(1),
-            "expired_claim":barriers.get::<_,bool>(2)},"claim_present":barriers.get::<_,bool>(3),
+            "expired_claim":barriers.get::<_,bool>(2),"claim_binding_changed":barriers.get::<_,bool>(4)},"claim_present":barriers.get::<_,bool>(3),
         "facts_truncated":false,"integration":null,"publication":null,
         "acceptance_inferred":false,"source_synchronized":false});
     let round = tx
@@ -222,8 +228,13 @@ fn select(
         || data["execution"]["state"] == "unknown"
         || c["recovery"]
             .as_object()
-            .is_some_and(|r| r.values().any(|v| v == true))
-    {
+            // Expiry is observable. Unresolved effects or changed bindings on
+            // an elapsed claim retain recovery; live delivery changes keep
+            // their existing advice. Admission still rechecks every binding.
+            .is_some_and(|r| {
+                r.iter()
+                    .any(|(key, value)| key != "expired_claim" && value == true)
+            }) {
         (
             "recovery",
             "execution or effects are unresolved",

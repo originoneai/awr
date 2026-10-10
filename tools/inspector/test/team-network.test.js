@@ -67,6 +67,8 @@ test('background refresh displays changed facts while retaining selection and la
   assert.equal(ui.state.layout, 'list');
   assert.equal(ui._selectedWork().next_step, 'Step 2');
   assert.match(node('teamDetail').textContent, /Claim expired/);
+  assert.match(node('teamDetail').textContent, /a new claim is required/);
+  assert.doesNotMatch(node('teamDetail').textContent, /awaiting recovery/);
   assert.match(node('teamDetail').textContent, /Member/);
   assert.match(node('teamDetail').textContent, /No recorded usage/);
   assert.equal(visualStatus(ui._selectedWork()), 'blocked');

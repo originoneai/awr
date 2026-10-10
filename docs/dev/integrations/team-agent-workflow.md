@@ -97,6 +97,13 @@ context. `work.observe` bounds the complete UTF-8 JSON response with
 Passed external checks remain observations, never AWR approval. For an unknown
 integration, inspect its original request instead of repeating the effect.
 
+An elapsed coordination claim is separate from unresolved execution effects.
+After an explicitly settled terminal execution under the current coordinator,
+consume current context and follow the appropriate fresh-claim intake action.
+Never renew an expired claim or resume the old run. Unknown effects, resource
+barriers, changed claim bindings and required recovery still block new effects;
+review, dependencies, user waits and permissions are checked independently.
+
 ## Current team inbox
 
 Supervisors use `awr_team_query` with `op="work.inbox"` after checking
