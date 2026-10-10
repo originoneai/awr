@@ -161,6 +161,28 @@ current binding values, hash codec and exact claim/header origins. Material revi
 target preconditions and artifact bytes must still be observed, not guessed. The
 full schema is absent from ordinary task responses and the eager tool catalog.
 
+Compute `binding.manifest_digest` from the **complete** described envelope:
+
+```json
+{
+  "codec": "awr-team-hash-v1",
+  "kind": "request",
+  "fields": {
+    "codec": "awr-delivery-manifest-v1",
+    "manifest": { "entries": [] }
+  }
+}
+```
+
+Replace the object at `manifest_hash_codec.manifest_pointer` with the actual
+manifest, including every entry. Serialize compact UTF-8 JSON with recursively
+sorted object keys, original array order and unescaped non-ASCII characters;
+SHA-256 these bytes once and use lowercase hexadecimal. Do not hash only `fields`
+or add another envelope. Versions and byte lengths remain decimal JSON strings.
+For `InvalidInput` with `reason: manifest_digest_mismatch`, rediscover this codec,
+recompute the digest, and refresh `work.prepare` and `claim.inspect` before retrying.
+The diagnostic identifies the fixed field without reflecting artifact content.
+
 Publish actual code/tests/report through the authorized
 project channel, select the exact candidate, and persist every manifest entry as
 evidence with its `payload.delivery_candidate_digest`. Report-only submissions

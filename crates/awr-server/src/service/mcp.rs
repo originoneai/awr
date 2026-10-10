@@ -1117,6 +1117,27 @@ mod tests {
     use std::collections::BTreeSet;
 
     #[test]
+    fn manifest_mismatch_has_specific_bounded_guidance_without_echoing_content() {
+        let (status, response) = public_error(PgError::manifest_digest_mismatch());
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(response["code"], "InvalidInput");
+        assert_eq!(response["reason"], "manifest_digest_mismatch");
+        assert_eq!(
+            response["invalid_field"],
+            "/args/candidate/binding/manifest_digest"
+        );
+        assert_eq!(
+            response["action_guidance"]["action"]["op"],
+            "delivery.submission.describe"
+        );
+        assert!(serde_json::to_vec(&response).unwrap().len() < 1024);
+        let (_, unknown) = public_error(PgError::Protocol("private-manifest-detail".into()));
+        assert_eq!(unknown["code"], "InvalidInput");
+        assert!(unknown.get("reason").is_none());
+        assert!(!unknown.to_string().contains("private-manifest-detail"));
+    }
+
+    #[test]
     fn unavailable_handoff_has_bounded_guidance_without_private_details() {
         let (status, response) = public_error(PgError::handoff_unavailable());
         assert_eq!(status, StatusCode::NOT_FOUND);

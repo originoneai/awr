@@ -18,8 +18,12 @@ pub(super) fn context(
         "candidate_command":"delivery.candidate.select","artifact_command":"evidence.submit",
         "review_command":"delivery.submit_and_request_review",
         "material_facts":"Observe the actual published source revision, target precondition and each manifest entry's bytes; never infer them from a progress summary.",
-        "manifest_hash_codec":{"algorithm":"sha256","json":"UTF-8 compact recursively sorted object keys; preserve array order",
-            "envelope":{"codec":"awr-delivery-manifest-v1","manifest":"the actual manifest object"}}})
+        "manifest_hash_codec":{"algorithm":"sha256","digest_encoding":"lowercase hexadecimal",
+            "json":"UTF-8 compact JSON; recursively sort object keys, preserve array order, emit non-ASCII characters directly",
+            "manifest_pointer":"/fields/manifest",
+            "instruction":"Replace envelope.fields.manifest with the actual manifest object and hash the complete envelope once; do not add another wrapper.",
+            "envelope":{"codec":awr_team::HASH_CODEC,"kind":"request",
+                "fields":{"codec":"awr-delivery-manifest-v1","manifest":"the actual manifest object"}}}})
 }
 
 fn text(limit: usize) -> Value {
