@@ -816,6 +816,331 @@ async fn supervisor_reserves_without_execution_session_and_target_accepts_atomic
     );
 }
 
+async fn entry_state(admin: &Client) -> Value {
+    let mut state = snapshot(admin).await;
+    state["executions"] = admin
+        .query_one(
+            "SELECT COALESCE(jsonb_agg(to_jsonb(e) ORDER BY id), '[]'::jsonb) FROM awr_team.executions e",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    state
+}
+
+async fn assert_entry_guidance(store: &WorkstreamReadStore, session: &str, op: &str) -> Value {
+    let p = prepare(store, A, "a").await;
+    let hint = &p["data"]["guidance"];
+    assert_eq!(hint["action"]["op"], op);
+    assert_eq!(p["data"]["execution_admission"], "not_evaluated");
+    let mut q = query("work.snapshot");
+    q.work_id = Some("a".into());
+    q.session_id = Some(session.into());
+    let snapshot = store.query(TENANT, PROJECT, A, q).await.unwrap();
+    assert_eq!(snapshot["data"]["context_hash"], p["data"]["context_hash"]);
+    assert_eq!(snapshot["data"]["guidance"], *hint);
+    assert_eq!(snapshot["data"]["observation"]["guidance"], *hint);
+    assert_eq!(
+        snapshot["data"]["observation"]["execution_authorized"],
+        false
+    );
+    assert!(hint.to_string().len() < 900);
+    for key in ["when", "because", "action", "recheck_on"] {
+        assert!(!hint[key].is_null());
+    }
+    for name in ["work.observe", "session.inspect", "work.recovery"] {
+        let mut q = query(name);
+        q.work_id = Some("a".into());
+        q.session_id = Some(session.into());
+        let current = store.query(TENANT, PROJECT, A, q).await.unwrap();
+        assert_eq!(current["data"]["guidance"], *hint, "{name}");
+    }
+    let next = store
+        .query(TENANT, PROJECT, A, query("work.next"))
+        .await
+        .unwrap();
+    let resume = next["data"]["resume"].as_array().unwrap();
+    assert!(
+        resume
+            .iter()
+            .any(|r| r["session_id"] == session && r["next_query"]["op"] == "work.observe")
+    );
+    p
+}
+
+#[tokio::test]
+async fn both_intake_paths_guide_owned_preparation_and_exact_execution_admission() {
+    for accept in [true, false] {
+        let (_guard, admin, db, store) = setup().await;
+        enable_writes(&admin).await;
+        members(&admin, &db).await;
+        let session = start(&store, A, "a", "entry-session").await;
+        if accept {
+            store
+                .commands()
+                .execute(
+                    TENANT,
+                    PROJECT,
+                    SUPERVISOR,
+                    assign(&store, "a", "entry-assignment", "alice").await,
+                )
+                .await
+                .unwrap();
+        }
+        let mut intake = take(&store, A, "a", &session, "entry-take", accept).await;
+        intake.args["ttl_seconds"] = json!(300);
+        let taken = store
+            .commands()
+            .execute(TENANT, PROJECT, A, intake)
+            .await
+            .unwrap();
+        let claim = &taken["receipt"]["data"];
+        let before = entry_state(&admin).await;
+        let p = assert_entry_guidance(&store, &session, "execution.prepare").await;
+        assert_eq!(entry_state(&admin).await, before);
+        let input = "a".repeat(64);
+        let prepared = store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                command(
+                    &p,
+                    "entry-prepare",
+                    "execution.prepare",
+                    json!({
+                "session_id":session,"expected_session_version":"1",
+                "claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+                "expected_lease_version":claim["lease_version"],
+                "expected_work_version":p["data"]["runtime"]["work_version"],
+                "input_digest":input,"declared_scope":["src"]}),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(prepared["receipt"]["data"]["dispatched"], false);
+        let before = entry_state(&admin).await;
+        let p = assert_entry_guidance(&store, &session, "execution.start").await;
+        assert_eq!(entry_state(&admin).await, before);
+        let execution = &prepared["receipt"]["data"];
+        store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                command(
+                    &p,
+                    "entry-start",
+                    "execution.start",
+                    json!({
+                "session_id":session,"expected_session_version":"1",
+                "claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+                "expected_lease_version":claim["lease_version"],
+                "execution_id":execution["execution_id"],
+                "expected_execution_version":execution["execution_version"],
+                "expected_work_version":p["data"]["runtime"]["work_version"],
+                "execution_mode":"caller_managed","expected_input_digest":input}),
+                ),
+            )
+            .await
+            .unwrap();
+        let before = entry_state(&admin).await;
+        assert_entry_guidance(&store, &session, "session.checkpoint").await;
+        let mut q = query("work.observe");
+        q.work_id = Some("a".into());
+        q.session_id = Some(session.into());
+        let observed = store.query(TENANT, PROJECT, A, q).await.unwrap();
+        assert_eq!(observed["data"]["execution"]["state"], "running");
+        assert_eq!(observed["data"]["execution_authorized"], false);
+        assert_eq!(entry_state(&admin).await, before);
+        admin.batch_execute("UPDATE awr_team.workstream_grants SET can_write=false,grant_version=grant_version+1 WHERE client_id='cli-a'").await.unwrap();
+        let p = prepare(&store, A, "a").await;
+        assert_eq!(p["data"]["guidance"]["action"]["op"], "work.next");
+    }
+}
+
+#[tokio::test]
+async fn execution_entry_guidance_requires_current_task_execution_authority() {
+    for has_prepared_execution in [false, true] {
+        let (_guard, admin, db, store) = setup().await;
+        enable_writes(&admin).await;
+        members(&admin, &db).await;
+        let session = start(&store, A, "a", "authority-session").await;
+        let mut intake = take(&store, A, "a", &session, "authority-take", false).await;
+        intake.args["ttl_seconds"] = json!(300);
+        let taken = store
+            .commands()
+            .execute(TENANT, PROJECT, A, intake)
+            .await
+            .unwrap();
+        let claim = &taken["receipt"]["data"];
+        let input = "b".repeat(64);
+        let p = prepare(&store, A, "a").await;
+        let args = json!({"session_id":session,"expected_session_version":"1",
+            "claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+            "expected_lease_version":claim["lease_version"],
+            "expected_work_version":p["data"]["runtime"]["work_version"],
+            "input_digest":input,"declared_scope":["src"]});
+        let prepared = if has_prepared_execution {
+            Some(
+                store
+                    .commands()
+                    .execute(
+                        TENANT,
+                        PROJECT,
+                        A,
+                        command(&p, "authority-prepare", "execution.prepare", args.clone()),
+                    )
+                    .await
+                    .unwrap(),
+            )
+        } else {
+            None
+        };
+        let op = if has_prepared_execution {
+            "execution.start"
+        } else {
+            "execution.prepare"
+        };
+        let request_args = prepared.as_ref().map_or(args, |receipt| {
+            let e = &receipt["receipt"]["data"];
+            json!({"session_id":session,"expected_session_version":"1",
+                "claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+                "expected_lease_version":claim["lease_version"],
+                "expected_work_version":p["data"]["runtime"]["work_version"],
+                "execution_id":e["execution_id"],"expected_execution_version":e["execution_version"],
+                "execution_mode":"caller_managed","expected_input_digest":input})
+        });
+        let auths =
+            AuthorizationStore::from_config(common::with_app_role(&common::test_config(), &db));
+        let original = auths.get(TENANT, PROJECT, "auth-a").await.unwrap().unwrap();
+        auths
+            .revoke(
+                TENANT,
+                PROJECT,
+                &RevokeAuthorizationRequest {
+                    request_key: "revoke-original".into(),
+                    authorization_id: original.id.clone(),
+                    revoked_by: original.authorizer_person_id.clone(),
+                    revoked_at_ms: 2000,
+                    reason: "Restrict execution while retaining inspection and coordination".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let mut coordination = original.clone();
+        coordination.id = "coordination-only".into();
+        coordination.actions = BTreeSet::from([
+            AuthorizedAction::Inspect,
+            AuthorizedAction::ClaimCoordination,
+        ]);
+        coordination.created_at_ms = 2001;
+        auths
+            .issue(
+                TENANT,
+                PROJECT,
+                &IssueAuthorizationRequest {
+                    request_key: "issue-coordination-only".into(),
+                    authorization: coordination,
+                },
+            )
+            .await
+            .unwrap();
+        let mut execution = original.clone();
+        execution.id = "other-task-execution".into();
+        execution.actions = BTreeSet::from([AuthorizedAction::StartWork]);
+        execution.scope = AuthorizationScope::Task {
+            project_id: PROJECT.into(),
+            work_item_id: "b".into(),
+        };
+        execution.created_at_ms = 3000;
+        for (stage, grant) in [("absent", None), ("other-task", Some(execution.clone()))] {
+            if let Some(grant) = grant {
+                auths
+                    .issue(
+                        TENANT,
+                        PROJECT,
+                        &IssueAuthorizationRequest {
+                            request_key: format!("issue-{}", grant.id),
+                            authorization: grant,
+                        },
+                    )
+                    .await
+                    .unwrap();
+            }
+            let before = entry_state(&admin).await;
+            let p = assert_entry_guidance(&store, &session, "work.next").await;
+            assert_eq!(p["data"]["guidance"]["code"], "inspect_only");
+            assert!(matches!(
+                store
+                    .commands()
+                    .execute(
+                        TENANT,
+                        PROJECT,
+                        A,
+                        command(&p, &format!("denied-{stage}"), op, request_args.clone())
+                    )
+                    .await,
+                Err(PgError::Forbidden)
+            ));
+            assert_eq!(entry_state(&admin).await, before);
+        }
+        execution.id = "current-task-execution".into();
+        execution.scope = AuthorizationScope::Task {
+            project_id: PROJECT.into(),
+            work_item_id: "a".into(),
+        };
+        execution.created_at_ms = 4000;
+        auths
+            .issue(
+                TENANT,
+                PROJECT,
+                &IssueAuthorizationRequest {
+                    request_key: "issue-current-task-execution".into(),
+                    authorization: execution.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        let before = entry_state(&admin).await;
+        assert_entry_guidance(&store, &session, op).await;
+        assert_eq!(entry_state(&admin).await, before);
+        auths
+            .revoke(
+                TENANT,
+                PROJECT,
+                &RevokeAuthorizationRequest {
+                    request_key: "revoke-current-task-execution".into(),
+                    authorization_id: execution.id,
+                    revoked_by: original.authorizer_person_id,
+                    revoked_at_ms: 5000,
+                    reason: "Execution authority was revoked".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let before = entry_state(&admin).await;
+        let p = assert_entry_guidance(&store, &session, "work.next").await;
+        assert_eq!(p["data"]["guidance"]["code"], "inspect_only");
+        assert!(matches!(
+            store
+                .commands()
+                .execute(
+                    TENANT,
+                    PROJECT,
+                    A,
+                    command(&p, "denied-revoked", op, request_args)
+                )
+                .await,
+            Err(PgError::Forbidden)
+        ));
+        assert_eq!(entry_state(&admin).await, before);
+    }
+}
+
 #[tokio::test]
 async fn two_simulated_members_self_claiming_have_one_atomic_winner() {
     let (_guard, admin, db, store) = setup().await;

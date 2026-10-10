@@ -26,6 +26,20 @@ current `guidance` as observation. Follow that guidance rather than replaying th
 checkpoint action. Expired leases cannot be renewed or revive an old execution;
 settle pending effects before preparing a fresh claim and a new admitted run.
 
+After accepting an assignment or self-claiming available work, an active own
+session with a live current claim receives `execution.prepare` guidance. Supply
+current versions, a measured input digest and the contract's declared scope.
+Once that exact execution is prepared, the next action is `execution.start`;
+effects require successful admission. Both hints require current scoped execution
+authority and a write grant. Each includes its condition, factual basis and
+recheck trigger within the existing bounded guidance packet.
+
+Context gaps, recovery, changed bindings, lease expiry, user waits and pending
+review or integration keep their existing priority. Running executions retain
+boundary progress and truthful terminal-settlement instructions; terminal runs
+are not automatically prepared again. Advice grants no authority, and every
+command rechecks its versions and permissions.
+
 Repeat `work.next` after progress, a resolved wait, claim conflicts, source or
 permission changes. Commands retain stable request IDs and recheck current
 authority; inspect unknown outcomes before retrying. The connected Agent performs

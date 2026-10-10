@@ -61,6 +61,7 @@ pub(super) fn authorized(
         Some(
             "claim.acquire" | "claim.renew" | "task.accept_assignment" | "task.claim_available",
         ) => Some(Action::ClaimManageOwn),
+        Some("execution.prepare" | "execution.start") => Some(Action::ExecutionRequestAndReportOwn),
         _ => None,
     };
     if action.is_some_and(|a| {
@@ -74,7 +75,7 @@ pub(super) fn authorized(
     }) {
         hint = json!({"code":"inspect_only","when":"the suggested mutation is outside current authority",
             "because":"no current covering action and write grant","action":{"op":"work.next",
-            "note":"Inspect your visible work; obtain the required scoped grant before starting a session or taking responsibility."},
+            "note":"Inspect your visible work; obtain the required scoped grant before session, responsibility or execution mutations."},
             "recheck_on":"member, delegation, source or workstream permissions change"});
     }
     if let Some(basis) = hint["because"].as_str() {
@@ -271,6 +272,39 @@ pub(super) fn select(data: &Value, context_complete: bool, owns_session: bool) -
             "At the next checkpoint include known client_info and supported/unsupported/unknown observations; never guess model or usage.",
             "client, model or capability changes",
         )
+    } else if data["responsibility"]["relation"] == "owned_by_me"
+        && data["responsibility"]["current_executor_matches_client"] == true
+        && claim["state"] == "active"
+        && claim["lease_live"] == true
+        && execution.is_null()
+    {
+        (
+            "prepare_execution",
+            "your current live claim has no execution",
+            "the active own session and current executor match task ownership",
+            "execution.prepare",
+            "Prepare your execution with current work/session/claim versions, a measured input_digest and declared_scope from the contract. Preparation does not admit effects; execution.start must succeed before editing or running work.",
+            "execution preparation, claim, contract, scope or authority changes",
+        )
+    } else if data["responsibility"]["relation"] == "owned_by_me"
+        && data["responsibility"]["current_executor_matches_client"] == true
+        && claim["state"] == "active"
+        && claim["lease_live"] == true
+        && execution["state"] == "prepared"
+        && execution["owned_by_client"] == true
+        && execution["lease_live"] == true
+        && execution["contract_matches_current"] == true
+        && execution["epoch_matches_current"] == true
+        && execution["cancel_requested"] == false
+    {
+        (
+            "start_execution",
+            "your bound execution is prepared and its lease is live",
+            "the prepared execution matches current ownership, contract and epoch",
+            "execution.start",
+            "Start the exact prepared execution using its receipt's ID and input digest with current work/session/claim/execution versions. Choose the contract's supported execution mode; perform effects only after successful admission.",
+            "admission, cancellation, claim, contract, epoch or authority changes",
+        )
     } else {
         (
             "report_at_boundary",
@@ -295,6 +329,128 @@ mod tests {
     fn active() -> Value {
         json!({"runtime":{"state":"in_progress"},"session":{"state":"active"},"client":{"product":"Agent"},
             "claim":{"state":"active","lease_live":true,"expires_at_unix_ms":200000},"observed_at_unix_ms":1})
+    }
+
+    fn owned() -> Value {
+        let mut data = active();
+        data["definition_state"] = json!("enabled");
+        data["responsibility"] = json!({"relation":"owned_by_me",
+            "current_executor_matches_client":true,"coordination_allowed_advisory":true});
+        data
+    }
+
+    #[test]
+    fn current_owned_intake_connects_preparation_to_exact_admission() {
+        let mut data = owned();
+        let prepare = select(&data, true, true);
+        assert_eq!(prepare["code"], "prepare_execution");
+        assert_eq!(prepare["action"]["op"], "execution.prepare");
+        assert!(
+            prepare["action"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("input_digest")
+        );
+        data["execution"] = json!({"state":"prepared","owned_by_client":true,
+            "lease_live":true,"contract_matches_current":true,"epoch_matches_current":true,
+            "cancel_requested":false});
+        let start = select(&data, true, true);
+        assert_eq!(start["code"], "start_execution");
+        assert_eq!(start["action"]["op"], "execution.start");
+        assert!(
+            start["action"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("exact prepared execution")
+        );
+        for hint in [prepare, start] {
+            assert!(hint.to_string().len() < 900);
+            for key in ["when", "because", "action", "recheck_on"] {
+                assert!(!hint[key].is_null());
+            }
+        }
+    }
+
+    #[test]
+    fn admission_advice_requires_live_current_ownership_and_preparation() {
+        for relation in [
+            "pool",
+            "assigned_to_me",
+            "owned_by_other",
+            "handoff_required",
+        ] {
+            let mut data = owned();
+            data["responsibility"]["relation"] = json!(relation);
+            assert_ne!(select(&data, true, true)["code"], "prepare_execution");
+        }
+        let mut data = owned();
+        data["responsibility"]["current_executor_matches_client"] = json!(false);
+        assert_ne!(select(&data, true, true)["code"], "prepare_execution");
+        data = owned();
+        assert_eq!(select(&data, true, false)["code"], "other_client_session");
+        data["execution"] = json!({"state":"prepared","owned_by_client":true,
+            "lease_live":true,"contract_matches_current":true,"epoch_matches_current":true,
+            "cancel_requested":false});
+        for field in [
+            "owned_by_client",
+            "lease_live",
+            "contract_matches_current",
+            "epoch_matches_current",
+        ] {
+            let mut changed = data.clone();
+            changed["execution"][field] = json!(false);
+            assert_ne!(select(&changed, true, true)["code"], "start_execution");
+        }
+        data["execution"]["cancel_requested"] = json!(true);
+        assert_ne!(select(&data, true, true)["code"], "start_execution");
+    }
+
+    #[test]
+    fn entry_advice_preserves_protective_and_collaboration_priorities() {
+        for execution in [
+            Value::Null,
+            json!({"state":"prepared","owned_by_client":true,
+            "lease_live":true,"contract_matches_current":true,"epoch_matches_current":true,
+            "cancel_requested":false}),
+        ] {
+            let mut data = owned();
+            data["execution"] = execution;
+            assert_eq!(select(&data, false, true)["code"], "restore_context");
+            data["runtime"]["recovery_blocked"] = json!(true);
+            assert_eq!(select(&data, true, true)["code"], "inspect_recovery");
+            data["runtime"]["recovery_blocked"] = json!(false);
+            data["claim"]["expires_at_unix_ms"] = json!(1000);
+            assert_eq!(select(&data, true, true)["code"], "renew_claim");
+            data["claim"]["lease_live"] = json!(false);
+            assert_eq!(select(&data, true, true)["code"], "inspect_expired_claim");
+            data = owned();
+            data["waiting_user"] = json!(true);
+            assert_eq!(select(&data, true, true)["code"], "wait_for_change");
+            data["waiting_user"] = json!(false);
+            for code in [
+                "review",
+                "rework",
+                "verification",
+                "integration_unknown",
+                "dependency",
+            ] {
+                let role = json!({"code":code,"action":{"op":"work.observe"}});
+                assert_eq!(
+                    with_collaboration(&data, true, true, Some(role))["code"],
+                    code
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn running_and_terminal_runs_are_not_implicitly_prepared_again() {
+        let mut data = owned();
+        for state in ["running", "succeeded", "failed", "cancelled"] {
+            data["execution"] = json!({"state":state,"owned_by_client":true,
+                "lease_live":true,"contract_matches_current":true,"epoch_matches_current":true});
+            assert_eq!(select(&data, true, true)["code"], "report_at_boundary");
+        }
     }
 
     #[test]
