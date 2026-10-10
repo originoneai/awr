@@ -153,6 +153,16 @@ or reported readiness alone does not verify, approve or complete the work.
 For `review.inspect`, use the actual `review_round_id`; `evidence.inspect` requires
 the actual `evidence_id`. These are record selectors, not event or checkpoint IDs.
 
+For tasks with configured neutral delivery, follow `delivery.neutral.inspect`
+before requesting review. Publish actual code/tests/report through the authorized
+project channel, select the exact candidate, and persist every manifest entry as
+evidence with its `payload.delivery_candidate_digest`. Report-only submissions
+return `ReviewSubmissionIncomplete`. The review's `submission.artifacts[].query`
+provides exact `artifact.content` selectors for the original version; use them
+instead of discovering peer files. Readability grants no approval or repository
+authority. Approval rechecks the current binding, and changed submissions need
+fresh evidence and review. See [neutral submission details](pr-delivery-review.md#neutral-delivery-before-business-review).
+
 When a supported input mismatch is rejected, HTTP and MCP return a bounded
 `invalid_field` JSON pointer and `constraint`. Unknown names and submitted values
 are never echoed: an unexpected evidence argument identifies `/args` and lists

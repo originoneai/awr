@@ -418,12 +418,54 @@ impl DeliverySyncStore {
             "fact_source":r.get::<_,String>(4),"enabled":r.get::<_,bool>(5),
             "current_epoch":r.get::<_,String>(6)==auth.epoch
         })).collect();
-        let result = json!({"work_id":work,"workstream_id":binding.workstream_id,"source_snapshot_id":auth.snapshot,
+        let evidence = tx
+            .query_opt(
+                "SELECT id FROM awr_team.evidence
+            WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND contract_hash=$4
+            ORDER BY created_at DESC,id DESC LIMIT 1",
+                &[&tenant, &project, &work, &current_contract],
+            )
+            .await?
+            .map(|r| r.get::<_, String>(0));
+        let submission = super::review_submission::inspect(
+            tx,
+            tenant,
+            project,
+            auth,
+            work,
+            evidence.as_deref(),
+            None,
+        )
+        .await?;
+        let mut result = json!({"work_id":work,"workstream_id":binding.workstream_id,"source_snapshot_id":auth.snapshot,
             "coordinator_epoch":auth.epoch,"project_revision":auth.revision.to_string(),"selected_current":selected_current,
             "selection_version":selected.as_ref().map(|s|s.5.to_string()),"candidate":selected.map(|s|s.0),"facts":facts,"history":history,
             "facts_truncated":facts_truncated,"history_truncated":history_truncated,
             "connectors":connectors,"connectors_truncated":connectors_truncated,
+            "submission":submission,
             "acceptance_ready":false,"execution_authorized":false,"source_synchronized":false});
+        if result["submission"]["delivery_required"] == true {
+            let checks: Value = tx
+                .query_one(
+                    "SELECT contract_json->'verification_requirements'
+                FROM awr_team.work_contracts WHERE tenant_id=$1 AND project_id=$2
+                AND snapshot_id=$3 AND scope_id='main' AND work_id=$4",
+                    &[&tenant, &project, &auth.snapshot, &work],
+                )
+                .await?
+                .get(0);
+            result["submission"]["candidate_context"] = json!({
+                "tenant_id":tenant,"project_id":project,"scope_id":"main",
+                "workstream_id":binding.workstream_id.to_string(),"work_id":work,
+                "contract_hash":current_contract,"required_checks":checks,
+                "candidate_command":"delivery.candidate.select",
+                "artifact_command":"evidence.submit",
+                "review_command":"delivery.submit_and_request_review",
+                "material_facts":"Observe the actual published source revision, target precondition and each manifest entry's bytes; never infer them from a progress summary.",
+                "manifest_hash_codec":{"algorithm":"sha256","json":"UTF-8 compact recursively sorted object keys; preserve array order",
+                    "envelope":{"codec":"awr-delivery-manifest-v1","manifest":"the actual manifest object"}}
+            });
+        }
         if serde_json::to_vec(&result).map_err(|_| invalid())?.len() > 262144 {
             return Err(PgError::ResponseTooLarge);
         }

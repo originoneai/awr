@@ -116,6 +116,61 @@ approval or finalization authority.
 
 ## Submitting inspectable evidence
 
+### Neutral delivery before business review
+
+A configured neutral delivery connector or an explicitly selected candidate opts
+the task into version-bound submission. Both `review.open` and
+`delivery.submit_and_request_review` then require a current candidate and readable
+evidence for **every manifest entry**. A report naming local files or an unbound
+commit does not satisfy this requirement. Disabling a connector does not remove
+the requirement. Tasks without a neutral connector/candidate retain their existing
+artifact/evidence review behavior.
+
+After a settled execution, inspect `delivery.neutral.inspect`. Its `submission`
+distinguishes a missing candidate, evidence without the candidate binding, missing
+manifest content, changed selection and readable current content. Its
+`candidate_context` supplies the actual scope, contract, required checks and the
+manifest hash codec; registered connector descriptions supply resource identities.
+Observe the published source revision and target precondition through the project's
+authorized delivery channel. Candidate selection still requires the current own
+session, claim and versions; settlement grants no new repository authority.
+
+Publish code, tests and the measured report in the intended shared version, then
+select the exact candidate using `delivery.candidate.select`. For each manifest
+entry, submit its bytes with `evidence.submit` and
+`payload.delivery_candidate_digest` equal to that selection's binding digest.
+The primary review evidence must itself be one of those entries. Keep execution
+input/output bindings on that primary evidence as required by the chosen policy.
+This uses the existing neutral protocol and supports Git SHA-1/SHA-256 or artifact
+revisions; GitHub and webhooks are optional.
+
+`review.inspect` adds `review.submission` with the **original** candidate digest,
+source revision and `artifacts[].query` selectors. Run those exact `artifact.content`
+queries to inspect all submitted bytes. Code bodies and peer-workspace paths are
+not returned in the metadata. Each content read checks current authorization.
+Content reads default to 64 KiB of raw bytes. An exact selector adds
+`max_context_bytes` only when the stored artifact needs a larger budget, up to
+1 MiB; other queries retain their 256 KiB maximum. JSON escaping, base64 and
+response metadata add transport overhead. Oversized persisted entries cannot
+pass the neutral inspectability gate. This does not widen uploads: authenticated
+workstream commands retain their 64 KiB total envelope bound. Larger pre-existing
+or imported artifacts can be read within the explicit artifact budget.
+Explicit artifact budgets above 64 KiB reserve bounded encoding overhead in the
+full response (at most 7 MiB); defaults and other operations retain their existing
+1 MiB response envelope.
+Old rounds retain their original references after reselection; they cannot approve
+the replacement. `max_context_bytes` bounds review metadata (65,536 bytes by
+default; at most 262,144); increase it on `ResponseTooLarge` rather than treating
+an incomplete read as complete.
+
+Opening or approving an incomplete/stale submission returns HTTP 409/MCP
+`ReviewSubmissionIncomplete` with one neutral inspection action. Approval
+rechecks currentness and stored content integrity. Rejection remains available
+for business rework. These checks establish **inspectability**, not passing tests,
+independent approval, verified repository publication or task completion. Adapter
+verification, integration, finalization and authoritative source confirmation keep
+their separate existing gates.
+
 `evidence.submit` requires `session_id`, `expected_session_version`, `payload`
 and the boolean `dirty_tree`. Generic evidence accepts any JSON payload. For
 Agent-reviewed caller completion, provide `execution_id`, the `input_digest`

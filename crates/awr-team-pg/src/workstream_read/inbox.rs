@@ -34,7 +34,9 @@ pub(super) async fn facts(
             AND (c.coordinator_epoch IS DISTINCT FROM $5 OR c.workstream_id IS DISTINCT FROM $6
               OR c.ownership_version IS DISTINCT FROM $7 OR c.fence IS DISTINCT FROM r.last_fence))",
         &[&tenant,&project,&work,&contract,&auth.epoch,&binding.workstream_id.to_string(),&ownership]).await?;
-    let mut data = json!({"review":null,"candidate":null,"verification":[],
+    let delivery_required =
+        crate::delivery_sync::review_submission::configured(tx, tenant, project, work).await?;
+    let mut data = json!({"review":null,"candidate":null,"verification":[],"delivery_required":delivery_required,
         "recovery":{"unsettled_execution":barriers.get::<_,bool>(0),"unknown_resource":barriers.get::<_,bool>(1),
             "expired_claim":barriers.get::<_,bool>(2),"claim_binding_changed":barriers.get::<_,bool>(4)},"claim_present":barriers.get::<_,bool>(3),
         "facts_truncated":false,"integration":null,"publication":null,
@@ -283,6 +285,22 @@ fn select(
             "the selection no longer matches current work",
             "delivery.neutral.inspect",
             "Inspect current candidate facts and refresh the binding before review or delivery.",
+        )
+    } else if !closed
+        && developer
+        && own
+        && c["delivery_required"] == true
+        && c["candidate"].is_null()
+        && c["review"].is_null()
+        && data["execution"]["state"] == "succeeded"
+        && data["execution"]["effects_settled"] == true
+    {
+        (
+            "submission",
+            "your settled result has no selected neutral delivery",
+            "this task has a configured delivery chain",
+            "delivery.neutral.inspect",
+            "Inspect submission context; publish actual code and report through the authorized project channel, then bind a candidate and readable manifest evidence before review.",
         )
     } else if !closed && c["review"]["state"] == "open" && (reviewer || supervisor) {
         (

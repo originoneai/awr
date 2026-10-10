@@ -754,12 +754,7 @@ pub(crate) fn authorize_command(
             Ok(())
         }
         DomainAuthority::Attest => {
-            if auth.actor_kind == "agent"
-                || auth.actor_kind == "human" && auth.role_template != auth.role_template
-            {
-                // agents never attest; product-role humans also never auto-upgrade
-                // (attest bit requires actor_kind==system in authenticate).
-            }
+            // Only system actors with an explicit attestation grant can attest.
             if auth.actor_kind != "system"
                 || !auth
                     .execution_access

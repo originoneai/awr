@@ -905,6 +905,18 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
                 "next_step":"Inspect your current session with session.inspect or use selector-free work.next resume. Retry with its current session_version as a JSON decimal string in args.expected_session_version."}),
         );
     }
+    if error.is_review_submission_incomplete() {
+        return (
+            StatusCode::CONFLICT,
+            json!({"code":"ReviewSubmissionIncomplete",
+                "message":"review requires a current candidate and its readable manifest evidence",
+                "next_step":"Inspect delivery.neutral.inspect for submission context; refresh before retrying.",
+                "action_guidance":{"when":"neutral submission is missing, incomplete or changed",
+                    "because":"the original candidate and exact stored artifacts must match",
+                    "action":{"op":"delivery.neutral.inspect"},
+                    "recheck_on":"candidate, contract, artifact or authority changes"}}),
+        );
+    }
     if error.is_missing_execution_prepare_session_binding() {
         return (
             StatusCode::BAD_REQUEST,
