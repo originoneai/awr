@@ -1,0 +1,22 @@
+# Optional flat compatibility mode with an exact top-level tool allowlist.
+# Merge this table into a trusted project's .codex/config.toml after replacing
+# both absolute paths. Use this only when the receiving Codex build needs
+# flat names. Published AWR 0.5.1 and this source tree default to grouped domains.
+[mcp_servers.awr]
+command = "/absolute/path/to/awr-mcp"
+args = ["--project", "/absolute/path/to/initialized/project"]
+cwd = "/absolute/path/to/initialized/project"
+env = { AWR_MCP_TOOL_EXPOSURE_MODE = "flat" }
+enabled_tools = [
+  "awr_project_status",
+  "awr_work_ready",
+  "awr_work_get",
+  "awr_context_compile",
+  "awr_work_transition",
+  "awr_event_append",
+  "awr_evidence_record",
+  "awr_search",
+]
+
+# This file is a template, not an installed server or a lifecycle hook.
+# Reconnect the client after changing the exposure mode so tools/list refreshes.

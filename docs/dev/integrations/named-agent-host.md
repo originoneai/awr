@@ -4,7 +4,7 @@ AWR coordinates work; coding agents execute it. This page documents **capability
 negotiation** for named controlled adapters and the always-available **L0 manual
 report** path. It does not make AWR a process supervisor.
 
-See also: [host integration layers](README.md), [Codex L2](codex.md),
+See also: [host integration layers](README.md), [Codex L1 + L2](codex.md),
 [Cursor L1](cursor.md), [session workflow (L0)](session-workflow.md).
 
 ## Capability matrix

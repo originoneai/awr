@@ -190,7 +190,7 @@ AWR 支持的是**在有限上下文窗口之间持续接续项目**。
 | 接入方式 | 文档入口 |
 | --- | --- |
 | 任意支持 CLI/MCP 的 Agent，包括 Claude Code | [通用会话流程](docs/dev/integrations/session-workflow.md) |
-| Codex | [可选生命周期适配器](docs/dev/integrations/codex.md) |
+| Codex | [L1 宿主说明和可选 L2 适配器](docs/dev/integrations/codex.md) |
 | Cursor | [客户端配置](docs/dev/integrations/cursor.md) |
 | Kimi Code | [宿主接入说明](docs/dev/integrations/kimi.md) |
 | Grok Build | [宿主接入说明](docs/dev/integrations/grok.md) |

@@ -1,10 +1,10 @@
 # Cursor integration examples
 
-[L1 Cursor note](../../docs/integrations/cursor.md) records merge paths.
-Session lifecycle stays on the [L0 workflow](../../docs/integrations/session-workflow.md).
+[L1 Cursor note](../../docs/dev/integrations/cursor.md) records merge paths.
+Session lifecycle stays on the [L0 workflow](../../docs/dev/integrations/session-workflow.md).
 
-Build `awr-mcp` from this repository. Packaged 0.4.0 does not expose the grouped
-catalog this template expects.
+Published AWR 0.5.1 and a binary built from this repository expose the grouped
+catalog this template expects. The 0.4.0 package does not.
 
 `mcp.json.example` is a stdio template with Cursor's documented fields (`type`,
 `command`, `args`). Merge it into `.cursor/mcp.json` or `~/.cursor/mcp.json`.

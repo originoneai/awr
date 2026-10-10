@@ -221,7 +221,7 @@ optional lifecycle adapters provide deeper integration where supported.
 | Entry point | Documentation |
 | --- | --- |
 | Any CLI/MCP-capable agent, including Claude Code | [Generic session workflow](docs/dev/integrations/session-workflow.md) |
-| Codex | [Optional lifecycle adapter](docs/dev/integrations/codex.md) |
+| Codex | [L1 host note and optional L2 adapter](docs/dev/integrations/codex.md) |
 | Cursor | [Client configuration](docs/dev/integrations/cursor.md) |
 | Kimi Code | [Host integration note](docs/dev/integrations/kimi.md) |
 | Grok Build | [Host integration note](docs/dev/integrations/grok.md) |
