@@ -722,6 +722,8 @@ pub(crate) fn guidance(data: &Value, fallback: Value) -> Value {
                     | "other_client_session"
                     | "declare_client"
                     | "report_at_boundary"
+                    | "prepare_execution"
+                    | "start_execution"
             )
         )
     {
@@ -731,7 +733,13 @@ pub(crate) fn guidance(data: &Value, fallback: Value) -> Value {
     }
     if !matches!(
         fallback["code"].as_str(),
-        Some("start_session" | "other_client_session" | "report_at_boundary")
+        Some(
+            "start_session"
+                | "other_client_session"
+                | "report_at_boundary"
+                | "prepare_execution"
+                | "start_execution"
+        )
     ) {
         return fallback;
     }
