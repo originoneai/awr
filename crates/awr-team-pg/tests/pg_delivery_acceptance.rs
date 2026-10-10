@@ -13,6 +13,7 @@ use awr_team_pg::*;
 use fixture::*;
 use integration_fixture::*;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 #[tokio::test]
 async fn actual_acceptance_atomically_schedules_receipt_backed_source_sync_without_observers() {
@@ -482,6 +483,15 @@ async fn revoked_domain_source_worker_cannot_write_or_abandon_its_original_journ
 async fn every_manifest_entry_needs_original_candidate_bound_artifact_evidence() {
     let extra = "Supplementary public notes";
     let f = SourceFixture::new_with_extra(false, Some(extra)).await;
+    // Opening now requires a complete manifest. Remove the supplementary
+    // evidence after approval to retain the independent finalization check.
+    f.f.admin
+        .execute(
+            "DELETE FROM awr_team.evidence WHERE output_digest=$1",
+            &[&format!("{:x}", Sha256::digest(extra.as_bytes()))],
+        )
+        .await
+        .unwrap();
     assert!(matches!(
         f.try_finalize("missing-extra").await,
         Err(PgError::EvidenceInvalid)
@@ -646,7 +656,7 @@ async fn actual_agent_and_simulated_acceptance_publish_exact_stored_artifact_ref
 }
 
 #[tokio::test]
-async fn changed_candidate_and_missing_or_wrong_original_declarations_cannot_finalize() {
+async fn changed_candidate_and_unbound_submissions_cannot_bypass_review_or_finalization() {
     for simulated in [false, true] {
         let f = SourceFixture::new(simulated).await;
         let mut changed = f.f.selection.clone();
@@ -669,13 +679,17 @@ async fn changed_candidate_and_missing_or_wrong_original_declarations_cannot_fin
             if let Some(value) = declaration {
                 payload["delivery_candidate_digest"] = json!(value);
             }
-            // Submit and independently approve a genuinely new evidence bundle.
-            // Its hash is valid; absence or mismatch of its candidate is the failure.
-            f.resubmit_reviewed_evidence(payload).await;
-            assert!(matches!(
-                f.try_finalize("undeclared").await,
-                Err(PgError::EvidenceInvalid)
-            ));
+            // A valid new evidence hash cannot open review with a missing or
+            // wrong original candidate. Finalization still rejects it as well.
+            assert!(
+                f.resubmit_reviewed_evidence(payload)
+                    .await
+                    .unwrap_err()
+                    .is_review_submission_incomplete()
+            );
+            let result = f.try_finalize("undeclared").await;
+            // The rejected opening created no approval for this new bundle.
+            assert!(matches!(result, Err(PgError::ReviewRequired)), "{result:?}");
             f.assert_no_completion().await;
         }
     }
@@ -693,13 +707,16 @@ async fn real_acceptance_keeps_no_candidate_compatibility_without_reconstructing
             .await
             .unwrap()
             .get(0);
-    // Fault injection removes the optional delivery selection, not execution or
-    // review. Resubmit through the actual ordinary Agent completion workflow.
+    // Legacy behavior applies only without a selection or configured mapping
+    // for this task. A disabled connector would retain the neutral review gate.
+    // Detach the synthetic mapping too; execution and review remain unchanged.
     f.f.admin
-        .batch_execute("DELETE FROM awr_team.delivery_selections")
+        .batch_execute("DELETE FROM awr_team.delivery_selections; UPDATE awr_team.delivery_connectors SET work_id='c'")
         .await
         .unwrap();
-    f.resubmit_reviewed_evidence(json!({"passed":true})).await;
+    f.resubmit_reviewed_evidence(json!({"passed":true}))
+        .await
+        .unwrap();
     let receipt = f.finalize("without-delivery").await;
     assert!(receipt["delivery_candidate_digest"].is_null());
     assert_eq!(receipt["task_complete"], true);
@@ -723,7 +740,11 @@ async fn real_acceptance_keeps_no_candidate_compatibility_without_reconstructing
             .get::<_, Option<String>>(0)
             .is_none()
     );
-    // Restoring the original selection cannot retroactively bind this real receipt.
+    // Restoring the original chain cannot retroactively bind this real receipt.
+    f.f.admin
+        .batch_execute("UPDATE awr_team.delivery_connectors SET work_id='a'")
+        .await
+        .unwrap();
     f.f.admin
         .execute(
             "INSERT INTO awr_team.delivery_selections SELECT * FROM

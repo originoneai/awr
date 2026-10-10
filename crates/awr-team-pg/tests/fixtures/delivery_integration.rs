@@ -63,12 +63,12 @@ pub async fn setup_integration() -> Fixture {
 
 /// Synthetic exact-base setup; all execution, evidence and review commands still run.
 pub async fn setup_content_integration() -> Fixture {
-    setup_integration_inner(None, None, None, false, true).await
+    setup_integration_inner(None, None, None, false, true, &[]).await
 }
 
 /// Bind an actual repository candidate before submitting evidence or approval.
 pub async fn setup_integration_with_candidate(actual: Option<DeliveryCandidate>) -> Fixture {
-    setup_integration_inner(actual, None, None, false, false).await
+    setup_integration_inner(actual, None, None, false, false, &[]).await
 }
 
 /// Activate the physical contract before execution or business review. No delivery
@@ -85,7 +85,7 @@ pub async fn setup_source_integration_with_checks(
     checks: &[String],
 ) -> Fixture {
     assert!(!checks.is_empty());
-    setup_integration_inner(Some(actual), Some(root), Some(checks), false, false).await
+    setup_integration_inner(Some(actual), Some(root), Some(checks), false, false, &[]).await
 }
 
 /// Activate the explicit simulated policy from physical source declarations.
@@ -95,7 +95,27 @@ pub async fn setup_source_simulated_member_integration(
     checks: &[String],
 ) -> Fixture {
     assert!(!checks.is_empty());
-    setup_integration_inner(Some(actual), Some(root), Some(checks), true, false).await
+    setup_integration_inner(Some(actual), Some(root), Some(checks), true, false, &[]).await
+}
+
+/// Persist all explicitly supplied manifest entries before independent review.
+pub async fn setup_source_integration_with_artifacts(
+    actual: DeliveryCandidate,
+    root: &Path,
+    checks: &[String],
+    simulated: bool,
+    additional: &[&str],
+) -> Fixture {
+    assert!(!checks.is_empty());
+    setup_integration_inner(
+        Some(actual),
+        Some(root),
+        Some(checks),
+        simulated,
+        false,
+        additional,
+    )
+    .await
 }
 
 /// Actual member anchors are provisioned only on the explicit simulated path.
@@ -109,7 +129,7 @@ pub async fn setup_simulated_content_integration() -> Fixture {
 }
 
 async fn setup_simulated_integration(exact_base: bool) -> Fixture {
-    let fixture = setup_integration_inner(None, None, None, true, exact_base).await;
+    let fixture = setup_integration_inner(None, None, None, true, exact_base, &[]).await;
     fixture.admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
         VALUES($1,$2,'session-supervisor','main','a','supervisor','cli-supervisor','supervisor-conversation','active',$3,1)",
         &[&TENANT,&PROJECT,&awr_core::Id::from(1).to_string()]).await.unwrap();
@@ -122,6 +142,7 @@ async fn setup_integration_inner(
     source_checks: Option<&[String]>,
     simulated: bool,
     exact_base: bool,
+    additional: &[&str],
 ) -> Fixture {
     let (guard, admin, db, reads) = setup().await;
     let config = common::with_app_role(&common::test_config(), &db);
@@ -431,6 +452,30 @@ async fn setup_integration_inner(
     let evidence=run(&reads,A,"submit-evidence","evidence.submit",json!({"session_id":"session-a","expected_session_version":"1",
         "artifact_text":CONTENT,"input_digest":INPUT,"execution_id":execution["execution_id"],"dirty_tree":false,
         "payload":{"passed":true,"output_digest":result,"delivery_candidate_digest":candidate_digest}})).await;
+    for (index, content) in additional.iter().enumerate() {
+        let digest = format!("{:x}", Sha256::digest(content.as_bytes()));
+        assert!(
+            selection
+                .candidate
+                .manifest
+                .entries
+                .iter()
+                .any(|entry| entry.sha256 == digest
+                    && entry.byte_length == content.len().to_string())
+        );
+        run(
+            &reads,
+            A,
+            &format!("manifest-evidence-{index}"),
+            "evidence.submit",
+            json!({
+                "session_id":"session-a","expected_session_version":"1","dirty_tree":false,
+                "artifact_text":content,"payload":{"passed":true,"output_digest":digest,
+                    "delivery_candidate_digest":candidate_digest}
+            }),
+        )
+        .await;
+    }
     let round=run(&reads,A,"open-review","review.open",json!({"session_id":"session-a","expected_session_version":"1","evidence_id":evidence["evidence_id"]})).await;
     let decision = if source_root.is_none() {
         run(&reads,REVIEWER,"approve-review","review.decide",json!({"session_id":"session-reviewer","expected_session_version":"1",

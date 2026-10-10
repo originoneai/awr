@@ -1,7 +1,7 @@
 //! Evidence encodings converge on the same exact bytes before hashing/storage.
 use super::*;
 
-const MAX_BYTES: usize = 1_048_576;
+const MAX_BYTES: usize = crate::WorkstreamQuery::MAX_ARTIFACT_BYTES;
 
 pub(super) fn decode(hex: Option<&str>, text: Option<&str>) -> PgResult<Option<Vec<u8>>> {
     match (hex, text) {

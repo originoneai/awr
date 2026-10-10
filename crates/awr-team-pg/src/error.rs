@@ -214,6 +214,16 @@ impl PgError {
     const WORK_NEXT_SELECTORS: &'static str = "work.next does not accept work selectors";
     const MISSING_REVIEW_SESSION_VERSION: &'static str =
         "review command requires expected_session_version";
+    const REVIEW_SUBMISSION_INCOMPLETE: &'static str =
+        "neutral review submission is incomplete or no longer current";
+
+    pub fn review_submission_incomplete() -> Self {
+        Self::Protocol(Self::REVIEW_SUBMISSION_INCOMPLETE.into())
+    }
+
+    pub fn is_review_submission_incomplete(&self) -> bool {
+        matches!(self, Self::Protocol(message) if message == Self::REVIEW_SUBMISSION_INCOMPLETE)
+    }
 
     pub fn work_next_selectors() -> Self {
         Self::Protocol(Self::WORK_NEXT_SELECTORS.into())

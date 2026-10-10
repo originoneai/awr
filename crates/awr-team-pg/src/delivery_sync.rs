@@ -8,6 +8,7 @@ mod inbox;
 mod integration;
 mod publisher;
 mod pump;
+pub(crate) mod review_submission;
 mod scheduling;
 mod snapshots;
 

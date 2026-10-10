@@ -130,11 +130,14 @@ work_items:
             "manifest_digest":manifest.digest().unwrap(),"source_revision":{"resource":RESOURCE,"format":"git_sha256","value":"a".repeat(64)},
             "required_checks":["report"],"target":{"resource":RESOURCE,"reference":"main","precondition":{"kind":"missing"}}},"manifest":manifest})).unwrap();
         let checks = ["report".into()];
-        let mut f = if simulated {
-            setup_source_simulated_member_integration(candidate, &root.0, &checks).await
-        } else {
-            setup_source_integration_with_checks(candidate, &root.0, &checks).await
-        };
+        let mut f = setup_source_integration_with_artifacts(
+            candidate,
+            &root.0,
+            &checks,
+            simulated,
+            &extra.into_iter().collect::<Vec<_>>(),
+        )
+        .await;
         // Session provisioning is identity infrastructure; all execution,
         // evidence, business review and acceptance use their actual commands.
         f.admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
@@ -168,7 +171,7 @@ work_items:
             .await
     }
 
-    pub async fn resubmit_reviewed_evidence(&mut self, mut payload: Value) {
+    pub async fn resubmit_reviewed_evidence(&mut self, mut payload: Value) -> PgResult<()> {
         payload["output_digest"] = json!(self.f.selection.candidate.manifest.entries[0].sha256);
         let execution: String = self
             .f
@@ -183,21 +186,34 @@ work_items:
         self.f.evidence = integration_fixture::run(&self.f.reads, A, "resubmit", "evidence.submit",
             json!({"session_id":"session-a","expected_session_version":"1","input_digest":INPUT,
                 "execution_id":execution,"artifact_text":CONTENT,"dirty_tree":false,"payload":payload})).await;
-        let round = integration_fixture::run(
-            &self.f.reads,
-            A,
-            "reopen",
-            "review.open",
-            json!({"session_id":"session-a","expected_session_version":"1",
-                "evidence_id":self.f.evidence["evidence_id"]}),
-        )
-        .await;
+        let p = prepare(&self.f.reads, A, "a").await;
+        let response = self
+            .f
+            .reads
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                command(
+                    &p,
+                    "reopen",
+                    "review.open",
+                    json!({
+                        "session_id":"session-a","expected_session_version":"1",
+                        "evidence_id":self.f.evidence["evidence_id"]
+                    }),
+                ),
+            )
+            .await?;
+        let round = &response["receipt"]["data"];
         self.f.request.evidence_id = self.f.evidence["evidence_id"].as_str().unwrap().into();
         self.f.request.review_round_id = round["round_id"].as_str().unwrap().into();
         self.f.request.review_decision_id.clear();
         self.f
             .approve_source_review_with_key("approve-resubmission")
             .await;
+        Ok(())
     }
 
     pub async fn assert_no_completion(&self) {

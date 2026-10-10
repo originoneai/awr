@@ -99,6 +99,9 @@ pub struct WorkstreamQuery {
 
 impl WorkstreamQuery {
     pub const OPERATIONS: &'static [&'static str] = QUERIES;
+    /// Maximum explicit raw-byte budget for stored artifact reads and encodings.
+    /// Command envelopes retain their separate, smaller transport bound.
+    pub const MAX_ARTIFACT_BYTES: usize = 1_048_576;
 
     pub fn validate(&self) -> PgResult<()> {
         if self.protocol_version != 1 {
@@ -130,9 +133,16 @@ impl WorkstreamQuery {
                 return Err(PgError::Protocol("invalid selector".into()));
             }
         }
+        let max_bytes = if self.op == "artifact.content" {
+            Self::MAX_ARTIFACT_BYTES
+        } else {
+            262144
+        };
         if self.limit.is_some_and(|n| n == 0 || n > 100)
             || self.cursor.as_ref().is_some_and(|s| s.len() > 4096)
-            || self.max_context_bytes.is_some_and(|n| n == 0 || n > 262144)
+            || self
+                .max_context_bytes
+                .is_some_and(|n| n == 0 || n > max_bytes)
         {
             return Err(PgError::Protocol("query bounds exceeded".into()));
         }
@@ -184,6 +194,8 @@ impl WorkstreamQuery {
                         | "work.inbox"
                         | "source.content"
                         | "artifact.content"
+                        | "review.inspect"
+                        | "delivery.neutral.inspect"
                 )
             || (!audit
                 && self.request_id.is_some()
@@ -360,7 +372,7 @@ mod input_guidance_tests {
             json!({"export_id":"x".repeat(129)}),
             json!({"expected_sha256":"F".repeat(64)}),
             json!({"op":"work.prepare"}),
-            json!({"max_context_bytes":262145}),
+            json!({"max_context_bytes":WorkstreamQuery::MAX_ARTIFACT_BYTES + 1}),
             json!({"limit":1}),
         ] {
             let mut input = base.clone();
@@ -384,6 +396,50 @@ mod input_guidance_tests {
                 .is_none(),
             "Old queries must not serialize the new absent selector"
         );
+    }
+
+    #[test]
+    fn only_explicit_artifact_reads_accept_the_full_stored_byte_budget() {
+        for selector in ["artifact_id", "export_id"] {
+            for bytes in [262145, WorkstreamQuery::MAX_ARTIFACT_BYTES] {
+                let mut value = json!({"protocol_version":1,"op":"artifact.content",
+                    "work_id":"work","max_context_bytes":bytes});
+                value[selector] = json!("artifact");
+                let q: WorkstreamQuery = serde_json::from_value(value).unwrap();
+                assert!(q.validate().is_ok());
+            }
+        }
+        for op in [
+            "work.prepare",
+            "work.snapshot",
+            "work.observe",
+            "work.inbox",
+            "source.content",
+            "review.inspect",
+            "delivery.neutral.inspect",
+        ] {
+            let mut value = json!({"protocol_version":1,"op":op,"max_context_bytes":262144});
+            if op != "work.inbox" {
+                value["work_id"] = json!("work");
+            }
+            if op == "source.content" {
+                value["source_path"] = json!("docs/contract.md");
+            }
+            if op == "review.inspect" {
+                value["review_round_id"] = json!("round");
+            }
+            let mut q: WorkstreamQuery = serde_json::from_value(value).unwrap();
+            assert!(q.validate().is_ok(), "valid boundary for {op}");
+            q.max_context_bytes = Some(262145);
+            assert!(q.validate().is_err(), "ordinary bound for {op}");
+        }
+        for bytes in [0, WorkstreamQuery::MAX_ARTIFACT_BYTES + 1] {
+            let q: WorkstreamQuery = serde_json::from_value(json!({
+                "protocol_version":1,"op":"artifact.content","work_id":"work",
+                "artifact_id":"artifact","max_context_bytes":bytes}))
+            .unwrap();
+            assert!(q.validate().is_err());
+        }
     }
 
     #[test]
@@ -500,10 +556,21 @@ impl WorkstreamReadStore {
                     .start()
                     .await?;
                 let result = authenticated_read(&tx, tenant, project, bearer, &request).await?;
+                // Explicit large artifact reads reserve worst-case JSON escaping
+                // plus the existing bounded metadata allowance (at most 7 MiB).
+                // Defaults and all other operations keep the original envelope.
+                let response_limit = if request.op == "artifact.content" {
+                    request
+                        .max_context_bytes
+                        .filter(|budget| *budget > 65_536)
+                        .map_or(1_048_576, |budget| 1_048_576 + 6 * budget)
+                } else {
+                    1_048_576
+                };
                 if serde_json::to_vec(&result)
                     .map_err(|_| PgError::SourceDivergence)?
                     .len()
-                    > 1_048_576
+                    > response_limit
                 {
                     return Err(PgError::ResponseTooLarge);
                 }
@@ -751,6 +818,14 @@ pub(crate) async fn read(
             "background_scheduling":false,"repository_effects":false,
             "domain_finalization":false,"read_consistency":"repeatable_read"
         });
+        caps["neutral_delivery"]["review_submission"] = json!({
+            "queries":["delivery.neutral.inspect","review.inspect"],
+            "requires":"configured_delivery_or_selected_candidate",
+            "opening_and_approval":"current_candidate_and_readable_bound_manifest",
+            "evidence_binding":"payload.delivery_candidate_digest",
+            "artifact_read":"submission.artifacts[].query",
+            "peer_paths_allowed":false,"inspectability_is_acceptance":false
+        });
         caps["handoff"] = json!({
             "protocol":"awr-team-handoff-consumption-v1","clock":"database",
             "package_source":"current_recorded_checkpoint_and_scoped_facts",
@@ -970,7 +1045,13 @@ pub(crate) async fn read(
         | "delivery.source.status"
         | "delivery.integration.inspect" => {
             let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-            delivery::read(tx, tenant, project, auth, q, work).await?
+            let value = delivery::read(tx, tenant, project, auth, q, work).await?;
+            if q.max_context_bytes.is_some_and(|budget| {
+                serde_json::to_vec(&value).map_or(true, |bytes| bytes.len() > budget)
+            }) {
+                return Err(PgError::ResponseTooLarge);
+            }
+            value
         }
         "work.observe" => {
             let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
@@ -1048,11 +1129,19 @@ pub(crate) async fn read(
             let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
             let _ = work_binding(tx, tenant, project, auth, work).await?;
             let round_id = q.review_round_id.as_deref().ok_or(PgError::Forbidden)?;
-            let value =
-                crate::workstream_command::reviews::inspect_review(tx, tenant, project, round_id)
-                    .await?;
+            let value = crate::workstream_command::reviews::inspect_review(
+                tx, tenant, project, auth, work, round_id,
+            )
+            .await?;
             if value["review"]["work_id"] != work {
                 return Err(PgError::Forbidden);
+            }
+            if serde_json::to_vec(&value)
+                .map_err(|_| PgError::SourceDivergence)?
+                .len()
+                > q.max_context_bytes.unwrap_or(65_536)
+            {
+                return Err(PgError::ResponseTooLarge);
             }
             value
         }

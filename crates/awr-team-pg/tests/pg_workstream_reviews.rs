@@ -4,6 +4,8 @@ mod common;
 mod evidence_input_tests;
 #[path = "fixtures/workstream_access.rs"]
 mod fixture;
+#[path = "cases/review_submission.rs"]
+mod review_submission_tests;
 
 use awr_team::WorkContract;
 use awr_team_pg::{PgError, WorkstreamReadStore, workstream_credential_hash};

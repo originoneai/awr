@@ -128,6 +128,21 @@ pub(super) async fn verify_artifacts(
     selected: &str,
     evidence: AcceptedEvidence<'_>,
 ) -> PgResult<()> {
+    artifact_refs(tx, tenant, project, candidate, selected, evidence)
+        .await
+        .map(|_| ())
+}
+
+/// The same exact-byte checks serve completion and review content discovery.
+/// References grant no read authority; artifact.content authenticates each read.
+pub(crate) async fn artifact_refs(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    candidate: &DeliveryCandidate,
+    selected: &str,
+    evidence: AcceptedEvidence<'_>,
+) -> PgResult<Vec<Value>> {
     DeliveryRecord::Candidate(candidate.clone())
         .validate()
         .map_err(|_| PgError::EvidenceInvalid)?;
@@ -151,12 +166,13 @@ pub(super) async fn verify_artifacts(
     }
     let primary = evidence.artifact_id.ok_or(PgError::EvidenceInvalid)?;
     let binding = &candidate.binding;
+    let mut references = Vec::with_capacity(candidate.manifest.entries.len());
     for entry in &candidate.manifest.entries {
         let pinned = (Some(entry.sha256.as_str()) == evidence.output_digest).then_some(primary);
         let row = tx
             .query_opt(
                 "SELECT a.sha256,a.byte_length,a.state,a.content,e.digest,e.input_digest,
-                    e.output_digest,e.execution_result_digest,e.payload_json
+                     e.output_digest,e.execution_result_digest,e.payload_json,a.id
              FROM awr_team.artifacts a JOIN awr_team.evidence e
                ON e.tenant_id=a.tenant_id AND e.project_id=a.project_id AND e.artifact_id=a.id
              WHERE a.tenant_id=$1 AND a.project_id=$2 AND e.work_id=$3 AND e.contract_hash=$4
@@ -183,6 +199,7 @@ pub(super) async fn verify_artifacts(
         let result: Option<String> = row.get(7);
         let payload: Value = row.get(8);
         if row.get::<_, String>(2) != "finalized"
+            || bytes.len() > crate::WorkstreamQuery::MAX_ARTIFACT_BYTES
             || row.get::<_, String>(0) != entry.sha256
             || crate::source::sha256_hex(&bytes) != entry.sha256
             || row.get::<_, i64>(1) != bytes.len() as i64
@@ -200,6 +217,17 @@ pub(super) async fn verify_artifacts(
         {
             return Err(PgError::EvidenceInvalid);
         }
+        let mut query = serde_json::json!({"protocol_version":1,"op":"artifact.content",
+            "work_id":binding.work_id,"artifact_id":row.get::<_,String>(9),
+            "expected_sha256":entry.sha256});
+        if bytes.len() > 65_536 {
+            query["max_context_bytes"] = serde_json::json!(bytes.len());
+        }
+        references.push(serde_json::json!({
+            "manifest_artifact_id": entry.artifact_id,
+            "query": query,
+            "byte_length":entry.byte_length
+        }));
     }
-    Ok(())
+    Ok(references)
 }

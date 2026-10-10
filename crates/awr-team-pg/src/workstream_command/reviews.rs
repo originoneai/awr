@@ -558,6 +558,16 @@ async fn open(
     if work_id != command.work_id {
         return Err(PgError::EvidenceInvalid);
     }
+    crate::delivery_sync::review_submission::require(
+        tx,
+        tenant,
+        project,
+        auth,
+        &command.work_id,
+        Some(&a.evidence_id),
+        &digest_v,
+    )
+    .await?;
     // Resolve to a person for independence checks. Unbound agents get a
     // person row keyed by actor id so the FK holds; that person is not a
     // substitute for a real human owner when judging team independence.
@@ -815,6 +825,16 @@ async fn decide(
     };
     let approval_basis = crate::review::approval_basis(independence_kind);
     let next = if decision == "approve" {
+        crate::delivery_sync::review_submission::require(
+            tx,
+            tenant,
+            project,
+            auth,
+            &command.work_id,
+            evidence_id.as_deref(),
+            &bundle_hash,
+        )
+        .await?;
         "approved"
     } else {
         "rejected"
@@ -1922,6 +1942,8 @@ pub(crate) async fn inspect_review(
     tx: &Transaction<'_>,
     tenant: &str,
     project: &str,
+    auth: &ReaderAuthority,
+    expected_work: &str,
     round_id: &str,
 ) -> PgResult<Value> {
     let row = tx
@@ -1935,6 +1957,9 @@ pub(crate) async fn inspect_review(
         )
         .await?
         .ok_or_else(|| PgError::Protocol("review round not found".into()))?;
+    if row.get::<_, String>(1) != expected_work {
+        return Err(PgError::Forbidden);
+    }
     let decisions = tx
         .query(
             "SELECT decision, reviewer_actor_id, reviewer_person_id, independence_kind, reason,
@@ -1981,6 +2006,18 @@ pub(crate) async fn inspect_review(
     if let Some(origins) = row.get::<_, Option<Value>>(13) {
         data["review"]["member_origins"] = origins;
     }
+    let work: String = row.get(1);
+    let evidence: Option<String> = row.get(8);
+    data["review"]["submission"] = crate::delivery_sync::review_submission::inspect(
+        tx,
+        tenant,
+        project,
+        auth,
+        &work,
+        evidence.as_deref(),
+        Some(row.get::<_, String>(3).as_str()),
+    )
+    .await?;
     Ok(data)
 }
 
