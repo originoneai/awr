@@ -13,6 +13,8 @@ import subprocess
 import sys
 import time
 
+from process_runner import run_command
+
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = ROOT / 'tests/platform/contract.json'
 PREFIX = ['rtk', 'proxy'] if shutil.which('rtk') else []
@@ -49,6 +51,7 @@ def main():
     evidence = output / 'evidence'
     evidence.mkdir()
     report_path = evidence / 'report.json'
+    cleanup_failed = False
     report = {'contract_id': contract['contract_id'], 'contract_version': contract['version'],
               'contract_sha256': digest(CONTRACT), 'work_item': contract['work_item'],
               'platform_id': args.platform, 'started_at': now(), 'passed': False, 'gates': [],
@@ -59,9 +62,14 @@ def main():
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
     def gate(name, command, validator=None, env=None, requires=()):
+        nonlocal cleanup_failed
         unmet = [key for key in requires if not any(g['id'] == key and g['passed'] for g in report['gates'])]
+        if cleanup_failed:
+            unmet.append('process_cleanup')
+        budget = selected.get('gate_timeout_seconds', {}).get(name, contract['command_timeout_seconds'])
         row = {'id': name, 'command': PREFIX + list(map(str, command)), 'passed': False,
-               'started_at': now(), 'not_run': bool(unmet)}
+               'started_at': now(), 'not_run': bool(unmet), 'timeout_seconds': budget,
+               'cleanup_timeout_seconds': contract['cleanup_timeout_seconds']}
         report['gates'].append(row)
         save()
         if unmet:
@@ -74,17 +82,18 @@ def main():
         process_env = dict(os.environ, PYTHONUTF8='1', CARGO_TERM_COLOR='never')
         process_env.update(env or {})
         try:
-            with log.open('wb') as stream:
-                result = subprocess.run(row['command'], cwd=ROOT, stdout=stream, stderr=subprocess.STDOUT,
-                                        env=process_env, timeout=1800)
-            row['exit_code'] = result.returncode
-            row['passed'] = result.returncode == 0
+            row.update(run_command(row['command'], cwd=ROOT, log=log, env=process_env,
+                                   timeout_seconds=budget, cleanup_seconds=contract['cleanup_timeout_seconds']))
+            cleanup_failed = not row['cleanup_complete']
             if row['passed'] and validator:
                 row.update(validator(log.read_text(encoding='utf-8', errors='replace')) or {})
         except Exception as error:
             row.update(passed=False, error=str(error))
+            cleanup_failed = not row.get('cleanup_complete', False)
         row.update(finished_at=now(), duration_seconds=round(time.monotonic() - started, 3),
-                   log=str(log.relative_to(ROOT)), log_sha256=digest(log))
+                   log=str(log.relative_to(ROOT)))
+        if row.get('log_finalized') and log.is_file():
+            row['log_sha256'] = digest(log)
         save()
 
     save()
@@ -123,6 +132,7 @@ def main():
     target = Path(metadata['target_directory']) / 'debug'
     extension = '.exe' if platform.system() == 'Windows' else ''
     awr, mcp = target / ('awr' + extension), target / ('awr-mcp' + extension)
+    gate('runner_tests', [sys.executable, 'tests/platform/test_process_runner.py'])
     gate('build', ['cargo', 'build', '--workspace', '--all-targets', '--locked'])
     if all(path.is_file() for path in [awr, mcp]):
         report['binary_sha256'] = {'awr': digest(awr), 'awr-mcp': digest(mcp)}
