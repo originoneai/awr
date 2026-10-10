@@ -78,6 +78,32 @@ The observer performs no squash, rebase, merge, push or reference mutation.
 Capabilities advertise observation and polling, with integration requests,
 change requests and notifications disabled. These flags never grant permission.
 
+## Submission input discovery
+
+Before selecting a candidate, query `delivery.neutral.inspect` for the exact work
+and follow `submission.describe_query` to `delivery.submission.describe`. Both
+reads use the member's current project/workstream/delegation permissions. The
+description supplies current `binding_values`, the complete closed candidate and
+manifest input schema, command header/claim origins and the manifest hash codec.
+Its stored selection digest is a compare-and-set input, including when that
+selection is stale; it is never substituted for the current contract.
+
+Use the repository's existing authorized shared remote to publish a development
+branch. Measure the immutable commit's file bytes and use
+`git-blob:relative/path` locators. The project agreement supplies the integration
+target reference; observe its actual exact revision or confirmed absence through
+the authorized remote. Do not push directly to that target or treat a query error
+as absence. If the publication channel or target is missing, record that prerequisite
+for the supervisor instead of reading server configuration or peer workspaces.
+
+After selection, bind every persisted artifact's evidence to
+`receipt.data.candidate_digest` with `payload.delivery_candidate_digest`. Submit
+the exact bytes through `artifact_text` or `artifact_hex`; logical manifest IDs
+are distinct from the server-assigned stored artifact IDs. Reinspect readiness
+before requesting review. This read-only description does not publish code,
+grant a lease, run tests, approve work, integrate a repository or confirm source
+writeback. GitHub and webhook configuration are unnecessary for this flow.
+
 ## Optional Team server worker
 
 ### Source-first delivery without a pull request

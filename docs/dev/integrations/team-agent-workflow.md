@@ -154,7 +154,14 @@ For `review.inspect`, use the actual `review_round_id`; `evidence.inspect` requi
 the actual `evidence_id`. These are record selectors, not event or checkpoint IDs.
 
 For tasks with configured neutral delivery, follow `delivery.neutral.inspect`
-before requesting review. Publish actual code/tests/report through the authorized
+before requesting review. Its `submission.describe_query` selects the authenticated,
+work-scoped `delivery.submission.describe` read. Fetch that detailed contract when
+constructing a submission: it provides the strict candidate/manifest argument shape,
+current binding values, hash codec and exact claim/header origins. Material revisions,
+target preconditions and artifact bytes must still be observed, not guessed. The
+full schema is absent from ordinary task responses and the eager tool catalog.
+
+Publish actual code/tests/report through the authorized
 project channel, select the exact candidate, and persist every manifest entry as
 evidence with its `payload.delivery_candidate_digest`. Report-only submissions
 return `ReviewSubmissionIncomplete`. The review's `submission.artifacts[].query`
@@ -162,6 +169,13 @@ provides exact `artifact.content` selectors for the original version; use them
 instead of discovering peer files. Readability grants no approval or repository
 authority. Approval rechecks the current binding, and changed submissions need
 fresh evidence and review. See [neutral submission details](pr-delivery-review.md#neutral-delivery-before-business-review).
+
+Use this project's disclosed shared channel and target. If either is unavailable,
+report the missing configuration to the supervisor; do not discover it by reading
+server worker files, peer workspaces or AWR implementation. GitHub is optional.
+The [Local Git flow](local-git-delivery.md#submission-input-discovery) uses the
+existing project remote, immutable commits and `git-blob:` locators. Description
+reads grant no session, claim, execution, repository, review or acceptance authority.
 
 When a supported input mismatch is rejected, HTTP and MCP return a bounded
 `invalid_field` JSON pointer and `constraint`. Unknown names and submitted values

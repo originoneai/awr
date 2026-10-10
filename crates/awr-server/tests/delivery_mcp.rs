@@ -198,6 +198,7 @@ async fn neutral_sdk_http_parity_reconnect_and_discovery_preserve_domain_receipt
     assert!(!fields.as_object().unwrap().contains_key("read_set"));
     for op in [
         "delivery.neutral.inspect",
+        "delivery.submission.describe",
         "delivery.neutral.outcome",
         "delivery.source.status",
     ] {
@@ -356,6 +357,158 @@ async fn neutral_sdk_http_parity_reconnect_and_discovery_preserve_domain_receipt
     assert_eq!(row.get::<_, i64>(1), 1);
     assert_eq!(row.get::<_, i64>(2), 1);
     resumed.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn lazy_submission_contract_has_http_mcp_parity_and_preserves_command_authority() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, A).await;
+    let input = read("delivery.submission.describe", None);
+    let (status, http_contract) = request(&server, "one", A, "query", &input).await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    let mcp_contract = call(&client, "awr_team_query", input.clone(), false).await;
+    assert_eq!(http_contract["data"], mcp_contract["data"]);
+    assert_eq!(mcp_contract["data"]["read_only"], true);
+    assert_eq!(mcp_contract["data"]["stored_selection"], Value::Null);
+    assert_eq!(mcp_contract["data"]["execution_authorized"], false);
+    assert_eq!(mcp_contract["data"]["acceptance_ready"], false);
+    assert!(serde_json::to_vec(&mcp_contract).unwrap().len() < 16384);
+    let tools = client.list_all_tools().await.unwrap();
+    let tool = tools
+        .iter()
+        .find(|tool| tool.name == "awr_team_query")
+        .unwrap();
+    assert!(
+        tool.input_schema["properties"]["op"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("delivery.submission.describe"))
+    );
+    assert!(
+        tool.input_schema["allOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|rule| rule["if"]["properties"]["op"]["enum"]
+                .as_array()
+                .is_some_and(|ops| ops.contains(&json!("delivery.submission.describe")))
+                && rule["then"]["required"] == json!(["work_id"]))
+    );
+    let ordinary = call(
+        &client,
+        "awr_team_query",
+        read("delivery.neutral.inspect", None),
+        false,
+    )
+    .await;
+    assert_eq!(ordinary["data"]["submission"]["describe_query"], input);
+    assert!(ordinary["data"]["submission"].get("args_schema").is_none());
+    let p = call(&client, "awr_team_query", read("work.prepare", None), false).await;
+    let claim = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &p,
+            "describe-claim",
+            "task.claim_available",
+            json!({"session_id":"session-a",
+            "expected_session_version":"1","expected_work_version":"0",
+            "expected_responsibility_version":p["data"]["responsibility"]["version"],
+            "ttl_seconds":3600}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await["receipt"]["data"]
+        .clone();
+    let p = call(&client, "awr_team_query", read("work.prepare", None), false).await;
+    let mut selected = serde_json::to_value(candidate(&p)).unwrap();
+    let mut binding = mcp_contract["data"]["binding_values"]
+        .as_object()
+        .unwrap()
+        .clone();
+    for key in [
+        "candidate_id",
+        "candidate_version",
+        "manifest_digest",
+        "source_revision",
+        "target",
+    ] {
+        binding.insert(key.into(), selected["binding"][key].clone());
+    }
+    selected["binding"] = Value::Object(binding);
+    let selection_args = json!({
+        "session_id":"session-a","claim_id":claim["claim_id"],"fence":claim["fence"],
+        "lease_version":claim["lease_version"],"expected_selected_digest":null,
+        "candidate":selected});
+    let selected = call(
+        &client,
+        "awr_team_command",
+        neutral(
+            &p,
+            "describe-select",
+            mcp_contract["data"]["command"]["op"].as_str().unwrap(),
+            selection_args.clone(),
+        ),
+        false,
+    )
+    .await;
+    let state = call(&client, "awr_team_query", input.clone(), false).await;
+    assert_eq!(
+        state["data"]["stored_selection"]["binding_digest"],
+        selected["receipt"]["data"]["candidate_digest"]
+    );
+    assert_eq!(state["data"]["stored_selection"]["current"], true);
+    let other = connect(&server, B).await;
+    let denied = call(&other, "awr_team_query", input.clone(), true).await;
+    assert_eq!(
+        denied,
+        json!({"code":"Forbidden","message":"access denied"})
+    );
+    assert_eq!(
+        request(&server, "other", A, "query", &input).await.0,
+        reqwest::StatusCode::FORBIDDEN
+    );
+    let mut bounded = input.clone();
+    bounded["max_context_bytes"] = json!(64);
+    let (status, error) = request(&server, "one", A, "query", &bounded).await;
+    assert_eq!(status, reqwest::StatusCode::CONFLICT);
+    assert_eq!(error, call(&client, "awr_team_query", bounded, true).await);
+    // Read permission remains sufficient to describe, and insufficient to select.
+    admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_grants SET can_write=false WHERE client_id='cli-a'",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        call(&client, "awr_team_query", input, false).await["data"]["read_only"],
+        true
+    );
+    let p = call(&client, "awr_team_query", read("work.prepare", None), false).await;
+    let mut denied_args = selection_args;
+    denied_args["expected_selected_digest"] =
+        selected["receipt"]["data"]["candidate_digest"].clone();
+    let denied = call(
+        &client,
+        "awr_team_command",
+        neutral(
+            &p,
+            "readonly-select",
+            "delivery.candidate.select",
+            denied_args,
+        ),
+        true,
+    )
+    .await;
+    assert_eq!(
+        denied,
+        json!({"code":"Forbidden","message":"access denied"})
+    );
+    other.cancel().await.unwrap();
+    client.cancel().await.unwrap();
 }
 
 #[tokio::test]
