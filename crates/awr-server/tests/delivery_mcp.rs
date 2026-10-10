@@ -208,10 +208,18 @@ async fn neutral_sdk_http_parity_reconnect_and_discovery_preserve_domain_receipt
                 .contains(&json!(op))
         );
     }
-    assert_eq!(
-        query_tool.input_schema["allOf"][1]["then"]["required"],
-        json!(["request_id"])
-    );
+    let query_rules = query_tool.input_schema["allOf"].as_array().unwrap();
+    for op in ["delivery.neutral.outcome", "delivery.integration.inspect"] {
+        assert!(
+            query_rules.iter().any(|rule| {
+                rule["if"]["properties"]["op"]["enum"]
+                    .as_array()
+                    .is_some_and(|ops| ops.contains(&json!(op)))
+                    && rule["then"]["required"] == json!(["request_id"])
+            }),
+            "{op} must require request_id"
+        );
+    }
     let caps = call(
         &client,
         "awr_team_query",
