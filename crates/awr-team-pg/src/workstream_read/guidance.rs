@@ -227,6 +227,11 @@ pub(super) fn select(data: &Value, context_complete: bool, owns_session: bool) -
     } else if !claim.is_null()
         && claim["lease_live"] != true
         && (claim["state"] == "active" || claim["state"] == "expired")
+        && !(execution_resolved
+            && execution["effects_settled"] == true
+            && execution["recovery_blocked"] != true
+            && execution["previous_epoch_review_required"] != true
+            && claim["epoch_matches_current"] == true)
     {
         (
             "inspect_expired_claim",
@@ -351,6 +356,42 @@ mod tests {
         data["execution"]["state"] = json!("running");
         data["execution"]["lease_live"] = json!(false);
         assert_eq!(select(&data, true, true)["code"], "inspect_expired_claim");
+    }
+
+    #[test]
+    fn elapsed_claim_after_explicit_settlement_keeps_current_work_actions() {
+        for outcome in ["succeeded", "failed", "cancelled"] {
+            for claim_state in ["active", "expired"] {
+                let mut data = active();
+                data["claim"] = json!({"state":claim_state,"lease_live":false,
+                    "epoch_matches_current":true});
+                data["execution"] = json!({"state":outcome,"effects_settled":true,
+                    "recovery_blocked":false,"previous_epoch_review_required":false});
+                let hint = select(&data, true, true);
+                assert_eq!(hint["code"], "report_at_boundary");
+                assert!(hint.to_string().len() < 900);
+                assert_eq!(select(&data, true, false)["code"], "other_client_session");
+                assert_eq!(select(&data, false, true)["code"], "restore_context");
+                let review = json!({"code":"review","action":{"op":"review.inspect"}});
+                assert_eq!(
+                    with_collaboration(&data, true, true, Some(review))["code"],
+                    "review"
+                );
+                data["waiting_user"] = json!(true);
+                assert_eq!(select(&data, true, true)["code"], "wait_for_change");
+                data["waiting_user"] = json!(false);
+                data["execution"]["effects_settled"] = Value::Null;
+                assert_eq!(select(&data, true, true)["code"], "inspect_expired_claim");
+                data["execution"]["effects_settled"] = json!(true);
+                data["claim"]["epoch_matches_current"] = json!(false);
+                assert_eq!(select(&data, true, true)["code"], "inspect_expired_claim");
+                data["claim"]["epoch_matches_current"] = json!(true);
+                data["execution"]["previous_epoch_review_required"] = json!(true);
+                assert_eq!(select(&data, true, true)["code"], "inspect_expired_claim");
+                data["runtime"]["recovery_blocked"] = json!(true);
+                assert_eq!(select(&data, true, true)["code"], "inspect_recovery");
+            }
+        }
     }
 
     #[test]

@@ -2,6 +2,7 @@
 mod common;
 #[path = "fixtures/workstream_access.rs"]
 mod fixture;
+use awr_team::{ExecutionSettlementPolicy, WorkContract};
 use awr_team_pg::PgError;
 use fixture::*;
 use serde_json::{Value, json};
@@ -249,6 +250,134 @@ async fn start_owned_run(store: &awr_team_pg::WorkstreamReadStore) -> (Value, Va
         .unwrap();
     assert_eq!(started["execution_authorized"], true);
     (claim, started["receipt"]["data"].clone())
+}
+
+#[tokio::test]
+async fn settled_workspace_expiry_guides_fresh_claim_without_replaying_execution() {
+    for outcome in ["succeeded", "failed", "cancelled"] {
+        let (_g, owner, _, store) = setup().await;
+        enable_writes(&owner).await;
+        let mut contract: WorkContract = serde_json::from_value(
+            owner
+                .query_one(
+                    "SELECT contract_json FROM awr_team.work_contracts WHERE work_id='a'",
+                    &[],
+                )
+                .await
+                .unwrap()
+                .get(0),
+        )
+        .unwrap();
+        contract.codec = WorkContract::CODEC_V3.into();
+        contract.completion_policy = ExecutionSettlementPolicy::COMPLETION_POLICY.into();
+        contract.verification_requirements = vec!["test".into()];
+        contract.execution_settlement = Some(
+            serde_json::from_value(json!({
+                "mode":"independent_workspace_v2","workspace_id":"fixture-workspace"
+            }))
+            .unwrap(),
+        );
+        owner.execute("UPDATE awr_team.work_contracts SET contract_json=$1,contract_hash=$2 WHERE work_id='a'",
+            &[&json!(contract), &contract.hash().unwrap()]).await.unwrap();
+        let (claim, run) = start_owned_run(&store).await;
+        let p = prepare(&store, A, "a").await;
+        store.commands().execute(TENANT, PROJECT, A, command(&p, "settle-workspace", "execution.report",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "execution_id":run["execution_id"],"expected_execution_version":run["execution_version"],
+                "outcome":outcome,"output_digest":"c".repeat(64),"observed_paths":["src/api"],
+                "note":"Stopped the fixture workspace without external effects",
+                "workspace_settlement":{"workspace_id":"fixture-workspace","input_digest":"a".repeat(64),
+                    "environment_digest":"b".repeat(64),"claim_id":claim["claim_id"],
+                    "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
+                    "executor_stopped":true,"no_external_effects":true}}))).await.unwrap();
+        let p = prepare(&store, A, "a").await;
+        store.commands().execute(TENANT, PROJECT, A, command(&p, "declare-fixture-client", "session.checkpoint",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "context_hash":p["data"]["context_hash"],"next_action":"Review the current result","open_loops":[],
+                "client_info":{"product":"Fixture Agent"}}))).await.unwrap();
+        owner
+            .batch_execute(
+                "UPDATE awr_team.claims SET expires_at=clock_timestamp()-interval '1 minute'",
+            )
+            .await
+            .unwrap();
+        let before = execution_state(&owner).await;
+        let p = prepare(&store, A, "a").await;
+        assert_eq!(p["data"]["guidance"]["action"]["op"], "claim.acquire");
+        for op in ["work.observe", "work.recovery", "session.inspect"] {
+            let observed = store
+                .query(TENANT, PROJECT, A, own_query(op))
+                .await
+                .unwrap();
+            assert_eq!(observed["data"]["guidance"], p["data"]["guidance"]);
+            assert_eq!(observed["data"]["automatic_resume"], false);
+        }
+        assert_eq!(
+            execution_state(&owner).await,
+            before,
+            "advice must remain read-only"
+        );
+        let observed = store
+            .query(TENANT, PROJECT, A, own_query("work.observe"))
+            .await
+            .unwrap();
+        assert_eq!(observed["data"]["execution"]["effects_settled"], true);
+        assert_eq!(
+            observed["data"]["collaboration"]["recovery"]["expired_claim"],
+            true
+        );
+        assert_eq!(
+            observed["data"]["collaboration"]["recovery"]["claim_binding_changed"],
+            false
+        );
+        assert_eq!(observed["data"]["execution_authorized"], false);
+        let renewed = store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                command(
+                    &p,
+                    "cannot-renew-elapsed",
+                    "claim.renew",
+                    json!({"session_id":"session-a","expected_session_version":"2",
+                "claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+                "expected_lease_version":claim["lease_version"],"ttl_seconds":3600}),
+                ),
+            )
+            .await;
+        assert!(matches!(renewed, Err(PgError::LeaseExpired)));
+        let p = prepare(&store, A, "a").await;
+        let fresh = store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                command(
+                    &p,
+                    "fresh-after-settlement",
+                    "claim.acquire",
+                    json!({"session_id":"session-a","expected_session_version":"2",
+                "expected_work_version":p["data"]["runtime"]["work_version"],"ttl_seconds":3600}),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_ne!(fresh["receipt"]["data"]["claim_id"], claim["claim_id"]);
+        assert_eq!(fresh["receipt"]["data"]["fence"], "2");
+        let observed = store
+            .query(TENANT, PROJECT, A, own_query("work.observe"))
+            .await
+            .unwrap();
+        assert_eq!(
+            observed["data"]["execution"]["execution_id"],
+            run["execution_id"]
+        );
+        assert_eq!(observed["data"]["execution"]["state"], outcome);
+        assert_eq!(observed["data"]["execution_authorized"], false);
+    }
 }
 
 async fn execution_state(owner: &tokio_postgres::Client) -> Value {

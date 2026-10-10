@@ -491,7 +491,7 @@ async fn role_separation_current_review_and_rework_never_become_inferred_approva
 }
 
 #[tokio::test]
-async fn expired_leases_unknown_resources_and_old_executions_prevent_fresh_intake() {
+async fn elapsed_claims_are_observations_but_unknown_effects_still_require_recovery() {
     let (_g, admin, _, store) = setup().await;
     supervisor(&admin).await;
     claim(&store, false).await;
@@ -501,10 +501,49 @@ async fn expired_leases_unknown_resources_and_old_executions_prevent_fresh_intak
         )
         .await
         .unwrap();
+    assert!(item(&inbox(&store, A).await, "a").is_null());
+    round(&admin, "elapsed-review", 1, "open").await;
     assert_eq!(
         item(&inbox(&store, A).await, "a")["guidance"]["code"],
-        "recovery"
+        "review"
     );
+    for change in [
+        "coordinator_epoch='previous'",
+        "ownership_version=ownership_version+1",
+        "fence=fence+1",
+    ] {
+        let original: Value = admin
+            .query_one(
+                "SELECT to_jsonb(c) FROM awr_team.claims c WHERE state='active'",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        admin
+            .batch_execute(&format!("UPDATE awr_team.claims SET {change}"))
+            .await
+            .unwrap();
+        assert_eq!(
+            item(&inbox(&store, A).await, "a")["guidance"]["code"],
+            "recovery"
+        );
+        admin
+            .execute(
+                "UPDATE awr_team.claims SET coordinator_epoch=$1,ownership_version=$2,fence=$3",
+                &[
+                    &original["coordinator_epoch"].as_str().unwrap(),
+                    &original["ownership_version"].as_i64().unwrap(),
+                    &original["fence"].as_i64().unwrap(),
+                ],
+            )
+            .await
+            .unwrap();
+    }
+    admin
+        .batch_execute("DELETE FROM awr_team.review_rounds WHERE id='elapsed-review'")
+        .await
+        .unwrap();
     admin.batch_execute("UPDATE awr_team.claims SET state='released';
         INSERT INTO awr_team.resource_reservations(tenant_id,project_id,id,work_id,resource_kind,canonical_key,state)
         VALUES('reader-tenant','reader-project','unresolved-resource','a','named','fixture-effect','unknown')").await.unwrap();

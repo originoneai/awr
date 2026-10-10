@@ -43,6 +43,20 @@ test('execution report, artifact, scoped settlement and recovery remain separate
   }
 });
 
+test('elapsed claim stays separate from settled execution and current intake guidance', () => {
+  for (const state of ['succeeded', 'failed', 'cancelled']) {
+    const guidance = { code: 'task_intake', action: { op: 'claim.acquire', note: 'Acquire a fresh claim' } };
+    const mapped = mapObservation({ runtime: { state: 'claimed', recovery_blocked: false },
+      claim: { state: 'active', lease_live: false }, execution: { state, effects_settled: true, recovery_blocked: false },
+      guidance });
+    assert.equal(mapped.attention, 'lease_expired');
+    assert.equal(mapped.execution.effects_settled, true);
+    assert.equal(mapped.execution.recovery_blocked, false);
+    assert.equal(mapped.next_step, guidance.action.note);
+    assert.equal(mapped.status, 'claimed');
+  }
+});
+
 test('background repository reads return immediately, retain cached observation time and bound concurrency', async () => {
   let release, clock = 1000, calls = 0, active = 0, maximum = 0;
   let gate = new Promise(resolve => { release = resolve; });
