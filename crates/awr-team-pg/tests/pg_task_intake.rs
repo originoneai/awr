@@ -560,7 +560,25 @@ mod assignee_directory {
         let hint = &p["data"]["guidance"];
         assert_eq!(hint["action"]["op"], "task.assignees");
         assert_eq!(hint["action"]["query"]["work_id"], "a");
+        let note = hint["action"]["note"].as_str().unwrap();
+        for entry in [
+            "awr_team_command/task.assign",
+            "assignee_person_id",
+            "expected_responsibility_version",
+            "responsibility.version",
+        ] {
+            assert!(note.contains(entry));
+        }
         assert!(hint.to_string().len() < 900);
+        for op in ["work.snapshot", "work.observe"] {
+            let mut q = query(op);
+            q.work_id = Some("a".into());
+            let result = read(&store, q).await;
+            assert_eq!(result["data"]["guidance"], *hint);
+            if op == "work.snapshot" {
+                assert_eq!(result["data"]["context_hash"], p["data"]["context_hash"]);
+            }
+        }
         admin.batch_execute("INSERT INTO awr_team.work_runtime(tenant_id,project_id,scope_id,work_id,state,recovery_blocked)
             VALUES('reader-tenant','reader-project','main','a','in_progress',true)").await.unwrap();
         assert_eq!(

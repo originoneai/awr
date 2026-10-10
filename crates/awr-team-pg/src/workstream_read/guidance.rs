@@ -54,7 +54,7 @@ pub(super) fn authorized(
     {
         hint["action"] = json!({"op":"task.assignees",
             "query":{"protocol_version":1,"op":"task.assignees","work_id":work,"workstream_id":stream},
-            "note":"Find an eligible member, then refresh work.prepare before assigning; leave work available for self-claim when appropriate."});
+            "note":"Find an eligible member, refresh work.prepare, then use awr_team_command/task.assign with assignee_person_id and expected_responsibility_version from responsibility.version. Existing-work assignment needs no planning draft. Leave unassigned work available for self-claim."});
     }
     let action = match hint["action"]["op"].as_str() {
         Some("session.start" | "session.checkpoint") => Some(Action::SessionMaintainOwn),

@@ -71,11 +71,16 @@ arguments. Each query/command rechecks the caller's current permissions.
 | --- | --- | --- |
 | Starting or reconnecting | Query `capabilities` to confirm identity and permissions, then `work.next` to resume your own sessions or discover visible unfinished work. Follow the returned `next_query`. On older servers without `work.next`, use `workstreams.list` and scoped `work.list` / `work.search`. | Progress, resolved waits, claim conflicts, identity, project, scope or ownership changes. |
 | Preparing a selected task | Consume `work.prepare`: current contract, required specifications, dependencies, recovery state and context hash. Resume only an active session owned by the current actor and client; otherwise use `session.start` when appropriate. | Contract, dependency or source changes; incomplete context. |
-| Claiming execution work | Inspect existing claims with `claim.inspect`. Acquire or renew a live claim under the session using fresh preconditions. Another person's live claim must not be replaced. | Conflict, stale version, lease expiry or revocation. |
+| Assigning existing work | A supervisor queries `task.assignees`, refreshes `work.prepare`, then uses `awr_team_command` with `op="task.assign"`, an eligible `assignee_person_id` and the current `expected_responsibility_version`. Leave unassigned work available for self-claim when appropriate. | Eligibility, responsibility, contract or permission changes. |
+| Taking assigned or available work | After starting or resuming an owned session, use `awr_team_command` with `task.accept_assignment` for a current pending assignment, or `task.claim_available` for unassigned eligible work. Both take responsibility and its live coordination lease atomically. Renew with `claim.renew` before expiry. | Conflict, blocker, stale version, lease expiry or revocation. |
 | Beginning effects | Use `execution.prepare` and a fresh `execution.start` response with `execution_authorized=true` for one execution within the declared scope. The Agent's host runs code and tools locally. A claim alone is not execution admission. | Permission, lease, scope or execution state changes. |
 | Reporting progress | Use `session.checkpoint` with consumed context hash, next action, open loops and a short `progress` summary. Batch updates when a phase/test completes, a blocker changes, user input is needed, or delivery is ready. Declare known `client_info` at session start or the next checkpoint. | Material work changes; client/model/capability changes. |
 | Finishing execution or stopping | Use `execution.report` only for a terminal outcome, then follow inspection/reconciliation. Attach version-bound evidence. Release claims and end sessions after active work and unknown outcomes are settled. | Interruption, handoff, unknown effects or changed context. |
 | Delivering | Submit evidence and request review through `delivery.submit_and_request_review` or `review.open`. An authorized independent person reviews; authorized finalization follows acceptance policy. | PR head, contract or artifact changes; returned review. |
+
+Assigning or claiming existing work keeps its published requirements unchanged.
+Use a planning draft when the goal, scope, acceptance criteria or dependencies
+need to change; discover that tool's schema before editing a candidate.
 
 `work.prepare`, `work.snapshot` and `work.observe` share the inbox's current
 repository-neutral candidate, check, review, integration and source-publication
