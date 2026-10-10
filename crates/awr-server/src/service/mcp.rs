@@ -57,6 +57,61 @@ fn add_evidence_input_schema(command: &mut Value, query: &mut Value) {
     }
 }
 
+fn add_review_input_schema(command: &mut Value) {
+    let identity = json!({"type":"string","minLength":1,"maxLength":128,
+        "description":"Opaque identity; at most 128 UTF-8 bytes, without control characters."});
+    let text = json!({"type":"string","minLength":1,"maxLength":4096,
+        "description":"Nonblank text; at most 4096 UTF-8 bytes."});
+    let fields = json!({
+        "session_id":identity,"expected_session_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
+        "evidence_id":identity,"round_id":identity,"note":text,"reason":text,
+        "decision":{"type":"string","enum":["approve","reject"]},
+        "context_complete":{"type":"boolean"},"requested_policy":{"type":["string","null"]}
+    });
+    for (op, extra, optional) in [
+        ("review.open", vec!["evidence_id"], vec![]),
+        (
+            "delivery.submit_and_request_review",
+            vec!["evidence_id"],
+            vec![],
+        ),
+        ("review.accept", vec!["round_id", "reason"], vec![]),
+        ("review.return", vec!["round_id", "reason"], vec![]),
+        (
+            "review.decide",
+            vec!["round_id", "decision", "reason"],
+            vec![],
+        ),
+        ("work.rework", vec!["round_id", "note"], vec![]),
+        (
+            "work.complete",
+            vec!["evidence_id", "context_complete"],
+            vec!["requested_policy"],
+        ),
+        (
+            "delivery.finalize",
+            vec!["evidence_id", "context_complete"],
+            vec!["requested_policy"],
+        ),
+    ] {
+        let required: Vec<_> = ["session_id", "expected_session_version"]
+            .into_iter()
+            .chain(extra)
+            .collect();
+        let properties: serde_json::Map<String, Value> = required
+            .iter()
+            .copied()
+            .chain(optional)
+            .map(|name| (name.to_owned(), fields[name].clone()))
+            .collect();
+        command["allOf"].as_array_mut().unwrap().push(json!({
+            "if":{"properties":{"op":{"const":op}},"required":["op"]},
+            "then":{"properties":{"args":{"type":"object","additionalProperties":false,
+                "required":required,"properties":properties}}}
+        }));
+    }
+}
+
 #[derive(Clone)]
 struct Endpoint {
     state: Arc<StateData>,
@@ -521,6 +576,7 @@ fn catalog() -> Vec<Tool> {
     add_handoff_input_schema(&mut command);
     add_neutral_delivery_schema(&mut command);
     add_evidence_input_schema(&mut command, &mut query);
+    add_review_input_schema(&mut command);
     command["properties"]["args"]["properties"]["assignee_person_id"] = json!({"type":"string","minLength":1,"maxLength":128,
         "description":"task.assign: active eligible project member. This is a target, never the acting identity."});
     command["properties"]["args"]["properties"]["expected_responsibility_version"] = json!({"type":"string","pattern":"^(0|[1-9][0-9]*)$",
@@ -1521,6 +1577,135 @@ mod tests {
             assert!(bytes.len() < 700, "guidance must stay bounded: {code}");
             assert!(!body.to_string().contains("outcome unavailable"));
 
+            let mcp = CallToolResult::structured_error(body.clone());
+            assert_eq!(mcp.is_error, Some(true));
+            assert_eq!(mcp.structured_content, Some(body));
+        }
+    }
+
+    #[test]
+    fn review_operations_discover_their_exact_closed_argument_shapes() {
+        let tools = catalog();
+        let command = &tools
+            .iter()
+            .find(|tool| tool.name == "awr_team_command")
+            .unwrap()
+            .input_schema;
+        let mut schema_bytes = 0;
+        for (op, extra, optional) in [
+            ("review.open", vec!["evidence_id"], vec![]),
+            (
+                "delivery.submit_and_request_review",
+                vec!["evidence_id"],
+                vec![],
+            ),
+            ("review.accept", vec!["round_id", "reason"], vec![]),
+            ("review.return", vec!["round_id", "reason"], vec![]),
+            (
+                "review.decide",
+                vec!["round_id", "decision", "reason"],
+                vec![],
+            ),
+            ("work.rework", vec!["round_id", "note"], vec![]),
+            (
+                "work.complete",
+                vec!["evidence_id", "context_complete"],
+                vec!["requested_policy"],
+            ),
+            (
+                "delivery.finalize",
+                vec!["evidence_id", "context_complete"],
+                vec!["requested_policy"],
+            ),
+        ] {
+            let branch = command["allOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|branch| branch["if"]["properties"]["op"]["const"] == op)
+                .unwrap_or_else(|| panic!("Missing operation-specific schema: {op}"));
+            let args = &branch["then"]["properties"]["args"];
+            schema_bytes += branch.to_string().len();
+            assert_eq!(args["additionalProperties"], false, "{op}");
+            let required = std::collections::BTreeSet::from_iter(
+                ["session_id", "expected_session_version"]
+                    .into_iter()
+                    .chain(extra),
+            );
+            let actual = std::collections::BTreeSet::from_iter(
+                args["required"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.as_str().unwrap()),
+            );
+            assert_eq!(actual, required, "{op}");
+            let fields = std::collections::BTreeSet::from_iter(
+                args["properties"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(String::as_str),
+            );
+            assert_eq!(
+                fields,
+                required
+                    .into_iter()
+                    .chain(optional)
+                    .collect::<std::collections::BTreeSet<_>>(),
+                "{op}"
+            );
+            assert_eq!(
+                args["properties"]["expected_session_version"]["pattern"],
+                "^[1-9][0-9]*$"
+            );
+            if op == "work.rework" {
+                assert!(args["properties"].get("reason").is_none());
+                assert_eq!(args["properties"]["note"]["maxLength"], 4096);
+            }
+            if matches!(op, "work.complete" | "delivery.finalize") {
+                assert_eq!(
+                    args["properties"]["requested_policy"]["type"],
+                    json!(["string", "null"])
+                );
+            }
+        }
+        assert!(
+            schema_bytes < 6500,
+            "Operation discovery must remain bounded: {schema_bytes}"
+        );
+    }
+
+    #[tokio::test]
+    async fn review_state_preconditions_are_bounded_transport_errors_not_invalid_input() {
+        for (error, status, code) in [
+            (
+                PgError::ReworkRequiresReturnedReview,
+                StatusCode::CONFLICT,
+                "ReworkRequiresReturnedReview",
+            ),
+            (
+                PgError::ReviewUnavailable,
+                StatusCode::NOT_FOUND,
+                "ReviewUnavailable",
+            ),
+        ] {
+            let response = error_response(error);
+            assert_eq!(response.status(), status);
+            let bytes = axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap();
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["code"], code);
+            assert!(body.get("invalid_field").is_none());
+            for field in ["condition", "basis", "next_action", "recheck"] {
+                assert!(!body["action_guidance"][field].is_null());
+            }
+            assert_eq!(
+                body["action_guidance"]["basis"]["inspect"],
+                "review.inspect"
+            );
+            assert!(bytes.len() < 700);
             let mcp = CallToolResult::structured_error(body.clone());
             assert_eq!(mcp.is_error, Some(true));
             assert_eq!(mcp.structured_content, Some(body));

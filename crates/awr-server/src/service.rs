@@ -1020,6 +1020,32 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
                 "next_step":"Inspect review.inspect for the evidence and delivery head. Obtain the review required by the current contract; changed evidence or a changed head requires a fresh review. Retry completion only after the review is accepted."
             }),
         ),
+        PgError::ReworkRequiresReturnedReview => (
+            StatusCode::CONFLICT,
+            json!({
+                "code":"ReworkRequiresReturnedReview",
+                "message":"work.rework requires a returned review",
+                "action_guidance":{
+                    "condition":"The selected review has not been returned.",
+                    "basis":{"operation":"work.rework","required_review_state":"rejected","inspect":"review.inspect"},
+                    "next_action":"Inspect the current review. Await its authorized independent decision; for changed results, submit new evidence and open a new review.",
+                    "recheck":"After a review decision or evidence/contract change."
+                }
+            }),
+        ),
+        PgError::ReviewUnavailable => (
+            StatusCode::NOT_FOUND,
+            json!({
+                "code":"ReviewUnavailable",
+                "message":"review is unavailable in the selected work",
+                "action_guidance":{
+                    "condition":"The selected review cannot be found.",
+                    "basis":{"operation":"work.rework","inspect":"review.inspect"},
+                    "next_action":"Use round_id from the review.open receipt for this work and inspect it as review_round_id. Refresh work.prepare if the work or session changed.",
+                    "recheck":"After correcting the review selector or refreshing current work/session facts."
+                }
+            }),
+        ),
         PgError::CompletionRejected => (
             StatusCode::CONFLICT,
             json!({

@@ -85,6 +85,10 @@ pub enum PgError {
     EvidenceInvalid,
     #[error("review required")]
     ReviewRequired,
+    #[error("rework requires a returned review")]
+    ReworkRequiresReturnedReview,
+    #[error("review unavailable in selected work")]
+    ReviewUnavailable,
     #[error("author cannot review")]
     AuthorCannotReview,
     #[error("completion rejected")]

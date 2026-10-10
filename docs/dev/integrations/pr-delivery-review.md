@@ -74,10 +74,45 @@ Legacy membership label `reviewer` maps to the reader template and **cannot**
 receive `independent_review`. Grant the developer (or higher) template plus the
 flag via project-admin access apply (`independent_review: true`).
 
-Current Agent delegations do not map to `delivery.finalize`. Even a maintainer
-role or a `Review` delegation does not grant an Agent finalization authority.
-After approval, an authorized human/system maintainer or project administrator
-finalizes the delivery through the same completion gates.
+A `Review` delegation alone does not grant an Agent finalization authority.
+An Agent additionally needs explicit live `finalize_delivery` delegation and a
+supported current completion contract. Otherwise an authorized human/system
+maintainer or project administrator finalizes through the same completion gates.
+
+## Review command discovery and returned work
+
+`awr_team_command` publishes a closed argument schema for each review action.
+Every action below includes `session_id` and the current
+`expected_session_version` as a positive JSON decimal string.
+
+| Operation | Additional required arguments | Optional arguments |
+| --- | --- | --- |
+| `review.open`, `delivery.submit_and_request_review` | `evidence_id` | — |
+| `review.accept`, `review.return` | `round_id`, `reason` | — |
+| `review.decide` | `round_id`, `decision` (`approve` or `reject`), `reason` | — |
+| `work.rework` | `round_id`, `note` | — |
+| `work.complete`, `delivery.finalize` | `evidence_id`, `context_complete` | `requested_policy` (string or null) |
+
+Unknown fields fail. Identity fields permit at most 128 UTF-8 bytes without
+control characters; `note` and `reason` must be nonblank and at most 4096 UTF-8
+bytes. Discovery describes request shape; authorization, artifact verification
+and exact-version review remain server-side gates.
+
+`work.rework` acknowledges a review already returned by an authorized reviewer
+(`state: rejected`). An open, approved or invalidated round returns HTTP 409
+`ReworkRequiresReturnedReview`; an unavailable round returns HTTP 404
+`ReviewUnavailable`. MCP exposes the same structured errors. These are definite
+rejections without business-state changes and carry bounded condition, basis,
+next-action and recheck guidance. They do not reveal submitted values or internal
+parser details. Malformed fields retain separate `InvalidInput` diagnostics.
+
+Inspect `review.inspect` using `review_round_id` from the original `review.open`
+receipt's `round_id`. Await the current authorized independent decision. When
+results change before a return, submit newly verified evidence and open a new
+round. After a return, acknowledge it with `note` and continue through ordinary
+execution and fresh evidence/review. Recheck after the review decision, evidence
+or contract changes. Acknowledgment preserves history and grants no execution,
+approval or finalization authority.
 
 ## Submitting inspectable evidence
 
