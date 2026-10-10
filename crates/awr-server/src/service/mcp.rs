@@ -18,6 +18,7 @@ use rmcp::{
 use tokio::{sync::OwnedSemaphorePermit, time::Instant};
 
 mod input_diagnostics;
+mod planning_schema;
 pub(super) use input_diagnostics::add_input_diagnostic;
 
 fn add_evidence_input_schema(command: &mut Value, query: &mut Value) {
@@ -705,7 +706,7 @@ fn catalog() -> Vec<Tool> {
             "author_person_id":{"type":["string","null"],"maxLength":128}
         }
     });
-    let planning_draft = json!({
+    let mut planning_draft = json!({
         "type":"object","additionalProperties":false,
         "required":["protocol_version","request_id","mode","changes"],
         "properties":{
@@ -713,7 +714,7 @@ fn catalog() -> Vec<Tool> {
             "request_id":{"type":"string","maxLength":128},
             "mode":{"type":"string","enum":["create","edit"]},
             "candidate_id":{"type":["string","null"],"maxLength":128},
-            "changes":{"type":"array","maxItems":256,"description":"DraftChange objects with op, before and after TaskDraft. V5 dependency_acceptance selects simulated_member_independent per required same-stream predecessor, independently of the consumer completion policy; omitted maps retain source values and replacements bind exact prior maps. V4 execution_settlement is {mode: independent_workspace_v1 or independent_workspace_v2, workspace_id: opaque identity}; V2 is an explicit late-terminal-only policy. New simulated-member tasks require settlement, scope_paths and verification_requirements. Optional execution fields omitted on edits retain source values; explicit replacement must include their exact prior values in before."},
+            "changes":{"type":"array","maxItems":256},
             "suggestion_ids":{"type":"array","maxItems":256,"items":{"type":"string"}},
             "allowed_spec_roots":{"type":"array","maxItems":64,"items":{"type":"string"}},
             "project_goal_keys":{"type":"array","maxItems":64,"items":{"type":"string"}},
@@ -721,6 +722,7 @@ fn catalog() -> Vec<Tool> {
             "author_person_id":{"type":["string","null"],"maxLength":128}
         }
     });
+    planning_schema::add(&mut planning_draft);
     let planning_preview = json!({
         "type":"object","additionalProperties":false,
         "required":["protocol_version","candidate_id"],
