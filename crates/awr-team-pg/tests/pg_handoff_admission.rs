@@ -1157,3 +1157,111 @@ async fn missing_cross_stream_adoption_returns_incomplete_context_and_blocks_acc
         Err(PgError::PreconditionsChanged)
     ));
 }
+
+async fn propose_to(
+    store: &WorkstreamReadStore,
+    sender: &str,
+    claim: &Value,
+    now: i64,
+    to: &str,
+) -> Result<Value, PgError> {
+    let p = scoped(store, A, sender).await;
+    let args = json!({"session_id":sender,"expected_session_version":"2","handoff_id":format!("handoff-{to}"),
+        "kind":"execution","to_person_id":to,"proposed_successor":{"kind":"person","person_id":to},
+        "proposer_execution_id":null,"proposer_fence":claim["fence"],"now_ms":now,"expires_at_ms":now+60000});
+    store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            command(&p, &format!("propose-{to}"), "handoff.propose", args),
+        )
+        .await
+        .map(|receipt| receipt["receipt"]["data"].clone())
+}
+
+/// The receiver must be an active person who is a project member, directly or through an active
+/// agent binding. Everything else the proposer could name is refused before a handoff row exists.
+#[tokio::test]
+async fn a_handoff_is_only_proposed_to_an_active_person_with_a_usable_member_identity() {
+    let (_guard, admin, _, store) = setup().await;
+    members(&admin).await;
+    admin.batch_execute(r#"INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status) VALUES
+          ('reader-tenant','dormant','human','Member whose actor is disabled','disabled'),
+          ('reader-tenant','departed','human','Member who left','active'),
+          ('reader-tenant','visitor','human','Active actor without a project membership','active'),
+          ('reader-tenant','retired-agent','agent','Agent whose binding was disabled','active');
+        INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role) VALUES
+          ('reader-tenant','reader-project','dormant','worker'),
+          ('reader-tenant','reader-project','departed','worker'),
+          ('reader-tenant','reader-project','retired-agent','worker');
+        INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status) VALUES
+          ('reader-tenant','reader-project','dormant','Dormant','active'),
+          ('reader-tenant','reader-project','departed','Departed','departed'),
+          ('reader-tenant','reader-project','visitor','Visitor','active'),
+          ('reader-tenant','reader-project','bound','Bound','active');
+        INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status)
+          VALUES('reader-tenant','reader-project','binding-bound','bound','retired-agent','disabled');"#)
+        .await
+        .unwrap();
+    let sender = start_session(&store, A, "predecessor-conversation").await;
+    let p = scoped(&store, A, &sender).await;
+    let claim = store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            command(
+                &p,
+                "take",
+                "task.claim_available",
+                json!({"session_id":sender,"expected_session_version":"1",
+            "expected_responsibility_version":p["data"]["responsibility"]["version"],
+            "expected_work_version":p["data"]["runtime"]["work_version"].as_str().unwrap_or("0"),
+            "ttl_seconds":600}),
+            ),
+        )
+        .await
+        .unwrap()["receipt"]["data"]
+        .clone();
+    let p = scoped(&store, A, &sender).await;
+    store
+        .commands()
+        .execute(TENANT, PROJECT, A, command(&p, "save-checkpoint", "session.checkpoint",
+            json!({"session_id":sender,"expected_session_version":"1","context_hash":p["data"]["context_hash"],
+                "next_action":"Review the unfinished API implementation","open_loops":["Independent review pending"]})))
+        .await
+        .unwrap();
+    let now: i64 = admin
+        .query_one(
+            "SELECT (extract(epoch FROM clock_timestamp())*1000)::bigint",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    for to in ["ghost", "departed", "dormant", "visitor", "bound"] {
+        let error = propose_to(&store, &sender, &claim, now, to)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, PgError::Forbidden),
+            "{to} must not receive a handoff: {error:?}"
+        );
+        let rows: i64 = admin
+            .query_one(
+                "SELECT count(*) FROM awr_team.team_handoffs WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+                &[&TENANT, &PROJECT, &format!("handoff-{to}")],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(rows, 0, "a refused proposal to {to} leaves no handoff row");
+    }
+    let handoff = propose_to(&store, &sender, &claim, now, "receiver")
+        .await
+        .unwrap();
+    assert_eq!(handoff["handoff_id"], "handoff-receiver");
+}
