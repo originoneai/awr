@@ -88,6 +88,23 @@ mod workspace_settlement_tests {
             let observed = inspect(&store, &e).await;
             let hint = &started["terminal_reporting"];
             assert_eq!(observed["terminal_reporting"], *hint);
+            let mut q = query("work.observe");
+            q.work_id = Some("a".into());
+            let work = store.query(TENANT, PROJECT, A, q).await.unwrap();
+            assert_eq!(work["data"]["execution"]["terminal_reporting"], *hint);
+            for note in [
+                started["next_action"].as_str().unwrap(),
+                hint["action"]["note"].as_str().unwrap(),
+            ] {
+                assert!(note.contains("Stop and report workspace execution before repository push/publication, external review, merge or deployment"));
+                assert!(note.contains("use separate delivery operations"));
+                assert!(
+                    note.contains(
+                        "Prior or unknown external effects from this run require recovery"
+                    )
+                );
+                assert!(note.contains("never declare no_external_effects=true"));
+            }
             assert!(hint.to_string().len() < 1500);
             for field in ["when", "because", "recheck_on"] {
                 assert!(!hint[field].as_str().unwrap().is_empty());
@@ -787,6 +804,10 @@ mod workspace_settlement_tests {
                 .clone();
             assert!(started["terminal_reporting"].is_null());
             assert!(inspect(&store, &e).await["terminal_reporting"].is_null());
+            let note = started["next_action"].as_str().unwrap();
+            assert!(!note.contains("workspace execution"));
+            assert!(!note.contains("no_external_effects"));
+            assert!(note.contains("A replay or unknown response never authorizes another start"));
             let cmd = declaration(&store, &c, &started, "injected-policy", "succeeded").await;
             let before = snapshot(&admin).await;
             assert!(matches!(
