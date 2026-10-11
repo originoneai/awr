@@ -1,5 +1,5 @@
 use super::*;
-use awr_team::{Action, delivery::DeliveryRecord};
+use awr_team::Action;
 use serde_json::json;
 use tokio_postgres::Transaction;
 
@@ -116,9 +116,15 @@ impl DeliverySyncStore {
         request: SelectDeliveryCandidate,
     ) -> PgResult<Value> {
         bounded(&request)?;
-        DeliveryRecord::Candidate(request.candidate.clone())
+        request
+            .candidate
+            .binding
             .validate()
             .map_err(|_| invalid())?;
+        let manifest_digest = request.candidate.manifest.digest().map_err(|_| invalid())?;
+        if manifest_digest != request.candidate.binding.manifest_digest {
+            return Err(PgError::manifest_digest_mismatch());
+        }
         if let Some(value) = &request.expected_selected_digest {
             digest(value)?;
         }

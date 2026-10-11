@@ -905,6 +905,19 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
                 "next_step":"Inspect your current session with session.inspect or use selector-free work.next resume. Retry with its current session_version as a JSON decimal string in args.expected_session_version."}),
         );
     }
+    if error.is_manifest_digest_mismatch() {
+        return (
+            StatusCode::BAD_REQUEST,
+            json!({"code":"InvalidInput","reason":"manifest_digest_mismatch",
+                "message":"args.candidate.binding.manifest_digest does not match the canonical manifest",
+                "invalid_field":"/args/candidate/binding/manifest_digest","constraint":"digest_mismatch",
+                "next_step":"Use delivery.submission.describe for this work; replace the declared manifest pointer and SHA-256 the complete envelope once using its codec. Refresh work.prepare and claim.inspect before retrying.",
+                "action_guidance":{"when":"a structurally valid candidate has a mismatched manifest digest",
+                    "because":"the digest must bind the complete canonical manifest envelope",
+                    "action":{"op":"delivery.submission.describe"},
+                    "recheck_on":"manifest, contract, selection, claim or authority changes"}}),
+        );
+    }
     if error.is_review_submission_incomplete() {
         return (
             StatusCode::CONFLICT,

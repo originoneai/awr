@@ -216,6 +216,16 @@ impl PgError {
         "review command requires expected_session_version";
     const REVIEW_SUBMISSION_INCOMPLETE: &'static str =
         "neutral review submission is incomplete or no longer current";
+    const MANIFEST_DIGEST_MISMATCH: &'static str =
+        "candidate manifest digest does not match its canonical manifest";
+
+    pub fn manifest_digest_mismatch() -> Self {
+        Self::Protocol(Self::MANIFEST_DIGEST_MISMATCH.into())
+    }
+
+    pub fn is_manifest_digest_mismatch(&self) -> bool {
+        matches!(self, Self::Protocol(message) if message == Self::MANIFEST_DIGEST_MISMATCH)
+    }
 
     pub fn review_submission_incomplete() -> Self {
         Self::Protocol(Self::REVIEW_SUBMISSION_INCOMPLETE.into())

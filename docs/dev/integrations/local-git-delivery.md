@@ -88,6 +88,15 @@ manifest input schema, command header/claim origins and the manifest hash codec.
 Its stored selection digest is a compare-and-set input, including when that
 selection is stale; it is never substituted for the current contract.
 
+Hash the complete `manifest_hash_codec.envelope` after replacing the object at
+its declared `manifest_pointer`. This includes the outer `awr-team-hash-v1`
+request envelope as well as the inner manifest envelope. Use compact sorted
+UTF-8 JSON, retain entry order and emit Unicode directly; do not hash only the
+inner `fields` object or double-wrap it. The
+[generic workflow](team-agent-workflow.md) specifies the same codec for every
+provider. A `manifest_digest_mismatch` rejection names the fixed digest field
+and directs the producer to rediscover and recompute it without echoing content.
+
 Use the repository's existing authorized shared remote to publish a development
 branch. Measure the immutable commit's file bytes and use
 `git-blob:relative/path` locators. The project agreement supplies the integration

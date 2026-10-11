@@ -4,6 +4,8 @@
 mod common;
 #[path = "../../awr-team-pg/tests/fixtures/workstream_access.rs"]
 mod fixture;
+#[path = "../../awr-team-pg/tests/fixtures/manifest_codec.rs"]
+mod manifest_codec;
 
 use awr_server::service::{ProjectBinding, ServiceConfig};
 use awr_team::delivery::*;
@@ -18,6 +20,7 @@ use rmcp::{
     },
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::time::Duration;
 
 type Client = RunningService<RoleClient, ()>;
@@ -424,7 +427,17 @@ async fn lazy_submission_contract_has_http_mcp_parity_and_preserves_command_auth
     .await["receipt"]["data"]
         .clone();
     let p = call(&client, "awr_team_query", read("work.prepare", None), false).await;
-    let mut selected = serde_json::to_value(candidate(&p)).unwrap();
+    let content = "客户支持\n";
+    let manifest = json!({"entries":[
+        {"artifact_id":"empty","sha256":format!("{:x}", Sha256::digest(b"")),
+            "byte_length":"0","locator":"fixture://private-manifest-locator"},
+        {"artifact_id":"结果","sha256":format!("{:x}", Sha256::digest(content.as_bytes())),
+            "byte_length":content.len().to_string(),"locator":"artifact:结果.txt"}]});
+    let manifest_digest = manifest_codec::manifest_digest(&mcp_contract["data"], &manifest);
+    let mut selected = json!({"binding":{
+        "candidate_id":"described-candidate","candidate_version":"1","manifest_digest":manifest_digest,
+        "source_revision":null,"target":{"resource":"fixture://sdk-artifacts","precondition":{"kind":"missing"}}
+    },"manifest":manifest});
     let mut binding = mcp_contract["data"]["binding_values"]
         .as_object()
         .unwrap()
@@ -443,6 +456,64 @@ async fn lazy_submission_contract_has_http_mcp_parity_and_preserves_command_auth
         "session_id":"session-a","claim_id":claim["claim_id"],"fence":claim["fence"],
         "lease_version":claim["lease_version"],"expected_selected_digest":null,
         "candidate":selected});
+    for incorrect in [
+        manifest_codec::digest_json(
+            &json!({"codec":"awr-delivery-manifest-v1","manifest":manifest}),
+        ),
+        "0".repeat(64),
+    ] {
+        let mut rejected = selection_args.clone();
+        rejected["candidate"]["binding"]["manifest_digest"] = json!(incorrect);
+        let input = neutral(&p, "describe-select", "delivery.candidate.select", rejected);
+        let (status, http_error) = request(&server, "one", A, "command", &input).await;
+        let mcp_error = call(&client, "awr_team_command", input, true).await;
+        assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+        assert_eq!(http_error, mcp_error);
+        assert_eq!(mcp_error["reason"], "manifest_digest_mismatch");
+        assert_eq!(
+            mcp_error["invalid_field"],
+            "/args/candidate/binding/manifest_digest"
+        );
+        assert_eq!(mcp_error["constraint"], "digest_mismatch");
+        assert_eq!(
+            mcp_error["action_guidance"]["action"]["op"],
+            "delivery.submission.describe"
+        );
+        assert!(!mcp_error.to_string().contains("private-manifest-locator"));
+        assert!(!mcp_error.to_string().contains("结果"));
+        assert!(serde_json::to_vec(&mcp_error).unwrap().len() < 1024);
+        assert_eq!(
+            admin
+                .query_one(
+                    "SELECT
+            (SELECT count(*) FROM awr_team.delivery_candidates) +
+            (SELECT count(*) FROM awr_team.delivery_selections) +
+            (SELECT count(*) FROM awr_team.delivery_sync_requests)",
+                    &[]
+                )
+                .await
+                .unwrap()
+                .get::<_, i64>(0),
+            0
+        );
+    }
+    let mut malformed = selection_args.clone();
+    malformed["candidate"]["manifest"]["entries"][0]["byte_length"] = json!(0);
+    let malformed_input = neutral(
+        &p,
+        "describe-malformed",
+        "delivery.candidate.select",
+        malformed,
+    );
+    let (status, error) = request(&server, "one", A, "command", &malformed_input).await;
+    assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(
+        error,
+        call(&client, "awr_team_command", malformed_input, true).await
+    );
+    assert_eq!(error["code"], "InvalidInput");
+    assert!(error.get("reason").is_none());
+    // The corrected request reuses the rejected request ID; no failed selection was stored.
     let selected = call(
         &client,
         "awr_team_command",

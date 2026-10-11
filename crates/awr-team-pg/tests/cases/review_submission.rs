@@ -7,6 +7,9 @@ use awr_team_pg::{
 };
 use sha2::{Digest, Sha256};
 
+#[path = "../fixtures/manifest_codec.rs"]
+mod manifest_codec;
+
 const CODE: &str = "export const filter = (records) => records.filter(x => x.open);\n";
 const REPORT: &str = "The filter preserves input records. Two fixture tests passed.\n";
 
@@ -188,6 +191,14 @@ async fn describe(reads: &WorkstreamReadStore, bearer: &str, work: &str) -> PgRe
     reads.query(TENANT, PROJECT, bearer, q).await
 }
 
+async fn delivery_snapshot(admin: &Client) -> Value {
+    admin.query_one("SELECT jsonb_build_object(
+        'candidates',(SELECT jsonb_agg(to_jsonb(c) ORDER BY binding_digest) FROM awr_team.delivery_candidates c),
+        'selections',(SELECT jsonb_agg(to_jsonb(s) ORDER BY work_id) FROM awr_team.delivery_selections s),
+        'requests',(SELECT jsonb_agg(to_jsonb(r) ORDER BY request_id) FROM awr_team.delivery_sync_requests r))", &[])
+        .await.unwrap().get(0)
+}
+
 #[tokio::test]
 async fn discovered_submission_constructs_a_real_candidate_and_bound_readable_review() {
     let (_guard, admin, db, reads) = setup().await;
@@ -212,9 +223,7 @@ async fn discovered_submission_constructs_a_real_candidate_and_bound_readable_re
     let manifest = json!({"entries":[
         {"artifact_id":"source-code","sha256":sha(CODE),"byte_length":CODE.len().to_string(),"locator":"git-blob:src/filter.js"},
         {"artifact_id":"test-report","sha256":sha(REPORT),"byte_length":REPORT.len().to_string(),"locator":"git-blob:reports/result.txt"}]});
-    let codec = &description["manifest_hash_codec"]["envelope"]["codec"];
-    let manifest_digest =
-        awr_team::request_hash(&json!({"codec":codec,"manifest":manifest})).unwrap();
+    let manifest_digest = manifest_codec::manifest_digest(&description, &manifest);
     let mut binding = description["binding_values"].clone();
     binding.as_object_mut().unwrap().extend(json!({
         "candidate_id":"described-submission","candidate_version":"1","manifest_digest":manifest_digest,
@@ -230,6 +239,37 @@ async fn discovered_submission_constructs_a_real_candidate_and_bound_readable_re
     let mut args = json!({"source_snapshot_id":p["source_snapshot_id"],
         "session_id":"session-a","claim_id":claim["claim_id"],"fence":claim["fence"],
         "lease_version":claim["lease_version"],"expected_selected_digest":null,"candidate":candidate});
+    let before = rework_business_snapshot(&admin).await;
+    let delivery_before = delivery_snapshot(&admin).await;
+    for incorrect in [
+        // Reproduce the previously advertised preimage, without its outer envelope.
+        manifest_codec::digest_json(
+            &json!({"codec":"awr-delivery-manifest-v1","manifest":candidate.manifest}),
+        ),
+        "0".repeat(64),
+    ] {
+        let mut rejected = args.clone();
+        rejected["candidate"]["binding"]["manifest_digest"] = json!(incorrect);
+        let error = reads
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                command(
+                    &p,
+                    "select-described",
+                    "delivery.candidate.select",
+                    rejected,
+                ),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.is_manifest_digest_mismatch(), "{error:?}");
+        assert_eq!(rework_business_snapshot(&admin).await, before);
+        assert_eq!(delivery_snapshot(&admin).await, delivery_before);
+    }
+    // A definite rejected input recorded no request; its corrected request can succeed.
     let selected = reads
         .commands()
         .execute(
@@ -283,6 +323,54 @@ async fn discovered_submission_constructs_a_real_candidate_and_bound_readable_re
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn discovered_manifest_codec_preserves_utf8_empty_artifacts_and_array_order() {
+    let (_guard, admin, _, reads) = setup().await;
+    seed_review_actors(&admin).await;
+    let description = describe(&reads, A, "a").await.unwrap()["data"].clone();
+    let manifest = json!({"entries":[
+        {"artifact_id":"empty","sha256":sha(""),"byte_length":"0","locator":"git-blob:empty.txt"},
+        {"artifact_id":"结果","sha256":sha("客户 \"雪\"\\\n"),
+            "byte_length":"客户 \"雪\"\\\n".len().to_string(),"locator":"artifact:结果-\"雪\"\\.txt"}]});
+    let digest = manifest_codec::manifest_digest(&description, &manifest);
+    let domain: ArtifactManifest = serde_json::from_value(manifest.clone()).unwrap();
+    assert_eq!(domain.digest().unwrap(), digest);
+    // Start from a different raw JSON key order, including nested entry objects.
+    let mut reordered = manifest.clone();
+    for entry in reordered["entries"].as_array_mut().unwrap() {
+        let fields = entry.as_object().unwrap();
+        let reversed = fields
+            .iter()
+            .rev()
+            .map(|(key, value)| format!("{}:{}", serde_json::to_string(key).unwrap(), value))
+            .collect::<Vec<_>>()
+            .join(",");
+        *entry = serde_json::from_str(&format!("{{{reversed}}}")).unwrap();
+    }
+    assert_eq!(
+        manifest_codec::manifest_digest(&description, &reordered),
+        digest
+    );
+    reordered["entries"].as_array_mut().unwrap().reverse();
+    assert_ne!(
+        manifest_codec::manifest_digest(&description, &reordered),
+        digest
+    );
+    let mut binding = description["binding_values"].clone();
+    binding.as_object_mut().unwrap().extend(json!({
+        "candidate_id":"utf8-empty","candidate_version":"1","manifest_digest":digest,
+        "source_revision":null,"target":{"resource":"fixture://artifacts","precondition":{"kind":"missing"}}
+    }).as_object().unwrap().clone());
+    let claim = claim(&reads).await;
+    let p = prepare(&reads, A, "a").await;
+    let selected = reads.commands().execute(TENANT, PROJECT, A,
+        command(&p, "select-utf8", "delivery.candidate.select", json!({
+            "source_snapshot_id":p["source_snapshot_id"],"session_id":"session-a",
+            "claim_id":claim["claim_id"],"fence":claim["fence"],"lease_version":claim["lease_version"],
+            "candidate":{"binding":binding,"manifest":manifest}}))).await.unwrap();
+    assert_eq!(selected["receipt"]["data"]["state"], "selected");
 }
 
 #[tokio::test]
