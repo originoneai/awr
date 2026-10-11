@@ -379,6 +379,11 @@ pub(super) async fn start(
     } else {
         None
     };
+    let next_action = if terminal_reporting.is_some() {
+        "Execute once under the current lease. Stop and report workspace execution before repository push/publication, external review, merge or deployment; use separate delivery operations. Prior or unknown external effects from this run require recovery; never declare no_external_effects=true for them. A replay or unknown response never authorizes another start. Do not claim OS/sandbox isolation from AWR metadata alone."
+    } else {
+        "Execute once under the current lease; report observations. A replay or unknown response never authorizes another start. Do not claim OS/sandbox isolation from AWR metadata alone."
+    };
     Ok(
         json!({"execution_id":a.execution_id,"execution_version":(r.get::<_,i64>("execution_version")+1).to_string(),
         "session_id":a.session_id,"claim_id":a.claim_id,"state":"running","fence":a.expected_fence,
@@ -392,7 +397,7 @@ pub(super) async fn start(
         "physical_isolation":"unverified_without_host_capability",
         "dependency_receipts":dependencies,"resources":resources,
         "result_authority":if attestation_grant.is_some() {"trusted_executor"} else {"caller_asserted"},
-        "next_action":"Execute once under the current lease; report observations. A replay or unknown response never authorizes another start. Do not claim OS/sandbox isolation from AWR metadata alone."}),
+        "next_action":next_action}),
     )
 }
 

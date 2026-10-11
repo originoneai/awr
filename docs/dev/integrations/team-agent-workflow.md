@@ -227,7 +227,14 @@ it is omitted after that execution grant is revoked or the run binding changes.
 Assert `executor_stopped` and
 `no_external_effects` only when both facts hold. For success, compute
 `output_digest` from the exact artifact bytes you will submit as evidence and
-retain those bytes unchanged. An omitted or unknown declaration records the
+retain those bytes unchanged. Stop and report the workspace execution **before**
+repository push/publication, external review, merge or deployment; those are
+separate delivery operations with their own authorization and recovery. If this
+run already caused or may have caused an external effect, use recovery instead
+of declaring `no_external_effects: true`. Earlier settled delivery operations
+do not by themselves prevent a new workspace run.
+
+An omitted or unknown declaration records the
 outcome conservatively and requires recovery; it does not settle the workspace.
 Recheck after contract, lease, execution or effect changes. See the
 [ordinary workspace report](../reference/team-execution-settlement.md#report-an-ordinary-workspace-outcome).

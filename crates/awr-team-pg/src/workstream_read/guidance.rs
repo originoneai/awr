@@ -312,7 +312,7 @@ pub(super) fn select(data: &Value, context_complete: bool, owns_session: bool) -
             "session is active and no higher-priority condition was found",
             "session.checkpoint",
             if execution["terminal_reporting"].is_object() {
-                "Batch progress with next_action/open_loops. At actual termination follow execution.terminal_reporting: include workspace_settlement with a measured environment digest and truthful stop/effect assertions, even with a live V2 lease. Omission preserves recovery; tests do not prove settlement."
+                "Batch progress with next_action/open_loops. Stop and report workspace execution before repository push/publication, external review, merge or deployment; use separate delivery operations. Follow execution.terminal_reporting with measured environment digest and truthful workspace_settlement, even with a live V2 lease. Prior or unknown external effects from this run require recovery; never declare no_external_effects=true for them. Omission preserves recovery; tests do not prove settlement."
             } else {
                 "Batch progress with next_action/open_loops and available host usage; terminal outcomes alone use execution.report. Continue only under existing admission."
             },
@@ -504,6 +504,10 @@ mod tests {
         assert!(note.contains("workspace_settlement"));
         assert!(note.contains("live V2 lease"));
         assert!(note.contains("tests do not prove settlement"));
+        assert!(note.contains("Stop and report workspace execution before repository push/publication, external review, merge or deployment"));
+        assert!(note.contains("use separate delivery operations"));
+        assert!(note.contains("Prior or unknown external effects from this run require recovery"));
+        assert!(note.contains("never declare no_external_effects=true"));
         assert!(hint.to_string().len() < 900);
         assert_eq!(select(&data, true, false)["code"], "other_client_session");
         assert_eq!(select(&data, false, true)["code"], "restore_context");

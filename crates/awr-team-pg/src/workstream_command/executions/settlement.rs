@@ -157,7 +157,7 @@ pub(super) fn policy(run: &Row) -> PgResult<Option<ExecutionSettlementPolicy>> {
 /// Bind advice to recorded admission without asserting that the executor stopped.
 pub(super) fn reporting_hint(run: &Row, policy: &ExecutionSettlementPolicy) -> Value {
     json!({
-        "when":"this admitted run has actually stopped and its original claim remains current",
+        "when":"this admitted workspace run has actually stopped, its original claim remains current, and external publication has not begun",
         "because":"caller_managed workspace settlement requires an explicit terminal declaration",
         "action":{
             "op":"execution.report",
@@ -170,7 +170,7 @@ pub(super) fn reporting_hint(run: &Row, policy: &ExecutionSettlementPolicy) -> V
                 "expected_lease_version":run.get::<_,i64>("claim_lease_version").to_string(),
                 "executor_stopped":null,"no_external_effects":null
             },
-            "note":"Include this declaration even while the lease is live. Supply a measured non-sensitive environment digest and truthful stop/effect assertions; omission preserves recovery. V1 needs a live lease; V2 allows elapsed time, never further execution after expiry. Success binds the exact submitted artifact bytes. This advice grants no execution or approval."
+            "note":"Include a measured non-sensitive environment digest and truthful stop/effect assertions even with a live lease. Stop and report workspace execution before repository push/publication, external review, merge or deployment; use separate delivery operations. Prior or unknown external effects from this run require recovery; never declare no_external_effects=true for them. Omission preserves recovery. V1 needs a live lease; V2 allows elapsed time, never further execution after expiry. Success binds exact submitted artifact bytes. This advice grants no execution or approval."
         },
         "recheck_on":"contract, epoch, claim, execution or effects change"
     })
