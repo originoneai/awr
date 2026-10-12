@@ -609,6 +609,23 @@ test('missing, stale and new delivery states cannot imply successful delivery', 
   }
 });
 
+for (const locale of ['en', 'zh-CN']) {
+  test(`replaced delivery history is distinguished from current rejection in ${locale}`, async () => {
+    i18n.setLocale(locale);
+    const liveWork = { ...work, workstream_id: 'stream', detail_loaded: true, context_complete: true,
+      guidance: { code: 'integration_rejected', action: { op: 'delivery.integration.inspect' } },
+      collaboration: { candidate: { digest: 'replacement', current: true }, verification: [],
+        review: { state: 'approved', current_candidate: false },
+        integration: { state: 'rejected', current_binding: false } } };
+    mock(url => url.includes('/projects?') ? projects : { ...overview, works: [liveWork], interaction_mode: 'mcp' });
+    await ui.refresh(); await ui._selectWork(work.key);
+    const text = node('teamDetail').textContent;
+    assert.ok(text.includes(i18n.t('feedback.guidance_integration_rejected')));
+    for (const state of ['review_approved', 'integration_rejected'])
+      assert.ok(text.includes(i18n.t('feedback.' + state) + ' · ' + i18n.t('feedback.delivery_historical')));
+  });
+}
+
 test('guidance query disclosure survives refresh only for the same identity and source binding', async () => {
   const liveWork = { ...work, workstream_id: 'stream', detail_loaded: true, context_complete: true,
     contract_hash: 'current', snapshot: { source_snapshot_id: 'source', coordinator_epoch: 'epoch' },

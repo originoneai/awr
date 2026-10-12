@@ -2,6 +2,7 @@
 mod content;
 mod eligibility;
 mod lifecycle;
+mod recovery;
 
 use super::*;
 use crate::workstream_auth::{CredentialReference, ReaderAuthority, credential_reference};

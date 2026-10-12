@@ -32,12 +32,57 @@ pub(super) fn with_collaboration(
     {
         return fallback;
     }
+    if role_hint
+        .as_ref()
+        .is_some_and(|hint| hint["code"] == "integration_rejected")
+        && data["collaboration"]["integration"]["target_changed"] == true
+        && data["responsibility"]["relation"] == "owned_by_me"
+        && data["responsibility"]["coordination_allowed_advisory"] == true
+    {
+        return rejected_integration(data, owns_session, fallback);
+    }
     // Employee intake needs its actual session and responsibility chain. The
     // shared condition's preparation query remains discovery's entry point.
     match role_hint {
         Some(hint) if hint["code"] != "intake" => hint,
         _ => fallback,
     }
+}
+
+/// Revision uses the existing session, claim and execution commands. An old
+/// approval does not reopen a settled execution or admit changes to its content.
+fn rejected_integration(data: &Value, owns_session: bool, fallback: Value) -> Value {
+    let integration = &data["collaboration"]["integration"];
+    let execution = &data["execution"];
+    if !owns_session
+        || data["session"]["state"] != "active"
+        || data["claim"]["lease_live"] != true
+        || data["responsibility"]["current_executor_matches_client"] != true
+        || matches!(
+            fallback["code"].as_str(),
+            Some("wait_for_change" | "declare_client")
+        )
+        || !matches!(
+            execution["state"].as_str(),
+            Some("succeeded" | "failed" | "cancelled")
+        )
+        || execution["effects_settled"] != true
+        || !integration["reviewed_execution_id"].is_string()
+    {
+        return fallback;
+    }
+    let revised = execution["state"] == "succeeded"
+        && execution["execution_id"] != integration["reviewed_execution_id"];
+    json!({"code":if revised {"submission"}else{"prepare_execution"},
+        "when":if revised {"your revision execution is settled"}else{"the selected integration was rejected and your prior execution is settled"},
+        "because":["the rejection still matches the selected candidate"],
+        "action":{"op":if revised {"delivery.submission.describe"}else{"execution.prepare"},
+            "note":if revised {
+                "Publish the revised result through the authorized channel; select a new candidate bound to the actual target, submit fresh evidence and request independent review. Do not reuse the rejected candidate's approval."
+            } else {
+                "Prepare a new execution with current versions, measured input_digest and contract scope, then execution.start before edits. Update against the current repository target and retest; preserve the rejected attempt and its approval as history."
+            }},
+        "recheck_on":"execution, target, candidate, blocker, ownership or permission changes"})
 }
 
 /// Preserve legacy action.op while keeping one bounded factual basis. A read
@@ -337,6 +382,63 @@ mod tests {
         data["responsibility"] = json!({"relation":"owned_by_me",
             "current_executor_matches_client":true,"coordination_allowed_advisory":true});
         data
+    }
+
+    #[test]
+    fn integration_revision_preserves_recovery_wait_and_lease_priority() {
+        let mut data = owned();
+        data["collaboration"] =
+            json!({"integration":{"reviewed_execution_id":"old","target_changed":true}});
+        data["execution"] =
+            json!({"execution_id":"old","state":"succeeded","effects_settled":true});
+        let hint = json!({"code":"integration_rejected"});
+        assert_eq!(
+            with_collaboration(&data, true, true, Some(hint.clone()))["code"],
+            "prepare_execution"
+        );
+        for (path, value, code) in [
+            ("/runtime/recovery_blocked", json!(true), "inspect_recovery"),
+            ("/execution/state", json!("unknown"), "reconcile_execution"),
+            ("/claim/expires_at_unix_ms", json!(1000), "renew_claim"),
+        ] {
+            let mut changed = data.clone();
+            let (parent, key) = path.rsplit_once('/').unwrap();
+            changed.pointer_mut(parent).unwrap()[key] = value;
+            assert_eq!(
+                with_collaboration(&changed, true, true, Some(hint.clone()))["code"],
+                code
+            );
+        }
+        assert_eq!(
+            with_collaboration(&data, false, true, Some(hint.clone()))["code"],
+            "restore_context"
+        );
+        assert_eq!(
+            with_collaboration(&data, true, false, Some(hint.clone()))["code"],
+            "other_client_session"
+        );
+        data["waiting_user"] = json!(true);
+        assert_eq!(
+            with_collaboration(&data, true, true, Some(hint.clone()))["code"],
+            "wait_for_change"
+        );
+        data["waiting_user"] = json!(false);
+        data["progress"] = json!({"contract_matches_current":true,"stale":false,"phase":"blocked"});
+        assert_eq!(
+            with_collaboration(&data, true, true, Some(hint.clone()))["code"],
+            "wait_for_change"
+        );
+        data["progress"] = Value::Null;
+        data["execution"]["execution_id"] = json!("new");
+        let submission = with_collaboration(&data, true, true, Some(hint));
+        assert_eq!(submission["action"]["op"], "delivery.submission.describe");
+        assert!(submission.to_string().len() < 900);
+        for code in ["recovery", "integration_unknown"] {
+            assert_eq!(
+                with_collaboration(&data, true, true, Some(json!({"code":code})))["code"],
+                code
+            );
+        }
     }
 
     #[test]

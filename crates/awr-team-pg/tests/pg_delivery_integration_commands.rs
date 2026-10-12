@@ -124,6 +124,266 @@ async fn counts(f: &Fixture) -> Vec<i64> {
     (0..5).map(|i| row.get::<_, i64>(i)).collect()
 }
 
+async fn inbox_item(f: &Fixture, token: &str) -> Value {
+    let page = f
+        .reads
+        .query(TENANT, PROJECT, token, query("work.inbox"))
+        .await
+        .unwrap();
+    page["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["work_id"] == "a")
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+async fn rejected_integration(f: &Fixture) -> String {
+    let prepared = f.prepared().await;
+    let id = prepared["integration_id"].as_str().unwrap();
+    let lease = f.leased(id).await;
+    f.dispatched(id, lease["lease_id"].as_str().unwrap()).await;
+    let DeliveryRecord::IntegrationObservation(mut observed) =
+        f.observation(id, IntegrationOutcome::Rejected)
+    else {
+        unreachable!()
+    };
+    observed.result_revision = Some(RevisionRef {
+        resource: RESOURCE.into(),
+        format: RevisionFormat::GitSha256,
+        value: "c".repeat(64),
+    });
+    let fact = f
+        .ingest_record(
+            "rejected-effect",
+            DeliveryRecord::IntegrationObservation(observed),
+        )
+        .await;
+    f.store
+        .confirm_integration(
+            TENANT,
+            PROJECT,
+            WORKER,
+            f.confirm_request("confirm-rejected", id, &fact),
+        )
+        .await
+        .unwrap();
+    id.into()
+}
+
+#[tokio::test]
+async fn rejected_integration_routes_owner_revision_and_never_reuses_old_approval() {
+    let mut f = setup_integration().await;
+    assert_eq!(
+        inbox_item(&f, SUPERVISOR).await["guidance"]["code"],
+        "finalization"
+    );
+    let id = rejected_integration(&f).await;
+    let before = counts(&f).await;
+    for token in [A, SUPERVISOR, REVIEWER] {
+        let item = inbox_item(&f, token).await;
+        assert_eq!(item["guidance"]["code"], "integration_rejected");
+        assert_eq!(item["next_query"]["request_id"], id);
+        assert!(item["guidance"].to_string().len() < 1000);
+        let inspection = read(&f, token, "delivery.integration.inspect", Some(&id))
+            .await
+            .unwrap();
+        assert_eq!(inspection["data"]["current_binding"], true);
+        assert_eq!(inspection["data"]["next_query"]["op"], "work.prepare");
+        assert_eq!(inspection["data"]["execution_authorized"], false);
+    }
+    assert_eq!(counts(&f).await, before, "advice is read-only");
+    let p = prepare(&f.reads, A, "a").await;
+    assert_eq!(p["data"]["guidance"]["code"], "declare_client");
+    run(&f.reads, A, "revision-client", "session.checkpoint", json!({
+        "session_id":"session-a","expected_session_version":"1",
+        "context_hash":p["data"]["context_hash"],"next_action":"Update the candidate against the current target",
+        "open_loops":[],"client_info":{"product":"Synthetic Agent"}})).await;
+    f.admin.execute("UPDATE awr_team.claims SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", &[&f.selection.claim_id]).await.unwrap();
+    let p = prepare(&f.reads, A, "a").await;
+    assert_eq!(p["data"]["guidance"]["action"]["op"], "claim.acquire");
+    let claim = run(
+        &f.reads,
+        A,
+        "revision-claim",
+        "claim.acquire",
+        json!({
+        "session_id":"session-a","expected_session_version":"2",
+        "expected_work_version":p["data"]["runtime"]["work_version"],"ttl_seconds":3600}),
+    )
+    .await;
+    f.selection.claim_id = claim["claim_id"].as_str().unwrap().into();
+    f.selection.fence = claim["fence"].as_str().unwrap().into();
+    f.selection.lease_version = claim["lease_version"].as_str().unwrap().into();
+    assert_eq!(
+        read(&f, A, "delivery.integration.inspect", Some(&id))
+            .await
+            .unwrap()["data"]["current_binding"],
+        true,
+        "reacquiring ownership does not erase the candidate's rejection"
+    );
+    let p = prepare(&f.reads, A, "a").await;
+    assert_eq!(p["data"]["guidance"]["action"]["op"], "execution.prepare");
+    let exec = run(
+        &f.reads,
+        A,
+        "revision-prepare",
+        "execution.prepare",
+        json!({
+        "session_id":"session-a","expected_session_version":"2",
+        "claim_id":f.selection.claim_id,"expected_fence":f.selection.fence,
+        "expected_lease_version":f.selection.lease_version,
+        "expected_work_version":p["data"]["runtime"]["work_version"],
+        "input_digest":INPUT,"declared_scope":["src/api"]}),
+    )
+    .await;
+    let p = prepare(&f.reads, A, "a").await;
+    assert_eq!(p["data"]["guidance"]["action"]["op"], "execution.start");
+    let started = run(&f.reads, A, "revision-start", "execution.start", json!({
+        "session_id":"session-a","expected_session_version":"2",
+        "execution_id":exec["execution_id"],"expected_execution_version":exec["execution_version"],
+        "claim_id":f.selection.claim_id,"expected_fence":f.selection.fence,
+        "expected_lease_version":f.selection.lease_version,
+        "expected_work_version":p["data"]["runtime"]["work_version"],"execution_mode":"caller_managed"})).await;
+    assert_eq!(
+        prepare(&f.reads, A, "a").await["data"]["guidance"]["code"],
+        "report_at_boundary"
+    );
+    run(&f.reads, A, "revision-report", "execution.report", json!({
+        "session_id":"session-a","expected_session_version":"2",
+        "execution_id":exec["execution_id"],"expected_execution_version":started["execution_version"],
+        "outcome":"succeeded","output_digest":f.selection.candidate.manifest.entries[0].sha256,
+        "observed_paths":["src/api/result.json"],"note":"Updated against the current target and rechecked.",
+        "workspace_settlement":{"workspace_id":"synthetic-workspace-a","input_digest":INPUT,
+          "environment_digest":"c".repeat(64),"claim_id":f.selection.claim_id,"expected_fence":f.selection.fence,
+          "expected_lease_version":f.selection.lease_version,"executor_stopped":true,"no_external_effects":true}})).await;
+    assert_eq!(
+        prepare(&f.reads, A, "a").await["data"]["guidance"]["action"]["op"],
+        "delivery.submission.describe"
+    );
+    let mut replacement = f.selection.clone();
+    replacement.request_id = "select-revision".into();
+    replacement.expected_selected_digest = Some(f.request.candidate_digest.clone());
+    replacement.candidate.binding.candidate_version = "2".into();
+    replacement
+        .candidate
+        .binding
+        .source_revision
+        .as_mut()
+        .unwrap()
+        .value = "d".repeat(64);
+    replacement.candidate.binding.target.precondition = TargetPrecondition::Exact(RevisionRef {
+        resource: RESOURCE.into(),
+        format: RevisionFormat::GitSha256,
+        value: "c".repeat(64),
+    });
+    f.store
+        .select_candidate(TENANT, PROJECT, A, replacement.clone())
+        .await
+        .unwrap();
+    let historical = read(&f, SUPERVISOR, "delivery.integration.inspect", Some(&id))
+        .await
+        .unwrap();
+    assert_eq!(historical["data"]["current_binding"], false);
+    assert_eq!(
+        historical["data"]["target_changed"], true,
+        "the original target observation stays historical"
+    );
+    assert_eq!(
+        historical["data"]["next_query"]["op"],
+        "delivery.neutral.inspect"
+    );
+    assert_eq!(
+        inbox_item(&f, SUPERVISOR).await["guidance"]["code"],
+        "verification"
+    );
+    let mut stale_approval = f.request.clone();
+    stale_approval.request_id = "old-approval-new-candidate".into();
+    stale_approval.candidate_digest = replacement.candidate.binding.digest().unwrap();
+    stale_approval.selection_version = "2".into();
+    assert!(matches!(
+        f.store
+            .prepare_integration(TENANT, PROJECT, SUPERVISOR, stale_approval)
+            .await,
+        Err(PgError::EvidenceInvalid)
+    ));
+    assert_eq!(f.guards().await, 0);
+    assert_eq!(
+        f.admin
+            .query_one(
+                "SELECT state FROM awr_team.review_rounds WHERE id=$1",
+                &[&f.request.review_round_id]
+            )
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "approved",
+        "history is preserved, not silently rewritten"
+    );
+}
+
+#[tokio::test]
+async fn rejected_integration_is_version_bound_and_does_not_grant_execution_permission() {
+    let f = setup_content_integration().await;
+    let id = rejected_integration(&f).await;
+    assert_eq!(
+        read(&f, A, "delivery.integration.inspect", Some(&id))
+            .await
+            .unwrap()["data"]["target_changed"],
+        true
+    );
+    for field in [
+        "candidate_digest",
+        "selection_version",
+        "source_snapshot_id",
+        "coordinator_epoch",
+        "ownership_version",
+        "work_id",
+        "contract_hash",
+        "workstream_id",
+    ] {
+        let path = if ["candidate_digest", "selection_version"].contains(&field) {
+            vec!["prepare", field]
+        } else {
+            vec!["prepare", "read_set", field]
+        };
+        let original: Value = f
+            .admin
+            .query_one(
+                "SELECT request_json FROM awr_team.delivery_integration_intents WHERE id=$1",
+                &[&id],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        f.admin.execute("UPDATE awr_team.delivery_integration_intents SET request_json=jsonb_set(request_json,$2,'\"changed\"') WHERE id=$1", &[&id,&path]).await.unwrap();
+        let observed = prepare(&f.reads, A, "a").await;
+        assert_ne!(
+            observed["data"]["guidance"]["code"], "prepare_execution",
+            "{field}"
+        );
+        assert_ne!(
+            inbox_item(&f, SUPERVISOR).await["guidance"]["code"],
+            "integration_rejected",
+            "{field}"
+        );
+        f.admin
+            .execute(
+                "UPDATE awr_team.delivery_integration_intents SET request_json=$2 WHERE id=$1",
+                &[&id, &original],
+            )
+            .await
+            .unwrap();
+    }
+    f.admin.batch_execute("UPDATE awr_team.agent_authorizations SET body_json=jsonb_set(body_json,'{actions}','[\"inspect\",\"claim_coordination\"]'::jsonb) WHERE subject_id='agent'").await.unwrap();
+    assert_eq!(
+        prepare(&f.reads, A, "a").await["data"]["guidance"]["code"],
+        "inspect_only"
+    );
+    assert_eq!(f.guards().await, 0);
+}
+
 async fn reject(f: &Fixture, key: &str, id: &str) -> WorkstreamCommand {
     let current = prepare(&f.reads, SUPERVISOR, "a").await;
     command(
@@ -411,6 +671,19 @@ async fn wire_rejection_releases_only_undispatched_targets_and_replays_original_
             .await
             .unwrap();
         assert_eq!(original["receipt"]["data"]["before_dispatch"], true);
+        let withdrawn = read(&f, A, "delivery.integration.inspect", Some(id))
+            .await
+            .unwrap();
+        assert_eq!(withdrawn["data"]["current_binding"], true);
+        assert_eq!(withdrawn["data"]["target_changed"], false);
+        assert_eq!(
+            withdrawn["data"]["next_query"]["op"],
+            "delivery.neutral.inspect"
+        );
+        assert_eq!(
+            prepare(&f.reads, A, "a").await["data"]["guidance"]["code"],
+            "integration_rejected"
+        );
         assert_eq!(f.guards().await, 0);
         let after = counts(&f).await;
         let replay = f

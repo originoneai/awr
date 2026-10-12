@@ -43,15 +43,18 @@ pub(super) async fn facts(
         "acceptance_inferred":false,"source_synchronized":false});
     let round = tx
         .query_opt(
-            "SELECT id,state,bundle_hash,author_actor_id FROM awr_team.review_rounds
-        WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND contract_hash=$4
-        ORDER BY round_index DESC,id DESC LIMIT 1",
+            "SELECT r.id,r.state,r.bundle_hash,r.author_actor_id,e.payload_json->>'delivery_candidate_digest'
+        FROM awr_team.review_rounds r LEFT JOIN awr_team.evidence e
+          ON (e.tenant_id,e.project_id,e.id)=(r.tenant_id,r.project_id,r.evidence_id)
+        WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.work_id=$3 AND r.contract_hash=$4
+        ORDER BY r.round_index DESC,r.id DESC LIMIT 1",
             &[&tenant, &project, &work, &contract],
         )
         .await?;
     if let Some(r) = round {
         data["review"] = json!({"id":r.get::<_,String>(0),"state":r.get::<_,String>(1),
-            "bundle_hash":r.get::<_,String>(2),"author_actor_id":r.get::<_,String>(3)});
+            "bundle_hash":r.get::<_,String>(2),"author_actor_id":r.get::<_,String>(3),
+            "candidate_digest":r.get::<_,Option<String>>(4)});
     }
     let selected = tx.query_opt("SELECT s.binding_digest,c.body_json,s.selection_version,
         s.source_snapshot_id=$4 AND s.ownership_version=$5 AND w.last_fence=s.fence
@@ -84,6 +87,10 @@ pub(super) async fn facts(
             && candidate.binding.contract_hash == contract;
         data["candidate"] = json!({"digest":digest,"selection_version":version.to_string(),
             "current":current,"required_checks":candidate.binding.required_checks});
+        if !data["review"].is_null() {
+            data["review"]["current_candidate"] =
+                json!(current && data["review"]["candidate_digest"] == digest);
+        }
         if current {
             let rows = tx.query("SELECT f.envelope_json FROM awr_team.delivery_fact_heads h
                 JOIN awr_team.delivery_facts f ON (f.tenant_id,f.project_id,f.id)=(h.tenant_id,h.project_id,h.fact_id)
@@ -129,17 +136,9 @@ pub(super) async fn facts(
         }
     }
     // Historical unsettled effects must remain visible even after reselection.
-    let integration = tx
-        .query_opt(
-            "SELECT id,state FROM awr_team.delivery_integration_intents
-        WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3
-        ORDER BY (state IN ('dispatched','unknown')) DESC,created_at DESC,id DESC LIMIT 1",
-            &[&tenant, &project, &work],
-        )
-        .await?;
-    if let Some(i) = integration {
-        data["integration"] = json!({"id":i.get::<_,String>(0),"state":i.get::<_,String>(1)});
-    }
+    data["integration"] =
+        crate::DeliverySyncStore::integration_summary_in_tx(tx, tenant, project, auth, work, None)
+            .await?;
     Ok(data)
 }
 
@@ -255,6 +254,24 @@ fn select(
             "delivery.integration.inspect",
             "Inspect the original integration request; do not submit another repository effect.",
         )
+    } else if involved
+        && !closed
+        && c["integration"]["state"] == "rejected"
+        && c["integration"]["current_binding"] == true
+        && data["waiting_user"] != true
+        && phase != Some("waiting_user")
+    {
+        (
+            "integration_rejected",
+            "integration of the selected version was rejected",
+            "the rejection matches the current candidate, selection and source binding",
+            "delivery.integration.inspect",
+            if developer && own {
+                "Inspect the rejection. If the target changed, use work.prepare to resume your own session/claim, revise in a new admitted execution, retest and request independent review of a new candidate. Otherwise resolve the recorded refusal before retrying; old approval cannot authorize changed content."
+            } else {
+                "Inspect the refusal and coordinate its resolution with the responsible member. Target changes require a revised candidate, checks and independent review before integration; do not finalize the rejected version."
+            },
+        )
     } else if data["waiting_user"] == true || matches!(phase, Some("blocked" | "waiting_user")) {
         (
             "blocked",
@@ -265,6 +282,7 @@ fn select(
         )
     } else if involved
         && !closed
+        && c["review"]["current_candidate"] != false
         && matches!(
             c["review"]["state"].as_str(),
             Some("rejected" | "invalidated")
@@ -302,7 +320,11 @@ fn select(
             "delivery.neutral.inspect",
             "Inspect submission context; publish actual code and report through the authorized project channel, then bind a candidate and readable manifest evidence before review.",
         )
-    } else if !closed && c["review"]["state"] == "open" && (reviewer || supervisor) {
+    } else if !closed
+        && c["review"]["state"] == "open"
+        && c["review"]["current_candidate"] != false
+        && (reviewer || supervisor)
+    {
         (
             "review",
             "a current AWR review is open",
@@ -310,7 +332,11 @@ fn select(
             "review.inspect",
             "Inspect the exact round; use a currently authorized independent reviewer for its decision.",
         )
-    } else if !closed && c["review"]["state"] == "approved" && (deliverer || supervisor) {
+    } else if !closed
+        && c["review"]["state"] == "approved"
+        && c["review"]["current_candidate"] != false
+        && (deliverer || supervisor)
+    {
         (
             "finalization",
             "an approved round awaits AWR finalization",

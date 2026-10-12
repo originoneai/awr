@@ -344,12 +344,14 @@
           const op = inbox.items.find(item => item.item_key === inbox.selected)?.next_query.op;
           const integration = op === 'delivery.integration.inspect' ? data : collaboration.integration;
           if (data.guidance) group.appendChild(el('p', null, nextStep({ guidance: data.guidance })));
-          for (const [label, value, prefix] of [['review', collaboration.review?.state, 'review_'],
-            ['integration', integration?.state, 'integration_'], ['publication', collaboration.publication?.phase, 'publication_']]) {
+          for (const [label, value, prefix, historical] of [['review', collaboration.review?.state, 'review_', collaboration.review?.current_candidate === false],
+            ['integration', integration?.state, 'integration_', integration?.current_binding === false && ['confirmed', 'rejected'].includes(integration?.state)],
+            ['publication', collaboration.publication?.phase, 'publication_']]) {
             const key = 'feedback.' + prefix + value;
             const translated = t(i18n, key);
             group.appendChild(el('p', null, t(i18n, 'ui.network_' + label) + ' · ' +
-              (value == null ? t(i18n, 'inbox.absent') : translated === key ? t(i18n, 'feedback.state_unknown', { state: value }) : translated)));
+              (value == null ? t(i18n, 'inbox.absent') : translated === key ? t(i18n, 'feedback.state_unknown', { state: value }) : translated)
+              + (historical ? ' · ' + t(i18n, 'feedback.delivery_historical') : '')));
           }
           if (op === 'delivery.source.status') {
             if (data.pending_publication_id) group.appendChild(el('p', { role: 'status' }, t(i18n, 'inbox.publication_waiting')));
@@ -898,10 +900,11 @@
       }
       const collaboration = w.collaboration;
       if (collaboration) {
-        const recorded = (prefix, value) => {
+        const recorded = (prefix, value, historical = false) => {
           if (!value) return unknown;
           const key = 'feedback.' + prefix + value, translated = t(i18n, key);
-          return translated === key ? t(i18n, 'feedback.state_unknown', { state: value }) : translated;
+          return (translated === key ? t(i18n, 'feedback.state_unknown', { state: value }) : translated)
+            + (historical ? ' · ' + t(i18n, 'feedback.delivery_historical') : '');
         };
         const candidate = collaboration.candidate;
         const group = section('delivery', [
@@ -909,8 +912,9 @@
           ['binding', candidate ? t(i18n, candidate.current === true ? 'feedback.binding_current'
             : candidate.current === false ? 'feedback.binding_changed' : 'feedback.dimension_unknown') : null],
           ['required_checks', candidate?.required_checks?.join(' · ')],
-          ['review', recorded('review_', collaboration.review?.state)],
-          ['integration', recorded('integration_', collaboration.integration?.state)],
+          ['review', recorded('review_', collaboration.review?.state, collaboration.review?.current_candidate === false)],
+          ['integration', recorded('integration_', collaboration.integration?.state, collaboration.integration?.current_binding === false
+            && ['confirmed', 'rejected'].includes(collaboration.integration?.state))],
           ['publication', recorded('publication_', collaboration.publication?.phase)],
         ]);
         group.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.delivery_dimensions')));

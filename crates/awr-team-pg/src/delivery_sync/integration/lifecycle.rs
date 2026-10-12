@@ -958,12 +958,25 @@ impl DeliverySyncStore {
         } else {
             Value::Null
         };
+        let current =
+            Self::integration_summary_in_tx(tx, tenant, project, auth, work, Some(id)).await?;
         let action = match state.as_str() {
             "prepared" | "leased" => {
                 "Await the configured integrator; inspect this original request for its outcome"
             }
             "dispatched" | "unknown" => {
                 "Await original-attempt reconciliation; preserve this request and do not redispatch"
+            }
+            "rejected"
+                if current["current_binding"] == true && current["target_changed"] == true =>
+            {
+                "The repository target changed. Use work.prepare to inspect responsibility and blockers. The responsible developer must update against the current target in a new admitted execution, retest, publish a new candidate with its actual target precondition and obtain fresh independent review. Supervisors coordinate that revision; do not retry or finalize the rejected version."
+            }
+            "rejected" if current["current_binding"] == true => {
+                "Inspect the refusal and current neutral facts with the responsible member or supervisor. No changed target was confirmed; do not infer that code revision is required or retry before resolving the refusal."
+            }
+            "rejected" => {
+                "This rejection is historical for the current selection or source. Inspect current neutral facts; do not redo work solely because an older attempt was rejected."
             }
             _ => "Read current neutral facts and source status before any acceptance action",
         };
@@ -972,11 +985,15 @@ impl DeliverySyncStore {
             "dispatched_at":row.get::<_,Option<String>>(5),"dispatch_receipt":row.get::<_,Option<Value>>(6),
             "confirmation_fact_id":row.get::<_,Option<String>>(7),"confirmation_current":row.get::<_,Option<bool>>(8),
             "confirmation":confirmation,
+            "current_binding":current["current_binding"],
+            "target_changed":current["target_changed"],
             "candidate":candidate,"original_read_set":prepare.read_set,
             "connector_id":prepare.connector_id,"connector_version":prepare.connector_version,
             "execution_authorized":false,"acceptance_ready":false,"source_synchronized":false,
             "request_binding":"original_candidate_and_read_set",
-            "next_query":{"protocol_version":1,"op":"delivery.integration.inspect","work_id":work,"request_id":id},
+            "next_query":if state=="rejected" {
+                json!({"protocol_version":1,"op":if current["current_binding"]==true && current["target_changed"]==true {"work.prepare"}else{"delivery.neutral.inspect"},"work_id":work})
+            } else { json!({"protocol_version":1,"op":"delivery.integration.inspect","work_id":work,"request_id":id}) },
             "guidance":{"when":"An integration request exists",
                 "because":"Intent state describes the original requested version; it does not authorize repository effects or acceptance",
                 "action":action,"recheck_on":"Intent, approval, source or permission changes"}});

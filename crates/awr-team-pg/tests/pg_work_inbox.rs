@@ -745,7 +745,8 @@ async fn current_neutral_check_changes_are_deduplicated_without_becoming_awr_acc
     round(&admin, "approved-before-change", 1, "approved").await;
     assert_eq!(
         item(&inbox(&store, A).await, "a")["guidance"]["code"],
-        "finalization"
+        "verification",
+        "an unbound historical review cannot approve the selected candidate"
     );
     admin
         .batch_execute("UPDATE awr_team.work_runtime SET last_fence=last_fence+1 WHERE work_id='a'")

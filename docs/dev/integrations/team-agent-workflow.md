@@ -97,6 +97,22 @@ context. `work.observe` bounds the complete UTF-8 JSON response with
 Passed external checks remain observations, never AWR approval. For an unknown
 integration, inspect its original request instead of repeating the effect.
 
+If integration is **rejected**, the owner and supervisor receive a version-bound
+follow-up instead of finalization advice. Inspect the original request. When a
+target change is confirmed, use `work.prepare`: the owner resumes their own session and claim, starts a new
+execution to update against the repository's current target, and reruns checks.
+After reporting and settling that execution, publish and select the revised
+candidate and obtain fresh independent review. The supervisor coordinates this
+revision and waits for its evidence. `work.rework` is only for a returned review;
+an integration refusal does not turn an approved review into a returned review.
+Withdrawal before dispatch does not prove a target change or require code revision.
+
+The old rejection and approval stay in history. Replacing the candidate removes
+that rejection from current action guidance, and its old approval cannot justify
+the new candidate's finalization. Unknown effects and unresolved blockers still
+take priority over starting more work. These steps use the neutral delivery
+protocol and apply to local Git as well as an optional repository provider.
+
 An elapsed coordination claim is separate from unresolved execution effects.
 After an explicitly settled terminal execution under the current coordinator,
 consume current context and follow the appropriate fresh-claim intake action.
