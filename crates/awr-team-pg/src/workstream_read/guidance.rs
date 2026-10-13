@@ -1,6 +1,12 @@
 //! One bounded, deterministic next-step hint. Advice never grants execution.
 use serde_json::{Value, json};
 
+/// Advice belongs to the selected session. A different participant's historical
+/// execution is display evidence, not admission for the current session.
+pub(super) fn session_execution(data: &Value) -> &Value {
+    data.get("session_execution").unwrap_or(&data["execution"])
+}
+
 /// Protective execution advice retains priority over coordination and delivery.
 pub(super) fn with_collaboration(
     data: &Value,
@@ -53,7 +59,7 @@ pub(super) fn with_collaboration(
 /// approval does not reopen a settled execution or admit changes to its content.
 fn rejected_integration(data: &Value, owns_session: bool, fallback: Value) -> Value {
     let integration = &data["collaboration"]["integration"];
-    let execution = &data["execution"];
+    let execution = session_execution(data);
     if !owns_session
         || data["session"]["state"] != "active"
         || data["claim"]["lease_live"] != true
@@ -131,7 +137,7 @@ pub(super) fn authorized(
 
 pub(super) fn select(data: &Value, context_complete: bool, owns_session: bool) -> Value {
     let runtime = &data["runtime"];
-    let execution = &data["execution"];
+    let execution = session_execution(data);
     let claim = &data["claim"];
     let progress = &data["progress"];
     let execution_resolved = matches!(
@@ -439,6 +445,24 @@ mod tests {
                 code
             );
         }
+    }
+
+    #[test]
+    fn historical_execution_does_not_admit_a_new_session_or_reuse_its_approval() {
+        let mut data = owned();
+        data["execution"] =
+            json!({"execution_id":"prior","state":"succeeded","effects_settled":true});
+        data["session_execution"] = Value::Null;
+        assert_eq!(select(&data, true, true)["code"], "prepare_execution");
+        data["collaboration"] =
+            json!({"integration":{"reviewed_execution_id":"prior","target_changed":true}});
+        let hint = json!({"code":"integration_rejected"});
+        assert_eq!(
+            with_collaboration(&data, true, true, Some(hint))["code"],
+            "prepare_execution"
+        );
+        data["session_execution"] = json!({"state":"unknown"});
+        assert_eq!(select(&data, true, true)["code"], "reconcile_execution");
     }
 
     #[test]

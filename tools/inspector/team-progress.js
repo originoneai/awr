@@ -19,6 +19,7 @@ function pullRequestReference(observation) {
 
 function mapObservation(data) {
   const session = data.session || {}, owner = data.responsibility || {};
+  const participant = 'last_participation' in data ? data.last_participation || {} : session;
   const execution = data.execution, checkpoint = data.checkpoint, claim = data.claim;
   const runtime = data.runtime || {};
   const terminal = ['completed', 'cancelled', 'archived'].includes(runtime.state);
@@ -30,7 +31,8 @@ function mapObservation(data) {
     last_activity_at_ms: data.last_activity_at_unix_ms,
     owner_person: owner.owner_name || owner.owner_person_id || null,
     claimant: claim?.state === 'active' && claim.lease_live ? session.actor_name || session.actor_id || null : null,
-    last_participant: session.actor_name || session.actor_id || null,
+    last_participant: participant.actor_name || participant.actor_id || null,
+    last_participation: data.last_participation || null,
     agent: data.client?.product || null, delegated_agent: owner.executor_agent_id || null,
     client_info: data.client || null, client_id: session.client_id || null,
     model: typeof data.model === 'string' ? data.model : data.model?.id || null,
@@ -38,6 +40,7 @@ function mapObservation(data) {
     progress_report: data.progress || null, reporting: data.reporting || null,
     checkpoint, claim, execution: execution ? {
       state: execution.state, id: execution.execution_id,
+      origin: execution.origin || null,
       contract_matches_current: execution.contract_matches_current,
       lease_live: execution.lease_live, receipt_details_available: execution.receipt_details_available,
       terminal_reported: booleanOrUnknown(execution.terminal_reported),

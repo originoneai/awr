@@ -51,10 +51,48 @@ async fn publication_replays_and_restarts_preserve_contract_status_and_source_by
         .await
         .unwrap();
     assert_eq!(confirmed["data"]["phase"], "confirmed");
+    assert_eq!(
+        confirmed["data"]["confirmation"]["operation_effects"]["work_finalized"],
+        false
+    );
+    assert_eq!(
+        confirmed["data"]["confirmation"]["effect_basis"],
+        "this_publication_operation; not current_work_state"
+    );
     assert_eq!(f.bytes(), after);
     let status = f.status().await;
     assert_eq!(status["source_synchronized"], true);
     assert_eq!(status["metadata_revision"], "1");
+    let mut q = query("work.observe");
+    q.work_id = Some("a".into());
+    let view = f.reads.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(view["data"]["collaboration"]["source_synchronized"], true);
+    assert_eq!(
+        view["data"]["collaboration"]["publication"]["basis"],
+        "recorded_publication_phase"
+    );
+    assert_eq!(
+        view["data"]["collaboration"]["source_state"]["basis"],
+        "current_physical_source"
+    );
+    std::fs::write(f.root.join("ledger.yaml"), &before).unwrap();
+    let changed = f.reads.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(
+        changed["data"]["collaboration"]["publication"]["phase"],
+        "confirmed"
+    );
+    assert_eq!(
+        changed["data"]["collaboration"]["source_synchronized"],
+        false
+    );
+    std::fs::remove_file(f.root.join("ledger.yaml")).unwrap();
+    let unavailable = f.reads.query(TENANT, PROJECT, A, q).await.unwrap();
+    assert!(unavailable["data"]["collaboration"]["source_synchronized"].is_null());
+    assert_eq!(
+        unavailable["data"]["collaboration"]["source_state"]["observation"],
+        "unavailable"
+    );
+    std::fs::write(f.root.join("ledger.yaml"), &after).unwrap();
     let current=f.admin.query_one("SELECT active_snapshot_id,authority_epoch FROM awr_team.projects WHERE tenant_id=$1 AND id=$2",
         &[&TENANT,&PROJECT]).await.unwrap();
     assert_eq!(current.get::<_, String>(0), source.get::<_, String>(0));

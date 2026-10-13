@@ -3,6 +3,25 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { mapObservation, pullRequestReference, createGithubObserver } = require('../team-progress');
 
+test('selected session, last participant, execution and reports preserve independent origins', () => {
+  const origin = { actor_id: 'developer', client_id: 'dev-client', session_id: 'dev-session', model: null };
+  const usage = { origin, input_tokens: 4000, stale: true };
+  const progress = { origin: { actor_id: 'reviewer', client_id: 'review-client', session_id: 'review-session' } };
+  const mapped = mapObservation({ session: { id: 'selected-session', actor_id: 'owner', client_id: 'owner-client' },
+    last_participation: { actor_name: 'Reviewer', session_id: 'review-session' },
+    execution: { state: 'succeeded', origin, receipt_details_available: false },
+    usage, progress, collaboration: { source_synchronized: null, publication: { phase: 'confirmed' } } });
+  assert.equal(mapped.last_participant, 'Reviewer');
+  assert.equal(mapped.last_participation.session_id, 'review-session');
+  assert.equal(mapped.session_id, 'selected-session');
+  assert.deepEqual(mapped.execution.origin, origin);
+  assert.deepEqual(mapped.usage, usage);
+  assert.deepEqual(mapped.progress_report, progress);
+  assert.equal(mapped.collaboration.source_synchronized, null);
+  assert.equal(mapped.execution.report, null);
+  assert.equal(mapObservation({ session: { actor_name: 'Selected owner' }, last_participation: null }).last_participant, null);
+});
+
 test('neutral delivery facts and authorized guidance survive without a repository provider', () => {
   const collaboration = { candidate: { digest: 'candidate-binding', selection_version: '4', current: false,
     required_checks: ['search'] }, verification: [], review: { state: 'approved', id: 'round' },

@@ -330,14 +330,20 @@ pub(crate) async fn observe(
     tenant: &str,
     project: &str,
     session: &str,
+    work: &str,
+    stream: &str,
+    ownership: i64,
+    requested_session: Option<&str>,
     contract: &str,
     observed: i64,
     data: &mut Value,
 ) -> PgResult<()> {
     let row = tx
         .query_one(
-            "SELECT client_info_json,(extract(epoch FROM client_info_at)*1000)::bigint
-        FROM awr_team.sessions WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+            "SELECT s.client_info_json,(extract(epoch FROM s.client_info_at)*1000)::bigint,
+                s.actor_id,s.client_id,a.display_name
+        FROM awr_team.sessions s LEFT JOIN awr_team.actors a ON a.tenant_id=s.tenant_id AND a.id=s.actor_id
+        WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.id=$3",
             &[&tenant, &project, &session],
         )
         .await?;
@@ -346,6 +352,9 @@ pub(crate) async fn observe(
     data["client"] = client.clone();
     data["model"] = client["model"].clone();
     data["reporting"] = json!({"version":1,"provenance":"caller_declared",
+        "client_origin":{"session_id":session,"actor_id":row.get::<_,String>(2),
+            "client_id":row.get::<_,String>(3),"actor_name":row.get::<_,Option<String>>(4)},
+        "model_basis":"latest_session_declaration; not execution-time attribution",
         "client_reported_at_unix_ms":at,"stale_after_ms":STALE_AFTER_MS,
         "client_stale":at.is_some_and(|at| observed.saturating_sub(at)>STALE_AFTER_MS),
         "billing_collected":false,"usage_aggregation":"none"});
@@ -361,12 +370,25 @@ pub(crate) async fn observe(
         let row = tx
             .query_opt(
                 &format!(
-                    "SELECT id,{column},contract_hash,next_action,
-            (extract(epoch FROM created_at)*1000)::bigint,observed_revision FROM awr_team.checkpoints
-            WHERE tenant_id=$1 AND project_id=$2 AND session_id=$3 AND {column} IS NOT NULL
-            ORDER BY observed_revision DESC,created_at DESC,id DESC LIMIT 1"
+                    "SELECT c.id,c.{column},c.contract_hash,c.next_action,
+            (extract(epoch FROM c.created_at)*1000)::bigint,c.observed_revision,
+            s.id,s.actor_id,s.client_id,a.display_name
+            FROM awr_team.checkpoints c JOIN awr_team.sessions s
+              ON (s.tenant_id,s.project_id,s.id)=(c.tenant_id,c.project_id,c.session_id)
+            LEFT JOIN awr_team.actors a ON a.tenant_id=s.tenant_id AND a.id=s.actor_id
+            WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.scope_id='main' AND s.work_id=$3
+              AND s.workstream_id=$4 AND s.ownership_version=$5
+              AND ($6::text IS NULL OR s.id=$6) AND c.{column} IS NOT NULL
+            ORDER BY c.observed_revision DESC,c.created_at DESC,c.id DESC LIMIT 1"
                 ),
-                &[&tenant, &project, &session],
+                &[
+                    &tenant,
+                    &project,
+                    &work,
+                    &stream,
+                    &ownership,
+                    &requested_session,
+                ],
             )
             .await?;
         if let Some(row) = row {
@@ -385,6 +407,9 @@ pub(crate) async fn observe(
             value["contract_matches_current"] = json!(current);
             value["stale"] = json!(!current || observed.saturating_sub(measured) > STALE_AFTER_MS);
             value["provenance"] = json!("caller_declared");
+            value["origin"] = json!({"session_id":row.get::<_,String>(6),
+                "actor_id":row.get::<_,String>(7),"client_id":row.get::<_,String>(8),
+                "actor_name":row.get::<_,Option<String>>(9)});
             if field == "progress" {
                 value["next_action"] = json!(row.get::<_, String>(3));
             }

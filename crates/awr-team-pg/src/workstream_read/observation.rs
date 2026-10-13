@@ -76,7 +76,9 @@ pub(super) async fn read(
     let mut data = json!({"work_id":work,"workstream_id":stream,"contract_hash":contract,"observed_at_unix_ms":observed,
         "definition_state":definition_state,
         "runtime":runtime,"responsibility":responsibility,"session":null,"checkpoint":null,"claim":null,
-        "execution":null,"pr_deliveries":[],"client":null,"progress":null,"model":null,"usage":null,
+        "execution":null,"session_execution":null,"last_participation":null,
+        "observation_scope":if requested_session.is_some(){"requested_session"}else{"current_work_ownership"},
+        "pr_deliveries":[],"client":null,"progress":null,"model":null,"usage":null,
         "missing":{"model":"no_session","usage":"no_session","progress":"no_session"},
         "execution_authorized":false,"automatic_resume":false});
     if let Some(s) = session {
@@ -93,6 +95,10 @@ pub(super) async fn read(
             tenant,
             project,
             &session_id,
+            work,
+            stream,
+            ownership,
+            requested_session,
             &contract,
             observed,
             &mut data,
@@ -110,13 +116,64 @@ pub(super) async fn read(
         if let Some(e) = tx.query_opt("SELECT id FROM awr_team.executions WHERE tenant_id=$1 AND project_id=$2
             AND scope_id='main' AND work_id=$3 AND workstream_id=$4 AND ownership_version=$5 AND session_id=$6
             ORDER BY id DESC LIMIT 1", &[&tenant,&project,&work,&stream,&ownership,&session_id]).await? {
-            data["execution"] = crate::workstream_command::executions::inspect(
+            let execution = crate::workstream_command::executions::inspect(
                 tx,tenant,project,auth,work,stream,ownership,&e.get::<_,String>(0),Some(&session_id)).await?;
-            if data["execution"]["receipt_details_available"] == false {
-                data["missing"]["execution_receipt"] = json!("permission_restricted");
+            // Only guidance inputs are repeated, never raw receipt payloads.
+            let mut summary = serde_json::Map::new();
+            for key in ["execution_id", "state", "effects_settled", "contract_matches_current",
+                "epoch_matches_current", "lease_live", "owned_by_client", "cancel_requested",
+                "recovery_blocked", "previous_epoch_review_required", "controlled_confirmation_available"] {
+                summary.insert(key.into(), execution[key].clone());
             }
+            // Guidance only needs presence; the full declaration stays on execution.
+            summary.insert("terminal_reporting".into(), if execution["terminal_reporting"].is_object() {
+                json!({})
+            } else { Value::Null });
+            data["session_execution"] = Value::Object(summary);
+            data["execution"] = execution;
         }
     }
+    // Select execution independently: a newer reviewer session must not hide
+    // the developer's result. The existing inspector still filters raw receipts.
+    if let Some(e) = tx.query_opt("SELECT e.id,e.session_id,e.executor_actor_id,e.executor_client_id,a.display_name
+        FROM awr_team.executions e LEFT JOIN awr_team.actors a
+          ON a.tenant_id=e.tenant_id AND a.id=e.executor_actor_id
+        WHERE e.tenant_id=$1 AND e.project_id=$2 AND e.scope_id='main' AND e.work_id=$3
+          AND e.workstream_id=$4 AND e.ownership_version=$5 AND ($6::text IS NULL OR e.session_id=$6)
+        ORDER BY e.id DESC LIMIT 1", &[&tenant,&project,&work,&stream,&ownership,&requested_session]).await? {
+        let id: String = e.get(0);
+        if data["execution"]["execution_id"].as_str() != Some(&id) {
+            data["execution"] = crate::workstream_command::executions::inspect(
+                tx,tenant,project,auth,work,stream,ownership,&id,requested_session).await?;
+        }
+        data["execution"]["origin"] = json!({"session_id":e.get::<_,Option<String>>(1),
+            "actor_id":e.get::<_,String>(2),"client_id":e.get::<_,Option<String>>(3),
+            "actor_name":e.get::<_,Option<String>>(4),"basis":"recorded_execution_identity",
+            "model":null,"model_basis":"not_recorded_at_execution"});
+        if data["execution"]["receipt_details_available"] == false {
+            data["missing"]["execution_receipt"] = json!("permission_restricted");
+        }
+    }
+    // Latest participation is ordered by committed session events, not by
+    // lease priority. Checkpoint revision is a fallback for imported sessions.
+    data["last_participation"] = tx.query_opt("SELECT s.id,s.actor_id,a.display_name,s.client_id,s.state,
+            GREATEST(ev.project_revision,c.observed_revision),
+            (extract(epoch FROM COALESCE(ev.created_at,c.created_at))*1000)::bigint
+        FROM awr_team.sessions s LEFT JOIN awr_team.actors a ON a.tenant_id=s.tenant_id AND a.id=s.actor_id
+        LEFT JOIN awr_team.checkpoints c ON (c.tenant_id,c.project_id,c.id)=(s.tenant_id,s.project_id,s.latest_checkpoint_id)
+        LEFT JOIN LATERAL (SELECT e.project_revision,e.created_at FROM awr_team.events e
+          WHERE e.tenant_id=s.tenant_id AND e.project_id=s.project_id AND e.work_id=s.work_id
+            AND e.workstream_id=s.workstream_id AND e.actor_id=s.actor_id AND e.payload_json->>'session_id'=s.id
+          ORDER BY e.project_revision DESC,e.event_index DESC LIMIT 1) ev ON true
+        WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.scope_id='main' AND s.work_id=$3
+          AND s.workstream_id=$4 AND s.ownership_version=$5 AND ($6::text IS NULL OR s.id=$6)
+          AND (ev.project_revision IS NOT NULL OR c.observed_revision IS NOT NULL)
+        ORDER BY GREATEST(ev.project_revision,c.observed_revision) DESC NULLS LAST,s.id DESC LIMIT 1",
+        &[&tenant,&project,&work,&stream,&ownership,&requested_session]).await?
+        .map(|r|json!({"session_id":r.get::<_,String>(0),"actor_id":r.get::<_,String>(1),
+            "actor_name":r.get::<_,Option<String>>(2),"client_id":r.get::<_,String>(3),"state":r.get::<_,String>(4),
+            "recorded_project_revision":r.get::<_,Option<i64>>(5).map(|v|v.to_string()),
+            "at_unix_ms":r.get::<_,Option<i64>>(6),"basis":"latest_recorded_session_activity"})).unwrap_or(Value::Null);
     let deliveries = tx.query("SELECT id,pr_url,head_sha,gh_submitted,gh_approved,gh_merged,
         contract_hash,state,fact_source,observed_at,test_evidence_id FROM awr_team.pr_deliveries
         WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 ORDER BY created_at DESC,id DESC LIMIT 5",
@@ -147,6 +204,18 @@ pub(super) async fn read(
         tx, tenant, project, auth, work, &contract, ownership,
     ))
     .await?;
+    Box::pin(super::inbox::observe_source(
+        tx,
+        tenant,
+        project,
+        auth,
+        work,
+        &mut data["collaboration"],
+    ))
+    .await?;
+    if data["collaboration"]["source_state"]["observation"] != "not_measured" {
+        data["collaboration"]["source_state"]["query_started_at_unix_ms"] = json!(observed);
+    }
     let ready = Box::pin(crate::workstream_command::task_intake::dependencies_ready(
         tx, tenant, project, auth, work, stream,
     ))

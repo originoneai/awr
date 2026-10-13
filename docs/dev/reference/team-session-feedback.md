@@ -98,10 +98,23 @@ raw events are not automatically added together.
 
 ## Read and freshness
 
-`work.observe` exposes the selected session's client, model, latest structured
-progress and latest usage under existing WorkRead permissions. Summaries are
+`work.observe` keeps the selected session and claim for action guidance. With no
+session selector, execution, progress and usage are independently selected from
+the current workstream/ownership scope. A reviewer opening a session does not
+erase the developer's execution or host counter. An explicit session selector
+restricts those observations to that session. Previous ownership is not inherited.
+Summaries are
 shared with authorized work readers; raw execution receipts keep their stricter
 ownership/reconciliation gate. Missing raw receipts say `permission_restricted`.
+
+Execution and reports include `origin` with the recorded actor, credential-client
+and session IDs; names are current display labels. `last_participation` identifies
+the latest recorded session activity, independently of the live claim. The
+selected session's `client`/`model` remain its latest caller declaration, with
+`reporting.client_origin` and declaration time. They do not identify the model
+that produced a historical execution. Execution model remains unknown when no
+execution-time record exists. A bounded `session_execution` contains only advice
+inputs, preventing historical display facts from admitting a new session.
 
 Each report includes its checkpoint ID, server report time, caller-declared
 provenance and contract match. A later checkpoint without feedback preserves the
@@ -172,6 +185,21 @@ unknown. Caller-asserted workspace settlement retains its declared basis and
 does not become repository integration or task acceptance. Expanded sources
 show report/checkpoint and recorded audit versions, supplied measurement time,
 receive time and current query time without inferring a client-consumed cursor.
+Each execution, progress report and host counter shows its own participant and
+session. Counters from different sessions are never added together.
+
+`collaboration.publication` is the recorded publication phase. Detailed work
+reads separately measure `collaboration.source_state` using the same source,
+fingerprint, projection and publication validation as `delivery.source.status`.
+`source_synchronized` is null when no current measurement is available or bounded
+history cannot establish the result. Shallow inbox reads return `not_measured`
+and a follow-up query rather than scanning the source for every item. The
+PostgreSQL snapshot does not freeze the filesystem; source currentness is an
+observation during that read and is rechecked before writes.
+Publication receipts describe effects **of that operation**, not current task
+state. New confirmation receipts label `operation_effects` explicitly; persisted
+historical replay receipts remain unchanged. Neither historical confirmation
+nor current synchronization by itself proves task acceptance.
 
 Visible idle workspaces refresh on a five-second cadence. The selected task is
 read first, followed by a batch of up to 60 tasks with four concurrent reads.

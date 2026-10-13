@@ -1048,7 +1048,9 @@ impl DeliverySyncStore {
             "candidate_digest":j.note.candidate_digest,"selection_version":j.note.selection_version,
             "source_fingerprint":j.after_fingerprint,"projection":proof,
             "completion_reference":j.note.completion_reference,"source_synchronized_at_commit":true,
-            "contract_activated":false,"work_finalized":false})),
+            "contract_activated":false,"work_finalized":false,
+            "effect_basis":"this_publication_operation; not current_work_state",
+            "operation_effects":{"source_metadata_written":true,"contract_activated":false,"work_finalized":false}})),
         ))
     }
 
@@ -1178,6 +1180,27 @@ impl DeliverySyncStore {
         auth: &ReaderAuthority,
         work: &str,
     ) -> PgResult<Value> {
+        Self::source_publication_read_in_tx(tx, tenant, project, auth, work, true).await
+    }
+
+    pub(crate) async fn source_publication_observation_in_tx(
+        tx: &Transaction<'_>,
+        tenant: &str,
+        project: &str,
+        auth: &ReaderAuthority,
+        work: &str,
+    ) -> PgResult<Value> {
+        Self::source_publication_read_in_tx(tx, tenant, project, auth, work, false).await
+    }
+
+    async fn source_publication_read_in_tx(
+        tx: &Transaction<'_>,
+        tenant: &str,
+        project: &str,
+        auth: &ReaderAuthority,
+        work: &str,
+        include_history: bool,
+    ) -> PgResult<Value> {
         let (binding, ownership) =
             crate::workstream_read::work_binding(tx, tenant, project, auth, work).await?;
         crate::workstream_auth::authorize_domain_action(
@@ -1226,6 +1249,7 @@ impl DeliverySyncStore {
             &[&tenant,&project,&work]).await?;
         let truncated = rows.len() > 32;
         let mut history = Vec::new();
+        let mut synchronized = false;
         for row in rows.into_iter().take(32) {
             let j = Journal::from_row(&row)?;
             let current = j.phase == "confirmed"
@@ -1243,18 +1267,20 @@ impl DeliverySyncStore {
                 )
                 .is_ok_and(|bytes| physical.as_ref() == Some(&bytes))
                 && j.require_note(tx, tenant, project, auth).await.is_ok();
-            let mut item = j.summary();
-            item["source_current"] = json!(current);
-            item["failure_code"] = json!(row.get::<_, Option<String>>("failure_code"));
-            history.push(item);
+            synchronized |= current;
+            if include_history {
+                let mut item = j.summary();
+                item["source_current"] = json!(current);
+                item["failure_code"] = json!(row.get::<_, Option<String>>("failure_code"));
+                history.push(item);
+            }
         }
-        let current = history.iter().any(|h| h["source_current"] == true);
         let result = json!({"work_id":work,"read_set":set,"metadata_revision":metadata.to_string(),
             "confirmed_fingerprint":confirmed,"source_fingerprint":actual_fingerprint,
             "source_observation":if physical.is_some(){"observed"}else{"unavailable"},
             "projection_current":projection_current,"cursor_current":actual_fingerprint.as_deref()==Some(confirmed.as_str()),
             "pending_publication_id":pending,"history":history,"history_truncated":truncated,
-            "source_synchronized":current,"acceptance_ready":false,"execution_authorized":false});
+            "source_synchronized":synchronized,"acceptance_ready":false,"execution_authorized":false});
         if serde_json::to_vec(&result).map_err(|_| invalid())?.len() > 262144 {
             return Err(PgError::ResponseTooLarge);
         }

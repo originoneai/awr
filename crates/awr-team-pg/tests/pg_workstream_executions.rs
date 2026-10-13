@@ -968,6 +968,82 @@ async fn observation_preserves_receipt_privacy_and_exposes_expired_claims_withou
     assert_eq!(before, snapshot(&admin).await);
 }
 
+#[tokio::test]
+async fn later_session_cannot_hide_execution_or_gain_its_receipt_authority() {
+    let (_g, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let (c, e) = ready_intent(&store).await;
+    store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            admission(&store, &c, &e, "origin-start").await,
+        )
+        .await
+        .unwrap();
+    admin.batch_execute("UPDATE awr_team.executions SET state='succeeded',terminal_reported=true WHERE work_id='a';
+        UPDATE awr_team.claims SET state='released' WHERE work_id='a';
+        UPDATE awr_team.sessions SET state='ended' WHERE id='session-a';
+        INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read)
+          VALUES('reader-tenant','reader-project','agent','cli-b','00000000000000000000000001',1,true);
+        INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
+          SELECT tenant_id,project_id,'later-session',scope_id,work_id,'reviewer','review-client','later-conversation','active',workstream_id,ownership_version
+          FROM awr_team.sessions WHERE id='session-a'").await.unwrap();
+    let before = snapshot(&admin).await;
+    let mut q = query("work.observe");
+    q.work_id = Some("a".into());
+    let own = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap()["data"].clone();
+    assert_eq!(own["session"]["id"], "later-session");
+    assert!(own["session_execution"].is_null());
+    assert_eq!(own["execution"]["execution_id"], e["execution_id"]);
+    assert_eq!(own["execution"]["origin"]["actor_id"], "agent");
+    assert_eq!(own["execution"]["origin"]["client_id"], "cli-a");
+    assert!(own["execution"]["origin"]["model"].is_null());
+    let peer = store.query(TENANT, PROJECT, B, q.clone()).await.unwrap();
+    assert_eq!(
+        peer["data"]["execution"]["receipt_details_available"],
+        false
+    );
+    assert!(peer["data"]["execution"]["latest_receipt"].is_null());
+    assert_eq!(before, snapshot(&admin).await);
+    q.session_id = Some("later-session".into());
+    assert!(
+        store.query(TENANT, PROJECT, A, q.clone()).await.unwrap()["data"]["execution"].is_null()
+    );
+    q.session_id = Some("session-a".into());
+    assert_eq!(
+        store.query(TENANT, PROJECT, A, q.clone()).await.unwrap()["data"]["execution"]["execution_id"],
+        e["execution_id"]
+    );
+    // A reassigned responsibility does not rewrite the recorded executor.
+    admin.batch_execute("INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+        VALUES('reader-tenant','reader-project','new-owner','New owner','active');
+        INSERT INTO awr_team.task_responsibilities(tenant_id,project_id,work_id,owner_person_id,version)
+        VALUES('reader-tenant','reader-project','a','new-owner',1)
+        ON CONFLICT(tenant_id,project_id,work_id) DO UPDATE SET owner_person_id='new-owner',version=awr_team.task_responsibilities.version+1").await.unwrap();
+    q.session_id = None;
+    let reassigned = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(
+        reassigned["data"]["responsibility"]["owner_person_id"],
+        "new-owner"
+    );
+    assert_eq!(
+        reassigned["data"]["execution"]["origin"]["client_id"],
+        "cli-a"
+    );
+    admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_ownership SET ownership_version=2 WHERE work_id='a';
+        UPDATE awr_team.workstream_snapshot_ownership SET ownership_version=2 WHERE work_id='a';
+        UPDATE awr_team.sessions SET ownership_version=2 WHERE id='later-session'",
+        )
+        .await
+        .unwrap();
+    assert!(store.query(TENANT, PROJECT, A, q).await.unwrap()["data"]["execution"].is_null());
+}
+
 async fn claim(store: &WorkstreamReadStore) -> Value {
     store.commands().execute(TENANT,PROJECT,A,command(&prepare(store,A,"a").await,"take","claim.acquire",
         json!({"session_id":"session-a","expected_session_version":"1","expected_work_version":"0","ttl_seconds":60})))

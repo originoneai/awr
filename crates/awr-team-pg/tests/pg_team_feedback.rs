@@ -492,10 +492,25 @@ async fn neutral_candidate_checks_and_reselection_share_facts_without_inferred_a
         observed["data"]["collaboration"]["acceptance_inferred"],
         false
     );
-    assert_eq!(
-        read(&store, "work.snapshot").await["data"]["observation"]["collaboration"],
-        observed["data"]["collaboration"]
-    );
+    let mut snapshot_facts =
+        read(&store, "work.snapshot").await["data"]["observation"]["collaboration"].clone();
+    let mut observed_facts = observed["data"]["collaboration"].clone();
+    for facts in [&mut snapshot_facts, &mut observed_facts] {
+        assert!(facts["source_synchronized"].is_null());
+        assert_eq!(
+            facts["source_state"]["observation"],
+            "source_binding_unavailable"
+        );
+        assert!(
+            facts["source_state"]
+                .as_object_mut()
+                .unwrap()
+                .remove("query_started_at_unix_ms")
+                .unwrap()
+                .is_number()
+        );
+    }
+    assert_eq!(snapshot_facts, observed_facts);
     admin
         .batch_execute(
             "UPDATE awr_team.delivery_selections SET ownership_version=ownership_version+1",

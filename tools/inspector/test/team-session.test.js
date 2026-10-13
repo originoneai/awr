@@ -610,6 +610,29 @@ test('missing, stale and new delivery states cannot imply successful delivery', 
 });
 
 for (const locale of ['en', 'zh-CN']) {
+  test(`independent execution and feedback origins stay visible with unknown synchronization in ${locale}`, async () => {
+    i18n.setLocale(locale);
+    const origin = (actor, client, session) => ({ actor_name: actor, client_id: client, session_id: session });
+    const liveWork = { ...work, detail_loaded: true, context_complete: true,
+      agent: 'Review Agent', model: 'Review model', client_id: 'selected-client', session_id: 'selected-session',
+      last_participant: 'Reviewer', last_participation: { session_id: 'last-session' },
+      execution: { state: 'succeeded', origin: origin('Developer', 'execution-client', 'execution-session') },
+      progress_report: { phase: 'reviewing', summary: 'Reviewing the result', origin: origin('Reviewer', 'report-client', 'report-session') },
+      usage: { input_tokens: 4000, stale: true, coverage: 'partial', origin: origin('Developer', 'counter-client', 'counter-session') },
+      collaboration: { publication: { phase: 'confirmed' }, source_synchronized: null } };
+    mock(url => url.includes('/projects?') ? projects : { ...overview, works: [liveWork], interaction_mode: 'mcp' });
+    await ui.refresh(); await ui._selectWork(work.key);
+    const text = node('teamDetail').textContent;
+    for (const value of ['Developer', 'Reviewer', 'execution-client', 'execution-session', 'report-client', 'report-session',
+      'counter-client', 'counter-session', 'selected-client', 'selected-session', 'last-session']) assert.ok(text.includes(value), value);
+    for (const key of ['feedback.publication_confirmed', 'feedback.dimension_unknown', 'feedback.execution_model_unknown',
+      'feedback.source_sync_basis', 'ui.network_session_model']) assert.ok(text.includes(i18n.t(key)), key);
+    assert.ok(!text.includes(i18n.t('feedback.source_sync_yes')));
+    assert.ok(!text.includes(i18n.t('feedback.source_sync_no')));
+  });
+}
+
+for (const locale of ['en', 'zh-CN']) {
   test(`replaced delivery history is distinguished from current rejection in ${locale}`, async () => {
     i18n.setLocale(locale);
     const liveWork = { ...work, workstream_id: 'stream', detail_loaded: true, context_complete: true,

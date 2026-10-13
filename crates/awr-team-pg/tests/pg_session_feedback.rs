@@ -40,6 +40,73 @@ async fn observe(store: &WorkstreamReadStore, token: &str) -> Value {
 }
 
 #[tokio::test]
+async fn reviewer_participation_does_not_erase_developer_feedback_or_reassign_host_usage() {
+    let (_g, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let mut report = cp(&store, "developer-feedback", "1").await;
+    report.args["client_info"] = client();
+    report.args["progress"] = progress();
+    report.args["usage"] = usage();
+    store
+        .commands()
+        .execute(TENANT, PROJECT, A, report)
+        .await
+        .unwrap();
+    let developer = observe(&store, A).await;
+    admin.batch_execute("UPDATE awr_team.sessions SET state='ended' WHERE id='session-a';
+        UPDATE awr_team.credentials SET actor_id='reviewer' WHERE id='reader-b';
+        INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,can_write)
+        VALUES('reader-tenant','reader-project','reviewer','cli-b','00000000000000000000000001',1,true,true)").await.unwrap();
+    let p = prepare(&store, B, "a").await;
+    let result = store.commands().execute(TENANT, PROJECT, B, command(&p, "reviewer-start", "session.start",
+        json!({"conversation_id":"review-conversation","client_info":{"product":"Review Agent","model":{"id":"review-model","source":"client_configuration"}}})))
+        .await.unwrap();
+    let session = result["receipt"]["data"]["session_id"].as_str().unwrap();
+    let mut q = query("work.observe");
+    q.work_id = Some("a".into());
+    let data = store.query(TENANT, PROJECT, B, q.clone()).await.unwrap()["data"].clone();
+    assert_eq!(data["session"]["id"], session);
+    assert_eq!(data["last_participation"]["session_id"], session);
+    assert_eq!(data["last_participation"]["actor_id"], "reviewer");
+    assert_eq!(data["progress"], developer["progress"]);
+    assert_eq!(data["usage"], developer["usage"]);
+    assert_eq!(data["usage"]["origin"]["client_id"], "cli-a");
+    assert_eq!(data["reporting"]["client_origin"]["session_id"], session);
+    assert_eq!(data["model"]["id"], "review-model");
+    let p = prepare(&store, B, "a").await;
+    store.commands().execute(TENANT, PROJECT, B, command(&p, "review-progress", "session.checkpoint",
+        json!({"session_id":session,"expected_session_version":"1","context_hash":p["data"]["context_hash"],
+            "next_action":"Review storage durability","open_loops":[],"progress":{"phase":"reviewing","summary":"Reviewing the submitted storage result."}})))
+        .await.unwrap();
+    let mixed = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap()["data"].clone();
+    assert_eq!(mixed["progress"]["origin"]["actor_id"], "reviewer");
+    assert_eq!(mixed["usage"], developer["usage"]);
+    assert_eq!(mixed["reporting"]["usage_aggregation"], "none");
+    q.session_id = Some(session.into());
+    let scoped = store.query(TENANT, PROJECT, B, q.clone()).await.unwrap()["data"].clone();
+    assert!(scoped["usage"].is_null());
+    assert_eq!(scoped["observation_scope"], "requested_session");
+    q.session_id = Some("session-a".into());
+    assert_eq!(
+        store.query(TENANT, PROJECT, A, q.clone()).await.unwrap()["data"]["progress"],
+        developer["progress"]
+    );
+    // Earlier ownership remains historical; it is not borrowed into the new scope.
+    admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_ownership SET ownership_version=2 WHERE work_id='a';
+        UPDATE awr_team.workstream_snapshot_ownership SET ownership_version=2 WHERE work_id='a';
+        UPDATE awr_team.sessions SET ownership_version=2 WHERE work_id='a' AND id<>'session-a'",
+        )
+        .await
+        .unwrap();
+    q.session_id = None;
+    let moved = store.query(TENANT, PROJECT, A, q).await.unwrap();
+    assert!(moved["data"]["usage"].is_null());
+    assert_eq!(moved["data"]["progress"]["origin"]["actor_id"], "reviewer");
+}
+
+#[tokio::test]
 async fn lifecycle_phases_are_declared_feedback_with_explicit_revision_and_time_provenance() {
     let (_g, admin, _, store) = setup().await;
     enable_writes(&admin).await;

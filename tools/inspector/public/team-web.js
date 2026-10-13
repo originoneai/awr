@@ -876,11 +876,13 @@
         group.appendChild(list); target.appendChild(group);
         return group;
       };
+      const originRows = origin => [['reporter', origin?.actor_name || origin?.actor_id],
+        ['client', origin?.client_id], ['session', origin?.session_id]];
       const agent = w.agent && typeof w.agent === 'object' ? w.agent.id : w.agent;
       section('people', [['developer', w.owner_person || t(i18n, 'ui.team_progress_unassigned')],
         ['claimant', w.claimant || t(i18n, 'feedback.no_current_claim')], ['last_participant', w.last_participant],
-        ['agent', agent || missing(w, 'model')],
-        ['model', w.model || missing(w, 'model', 'ui.team_progress_model_missing')]]);
+        ['session_agent', agent || missing(w, 'model')],
+        ['session_model', w.model || missing(w, 'model', 'ui.team_progress_model_missing')]]);
       section('progress', [['status', workStatus(w)], ['next', nextStep(w)]]);
       if (w.guidance) {
         const hint = w.guidance;
@@ -916,8 +918,11 @@
           ['integration', recorded('integration_', collaboration.integration?.state, collaboration.integration?.current_binding === false
             && ['confirmed', 'rejected'].includes(collaboration.integration?.state))],
           ['publication', recorded('publication_', collaboration.publication?.phase)],
+          ['source_sync', t(i18n, collaboration.source_synchronized === true ? 'feedback.source_sync_yes'
+            : collaboration.source_synchronized === false ? 'feedback.source_sync_no' : 'feedback.dimension_unknown')],
         ]);
         group.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.delivery_dimensions')));
+        group.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.source_sync_basis')));
         group.appendChild(el('h6', null, t(i18n, 'feedback.delivery_checks')));
         const checks = el('ul');
         for (const check of collaboration.verification || [])
@@ -932,7 +937,7 @@
       const report = w.progress_report;
       if (report) {
         const group = section('agent_report', [['phase', t(i18n, 'feedback.phase_' + report.phase)],
-          ['summary', report.summary], ['reported_at', time(report.reported_at_unix_ms)]]);
+          ['summary', report.summary], ['reported_at', time(report.reported_at_unix_ms)], ...originRows(report.origin)]);
         group.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.caller_report')));
         if (report.stale) group.appendChild(el('p', { class: 'team-error' }, t(i18n, 'feedback.stale')));
         for (const [label, values] of [
@@ -951,7 +956,7 @@
         const usage = w.usage;
         const group = section('usage', [['input_tokens', usage.input_tokens], ['output_tokens', usage.output_tokens],
           ['cached_input_tokens', usage.cached_input_tokens], ['usage_coverage', t(i18n, 'feedback.coverage_' + usage.coverage)],
-          ['measured_at', time(usage.observed_at_unix_ms)], ['reported_at', time(usage.reported_at_unix_ms)]]);
+          ['measured_at', time(usage.observed_at_unix_ms)], ['reported_at', time(usage.reported_at_unix_ms)], ...originRows(usage.origin)]);
         group.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.usage_scope')));
         if (usage.stale) group.appendChild(el('p', { class: 'team-error' }, t(i18n, 'feedback.stale')));
       } else section('usage', [['tokens', missing(w, 'usage', 'ui.team_progress_usage_missing')]]);
@@ -980,7 +985,8 @@
           const key = 'feedback.' + prefix + value, translated = t(i18n, key);
           return translated === key ? t(i18n, 'ui.network_not_reported') : translated;
         };
-        const group = section('execution', [['execution_state', t(i18n, 'ui.team_progress_execution_' + execution.state)],
+        const group = section('execution', [...originRows(execution.origin),
+          ['execution_state', t(i18n, 'ui.team_progress_execution_' + execution.state)],
           ['terminal_reported', dimension('terminal_reported')], ['artifact_verified', dimension('artifact_verified')],
           ['effects_settled', dimension('effects_settled')], ['settlement_basis', known('settlement_', execution.settlement_basis)],
           ['settlement_scope', known('scope_', execution.settlement_scope)],
@@ -988,6 +994,7 @@
           ['previous_epoch', execution.previous_epoch_review_required == null ? t(i18n, 'feedback.dimension_unknown')
             : t(i18n, execution.previous_epoch_review_required ? 'feedback.epoch_review_required' : 'feedback.epoch_review_not_required')]]);
         group.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.execution_dimensions')));
+        group.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.execution_model_unknown')));
       }
       if (w.checkpoint) {
         const history = el('details', { class: 'feedback-history' });
@@ -1008,6 +1015,7 @@
       const provenance = el('details', { class: 'feedback-history' });
       provenance.appendChild(el('summary', null, t(i18n, 'feedback.provenance')));
       section('provenance', [['client', w.client_id], ['session', w.session_id],
+        ['last_participant_session', w.last_participation?.session_id],
         ['delegated_agent', w.delegated_agent], ['client_version', w.client_info?.version],
         ['model_source', w.model_info?.source ? t(i18n, 'feedback.' + w.model_info.source) : null],
         ['reported_at', time(w.reporting?.client_reported_at_unix_ms)],
