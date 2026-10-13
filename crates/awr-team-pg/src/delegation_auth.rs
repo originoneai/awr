@@ -474,6 +474,62 @@ fn covers_stream(grant: &AgentAuthorization, stream: awr_core::Id) -> bool {
     }
 }
 
+/// Explain only an elapsed discovery grant whose identity and current read
+/// scope are still valid. No authority is installed, and mixed live/expired
+/// grants stay conservatively denied rather than guessing which one to renew.
+async fn deny_discovery(
+    tx: &tokio_postgres::Transaction<'_>,
+    auth: &ReaderAuthority,
+    project: &str,
+    request: &crate::WorkstreamQuery,
+    now_ms: i64,
+    has_live_candidates: bool,
+) -> PgResult<()> {
+    if has_live_candidates || !auth.membership_actions().contains(&Action::WorkRead) {
+        return Err(PgError::Forbidden);
+    }
+    let rows = tx
+        .query(
+            "SELECT body_json FROM awr_team.agent_authorizations
+             WHERE tenant_id=$1 AND project_id=$2 AND subject_id=$3 AND status='active'
+             ORDER BY created_at_ms ASC, id ASC FOR SHARE",
+            &[&auth.tenant_id, &project, &auth.actor_id],
+        )
+        .await?;
+    for row in rows {
+        let grant: AgentAuthorization = serde_json::from_value(row.get(0))
+            .map_err(|_| PgError::Protocol("corrupt agent authorization".into()))?;
+        if grant.subject_kind != ExecutionSubjectKind::Agent
+            || grant.subject_id != auth.actor_id
+            || grant.client_id != auth.client_id
+            || grant.session_id.is_some()
+            || grant.scope.project_id() != project
+            || grant.status != AuthorizationStatus::Active
+            || grant.revoked_at_ms.is_some()
+            || grant.created_at_ms > now_ms
+            || grant.expires_at_ms.is_none_or(|expiry| expiry > now_ms)
+            || !grant.actions.contains(&AuthorizedAction::Inspect)
+        {
+            continue;
+        }
+        let readable_scope = auth.catalog.workstreams.iter().any(|stream| {
+            request.workstream_id.is_none_or(|id| id == stream.id)
+                && covers_stream(&grant, stream.id)
+                && auth
+                    .access
+                    .authorize(&auth.catalog, stream.id, awr_core::WorkstreamAction::Read)
+                    .is_ok()
+        });
+        if readable_scope
+            && live_person_binding_covers(tx, &auth.tenant_id, project, &grant, &auth.actor_id)
+                .await?
+        {
+            return Err(PgError::expired_agent_authorization());
+        }
+    }
+    Err(PgError::Forbidden)
+}
+
 /// Discovery can expose several independently authorized read scopes. It never
 /// combines their action sets into a reusable command authority.
 pub(crate) async fn resolve_agent_read_delegation(
@@ -513,6 +569,10 @@ pub(crate) async fn resolve_agent_read_delegation(
         let chosen = candidates.iter().find(|candidate| {
             candidate.actions.contains(&Action::WorkRead) && covers_stream(&candidate.grant, stream)
         });
+        if chosen.is_none() {
+            return deny_discovery(tx, auth, project, request, now_ms, !candidates.is_empty())
+                .await;
+        }
         install_delegation(auth, chosen);
         return restrict_read_scope(tx, auth, project, request).await;
     }
@@ -572,7 +632,8 @@ pub(crate) async fn resolve_agent_read_delegation(
             }
         }
         if scope.streams.is_empty() && scope.tasks.is_empty() {
-            return Err(PgError::Forbidden);
+            return deny_discovery(tx, auth, project, request, now_ms, !candidates.is_empty())
+                .await;
         }
         // A task's owner is retained for per-row checks, never promoted to a
         // broadly readable stream. SQL applies the exact task-owner predicate.
@@ -586,7 +647,8 @@ pub(crate) async fn resolve_agent_read_delegation(
         auth.navigation_read_scope = Some(scope);
     } else {
         if readers.is_empty() {
-            return Err(PgError::Forbidden);
+            return deny_discovery(tx, auth, project, request, now_ms, !candidates.is_empty())
+                .await;
         }
         auth.access.grants.retain(|access| {
             readers

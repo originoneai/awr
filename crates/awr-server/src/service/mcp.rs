@@ -199,8 +199,9 @@ async fn authorize(State(endpoint): State<Endpoint>, request: Request, next: Nex
             )
             .await
         {
-            // Admission failures need a fresh login even when a native client
-            // retained a static credential. Tool permissions are checked below.
+            // Generic admission failures retain the login challenge. A diagnosed
+            // expired delegation instead keeps its bounded403 recovery advice:
+            // repeating authentication cannot renew the member's authority.
             if matches!(error, PgError::Forbidden) {
                 return oauth::challenge(&endpoint.state, &endpoint.project.key, true);
             }

@@ -394,6 +394,7 @@ pub(crate) async fn audited(
     let status = match &result {
         Ok(_) => "succeeded",
         Err(PgError::Forbidden) => "denied",
+        Err(error) if error.is_expired_agent_authorization() => "denied",
         Err(error) if error.source_storage_reason().is_some() => "unknown",
         Err(
             PgError::Protocol(_)
@@ -875,6 +876,19 @@ fn retryable_value() -> Value {
 
 // Shared by HTTP and MCP; never expose SQL, URLs, credentials or source bodies.
 fn public_error(error: PgError) -> (StatusCode, Value) {
+    if error.is_expired_agent_authorization() {
+        return (
+            StatusCode::FORBIDDEN,
+            json!({
+                "code":"AgentAuthorizationExpired",
+                "message":"Your Agent delegation has expired; logging in again will not renew it.",
+                "condition":"No live delegation remains for this authenticated client.",
+                "evidence":"The credential, membership and person binding are valid; a matching read delegation has elapsed.",
+                "next_step":"Ask the responsible member or authorized operator to renew the Agent delegation through the reviewed authorization workflow.",
+                "recheck_when":"After renewal, reconnect and inspect current work, session, claim and execution before resuming. Do not replay an old run."
+            }),
+        );
+    }
     if error.is_retryable() {
         return (StatusCode::SERVICE_UNAVAILABLE, retryable_value());
     }

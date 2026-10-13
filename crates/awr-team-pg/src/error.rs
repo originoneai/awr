@@ -118,6 +118,18 @@ pub enum PgError {
 }
 
 impl PgError {
+    const EXPIRED_AGENT_AUTHORIZATION: &'static str = "authenticated Agent read delegation expired";
+
+    /// A safe discovery diagnosis, never an authentication or execution permit.
+    /// Keep the public enum stable for downstream exhaustive matches.
+    pub(crate) fn expired_agent_authorization() -> Self {
+        Self::Protocol(Self::EXPIRED_AGENT_AUTHORIZATION.into())
+    }
+
+    pub fn is_expired_agent_authorization(&self) -> bool {
+        matches!(self, Self::Protocol(message) if message == Self::EXPIRED_AGENT_AUTHORIZATION)
+    }
+
     // Keep the existing Protocol representation: PgError is a public,
     // exhaustively matched enum, and callers already classify it as bad input.
     const SOURCE_STORAGE_IO: &'static str = "authoritative source storage is unavailable";

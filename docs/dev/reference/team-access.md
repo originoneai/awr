@@ -191,6 +191,29 @@ Agent manage, executor-attestation and reconciliation grants.
 `work.assign` is an authorization contract; the assignment command and complete
 delivery flow must be advertised separately when those entry points ship.
 
+### Recovering an expired Agent delegation
+
+A valid personal credential does not extend a finite Agent delegation. When
+project discovery finds no live delegation, but verifies an elapsed read grant
+against the current credential, membership, client, person binding and readable
+scope, HTTP and MCP return `403 AgentAuthorizationExpired`. Its bounded response
+states the condition, evidence, next step and when to recheck. MCP preserves this
+diagnosis instead of prompting another OAuth login. No project content or grant
+identifiers are disclosed. Unrelated scopes, revoked identity, missing read
+access and ambiguous mixtures of live and expired grants retain generic denial.
+
+Ask the responsible member or authorized operator to arrange a reviewed renewal.
+The existing [operator renewal workflow](team-operator-access.md) uses
+`agent-renew-preview`, `agent-renew-apply` and `agent-renew-outcome` to issue a
+finite successor while preserving the prior grant and member binding. These
+remain owner operations; an Agent cannot renew itself or obtain owner access
+from this diagnostic. Logging in again or rotating a credential does not renew
+delegation.
+
+After confirmed renewal, reconnect and inspect current work, session, claim and
+execution before continuing. Renewal does not revive an expired lease, authorize
+replaying a run, or prove that an interrupted execution stopped.
+
 ### Resource-bound authority
 
 An allow decision requires an `AuthorityScope` that binds all of:

@@ -60,6 +60,127 @@ fn work_grant(person: &PersonId) -> AgentAuthorization {
 }
 
 #[tokio::test]
+async fn expired_discovery_advice_requires_live_identity_binding_and_scope() {
+    let (_guard, admin, db, store) = setup().await;
+    flip_actor_to_agent(&admin).await;
+    let authorizations =
+        AuthorizationStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let mut expired = work_grant(&PersonId::new("alice").unwrap());
+    expired.expires_at_ms = Some(2_000);
+    authorizations
+        .issue(
+            TENANT,
+            PROJECT,
+            &IssueAuthorizationRequest {
+                request_key: "discovery-expired".into(),
+                authorization: expired.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    for op in ["capabilities", "work.next", "work.inbox", "work.list"] {
+        let error = store
+            .query(TENANT, PROJECT, A, query(op))
+            .await
+            .unwrap_err();
+        assert!(error.is_expired_agent_authorization(), "{op}: {error:?}");
+    }
+    for (disable, restore) in [
+        (
+            "UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='reader-a'",
+            "UPDATE awr_team.credentials SET revoked_at=NULL WHERE id='reader-a'",
+        ),
+        (
+            "UPDATE awr_team.credentials SET expires_at=clock_timestamp()-interval '1 hour' WHERE id='reader-a'",
+            "UPDATE awr_team.credentials SET expires_at=NULL WHERE id='reader-a'",
+        ),
+        (
+            "UPDATE awr_team.person_agent_bindings SET status='disabled' WHERE id='bind-agent'",
+            "UPDATE awr_team.person_agent_bindings SET status='active' WHERE id='bind-agent'",
+        ),
+        (
+            "UPDATE awr_team.persons SET status='disabled' WHERE id='alice'",
+            "UPDATE awr_team.persons SET status='active' WHERE id='alice'",
+        ),
+        (
+            "UPDATE awr_team.agent_authorizations SET status='revoked' WHERE id='auth-agent-work'",
+            "UPDATE awr_team.agent_authorizations SET status='active' WHERE id='auth-agent-work'",
+        ),
+        (
+            "UPDATE awr_team.workstream_grants SET can_read=false WHERE client_id='cli-a'",
+            "UPDATE awr_team.workstream_grants SET can_read=true WHERE client_id='cli-a'",
+        ),
+    ] {
+        admin.batch_execute(disable).await.unwrap();
+        for op in ["capabilities", "work.next"] {
+            assert!(matches!(
+                store.query(TENANT, PROJECT, A, query(op)).await,
+                Err(PgError::Forbidden)
+            ));
+        }
+        admin.batch_execute(restore).await.unwrap();
+    }
+    let original = serde_json::to_value(&expired).unwrap();
+    let mut unrelated = expired.clone();
+    unrelated.client_id = "other-client".into();
+    let mut session_bound = expired.clone();
+    session_bound.session_id = Some("another-session".into());
+    let mut unreadable = expired.clone();
+    unreadable.scope = AuthorizationScope::Workstream {
+        project_id: PROJECT.into(),
+        workstream_id: Id::from(999).to_string(),
+    };
+    let mut no_read = expired.clone();
+    no_read.actions = BTreeSet::from([AuthorizedAction::StartWork]);
+    for foreign in [unrelated, session_bound, unreadable, no_read] {
+        admin
+            .execute(
+                "UPDATE awr_team.agent_authorizations SET body_json=$1 WHERE id='auth-agent-work'",
+                &[&serde_json::to_value(&foreign).unwrap()],
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            store.query(TENANT, PROJECT, A, query("work.next")).await,
+            Err(PgError::Forbidden)
+        ));
+    }
+    admin
+        .execute(
+            "UPDATE awr_team.agent_authorizations SET body_json=$1 WHERE id='auth-agent-work'",
+            &[&original],
+        )
+        .await
+        .unwrap();
+    // A live successor restores discovery only through actual stored authority.
+    let mut successor = expired;
+    successor.id = "successor-read".into();
+    successor.expires_at_ms = None;
+    successor.actions = BTreeSet::from([AuthorizedAction::Inspect]);
+    authorizations
+        .issue(
+            TENANT,
+            PROJECT,
+            &IssueAuthorizationRequest {
+                request_key: "discovery-successor".into(),
+                authorization: successor,
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .query(TENANT, PROJECT, A, query("capabilities"))
+        .await
+        .unwrap();
+    assert!(matches!(
+        store
+            .query(TENANT, "other-project", A, query("capabilities"))
+            .await,
+        Err(PgError::Forbidden)
+    ));
+}
+
+#[tokio::test]
 async fn one_live_delegation_is_intersected_with_current_duties_for_navigation_and_commands() {
     use awr_team::BusinessRole;
     use awr_team_pg::{AccessPlan, OperatorAccess};
