@@ -176,7 +176,7 @@ pub(crate) async fn evidence_origins(
     contract_hash: &str,
     execution: Option<&str>,
 ) -> PgResult<Value> {
-    let execution = execution.ok_or(PgError::EvidenceInvalid)?;
+    let execution = execution.ok_or_else(PgError::missing_simulated_evidence_execution)?;
     let row = tx
         .query_opt(
             "SELECT executor_origin_json FROM awr_team.executions

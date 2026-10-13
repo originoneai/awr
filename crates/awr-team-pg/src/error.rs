@@ -226,6 +226,8 @@ impl PgError {
     const WORK_NEXT_SELECTORS: &'static str = "work.next does not accept work selectors";
     const MISSING_REVIEW_SESSION_VERSION: &'static str =
         "review command requires expected_session_version";
+    const MISSING_SIMULATED_EVIDENCE_EXECUTION: &'static str =
+        "simulated member evidence requires execution_id";
     const REVIEW_SUBMISSION_INCOMPLETE: &'static str =
         "neutral review submission is incomplete or no longer current";
     const MANIFEST_DIGEST_MISMATCH: &'static str =
@@ -261,5 +263,13 @@ impl PgError {
 
     pub fn is_missing_review_session_version(&self) -> bool {
         matches!(self, Self::Protocol(message) if message == Self::MISSING_REVIEW_SESSION_VERSION)
+    }
+
+    pub fn missing_simulated_evidence_execution() -> Self {
+        Self::Protocol(Self::MISSING_SIMULATED_EVIDENCE_EXECUTION.into())
+    }
+
+    pub fn is_missing_simulated_evidence_execution(&self) -> bool {
+        matches!(self, Self::Protocol(message) if message == Self::MISSING_SIMULATED_EVIDENCE_EXECUTION)
     }
 }

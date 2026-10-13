@@ -178,6 +178,75 @@ async fn open_simulated(
 }
 
 #[tokio::test]
+async fn simulated_auxiliary_evidence_recovery_guidance_preserves_attribution_and_atomicity() {
+    async fn state(admin: &Client) -> Vec<i64> {
+        let row = admin.query_one("SELECT (SELECT count(*) FROM awr_team.evidence),
+            (SELECT count(*) FROM awr_team.artifacts),(SELECT count(*) FROM awr_team.operations),
+            (SELECT count(*) FROM awr_team.events),project_revision FROM awr_team.projects
+            WHERE tenant_id=$1 AND id=$2", &[&TENANT, &PROJECT]).await.unwrap();
+        (0..5).map(|i| row.get(i)).collect()
+    }
+
+    let (_guard, admin, db, store) = setup().await;
+    let ordinary_contract = current_contract(&admin).await;
+    seed_simulated_members(&admin, &db).await;
+    let primary = simulated_evidence(&store).await;
+    let args = json!({"session_id":"session-a","expected_session_version":"1",
+        "dirty_tree":false,"artifact_text":"public auxiliary content","payload":{"kind":"auxiliary"}});
+    let before = state(&admin).await;
+    for (key, explicit_null) in [("missing-execution", false), ("null-execution", true)] {
+        let mut missing = args.clone();
+        if explicit_null {
+            missing["execution_id"] = Value::Null;
+        }
+        let error = run_err(&store, A, key, "evidence.submit", missing).await;
+        assert!(error.to_string().contains("execution_id"), "{error}");
+        assert!(!error.to_string().contains("public auxiliary content"));
+        assert_eq!(state(&admin).await, before);
+    }
+    for (key, execution) in [("empty-execution", ""), ("unknown-execution", "private-missing-id")] {
+        let mut invalid = args.clone();
+        invalid["execution_id"] = json!(execution);
+        assert!(matches!(
+            run_err(&store, A, key, "evidence.submit", invalid).await,
+            PgError::EvidenceInvalid
+        ));
+        assert_eq!(state(&admin).await, before);
+    }
+    let mut wrong_session = args.clone();
+    wrong_session["session_id"] = json!("session-reviewer");
+    assert!(matches!(
+        run_err(&store, A, "wrong-session", "evidence.submit", wrong_session).await,
+        PgError::Forbidden
+    ));
+    let mut stale_session = args.clone();
+    stale_session["expected_session_version"] = json!("2");
+    assert!(matches!(
+        run_err(&store, A, "stale-session", "evidence.submit", stale_session).await,
+        PgError::PreconditionsChanged
+    ));
+    assert_eq!(state(&admin).await, before);
+
+    let mut corrected = args.clone();
+    corrected["execution_id"] = primary["execution_id"].clone();
+    let auxiliary = run(&store, A, "corrected-auxiliary", "evidence.submit", corrected).await;
+    let row = admin.query_one("SELECT execution_id,member_origins_json FROM awr_team.evidence WHERE id=$1",
+        &[&auxiliary["evidence_id"].as_str().unwrap()]).await.unwrap();
+    assert_eq!(row.get::<_, String>(0), primary["execution_id"].as_str().unwrap());
+    let origin: Value = row.get(1);
+    assert_eq!(origin["executor"]["member_id"], "person-author");
+    assert_eq!(origin["submitter"]["member_id"], "person-author");
+
+    // The conditional requirement must not reject ordinary standalone evidence.
+    put_contract(&admin, &ordinary_contract).await;
+    let standalone = run(&store, A, "ordinary-standalone", "evidence.submit", args).await;
+    let row = admin.query_one("SELECT execution_id,member_origins_json FROM awr_team.evidence WHERE id=$1",
+        &[&standalone["evidence_id"].as_str().unwrap()]).await.unwrap();
+    assert!(row.get::<_, Option<String>>(0).is_none());
+    assert!(row.get::<_, Option<Value>>(1).is_none());
+}
+
+#[tokio::test]
 async fn simulated_members_review_with_one_controller_and_immutable_inspectable_basis() {
     let (_g, admin, db, store) = setup().await;
     seed_simulated_members(&admin, &db).await;

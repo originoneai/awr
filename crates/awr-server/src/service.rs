@@ -919,6 +919,19 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
                 "next_step":"Inspect your current session with session.inspect or use selector-free work.next resume. Retry with its current session_version as a JSON decimal string in args.expected_session_version."}),
         );
     }
+    if error.is_missing_simulated_evidence_execution() {
+        return (
+            StatusCode::CONFLICT,
+            json!({"code":"EvidenceInvalid","message":"args.execution_id is required",
+            "invalid_field":"/args/execution_id","constraint":"required_by_completion_policy",
+            "action_guidance":{
+                "when":"evidence.submit under simulated-member completion, including auxiliary files",
+                "because":"Every evidence item must retain the actual executor's member identity.",
+                "action":"Inspect this work's actual execution with work.observe, then submit its execution_id in args.",
+                "recheck_on":"Session, contract, execution or authority changes."
+            }}),
+        );
+    }
     if error.is_manifest_digest_mismatch() {
         return (
             StatusCode::BAD_REQUEST,

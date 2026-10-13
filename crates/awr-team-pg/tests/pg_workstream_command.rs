@@ -246,7 +246,7 @@ async fn stale_preconditions_invalid_context_and_forged_fields_do_not_write() {
 }
 
 #[tokio::test]
-async fn inspect_after_lost_response_is_client_and_ownership_bound_and_missing_is_unknown() {
+async fn inspect_recovery_guidance_keeps_missing_unknown_and_receipts_identity_bound() {
     let (_guard, admin, _, store) = setup().await;
     enable_writes(&admin).await;
     let commands = store.commands();
@@ -272,10 +272,53 @@ async fn inspect_after_lost_response_is_client_and_ownership_bound_and_missing_i
     );
     let mut missing = q.clone();
     missing.request_id = Some("not-submitted".into());
-    assert_eq!(
-        store.query(TENANT, PROJECT, A, missing).await.unwrap()["data"]["state"],
-        "unknown"
+    let unknown = store
+        .query(TENANT, PROJECT, A, missing.clone())
+        .await
+        .unwrap();
+    assert_eq!(unknown["data"]["state"], "unknown");
+    assert_eq!(unknown["data"]["retry"], "conditional");
+    let guidance = &unknown["data"]["action_guidance"];
+    assert!(
+        guidance["when"]
+            .as_str()
+            .unwrap()
+            .contains("missing or uncertain")
     );
+    assert!(
+        guidance["action"]
+            .as_str()
+            .unwrap()
+            .contains("explicit input rejection")
+    );
+    assert!(
+        guidance["action"]
+            .as_str()
+            .unwrap()
+            .contains("Never repeat external effects")
+    );
+    assert!(!guidance["because"].is_null() && !guidance["recheck_on"].is_null());
+    assert!(unknown["data"].to_string().len() < 800);
+
+    let before = counts(&admin).await;
+    let invalid = command(
+        &prepare(&store, A, "a").await,
+        "rejected",
+        "session.start",
+        json!({}),
+    );
+    assert!(
+        commands
+            .execute(TENANT, PROJECT, A, invalid)
+            .await
+            .unwrap_err()
+            .is_missing_session_start_conversation_id()
+    );
+    missing.request_id = Some("rejected".into());
+    let rejected = store.query(TENANT, PROJECT, A, missing).await.unwrap();
+    assert_eq!(rejected["data"]["state"], "unknown");
+    assert_eq!(rejected["data"]["action_guidance"], *guidance);
+    assert_eq!(counts(&admin).await, before);
     admin.batch_execute("UPDATE awr_team.workstream_snapshot_ownership SET ownership_version=2 WHERE work_id='a'").await.unwrap();
     assert!(matches!(
         store.query(TENANT, PROJECT, A, q).await,

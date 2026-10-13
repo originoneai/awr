@@ -225,8 +225,19 @@ the operation's known `expected_fields`. Correct the field using current
 discovery; after an uncertain command outcome, inspect its original request first.
 Diagnostics are advice on a rejection, not a second validator or an approval.
 
+Under simulated-member completion, every `evidence.submit` needs the actual
+`args.execution_id`, including auxiliary code, styles and tests. A missing or null
+selector keeps the `EvidenceInvalid` conflict and identifies `/args/execution_id`;
+inspect this work's actual execution before correcting it. Other invalid bindings
+remain generic. Contracts that permit standalone evidence still support it.
+
 Persist a stable request ID and exact command envelope before a write. After a
 timeout, inspect the original `command.inspect` result before an exact retry.
+No committed receipt means `unknown`: an in-flight command may still commit.
+Its retry advice applies only to a missing or uncertain original response. When
+the original input was explicitly rejected, inspect current state and correct it
+instead of replaying unchanged input. Inspection does not turn absence into a
+definite rejection or grant execution authority.
 Replayed receipts are historical facts, not permission to run effects again.
 Unknown execution effects require inspection and authorized reconciliation;
 creating a new session does not bypass that requirement.

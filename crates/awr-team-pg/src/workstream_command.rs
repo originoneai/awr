@@ -884,6 +884,14 @@ pub(crate) async fn inspect(
         Ok(json!({"state":"committed","receipt":receipt}))
     } else {
         // Absence is not proof that a timed-out concurrent command cannot commit.
-        Ok(json!({"state":"unknown","request_id":request,"retry":"same_request_id_and_payload"}))
+        Ok(
+            json!({"state":"unknown","request_id":request,"retry":"conditional",
+            "action_guidance":{
+                "when":"The original response is missing or uncertain; a known rejection does not qualify.",
+                "because":"No committed receipt is visible, but an in-flight command may still commit.",
+                "action":"Retry only the same request_id and payload. For an explicit input rejection, inspect current state and correct the request instead. Never repeat external effects.",
+                "recheck_on":"Original command result, contract or authority changes."
+            }}),
+        )
     }
 }
