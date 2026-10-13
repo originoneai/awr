@@ -135,12 +135,16 @@ Observe the published source revision and target precondition through the projec
 authorized delivery channel. Candidate selection still requires the current own
 session, claim and versions; settlement grants no new repository authority.
 
-Publish code, tests and the measured report in the intended shared version, then
+Publish code and tests in the intended shared version, then
 select the exact candidate using `delivery.candidate.select`. For each manifest
 entry, submit its bytes with `evidence.submit` and
 `payload.delivery_candidate_digest` equal to that selection's binding digest.
-The primary review evidence must itself be one of those entries. Keep execution
-input/output bindings on that primary evidence as required by the chosen policy.
+Submit the primary execution report with the same candidate binding. It may stay
+in AWR without becoming a repository file. Its exact stored artifact ID, bytes and
+digest are checked independently; all manifest files still require their own
+bound evidence. Keep execution input/output bindings on that primary evidence as
+required by the chosen policy. Review, completion and integration use the same
+artifact checks. Existing reports included in the manifest remain supported.
 This uses the existing neutral protocol and supports Git SHA-1/SHA-256 or artifact
 revisions; GitHub and webhooks are optional.
 
@@ -148,6 +152,9 @@ revisions; GitHub and webhooks are optional.
 source revision and `artifacts[].query` selectors. Run those exact `artifact.content`
 queries to inspect all submitted bytes. Code bodies and peer-workspace paths are
 not returned in the metadata. Each content read checks current authorization.
+An AWR-only primary report has `primary_evidence: true` and
+`manifest_artifact_id: null`; read it alongside every manifest entry. It is not
+added to the repository integration's file manifest.
 Content reads default to 64 KiB of raw bytes. An exact selector adds
 `max_context_bytes` only when the stored artifact needs a larger budget, up to
 1 MiB; other queries retain their 256 KiB maximum. JSON escaping, base64 and

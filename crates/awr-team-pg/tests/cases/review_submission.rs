@@ -578,6 +578,129 @@ async fn review_needs_every_bound_manifest_artifact_and_returns_exact_authorized
 }
 
 #[tokio::test]
+async fn standalone_primary_report_keeps_exact_readable_code_manifest() {
+    let (_guard, admin, db, reads) = setup().await;
+    seed_review_actors(&admin).await;
+    let delivery = connector(&admin, &db, &reads, "configure", "0", true).await;
+    let mut selection = select_manifest(
+        &admin,
+        &reads,
+        &delivery,
+        ArtifactManifest {
+            entries: vec![ArtifactEntry {
+                artifact_id: "source-code".into(),
+                sha256: sha(CODE),
+                byte_length: CODE.len().to_string(),
+                locator: "git-blob:src/filter.js".into(),
+            }],
+        },
+    )
+    .await;
+    let binding = selection.candidate.binding.digest().unwrap();
+    let report = evidence(&reads, "report", REPORT, Some(&binding)).await;
+    evidence(&reads, "wrong-code", CODE, Some(&"f".repeat(64))).await;
+    let before = rework_business_snapshot(&admin).await;
+    assert!(
+        run_err(&reads, A, "missing-code", "review.open", opening(&report))
+            .await
+            .is_review_submission_incomplete()
+    );
+    assert_eq!(rework_business_snapshot(&admin).await, before);
+    evidence(&reads, "code", CODE, Some(&binding)).await;
+    let round = run(&reads, A, "open", "review.open", opening(&report)).await;
+    let review = inspect_round(&reads, &round).await;
+    let submission = &review["submission"];
+    assert_eq!(submission["inspectable"], true);
+    assert_eq!(submission["candidate_current"], true);
+    let artifacts = submission["artifacts"].as_array().unwrap();
+    assert_eq!(artifacts.len(), 2);
+    assert_eq!(artifacts[0]["manifest_artifact_id"], Value::Null);
+    assert_eq!(artifacts[0]["primary_evidence"], true);
+    assert_eq!(artifacts[0]["query"]["artifact_id"], report["artifact_id"]);
+    assert_eq!(artifacts[1]["manifest_artifact_id"], "source-code");
+    for (reference, expected) in artifacts.iter().zip([REPORT, CODE]) {
+        let q: awr_team_pg::WorkstreamQuery =
+            serde_json::from_value(reference["query"].clone()).unwrap();
+        let content = reads
+            .query(TENANT, PROJECT, REVIEWER_TOKEN, q.clone())
+            .await
+            .unwrap();
+        assert_eq!(content["data"]["text"], expected);
+        assert!(reads.query(TENANT, PROJECT, B, q).await.is_err());
+    }
+    // Another identical report must not replace the exact originally submitted ID.
+    evidence(&reads, "duplicate-report", REPORT, Some(&binding)).await;
+    admin
+        .execute(
+            "UPDATE awr_team.artifacts SET content=$2 WHERE id=$1",
+            &[
+                &report["artifact_id"].as_str().unwrap(),
+                &b"changed report".to_vec(),
+            ],
+        )
+        .await
+        .unwrap();
+    let before = rework_business_snapshot(&admin).await;
+    assert!(
+        run_err(&reads, A, "corrupt-open", "review.open", opening(&report))
+            .await
+            .is_review_submission_incomplete()
+    );
+    assert!(
+        run_err(
+            &reads,
+            REVIEWER_TOKEN,
+            "corrupt-approve",
+            "review.decide",
+            decision(&round, "approve")
+        )
+        .await
+        .is_review_submission_incomplete()
+    );
+    let review = inspect_round(&reads, &round).await;
+    assert_eq!(review["submission"]["inspectable"], false);
+    assert_eq!(review["submission"]["artifacts"], json!([]));
+    assert_eq!(rework_business_snapshot(&admin).await, before);
+    admin
+        .execute(
+            "UPDATE awr_team.artifacts SET content=$2 WHERE id=$1",
+            &[
+                &report["artifact_id"].as_str().unwrap(),
+                &REPORT.as_bytes().to_vec(),
+            ],
+        )
+        .await
+        .unwrap();
+    let approved = run(
+        &reads,
+        REVIEWER_TOKEN,
+        "approve",
+        "review.decide",
+        decision(&round, "approve"),
+    )
+    .await;
+    assert_eq!(approved["state"], "approved");
+    assert_eq!(approved["task_complete"], false);
+    selection.request_id = "select-replacement".into();
+    selection.expected_selected_digest = Some(binding.clone());
+    selection.candidate.binding.candidate_version = "2".into();
+    selection.read_set = read_set(&prepare(&reads, A, "a").await);
+    delivery
+        .select_candidate(TENANT, PROJECT, A, selection)
+        .await
+        .unwrap();
+    let historical = inspect_round(&reads, &round).await;
+    assert_eq!(historical["submission"]["candidate_digest"], binding);
+    assert_eq!(historical["submission"]["inspectable"], true);
+    assert_eq!(historical["submission"]["candidate_current"], false);
+    assert!(
+        run_err(&reads, A, "stale-open", "review.open", opening(&report))
+            .await
+            .is_review_submission_incomplete()
+    );
+}
+
+#[tokio::test]
 async fn original_large_stored_text_and_binary_have_readable_bounded_authorized_selectors() {
     use awr_team_pg::WorkstreamQuery;
     for length in [

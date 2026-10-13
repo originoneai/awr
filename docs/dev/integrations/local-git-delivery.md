@@ -105,6 +105,11 @@ the authorized remote. Do not push directly to that target or treat a query erro
 as absence. If the publication channel or target is missing, record that prerequisite
 for the supervisor instead of reading server configuration or peer workspaces.
 
+The primary execution report may remain in AWR; it does not need a Git path or
+commit. The code/test manifest still lists the exact repository files. Review,
+completion and integration verify both the pinned report and all manifest bytes.
+Only manifest entries are treated as repository artifacts.
+
 After selection, bind every persisted artifact's evidence to
 `receipt.data.candidate_digest` with `payload.delivery_candidate_digest`. Submit
 the exact bytes through `artifact_text` or `artifact_hex`; logical manifest IDs

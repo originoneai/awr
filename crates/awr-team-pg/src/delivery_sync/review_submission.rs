@@ -41,8 +41,8 @@ fn guidance(work: &str, reason: &str) -> Value {
             "historical artifacts cannot approve a replacement selection",
         ),
         "manifest_content_unavailable" => (
-            "some original manifest content is missing or changed",
-            "every entry must match its stored bytes, digest and length",
+            "the original report or manifest content is missing or changed",
+            "the pinned report and every manifest entry must match their stored bytes and bindings",
         ),
         "inspectable_current_submission" => (
             "the current original submission is readable",
@@ -55,7 +55,7 @@ fn guidance(work: &str, reason: &str) -> Value {
     };
     json!({"when":when,"because":[basis],
         "action":{"op":"delivery.neutral.inspect","work_id":work,
-            "note":"The author must publish actual code and report through the authorized project channel, select its exact candidate, and submit readable evidence for every manifest entry with payload.delivery_candidate_digest. Refresh work.prepare and claim.inspect before selection; never inspect peer paths."},
+            "note":"Publish the deliverable, select its exact candidate, and submit readable primary report and manifest evidence with payload.delivery_candidate_digest. The report may stay in AWR; every manifest file still needs exact bytes. Refresh work.prepare and claim.inspect before selection; never inspect peer paths."},
         "recheck_on":"candidate, contract, artifact, scope or authority changes"})
 }
 

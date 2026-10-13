@@ -107,41 +107,36 @@ pub(super) async fn resolve(
             result.as_deref(),
             &payload,
         )? != evidence_digest
-        || !candidate
-            .manifest
-            .entries
-            .iter()
-            .any(|a| Some(a.sha256.as_str()) == output.as_deref())
     {
         return Err(PgError::EvidenceInvalid);
     }
-    let mut artifacts = Vec::new();
-    for entry in &candidate.manifest.entries {
-        // Manifest IDs are logical delivery names; evidence.submit allocates its
-        // own artifact ID. Bind those independent identities through actual bytes.
-        let pinned =
-            (Some(entry.sha256.as_str()) == output.as_deref()).then_some(artifact_id.as_str());
-        let artifact = tx.query_opt(
-            "SELECT a.sha256,a.byte_length,a.state,a.content,a.id FROM awr_team.artifacts a
-             JOIN awr_team.evidence e ON e.tenant_id=a.tenant_id AND e.project_id=a.project_id AND e.artifact_id=a.id
-             WHERE a.tenant_id=$1 AND a.project_id=$2 AND e.work_id=$3 AND a.sha256=$4 AND ($5::text IS NULL OR a.id=$5)
-               AND e.contract_hash=$6 ORDER BY a.id LIMIT 1",
-            &[&tenant,&project,&set.work_id,&entry.sha256,&pinned,&set.contract_hash],
-        ).await?.ok_or(PgError::EvidenceInvalid)?;
-        let bytes: Vec<u8> = artifact
-            .get::<_, Option<Vec<u8>>>(3)
-            .ok_or(PgError::EvidenceInvalid)?;
-        if artifact.get::<_, String>(2) != "finalized"
-            || artifact.get::<_, String>(0) != entry.sha256
-            || crate::source::sha256_hex(&bytes) != entry.sha256
-            || artifact.get::<_, i64>(1) != bytes.len() as i64
-            || entry.byte_length != bytes.len().to_string()
-        {
-            return Err(PgError::EvidenceInvalid);
-        }
-        artifacts.push(json!({"manifest_artifact_id":entry.artifact_id,"stored_artifact_id":artifact.get::<_,String>(4),
-            "sha256":entry.sha256,"byte_length":entry.byte_length}));
-    }
+    // Review, completion and integration validate the same exact report and
+    // candidate-bound manifest bytes. Only manifest files belong in Git effects.
+    let references = completion::artifact_refs(
+        tx,
+        tenant,
+        project,
+        &candidate,
+        &selected,
+        completion::AcceptedEvidence {
+            payload: &payload,
+            artifact_id: Some(&artifact_id),
+            output_digest: output.as_deref(),
+        },
+    )
+    .await?;
+    let artifacts: Vec<Value> = references
+        .into_iter()
+        .filter(|reference| reference["manifest_artifact_id"].is_string())
+        .map(|reference| {
+            json!({
+                "manifest_artifact_id":reference["manifest_artifact_id"],
+                "stored_artifact_id":reference["query"]["artifact_id"],
+                "sha256":reference["query"]["expected_sha256"],
+                "byte_length":reference["byte_length"]
+            })
+        })
+        .collect();
     let policy = contract.completion_policy.as_str();
     let simulated_policy = policy == crate::review::simulated_member::POLICY;
     let agent_policy = policy == crate::review::AGENT_REVIEW_POLICY || simulated_policy;

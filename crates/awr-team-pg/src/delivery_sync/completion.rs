@@ -119,7 +119,7 @@ pub(super) async fn require_contracts(
 }
 
 /// Use only evidence that originally names this exact candidate. The primary
-/// stored artifact is pinned; additional entries need their own bound evidence.
+/// stored artifact is pinned independently of the repository manifest.
 pub(super) async fn verify_artifacts(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -156,19 +156,44 @@ pub(crate) async fn artifact_refs(
     }
     if evidence.payload["delivery_candidate_digest"].as_str() != Some(selected)
         || evidence.payload["passed"] == false
-        || !candidate
-            .manifest
-            .entries
-            .iter()
-            .any(|entry| Some(entry.sha256.as_str()) == evidence.output_digest)
     {
         return Err(PgError::EvidenceInvalid);
     }
     let primary = evidence.artifact_id.ok_or(PgError::EvidenceInvalid)?;
+    let primary_digest = evidence.output_digest.ok_or(PgError::EvidenceInvalid)?;
     let binding = &candidate.binding;
-    let mut references = Vec::with_capacity(candidate.manifest.entries.len());
+    struct ArtifactTarget<'a> {
+        manifest_id: Option<&'a str>,
+        sha256: &'a str,
+        byte_length: Option<&'a str>,
+        pinned: Option<&'a str>,
+    }
+    let mut targets = Vec::with_capacity(candidate.manifest.entries.len() + 1);
+    // Execution reports may live only in AWR. They still need their exact stored
+    // bytes, original evidence binding and ID; an equal report cannot replace one.
+    if !candidate
+        .manifest
+        .entries
+        .iter()
+        .any(|e| e.sha256 == primary_digest)
+    {
+        targets.push(ArtifactTarget {
+            manifest_id: None,
+            sha256: primary_digest,
+            byte_length: None,
+            pinned: Some(primary),
+        });
+    }
     for entry in &candidate.manifest.entries {
-        let pinned = (Some(entry.sha256.as_str()) == evidence.output_digest).then_some(primary);
+        targets.push(ArtifactTarget {
+            manifest_id: Some(&entry.artifact_id),
+            sha256: &entry.sha256,
+            byte_length: Some(&entry.byte_length),
+            pinned: (entry.sha256 == primary_digest).then_some(primary),
+        });
+    }
+    let mut references = Vec::with_capacity(targets.len());
+    for target in targets {
         let row = tx
             .query_opt(
                 "SELECT a.sha256,a.byte_length,a.state,a.content,e.digest,e.input_digest,
@@ -184,8 +209,8 @@ pub(crate) async fn artifact_refs(
                     &project,
                     &binding.work_id.as_str(),
                     &binding.contract_hash,
-                    &entry.sha256,
-                    &pinned,
+                    &target.sha256,
+                    &target.pinned,
                     &selected,
                 ],
             )
@@ -200,11 +225,14 @@ pub(crate) async fn artifact_refs(
         let payload: Value = row.get(8);
         if row.get::<_, String>(2) != "finalized"
             || bytes.len() > crate::WorkstreamQuery::MAX_ARTIFACT_BYTES
-            || row.get::<_, String>(0) != entry.sha256
-            || crate::source::sha256_hex(&bytes) != entry.sha256
+            || row.get::<_, String>(0) != target.sha256
+            || crate::source::sha256_hex(&bytes) != target.sha256
             || row.get::<_, i64>(1) != bytes.len() as i64
-            || entry.byte_length != bytes.len().to_string()
-            || output.as_deref() != Some(entry.sha256.as_str())
+            || target
+                .byte_length
+                .is_some_and(|length| length != bytes.len().to_string())
+            || output.as_deref() != Some(target.sha256)
+            || (target.pinned.is_some() && payload != *evidence.payload)
             || payload["passed"] == false
             || crate::review::evidence_digest(
                 binding.work_id.as_str(),
@@ -219,14 +247,15 @@ pub(crate) async fn artifact_refs(
         }
         let mut query = serde_json::json!({"protocol_version":1,"op":"artifact.content",
             "work_id":binding.work_id,"artifact_id":row.get::<_,String>(9),
-            "expected_sha256":entry.sha256});
+            "expected_sha256":target.sha256});
         if bytes.len() > 65_536 {
             query["max_context_bytes"] = serde_json::json!(bytes.len());
         }
         references.push(serde_json::json!({
-            "manifest_artifact_id": entry.artifact_id,
+            "manifest_artifact_id": target.manifest_id,
+            "primary_evidence": target.pinned.is_some(),
             "query": query,
-            "byte_length":entry.byte_length
+            "byte_length":bytes.len().to_string()
         }));
     }
     Ok(references)

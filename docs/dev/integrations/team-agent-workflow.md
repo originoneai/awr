@@ -199,9 +199,12 @@ For `InvalidInput` with `reason: manifest_digest_mismatch`, rediscover this code
 recompute the digest, and refresh `work.prepare` and `claim.inspect` before retrying.
 The diagnostic identifies the fixed field without reflecting artifact content.
 
-Publish actual code/tests/report through the authorized
+Publish actual code/tests through the authorized
 project channel, select the exact candidate, and persist every manifest entry as
-evidence with its `payload.delivery_candidate_digest`. Report-only submissions
+evidence with its `payload.delivery_candidate_digest`. Bind the primary execution
+report to that same candidate; the report may stay in AWR without being committed
+to the repository. Its exact bytes and every manifest file are checked separately.
+Report-only submissions with missing manifest evidence
 return `ReviewSubmissionIncomplete`. The review's `submission.artifacts[].query`
 provides exact `artifact.content` selectors for the original version; use them
 instead of discovering peer files. Readability grants no approval or repository

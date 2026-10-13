@@ -61,6 +61,123 @@ async fn public_prepare(f: &Fixture, key: &str) -> WorkstreamCommand {
 }
 
 #[tokio::test]
+async fn standalone_report_preserves_review_integration_and_completion_bindings() {
+    const REPORT: &str = "The code was tested in the assigned workspace.\n";
+    let f = setup_simulated_report_integration(REPORT).await;
+    assert_ne!(
+        f.evidence["artifact_digest"],
+        f.selection.candidate.manifest.entries[0].sha256
+    );
+    let review = read(
+        &f,
+        REVIEWER,
+        "review.inspect",
+        Some(&f.request.review_round_id),
+    )
+    .await
+    .unwrap();
+    let artifacts = review["data"]["review"]["submission"]["artifacts"]
+        .as_array()
+        .unwrap();
+    assert_eq!(artifacts.len(), 2);
+    assert_eq!(artifacts[0]["primary_evidence"], true);
+    assert_eq!(artifacts[0]["manifest_artifact_id"], Value::Null);
+    for (reference, expected) in artifacts.iter().zip([REPORT, CONTENT]) {
+        let query: WorkstreamQuery = serde_json::from_value(reference["query"].clone()).unwrap();
+        let content = f
+            .reads
+            .query(TENANT, PROJECT, REVIEWER, query)
+            .await
+            .unwrap();
+        assert_eq!(content["data"]["text"], expected);
+        let id = reference["query"]["artifact_id"].as_str().unwrap();
+        f.admin
+            .execute(
+                "UPDATE awr_team.artifacts SET content=$2 WHERE id=$1",
+                &[&id, &b"changed".to_vec()],
+            )
+            .await
+            .unwrap();
+        let before = counts(&f).await;
+        let cmd = public_prepare(&f, "damaged-integration").await;
+        assert!(matches!(
+            f.reads
+                .commands()
+                .execute(TENANT, PROJECT, SUPERVISOR, cmd)
+                .await,
+            Err(PgError::EvidenceInvalid)
+        ));
+        let current = prepare(&f.reads, SUPERVISOR, "a").await;
+        let finalize = command(
+            &current,
+            "damaged-finalize",
+            "delivery.finalize",
+            json!({"session_id":"session-supervisor","expected_session_version":"1",
+                "evidence_id":f.evidence["evidence_id"],"context_complete":true}),
+        );
+        assert!(
+            f.reads
+                .commands()
+                .execute(TENANT, PROJECT, SUPERVISOR, finalize)
+                .await
+                .is_err()
+        );
+        assert_eq!(counts(&f).await, before);
+        f.admin
+            .execute(
+                "UPDATE awr_team.artifacts SET content=$2 WHERE id=$1",
+                &[&id, &expected.as_bytes().to_vec()],
+            )
+            .await
+            .unwrap();
+    }
+    let cmd = public_prepare(&f, "standalone-report-integration").await;
+    let prepared = f
+        .reads
+        .commands()
+        .execute(TENANT, PROJECT, SUPERVISOR, cmd)
+        .await
+        .unwrap();
+    assert_eq!(prepared["receipt"]["data"]["state"], "prepared");
+    let id = prepared["receipt"]["data"]["integration_id"]
+        .as_str()
+        .unwrap();
+    let lease = f.leased(id).await;
+    f.dispatched(id, lease["lease_id"].as_str().unwrap()).await;
+    // Synthetic adapter observation, not a claim that a real repository merged.
+    let fact = f
+        .ingest_record("integrated", f.observation(id, IntegrationOutcome::Applied))
+        .await;
+    f.store
+        .confirm_integration(
+            TENANT,
+            PROJECT,
+            WORKER,
+            f.confirm_request("confirmed", id, &fact),
+        )
+        .await
+        .unwrap();
+    let completed = run(
+        &f.reads,
+        SUPERVISOR,
+        "finalize-report",
+        "delivery.finalize",
+        json!({"session_id":"session-supervisor","expected_session_version":"1",
+            "evidence_id":f.evidence["evidence_id"],"context_complete":true}),
+    )
+    .await;
+    assert!(completed["receipt_id"].is_string());
+    assert_eq!(
+        f.admin
+            .query_one("SELECT count(*) FROM awr_team.completion_receipts", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        1
+    );
+}
+
+#[tokio::test]
 async fn supervisor_prepares_from_public_queries_and_inspects_the_original_request() {
     let f = setup_integration().await;
     let command = public_prepare(&f, "wire-prepare").await;

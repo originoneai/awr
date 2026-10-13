@@ -63,12 +63,12 @@ pub async fn setup_integration() -> Fixture {
 
 /// Synthetic exact-base setup; all execution, evidence and review commands still run.
 pub async fn setup_content_integration() -> Fixture {
-    setup_integration_inner(None, None, None, false, true, &[]).await
+    setup_integration_inner(None, None, None, false, true, &[], None).await
 }
 
 /// Bind an actual repository candidate before submitting evidence or approval.
 pub async fn setup_integration_with_candidate(actual: Option<DeliveryCandidate>) -> Fixture {
-    setup_integration_inner(actual, None, None, false, false, &[]).await
+    setup_integration_inner(actual, None, None, false, false, &[], None).await
 }
 
 /// Activate the physical contract before execution or business review. No delivery
@@ -85,7 +85,16 @@ pub async fn setup_source_integration_with_checks(
     checks: &[String],
 ) -> Fixture {
     assert!(!checks.is_empty());
-    setup_integration_inner(Some(actual), Some(root), Some(checks), false, false, &[]).await
+    setup_integration_inner(
+        Some(actual),
+        Some(root),
+        Some(checks),
+        false,
+        false,
+        &[],
+        None,
+    )
+    .await
 }
 
 /// Activate the explicit simulated policy from physical source declarations.
@@ -95,7 +104,16 @@ pub async fn setup_source_simulated_member_integration(
     checks: &[String],
 ) -> Fixture {
     assert!(!checks.is_empty());
-    setup_integration_inner(Some(actual), Some(root), Some(checks), true, false, &[]).await
+    setup_integration_inner(
+        Some(actual),
+        Some(root),
+        Some(checks),
+        true,
+        false,
+        &[],
+        None,
+    )
+    .await
 }
 
 /// Persist all explicitly supplied manifest entries before independent review.
@@ -114,6 +132,7 @@ pub async fn setup_source_integration_with_artifacts(
         simulated,
         false,
         additional,
+        None,
     )
     .await
 }
@@ -129,7 +148,16 @@ pub async fn setup_simulated_content_integration() -> Fixture {
 }
 
 async fn setup_simulated_integration(exact_base: bool) -> Fixture {
-    let fixture = setup_integration_inner(None, None, None, true, exact_base, &[]).await;
+    let fixture = setup_integration_inner(None, None, None, true, exact_base, &[], None).await;
+    fixture.admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
+        VALUES($1,$2,'session-supervisor','main','a','supervisor','cli-supervisor','supervisor-conversation','active',$3,1)",
+        &[&TENANT,&PROJECT,&awr_core::Id::from(1).to_string()]).await.unwrap();
+    fixture
+}
+
+/// The execution report is stored in AWR; the repository contains only CONTENT.
+pub async fn setup_simulated_report_integration(report: &str) -> Fixture {
+    let fixture = setup_integration_inner(None, None, None, true, false, &[], Some(report)).await;
     fixture.admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
         VALUES($1,$2,'session-supervisor','main','a','supervisor','cli-supervisor','supervisor-conversation','active',$3,1)",
         &[&TENANT,&PROJECT,&awr_core::Id::from(1).to_string()]).await.unwrap();
@@ -143,6 +171,7 @@ async fn setup_integration_inner(
     simulated: bool,
     exact_base: bool,
     additional: &[&str],
+    primary_report: Option<&str>,
 ) -> Fixture {
     let (guard, admin, db, reads) = setup().await;
     let config = common::with_app_role(&common::test_config(), &db);
@@ -443,16 +472,23 @@ async fn setup_integration_inner(
         "execution_id":execution["execution_id"],"expected_execution_version":execution["execution_version"],"claim_id":claim["claim_id"],
         "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
         "expected_work_version":prepare(&reads,A,"a").await["data"]["runtime"]["work_version"],"execution_mode":"caller_managed"})).await;
-    let result = &selection.candidate.manifest.entries[0].sha256;
+    let result = primary_report
+        .map(|text| format!("{:x}", Sha256::digest(text)))
+        .unwrap_or_else(|| selection.candidate.manifest.entries[0].sha256.clone());
     run(&reads,A,"report-execution","execution.report",json!({"session_id":"session-a","expected_session_version":"1",
         "execution_id":execution["execution_id"],"expected_execution_version":started["execution_version"],"outcome":"succeeded",
         "output_digest":result,"observed_paths":["src/api/result.json"],"note":"Completed independent fixture workspace.",
         "workspace_settlement":{"workspace_id":"synthetic-workspace-a","input_digest":INPUT,"environment_digest":"c".repeat(64),
             "claim_id":claim["claim_id"],"expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],"executor_stopped":true,"no_external_effects":true}})).await;
     let evidence=run(&reads,A,"submit-evidence","evidence.submit",json!({"session_id":"session-a","expected_session_version":"1",
-        "artifact_text":CONTENT,"input_digest":INPUT,"execution_id":execution["execution_id"],"dirty_tree":false,
+        "artifact_text":primary_report.unwrap_or(CONTENT),"input_digest":INPUT,"execution_id":execution["execution_id"],"dirty_tree":false,
         "payload":{"passed":true,"output_digest":result,"delivery_candidate_digest":candidate_digest}})).await;
-    for (index, content) in additional.iter().enumerate() {
+    for (index, content) in primary_report
+        .map(|_| CONTENT)
+        .into_iter()
+        .chain(additional.iter().copied())
+        .enumerate()
+    {
         let digest = format!("{:x}", Sha256::digest(content.as_bytes()));
         assert!(
             selection
@@ -470,7 +506,8 @@ async fn setup_integration_inner(
             "evidence.submit",
             json!({
                 "session_id":"session-a","expected_session_version":"1","dirty_tree":false,
-                "artifact_text":content,"payload":{"passed":true,"output_digest":digest,
+                "artifact_text":content,"execution_id":execution["execution_id"],"input_digest":INPUT,
+                "payload":{"passed":true,"output_digest":digest,
                     "delivery_candidate_digest":candidate_digest}
             }),
         )
@@ -522,7 +559,7 @@ impl Fixture {
         let mut q = query("artifact.content");
         q.work_id = Some("a".into());
         q.artifact_id = Some(self.evidence["artifact_id"].as_str().unwrap().into());
-        q.expected_sha256 = Some(self.selection.candidate.manifest.entries[0].sha256.clone());
+        q.expected_sha256 = Some(self.evidence["artifact_digest"].as_str().unwrap().into());
         let content = self
             .reads
             .query(TENANT, PROJECT, REVIEWER, q)
