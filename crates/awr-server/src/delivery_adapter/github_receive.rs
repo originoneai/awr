@@ -1,9 +1,9 @@
 //! One bounded HTTPS receive-pack command with a server-enforced old-object CAS.
-use super::{GitHubConfig, GitHubError};
+use super::{GitHubConfig, GitHubError, github_http::check_deadline};
 use awr_team::delivery::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use url::Url;
 use zeroize::Zeroizing;
 
@@ -68,10 +68,12 @@ impl GitHubReceiveTransport for HttpsReceivePack {
         timeout: Duration,
         max_bytes: usize,
     ) -> Result<GitHubReceiveResponse, GitHubError> {
+        let started = Instant::now();
         // The URL contains no credential. The separately held token is used by
         // both the API observer and the mapped Git endpoint, with no helper.
         let basic = Zeroizing::new(format!("x-access-token:{}", self.credential.as_str()));
         let authorization = Zeroizing::new(format!("Basic {}", STANDARD.encode(basic.as_bytes())));
+        check_deadline(started, timeout)?;
         let result = match method {
             GitHubReceiveMethod::Advertise => self
                 .agent
@@ -98,6 +100,7 @@ impl GitHubReceiveTransport for HttpsReceivePack {
             ureq::Error::BodyExceedsLimit(_) => GitHubError::OutputLimit,
             _ => GitHubError::ProviderUnavailable,
         })?;
+        check_deadline(started, timeout)?;
         let status = response.status().as_u16();
         let content_type = response
             .headers()
@@ -118,6 +121,7 @@ impl GitHubReceiveTransport for HttpsReceivePack {
         } else {
             Vec::new() // Never read or emit a provider error body.
         };
+        check_deadline(started, timeout)?;
         Ok(GitHubReceiveResponse {
             status,
             content_type,
@@ -412,6 +416,15 @@ mod tests {
     }
     impl Server {
         fn start(status: u16, extra: &str, body: &[u8], delay: u64) -> Self {
+            Self::start_staged(status, extra, body, delay, 0)
+        }
+        fn start_staged(
+            status: u16,
+            extra: &str,
+            body: &[u8],
+            header_delay: u64,
+            body_delay: u64,
+        ) -> Self {
             let key = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
             let certificate = key.cert.der().to_vec();
             let tls = Arc::new(
@@ -434,12 +447,12 @@ mod tests {
             let requests = Arc::new(Mutex::new(Vec::new()));
             let stopped = stop.clone();
             let seen = requests.clone();
-            let mut response = format!(
+            let response = format!(
                 "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n{extra}\r\n",
                 body.len()
             )
             .into_bytes();
-            response.extend(body);
+            let body = body.to_vec();
             let task = thread::spawn(move || {
                 while !stopped.load(Ordering::Acquire) {
                     let Ok((socket, _)) = listener.accept() else {
@@ -480,8 +493,11 @@ mod tests {
                     }
                     if request.windows(4).any(|w| w == b"\r\n\r\n") {
                         seen.lock().unwrap().push(request);
-                        thread::sleep(Duration::from_millis(delay));
+                        thread::sleep(Duration::from_millis(header_delay));
                         let _ = stream.write_all(&response);
+                        let _ = stream.flush();
+                        thread::sleep(Duration::from_millis(body_delay));
+                        let _ = stream.write_all(&body);
                         let _ = stream.flush();
                     }
                 }
@@ -642,19 +658,39 @@ mod tests {
                 .err(),
             Some(GitHubError::OutputLimit)
         );
-        let slow = Server::start(200, "", b"0000", 150);
-        assert_eq!(
-            slow.trusted()
-                .request(
-                    GitHubReceiveMethod::Apply,
-                    &slow.url,
-                    b"fixture",
-                    Duration::from_millis(30),
-                    1024
-                )
-                .err(),
-            Some(GitHubError::TimedOut)
-        );
+        for method in [GitHubReceiveMethod::Advertise, GitHubReceiveMethod::Apply] {
+            for (header_delay, body_delay) in [(150, 0), (0, 150)] {
+                let slow = Server::start_staged(200, "", b"0000", header_delay, body_delay);
+                assert_eq!(
+                    slow.trusted()
+                        .request(
+                            method,
+                            &slow.url,
+                            b"fixture",
+                            Duration::from_millis(30),
+                            1024
+                        )
+                        .err(),
+                    Some(GitHubError::TimedOut)
+                );
+                assert!(slow.requests.lock().unwrap().len() <= 1);
+            }
+        }
+    }
+
+    #[test]
+    fn receive_pack_rejects_zero_budget_without_sending() {
+        for method in [GitHubReceiveMethod::Advertise, GitHubReceiveMethod::Apply] {
+            let server = Server::start(200, "", b"0000", 0);
+            assert_eq!(
+                server
+                    .trusted()
+                    .request(method, &server.url, b"fixture", Duration::ZERO, 1024)
+                    .err(),
+                Some(GitHubError::TimedOut)
+            );
+            assert!(server.requests.lock().unwrap().is_empty());
+        }
     }
 
     // ---- A real `git receive-pack` is the oracle -------------------------------

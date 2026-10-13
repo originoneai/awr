@@ -1,6 +1,6 @@
 //! The production transport only performs bounded GETs to operator-mapped HTTPS URLs.
 use super::github::GitHubError;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use url::Url;
 use zeroize::Zeroizing;
 
@@ -55,6 +55,16 @@ fn error(e: ureq::Error) -> GitHubError {
     }
 }
 
+/// I/O timeouts alone cannot reject a response buffered while this thread was
+/// not running. Keep the whole call inside its budget before accepting a result.
+pub(super) fn check_deadline(started: Instant, timeout: Duration) -> Result<(), GitHubError> {
+    if started.elapsed() >= timeout {
+        Err(GitHubError::TimedOut)
+    } else {
+        Ok(())
+    }
+}
+
 impl GitHubTransport for HttpsTransport {
     fn get(
         &self,
@@ -62,6 +72,7 @@ impl GitHubTransport for HttpsTransport {
         timeout: Duration,
         max_bytes: usize,
     ) -> Result<GitHubResponse, GitHubError> {
+        let started = Instant::now();
         let mut request = self
             .agent
             .get(url.as_str())
@@ -70,6 +81,7 @@ impl GitHubTransport for HttpsTransport {
         if let Some(secret) = &self.credential {
             request = request.header("Authorization", format!("Bearer {}", secret.as_str()));
         }
+        check_deadline(started, timeout)?;
         let mut response = request
             .config()
             .timeout_global(Some(timeout))
@@ -78,6 +90,7 @@ impl GitHubTransport for HttpsTransport {
             .build()
             .call()
             .map_err(error)?;
+        check_deadline(started, timeout)?;
         let status = response.status().as_u16();
         // GitHub's primary rate limit commonly uses 403 rather than 429.
         if status == 403
@@ -100,6 +113,7 @@ impl GitHubTransport for HttpsTransport {
         } else {
             Vec::new()
         };
+        check_deadline(started, timeout)?;
         Ok(GitHubResponse { status, body })
     }
 }
@@ -126,6 +140,15 @@ mod tests {
     }
     impl Server {
         fn start(status: u16, headers: &str, body: &str, delay: u64) -> Self {
+            Self::start_staged(status, headers, body, delay, 0)
+        }
+        fn start_staged(
+            status: u16,
+            headers: &str,
+            body: &str,
+            header_delay: u64,
+            body_delay: u64,
+        ) -> Self {
             let key = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
             let certificate = key.cert.der().to_vec();
             let tls = rustls::ServerConfig::builder_with_provider(Arc::new(
@@ -148,9 +171,10 @@ mod tests {
             let stopped = stop.clone();
             let seen = requests.clone();
             let response = format!(
-                "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n{headers}\r\n{body}",
+                "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n{headers}\r\n",
                 body.len()
             );
+            let body = body.as_bytes().to_vec();
             let task = thread::spawn(move || {
                 while !stopped.load(Ordering::Acquire) {
                     let Ok((socket, _)) = listener.accept() else {
@@ -178,8 +202,11 @@ mod tests {
                     }
                     if request.ends_with(b"\r\n\r\n") {
                         seen.lock().unwrap().push(request);
-                        thread::sleep(Duration::from_millis(delay));
+                        thread::sleep(Duration::from_millis(header_delay));
                         let _ = stream.write_all(response.as_bytes());
+                        let _ = stream.flush();
+                        thread::sleep(Duration::from_millis(body_delay));
+                        let _ = stream.write_all(&body);
                         let _ = stream.flush();
                     }
                 }
@@ -306,12 +333,28 @@ mod tests {
                 .err(),
             Some(GitHubError::OutputLimit)
         );
-        let slow = Server::start(200, "", "{}", 250);
+        for (header_delay, body_delay) in [(250, 0), (0, 250)] {
+            let slow = Server::start_staged(200, "", "{}", header_delay, body_delay);
+            assert_eq!(
+                slow.trusted()
+                    .get(&slow.url, Duration::from_millis(100), 1024)
+                    .err(),
+                Some(GitHubError::TimedOut)
+            );
+            assert!(slow.requests.lock().unwrap().len() <= 1);
+        }
+    }
+
+    #[test]
+    fn github_https_transport_rejects_zero_budget_without_sending() {
+        let server = Server::start(200, "", "{}", 0);
         assert_eq!(
-            slow.trusted()
-                .get(&slow.url, Duration::from_millis(100), 1024)
+            server
+                .trusted()
+                .get(&server.url, Duration::ZERO, 1024)
                 .err(),
             Some(GitHubError::TimedOut)
         );
+        assert!(server.requests.lock().unwrap().is_empty());
     }
 }
