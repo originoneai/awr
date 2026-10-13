@@ -3,7 +3,7 @@
 use super::*;
 
 pub(in crate::service) fn add_input_diagnostic(error: &mut Value, input: &Value, write: bool) {
-    if error["code"] != "InvalidInput" {
+    if error["code"] != "InvalidInput" || error.get("invalid_field").is_some() {
         return;
     }
     let name = if write {
@@ -25,20 +25,29 @@ pub(in crate::service) fn add_input_diagnostic(error: &mut Value, input: &Value,
                 continue;
             }
             if let Some(detail) = shape_issue(input, &branch["then"], "") {
-                attach(error, detail);
+                attach(error, detail, write);
                 return;
             }
         }
         return;
     };
-    attach(error, detail);
+    attach(error, detail, write);
 }
 
-fn attach(error: &mut Value, detail: Value) {
+fn attach(error: &mut Value, detail: Value, write: bool) {
     error
         .as_object_mut()
         .unwrap()
         .extend(detail.as_object().unwrap().clone());
+    if !write {
+        error["action_guidance"] = json!({
+            "condition":"The read query's input shape was rejected.",
+            "basis":detail,
+            "next_action":"Correct the indicated field using the discovered query schema, then resubmit the read query.",
+            "recheck":"After correcting inputs. Current permission and state checks still apply; no execution or command replay is authorized."
+        });
+        return;
+    }
     // Preserve existing actionable guidance, including session-resume instructions
     // and the decimal-string wire format. Add advice only when it was absent.
     if error.get("next_step").is_none() {
@@ -134,12 +143,20 @@ fn shape_issue(input: &Value, schema: &Value, path: &str) -> Option<Value> {
             return Some(issue(path, "pattern"));
         }
     }
-    if let Some(number) = input.as_u64() {
-        if schema["minimum"].as_u64().is_some_and(|n| number < n)
+    let below_minimum =
+        input.as_i64().is_some_and(|n| n < 0) && schema["minimum"].as_u64().is_some();
+    let outside_unsigned_bounds = input.as_u64().is_some_and(|number| {
+        schema["minimum"].as_u64().is_some_and(|n| number < n)
             || schema["maximum"].as_u64().is_some_and(|n| number > n)
-        {
-            return Some(issue(path, "bounds"));
+    });
+    if below_minimum || outside_unsigned_bounds {
+        let mut detail = issue(path, "bounds");
+        for bound in ["minimum", "maximum"] {
+            if let Some(value) = schema.get(bound) {
+                detail[bound] = value.clone();
+            }
         }
+        return Some(detail);
     }
     // Never walk payloads, maps, submitted artifacts or caller-controlled paths.
     // Only root properties and the known args object are diagnostic locations.
@@ -224,6 +241,37 @@ mod tests {
         let error = rejected(input, true);
         assert_eq!(error["invalid_field"], "/op");
         assert!(!error.to_string().contains("synthetic-secret"));
+    }
+
+    #[test]
+    fn malformed_query_bounds_are_precise_and_do_not_replace_validator_diagnostics() {
+        for value in [json!(-1), json!(65536)] {
+            let error = rejected(
+                json!({"protocol_version":1,"op":"work.next","limit":value}),
+                false,
+            );
+            assert_eq!(error["invalid_field"], "/limit");
+            assert_eq!(error["constraint"], "bounds");
+            assert_eq!(error["minimum"], 1);
+            assert_eq!(error["maximum"], 100);
+            assert!(
+                error["action_guidance"]["next_action"]
+                    .as_str()
+                    .unwrap()
+                    .contains("read query")
+            );
+            assert!(error.get("next_step").is_none());
+        }
+        let input = json!({"protocol_version":1,"op":"work.next","max_context_bytes":65536});
+        let query: WorkstreamQuery = serde_json::from_value(input.clone()).unwrap();
+        let mut error = query
+            .validate()
+            .unwrap_err()
+            .query_input_diagnostic()
+            .unwrap();
+        let original = error.clone();
+        add_input_diagnostic(&mut error, &input, false);
+        assert_eq!(error, original);
     }
 
     #[test]

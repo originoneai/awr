@@ -457,6 +457,8 @@ fn catalog() -> Vec<Tool> {
         "expected_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}
     }});
     query["allOf"] = json!([
+        {"if":{"properties":{"op":{"enum":WorkstreamQuery::CONTEXT_BUDGET_OPERATIONS}},"required":["op"]},
+            "else":{"properties":{"max_context_bytes":{"type":"null"}}}},
         {"if":{"properties":{"op":{"const":"artifact.content"}},"required":["op"]},
             "then":{"properties":{"max_context_bytes":{"maximum":WorkstreamQuery::MAX_ARTIFACT_BYTES}}},
             "else":{"properties":{"max_context_bytes":{"maximum":262144}}}},
@@ -1305,6 +1307,17 @@ mod tests {
         assert_eq!(
             tool.input_schema["properties"]["max_context_bytes"]["maximum"],
             WorkstreamQuery::MAX_ARTIFACT_BYTES
+        );
+        assert!(
+            tool.input_schema["allOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|branch| {
+                    branch["if"]["properties"]["op"]["enum"]
+                        == json!(WorkstreamQuery::CONTEXT_BUDGET_OPERATIONS)
+                        && branch["else"]["properties"]["max_context_bytes"]["type"] == "null"
+                })
         );
         let condition = tool.input_schema["allOf"]
             .as_array()

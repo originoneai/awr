@@ -67,6 +67,20 @@ Use the discovered `awr_team_query` and `awr_team_command` tool schemas and the
 [Team protocol reference](../reference/team-workstream-service.md) for exact
 arguments. Each query/command rechecks the caller's current permissions.
 
+For a rejected read query, `InvalidInput.invalid_field` identifies one known
+field and `constraint` explains the violated rule. The short `action_guidance`
+gives its condition, basis, correction and recheck trigger without echoing input
+values. Apply the correction to the read query, then read current state again;
+this advice does not authorize execution or replay of a command. For example,
+`work.next`, `evidence.inspect` and `completion.inspect` do not accept
+`max_context_bytes`: omit it. `source.content` accepts that budget up to 262144
+bytes, and requires a registered source path relative to the active snapshot.
+For repository delivery files, follow the authorized `artifact.content` query
+from the delivery or review manifest; `source.content` cannot read arbitrary
+files from the developer's repository.
+Unknown fields and malformed envelopes remain rejected; the service never
+silently removes query fields. HTTP and MCP share the same diagnostics.
+
 | When | Agent action | Recheck when |
 | --- | --- | --- |
 | Starting or reconnecting | Query `capabilities` to confirm identity and permissions, then `work.next` to resume your own sessions or discover visible unfinished work. Follow the returned `next_query`. On older servers without `work.next`, use `workstreams.list` and scoped `work.list` / `work.search`. | Progress, resolved waits, claim conflicts, identity, project, scope or ownership changes. |

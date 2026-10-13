@@ -118,6 +118,112 @@ pub enum PgError {
 }
 
 impl PgError {
+    /// Validation records only fixed field/rule identifiers. Never store caller
+    /// values here or forward arbitrary Protocol text to a transport.
+    pub(crate) fn query_field(field: &'static str, rule: &'static str) -> Self {
+        Self::Protocol(format!("query_input/{field}/{rule}"))
+    }
+
+    /// Bounded diagnostics from the query validator, shared by HTTP and MCP.
+    /// Preserve the public enum for downstream exhaustive matches. Both parts
+    /// are allowlisted again so an unrelated Protocol error cannot echo input.
+    pub fn query_input_diagnostic(&self) -> Option<serde_json::Value> {
+        let Self::Protocol(message) = self else {
+            return None;
+        };
+        let (field, rule) = message.strip_prefix("query_input/")?.split_once('/')?;
+        let field = [
+            "workstream_id",
+            "work_id",
+            "session_id",
+            "request_id",
+            "claim_id",
+            "execution_id",
+            "handoff_id",
+            "evidence_id",
+            "review_round_id",
+            "artifact_id",
+            "export_id",
+            "change_id",
+            "member_actor_id",
+            "category",
+            "include_denies",
+            "limit",
+            "cursor",
+            "search",
+            "max_context_bytes",
+            "source_path",
+            "expected_sha256",
+        ]
+        .into_iter()
+        .find(|known| *known == field)?;
+        let (constraint, correction) = match rule {
+            "unsupported" => (
+                "unsupported_for_operation",
+                "Omit this field for the selected query operation.",
+            ),
+            "required" => (
+                "required",
+                "Supply this field using the selected operation's discovered input schema.",
+            ),
+            "selector" => (
+                "selector_format",
+                "Use a nonempty selector of at most 128 UTF-8 bytes, without control characters.",
+            ),
+            "limit" => (
+                "bounds",
+                "Use an integer from 1 through 100, or omit this optional field.",
+            ),
+            "cursor" => (
+                "max_bytes",
+                "Use the returned cursor unchanged, at most 4096 UTF-8 bytes; omit it to start a new read.",
+            ),
+            "context" => (
+                "bounds",
+                "Use an integer from 1 through 262144 bytes, or omit this optional budget.",
+            ),
+            "artifact_context" => (
+                "bounds",
+                "Use an integer from 1 through 1048576 bytes, or omit this optional budget.",
+            ),
+            "search" => (
+                "search_format",
+                "Use a nonempty search of at most 512 UTF-8 bytes, without control characters.",
+            ),
+            "digest" => (
+                "sha256_format",
+                "Use exactly 64 lowercase hexadecimal characters for the expected SHA-256, or omit it.",
+            ),
+            "source_path" => (
+                "relative_path",
+                "Use a registered source path relative to the active snapshot, at most 512 UTF-8 bytes; no absolute path, URL, '..', backslash, colon or control characters.",
+            ),
+            "source_unavailable" => (
+                "registered_source_required",
+                "Use a registered source reference from work.prepare. For repository delivery files, follow an authorized artifact.content query from the delivery or review manifest; source.content does not read arbitrary repository files.",
+            ),
+            "artifact_selection" => (
+                "exactly_one",
+                "Supply exactly one of artifact_id or export_id from the authorized artifact reference.",
+            ),
+            "work_selection" => (
+                "required_selection",
+                "Supply work_id or session_id from an authorized work or session reference.",
+            ),
+            _ => return None,
+        };
+        Some(serde_json::json!({
+            "code":"InvalidInput", "message":"query field violates the selected operation's contract",
+            "invalid_field":format!("/{field}"), "constraint":constraint,
+            "action_guidance":{
+                "condition":"This read query was rejected.",
+                "basis":"The query validator requires the indicated field constraint.",
+                "next_action":correction,
+                "recheck":"After correcting the query inputs. Current permission and state checks still apply; this advice does not authorize execution or command replay."
+            }
+        }))
+    }
+
     const EXPIRED_AGENT_AUTHORIZATION: &'static str = "authenticated Agent read delegation expired";
 
     /// A safe discovery diagnosis, never an authentication or execution permit.

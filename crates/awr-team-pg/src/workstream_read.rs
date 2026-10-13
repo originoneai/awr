@@ -100,6 +100,18 @@ pub struct WorkstreamQuery {
 
 impl WorkstreamQuery {
     pub const OPERATIONS: &'static [&'static str] = QUERIES;
+    /// Used by validation and MCP discovery; other queries must omit the budget.
+    pub const CONTEXT_BUDGET_OPERATIONS: &'static [&'static str] = &[
+        "work.prepare",
+        "work.snapshot",
+        "work.observe",
+        "work.inbox",
+        "source.content",
+        "artifact.content",
+        "review.inspect",
+        "delivery.neutral.inspect",
+        "delivery.submission.describe",
+    ];
     /// Maximum explicit raw-byte budget for stored artifact reads and encodings.
     /// Command envelopes retain their separate, smaller transport bound.
     pub const MAX_ARTIFACT_BYTES: usize = 1_048_576;
@@ -113,25 +125,25 @@ impl WorkstreamQuery {
         if !QUERIES.contains(&self.op.as_str()) {
             return Err(PgError::Unsupported("workstream query operation".into()));
         }
-        for id in [
-            &self.work_id,
-            &self.session_id,
-            &self.request_id,
-            &self.claim_id,
-            &self.execution_id,
-            &self.evidence_id,
-            &self.review_round_id,
-            &self.artifact_id,
-            &self.export_id,
-            &self.change_id,
-            &self.member_actor_id,
-            &self.category,
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if id.is_empty() || id.len() > 128 || id.chars().any(char::is_control) {
-                return Err(PgError::Protocol("invalid selector".into()));
+        for (field, id) in [
+            ("work_id", &self.work_id),
+            ("session_id", &self.session_id),
+            ("request_id", &self.request_id),
+            ("claim_id", &self.claim_id),
+            ("execution_id", &self.execution_id),
+            ("handoff_id", &self.handoff_id),
+            ("evidence_id", &self.evidence_id),
+            ("review_round_id", &self.review_round_id),
+            ("artifact_id", &self.artifact_id),
+            ("export_id", &self.export_id),
+            ("change_id", &self.change_id),
+            ("member_actor_id", &self.member_actor_id),
+            ("category", &self.category),
+        ] {
+            if id.as_ref().is_some_and(|id| {
+                id.is_empty() || id.len() > 128 || id.chars().any(char::is_control)
+            }) {
+                return Err(PgError::query_field(field, "selector"));
             }
         }
         let max_bytes = if self.op == "artifact.content" {
@@ -139,25 +151,29 @@ impl WorkstreamQuery {
         } else {
             262144
         };
-        if self.limit.is_some_and(|n| n == 0 || n > 100)
-            || self.cursor.as_ref().is_some_and(|s| s.len() > 4096)
-            || self
-                .max_context_bytes
-                .is_some_and(|n| n == 0 || n > max_bytes)
+        if self.limit.is_some_and(|n| n == 0 || n > 100) {
+            return Err(PgError::query_field("limit", "limit"));
+        }
+        if self.cursor.as_ref().is_some_and(|s| s.len() > 4096) {
+            return Err(PgError::query_field("cursor", "cursor"));
+        }
+        if self
+            .max_context_bytes
+            .is_some_and(|n| n == 0 || n > max_bytes)
         {
-            return Err(PgError::Protocol("query bounds exceeded".into()));
+            return Err(PgError::query_field(
+                "max_context_bytes",
+                if self.op == "artifact.content" {
+                    "artifact_context"
+                } else {
+                    "context"
+                },
+            ));
         }
         if self.op == "work.next"
             && (self.workstream_id.is_some() || self.work_id.is_some() || self.session_id.is_some())
         {
             return Err(PgError::work_next_selectors());
-        }
-        if self.op == "work.inbox"
-            && (self.workstream_id.is_some() || self.work_id.is_some() || self.session_id.is_some())
-        {
-            return Err(PgError::Protocol(
-                "work.inbox does not accept workstream_id, work_id, or session_id; follow the returned next_query".into(),
-            ));
         }
         let paged = matches!(
             self.op.as_str(),
@@ -178,116 +194,205 @@ impl WorkstreamQuery {
                 | "audit.requests"
                 | "audit.development"
         );
-        if !paged && !audit && (self.cursor.is_some() || self.limit.is_some())
-            || self.op == "work.search" && self.search.is_none()
-            || self.search.is_some()
-                && !matches!(self.op.as_str(), "work.search" | "task.assignees")
-            || self
-                .search
-                .as_ref()
-                .is_some_and(|s| s.is_empty() || s.len() > 512 || s.chars().any(char::is_control))
-            || self.max_context_bytes.is_some()
-                && !matches!(
-                    self.op.as_str(),
-                    "work.prepare"
-                        | "work.snapshot"
-                        | "work.observe"
-                        | "work.inbox"
-                        | "source.content"
-                        | "artifact.content"
-                        | "review.inspect"
-                        | "delivery.neutral.inspect"
-                        | "delivery.submission.describe"
-                )
-            || (!audit
-                && self.request_id.is_some()
-                    != matches!(
-                        self.op.as_str(),
-                        "command.inspect"
-                            | "planning.outcome"
-                            | "delivery.neutral.outcome"
-                            | "delivery.integration.inspect"
-                    ))
-            || (self.change_id.is_some()
-                || self.member_actor_id.is_some()
-                || self.category.is_some()
-                || self.include_denies.is_some())
-                && !audit
-            || self.claim_id.is_some() != (self.op == "claim.inspect")
-            || self.execution_id.is_some() != (self.op == "execution.inspect")
-            || self.handoff_id.is_some() != (self.op == "handoff.inspect")
-            || self.evidence_id.is_some() != (self.op == "evidence.inspect")
-            || self.review_round_id.is_some() != (self.op == "review.inspect")
-            || self.source_path.is_some() != (self.op == "source.content")
-            || (self.artifact_id.is_some() || self.export_id.is_some())
-                != (self.op == "artifact.content")
-            || (self.artifact_id.is_some() && self.export_id.is_some())
-            || self.expected_sha256.as_ref().is_some_and(|s| {
-                s.len() != 64
-                    || !s
-                        .bytes()
-                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-            })
-            || self.source_path.as_ref().is_some_and(|path| {
-                path.is_empty()
-                    || path.len() > 512
-                    || path.starts_with('/')
-                    || path.contains("..")
-                    || path.contains('\\')
-                    || path.contains(':')
-                    || path.contains("://")
-                    || path.chars().any(char::is_control)
-            })
-            || matches!(self.op.as_str(), "capabilities" | "workstreams.list")
-                && (self.work_id.is_some()
-                    || self.session_id.is_some()
-                    || self.workstream_id.is_some())
-            || matches!(self.op.as_str(), "work.list" | "work.search")
-                && (self.work_id.is_some() || self.session_id.is_some())
-            || matches!(self.op.as_str(), "audit.requests" | "audit.development")
-                && (self.session_id.is_some()
-                    || self.workstream_id.is_some()
-                    || self.change_id.is_some()
-                    || self.category.is_some()
-                    || self.request_id.is_some()
-                    || self.include_denies.is_some())
-            || self.op == "session.inspect" && self.session_id.is_none()
-            || self.op == "task.assignees"
-                && (self.work_id.is_none()
-                    || self.session_id.is_some()
-                    || self.expected_sha256.is_some())
-            || self.op == "planning.outcome"
-                && (self.work_id.is_some() || self.session_id.is_some())
-            || matches!(
-                self.op.as_str(),
-                "delivery.neutral.inspect"
-                    | "delivery.submission.describe"
-                    | "delivery.neutral.outcome"
-                    | "delivery.source.status"
-                    | "delivery.integration.inspect"
-            ) && (self.work_id.is_none() || self.session_id.is_some())
-            || matches!(
-                self.op.as_str(),
-                "work.prepare"
-                    | "work.snapshot"
-                    | "work.observe"
-                    | "work.recovery"
-                    | "command.inspect"
-                    | "claim.inspect"
-                    | "execution.inspect"
-                    | "handoff.inspect"
-                    | "evidence.inspect"
-                    | "review.inspect"
-                    | "completion.inspect"
-                    | "delivery.inspect"
-                    | "artifact.content"
-                    | "delivery.exports"
-            ) && self.work_id.is_none()
-                && self.session_id.is_none()
+        let budgeted = Self::CONTEXT_BUDGET_OPERATIONS.contains(&self.op.as_str());
+        for (field, rejected) in [
+            ("cursor", !paged && !audit && self.cursor.is_some()),
+            ("limit", !paged && !audit && self.limit.is_some()),
+            (
+                "search",
+                self.search.is_some()
+                    && !matches!(self.op.as_str(), "work.search" | "task.assignees"),
+            ),
+            (
+                "max_context_bytes",
+                self.max_context_bytes.is_some() && !budgeted,
+            ),
+            ("change_id", self.change_id.is_some() && !audit),
+            ("member_actor_id", self.member_actor_id.is_some() && !audit),
+            ("category", self.category.is_some() && !audit),
+            ("include_denies", self.include_denies.is_some() && !audit),
+            (
+                "expected_sha256",
+                self.expected_sha256.is_some()
+                    && !matches!(self.op.as_str(), "source.content" | "artifact.content"),
+            ),
+        ] {
+            if rejected {
+                return Err(PgError::query_field(field, "unsupported"));
+            }
+        }
+        if self.op == "work.search" && self.search.is_none() {
+            return Err(PgError::query_field("search", "required"));
+        }
+        if self
+            .search
+            .as_ref()
+            .is_some_and(|s| s.is_empty() || s.len() > 512 || s.chars().any(char::is_control))
         {
-            return Err(PgError::Protocol(
-                "query fields do not match operation".into(),
-            ));
+            return Err(PgError::query_field("search", "search"));
+        }
+        // These selectors are required by exactly one operation (request_id is
+        // also an optional audit filter). Report one known field, never its value.
+        for (field, present, required, allowed) in [
+            (
+                "request_id",
+                self.request_id.is_some(),
+                matches!(
+                    self.op.as_str(),
+                    "command.inspect"
+                        | "planning.outcome"
+                        | "delivery.neutral.outcome"
+                        | "delivery.integration.inspect"
+                ),
+                audit,
+            ),
+            (
+                "claim_id",
+                self.claim_id.is_some(),
+                self.op == "claim.inspect",
+                false,
+            ),
+            (
+                "execution_id",
+                self.execution_id.is_some(),
+                self.op == "execution.inspect",
+                false,
+            ),
+            (
+                "handoff_id",
+                self.handoff_id.is_some(),
+                self.op == "handoff.inspect",
+                false,
+            ),
+            (
+                "evidence_id",
+                self.evidence_id.is_some(),
+                self.op == "evidence.inspect",
+                false,
+            ),
+            (
+                "review_round_id",
+                self.review_round_id.is_some(),
+                self.op == "review.inspect",
+                false,
+            ),
+            (
+                "source_path",
+                self.source_path.is_some(),
+                self.op == "source.content",
+                false,
+            ),
+        ] {
+            if present && !required && !allowed {
+                return Err(PgError::query_field(field, "unsupported"));
+            }
+            if !present && required {
+                return Err(PgError::query_field(field, "required"));
+            }
+        }
+        if self.op == "artifact.content" {
+            if self.artifact_id.is_some() == self.export_id.is_some() {
+                return Err(PgError::query_field("artifact_id", "artifact_selection"));
+            }
+        } else {
+            for (field, present) in [
+                ("artifact_id", self.artifact_id.is_some()),
+                ("export_id", self.export_id.is_some()),
+            ] {
+                if present {
+                    return Err(PgError::query_field(field, "unsupported"));
+                }
+            }
+        }
+        if self.expected_sha256.as_ref().is_some_and(|s| {
+            s.len() != 64
+                || !s
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        }) {
+            return Err(PgError::query_field("expected_sha256", "digest"));
+        }
+        if self.source_path.as_ref().is_some_and(|path| {
+            path.is_empty()
+                || path.len() > 512
+                || path.starts_with('/')
+                || path.contains("..")
+                || path.contains('\\')
+                || path.contains(':')
+                || path.chars().any(char::is_control)
+        }) {
+            return Err(PgError::query_field("source_path", "source_path"));
+        }
+        let project_wide = matches!(
+            self.op.as_str(),
+            "capabilities" | "workstreams.list" | "work.inbox"
+        );
+        let work_list = matches!(
+            self.op.as_str(),
+            "work.list" | "work.search" | "planning.outcome"
+        );
+        let activity_audit = matches!(self.op.as_str(), "audit.requests" | "audit.development");
+        let exact_work = matches!(
+            self.op.as_str(),
+            "task.assignees"
+                | "delivery.neutral.inspect"
+                | "delivery.submission.describe"
+                | "delivery.neutral.outcome"
+                | "delivery.source.status"
+                | "delivery.integration.inspect"
+        );
+        for (field, rejected) in [
+            (
+                "work_id",
+                self.work_id.is_some() && (project_wide || work_list),
+            ),
+            (
+                "session_id",
+                self.session_id.is_some()
+                    && (project_wide || work_list || activity_audit || exact_work),
+            ),
+            (
+                "workstream_id",
+                self.workstream_id.is_some() && (project_wide || activity_audit),
+            ),
+            ("change_id", self.change_id.is_some() && activity_audit),
+            ("category", self.category.is_some() && activity_audit),
+            ("request_id", self.request_id.is_some() && activity_audit),
+            (
+                "include_denies",
+                self.include_denies.is_some() && activity_audit,
+            ),
+        ] {
+            if rejected {
+                return Err(PgError::query_field(field, "unsupported"));
+            }
+        }
+        if self.op == "session.inspect" && self.session_id.is_none() {
+            return Err(PgError::query_field("session_id", "required"));
+        }
+        if exact_work && self.work_id.is_none() {
+            return Err(PgError::query_field("work_id", "required"));
+        }
+        if matches!(
+            self.op.as_str(),
+            "work.prepare"
+                | "work.snapshot"
+                | "work.observe"
+                | "work.recovery"
+                | "command.inspect"
+                | "claim.inspect"
+                | "execution.inspect"
+                | "handoff.inspect"
+                | "evidence.inspect"
+                | "review.inspect"
+                | "completion.inspect"
+                | "delivery.inspect"
+                | "artifact.content"
+                | "delivery.exports"
+        ) && self.work_id.is_none()
+            && self.session_id.is_none()
+        {
+            return Err(PgError::query_field("work_id", "work_selection"));
         }
         Ok(())
     }
@@ -300,6 +405,165 @@ pub struct WorkstreamReadStore {
 #[cfg(test)]
 mod input_guidance_tests {
     use super::*;
+
+    #[test]
+    fn rejected_query_fields_have_bounded_diagnostics_and_correctable_reads() {
+        let sentinel = "synthetic-private-value";
+        let cases = [
+            (
+                json!({"op":"work.next"}),
+                "max_context_bytes",
+                json!(65536),
+                "unsupported_for_operation",
+                "Omit",
+            ),
+            (
+                json!({"op":"evidence.inspect","work_id":"work","evidence_id":"evidence"}),
+                "max_context_bytes",
+                json!(65536),
+                "unsupported_for_operation",
+                "Omit",
+            ),
+            (
+                json!({"op":"completion.inspect","work_id":"work"}),
+                "max_context_bytes",
+                json!(65536),
+                "unsupported_for_operation",
+                "Omit",
+            ),
+            (
+                json!({"op":"source.content","source_path":"docs/spec.md"}),
+                "limit",
+                json!(1),
+                "unsupported_for_operation",
+                "Omit",
+            ),
+            (
+                json!({"op":"source.content","source_path":"docs/spec.md"}),
+                "source_path",
+                json!(format!("../{sentinel}")),
+                "relative_path",
+                "registered source",
+            ),
+            (
+                json!({"op":"work.next"}),
+                "limit",
+                json!(0),
+                "bounds",
+                "1 through 100",
+            ),
+            (
+                json!({"op":"work.next"}),
+                "limit",
+                json!(101),
+                "bounds",
+                "1 through 100",
+            ),
+            (
+                json!({"op":"work.list"}),
+                "cursor",
+                json!(sentinel.repeat(256)),
+                "max_bytes",
+                "4096 UTF-8 bytes",
+            ),
+            (
+                json!({"op":"source.content","source_path":"docs/spec.md"}),
+                "max_context_bytes",
+                json!(262145),
+                "bounds",
+                "1 through 262144",
+            ),
+            (
+                json!({"op":"artifact.content","work_id":"work","artifact_id":"artifact"}),
+                "max_context_bytes",
+                json!(1048577),
+                "bounds",
+                "1 through 1048576",
+            ),
+            (
+                json!({"op":"work.prepare","work_id":"work"}),
+                "work_id",
+                json!(sentinel.repeat(8)),
+                "selector_format",
+                "128 UTF-8 bytes",
+            ),
+            (
+                json!({"op":"handoff.inspect","work_id":"work","handoff_id":"handoff"}),
+                "handoff_id",
+                json!(sentinel.repeat(8)),
+                "selector_format",
+                "128 UTF-8 bytes",
+            ),
+            (
+                json!({"op":"work.prepare","work_id":"work"}),
+                "expected_sha256",
+                json!("a".repeat(64)),
+                "unsupported_for_operation",
+                "Omit",
+            ),
+            (
+                json!({"op":"source.content","source_path":"docs/spec.md"}),
+                "expected_sha256",
+                json!(sentinel),
+                "sha256_format",
+                "64 lowercase",
+            ),
+            (
+                json!({"op":"work.search","search":"example"}),
+                "search",
+                json!(sentinel.repeat(32)),
+                "search_format",
+                "512 UTF-8 bytes",
+            ),
+        ];
+        for (mut corrected, field, value, constraint, correction) in cases {
+            corrected["protocol_version"] = json!(1);
+            let query: WorkstreamQuery = serde_json::from_value(corrected.clone()).unwrap();
+            query.validate().unwrap();
+            let mut invalid = corrected;
+            invalid[field] = value;
+            let query: WorkstreamQuery = serde_json::from_value(invalid).unwrap();
+            let error = query.validate().unwrap_err();
+            let detail = error.query_input_diagnostic().unwrap();
+            assert_eq!(detail["invalid_field"], format!("/{field}"));
+            assert_eq!(detail["constraint"], constraint);
+            assert!(
+                detail["action_guidance"]["next_action"]
+                    .as_str()
+                    .unwrap()
+                    .contains(correction)
+            );
+            assert!(!error.to_string().contains(sentinel));
+            assert!(!detail.to_string().contains(sentinel));
+            assert!(detail.to_string().len() < 900);
+        }
+    }
+
+    #[test]
+    fn query_diagnostics_never_classify_unknown_protocol_text_or_grant_authority() {
+        for message in [
+            "synthetic-private-value",
+            "query_input/secret-name/limit",
+            "query_input/limit/secret-value",
+        ] {
+            assert!(
+                PgError::Protocol(message.into())
+                    .query_input_diagnostic()
+                    .is_none()
+            );
+        }
+        assert!(PgError::Forbidden.query_input_diagnostic().is_none());
+        for input in [
+            json!({"protocol_version":1,"op":"synthetic-private-op"}),
+            json!({"protocol_version":2,"op":"work.next"}),
+        ] {
+            let query: WorkstreamQuery = serde_json::from_value(input).unwrap();
+            let error = query.validate().unwrap_err();
+            assert!(matches!(error, PgError::Unsupported(_)));
+            assert!(error.query_input_diagnostic().is_none());
+            assert!(!error.to_string().contains("synthetic-private"));
+        }
+    }
 
     #[test]
     fn submission_description_requires_exact_work_without_runtime_or_history_selectors() {
@@ -1618,11 +1882,7 @@ async fn read_controlled_source_content(
     let file = files
         .into_iter()
         .find(|f| f.get("path").and_then(|v| v.as_str()) == Some(path))
-        .ok_or_else(|| {
-            PgError::Protocol(
-                "source path not present in the active authorized snapshot; historical versions, URLs and attachments cannot bypass project/stream auth".into(),
-            )
-        })?;
+        .ok_or_else(|| PgError::query_field("source_path", "source_unavailable"))?;
     let text = file
         .get("text")
         .and_then(|v| v.as_str())

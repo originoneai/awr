@@ -657,6 +657,173 @@ async fn missing_session_start_conversation_id_is_actionable_and_does_not_mutate
 }
 
 #[tokio::test]
+async fn query_contract_diagnostics_match_http_and_mcp_and_corrected_reads_succeed() {
+    let (_guard, admin, _, store) = setup_with_specs(vec![
+        awr_team_pg::SourceFile {
+            path: "docs/alpha.md".into(),
+            bytes: b"Public acceptance specification\n".to_vec(),
+        },
+        awr_team_pg::SourceFile {
+            path: "docs/private-beta.md".into(),
+            bytes: b"Other stream specification\n".to_vec(),
+        },
+    ])
+    .await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let submitted = call(&client, "awr_team_command", serde_json::to_value(command(
+        &prepared(&client).await, "query-diagnostic-evidence", "evidence.submit",
+        json!({"session_id":"session-a","expected_session_version":"1","payload":{},"artifact_text":"Public evidence\n","dirty_tree":false}),
+    )).unwrap(), false).await;
+    let before = prepared(&client).await;
+    let counts_sql = "SELECT json_build_array((SELECT count(*) FROM awr_team.operations), (SELECT count(*) FROM awr_team.claims), (SELECT count(*) FROM awr_team.execution_receipts), (SELECT count(*) FROM awr_team.checkpoints))";
+    let before_counts: Value = admin.query_one(counts_sql, &[]).await.unwrap().get(0);
+    let cases = [
+        (
+            json!({"op":"work.next"}),
+            "max_context_bytes",
+            json!(65536),
+            "unsupported_for_operation",
+        ),
+        (
+            json!({"op":"evidence.inspect","work_id":"a","evidence_id":submitted["receipt"]["data"]["evidence_id"]}),
+            "max_context_bytes",
+            json!(65536),
+            "unsupported_for_operation",
+        ),
+        (
+            json!({"op":"completion.inspect","work_id":"a"}),
+            "max_context_bytes",
+            json!(65536),
+            "unsupported_for_operation",
+        ),
+        (
+            json!({"op":"source.content","source_path":"docs/alpha.md"}),
+            "limit",
+            json!(1),
+            "unsupported_for_operation",
+        ),
+        (
+            json!({"op":"source.content","source_path":"docs/alpha.md"}),
+            "source_path",
+            json!("../synthetic-private-value"),
+            "relative_path",
+        ),
+        (
+            json!({"op":"source.content","source_path":"docs/alpha.md"}),
+            "source_path",
+            json!("src/synthetic-private-value.rs"),
+            "registered_source_required",
+        ),
+        (
+            json!({"op":"source.content","source_path":"docs/alpha.md"}),
+            "max_context_bytes",
+            json!(262145),
+            "bounds",
+        ),
+        (
+            json!({"op":"source.content","source_path":"docs/alpha.md"}),
+            "expected_sha256",
+            json!("synthetic-private-value"),
+            "sha256_format",
+        ),
+        (json!({"op":"work.next"}), "limit", json!(101), "bounds"),
+        (json!({"op":"work.next"}), "limit", json!(-1), "bounds"),
+        (json!({"op":"work.next"}), "limit", json!(65536), "bounds"),
+        (
+            json!({"op":"work.list"}),
+            "cursor",
+            json!("synthetic-private-value".repeat(256)),
+            "max_bytes",
+        ),
+        (
+            json!({"op":"work.prepare","work_id":"a"}),
+            "work_id",
+            json!("synthetic-private-value".repeat(8)),
+            "selector_format",
+        ),
+    ];
+    for (mut corrected, field, value, constraint) in cases {
+        corrected["protocol_version"] = json!(1);
+        let mut invalid = corrected.clone();
+        invalid[field] = value;
+        let mcp = call(&client, "awr_team_query", invalid.clone(), true).await;
+        let response = http()
+            .post(format!("{}/one/query", server.url))
+            .bearer_auth(A)
+            .json(&invalid)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        assert_eq!(mcp, response.json::<Value>().await.unwrap());
+        assert_eq!(mcp["code"], "InvalidInput");
+        assert_eq!(mcp["invalid_field"], format!("/{field}"));
+        assert_eq!(mcp["constraint"], constraint);
+        assert!(!mcp["action_guidance"]["basis"].is_null());
+        for part in ["condition", "next_action", "recheck"] {
+            assert!(!mcp["action_guidance"][part].as_str().unwrap().is_empty());
+        }
+        assert!(!mcp.to_string().contains("synthetic-private"));
+        assert!(mcp.to_string().len() < 900);
+        let read = call(&client, "awr_team_query", corrected.clone(), false).await;
+        let response = http()
+            .post(format!("{}/one/query", server.url))
+            .bearer_auth(A)
+            .json(&corrected)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let http: Value = response.json().await.unwrap();
+        assert_eq!(http["data"], read["data"]);
+    }
+    // A syntactically valid selector does not confer access. Invalid credentials
+    // and forged authority continue to fail without query guidance or values.
+    for (token, input) in [
+        (
+            "synthetic-private-credential",
+            json!({"protocol_version":1,"op":"work.next","max_context_bytes":65536}),
+        ),
+        (
+            A,
+            json!({"protocol_version":1,"op":"work.next","actor_id":"synthetic-private-value"}),
+        ),
+        (
+            A,
+            json!({"protocol_version":1,"op":"completion.inspect","work_id":"b-private"}),
+        ),
+    ] {
+        let response = http()
+            .post(format!("{}/one/query", server.url))
+            .bearer_auth(token)
+            .json(&input)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+        assert_eq!(
+            response.json::<Value>().await.unwrap(),
+            json!({"code":"Forbidden","message":"access denied"})
+        );
+        if token == A {
+            assert_eq!(
+                call(&client, "awr_team_query", input, true).await["code"],
+                "Forbidden"
+            );
+        }
+    }
+    assert_eq!(
+        prepared(&client).await["project_revision"],
+        before["project_revision"]
+    );
+    let after_counts: Value = admin.query_one(counts_sql, &[]).await.unwrap().get(0);
+    assert_eq!(after_counts, before_counts);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn evidence_input_diagnostics_are_safe_and_identical_over_http_and_mcp() {
     let (_guard, admin, _, store) = setup().await;
     enable_writes(&admin).await;
