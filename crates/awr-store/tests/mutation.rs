@@ -151,6 +151,7 @@ fn seed(fixture: &mut Fixture) -> Seed {
         locator: "ledger.yaml".into(),
         sha256: None,
         source_sha: None,
+        section_fingerprint: None,
         command: None,
         scope: vec!["W-1".into()],
         source_ref: Some(meta(fixture, seed.evidence_id, "E-1", 1, FP_A).source_ref),

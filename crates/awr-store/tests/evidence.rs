@@ -304,3 +304,103 @@ fn evidence_is_explicit_version_bound_and_append_only_by_key() {
     );
     assert!(f.store.doctor().unwrap().ok);
 }
+
+/// A work item whose `source_ref` carries an identity+acceptance section
+/// fingerprint, as produced by the yaml-ledger adapter (A2a).
+fn sec_work(f: &Fixture, key: &str, section: &str) -> WorkItem {
+    let mut w = work(f, key);
+    w.meta.source_ref.section_fingerprint = Some(section.into());
+    w
+}
+
+/// C1: completing one work item in a single ledger file must not roll back the
+/// verified evidence of the other items (proves iron-rule #2 is fixed).
+///
+/// WB's completion rewrites the *whole file* (its source SHA changes), but WB's
+/// and WA's identity+acceptance sections are untouched, so both stay Current.
+#[test]
+fn completing_one_work_item_keeps_other_items_evidence_current() {
+    let mut f = Fixture::new();
+    f.commit(ProjectionBatch {
+        work_items: vec![sec_work(&f, "WA", "sec-A"), sec_work(&f, "WB", "sec-B")],
+        ..Default::default()
+    });
+    let sha_before = "b".repeat(40);
+    for key in ["WA", "WB"] {
+        let mut d = draft(&format!("{key}-report"));
+        d.work_item_key = Some(key.into());
+        d.source_sha = Some(sha_before.clone());
+        let rev = f.store.project(f.project.id).unwrap().project_revision;
+        f.store.record_evidence(f.project.id, rev, d).unwrap();
+    }
+    // The whole-file SHA advances after WB is completed (status written by AWR).
+    let sha_after = "c".repeat(40);
+    for key in ["WA", "WB"] {
+        let evs = f
+            .store
+            .evidence_for_work(f.project.id, key, Some(&sha_after), None)
+            .unwrap();
+        assert!(
+            evs.iter().all(|a| a.currency == EvidenceCurrency::Current),
+            "{key} evidence must stay Current when the whole-file SHA changes (section isolation)"
+        );
+    }
+}
+
+/// C1m: shared-ledger multi-node isolation. Two logical nodes share one git
+/// ledger, each completing a different ticket on its own copy, so each node
+/// observes a different whole-file SHA. A node's own completion must not drop
+/// the other node's evidence from Current to Historical.
+#[test]
+fn shared_ledger_cross_node_completions_do_not_cross_invalidate() {
+    // Node A and Node B have identical sections for WA/WB, but each copy's
+    // whole-file SHA differs because each node completed a different ticket.
+    let mut node_a = Fixture::new();
+    node_a.commit(ProjectionBatch {
+        work_items: vec![
+            sec_work(&node_a, "WA", "sec-A"),
+            sec_work(&node_a, "WB", "sec-B"),
+        ],
+        ..Default::default()
+    });
+    let mut node_b = Fixture::new();
+    node_b.commit(ProjectionBatch {
+        work_items: vec![
+            sec_work(&node_b, "WA", "sec-A"),
+            sec_work(&node_b, "WB", "sec-B"),
+        ],
+        ..Default::default()
+    });
+
+    // Node A completes WA against its own file SHA.
+    let sha_a = "a".repeat(40);
+    let mut wa_report = draft("wa-report");
+    wa_report.work_item_key = Some("WA".into());
+    wa_report.source_sha = Some(sha_a.clone());
+    let rev = node_a.store.project(node_a.project.id).unwrap().project_revision;
+    node_a
+        .store
+        .record_evidence(node_a.project.id, rev, wa_report.clone())
+        .unwrap();
+
+    // Node B pulls WA's evidence (shared ledger) and completes WB, advancing its
+    // own whole-file SHA to sha_b (≠ sha_a). WA's identity+acceptance section is
+    // unchanged, so its evidence must remain Current under sha_b.
+    let sha_b = "b".repeat(40);
+    let mut pulled = draft("wa-report");
+    pulled.work_item_key = Some("WA".into());
+    pulled.source_sha = Some(sha_a.clone());
+    let rev = node_b.store.project(node_b.project.id).unwrap().project_revision;
+    node_b
+        .store
+        .record_evidence(node_b.project.id, rev, pulled)
+        .unwrap();
+    let evs = node_b
+        .store
+        .evidence_for_work(node_b.project.id, "WA", Some(&sha_b), None)
+        .unwrap();
+    assert!(
+        evs.iter().all(|a| a.currency == EvidenceCurrency::Current),
+        "cross-node completion must not drop the other node's evidence to Historical"
+    );
+}
