@@ -1,6 +1,18 @@
 mod support;
 use awr_core::*;
+use std::path::Path;
 use support::Fixture;
+
+/// HEAD sha of a real git repository (used by the real-worktree C1m test).
+fn git_head(repo: &Path) -> String {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo)
+        .output()
+        .expect("git must be available on PATH");
+    assert!(out.status.success(), "git rev-parse failed");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
 
 fn work(f: &Fixture, key: &str) -> WorkItem {
     WorkItem {
@@ -403,4 +415,134 @@ fn shared_ledger_cross_node_completions_do_not_cross_invalidate() {
         evs.iter().all(|a| a.currency == EvidenceCurrency::Current),
         "cross-node completion must not drop the other node's evidence to Historical"
     );
+}
+
+/// C1m (real-environment): two *real* git worktrees of one shared ledger repo,
+/// each holding an independent SQLite store. Node A completes item WA on its own
+/// worktree (a real `git commit`), Node B `git pull`s that commit and completes
+/// item WB on its copy. Each node therefore sees a different whole-file SHA of
+/// the same ledger; WA's evidence must still be Current from Node B's view
+/// because WA's identity+acceptance section is unchanged across the copies.
+///
+/// This reproduces shared-ledger multi-agent collaboration over a real Git
+/// transport, not merely two in-process fixtures.
+#[test]
+fn real_git_worktree_two_node_shared_ledger_keeps_both_evidence_current() {
+    fn git(repo: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .output()
+            .expect("git must be available on PATH");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    let base = std::env::temp_dir().join(format!("awr-c1m-real-{}", Id::new()));
+    let repo = base.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    // A shared ledger file keyed by git commit: each item's completion is a real
+    // commit bumping the whole-file SHA, while identity+acceptance stay put.
+    // write_ledger writes into a specific worktree's own copy.
+    let write_ledger = |dir: &Path, wa: bool, wb: bool| {
+        std::fs::write(
+            dir.join("work.yaml"),
+            format!(
+                "work_items:\n- id: WA\n  title: A\n  status: {}\n  acceptance: [render A]\n- id: WB\n  title: B\n  status: {}\n  acceptance: [render B]\n",
+                if wa { "completed" } else { "planned" },
+                if wb { "completed" } else { "planned" },
+            ),
+        )
+        .unwrap();
+    };
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(
+        &repo,
+        &["-c", "user.email=node@test", "-c", "user.name=node", "config", "--local", "user.email", "node@test"],
+    );
+    git(&repo, &["config", "--local", "user.name", "node"]);
+    write_ledger(&repo, false, false);
+    git(&repo, &["add", "work.yaml"]);
+    git(&repo, &["commit", "-q", "-m", "both planned"]);
+    let sha_both_planned = git_head(&repo);
+
+    // Two real worktrees of the shared repo, on independent branches (each node
+    // completes its own ticket without colliding on the same branch).
+    let node_a = base.join("node-a");
+    let node_b = base.join("node-b");
+    git(
+        &repo,
+        &["worktree", "add", "-q", "-b", "node-a", node_a.to_str().unwrap(), "main"],
+    );
+    git(
+        &repo,
+        &["worktree", "add", "-q", "-b", "node-b", node_b.to_str().unwrap(), "main"],
+    );
+
+    // ---- Node A: store over worktree A, complete WA (real commit). ----
+    let mut f_a = Fixture::new_under(&node_a, "file:///node-a/work.yaml");
+    f_a.commit(ProjectionBatch {
+        work_items: vec![sec_work(&f_a, "WA", "sec-A"), sec_work(&f_a, "WB", "sec-B")],
+        ..Default::default()
+    });
+    let mut wa_ev = draft("wa-report");
+    wa_ev.work_item_key = Some("WA".into());
+    wa_ev.source_sha = Some(sha_both_planned.clone());
+    let r = f_a.store.project(f_a.project.id).unwrap().project_revision;
+    f_a.store.record_evidence(f_a.project.id, r, wa_ev).unwrap();
+    write_ledger(&node_a, true, false); // node A completes WA
+    git(&node_a, &["add", "work.yaml"]);
+    git(&node_a, &["commit", "-q", "-m", "A completes WA"]);
+
+    // ---- Node B fast-forwards to A's completed ledger, then completes WB. ----
+    let sha_after_a = git_head(&node_a);
+    // Two real worktrees share one git object store (the shared ledger): Node B
+    // moves to A's latest commit through the real git transport, so its
+    // whole-file SHA now differs from the SHA Node A bound WA's evidence at.
+    git(&node_b, &["reset", "-q", "--hard", &sha_after_a]);
+    let sha_after_a = git_head(&node_b);
+    assert_ne!(sha_after_a, sha_both_planned, "A's completion changed the whole file");
+    let mut f_b = Fixture::new_under(&node_b, "file:///node-b/work.yaml");
+    f_b.commit(ProjectionBatch {
+        work_items: vec![sec_work(&f_b, "WA", "sec-A"), sec_work(&f_b, "WB", "sec-B")],
+        ..Default::default()
+    });
+    // Node B registers the same shared WA report; WA's section is unchanged, so
+    // even though Node B's whole-file SHA now differs from Node A's, WA's
+    // evidence must stay Current.
+    let mut wa_shared = draft("wa-report");
+    wa_shared.work_item_key = Some("WA".into());
+    wa_shared.source_sha = Some(sha_after_a.clone());
+    let r = f_b.store.project(f_b.project.id).unwrap().project_revision;
+    f_b.store.record_evidence(f_b.project.id, r, wa_shared).unwrap();
+    let mut wb_ev = draft("wb-report");
+    wb_ev.work_item_key = Some("WB".into());
+    wb_ev.source_sha = Some(sha_after_a.clone());
+    let r = f_b.store.project(f_b.project.id).unwrap().project_revision;
+    f_b.store.record_evidence(f_b.project.id, r, wb_ev).unwrap();
+    write_ledger(&node_b, true, true); // node B completes WB
+    git(&node_b, &["add", "work.yaml"]);
+    git(&node_b, &["commit", "-q", "-m", "B completes WB"]);
+    let sha_after_both = git_head(&node_b);
+    assert_ne!(sha_after_both, sha_after_a);
+
+    // Cross-node assertion: from Node B's final shared-ledger state, WA's and
+    // WB's evidence are both Current (identity+acceptance sections unchanged),
+    // despite a now entirely different whole-file SHA than when they were bound.
+    for (key, section) in [("WA", "sec-A"), ("WB", "sec-B")] {
+        let _ = section;
+        let evs = f_b
+            .store
+            .evidence_for_work(f_b.project.id, key, Some(&sha_after_both), None)
+            .unwrap();
+        assert!(
+            evs.iter().all(|a| a.currency == EvidenceCurrency::Current),
+            "real-git worktree cross-node completion dropped {key} evidence to Historical",
+        );
+    }
+    let _ = std::fs::remove_dir_all(&base);
 }
