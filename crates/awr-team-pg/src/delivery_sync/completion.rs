@@ -251,12 +251,19 @@ pub(crate) async fn artifact_refs(
         if bytes.len() > 65_536 {
             query["max_context_bytes"] = serde_json::json!(bytes.len());
         }
-        references.push(serde_json::json!({
+        let mut reference = serde_json::json!({
             "manifest_artifact_id": target.manifest_id,
             "primary_evidence": target.pinned.is_some(),
             "query": query,
             "byte_length":bytes.len().to_string()
-        }));
+        });
+        if bytes.len() > 2048 {
+            let mut segment = reference["query"].clone();
+            segment["op"] = serde_json::json!("artifact.segment");
+            segment.as_object_mut().unwrap().remove("max_context_bytes");
+            reference["segment_query"] = segment;
+        }
+        references.push(reference);
     }
     Ok(references)
 }

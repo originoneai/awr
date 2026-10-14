@@ -233,9 +233,13 @@ pub(crate) async fn inspect(
     }
     result["guidance"] = guidance(work, result["reason"].as_str().unwrap());
     if result["inspectable"] == true && current {
-        result["guidance"]["action"] = json!({"op":"artifact.content",
-            "query":result["artifacts"][0]["query"],
-            "note":"Read every listed exact artifact query before an independent decision. Readability is not test verification, approval or repository integration."});
+        let first = &result["artifacts"][0];
+        let query = first
+            .get("segment_query")
+            .unwrap_or(&first["query"])
+            .clone();
+        result["guidance"]["action"] = json!({"op":query["op"], "query":query,
+            "note":"Read every listed artifact before an independent decision. Prefer segment_query when present: follow all next_query pages, concatenate contiguous bytes and verify full length/sha256. Readability is not test verification, approval or integration."});
     }
     Ok(result)
 }

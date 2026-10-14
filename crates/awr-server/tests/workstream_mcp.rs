@@ -20,6 +20,197 @@ use std::time::Duration;
 type Client = RunningService<RoleClient, ()>;
 
 #[tokio::test]
+async fn artifact_segments_reconstruct_exact_bytes_with_bounded_mcp_envelopes() {
+    use base64::Engine;
+    use sha2::Digest;
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let text = "line: \"雪🌱\" \\ tab\t\r\n".repeat(1200);
+    let binary: Vec<u8> = (0..19001).map(|i| (i % 256) as u8).collect();
+    for (case, bytes, budget) in [
+        ("unicode", text.into_bytes(), 4096),
+        ("binary", binary, 2047),
+        ("empty", vec![], 1),
+    ] {
+        let args = json!({"session_id":"session-a","expected_session_version":"1",
+            "payload":{"passed":true},"artifact_hex":bytes.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+            "dirty_tree":false});
+        let submitted = call(
+            &client,
+            "awr_team_command",
+            serde_json::to_value(command(
+                &prepared(&client).await,
+                &format!("segments-{case}"),
+                "evidence.submit",
+                args,
+            ))
+            .unwrap(),
+            false,
+        )
+        .await;
+        let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+        assert_eq!(submitted["receipt"]["data"]["artifact_digest"], digest);
+        let initial = json!({"protocol_version":1,"op":"artifact.segment","work_id":"a",
+            "artifact_id":submitted["receipt"]["data"]["artifact_id"],"expected_sha256":digest,"max_context_bytes":budget});
+        let mut query = initial.clone();
+        let mut combined = Vec::new();
+        let mut pages = 0;
+        loop {
+            let response = client
+                .call_tool(
+                    CallToolRequestParams::new("awr_team_query")
+                        .with_arguments(query.as_object().unwrap().clone()),
+                )
+                .await
+                .unwrap();
+            assert!(!response.is_error.unwrap_or(false), "{response:?}");
+            assert!(
+                serde_json::to_vec(&response).unwrap().len()
+                    <= awr_team_pg::WorkstreamQuery::MAX_ARTIFACT_SEGMENT_WIRE_BYTES
+            );
+            let value = response.structured_content.as_ref().unwrap();
+            let data = &value["data"];
+            assert_eq!(data["range"]["start"], combined.len());
+            let part = base64::engine::general_purpose::STANDARD
+                .decode(data["content_base64"].as_str().unwrap())
+                .unwrap();
+            assert!(part.len() <= budget);
+            assert_eq!(
+                data["segment_sha256"],
+                format!("{:x}", sha2::Sha256::digest(&part))
+            );
+            combined.extend(part);
+            assert_eq!(data["range"]["end_exclusive"], combined.len());
+            assert_eq!(data["byte_length"], bytes.len());
+            assert_eq!(data["sha256"], digest);
+            assert_eq!(data["execution_authorized"], false);
+            pages += 1;
+            assert!(pages < 50);
+            if data["end_of_artifact"] == true {
+                assert!(data["next_query"].is_null());
+                assert!(data["next_cursor"].is_null());
+                break;
+            }
+            assert!(data["next_cursor"].is_string());
+            query = data["next_query"].clone();
+        }
+        assert_eq!(combined, bytes);
+        assert_eq!(format!("{:x}", sha2::Sha256::digest(&combined)), digest);
+        assert_eq!(pages == 1, bytes.is_empty());
+        // The old full read still returns the entire object, never a prefix.
+        let mut full = initial.clone();
+        full["op"] = json!("artifact.content");
+        full.as_object_mut().unwrap().remove("max_context_bytes");
+        let old = call(&client, "awr_team_query", full, false).await;
+        if let Ok(text) = String::from_utf8(bytes.clone()) {
+            assert_eq!(old["data"]["text"], text);
+        } else {
+            assert_eq!(
+                base64::engine::general_purpose::STANDARD
+                    .decode(old["data"]["content_base64"].as_str().unwrap())
+                    .unwrap(),
+                bytes
+            );
+        }
+    }
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn artifact_segments_reauthorize_each_page_and_reject_stale_or_invalid_ranges() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let submitted = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "segment-boundary-evidence",
+            "evidence.submit",
+            json!({"session_id":"session-a","expected_session_version":"1",
+            "payload":{"passed":true},"artifact_text":"abcdefghi","dirty_tree":false}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    let initial = json!({"protocol_version":1,"op":"artifact.segment","work_id":"a",
+        "artifact_id":submitted["receipt"]["data"]["artifact_id"],"expected_sha256":submitted["receipt"]["data"]["artifact_digest"],"max_context_bytes":3});
+    let first = call(&client, "awr_team_query", initial.clone(), false).await;
+    let next = first["data"]["next_query"].clone();
+    let second = call(&client, "awr_team_query", next.clone(), false).await;
+    assert_eq!(second["data"]["range"]["start"], 3);
+    assert_eq!(
+        second["data"],
+        call(&client, "awr_team_query", next.clone(), false).await["data"]
+    );
+    for (field, value) in [
+        ("cursor", json!("bad")),
+        ("expected_sha256", json!("f".repeat(64))),
+        ("work_id", json!("b-private")),
+        ("artifact_id", json!("missing")),
+        ("max_context_bytes", json!(4097)),
+    ] {
+        let mut bad = next.clone();
+        bad[field] = value;
+        call(&client, "awr_team_query", bad, true).await;
+    }
+    for offset in [9_u64, u64::MAX] {
+        let mut bad = next.clone();
+        let mut cursor: Value = serde_json::from_str(bad["cursor"].as_str().unwrap()).unwrap();
+        cursor["offset"] = json!(offset);
+        bad["cursor"] = json!(cursor.to_string());
+        call(&client, "awr_team_query", bad, true).await;
+    }
+    let artifact_id = submitted["receipt"]["data"]["artifact_id"]
+        .as_str()
+        .unwrap();
+    admin
+        .execute(
+            "UPDATE awr_team.artifacts SET byte_length=byte_length+1 WHERE id=$1",
+            &[&artifact_id],
+        )
+        .await
+        .unwrap();
+    call(&client, "awr_team_query", initial.clone(), true).await;
+    admin
+        .execute(
+            "UPDATE awr_team.artifacts SET byte_length=byte_length-1 WHERE id=$1",
+            &[&artifact_id],
+        )
+        .await
+        .unwrap();
+    admin.batch_execute("UPDATE awr_team.workstream_ownership SET ownership_version=ownership_version+1 WHERE work_id='a';
+        UPDATE awr_team.workstream_snapshot_ownership SET ownership_version=ownership_version+1 WHERE work_id='a'").await.unwrap();
+    call(&client, "awr_team_query", next.clone(), true).await;
+    call(&client, "awr_team_query", initial.clone(), false).await;
+    let mut no_digest = initial.clone();
+    no_digest.as_object_mut().unwrap().remove("expected_sha256");
+    let refused = call(&client, "awr_team_query", no_digest, true).await;
+    assert_eq!(refused["invalid_field"], "/expected_sha256");
+    admin.batch_execute("UPDATE awr_team.workstream_grants SET grant_version=grant_version+1 WHERE client_id='cli-a'").await.unwrap();
+    call(&client, "awr_team_query", next.clone(), true).await;
+    let fresh = call(&client, "awr_team_query", initial.clone(), false).await;
+    admin.batch_execute("UPDATE awr_team.workstream_grants SET can_read=false,can_write=false,grant_version=grant_version+1 WHERE client_id='cli-a'").await.unwrap();
+    let revoked = client
+        .call_tool(
+            CallToolRequestParams::new("awr_team_query")
+                .with_arguments(fresh["data"]["next_query"].as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        revoked.to_string().contains("HTTP 403 Forbidden"),
+        "{revoked}"
+    );
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn shared_role_guidance_has_http_mcp_reconnect_and_revocation_parity() {
     let (_guard, admin, _db, store) = setup().await;
     enable_writes(&admin).await;

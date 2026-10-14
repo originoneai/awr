@@ -630,6 +630,18 @@ pub(crate) async fn content(
     work: &str,
     q: &WorkstreamQuery,
 ) -> PgResult<Value> {
+    let (bytes, metadata) = content_bytes(tx, tenant, project, auth, work, q).await?;
+    crate::workstream_read::render_artifact_content(bytes, metadata, q.max_context_bytes)
+}
+
+pub(crate) async fn content_bytes(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    auth: &ReaderAuthority,
+    work: &str,
+    q: &WorkstreamQuery,
+) -> PgResult<(Vec<u8>, Value)> {
     let export = q.export_id.as_deref().ok_or(PgError::Forbidden)?;
     let r = tx.query_opt("SELECT manifest_json,proof_json,disclosure_sha256,version FROM awr_team.workstream_artifact_exports
         WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND consumer_work_id=$4 AND status='active'", &[&tenant,&project,&export,&work]).await?.ok_or(PgError::Forbidden)?;
@@ -651,10 +663,9 @@ pub(crate) async fn content(
     {
         return Err(PgError::SnapshotDrift(export.into()));
     }
-    if bytes.len() > q.max_context_bytes.unwrap_or(65536) {
-        return Err(PgError::ContextIncomplete);
+    if bytes.len() > WorkstreamQuery::MAX_ARTIFACT_BYTES {
+        return Err(PgError::EvidenceInvalid);
     }
-    let text = String::from_utf8(bytes.clone()).ok();
     let adopted = crate::cross_workstream_adoption::is_selected_export(
         tx,
         tenant,
@@ -666,13 +677,11 @@ pub(crate) async fn content(
         &manifest,
     )
     .await?;
-    Ok(
-        json!({"kind":"exported_artifact","export_id":export,"export_version":r.get::<_,i64>(3).to_string(),
+    let metadata = json!({"kind":"exported_artifact","export_id":export,"export_version":r.get::<_,i64>(3).to_string(),
         "work_id":work,"sha256":manifest["artifact_sha256"],"byte_length":bytes.len(),"media_type":manifest["media_type"],
-        "disclosure_sha256":r.get::<_,String>(2),"review":manifest["review"],"text":text,
-        "content_base64":if text.is_none() { json!(crate::workstream_read::base64_encode(&bytes)) } else { Value::Null },
-        "adopted":adopted,"execution_authorized":false,"upstream_source_access":false}),
-    )
+        "disclosure_sha256":r.get::<_,String>(2),"review":manifest["review"],
+        "adopted":adopted,"execution_authorized":false,"upstream_source_access":false});
+    Ok((bytes, metadata))
 }
 
 #[derive(serde::Serialize, Deserialize)]
@@ -767,6 +776,8 @@ pub(crate) async fn list(
             item["receipt_id"] = manifest["receipt_id"].clone();
             item["review"] = manifest["review"].clone();
             item["policy"] = manifest["policy"].clone();
+            item["segment_query"] = json!({"protocol_version":1,"op":"artifact.segment",
+                "work_id":work,"export_id":export,"expected_sha256":manifest["artifact_sha256"]});
         }
         items.push(item);
     }

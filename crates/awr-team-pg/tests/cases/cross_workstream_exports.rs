@@ -211,3 +211,31 @@ async fn export_rollback_keeps_unknown_outcome_and_pagination_binds_current_cons
     admin.batch_execute("UPDATE awr_team.project_memberships SET membership_version=membership_version+1 WHERE actor_id='agent'").await.unwrap();
     assert!(matches!(store.query(TENANT,PROJECT,B,q).await,Err(PgError::CursorExpired)));
 }
+
+
+#[tokio::test]
+async fn artifact_segments_keep_export_scope_adoption_and_revocation_live() {
+    let (_g,admin,db,store)=setup().await;
+    seed_simulated_members(&admin,&db).await;
+    let receipt=complete_simulated_upstream(&store).await;
+    let consumer=exported_consumer(&admin,&store,&db).await;
+    let exported=publish_export(&store,&consumer,&receipt,"segment-export").await;
+    let mut q=export_content(&exported);q.op="artifact.segment".into();q.max_context_bytes=Some(3);
+    q.expected_sha256=Some(crate::hex_encode(&sha2::Sha256::digest(b"simulated artifact")));
+    let first=store.query(TENANT,PROJECT,B,q.clone()).await.unwrap();
+    assert_eq!(first["data"]["content_base64"],"c2lt");
+    assert_eq!(first["data"]["adopted"],false);
+    assert_eq!(first["data"]["upstream_source_access"],false);
+    assert_eq!(first["data"]["execution_authorized"],false);
+    let next: awr_team_pg::WorkstreamQuery=serde_json::from_value(first["data"]["next_query"].clone()).unwrap();
+    let second=store.query(TENANT,PROJECT,B,next.clone()).await.unwrap();
+    assert_eq!(second["data"]["range"]["start"],3);
+    let mut foreign=next.clone();foreign.work_id=Some("a".into());
+    assert!(store.query(TENANT,PROJECT,B,foreign).await.is_err());
+    let p=prepare(&store,RUNNER,"a").await;
+    let revoke=command(&p,"revoke-segment-export","delivery.export.revoke",json!({"session_id":"session-runner","expected_session_version":"1",
+        "export_id":exported["receipt"]["data"]["export_id"],"expected_export_version":"1"}));
+    store.commands().execute(TENANT,PROJECT,RUNNER,revoke).await.unwrap();
+    assert!(matches!(store.query(TENANT,PROJECT,B,next).await,Err(PgError::Forbidden)));
+    assert!(matches!(store.query(TENANT,PROJECT,B,q).await,Err(PgError::Forbidden)));
+}

@@ -182,6 +182,10 @@ impl PgError {
                 "bounds",
                 "Use an integer from 1 through 262144 bytes, or omit this optional budget.",
             ),
+            "segment_context" => (
+                "bounds",
+                "Use an integer from 1 through 4096 raw bytes per segment, or omit the budget for 2048 bytes.",
+            ),
             "artifact_context" => (
                 "bounds",
                 "Use an integer from 1 through 1048576 bytes, or omit this optional budget.",
@@ -189,6 +193,10 @@ impl PgError {
             "search" => (
                 "search_format",
                 "Use a nonempty search of at most 512 UTF-8 bytes, without control characters.",
+            ),
+            "required_digest" => (
+                "sha256_format",
+                "Supply exactly 64 lowercase hexadecimal characters from the current authorized artifact reference; artifact.segment requires this digest.",
             ),
             "digest" => (
                 "sha256_format",

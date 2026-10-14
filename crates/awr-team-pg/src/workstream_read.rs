@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use tokio_postgres::{IsolationLevel, Transaction};
 
 mod activity;
+mod artifact_segments;
 mod assignees;
 mod delivery;
 mod guidance;
@@ -48,6 +49,7 @@ const QUERIES: &[&str] = &[
     "delivery.integration.inspect",
     "source.content",
     "artifact.content",
+    "artifact.segment",
     "delivery.exports",
     "planning.outcome",
     "audit.history",
@@ -108,6 +110,7 @@ impl WorkstreamQuery {
         "work.inbox",
         "source.content",
         "artifact.content",
+        "artifact.segment",
         "review.inspect",
         "delivery.neutral.inspect",
         "delivery.submission.describe",
@@ -115,6 +118,9 @@ impl WorkstreamQuery {
     /// Maximum explicit raw-byte budget for stored artifact reads and encodings.
     /// Command envelopes retain their separate, smaller transport bound.
     pub const MAX_ARTIFACT_BYTES: usize = 1_048_576;
+    /// Raw bytes per page; the MCP wire envelope has an additional hard bound.
+    pub const MAX_ARTIFACT_SEGMENT_BYTES: usize = 4096;
+    pub const MAX_ARTIFACT_SEGMENT_WIRE_BYTES: usize = 18_432;
 
     pub fn validate(&self) -> PgResult<()> {
         if self.protocol_version != 1 {
@@ -146,7 +152,9 @@ impl WorkstreamQuery {
                 return Err(PgError::query_field(field, "selector"));
             }
         }
-        let max_bytes = if self.op == "artifact.content" {
+        let max_bytes = if self.op == "artifact.segment" {
+            Self::MAX_ARTIFACT_SEGMENT_BYTES
+        } else if self.op == "artifact.content" {
             Self::MAX_ARTIFACT_BYTES
         } else {
             262144
@@ -163,7 +171,9 @@ impl WorkstreamQuery {
         {
             return Err(PgError::query_field(
                 "max_context_bytes",
-                if self.op == "artifact.content" {
+                if self.op == "artifact.segment" {
+                    "segment_context"
+                } else if self.op == "artifact.content" {
                     "artifact_context"
                 } else {
                     "context"
@@ -196,7 +206,10 @@ impl WorkstreamQuery {
         );
         let budgeted = Self::CONTEXT_BUDGET_OPERATIONS.contains(&self.op.as_str());
         for (field, rejected) in [
-            ("cursor", !paged && !audit && self.cursor.is_some()),
+            (
+                "cursor",
+                !paged && !audit && self.op != "artifact.segment" && self.cursor.is_some(),
+            ),
             ("limit", !paged && !audit && self.limit.is_some()),
             (
                 "search",
@@ -214,7 +227,10 @@ impl WorkstreamQuery {
             (
                 "expected_sha256",
                 self.expected_sha256.is_some()
-                    && !matches!(self.op.as_str(), "source.content" | "artifact.content"),
+                    && !matches!(
+                        self.op.as_str(),
+                        "source.content" | "artifact.content" | "artifact.segment"
+                    ),
             ),
         ] {
             if rejected {
@@ -290,7 +306,7 @@ impl WorkstreamQuery {
                 return Err(PgError::query_field(field, "required"));
             }
         }
-        if self.op == "artifact.content" {
+        if matches!(self.op.as_str(), "artifact.content" | "artifact.segment") {
             if self.artifact_id.is_some() == self.export_id.is_some() {
                 return Err(PgError::query_field("artifact_id", "artifact_selection"));
             }
@@ -304,13 +320,23 @@ impl WorkstreamQuery {
                 }
             }
         }
+        if self.op == "artifact.segment" && self.expected_sha256.is_none() {
+            return Err(PgError::query_field("expected_sha256", "required"));
+        }
         if self.expected_sha256.as_ref().is_some_and(|s| {
             s.len() != 64
                 || !s
                     .bytes()
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         }) {
-            return Err(PgError::query_field("expected_sha256", "digest"));
+            return Err(PgError::query_field(
+                "expected_sha256",
+                if self.op == "artifact.segment" {
+                    "required_digest"
+                } else {
+                    "digest"
+                },
+            ));
         }
         if self.source_path.as_ref().is_some_and(|path| {
             path.is_empty()
@@ -388,6 +414,7 @@ impl WorkstreamQuery {
                 | "completion.inspect"
                 | "delivery.inspect"
                 | "artifact.content"
+                | "artifact.segment"
                 | "delivery.exports"
         ) && self.work_id.is_none()
             && self.session_id.is_none()
@@ -684,6 +711,56 @@ mod input_guidance_tests {
                 .get("export_id")
                 .is_none(),
             "Old queries must not serialize the new absent selector"
+        );
+    }
+
+    #[test]
+    fn artifact_segments_require_exact_digests_and_bounded_read_only_selectors() {
+        let initial = json!({"protocol_version":1,"op":"artifact.segment","work_id":"work",
+            "artifact_id":"artifact","expected_sha256":"a".repeat(64)});
+        let q: WorkstreamQuery = serde_json::from_value(initial.clone()).unwrap();
+        assert!(q.validate().is_ok());
+        for bytes in [1, 2048, 4096] {
+            let mut q = q.clone();
+            q.max_context_bytes = Some(bytes);
+            assert!(q.validate().is_ok());
+        }
+        for (field, value) in [
+            ("limit", json!(1)),
+            ("max_context_bytes", json!(0)),
+            ("max_context_bytes", json!(4097)),
+            ("export_id", json!("also-export")),
+            ("source_path", json!("private.md")),
+            ("request_id", json!("write-intent")),
+            ("expected_sha256", json!("bad-digest")),
+        ] {
+            let mut input = initial.clone();
+            input[field] = value;
+            let invalid: WorkstreamQuery = serde_json::from_value(input).unwrap();
+            assert!(invalid.validate().is_err());
+        }
+        let mut absent = q.clone();
+        absent.expected_sha256 = None;
+        assert_eq!(
+            absent
+                .validate()
+                .unwrap_err()
+                .query_input_diagnostic()
+                .unwrap()["constraint"],
+            "required"
+        );
+        let mut malformed = q;
+        malformed.expected_sha256 = Some("bad".into());
+        let correction = malformed
+            .validate()
+            .unwrap_err()
+            .query_input_diagnostic()
+            .unwrap();
+        assert!(
+            correction["action_guidance"]["next_action"]
+                .as_str()
+                .unwrap()
+                .contains("requires this digest")
         );
     }
 
@@ -1138,7 +1215,7 @@ pub(crate) async fn read(
         });
         caps["approved_artifact_exports"] = json!({
             "commands":["delivery.export.publish","delivery.export.revoke"],"query":"delivery.exports",
-            "content_query":"artifact.content","content_selector":"export_id",
+            "content_query":"artifact.content","segment_query":"artifact.segment","content_selector":"export_id",
             "publication_action":"delivery.finalize","requires":"current_selected_receipt_and_exact_original_review",
             "read_scope":"exact_consumer_work","upstream_source_access":false,"adoption_available":true,
             "current_contract_only":false,"historical_fixed_delivery_available":true,
@@ -1187,6 +1264,10 @@ pub(crate) async fn read(
             "v5_dependency_scope":"same_workstream",
             "cross_workstream_adoption_policy":"explicit_v6_version_policy"
         });
+        caps["artifact_segments"] = json!({"query":"artifact.segment", "expected_sha256_required":true,
+            "default_raw_bytes":2048,"max_raw_bytes":WorkstreamQuery::MAX_ARTIFACT_SEGMENT_BYTES,
+            "max_mcp_result_bytes":WorkstreamQuery::MAX_ARTIFACT_SEGMENT_WIRE_BYTES,
+            "encoding":"base64","complete_read":"Follow next_query until end_of_artifact; concatenate contiguous ranges from 0 and verify the full length and sha256."});
         caps["identity"] = navigation::identity(auth);
         caps["business_role_presets"] = json!({
             "roles":awr_team::BusinessRole::all(), "explicit_combined_duties":true,
@@ -1304,6 +1385,24 @@ pub(crate) async fn read(
             resolved.workstream_id,
             resolved.authority_version,
             ownership,
+        )
+        .await?;
+        return Ok(json!({"protocol_version":1,"workstream_id":stream,
+            "authority_version":resolved.authority_version.to_string(),"scope_id":"main",
+            "selection_basis":resolved.basis,"coordinator_epoch":auth.epoch,
+            "project_status":auth.project_status,"source_snapshot_id":auth.snapshot,
+            "project_revision":auth.revision.to_string(),"data":data}));
+    }
+    if q.op == "artifact.segment" {
+        let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+        let data = artifact_segments::read(
+            tx,
+            tenant,
+            project,
+            auth,
+            q,
+            work,
+            resolved.authority_version,
         )
         .await?;
         return Ok(json!({"protocol_version":1,"workstream_id":stream,
@@ -1982,15 +2081,14 @@ fn authorize_source_file_streams(auth: &ReaderAuthority, path: &str, text: &str)
     Ok(())
 }
 
-async fn read_controlled_artifact_content(
+async fn controlled_artifact_bytes(
     tx: &Transaction<'_>,
     tenant: &str,
     project: &str,
     work: &str,
     artifact_id: &str,
     expected_sha256: Option<&str>,
-    max_bytes: Option<usize>,
-) -> PgResult<Value> {
+) -> PgResult<(Vec<u8>, Value)> {
     // Bind artifact to evidence for the authorized work — refuse free-floating IDs.
     let row = tx
         .query_opt(
@@ -2014,7 +2112,11 @@ async fn read_controlled_artifact_content(
         )
     })?;
     let digest = crate::source::sha256_hex(&content);
-    if state != "finalized" || digest != sha {
+    if state != "finalized"
+        || digest != sha
+        || byte_length != content.len() as i64
+        || content.len() > WorkstreamQuery::MAX_ARTIFACT_BYTES
+    {
         return Err(PgError::SnapshotDrift(artifact_id.into()));
     }
     if let Some(expected) = expected_sha256 {
@@ -2022,29 +2124,44 @@ async fn read_controlled_artifact_content(
             return Err(PgError::SnapshotDrift(artifact_id.into()));
         }
     }
-    let max = max_bytes.unwrap_or(65536);
-    if content.len() > max {
+    Ok((
+        content,
+        json!({"kind":"artifact", "artifact_id":artifact_id, "work_id":work,
+        "sha256":digest,"byte_length":byte_length,"media_type":media,
+        "path_bypass":false,"url_bypass":false,"history_bypass":false,"next_step":null}),
+    ))
+}
+
+async fn read_controlled_artifact_content(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    work: &str,
+    artifact_id: &str,
+    expected_sha256: Option<&str>,
+    max_bytes: Option<usize>,
+) -> PgResult<Value> {
+    let (bytes, metadata) =
+        controlled_artifact_bytes(tx, tenant, project, work, artifact_id, expected_sha256).await?;
+    render_artifact_content(bytes, metadata, max_bytes)
+}
+
+pub(crate) fn render_artifact_content(
+    bytes: Vec<u8>,
+    mut metadata: Value,
+    max_bytes: Option<usize>,
+) -> PgResult<Value> {
+    if bytes.len() > max_bytes.unwrap_or(65536) {
         return Err(PgError::ContextIncomplete);
     }
-    let text = String::from_utf8(content.clone()).ok();
-    Ok(json!({
-        "kind":"artifact",
-        "artifact_id":artifact_id,
-        "work_id":work,
-        "sha256":digest,
-        "byte_length":byte_length,
-        "media_type":media,
-        "text":text,
-        "content_base64": if text.is_none() {
-            Value::String(base64_encode(&content))
-        } else {
-            Value::Null
-        },
-        "path_bypass":false,
-        "url_bypass":false,
-        "history_bypass":false,
-        "next_step":null
-    }))
+    let text = String::from_utf8(bytes.clone()).ok();
+    metadata["content_base64"] = if text.is_none() {
+        json!(base64_encode(&bytes))
+    } else {
+        Value::Null
+    };
+    metadata["text"] = json!(text);
+    Ok(metadata)
 }
 
 pub(crate) fn base64_encode(bytes: &[u8]) -> String {

@@ -450,13 +450,15 @@ fn catalog() -> Vec<Tool> {
         "search":{"type":"string","maxLength":512,"description":"Required for work.search; optional literal, case-insensitive member-name substring for task.assignees."},"cursor":{"type":"string","maxLength":4096},
         "limit":{"type":"integer","minimum":1,"maximum":100},
         "max_context_bytes":{"type":"integer","minimum":1,"maximum":WorkstreamQuery::MAX_ARTIFACT_BYTES,
-            "description":"Defaults stay bounded. Only artifact.content accepts up to 1 MiB of raw bytes; other query budgets are at most 256 KiB. JSON/base64 and metadata add transport overhead."},
+            "description":"Defaults stay bounded. Only artifact.content accepts up to 1 MiB of raw bytes; other query budgets are at most 256 KiB. artifact.segment requires expected_sha256 and uses 1..4096 raw bytes per page (default 2048); follow next_query and verify the complete digest. JSON/base64 and metadata add transport overhead."},
         "source_path":{"type":"string","maxLength":512},
         "artifact_id":{"type":"string","maxLength":128},
         "export_id":{"type":"string","maxLength":128},
         "expected_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}
     }});
     query["allOf"] = json!([
+        {"if":{"properties":{"op":{"const":"artifact.segment"}},"required":["op"]},
+            "then":{"required":["expected_sha256"],"properties":{"max_context_bytes":{"maximum":WorkstreamQuery::MAX_ARTIFACT_SEGMENT_BYTES}}}},
         {"if":{"properties":{"op":{"enum":WorkstreamQuery::CONTEXT_BUDGET_OPERATIONS}},"required":["op"]},
             "else":{"properties":{"max_context_bytes":{"type":"null"}}}},
         {"if":{"properties":{"op":{"const":"artifact.content"}},"required":["op"]},
@@ -772,7 +774,7 @@ fn catalog() -> Vec<Tool> {
     });
     vec![
         Tool::new("awr_team_query",
-            "Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. Supervisors use selector-free work.inbox. work.observe shares bounded neutral candidate/check/review/integration/publication facts and independently scoped role guidance with prepare/snapshot/inbox, preserving context hashes. Follow one action.op and its optional action.query; recheck_on names refresh triggers. Required context and unknown effects retain priority. max_context_bytes bounds the full observation response. Receipt access and unknown model/usage remain explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission. Approved cross-stream content: delivery.exports with consumer work_id, then artifact.content with export_id and expected_sha256. Disclosure never satisfies adoption. Neutral facts: delivery.neutral.inspect. Current source synchronization: delivery.source.status. Missing neutral command response: delivery.neutral.outcome with actual work_id and original client retry ID. delivery.integration.inspect uses the generated IntegrationRequest.request_id (data.integration_id), preserving the original candidate. Neutral inspection includes scoped connector versions; review.inspect includes decision IDs. Descriptions grant no authority.",
+            "Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. Supervisors use selector-free work.inbox. work.observe shares bounded neutral candidate/check/review/integration/publication facts and independently scoped role guidance with prepare/snapshot/inbox, preserving context hashes. Follow one action.op and its optional action.query; recheck_on names refresh triggers. Required context and unknown effects retain priority. max_context_bytes bounds the full observation response. Receipt access and unknown model/usage remain explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission. Approved cross-stream content: delivery.exports with consumer work_id, then artifact.content or bounded artifact.segment with export_id and expected_sha256. For segments follow every next_query, concatenate contiguous ranges from zero and verify the full length/digest; the last page alone is not a complete read. Disclosure never satisfies adoption. Neutral facts: delivery.neutral.inspect. Current source synchronization: delivery.source.status. Missing neutral command response: delivery.neutral.outcome with actual work_id and original client retry ID. delivery.integration.inspect uses the generated IntegrationRequest.request_id (data.integration_id), preserving the original candidate. Neutral inspection includes scoped connector versions; review.inspect includes decision IDs. Descriptions grant no authority.",
             query.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_command",
@@ -826,7 +828,7 @@ impl ServerHandler for Endpoint {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("awr-team-mcp", env!("CARGO_PKG_VERSION")))
-            .with_instructions("The URL binds one operator-registered project; bearer credentials are checked on every request. Begin with awr_team_query capabilities, then work.next to resume own work or discover scoped candidates without manual task selection. Supervisors use work.inbox for current permission-filtered coordination; both entries omit work/workstream/session selectors. Follow one next_query and refresh after relevant changes. Project admins manage members via awr_team_access_* tools after local owner bootstrap of the first admin. Raw credentials are never accepted or returned over MCP — generate them through protected Inspector issuance or awr-server access token and register only secret_hash. Work/session selectors bind a workstream; missing permissions never mean satisfied dependencies. Consume work.prepare before checkpointing. Follow its single guidance item (when/because/action/recheck_on); it grants no authority. Report client_info from known host metadata at session start or next checkpoint. Batch progress at phase/test completion, blocker, user wait or delivery boundaries; no per-tool reporting loop. Only submit usage with known host counter scope. Routine progress uses session.checkpoint; execution.report is for terminal outcomes. Session journals and claims grant no execution rights. Claim replay is a historical receipt; use claim.inspect for current lease state. If a command outcome is unknown, inspect its original request_id before an exact retry: delivery.neutral.outcome for neutral operations, command.inspect for legacy coordination. Check delivery.neutral.inspect and delivery.source.status for current state. Planning mutations use awr_team_planning_* with stable request_id; on disconnect call awr_team_planning_outcome or planning.outcome before any new ID. Controlled source/artifact content uses source.content / artifact.content — never path/URL/history bypass. Ops history uses audit.history/export/count within authorized scope. Recheck context and permission after relevant changes. MCP connection closure never closes a durable work session.")
+            .with_instructions("The URL binds one operator-registered project; bearer credentials are checked on every request. Begin with awr_team_query capabilities, then work.next to resume own work or discover scoped candidates without manual task selection. Supervisors use work.inbox for current permission-filtered coordination; both entries omit work/workstream/session selectors. Follow one next_query and refresh after relevant changes. Project admins manage members via awr_team_access_* tools after local owner bootstrap of the first admin. Raw credentials are never accepted or returned over MCP — generate them through protected Inspector issuance or awr-server access token and register only secret_hash. Work/session selectors bind a workstream; missing permissions never mean satisfied dependencies. Consume work.prepare before checkpointing. Follow its single guidance item (when/because/action/recheck_on); it grants no authority. Report client_info from known host metadata at session start or next checkpoint. Batch progress at phase/test completion, blocker, user wait or delivery boundaries; no per-tool reporting loop. Only submit usage with known host counter scope. Routine progress uses session.checkpoint; execution.report is for terminal outcomes. Session journals and claims grant no execution rights. Claim replay is a historical receipt; use claim.inspect for current lease state. If a command outcome is unknown, inspect its original request_id before an exact retry: delivery.neutral.outcome for neutral operations, command.inspect for legacy coordination. Check delivery.neutral.inspect and delivery.source.status for current state. Planning mutations use awr_team_planning_* with stable request_id; on disconnect call awr_team_planning_outcome or planning.outcome before any new ID. Controlled source/artifact content uses source.content / artifact.content; for long artifacts use artifact.segment with the exact digest, follow every next_query, concatenate contiguous ranges and verify length/digest — never path/URL/history bypass. Ops history uses audit.history/export/count within authorized scope. Recheck context and permission after relevant changes. MCP connection closure never closes a durable work session.")
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
@@ -902,6 +904,7 @@ impl ServerHandler for Endpoint {
             matches!(request.name.as_ref(), "awr_team_query" | "awr_team_command")
                 .then(|| args.clone());
         let write = request.name == "awr_team_command";
+        let segmented = request.name == "awr_team_query" && args["op"] == "artifact.segment";
         let result = tokio::time::timeout_at(access.deadline, super::audited(&self.state, &self.project, &access.bearer, &action, work.as_deref(), async {
             match request.name.as_ref() {
                 "awr_team_query" => {
@@ -1100,7 +1103,25 @@ impl ServerHandler for Endpoint {
         }))
         .await;
         let result = match result {
-            Ok(Ok(value)) => CallToolResult::structured(value),
+            Ok(Ok(value)) => {
+                let result = CallToolResult::structured(value);
+                // Bound the actual text + structured-content envelope, not just
+                // the raw chunk. No oversized prefix is ever emitted.
+                if segmented
+                    && !serde_json::to_vec(&result).is_ok_and(|bytes| {
+                        bytes.len() <= WorkstreamQuery::MAX_ARTIFACT_SEGMENT_WIRE_BYTES
+                    })
+                {
+                    CallToolResult::structured_error(json!({"code":"ResponseTooLarge",
+                        "message":"artifact segment transport envelope exceeds its bound",
+                        "action_guidance":{"condition":"The complete segment response is too large.",
+                            "basis":"The MCP text and structured result share a bounded wire budget.",
+                            "next_action":"Repeat this read with a smaller max_context_bytes, such as 1024; keep the same digest and cursor.",
+                            "recheck":"After reducing the read budget. This grants no execution or review authority."}}))
+                } else {
+                    result
+                }
+            }
             Ok(Err(error)) => {
                 let rejection = super::claim_rejection(&action, &error);
                 let mut value = public_error(super::legacy_claim_acquire_error(&action, error)).1;

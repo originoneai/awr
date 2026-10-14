@@ -506,6 +506,7 @@ pub fn query_business_action(op: &str) -> Option<awr_team::Action> {
         "delivery.integration.inspect",
         "source.content",
         "artifact.content",
+        "artifact.segment",
         "delivery.exports",
         "planning.outcome",
         "audit.history",
