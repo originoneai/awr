@@ -125,6 +125,7 @@ pub fn prepare_completion(
         locator: request.report.clone(),
         sha256: Some(format!("{:x}", Sha256::digest(&bytes))),
         source_sha: Some(request.source_sha.clone()),
+        section_fingerprint: work.item.meta.source_ref.section_fingerprint.clone(),
         command: Some(report.command.clone()),
         scope: report.scope.clone(),
         source_ref: None,

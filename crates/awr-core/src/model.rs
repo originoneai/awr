@@ -284,6 +284,8 @@ pub struct Evidence {
     pub locator: String,
     pub sha256: Option<String>,
     pub source_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_fingerprint: Option<String>,
     pub command: Option<String>,
     pub scope: Vec<String>,
     pub source_ref: Option<SourceRef>,

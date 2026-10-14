@@ -291,7 +291,7 @@ impl CompletionBinding {
                 source: None,
                 project_revision: 0,
             }
-            .assess(Some(&self.source_sha), e.branch_id);
+            .assess(Some(&self.source_sha), None, e.branch_id);
             if !assessment.missing_bindings.is_empty() {
                 return Err(Error::EvidenceMissing(format!(
                     "evidence {} lacks {}",

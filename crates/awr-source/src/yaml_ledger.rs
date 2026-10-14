@@ -875,6 +875,7 @@ fn parse_evidence(
             locator,
             sha256: None,
             source_sha: None,
+            section_fingerprint: None,
             command: None,
             scope: vec![work.meta.external_key.clone()],
             source_ref: Some(meta.source_ref),
