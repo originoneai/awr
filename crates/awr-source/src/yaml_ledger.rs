@@ -1,4 +1,4 @@
-use crate::{Locator, Manifest, ParseContext, SourceAdapter, SourceSnapshot, SourceSpec};
+use crate::{fingerprint, Locator, Manifest, ParseContext, SourceAdapter, SourceSnapshot, SourceSpec};
 use awr_core::{
     DiagnosticLocation, Edge, EntityKind, Error, Evidence, EvidenceLevel, Goal, Id, Plan,
     ProjectionBatch, Result, SourceDiagnostic, SourceRef, WorkItem, WorkStatus,
@@ -132,6 +132,56 @@ fn alias_pointer(value: &Value, pointer: &str, first: &str, second: &str) -> Str
 
 fn escape(value: &str) -> String {
     value.replace('~', "~0").replace('/', "~1")
+}
+
+/// Lifecycle and projection-metadata fields that AWR itself rewrites on a work
+/// record without a human source edit. They are excluded from the work section
+/// fingerprint so a domain write (progress, completion, reopen, reindex) cannot
+/// invalidate the record's own evidence.
+///
+/// Authoritative anchor: the `WorkActionBinding::validate` field whitelist
+/// (`awr-core/src/work_action.rs`) union the keys written by
+/// `completion_source_changes` (`awr-core/src/completion.rs`) union the
+/// projection metadata — exactly
+/// {status, next_action, summary, blocker, evidence, verification,
+///  evidence_level, ordinary_completion, source_ref, revision}.
+///
+/// Notes: the progress action rewrites `summary` + `next_action` (there is no
+/// "progress" column in a YAML record). `summary` stays excluded on purpose: a
+/// human summary edit must not invalidate verified evidence — an intentional
+/// sensitivity tradeoff, called out in the PR description.
+const WORK_LIFECYCLE_FIELDS: &[&str] = &[
+    "status",
+    "next_action",
+    "summary",
+    "blocker",
+    "evidence",
+    "verification",
+    "evidence_level",
+    "ordinary_completion",
+    "source_ref",
+    "revision",
+];
+
+/// Semantic identity + acceptance fingerprint of one work record: the parsed
+/// record minus the lifecycle fields above — everything else, including unknown
+/// fields, is hashed — as key-sorted JSON (same value space as
+/// `awr_core::mutation_projection_hash`). YAML key order and whitespace never
+/// change it; an acceptance, identity or any other source edit does.
+fn work_section_fingerprint(record: &Value) -> Result<String> {
+    let mut facts = record.clone();
+    let fields = facts.as_object_mut().ok_or_else(|| {
+        invalid(
+            "",
+            "ledger.record",
+            "record must be a mapping",
+            "Supply named fields such as id, title and status.",
+        )
+    })?;
+    for field in WORK_LIFECYCLE_FIELDS {
+        fields.remove(*field);
+    }
+    Ok(fingerprint(&serde_json::to_vec(&facts)?))
 }
 fn entries<'a>(document: &'a Value, field: &str) -> Result<Vec<Entry<'a>>> {
     let raw: Vec<(Option<&str>, String, &Value)> = match &document[field] {
@@ -386,13 +436,15 @@ impl YamlLedgerAdapter {
                     "{pointer}/status: unknown raw status {raw_status:?}; no transition inferred"
                 ));
             }
-            let meta = context.meta(
+            let mut meta = context.meta(
                 EntityKind::WorkItem,
                 &key,
                 snapshot,
                 Some(pointer.clone()),
                 None,
             )?;
+            meta.source_ref
+                .section_fingerprint = Some(work_section_fingerprint(value)?);
             let direct_level = &value["evidence_level"];
             let nested_level = &value["verification"]["evidence_level"];
             if !direct_level.is_null() && !nested_level.is_null() && direct_level != nested_level {
