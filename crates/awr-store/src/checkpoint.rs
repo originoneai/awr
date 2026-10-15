@@ -26,16 +26,35 @@ pub(crate) fn checkpoint_at(
 
 pub(crate) fn validate_draft(draft: &CheckpointDraft) -> Result<()> {
     ensure_public_data(draft)?;
-    if !is_sha256_hash(&draft.context_hash)
-        || draft.digest.trim().is_empty()
-        || draft.next_action.trim().is_empty()
-        || draft
-            .open_loops
-            .iter()
-            .chain(&draft.changed_entities)
-            .any(|s| s.trim().is_empty())
-    {
-        return Err(Error::InvalidInput("checkpoint requires a SHA256 context hash, digest, next action and nonblank list entries".into()));
+    if !is_sha256_hash(&draft.context_hash) {
+        return Err(Error::InvalidInput(
+            "checkpoint context_hash (--context-hash) must be 64 hexadecimal characters without a sha256: prefix; use work_context.context_hash from the last consumed work prepare or context compile result, not a source fingerprint".into(),
+        ));
+    }
+    for (field, flag, value) in [
+        ("digest", "--digest", &draft.digest),
+        ("next_action", "--next-action", &draft.next_action),
+    ] {
+        if value.trim().is_empty() {
+            return Err(Error::InvalidInput(format!(
+                "checkpoint {field} ({flag}) must not be blank"
+            )));
+        }
+    }
+    for (field, flag, entries) in [
+        ("open_loops", "--open-loop", &draft.open_loops),
+        (
+            "changed_entities",
+            "--changed-entity",
+            &draft.changed_entities,
+        ),
+    ] {
+        if let Some(index) = entries.iter().position(|entry| entry.trim().is_empty()) {
+            return Err(Error::InvalidInput(format!(
+                "checkpoint {field} ({flag}) entry {} must not be blank",
+                index + 1
+            )));
+        }
     }
     Ok(())
 }

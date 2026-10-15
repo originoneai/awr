@@ -79,12 +79,17 @@ pub enum SessionCommand {
         selection: Selection,
         #[arg(long)]
         work: Option<String>,
+        /// 64 hexadecimal characters without a sha256: prefix. Copy work_context.context_hash
+        /// from the last consumed work prepare or context compile result, not a source fingerprint.
         #[arg(long)]
         context_hash: String,
+        /// Nonblank progress summary for the successor; this is text, not a cryptographic digest.
         #[arg(long)]
         digest: String,
+        /// Nonblank next action for continuing the work.
         #[arg(long)]
         next_action: String,
+        /// Unfinished item to retain; repeat for multiple nonblank entries.
         #[arg(long)]
         open_loop: Vec<String>,
         #[arg(long)]

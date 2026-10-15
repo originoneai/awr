@@ -94,6 +94,67 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn checkpoint_help_explains_the_consumed_hash_and_progress_fields() {
+    let result = Command::new(env!("CARGO_BIN_EXE_awr"))
+        .args(["session", "checkpoint", "--help"])
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    let help = String::from_utf8(result.stdout).unwrap();
+    for text in [
+        "64 hexadecimal characters",
+        "without a sha256: prefix",
+        "work_context.context_hash",
+        "work prepare",
+        "context compile",
+        "Nonblank progress summary",
+        "Nonblank next action",
+    ] {
+        assert!(help.contains(text), "Missing {text:?} in {help}");
+    }
+}
+
+#[test]
+fn checkpoint_rejects_prefixed_hash_with_actionable_error_and_keeps_bare_hashes() {
+    let f = Fixture::new();
+    let session = f.start("executor", false);
+    let sid = session["session"]["id"].as_str().unwrap();
+    let revision = f.revision();
+    let hash = "A".repeat(64);
+    let mut args = vec![
+        "session",
+        "checkpoint",
+        "--session",
+        sid,
+        "--context-hash",
+        &hash,
+        "--digest",
+        "Recorded progress",
+        "--next-action",
+        "Continue",
+        "--expected-revision",
+        &revision,
+    ];
+    let prefixed = format!("sha256:{hash}");
+    args[5] = &prefixed;
+    let result = f.run(&args);
+    assert!(!result.status.success());
+    let error: Value = serde_json::from_slice(&result.stderr).unwrap();
+    assert_eq!(error["code"], "InvalidInput");
+    let message = error["message"].as_str().unwrap();
+    assert!(message.contains("--context-hash") && message.contains("without a sha256: prefix"));
+    assert!(message.contains("work_context.context_hash"));
+    assert!(!message.contains(&prefixed));
+    assert_eq!(f.revision(), revision);
+    args[5] = &hash;
+    let saved = f.ok(&args);
+    assert_eq!(
+        saved["checkpoint"]["context_hash"],
+        hash.to_ascii_lowercase()
+    );
+}
+
+#[test]
 fn compact_checkpoint_records_observed_changes_and_keeps_caller_claims_separate() {
     let f = Fixture::new();
     let a = f.start("executor", false);

@@ -156,3 +156,86 @@ fn invalid_drafts_and_forged_attempt_receipts_do_not_change_state() {
         before
     );
 }
+
+#[test]
+fn invalid_checkpoint_fields_are_identified_without_creating_an_attempt() {
+    let mut f = Fixture::new();
+    let before = f.store.project(f.project.id).unwrap().project_revision;
+    for (field, value, expected) in [
+        (
+            "context_hash",
+            format!("sha256:{}", "a".repeat(64)),
+            "without a sha256: prefix",
+        ),
+        ("context_hash", "a".repeat(63), "64 hexadecimal characters"),
+        (
+            "context_hash",
+            "not-a-context-digest".into(),
+            "64 hexadecimal characters",
+        ),
+        (
+            "digest",
+            " \t".into(),
+            "digest (--digest) must not be blank",
+        ),
+        (
+            "next_action",
+            "\n".into(),
+            "next_action (--next-action) must not be blank",
+        ),
+        (
+            "open_loops",
+            " ".into(),
+            "open_loops (--open-loop) entry 2 must not be blank",
+        ),
+        (
+            "changed_entities",
+            "\t".into(),
+            "changed_entities (--changed-entity) entry 2 must not be blank",
+        ),
+    ] {
+        let mut input = draft("Next action");
+        match field {
+            "context_hash" => input.context_hash = value,
+            "digest" => input.digest = value,
+            "next_action" => input.next_action = value,
+            "open_loops" => input.open_loops.push(value),
+            "changed_entities" => input.changed_entities = vec!["work/W".into(), value],
+            _ => unreachable!(),
+        }
+        for error in [
+            f.store
+                .create_checkpoint(f.project.id, before, Id::new(), input.clone())
+                .unwrap_err(),
+            f.store
+                .begin_checkpoint_save(f.project.id, before, Id::new(), input)
+                .unwrap_err(),
+        ] {
+            let Error::InvalidInput(message) = error else {
+                panic!("Unexpected error: {error}")
+            };
+            assert!(message.contains(expected), "{field}: {message}");
+            assert!(!message.contains("not-a-context-digest"));
+        }
+        assert_eq!(
+            f.store.project(f.project.id).unwrap().project_revision,
+            before
+        );
+    }
+    let conn = rusqlite::Connection::open(f.root.join("state.db")).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT count(*) FROM checkpoints", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT count(*) FROM events WHERE event_type LIKE 'checkpoint.%'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+}
