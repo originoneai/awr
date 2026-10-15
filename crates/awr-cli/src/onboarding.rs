@@ -262,6 +262,44 @@ fn source(domain: &str, path: &str, adapter: &str, primary: bool) -> SourceSpec 
         options: Default::default(),
     }
 }
+fn intake_goal_status(goal: Option<&str>) -> &'static str {
+    if goal.is_some_and(|value| !value.trim().is_empty()) {
+        "active"
+    } else {
+        "draft"
+    }
+}
+fn intake_goal_text(goal: Option<&str>) -> &str {
+    goal.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Project purpose and acceptance criteria still need to be established from existing material; uncertain business intent remains pending.")
+}
+fn intake_goal_provenance(goal: Option<&str>) -> &'static str {
+    if goal.is_some_and(|value| !value.trim().is_empty()) {
+        "explicit --goal input"
+    } else {
+        "generated intake placeholder; not confirmed"
+    }
+}
+fn intake_goal_record(goal: Option<&str>) -> Value {
+    let explicit = goal.is_some_and(|value| !value.trim().is_empty());
+    let text = intake_goal_text(goal);
+    json!({
+        "id": "intake-goal",
+        "title": if explicit { text } else { "Project goal" },
+        "status": intake_goal_status(goal),
+        "summary": format!("{text}\n\nProvenance: {}. Existing implementation progress remains unverified until reviewed against source and evidence.", intake_goal_provenance(goal)),
+        "success_criteria": if explicit { vec![text] } else { Vec::<&str>::new() },
+    })
+}
+fn intake_goal_markdown(goal: Option<&str>) -> String {
+    format!(
+        "# Project goal {{#intake-goal status={}}}\n\n{}\n\nProvenance: {}. Existing implementation progress remains unverified until reviewed against source and evidence.\n",
+        intake_goal_status(goal),
+        intake_goal_text(goal),
+        intake_goal_provenance(goal)
+    )
+}
 fn draft(root: &Path, goal: Option<&str>) -> Result<IntakeDraft> {
     let files = inventory(root)?;
     let git = git(root);
@@ -364,36 +402,61 @@ fn draft(root: &Path, goal: Option<&str>) -> Result<IntakeDraft> {
                 || g.as_mapping().is_some_and(|v| !v.is_empty())
         });
     }
-    for domain in ["goal", "ledger"] {
-        if domain == "goal" && embedded_goals {
-            continue;
-        }
-        if mapping.sources.iter().any(|s| s.domain == domain)
-            || ambiguous_domains.iter().any(|d| d == domain)
+    let goal_missing = !embedded_goals
+        && !mapping.sources.iter().any(|s| s.domain == "goal")
+        && !ambiguous_domains.iter().any(|d| d == "goal");
+    let ledger_missing = !mapping.sources.iter().any(|s| s.domain == "ledger")
+        && !ambiguous_domains.iter().any(|d| d == "ledger");
+    // A new YAML ledger can hold the placeholder goal. Do not add a path-derived Markdown key.
+    if goal_missing {
+        gaps.push(
+            "No authoritative goal source was identified; the proposed intake source needs review."
+                .into(),
+        );
+    }
+    if ledger_missing {
+        gaps.push("No authoritative ledger source was identified; the proposed intake source needs review.".into());
+        let mut tasks = vec![
+            json!({"id":"INTAKE-001","kind":"intake","title":"Verify project goals, current state, and the next deliverable","status":"ready","priority":"P0","required":true,"depends_on":[],"acceptance":["Confirm goals, existing implementation, unfinished work, and blockers with source references.","Mark uncertain progress as unverified and define acceptance criteria for the next executable task."],"next_action":"Run awr intake inspect and read sources for each gap; add goal references, acceptance criteria, and next actions, then inspect again.","summary":"This is a new intake task; it does not establish whether existing functionality is implemented or accepted."}),
+        ];
+        // A plan creates reviewable task proposals, never fabricated completed work.
+        for spec in mapping
+            .sources
+            .iter()
+            .filter(|s| s.domain == "plan" && s.adapter == "markdown-heading-v1")
         {
-            continue;
-        }
-        gaps.push(format!("No authoritative {domain} source was identified; the proposed intake source needs review."));
-        let (filename,adapter,body)=match domain {
-            "goal"=>("GOALS.md","markdown-heading-v1",format!("# Project goal {{#intake-goal status={}}}\n\n{}\n\nProvenance: {}. Existing implementation progress remains unverified until reviewed against source and evidence.\n",if goal.is_some_and(|g| !g.trim().is_empty()) { "active" } else { "draft" },goal.filter(|g| !g.trim().is_empty()).unwrap_or("Project purpose and acceptance criteria still need to be established from existing material; uncertain business intent remains pending."),if goal.is_some() { "explicit --goal input" } else { "generated intake placeholder; not confirmed" })),
-            _=>{
-                let mut tasks=vec![json!({"id":"INTAKE-001","kind":"intake","title":"Verify project goals, current state, and the next deliverable","status":"ready","priority":"P0","required":true,"depends_on":[],"acceptance":["Confirm goals, existing implementation, unfinished work, and blockers with source references.","Mark uncertain progress as unverified and define acceptance criteria for the next executable task."],"next_action":"Run awr intake inspect and read sources for each gap; add goal references, acceptance criteria, and next actions, then inspect again.","summary":"This is a new intake task; it does not establish whether existing functionality is implemented or accepted."})];
-                // A plan creates reviewable task proposals, never fabricated completed work.
-                for spec in mapping.sources.iter().filter(|s|s.domain=="plan"&&s.adapter=="markdown-heading-v1") {
-                    if let Some(path)=&spec.path {
-                        if !root.join(path).is_file(){continue;}
-                        let snapshot=awr_source::Locator::from_spec(root,&mapping,spec)?.read(root,awr_source::MARKDOWN_READ_CAP)?;
-                        for section in awr_source::markdown_sections(&snapshot)?.into_iter().take(100) {
-                            tasks.push(json!({"id":format!("INTAKE-{:03}",tasks.len()+1),"title":format!("Verify and advance: {}",section.title),"status":"planned","priority":"P1","depends_on":["INTAKE-001"],"acceptance":["Confirm deliverables and acceptance criteria against the original plan, verify existing progress, then execute."],"next_action":format!("Review the original plan section in {}; first add concrete actions and acceptance criteria.",path.display()),"paths":[path],"summary":"Task proposal derived from a plan section, pending review; implementation status is not yet assessed."}));
-                        }
-                    }
+            if let Some(path) = &spec.path {
+                if !root.join(path).is_file() {
+                    continue;
                 }
-                ("work-ledger.yaml","yaml-ledger-v1",serde_yaml_ng::to_string(&json!({"work_items":tasks})).map_err(|e|Error::InvalidInput(e.to_string()))?)
+                let snapshot = awr_source::Locator::from_spec(root, &mapping, spec)?
+                    .read(root, awr_source::MARKDOWN_READ_CAP)?;
+                for section in awr_source::markdown_sections(&snapshot)?
+                    .into_iter()
+                    .take(100)
+                {
+                    tasks.push(json!({"id":format!("INTAKE-{:03}",tasks.len()+1),"title":format!("Verify and advance: {}",section.title),"status":"planned","priority":"P1","depends_on":["INTAKE-001"],"acceptance":["Confirm deliverables and acceptance criteria against the original plan, verify existing progress, then execute."],"next_action":format!("Review the original plan section in {}; first add concrete actions and acceptance criteria.",path.display()),"paths":[path],"summary":"Task proposal derived from a plan section, pending review; implementation status is not yet assessed."}));
+                }
             }
-        };
-        let path = format!("{PREFIX}{filename}");
+        }
+        let mut document = json!({"work_items": tasks});
+        if goal_missing {
+            document["goals"] = json!([intake_goal_record(goal)]);
+        }
+        let body =
+            serde_yaml_ng::to_string(&document).map_err(|e| Error::InvalidInput(e.to_string()))?;
+        let path = format!("{PREFIX}work-ledger.yaml");
         generated.insert(path.clone(), body);
-        mapping.sources.push(source(domain, &path, adapter, true));
+        mapping
+            .sources
+            .push(source("ledger", &path, "yaml-ledger-v1", true));
+    } else if goal_missing {
+        let body = intake_goal_markdown(goal);
+        let path = format!("{PREFIX}GOALS.md");
+        generated.insert(path.clone(), body);
+        mapping
+            .sources
+            .push(source("goal", &path, "markdown-heading-v1", true));
     }
     for name in ["README.md", "AGENTS.md"] {
         if files.iter().any(|f| f.path == name)
@@ -547,7 +610,7 @@ pub fn run(root: &Path, args: &InitArgs, json_output: bool) -> Result<()> {
         file.sync_all()?;
     }
     if !args.accept {
-        let missing = candidate
+        let mut missing = candidate
             .generated_files
             .keys()
             .filter_map(|p| {
@@ -560,6 +623,14 @@ pub fn run(root: &Path, args: &InitArgs, json_output: bool) -> Result<()> {
                 }
             })
             .collect::<Vec<String>>();
+        if candidate
+            .generated_files
+            .get(&format!("{PREFIX}work-ledger.yaml"))
+            .is_some_and(|body| body.contains("id: intake-goal"))
+            && !missing.iter().any(|domain| domain == "goal")
+        {
+            missing.push("goal".into());
+        }
         let sources = candidate.authority_mapping.sources.iter().map(|s| json!({"domain":s.domain,"role":s.role,"path":s.path,"adapter":s.adapter,"proposed":s.path.as_ref().is_some_and(|p|candidate.generated_files.contains_key(&p.to_string_lossy().into_owned()))})).collect();
         let mut organization = awr_runtime::OrganizationReport::intake_preview(
             sources,

@@ -266,6 +266,34 @@ fn scope(request: &ContextRequest, session: Option<&Session>) -> RuleScopeInput 
     }
 }
 
+fn goal_needs_confirmation(goal: &Projected<Goal>) -> bool {
+    goal.source.freshness != Freshness::Fresh
+        || goal.item.status.trim().is_empty()
+        || matches!(
+            goal.item.status.trim().to_ascii_lowercase().as_str(),
+            "unknown" | "draft" | "candidate" | "pending" | "needs_confirmation"
+        )
+        || (goal
+            .source
+            .locator
+            .replace('\\', "/")
+            .contains(".awr/intake/")
+            && goal.item.title == "Establish a verified project baseline")
+        || goal.item.title.trim().is_empty()
+}
+
+fn project_goal_notice(goal: &Projected<Goal>) -> CompletenessIssue {
+    CompletenessIssue {
+        field: "project_goal",
+        code: "project_goal_unconfirmed",
+        reference: goal.item.meta.external_key.clone(),
+        reason: format!(
+            "Project goal {} ({}) is unconfirmed and is not linked to this work. It does not make this work's context incomplete. Confirm or retire it with awr intake inspect.",
+            goal.item.title, goal.item.status
+        ),
+    }
+}
+
 fn goals(
     store: &Store,
     project: &Project,
@@ -440,7 +468,7 @@ fn compile_context_selected(
             "No current task in the selected workstream; specify a work item".into(),
         ));
     }
-    let goal_basis = if !request.goal_keys.is_empty() {
+    let mut goal_basis = if !request.goal_keys.is_empty() {
         "explicit_goal_keys"
     } else if read.is_some() {
         "workstream_goal_references"
@@ -515,10 +543,42 @@ fn compile_context_selected(
         related.branch_evidence(store, request.source_sha.as_deref())?;
         related.finish(store)?
     };
-    let selected_goals = if let Some(read) = &read {
-        scoped_goals(read, &request.goal_keys)?
+    let linked_goal_keys = if request.goal_keys.is_empty() {
+        if let Some(read) = &read {
+            read.goal_links_for(key)?
+        } else {
+            store
+                .work_goal_links(project.id)?
+                .into_iter()
+                .filter(|edge| edge.from_key == key)
+                .map(|edge| edge.to_key)
+                .collect()
+        }
     } else {
-        goals(store, &project, &sources, &request.goal_keys)?
+        Vec::new()
+    };
+    if !linked_goal_keys.is_empty() {
+        goal_basis = "work_goal_links";
+    }
+    let selection_keys = if !request.goal_keys.is_empty() {
+        request.goal_keys.clone()
+    } else {
+        linked_goal_keys.clone()
+    };
+    let selected_goals = if let Some(read) = &read {
+        if request.goal_keys.is_empty() && !linked_goal_keys.is_empty() {
+            let mut goals = read.goals()?;
+            goals.retain(|goal| {
+                linked_goal_keys
+                    .iter()
+                    .any(|link| link == &goal.item.meta.external_key)
+            });
+            goals
+        } else {
+            scoped_goals(read, &request.goal_keys)?
+        }
+    } else {
+        goals(store, &project, &sources, &selection_keys)?
     };
     if let Some(read) = &read {
         let mut ids = BTreeSet::from([work.source.id]);
@@ -586,7 +646,7 @@ fn compile_context_selected(
             "No current primary project goal was found. Run awr intake inspect --json; reuse goal material or add goals to the primary YAML ledger, link work with goal/goals, and recheck. Keep uncertain intent draft rather than inventing a goal",
         );
     }
-    for requested in request.goal_keys.iter().collect::<BTreeSet<_>>() {
+    for requested in selection_keys.iter().collect::<BTreeSet<_>>() {
         if !selected_goals
             .iter()
             .any(|g| &g.item.meta.external_key == requested)
@@ -597,7 +657,11 @@ fn compile_context_selected(
                 "goal_context_complete",
                 "goal_not_found",
                 requested.clone(),
-                "Explicit goal has no current source projection",
+                if request.goal_keys.is_empty() {
+                    "Linked goal has no current source projection. Use the exact goals[].key."
+                } else {
+                    "Explicit goal has no current source projection"
+                },
             );
         }
     }
@@ -723,6 +787,29 @@ fn compile_context_selected(
                 ),
             ));
         }
+    }
+    if !selection_keys.is_empty() {
+        let universe = if let Some(read) = &read {
+            read.goals()?
+        } else {
+            goals(store, &project, &sources, &[])?
+        };
+        let selected_keys = selected_goals
+            .iter()
+            .map(|goal| goal.item.meta.external_key.as_str())
+            .collect::<BTreeSet<_>>();
+        for goal in universe {
+            if selected_keys.contains(goal.item.meta.external_key.as_str())
+                || !goal_needs_confirmation(&goal)
+            {
+                continue;
+            }
+            completeness
+                .project_notices
+                .push(project_goal_notice(&goal));
+        }
+        completeness.project_notices.sort();
+        completeness.project_notices.dedup();
     }
     completeness.goal_context_complete = Some(goal_complete);
     if !goal_complete {
@@ -1034,7 +1121,7 @@ fn compile_context_selected(
     ));
     completeness.issues.sort();
     completeness.issues.dedup();
-    let completeness_text = format!(
+    let mut completeness_text = format!(
         "{}\n{}\n{}",
         completeness.status,
         completeness
@@ -1045,6 +1132,19 @@ fn compile_context_selected(
             .join("\n"),
         completeness.assessment_scope
     );
+    if !completeness.project_notices.is_empty() {
+        completeness_text.push_str(
+            "\nProject notices (not linked to this work; they do not make this work incomplete):\n",
+        );
+        completeness_text.push_str(
+            &completeness
+                .project_notices
+                .iter()
+                .map(|notice| format!("{} [{}]: {}", notice.code, notice.reference, notice.reason))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    }
     required.push(chunk(
         "completeness",
         ContextSection::Metadata,

@@ -44,7 +44,7 @@ cargo build --locked -p awr-server --release --features tls
    (`awr_team_pg::EXPECTED_SCHEMA_VERSION`, currently **31** on this tip).
 4. Deploy **that** binary. Do not hot-swap an unreviewed develop checkout onto
    the runtime host. Candidate updates are verified first, then
-   [directed-replaced](team-publish-entrypoint.md#runtime-vs-develop) with a
+   [directed-replaced](team-publish-entrypoint.md#runtime-vs-develop-versions) with a
    matching rollback basis.
 
 ## Topology

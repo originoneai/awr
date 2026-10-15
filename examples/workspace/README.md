@@ -55,4 +55,4 @@ session starts with. It pulls and never pushes.
 Tracked files stay authoritative on the host that owns them, and `.awr/` - the
 runtime database, credentials and the workspace state file - is never
 transferred. The design and its measured numbers are in
-[docs/reference/workspace-exchange.md](../../docs/reference/workspace-exchange.md).
+[docs/dev/reference/workspace-exchange.md](../../docs/dev/reference/workspace-exchange.md).

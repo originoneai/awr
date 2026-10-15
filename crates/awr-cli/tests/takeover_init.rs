@@ -53,7 +53,17 @@ fn empty_and_code_only_projects_get_a_real_work_entry_without_invented_history()
                 .as_object()
                 .unwrap()
                 .len(),
-            2
+            1
+        );
+        assert!(
+            preview["draft"]["generated_files"]
+                .get(".awr/intake/work-ledger.yaml")
+                .is_some()
+        );
+        assert!(
+            preview["draft"]["generated_files"]
+                .get(".awr/intake/GOALS.md")
+                .is_none()
         );
         let installed = p.ok(&[
             "init",
@@ -61,7 +71,7 @@ fn empty_and_code_only_projects_get_a_real_work_entry_without_invented_history()
             "--goal",
             "Deliver a useful document portal",
         ]);
-        assert_eq!(installed["index"]["indexed"], 2);
+        assert_eq!(installed["index"]["indexed"], 1);
         let work = p.ok(&["work", "show", "INTAKE-001"]);
         assert!(work.to_string().contains("Verify project goals"));
         let before = fs::read(p.0.join(".awr/intake/work-ledger.yaml")).unwrap();
@@ -97,6 +107,7 @@ fn existing_markdown_table_and_checkbox_states_are_preserved() {
     p.write("台账.md", body);
     p.ok(&["init", "--accept"]);
     assert!(!p.0.join(".awr/intake/work-ledger.yaml").exists());
+    assert!(p.0.join(".awr/intake/GOALS.md").is_file());
     assert!(
         p.ok(&["work", "show", "DONE-1"])
             .to_string()
@@ -268,4 +279,31 @@ fn rejected_measurement_sources_have_consistent_locations_and_leave_no_partial_i
         ]);
         p.ok(&["doctor"]);
     }
+}
+
+#[test]
+fn blank_project_embeds_the_placeholder_goal_in_the_ledger() {
+    let p = Project::new();
+    let installed = p.ok(&["init", "--accept"]);
+    assert_eq!(installed["index"]["indexed"], 1);
+    assert!(!p.0.join(".awr/intake/GOALS.md").exists());
+    let ledger = fs::read_to_string(p.0.join(".awr/intake/work-ledger.yaml")).unwrap();
+    assert!(ledger.contains("id: intake-goal"));
+    assert!(ledger.contains("status: draft"));
+    assert!(!ledger.contains("file://"));
+    let report = p.ok(&["intake", "inspect"]);
+    let goal = &report["organization"]["goals"][0];
+    assert_eq!(goal["key"], "intake-goal");
+    assert_eq!(goal["status"], "draft");
+    let named = Project::new();
+    named.ok(&["init", "--accept", "--goal", "Deliver a report exporter"]);
+    let named_ledger = fs::read_to_string(named.0.join(".awr/intake/work-ledger.yaml")).unwrap();
+    assert!(named_ledger.contains("id: intake-goal"));
+    assert!(named_ledger.contains("status: active"));
+    assert!(named_ledger.contains("Deliver a report exporter"));
+    let named_report = named.ok(&["intake", "inspect"]);
+    assert_eq!(
+        named_report["organization"]["goals"][0]["key"],
+        "intake-goal"
+    );
 }

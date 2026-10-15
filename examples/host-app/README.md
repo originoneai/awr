@@ -1,6 +1,6 @@
 # No-UI host example
 
-For dependency scheduling, see [source changes and task graphs](../../docs/reference/source-changes.md)
+For dependency scheduling, see [source changes and task graphs](../../docs/dev/reference/source-changes.md)
 and `orchestrator.py`. It composes a replaceable executor with the existing workflow,
 bounded parallelism and durable dispatch lookup; source work state remains in AWR.
 
@@ -40,7 +40,7 @@ operation before deciding whether to retry. No automatic write retry occurs.
 `Host.catalog` fails the whole traversal on source failure, revision mismatch or
 missing/duplicate objects. Keep the last complete UI snapshot separately; do not
 present partial traversal as a confirmed empty project. Field shapes remain the
-command-specific contract in [host-contract](../../docs/reference/host-contract.md).
+command-specific contract in [host-contract](../../docs/dev/reference/host-contract.md).
 
 `cargo test -p awr-cli --test host_app` exercises the example on a temporary Chinese
 path containing spaces, with no TTY. It requires Python 3.11+ on the development/CI
@@ -54,7 +54,7 @@ through the pinned binary's capabilities. Python callers can use
 `workflow.prepare(response_view="action")`. Hosts can report completed native
 compactions with `observe_compaction`, inspect with `compaction`, and record a
 user's postponement with `defer_compaction`. These never create a native session;
-see the [measurement and guidance contract](../../docs/integrations/context-continuity.md).
+see the [measurement and guidance contract](../../docs/dev/integrations/context-continuity.md).
 
 `workflow.py` is a reusable thin caller for ordinary engineering work. It uses the
 same `Host` pin checks, argv, public domain commands, and private receipts. It adds
@@ -106,7 +106,7 @@ business acceptance.
 
 For unified `prepare`/`progress`, optional concise responses, and reviewed reports
 assembled from actual managed execution, see [host workflows with less
-bookkeeping](../../docs/integrations/host-workflow.md). The optional report flow
+bookkeeping](../../docs/dev/integrations/host-workflow.md). The optional report flow
 requires state under an ignored project-local directory and explicit source and
 new artifact paths. It preserves the same consumption, completion and recovery
 requirements as the original workflow above.

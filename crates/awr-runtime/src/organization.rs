@@ -323,6 +323,91 @@ fn action_for(id: &'static str) -> OrganizationAction {
     }
 }
 
+fn unresolved_goal_detail(
+    link_key: &str,
+    goals: &BTreeMap<String, &Projected<Goal>>,
+    work_open: bool,
+) -> String {
+    if let Some(goal) = goals.get(link_key) {
+        if work_open && finished_goal(&goal.item) && declared_goal(goal) {
+            return format!(
+                "Goal {link_key} is already finished ({}) while this work remains open. Link an open goal or complete the work.",
+                goal.item.status
+            );
+        }
+        return format!(
+            "Goal {link_key} is present but not confirmed: {}. Record source-backed confirmation before linking open work to it.",
+            undeclared_goal_reason(goal)
+        );
+    }
+    let mut detail =
+        format!("Goal {link_key} is not a primary goal key. Links must match goals[].key exactly.");
+    let matches = matching_goal_keys(link_key, goals.keys().map(String::as_str));
+    if matches.len() == 1 {
+        detail.push_str(&format!(
+            " The value matches goal key {}; use that exact goals[].key.",
+            matches[0]
+        ));
+    } else if matches.len() > 1 {
+        detail.push_str(" The value matches more than one goal key; choose the exact goals[].key.");
+    }
+    detail
+}
+
+fn undeclared_goal_reason(goal: &Projected<Goal>) -> String {
+    let mut reasons = Vec::new();
+    if goal.source.freshness != Freshness::Fresh {
+        reasons.push(format!("source is {:?}", goal.source.freshness));
+    }
+    if goal.item.title.trim().is_empty() {
+        reasons.push("title is empty".into());
+    }
+    let status = goal.item.status.to_ascii_lowercase();
+    if !matches!(
+        status.as_str(),
+        "active" | "confirmed" | "approved" | "in_progress" | "completed" | "done"
+    ) {
+        reasons.push(format!("status {} is not confirmed", goal.item.status));
+    }
+    if goal
+        .source
+        .locator
+        .replace('\\', "/")
+        .contains(".awr/intake/")
+        && goal.item.title == "Establish a verified project baseline"
+    {
+        reasons.push("it is the legacy intake placeholder".into());
+    }
+    if goal.item.summary.trim().is_empty()
+        && validate_criteria(&goal.item.success_criteria).is_err()
+    {
+        reasons.push("summary and success criteria are missing".into());
+    }
+    if reasons.is_empty() {
+        reasons.push("it is not source-declared".into());
+    }
+    reasons.join("; ")
+}
+
+fn matching_goal_keys<'a>(value: &str, keys: impl Iterator<Item = &'a str>) -> Vec<&'a str> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Vec::new();
+    }
+    keys.filter(|key| {
+        let anchor = key
+            .rsplit_once('#')
+            .map(|(_, anchor)| anchor)
+            .unwrap_or(key);
+        *key == value
+            || anchor == value
+            || key.strip_suffix(value).is_some_and(|prefix| {
+                prefix.is_empty() || prefix.ends_with('/') || prefix.ends_with('#')
+            })
+    })
+    .collect()
+}
+
 fn declared_goal(goal: &Projected<Goal>) -> bool {
     goal.source.freshness == Freshness::Fresh
         && !goal.item.title.trim().is_empty()
@@ -497,19 +582,17 @@ pub fn inspect_organization(
             structured = false;
             result.gap("work_goal_missing", key, "Link this work to its goal using goal/goals in YAML or a goal column in the Markdown table. Do not infer a business relationship from filenames.", vec![work.meta.source_ref.clone()], "work");
         } else {
+            let work_open = work.status != WorkStatus::Completed;
             for link in work_links.into_iter().flatten() {
-                if !goals.get(&link.to_key).is_some_and(|g| {
-                    declared_goal(g)
-                        && (work.status == WorkStatus::Completed || !finished_goal(&g.item))
-                }) {
+                let resolved = goals
+                    .get(&link.to_key)
+                    .is_some_and(|g| declared_goal(g) && (!work_open || !finished_goal(&g.item)));
+                if !resolved {
                     structured = false;
                     result.gap(
                         "work_goal_unresolved",
                         key,
-                        &format!(
-                            "Goal {} is missing, non-primary, unconfirmed or already finished while this work remains open.",
-                            link.to_key
-                        ),
+                        &unresolved_goal_detail(&link.to_key, &goals, work_open),
                         vec![link.source_ref.clone()],
                         "goals",
                     );

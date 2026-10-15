@@ -17,5 +17,5 @@ Edit the copied work ledger, then use `source scan` to inspect changes and
 `source reindex` to refresh them. Reindexing unchanged sources preserves revisions.
 CLI reads also check source freshness. `--json` returns structured reports.
 
-Try the [L0 session workflow](../../docs/integrations/session-workflow.md) or the [CLI lifecycle example](../codex/README.md) for session continuity. This is a
+Try the [L0 session workflow](../../docs/dev/integrations/session-workflow.md) or the [CLI lifecycle example](../codex/README.md) for session continuity. This is a
 local demonstration fixture, not a completed real-client business scenario.

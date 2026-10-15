@@ -74,7 +74,12 @@ fn new_project_has_ordered_guidance_and_minimal_draft_without_false_readiness() 
             .as_object()
             .unwrap()
             .len(),
-        2
+        1
+    );
+    assert!(
+        preview["draft"]["generated_files"]
+            .get(".awr/intake/GOALS.md")
+            .is_none()
     );
     assert!(!f.0.join(".awr").exists());
     let ids: Vec<_> = preview["organization"]["actions"]
@@ -596,4 +601,93 @@ fn organized_minimal_project_can_claim_and_write_progress_with_profile_checks() 
     ]);
     assert!(!stale.status.success());
     assert_eq!(fs::read(f.0.join("work-ledger.yaml")).unwrap(), before);
+}
+
+#[test]
+fn short_markdown_goal_link_explains_the_miss_and_suggests_the_full_key() {
+    let f = Fixture::new();
+    f.write(
+        "GOALS.md",
+        "# Search documents {#search status=active}\nUser requested document search.\n",
+    );
+    let table = "| 编号 | 任务 | 状态 | 目标 | 验收 | 下一步 |\n| --- | --- | --- | --- | --- | --- |\n| W | 文档搜索 | 就绪 | search | 能找到目标文档 | 实现搜索接口 |\n";
+    f.write("台账.md", table);
+    f.ok(&["init", "--accept"]);
+    let report = f.inspect();
+    let detail = report["gaps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|gap| gap["code"] == "work_goal_unresolved")
+        .unwrap()["detail"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(detail.contains("not a primary goal key"), "{detail}");
+    assert!(detail.contains("#search"), "{detail}");
+    assert!(detail.contains("GOALS.md"), "{detail}");
+    let full = report["goals"][0]["key"].as_str().unwrap();
+    assert!(detail.contains(full), "{detail}");
+    let suffix = "GOALS.md#search";
+    f.write(
+        "台账.md",
+        &table.replace("| search |", &format!("| {suffix} |")),
+    );
+    let report = f.inspect();
+    let detail = report["gaps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|gap| gap["code"] == "work_goal_unresolved")
+        .unwrap()["detail"]
+        .as_str()
+        .unwrap();
+    assert!(detail.contains(full), "{detail}");
+}
+
+#[test]
+fn unrelated_draft_goal_does_not_make_linked_work_context_incomplete() {
+    let f = Fixture::new();
+    f.init(
+        "goals:\n- id: intake-goal\n  title: Project goal\n  status: draft\n  summary: placeholder not confirmed\n- id: search\n  title: Search documents\n  status: active\n  summary: Requested search\n  success_criteria: [Find the document]\nwork_items:\n- id: DEMO-001\n  title: Demo search\n  status: ready\n  goal: search\n  acceptance: [Find the document]\n  next_action: Implement search\n",
+    );
+    let report = f.inspect();
+    assert_eq!(report["executable_work"], json!(["DEMO-001"]));
+    assert!(gap(&report, "goal_unconfirmed"));
+    let prepared = f.ok(&["work", "prepare", "DEMO-001", "--response-view", "summary"]);
+    assert_eq!(prepared["context"]["completeness"]["complete"], true);
+    assert_eq!(
+        prepared["context"]["completeness"]["status"],
+        "CONTEXT COMPLETE"
+    );
+    assert_eq!(
+        prepared["context"]["goal_selection_basis"],
+        "work_goal_links"
+    );
+    let notices = prepared["context"]["completeness"]["project_notices"].to_string();
+    assert!(notices.contains("intake-goal"), "{notices}");
+    assert!(
+        notices.contains("does not make this work's context incomplete"),
+        "{notices}"
+    );
+    let blocked = f.run(&[
+        "work",
+        "prepare",
+        "DEMO-001",
+        "--goal",
+        "intake-goal",
+        "--response-view",
+        "summary",
+    ]);
+    assert!(!blocked.status.success());
+    let blocked: Value = serde_json::from_slice(&blocked.stdout).unwrap();
+    assert_eq!(
+        blocked["context"]["completeness"]["status"],
+        "CONTEXT INCOMPLETE"
+    );
+    assert!(
+        blocked["context"]["completeness"]["issues"]
+            .to_string()
+            .contains("goal_state_incomplete")
+    );
 }

@@ -47,6 +47,9 @@ pub struct ContextCompleteness {
     pub evidence_gaps: Vec<EvidenceGap>,
     pub source_versions: Vec<SourceVersion>,
     pub issues: Vec<CompletenessIssue>,
+    /// Unconfirmed project goals that are not linked to this work. They do not change `complete`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub project_notices: Vec<CompletenessIssue>,
     pub complete: bool,
     pub status: &'static str,
     pub assessment_scope: &'static str,
@@ -395,6 +398,7 @@ pub(crate) fn assess_completeness(facts: CompletenessFacts<'_>) -> Result<Contex
         evidence_gaps,
         source_versions,
         issues,
+        project_notices: Vec::new(),
         complete,
         status: if complete {
             "CONTEXT COMPLETE"

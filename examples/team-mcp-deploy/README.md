@@ -13,7 +13,7 @@ client config.
 | `clients/codex_cli.mcp.toml.example` | Codex remote Team MCP |
 | `clients/claude_code.mcp.json.example` | Claude Code remote Team MCP |
 
-Operator guide: [`docs/reference/team-deploy-pack.md`](../../docs/reference/team-deploy-pack.md).
+Operator guide: [`docs/dev/reference/team-deploy-pack.md`](../../docs/dev/reference/team-deploy-pack.md).
 Scripts: [`scripts/team-deploy/`](../../scripts/team-deploy/).
 
 **Do not** commit real bearers, DB passwords, or copies of runtime ledgers.

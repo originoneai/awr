@@ -124,6 +124,21 @@ impl WorkstreamRead {
     pub fn goals(&self) -> Result<Vec<Projected<Goal>>> {
         crate::query::scoped_projections(&self.store.conn, self.project, EntityKind::Goal)
     }
+    /// Goal keys declared on this work item. Visibility of the goal body is applied by the caller.
+    pub fn goal_links_for(&self, work: &str) -> Result<Vec<String>> {
+        let work = self.work_item(work)?;
+        let mut statement = self.store.conn.prepare(
+            "SELECT e.to_key FROM edges e JOIN sources s ON s.id=e.source_id AND s.project_id=e.project_id WHERE e.project_id=?1 AND e.active=1 AND s.active=1 AND e.from_kind='work_item' AND e.from_key=?2 AND e.to_kind='goal' AND e.relation='supports' ORDER BY e.to_key",
+        ).map_err(db_error)?;
+        statement
+            .query_map(
+                params![self.project.to_string(), work.item.meta.external_key],
+                |row| row.get(0),
+            )
+            .map_err(db_error)?
+            .collect::<rusqlite::Result<Vec<String>>>()
+            .map_err(db_error)
+    }
     /// Applicability remains the compiler's responsibility; unknown hard rules survive.
     pub fn rules(&self) -> Result<Vec<Projected<Rule>>> {
         crate::query::scoped_projections(&self.store.conn, self.project, EntityKind::Rule)
