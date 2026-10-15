@@ -171,7 +171,14 @@ awr work prepare-completion WORK --report report.json --evidence-key KEY \
 
 Preflight runs no command, registers no evidence and completes no task — it
 reads the report bytes and returns the evidence arguments and the acceptance
-mapping. Completion itself is a separate write that rechecks claims,
+mapping. With `--json`, the CLI's `.evidence` object can be saved unchanged for
+`awr evidence add --input`; `.completion` can be saved for `awr work complete
+--input`. The evidence draft uses `work_item_key` and pins the preflight's branch
+in `branch_id` (explicit `null` for main), so a later branch switch cannot redirect
+it. Use an owned session on that same branch for completion and a current revision
+for each write. See the [CLI sequence](../dev/reference/workflow.md)
+for the full flow. MCP retains its `work` and `branch` arguments.
+Completion itself is a separate write that rechecks claims,
 dependencies, source freshness and report bytes; changing a report after
 preflight invalidates its digest. Source-declared completion alone never
 supplies a verified receipt, and `source_completed` and `verified_completed`

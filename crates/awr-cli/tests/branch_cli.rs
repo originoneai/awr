@@ -169,6 +169,115 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn completion_preflight_round_trips_without_rewriting_evidence_or_losing_its_branch() {
+    for selection in [
+        "current_main",
+        "current_branch",
+        "named_branch",
+        "branch_id",
+        "explicit_main",
+    ] {
+        let f = Fixture::new();
+        let branch = Fixture::success(&f.create("analysis", &[]));
+        let bid = branch["branch"]["id"].as_str().unwrap();
+        Fixture::success(&f.create("other", &[]));
+        if matches!(selection, "current_branch" | "explicit_main") {
+            Fixture::success(&f.switch("analysis"));
+        }
+        let expected_branch = if matches!(selection, "current_main" | "explicit_main") {
+            Value::Null
+        } else {
+            json!(bid)
+        };
+        let sha = "a".repeat(40);
+        let report = json!({"version":1,"work_item":"W","source_sha":sha,
+            "command":"inspect fixture","scope":["W"],"verified_at":1,
+            "checks":[{"name":"review","passed":true,"details":"fixture result",
+                "criteria":["Preserve work and branch ownership"]}]});
+        fs::write(f.0.join("report.json"), report.to_string()).unwrap();
+        let revision = f.revision();
+        let source = fs::read(f.0.join("work.yaml")).unwrap();
+        let mut args = vec![
+            "work",
+            "prepare-completion",
+            "W",
+            "--report",
+            "report.json",
+            "--evidence-key",
+            "E",
+            "--source-sha",
+            &sha,
+        ];
+        match selection {
+            "named_branch" => args.extend_from_slice(&["--branch", "analysis"]),
+            "branch_id" => args.extend_from_slice(&["--branch", bid]),
+            "explicit_main" => args.extend_from_slice(&["--branch", "main"]),
+            _ => {}
+        }
+        let prepared = f.ok(&args);
+        assert_eq!(prepared["verification_executed"], false);
+        assert_eq!(prepared["completion_claimed"], false);
+        assert_eq!(f.revision(), revision);
+        assert_eq!(fs::read(f.0.join("work.yaml")).unwrap(), source);
+
+        // Change the default after preflight: the unchanged draft must still
+        // record on the branch against which the report was validated.
+        Fixture::success(&f.switch("other"));
+        fs::write(f.0.join("evidence.json"), prepared["evidence"].to_string()).unwrap();
+        let recorded = f.ok(&[
+            "evidence",
+            "add",
+            "--input",
+            f.0.join("evidence.json").to_str().unwrap(),
+            "--expected-revision",
+            &f.revision(),
+        ]);
+        let draft = &prepared["evidence"];
+        assert!(draft.get("work").is_none() && draft.get("branch").is_none());
+        assert_eq!(draft["work_item_key"], "W");
+        assert_eq!(draft.get("branch_id"), Some(&expected_branch));
+        assert_eq!(recorded["evidence"]["branch_id"], expected_branch);
+        let (store, project) = f.store();
+        assert_eq!(
+            recorded["evidence"]["work_item_id"],
+            json!(store.work_item(project, "W").unwrap().item.meta.id)
+        );
+        drop(store);
+
+        Fixture::success(&f.switch(if expected_branch.is_null() {
+            "main"
+        } else {
+            "analysis"
+        }));
+        let session = f.start("executor", true);
+        fs::write(
+            f.0.join("completion.json"),
+            prepared["completion"].to_string(),
+        )
+        .unwrap();
+        let completed = f.ok(&[
+            "work",
+            "complete",
+            "W",
+            "--session",
+            session["session"]["id"].as_str().unwrap(),
+            "--reason",
+            "Deliver the verified branch result",
+            "--input",
+            f.0.join("completion.json").to_str().unwrap(),
+            "--expected-revision",
+            &f.revision(),
+        ]);
+        assert_eq!(completed["write_outcome"], "applied", "{selection}");
+        assert_eq!(
+            f.ok(&["work", "show", "W"])["work"]["status"],
+            "completed",
+            "{selection}"
+        );
+    }
+}
+
+#[test]
 fn named_context_combines_current_shared_sources_with_fork_delta_without_switching() {
     let f = Fixture::new();
     f.init_git();

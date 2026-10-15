@@ -130,7 +130,7 @@ pub fn prepare(root: &Path, args: &PrepareArgs, json_output: bool) -> Result<()>
 pub fn completion(root: &Path, args: &CompletionArgs, json_output: bool) -> Result<()> {
     let query = crate::query::QueryProject::open_read(root, false)?;
     query.finish()?;
-    let value = awr_runtime::prepare_completion(
+    let mut value = awr_runtime::prepare_completion(
         &query.store,
         root,
         &PrepareCompletionRequest {
@@ -143,5 +143,16 @@ pub fn completion(root: &Path, args: &CompletionArgs, json_output: bool) -> Resu
             branch: args.branch.clone(),
         },
     )?;
+    // CLI evidence input uses domain field names. Resolve the branch from the
+    // same immutable snapshot used by preflight, so a later default switch
+    // cannot redirect this draft (explicit null pins the main branch).
+    let branch_id = crate::query::branch(&query.store, &query.project, args.branch.as_deref())?;
+    let evidence = value["evidence"]
+        .as_object_mut()
+        .expect("completion evidence draft");
+    let work = evidence.remove("work").expect("completion evidence work");
+    evidence.insert("work_item_key".into(), work);
+    evidence.remove("branch");
+    evidence.insert("branch_id".into(), json!(branch_id));
     output(value, &query, json_output)
 }

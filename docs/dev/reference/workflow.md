@@ -50,6 +50,33 @@ report; the file digest is computed by AWR. The supplied source SHA must match t
 report and must include any changes relevant to verification in its accompanying
 source evidence. AWR does not assume a clean Git checkout.
 
+The CLI's `evidence` object is ready for `awr evidence add --input` without
+renaming fields: it contains `work_item_key` and an explicit `branch_id` resolved
+from the preflight snapshot. Omitting `--branch` selects that snapshot's current
+branch; a name or ID selects that branch, and `--branch main` selects main.
+The draft pins the selected branch (`null` for main), even if the project's
+current branch changes before recording. Complete with an owned session on the
+same branch. MCP keeps its existing `work` and `branch` argument names for
+`awr_evidence_record`.
+
+For an already-owned session, the CLI sequence is:
+
+```sh
+awr work prepare-completion WORK --report report.json --evidence-key KEY \
+  --source-sha FULL_SHA --json > prepared.json
+jq '.evidence' prepared.json > evidence.json
+jq '.completion' prepared.json > completion.json
+awr evidence add --input evidence.json \
+  --expected-revision "$(jq -er '.project_revision' prepared.json)" \
+  --json > recorded.json
+awr work complete WORK --session "$SESSION" --reason "Deliver verified work" \
+  --input completion.json \
+  --expected-revision "$(jq -er '.project_revision' recorded.json)"
+```
+
+Each write requires the current project revision. If another operation advances
+it, read the current state and recheck the report, branch and claim before retrying.
+
 The report uses this structure; replace every fixture value with actual evidence:
 
 ```json

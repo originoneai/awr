@@ -661,6 +661,10 @@ async fn report_preflight_derives_bytes_and_coverage_without_recording_evidence(
     fs::write(f.root.join("report.json"), &bytes).unwrap();
     let args = json!({"work":"W","report":"report.json","evidence_key":"E","source_sha":SHA,"level":"locally_verified"});
     let result = success(call(&client, "awr_completion_prepare", args.clone()).await);
+    assert_eq!(result["evidence"]["work"], "W");
+    assert_eq!(result["evidence"].get("branch"), Some(&Value::Null));
+    assert!(result["evidence"].get("work_item_key").is_none());
+    assert!(result["evidence"].get("branch_id").is_none());
     assert_eq!(
         result["report_sha256"],
         format!("{:x}", Sha256::digest(&bytes))
