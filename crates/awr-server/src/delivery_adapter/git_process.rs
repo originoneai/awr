@@ -15,19 +15,54 @@ mod tests {
     #[tokio::test]
     async fn output_reader_enforces_exact_byte_bound() {
         assert_eq!(
-            read_limited(std::io::Cursor::new(b"abcd"), 4)
+            read_limited(std::io::Cursor::new(b"abcd"), 4, "", "read_stdout")
                 .await
                 .unwrap(),
             b"abcd"
         );
         assert!(matches!(
-            read_limited(std::io::Cursor::new(b"abcde"), 4).await,
+            read_limited(std::io::Cursor::new(b"abcde"), 4, "", "read_stdout").await,
             Err(LocalGitError::OutputLimit)
         ));
         assert_eq!(
-            read_limited(std::io::Cursor::new(b""), 0).await.unwrap(),
+            read_limited(std::io::Cursor::new(b""), 0, "", "read_stdout")
+                .await
+                .unwrap(),
             b""
         );
+    }
+
+    #[test]
+    fn process_diagnostics_retain_stage_and_os_code_without_private_values() {
+        let error = std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "private repository path and credential",
+        );
+        assert_eq!(
+            process_diagnostic("private argument", "spawn", Some(&error)),
+            "local Git process failed: command=other, stage=spawn, kind=Some(PermissionDenied), os_code=None"
+        );
+        let error = std::io::Error::from_raw_os_error(2);
+        let diagnostic = process_diagnostic("--version", "spawn", Some(&error));
+        assert!(diagnostic.contains("command=version, stage=spawn"));
+        assert!(diagnostic.contains("os_code=Some(2)"));
+        assert_eq!(
+            process_diagnostic("cat-file", "decode_utf8", None),
+            "local Git process failed: command=cat-file, stage=decode_utf8, kind=None, os_code=None"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_spawn_remains_repository_unavailable() {
+        let git = GitProcess {
+            executable: std::env::temp_dir().join(format!("missing-git-{}", awr_core::Id::new())),
+            repository: std::env::temp_dir(),
+            timeout_ms: 100,
+        };
+        assert!(matches!(
+            git.text(&["--version"]).await,
+            Err(LocalGitError::RepositoryUnavailable)
+        ));
     }
 
     #[cfg(unix)]
@@ -56,6 +91,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(git.text(&[]).await.unwrap(), None);
+        std::fs::write(&executable, "#!/bin/sh\nprintf '\\377'\n").unwrap();
+        assert!(matches!(
+            git.text(&[]).await,
+            Err(LocalGitError::RepositoryUnavailable)
+        ));
         std::fs::write(&executable, "#!/bin/sh\nexec sleep 2\n").unwrap();
         git.timeout_ms = 100;
         let started = std::time::Instant::now();
@@ -70,15 +110,44 @@ pub(super) struct Output {
     pub bytes: Vec<u8>,
 }
 
+// Keep the public finite error contract while retaining safe operational evidence.
+// Display/Debug on io::Error can include configured paths; never print it or Git stderr.
+fn process_diagnostic(command: &str, stage: &str, error: Option<&std::io::Error>) -> String {
+    // Do not emit arbitrary argv, paths, refs, object IDs, or provider output.
+    let command = match command {
+        "--version" => "version",
+        "rev-parse" => "rev-parse",
+        "show-ref" => "show-ref",
+        "symbolic-ref" => "symbolic-ref",
+        "cat-file" => "cat-file",
+        "ls-tree" => "ls-tree",
+        "merge-base" => "merge-base",
+        "update-ref" => "update-ref",
+        _ => "other",
+    };
+    format!(
+        "local Git process failed: command={command}, stage={stage}, kind={:?}, os_code={:?}",
+        error.map(std::io::Error::kind),
+        error.and_then(std::io::Error::raw_os_error)
+    )
+}
+
+fn process_error(command: &str, stage: &str, error: Option<&std::io::Error>) -> LocalGitError {
+    eprintln!("{}", process_diagnostic(command, stage, error));
+    LocalGitError::RepositoryUnavailable
+}
+
 async fn read_limited(
     pipe: impl tokio::io::AsyncRead + Unpin,
     limit: usize,
+    command: &str,
+    stage: &str,
 ) -> Result<Vec<u8>, LocalGitError> {
     let mut bytes = Vec::new();
     pipe.take(limit as u64 + 1)
         .read_to_end(&mut bytes)
         .await
-        .map_err(|_| LocalGitError::RepositoryUnavailable)?;
+        .map_err(|error| process_error(command, stage, Some(&error)))?;
     if bytes.len() > limit {
         return Err(LocalGitError::OutputLimit);
     }
@@ -89,6 +158,7 @@ impl GitProcess {
     /// Only fixed Git subcommands with separately validated object/ref/path arguments.
     /// No shell, hooks, working-tree filters, replacement objects or lazy network fetches.
     pub async fn run(&self, args: &[&str], limit: usize) -> Result<Output, LocalGitError> {
+        let subcommand = args.first().copied().unwrap_or("");
         let mut command = Command::new(&self.executable);
         command
             .arg("--no-replace-objects")
@@ -137,24 +207,24 @@ impl GitProcess {
         }
         let mut child = command
             .spawn()
-            .map_err(|_| LocalGitError::RepositoryUnavailable)?;
+            .map_err(|error| process_error(subcommand, "spawn", Some(&error)))?;
         let stdout = child
             .stdout
             .take()
-            .ok_or(LocalGitError::RepositoryUnavailable)?;
+            .ok_or_else(|| process_error(subcommand, "missing_stdout", None))?;
         let stderr = child
             .stderr
             .take()
-            .ok_or(LocalGitError::RepositoryUnavailable)?;
+            .ok_or_else(|| process_error(subcommand, "missing_stderr", None))?;
         let operation = async {
             let (bytes, _, status) = tokio::try_join!(
-                read_limited(stdout, limit),
-                read_limited(stderr, 16384),
+                read_limited(stdout, limit, subcommand, "read_stdout"),
+                read_limited(stderr, 16384, subcommand, "read_stderr"),
                 async {
                     child
                         .wait()
                         .await
-                        .map_err(|_| LocalGitError::RepositoryUnavailable)
+                        .map_err(|error| process_error(subcommand, "wait", Some(&error)))
                 }
             )?;
             Ok(Output {
@@ -175,6 +245,6 @@ impl GitProcess {
         }
         String::from_utf8(output.bytes)
             .map(|s| Some(s.trim_end().to_owned()))
-            .map_err(|_| LocalGitError::RepositoryUnavailable)
+            .map_err(|_| process_error(args.first().copied().unwrap_or(""), "decode_utf8", None))
     }
 }
