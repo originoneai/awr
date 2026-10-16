@@ -405,12 +405,14 @@ fn source_sha_mismatch_beats_a_matching_section_fingerprint() {
     let mut rec = f.store.evidence(f.project.id, "wa-report").unwrap();
     rec.item.section_fingerprint = Some("sec-A".into());
     assert_eq!(
-        rec.assess(Some(&sha), Some("sec-A"), None).currency,
+        rec.clone().assess(Some(&sha), Some("sec-A"), None).currency,
         EvidenceCurrency::Current
     );
     // Same revision, edited contract -> Historical.
     assert_eq!(
-        rec.assess(Some(&sha), Some("sec-A-edited"), None).currency,
+        rec.clone()
+            .assess(Some(&sha), Some("sec-A-edited"), None)
+            .currency,
         EvidenceCurrency::Historical
     );
     // Older revision, identical contract -> Historical (never Current).
