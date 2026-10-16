@@ -16,6 +16,7 @@ jobs:
         run: |
           mkdir -p .local/git-init-repro
           git --version
+          cargo test -p awr-server --lib delivery_adapter::git_process --locked
           cargo test -p awr-server --test local_git_delivery --locked --no-run
           for attempt in $(seq 1 100); do
             echo "Linux Git suite attempt $attempt"
