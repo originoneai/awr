@@ -5,6 +5,7 @@ mod workstream_readset;
 pub use workstream_readset::*;
 mod branch;
 mod branch_close;
+pub mod claim_arbitration;
 mod completion;
 mod error;
 mod event_payload;
