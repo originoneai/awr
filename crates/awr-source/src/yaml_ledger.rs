@@ -1,4 +1,6 @@
-use crate::{fingerprint, Locator, Manifest, ParseContext, SourceAdapter, SourceSnapshot, SourceSpec};
+use crate::{
+    Locator, Manifest, ParseContext, SourceAdapter, SourceSnapshot, SourceSpec, fingerprint,
+};
 use awr_core::{
     DiagnosticLocation, Edge, EntityKind, Error, Evidence, EvidenceLevel, Goal, Id, Plan,
     ProjectionBatch, Result, SourceDiagnostic, SourceRef, WorkItem, WorkStatus,
@@ -443,8 +445,7 @@ impl YamlLedgerAdapter {
                 Some(pointer.clone()),
                 None,
             )?;
-            meta.source_ref
-                .section_fingerprint = Some(work_section_fingerprint(value)?);
+            meta.source_ref.section_fingerprint = Some(work_section_fingerprint(value)?);
             let direct_level = &value["evidence_level"];
             let nested_level = &value["verification"]["evidence_level"];
             if !direct_level.is_null() && !nested_level.is_null() && direct_level != nested_level {

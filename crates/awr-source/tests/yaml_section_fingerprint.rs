@@ -37,8 +37,7 @@ fn parse(text: &str) -> awr_core::Result<ProjectionBatch> {
 }
 
 fn section_fp(batch: &ProjectionBatch) -> Option<String> {
-    batch
-        .work_items[0]
+    batch.work_items[0]
         .meta
         .source_ref
         .section_fingerprint

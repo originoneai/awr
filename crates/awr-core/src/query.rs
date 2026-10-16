@@ -197,10 +197,9 @@ impl EvidenceRecord {
             } else if !recorded.eq_ignore_ascii_case(requested) {
                 reasons.push("evidence was recorded for a different source SHA".into());
                 EvidenceCurrency::Historical
-            } else if let (Some(recorded_section), Some(requested_section)) = (
-                self.item.section_fingerprint.as_deref(),
-                section_fp,
-            ) {
+            } else if let (Some(recorded_section), Some(requested_section)) =
+                (self.item.section_fingerprint.as_deref(), section_fp)
+            {
                 if !recorded_section.eq_ignore_ascii_case(requested_section) {
                     reasons.push(
                         "evidence was recorded against a different work section (identity+acceptance)"
@@ -219,10 +218,9 @@ impl EvidenceRecord {
             } else {
                 EvidenceCurrency::Current
             }
-        } else if let (Some(recorded_section), Some(requested_section)) = (
-            self.item.section_fingerprint.as_deref(),
-            section_fp,
-        ) {
+        } else if let (Some(recorded_section), Some(requested_section)) =
+            (self.item.section_fingerprint.as_deref(), section_fp)
+        {
             if !recorded_section.eq_ignore_ascii_case(requested_section) {
                 reasons.push(
                     "evidence was recorded against a different work section (identity+acceptance)"

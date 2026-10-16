@@ -202,9 +202,10 @@ pub fn evidence(root: &Path, command: &EvidenceCommand, json_output: bool) -> Re
                 ));
             }
             let record = db.store.evidence(project, id)?;
-            let assessment = record
-                .clone()
-                .assess(source_sha.as_deref(), None, db.project.current_branch_id);
+            let assessment =
+                record
+                    .clone()
+                    .assess(source_sha.as_deref(), None, db.project.current_branch_id);
             let mut value = db.metadata(db.project.project_revision);
             value["evidence"] = evidence_brief(&record);
             value["currency"] = json!(assessment.currency);

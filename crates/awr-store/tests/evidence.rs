@@ -355,7 +355,11 @@ fn evidence_is_bound_to_the_source_revision_it_was_recorded_against() {
             .store
             .evidence_for_work(f.project.id, key, Some(&sha_before), None)
             .unwrap();
-        assert_eq!(evs.len(), 1, "{key} evidence must be linked to its work item");
+        assert_eq!(
+            evs.len(),
+            1,
+            "{key} evidence must be linked to its work item"
+        );
         assert!(
             evs.iter().all(|a| a.currency == EvidenceCurrency::Current),
             "{key} evidence must be Current at its own source revision"
@@ -369,9 +373,14 @@ fn evidence_is_bound_to_the_source_revision_it_was_recorded_against() {
             .store
             .evidence_for_work(f.project.id, key, Some(&sha_after), None)
             .unwrap();
-        assert_eq!(evs.len(), 1, "{key} evidence must be linked to its work item");
+        assert_eq!(
+            evs.len(),
+            1,
+            "{key} evidence must be linked to its work item"
+        );
         assert!(
-            evs.iter().all(|a| a.currency == EvidenceCurrency::Historical),
+            evs.iter()
+                .all(|a| a.currency == EvidenceCurrency::Historical),
             "{key} evidence recorded at an older source revision must be Historical, not Current"
         );
     }
@@ -406,7 +415,8 @@ fn source_sha_mismatch_beats_a_matching_section_fingerprint() {
     );
     // Older revision, identical contract -> Historical (never Current).
     assert_eq!(
-        rec.assess(Some(&"d".repeat(40)), Some("sec-A"), None).currency,
+        rec.assess(Some(&"d".repeat(40)), Some("sec-A"), None)
+            .currency,
         EvidenceCurrency::Historical
     );
 }
@@ -443,7 +453,11 @@ fn shared_ledger_cross_node_completion_marks_pulled_evidence_historical() {
     let mut wa_report = draft("wa-report");
     wa_report.work_item_key = Some("WA".into());
     wa_report.source_sha = Some(sha_a.clone());
-    let rev = node_a.store.project(node_a.project.id).unwrap().project_revision;
+    let rev = node_a
+        .store
+        .project(node_a.project.id)
+        .unwrap()
+        .project_revision;
     node_a
         .store
         .record_evidence(node_a.project.id, rev, wa_report.clone())
@@ -456,7 +470,11 @@ fn shared_ledger_cross_node_completion_marks_pulled_evidence_historical() {
     let mut pulled = draft("wa-report");
     pulled.work_item_key = Some("WA".into());
     pulled.source_sha = Some(sha_a.clone());
-    let rev = node_b.store.project(node_b.project.id).unwrap().project_revision;
+    let rev = node_b
+        .store
+        .project(node_b.project.id)
+        .unwrap()
+        .project_revision;
     node_b
         .store
         .record_evidence(node_b.project.id, rev, pulled)
@@ -467,7 +485,8 @@ fn shared_ledger_cross_node_completion_marks_pulled_evidence_historical() {
         .unwrap();
     assert_eq!(evs.len(), 1, "pulled evidence must stay linked to WA");
     assert!(
-        evs.iter().all(|a| a.currency == EvidenceCurrency::Historical),
+        evs.iter()
+            .all(|a| a.currency == EvidenceCurrency::Historical),
         "evidence recorded at another node's revision must not be Current here"
     );
 
@@ -475,7 +494,11 @@ fn shared_ledger_cross_node_completion_marks_pulled_evidence_historical() {
     let mut revalidated = draft("wa-report-v2");
     revalidated.work_item_key = Some("WA".into());
     revalidated.source_sha = Some(sha_b.clone());
-    let rev = node_b.store.project(node_b.project.id).unwrap().project_revision;
+    let rev = node_b
+        .store
+        .project(node_b.project.id)
+        .unwrap()
+        .project_revision;
     node_b
         .store
         .record_evidence(node_b.project.id, rev, revalidated)
@@ -485,8 +508,8 @@ fn shared_ledger_cross_node_completion_marks_pulled_evidence_historical() {
         .evidence_for_work(node_b.project.id, "WA", Some(&sha_b), None)
         .unwrap();
     assert!(
-        evs.iter()
-            .any(|a| a.currency == EvidenceCurrency::Current && a.evidence.item.external_key == "wa-report-v2"),
+        evs.iter().any(|a| a.currency == EvidenceCurrency::Current
+            && a.evidence.item.external_key == "wa-report-v2"),
         "a record re-registered at this node's revision must be Current"
     );
 }
@@ -537,7 +560,16 @@ fn real_git_worktree_transport_marks_outdated_evidence_historical() {
     git(&repo, &["init", "-q", "-b", "main"]);
     git(
         &repo,
-        &["-c", "user.email=node@test", "-c", "user.name=node", "config", "--local", "user.email", "node@test"],
+        &[
+            "-c",
+            "user.email=node@test",
+            "-c",
+            "user.name=node",
+            "config",
+            "--local",
+            "user.email",
+            "node@test",
+        ],
     );
     git(&repo, &["config", "--local", "user.name", "node"]);
     write_ledger(&repo, false, false);
@@ -551,11 +583,27 @@ fn real_git_worktree_transport_marks_outdated_evidence_historical() {
     let node_b = base.join("node-b");
     git(
         &repo,
-        &["worktree", "add", "-q", "-b", "node-a", node_a.to_str().unwrap(), "main"],
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "node-a",
+            node_a.to_str().unwrap(),
+            "main",
+        ],
     );
     git(
         &repo,
-        &["worktree", "add", "-q", "-b", "node-b", node_b.to_str().unwrap(), "main"],
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "node-b",
+            node_b.to_str().unwrap(),
+            "main",
+        ],
     );
 
     // ---- Node A: store over worktree A, complete WA (real commit). ----
@@ -580,7 +628,10 @@ fn real_git_worktree_transport_marks_outdated_evidence_historical() {
     // whole-file SHA now differs from the SHA Node A bound WA's evidence at.
     git(&node_b, &["reset", "-q", "--hard", &sha_after_a]);
     let sha_after_a = git_head(&node_b);
-    assert_ne!(sha_after_a, sha_both_planned, "A's completion changed the whole file");
+    assert_ne!(
+        sha_after_a, sha_both_planned,
+        "A's completion changed the whole file"
+    );
     let mut f_b = Fixture::new_under(&node_b, "file:///node-b/work.yaml");
     f_b.commit(ProjectionBatch {
         work_items: vec![sec_work(&f_b, "WA", "sec-A"), sec_work(&f_b, "WB", "sec-B")],
@@ -593,7 +644,9 @@ fn real_git_worktree_transport_marks_outdated_evidence_historical() {
     wa_shared.work_item_key = Some("WA".into());
     wa_shared.source_sha = Some(sha_after_a.clone());
     let r = f_b.store.project(f_b.project.id).unwrap().project_revision;
-    f_b.store.record_evidence(f_b.project.id, r, wa_shared).unwrap();
+    f_b.store
+        .record_evidence(f_b.project.id, r, wa_shared)
+        .unwrap();
     let mut wb_ev = draft("wb-report");
     wb_ev.work_item_key = Some("WB".into());
     wb_ev.source_sha = Some(sha_after_a.clone());
@@ -614,7 +667,10 @@ fn real_git_worktree_transport_marks_outdated_evidence_historical() {
             .store
             .evidence_for_work(f_b.project.id, key, Some(&sha_after_both), None)
             .unwrap();
-        assert!(!evs.is_empty(), "{key} evidence must stay linked over the real transport");
+        assert!(
+            !evs.is_empty(),
+            "{key} evidence must stay linked over the real transport"
+        );
         assert!(
             evs.iter().all(|a| a.currency != EvidenceCurrency::Current),
             "real-git transport left {key} evidence looking Current after the ledger moved",
