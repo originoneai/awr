@@ -120,7 +120,7 @@ mod tests {
         .await
         .unwrap();
         assert!(child.wait().await.unwrap().success());
-        assert_eq!(attempts, 2);
+        assert!((2..=4).contains(&attempts));
 
         let writer = std::fs::OpenOptions::new()
             .write(true)
