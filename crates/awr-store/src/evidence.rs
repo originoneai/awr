@@ -319,10 +319,24 @@ impl Store {
             if let Some(key)=&draft.work_item_key {
                 let work:Projected<WorkItem>=projection(tx,project,EntityKind::WorkItem,key)?;
                 item.work_item_id=Some(work.item.meta.id);
-                // Bind the record to the work item's identity+acceptance section so a
-                // rewrite of lifecycle fields in the same file (or in another node's
-                // copy of the shared ledger) cannot invalidate this evidence.
-                if item.section_fingerprint.is_none() {
+                // Bind the record to the work item's identity+acceptance section as a
+                // second, narrower currency binding on top of the source revision.
+                //
+                // The stamp is only applied when the evidence was recorded against the
+                // work item's *current* source revision. Stamping the current section
+                // onto a record taken from an older revision would exempt that stale
+                // record from the source-SHA drift check entirely.
+                let current = work
+                    .item
+                    .meta
+                    .source_ref
+                    .source_fingerprint
+                    .trim_start_matches("sha256:");
+                let recorded_against_current = item
+                    .source_sha
+                    .as_deref()
+                    .is_some_and(|s| s.eq_ignore_ascii_case(current));
+                if item.section_fingerprint.is_none() && recorded_against_current {
                     item.section_fingerprint =
                         work.item.meta.source_ref.section_fingerprint.clone();
                 }

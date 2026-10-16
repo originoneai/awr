@@ -132,14 +132,15 @@ pub fn is_source_sha(value: &str) -> bool {
 impl EvidenceRecord {
     /// Assess currency relative to an explicitly requested source state.
     ///
-    /// When the record was stamped with a per-work-item section fingerprint
-    /// (`section_fingerprint`) and the caller knows the work item's current
-    /// section fingerprint (`section_fp`), currency is decided by those two:
-    /// a rewrite of *other* lifecycle fields in the same file (progress,
-    /// completion of another item) cannot invalidate this evidence. When either
-    /// fingerprint is missing it falls back to the previous whole-file
-    /// `source_sha` comparison, so evidence recorded without section bindings
-    /// (and markdown-ledger evidence) keeps its existing behavior.
+    /// Ordering is deliberate and non-overridable: the recorded/requested
+    /// **source SHA** is compared first, so a rewritten source can never be
+    /// reported as `Current` merely because the item's contract section still
+    /// matches. Only after the source revision matches is the per-work-item
+    /// section fingerprint (`section_fingerprint`) checked as a second, narrower
+    /// binding against a contract edit the source revision did not reflect. When
+    /// a source SHA is absent on either side the comparison falls back to the
+    /// section binding, and with neither binding available the result is
+    /// `Unknown`.
     pub fn assess(
         self,
         source_sha: Option<&str>,
@@ -189,6 +190,35 @@ impl EvidenceRecord {
         let currency = if self.item.branch_id != branch {
             reasons.push("evidence belongs to a different branch".into());
             EvidenceCurrency::Historical
+        } else if let (Some(recorded), Some(requested)) = (&self.item.source_sha, source_sha) {
+            if !is_source_sha(recorded) || !is_source_sha(requested) {
+                reasons.push("source SHA is not a full hash".into());
+                EvidenceCurrency::Unknown
+            } else if !recorded.eq_ignore_ascii_case(requested) {
+                reasons.push("evidence was recorded for a different source SHA".into());
+                EvidenceCurrency::Historical
+            } else if let (Some(recorded_section), Some(requested_section)) = (
+                self.item.section_fingerprint.as_deref(),
+                section_fp,
+            ) {
+                if !recorded_section.eq_ignore_ascii_case(requested_section) {
+                    reasons.push(
+                        "evidence was recorded against a different work section (identity+acceptance)"
+                            .into(),
+                    );
+                    EvidenceCurrency::Historical
+                } else if stale() {
+                    reasons.push("evidence source is not fresh".into());
+                    EvidenceCurrency::Unknown
+                } else {
+                    EvidenceCurrency::Current
+                }
+            } else if stale() {
+                reasons.push("evidence source is not fresh".into());
+                EvidenceCurrency::Unknown
+            } else {
+                EvidenceCurrency::Current
+            }
         } else if let (Some(recorded_section), Some(requested_section)) = (
             self.item.section_fingerprint.as_deref(),
             section_fp,
@@ -198,19 +228,6 @@ impl EvidenceRecord {
                     "evidence was recorded against a different work section (identity+acceptance)"
                         .into(),
                 );
-                EvidenceCurrency::Historical
-            } else if stale() {
-                reasons.push("evidence source is not fresh".into());
-                EvidenceCurrency::Unknown
-            } else {
-                EvidenceCurrency::Current
-            }
-        } else if let (Some(recorded), Some(requested)) = (&self.item.source_sha, source_sha) {
-            if !is_source_sha(recorded) || !is_source_sha(requested) {
-                reasons.push("source SHA is not a full hash".into());
-                EvidenceCurrency::Unknown
-            } else if !recorded.eq_ignore_ascii_case(requested) {
-                reasons.push("evidence was recorded for a different source SHA".into());
                 EvidenceCurrency::Historical
             } else if stale() {
                 reasons.push("evidence source is not fresh".into());
