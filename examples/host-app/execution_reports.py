@@ -209,8 +209,8 @@ class ExecutionReports:
         preflight = self.preflight(record)
         revision = preflight['project_revision'] if expected_revision is None else expected_revision
         draft = dict(preflight['evidence'])
-        draft['work_item_key'] = draft.pop('work')
-        draft['branch_id'] = draft.pop('branch')
+        # The CLI preflight already returns the exact evidence-add payload.
+        # Keep its resolved branch binding when forwarding it unchanged.
         # Look up the exact evidence key even after a lost registration response. No duplicate write.
         # Preflight accepts reports up to 1 MiB; recovery must read that same accepted report.
         found = wf.host.call('evidence', 'show', record['evidence_key'], '--source-sha', record['source_sha'],
