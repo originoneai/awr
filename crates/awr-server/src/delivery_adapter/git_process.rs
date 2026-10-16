@@ -53,16 +53,103 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn only_executable_busy_is_retried_with_a_finite_budget() {
+        use std::io::{Error, ErrorKind};
+        let mut attempts = 0;
+        let value = spawn_with_retry(|| {
+            attempts += 1;
+            if attempts < 3 {
+                Err(ErrorKind::ExecutableFileBusy.into())
+            } else {
+                Ok(42)
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!((value, attempts), (42, 3));
+
+        for kind in [
+            ErrorKind::NotFound,
+            ErrorKind::PermissionDenied,
+            ErrorKind::Other,
+        ] {
+            attempts = 0;
+            let result = spawn_with_retry(|| {
+                attempts += 1;
+                Err::<(), _>(Error::from(kind))
+            })
+            .await;
+            assert_eq!(result.unwrap_err().kind(), kind);
+            assert_eq!(attempts, 1);
+        }
+        attempts = 0;
+        let result = spawn_with_retry(|| {
+            attempts += 1;
+            Err::<(), _>(Error::from(ErrorKind::ExecutableFileBusy))
+        })
+        .await;
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::ExecutableFileBusy);
+        assert_eq!(attempts, 4);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn busy_executable_recovers_after_writer_closes_and_respects_command_timeout() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("awr-git-busy-{}", awr_core::Id::new()));
+        std::fs::create_dir(&root).unwrap();
+        let executable = root.join("synthetic-git");
+        std::fs::write(&executable, "#!/bin/sh\nprintf ready\n").unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut writer = Some(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&executable)
+                .unwrap(),
+        );
+        let mut command = Command::new(&executable);
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+        let mut attempts = 0;
+        let mut child = spawn_with_retry(|| {
+            attempts += 1;
+            if attempts == 2 {
+                drop(writer.take());
+            }
+            command.spawn()
+        })
+        .await
+        .unwrap();
+        assert!(child.wait().await.unwrap().success());
+        assert_eq!(attempts, 2);
+
+        let writer = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&executable)
+            .unwrap();
+        let mut git = GitProcess {
+            executable,
+            repository: root.clone(),
+            timeout_ms: 1,
+        };
+        assert!(matches!(git.text(&[]).await, Err(LocalGitError::TimedOut)));
+        drop(writer);
+        git.timeout_ms = 3000;
+        assert_eq!(git.text(&[]).await.unwrap(), Some("ready".into()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn failed_spawn_remains_repository_unavailable() {
         let git = GitProcess {
             executable: std::env::temp_dir().join(format!("missing-git-{}", awr_core::Id::new())),
             repository: std::env::temp_dir(),
             timeout_ms: 100,
         };
-        assert!(matches!(
-            git.text(&["--version"]).await,
-            Err(LocalGitError::RepositoryUnavailable)
-        ));
+        let result = git.text(&["--version"]).await;
+        assert!(
+            matches!(result, Err(LocalGitError::RepositoryUnavailable)),
+            "unexpected missing-executable result: {result:?}"
+        );
     }
 
     #[cfg(unix)]
@@ -108,6 +195,23 @@ mod tests {
 pub(super) struct Output {
     pub code: i32,
     pub bytes: Vec<u8>,
+}
+
+// Linux may briefly retain a write reference to a newly closed executable while
+// another thread is spawning a child. execve then fails with ETXTBSY before any
+// child starts. Retry only that failure; never replay a started Git command.
+async fn spawn_with_retry<T>(mut spawn: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    let mut retries = 0;
+    loop {
+        match spawn() {
+            Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy && retries < 3 => {
+                let delay = Duration::from_millis(10 << retries);
+                retries += 1;
+                tokio::time::sleep(delay).await;
+            }
+            result => return result,
+        }
+    }
 }
 
 // Keep the public finite error contract while retaining safe operational evidence.
@@ -205,18 +309,18 @@ impl GitProcess {
         if let Some(path) = std::env::var_os("PATH") {
             command.env("PATH", path);
         }
-        let mut child = command
-            .spawn()
-            .map_err(|error| process_error(subcommand, "spawn", Some(&error)))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| process_error(subcommand, "missing_stdout", None))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| process_error(subcommand, "missing_stderr", None))?;
         let operation = async {
+            let mut child = spawn_with_retry(|| command.spawn())
+                .await
+                .map_err(|error| process_error(subcommand, "spawn", Some(&error)))?;
+            let stdout = child
+                .stdout
+                .take()
+                .ok_or_else(|| process_error(subcommand, "missing_stdout", None))?;
+            let stderr = child
+                .stderr
+                .take()
+                .ok_or_else(|| process_error(subcommand, "missing_stderr", None))?;
             let (bytes, _, status) = tokio::try_join!(
                 read_limited(stdout, limit, subcommand, "read_stdout"),
                 read_limited(stderr, 16384, subcommand, "read_stderr"),
