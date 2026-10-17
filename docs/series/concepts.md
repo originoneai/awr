@@ -141,6 +141,46 @@ terminate sessions, which remains your explicit responsibility at handoff.
 someone wrote `status: completed` in a ledger. It is done when a registered
 completion report verifies against the ledger's current acceptance criteria.
 
+The work-aware section-stamp currency behavior described below is available on
+development `main`; it is outside the published 0.5.1 package boundary.
+
+Keep the evidence bindings separate:
+
+- `source_sha` names the exact source revision used by verification. It remains
+  strict for Git or code revisions; a matching task section cannot make an
+  arbitrary source-SHA mismatch current.
+- `section_fingerprint` is an independent, narrower binding to the work item's
+  task contract. It is not a canonical acceptance version and does not replace
+  the report's exact criterion coverage.
+- The evidence `sha256` is the report digest: it binds the report bytes read
+  during preflight and completion. Branch, source freshness and required proof
+  bindings remain separate gates.
+
+For a YAML ledger, `section_fingerprint` is a SHA-256 hash of key-sorted JSON
+for the parsed work record after removing these fields: `status`, `next_action`,
+`summary`, `blocker`, `evidence`, `verification`, `evidence_level`,
+`ordinary_completion`, `source_ref` and `revision`. All other fields, including
+unknown fields, affect it; YAML key order and whitespace do not affect it. Thus
+lifecycle or unrelated task edits can change the file-level source fingerprint
+without changing the current task contract.
+
+In a work-aware evidence query, a changed ledger SHA may still be `Current` only
+when registration stamped the evidence against a fresh source projection because
+its `source_sha` matched the full hash represented by that work's then-current
+ledger `source_fingerprint`, the
+requested SHA now matches the current ledger's hash, and
+the recorded and current section fingerprints match. The `sha256:` prefix is
+omitted when supplying these hashes as `source_sha`. This permits ledger-only
+lifecycle or unrelated-task edits; it never overrides an arbitrary Git or code
+SHA mismatch. Generic evidence listings without work context remain SHA-strict.
+A work-aware query with an omitted SHA can use the section binding, but verified
+evidence still requires `source_sha` and all required report bindings. The
+original evidence/report SHA is never rewritten. Registering an old report after
+ledger drift receives no new stamp, and this exception does not automatically
+carry a stamp across nodes or establish report validity.
+`Current` describes currency only; it does not prove that a command ran,
+execution occurred or completion was accepted.
+
 A completion report records the command actually executed, the scope actually
 verified, the time, and named checks — each mapping to an exact acceptance
 criterion and describing the observed outcome, not the intended result:
@@ -207,8 +247,9 @@ Tie it together with the search task from the ledger above:
    chat history being replayed.
 6. **Delivery.** You write a report whose checks map to the exact acceptance
    criterion, preflight it with `awr work prepare-completion`, and only then
-   record completion. Status now shows the task as *verified* against the
-   source SHA, not merely marked done.
+   record completion. Status keeps source-declared completion separate from
+   `verified_completed`; the latter requires AWR to check the exact bound reports
+   and their checks.
 
 ## Where to go next
 

@@ -2,16 +2,29 @@
 
 The [contract](contract.json) defines five native targets: macOS arm64 and Intel
 x64, Linux x64 and arm64, and Windows x64, using Rust 1.93.1. Each platform runs
-all fourteen gates on its own recorded source commit. A workflow definition,
+all sixteen gates on its own recorded source commit. A workflow definition,
 cross compilation or another platform's result cannot supply that evidence.
 
-The gates include subprocess-runner regression, workspace/all-targets build and
+The gates include subprocess and currency-runner regressions, workspace/all-targets build and
 tests, doctests, ignored-test inventory and actual CLI crash recovery, all nine
 CLI/MCP parity checks, manual checkpoint/resume, and native CLI conditions. The
 conditions cover Unicode/space paths, CRLF, WAL/schema integrity, persisted
 sessions, source writes and receipts, stale-write rejection, changed hard rules,
 outside-source rejection and closed-session health. The final gate checks that
 tracked inputs and the source commit remain unchanged.
+
+The `evidence_currency_poc` gate runs the standalone
+`tests/evidence-currency/poc.py` against the `awr` binary produced by that
+platform's workspace build. The build gate first captures an immutable `awr`
+snapshot outside the uploaded evidence tree; the POC runs against that snapshot
+and binds its report to the captured executable hash. It requires the four
+synthetic scenarios and archives the complete POC report under
+`evidence/currency/`, together with only its top-level numeric stdout/stderr and
+scenario failure logs. Fixture projects and SQLite state are excluded. The POC
+covers work-aware ledger drift, cross-instance byte transport, stale
+registration retry, and strict Git/code revision binding. Its synthetic checker
+performs no model or network calls. A cross-compiled binary or a POC result from
+another host cannot satisfy this gate.
 
 Run from a committed, clean checkout with a fresh output directory:
 

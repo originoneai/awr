@@ -325,14 +325,170 @@ fn sec_work(f: &Fixture, key: &str, section: &str) -> WorkItem {
     w
 }
 
-/// C1 (revised): evidence is bound to the *source revision* it was recorded
-/// against. When the ledger file changes — even if only an unrelated item's
-/// lifecycle line moved — every record taken at the older revision becomes
-/// Historical, so a stale record can never be counted as Current.
-///
-/// The identity+acceptance section is a second, narrower binding: at the very
-/// same revision a change to the item's own contract invalidates too, while an
-/// unchanged contract stays Current.
+fn ledger_snapshot(f: &mut Fixture, sha: &str, section: &str) {
+    let mut item = sec_work(f, "WA", section);
+    if let Ok(previous) = f.store.work_item(f.project.id, "WA") {
+        item.meta.id = previous.item.meta.id;
+    }
+    let fingerprint = format!("sha256:{sha}");
+    item.meta.source_ref.source_fingerprint = fingerprint.clone();
+    f.source = f
+        .store
+        .commit_source_projection(
+            &f.source,
+            &fingerprint,
+            ProjectionBatch {
+                work_items: vec![item],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+}
+
+#[test]
+fn ledger_snapshot_evidence_reuses_only_an_unchanged_stamped_contract() {
+    let mut f = Fixture::new();
+    let before = "a".repeat(64);
+    let after = "b".repeat(64);
+    ledger_snapshot(&mut f, &before, "sec-A");
+    for (key, sha) in [("ledger", before.clone()), ("code", "c".repeat(40))] {
+        let mut d = draft(key);
+        d.work_item_key = Some("WA".into());
+        d.source_sha = Some(sha);
+        let rev = f.store.project(f.project.id).unwrap().project_revision;
+        let (recorded, _) = f.store.record_evidence(f.project.id, rev, d).unwrap();
+        assert_eq!(recorded.section_fingerprint.is_some(), key == "ledger");
+    }
+    // A refreshed ledger snapshot changes, while this task's contract stays put.
+    ledger_snapshot(&mut f, &after, "sec-A");
+    let assessments = f
+        .store
+        .evidence_for_work(f.project.id, "WA", Some(&after), None)
+        .unwrap();
+    let ledger = assessments
+        .iter()
+        .find(|a| a.evidence.item.external_key == "ledger")
+        .unwrap();
+    assert_eq!(ledger.currency, EvidenceCurrency::Current);
+    assert!(ledger.missing_bindings.is_empty());
+    assert_eq!(
+        ledger.evidence.item.source_sha.as_deref(),
+        Some(before.as_str())
+    );
+    assert_eq!(
+        assessments
+            .iter()
+            .find(|a| a.evidence.item.external_key == "code")
+            .unwrap()
+            .currency,
+        EvidenceCurrency::Historical
+    );
+    // A matching contract cannot bless an arbitrary requested code revision,
+    // a different branch, or a generic read without the work source binding.
+    for (requested, branch) in [(&"d".repeat(64), None), (&after, Some(Id::new()))] {
+        assert!(
+            f.store
+                .evidence_for_work(f.project.id, "WA", Some(requested), branch)
+                .unwrap()
+                .iter()
+                .all(|a| a.currency == EvidenceCurrency::Historical)
+        );
+    }
+    assert_eq!(
+        ledger
+            .evidence
+            .clone()
+            .assess(Some(&after), Some("sec-A"), None)
+            .currency,
+        EvidenceCurrency::Historical
+    );
+    f.source = f
+        .store
+        .mark_source_freshness(&f.source, Freshness::Stale)
+        .unwrap();
+    let stale = f
+        .store
+        .evidence_for_work(f.project.id, "WA", Some(&after), None)
+        .unwrap();
+    assert_eq!(
+        stale
+            .iter()
+            .find(|a| a.evidence.item.external_key == "ledger")
+            .unwrap()
+            .currency,
+        EvidenceCurrency::Unknown
+    );
+    // Contract changes invalidate even a query for the original verification SHA.
+    ledger_snapshot(&mut f, &"e".repeat(64), "sec-A-edited");
+    for requested in [&before, &"e".repeat(64)] {
+        assert!(
+            f.store
+                .evidence_for_work(f.project.id, "WA", Some(requested), None)
+                .unwrap()
+                .iter()
+                .all(|a| a.currency == EvidenceCurrency::Historical)
+        );
+    }
+}
+
+#[test]
+fn stale_projection_cannot_stamp_new_evidence_for_later_reuse() {
+    let mut f = Fixture::new();
+    let before = "a".repeat(64);
+    let after = "b".repeat(64);
+    ledger_snapshot(&mut f, &before, "sec-A");
+    f.source = f
+        .store
+        .mark_source_freshness(&f.source, Freshness::Stale)
+        .unwrap();
+    let mut d = draft("stale-snapshot");
+    d.work_item_key = Some("WA".into());
+    d.source_sha = Some(before);
+    let rev = f.store.project(f.project.id).unwrap().project_revision;
+    let (recorded, _) = f.store.record_evidence(f.project.id, rev, d).unwrap();
+    assert!(recorded.section_fingerprint.is_none());
+    // A later fresh projection must not promote the record by inferring that it
+    // was registered against a verified ledger snapshot.
+    ledger_snapshot(&mut f, &after, "sec-A");
+    assert_eq!(
+        f.store
+            .evidence_for_work(f.project.id, "WA", Some(&after), None)
+            .unwrap()[0]
+            .currency,
+        EvidenceCurrency::Historical
+    );
+}
+
+#[test]
+fn importing_old_ledger_evidence_does_not_stamp_the_current_contract() {
+    let mut f = Fixture::new();
+    let current = "b".repeat(64);
+    ledger_snapshot(&mut f, &current, "sec-A");
+    let mut d = draft("old-ledger");
+    d.work_item_key = Some("WA".into());
+    d.source_sha = Some("a".repeat(64));
+    let rev = f.store.project(f.project.id).unwrap().project_revision;
+    let (recorded, _) = f.store.record_evidence(f.project.id, rev, d).unwrap();
+    assert!(recorded.section_fingerprint.is_none());
+    assert_eq!(
+        f.store
+            .evidence_for_work(f.project.id, "WA", Some(&current), None)
+            .unwrap()[0]
+            .currency,
+        EvidenceCurrency::Historical
+    );
+    assert!(
+        f.store
+            .evidence(f.project.id, "old-ledger")
+            .unwrap()
+            .item
+            .section_fingerprint
+            .is_none()
+    );
+}
+
+/// Git/code revision evidence has no ledger stamp. A contract match alone must
+/// never allow it to cross an explicitly requested verification revision.
 #[test]
 fn evidence_is_bound_to_the_source_revision_it_was_recorded_against() {
     let mut f = Fixture::new();
@@ -366,7 +522,7 @@ fn evidence_is_bound_to_the_source_revision_it_was_recorded_against() {
         );
     }
 
-    // The whole-file SHA advances (an unrelated item is completed).
+    // The requested verification revision advances, without a ledger binding.
     let sha_after = "c".repeat(40);
     for key in ["WA", "WB"] {
         let evs = f
@@ -386,8 +542,8 @@ fn evidence_is_bound_to_the_source_revision_it_was_recorded_against() {
     }
 }
 
-/// The two bindings are independent and the source revision wins: a section
-/// fingerprint that still matches can never override a source-SHA mismatch.
+/// Generic assessment lacks a current ledger binding, so a section fingerprint
+/// that still matches cannot override a source-SHA mismatch.
 #[test]
 fn source_sha_mismatch_beats_a_matching_section_fingerprint() {
     let mut f = Fixture::new();
@@ -423,16 +579,13 @@ fn source_sha_mismatch_beats_a_matching_section_fingerprint() {
     );
 }
 
-/// C1m: shared-ledger multi-node drift. Two logical nodes share one ledger, each
-/// completing a different ticket on its own copy, so each observes a different
-/// whole-file SHA. A record pulled from another node was taken at the *other*
-/// node's revision, so it is Historical here until it is re-verified at this
-/// node's revision — a node's own completion must never leave stale evidence
-/// looking Current.
+/// Git/code revision evidence transported between nodes has no ledger-snapshot
+/// stamp. Identical task sections cannot establish that it verified a different
+/// requested code revision.
 #[test]
 fn shared_ledger_cross_node_completion_marks_pulled_evidence_historical() {
-    // Node A and Node B have identical sections for WA/WB, but each copy's
-    // whole-file SHA differs because each node completed a different ticket.
+    // Node A and Node B have identical sections for WA/WB, but request different
+    // verification revisions rather than the ledger-snapshot fingerprints.
     let mut node_a = Fixture::new();
     node_a.commit(ProjectionBatch {
         work_items: vec![
@@ -466,7 +619,7 @@ fn shared_ledger_cross_node_completion_marks_pulled_evidence_historical() {
         .unwrap();
 
     // Node B pulls WA's evidence (shared ledger) and completes WB, advancing its
-    // own whole-file SHA to sha_b (≠ sha_a). WA's evidence was recorded at sha_a,
+    // own requested revision to sha_b (≠ sha_a). WA's evidence was recorded at sha_a,
     // so from Node B's view it is Historical until re-registered here.
     let sha_b = "b".repeat(40);
     let mut pulled = draft("wa-report");
@@ -519,8 +672,8 @@ fn shared_ledger_cross_node_completion_marks_pulled_evidence_historical() {
 /// C1m (real-environment): two *real* git worktrees of one shared ledger repo,
 /// each holding an independent SQLite store. Node A completes item WA on its own
 /// worktree (a real `git commit`), Node B fast-forwards to that commit and then
-/// completes item WB on its copy. Each node therefore sees a different whole-file
-/// SHA of the same ledger, and records bound to an earlier revision must be
+/// completes item WB on its copy. Each node therefore sees a different Git
+/// revision, and records bound to an earlier code revision must be
 /// Historical rather than silently Current; re-verifying at the current revision
 /// restores Current.
 ///
@@ -545,8 +698,8 @@ fn real_git_worktree_transport_marks_outdated_evidence_historical() {
     let base = std::env::temp_dir().join(format!("awr-c1m-real-{}", Id::new()));
     let repo = base.join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    // A shared ledger file keyed by git commit: each item's completion is a real
-    // commit bumping the whole-file SHA, while identity+acceptance stay put.
+    // A shared ledger file keyed by Git commit, not its source fingerprint:
+    // completion changes the repository revision, while the task contract stays put.
     // write_ledger writes into a specific worktree's own copy.
     let write_ledger = |dir: &Path, wa: bool, wb: bool| {
         std::fs::write(
@@ -627,7 +780,7 @@ fn real_git_worktree_transport_marks_outdated_evidence_historical() {
     let sha_after_a = git_head(&node_a);
     // Two real worktrees share one git object store (the shared ledger): Node B
     // moves to A's latest commit through the real git transport, so its
-    // whole-file SHA now differs from the SHA Node A bound WA's evidence at.
+    // Git revision now differs from the SHA Node A bound WA's evidence at.
     git(&node_b, &["reset", "-q", "--hard", &sha_after_a]);
     let sha_after_a = git_head(&node_b);
     assert_ne!(

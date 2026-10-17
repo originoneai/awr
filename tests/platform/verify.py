@@ -29,6 +29,92 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def receipt_path(path):
+    path = Path(path)
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def receipt_finalized(result):
+    return bool(result.get('cleanup_complete') and result.get('log_finalized')
+                and not result.get('timed_out'))
+
+
+def snapshot_binary(source, destination):
+    source, destination = Path(source), Path(destination)
+    require(not source.is_symlink() and source.is_file(),
+            f'Native binary is not a regular file: {source}')
+    require(not destination.exists() and not destination.is_symlink(),
+            f'Binary snapshot already exists: {destination}')
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    before = digest(source)
+    shutil.copy2(source, destination, follow_symlinks=False)
+    require(not destination.is_symlink(), f'Binary snapshot is a symlink: {destination}')
+    after = digest(source)
+    copied = digest(destination)
+    require(before == after == copied,
+            'Native binary changed while collecting its immutable currency snapshot')
+    return before
+
+
+def archive_currency_artifacts(source, destination):
+    source, destination = Path(source), Path(destination)
+    require(not source.is_symlink() and source.is_dir(),
+            f'Currency output is not a regular directory: {source}')
+    require(not destination.exists() and not destination.is_symlink(),
+            f'Currency evidence directory already exists: {destination}')
+
+    selected = []
+    for entry in sorted(source.iterdir(), key=lambda path: path.name):
+        if entry.is_symlink():
+            raise RuntimeError(f'Currency output contains a symlink artifact: {entry.name}')
+        if entry.name == 'report.json' or re.fullmatch(r'\d+\.(?:stdout|stderr)', entry.name) \
+                or entry.name.endswith('.failure.txt'):
+            require(entry.is_file(), f'Currency artifact is not a regular file: {entry.name}')
+            selected.append(entry)
+    report = source / 'report.json'
+    require(report in selected, 'Currency POC report.json is missing')
+
+    destination.mkdir(parents=True, exist_ok=False)
+    copied = []
+    try:
+        for entry in selected:
+            target = destination / entry.name
+            require(not target.exists() and not target.is_symlink(),
+                    f'Currency archive target already exists: {target}')
+            shutil.copyfile(entry, target, follow_symlinks=False)
+            require(not target.is_symlink() and target.is_file(),
+                    f'Currency archive target is not a regular file: {target}')
+            require(digest(entry) == digest(target),
+                    f'Currency artifact changed while archiving: {entry.name}')
+            copied.append(target)
+    except Exception:
+        if destination.is_dir() and not destination.is_symlink():
+            shutil.rmtree(destination)
+        raise
+
+    archived_report = destination / 'report.json'
+    return {
+        'archive_status': 'finalized',
+        'receipt': receipt_path(archived_report),
+        'receipt_sha256': digest(archived_report),
+        'archived_files': [receipt_path(path) for path in copied],
+    }
+
+
+def receipt(path, validate):
+    path = Path(path)
+
+    def check(_):
+        data = json.loads(path.read_text(encoding='utf-8'))
+        extra = validate(data) or {}
+        return {'receipt': receipt_path(path), 'receipt_sha256': digest(path), **extra}
+
+    return check
+
+
 def read_command(*command):
     return subprocess.check_output(PREFIX + list(command), cwd=ROOT, text=True, encoding='utf-8').strip()
 
@@ -61,7 +147,7 @@ def main():
     def save():
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
-    def gate(name, command, validator=None, env=None, requires=()):
+    def gate(name, command, validator=None, env=None, requires=(), archiver=None):
         nonlocal cleanup_failed
         unmet = [key for key in requires if not any(g['id'] == key and g['passed'] for g in report['gates'])]
         if cleanup_failed:
@@ -81,15 +167,33 @@ def main():
         started = time.monotonic()
         process_env = dict(os.environ, PYTHONUTF8='1', CARGO_TERM_COLOR='never')
         process_env.update(env or {})
+        archive_ready = True
         try:
             row.update(run_command(row['command'], cwd=ROOT, log=log, env=process_env,
                                    timeout_seconds=budget, cleanup_seconds=contract['cleanup_timeout_seconds']))
             cleanup_failed = not row['cleanup_complete']
-            if row['passed'] and validator:
+            if archiver:
+                if receipt_finalized(row):
+                    try:
+                        row.update(archiver())
+                    except Exception as error:
+                        archive_ready = False
+                        row.update(archive_status='failed', archive_error=str(error))
+                else:
+                    archive_ready = False
+                    row.update(archive_status='not_finalized',
+                               archive_reason='Process cleanup or output finalization did not complete')
+            if row.get('passed') and archive_ready and validator:
                 row.update(validator(log.read_text(encoding='utf-8', errors='replace')) or {})
+            elif row.get('passed') and not archive_ready:
+                row.update(status='failed', passed=False,
+                           error='Currency evidence was not finalized')
         except Exception as error:
             row.update(passed=False, error=str(error))
             cleanup_failed = not row.get('cleanup_complete', False)
+            if archiver:
+                row.update(archive_status='not_finalized',
+                           archive_reason='Process did not produce finalized output')
         row.update(finished_at=now(), duration_seconds=round(time.monotonic() - started, 3),
                    log=str(log.relative_to(ROOT)))
         if row.get('log_finalized') and log.is_file():
@@ -133,9 +237,22 @@ def main():
     extension = '.exe' if platform.system() == 'Windows' else ''
     awr, mcp = target / ('awr' + extension), target / ('awr-mcp' + extension)
     gate('runner_tests', [sys.executable, 'tests/platform/test_process_runner.py'])
+    gate('currency_runner_tests', [sys.executable, '-m', 'unittest', 'discover',
+                                   '-s', 'tests/evidence-currency', '-p', 'test_*.py'])
     gate('build', ['cargo', 'build', '--workspace', '--all-targets', '--locked'])
-    if all(path.is_file() for path in [awr, mcp]):
-        report['binary_sha256'] = {'awr': digest(awr), 'awr-mcp': digest(mcp)}
+    currency_binary_snapshot = output / 'fixtures' / 'currency-binary' / awr.name
+    currency_binary_sha256 = None
+    build_row = next(gate for gate in report['gates'] if gate['id'] == 'build')
+    if build_row['passed']:
+        try:
+            currency_binary_sha256 = snapshot_binary(awr, currency_binary_snapshot)
+            build_row['currency_binary_sha256'] = currency_binary_sha256
+            save()
+        except Exception as error:
+            build_row.update(passed=False, error=str(error))
+            save()
+    if all(path.is_file() for path in [awr, mcp]) and currency_binary_sha256 is not None:
+        report['binary_sha256'] = {'awr': currency_binary_sha256, 'awr-mcp': digest(mcp)}
 
     def inventory(text):
         names = re.findall(r'^(.+): test$', text, re.M)
@@ -158,13 +275,6 @@ def main():
                           'mutation_apply::recovery_tests::cli_recovery_after_process_death_binds_original_attempt_and_resolves_once',
                           '--', '--ignored', '--exact', '--test-threads=1'], rust_results,
          env={'AWR_RECOVERY_CLI': str(awr.resolve())}, requires=('build', 'ignored_inventory'))
-
-    def receipt(path, validate):
-        def check(_):
-            data = json.loads(path.read_text(encoding='utf-8'))
-            extra = validate(data) or {}
-            return {'receipt': str(path.relative_to(ROOT)), 'receipt_sha256': digest(path), **extra}
-        return check
 
     parity = evidence / 'cli_mcp_parity.json'
 
@@ -215,6 +325,59 @@ def main():
     gate('workflow_scenarios', [sys.executable, 'tests/benchmarks/workflow/run.py', '--awr', awr, '--mcp', mcp,
                               '--runtime-source-sha', source, '--output', workflow, '--repetitions', '1'],
          receipt(workflow / 'aggregate.json', validate_workflow), requires=('build', 'workflow_oracle'))
+
+    currency_spec = contract['evidence_currency_poc']
+    currency_contract_path = ROOT / currency_spec['contract']
+    currency_contract = (json.loads(currency_contract_path.read_text(encoding='utf-8'))
+                         if currency_contract_path.is_file() else {})
+    currency_output = output / 'fixtures' / 'evidence-currency'
+    currency_evidence = evidence / 'currency'
+
+    def validate_currency(data):
+        require(currency_contract.get('version') == currency_spec['contract_version'],
+                'Evidence-currency contract version is not pinned in the platform contract')
+        require(data.get('version') == 1 and data.get('passed') is True,
+                'Evidence-currency POC did not pass')
+        require(data.get('verification_kind') == currency_spec['verification_kind'],
+                'Evidence-currency POC kind is not synthetic_cli_process_poc')
+        poc_platform = data.get('platform')
+        require(isinstance(poc_platform, dict)
+                and poc_platform.get('system') == platform.system()
+                and poc_platform.get('machine'),
+                'Evidence-currency POC platform binding is incomplete')
+        require(data.get('source_commit') == source and data.get('source_dirty') is False,
+                'Evidence-currency POC is not bound to this clean native source commit')
+        require(data.get('inputs_unchanged') is True and data.get('binary_unchanged') is True,
+                'Evidence-currency POC inputs or binary changed during execution')
+        scenarios = data.get('scenarios', [])
+        observed = [item.get('id') for item in scenarios]
+        expected = currency_spec['scenarios']
+        require(len(observed) == len(set(observed)) and observed and set(observed) == set(expected),
+                'Evidence-currency POC scenario inventory is incomplete')
+        require(all(item.get('passed') is True for item in scenarios),
+                'Evidence-currency POC scenario failed')
+        observations = {item['id']: item.get('details', {}) for item in scenarios}
+        for scenario in currency_contract['scenarios']:
+            for field, expected_value in scenario.get('required_observations', {}).items():
+                actual = observations[scenario['id']].get(field)
+                require(type(actual) is type(expected_value) and actual == expected_value,
+                        f"Evidence-currency POC {scenario['id']} observation mismatch: {field}")
+        require(currency_binary_sha256 is not None
+                and data.get('binary_sha256') == currency_binary_sha256,
+                'Evidence-currency POC did not bind the immutable native awr snapshot')
+        identity = data.get('binary_identity')
+        require(isinstance(identity, dict) and identity.get('architecture_relation') == 'same'
+                and identity.get('architecture') not in {None, 'unknown'},
+                'Evidence-currency POC binary architecture is not native to this host')
+        return {'contract': str(currency_contract_path.relative_to(ROOT)),
+                'contract_version': currency_contract['version'],
+                'contract_sha256': digest(currency_contract_path),
+                'scenarios': observed, 'steps': len(data.get('steps', []))}
+
+    gate('evidence_currency_poc', [sys.executable, currency_spec['script'], '--awr',
+                                  currency_binary_snapshot, '--output', currency_output],
+         receipt(currency_evidence / 'report.json', validate_currency), requires=('build',),
+         archiver=lambda: archive_currency_artifacts(currency_output, currency_evidence))
     gate('format', ['cargo', 'fmt', '--all', '--check'])
     unchanged = all((ROOT / name).is_file() and digest(ROOT / name) == value for name, value in fingerprints.items())
     unchanged = unchanged and read_command('git', 'rev-parse', 'HEAD') == source and not read_command('git', 'status', '--porcelain')

@@ -790,9 +790,23 @@ fn verify_completed(
         .unwrap_or(Some(2))
         .ok_or_else(|| Error::EvidenceMissing("unknown required evidence level".into()))?
         .max(2);
+    // Equivalent ledger snapshots retain the successful receipt's exact proof
+    // selection; a newer passing report must not replace damaged selected proof.
     let binding = store
         .current_completion_binding(project, &work.meta.external_key, branch)?
-        .filter(|binding| binding.source_sha == sha);
+        .filter(|binding| {
+            binding.source_sha == sha
+                || binding.evidence.iter().any(|item| {
+                    EvidenceRecord {
+                        item: item.clone(),
+                        source: None,
+                        project_revision: 0,
+                    }
+                    .assess_for_work(Some(sha), &work.meta.source_ref, branch)
+                    .currency
+                        == EvidenceCurrency::Current
+                })
+        });
     if let Some(binding) = &binding {
         store.check_completion_binding(project, work, branch, binding)?;
     }

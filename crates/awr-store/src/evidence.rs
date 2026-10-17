@@ -210,11 +210,8 @@ impl Store {
                         .iter()
                         .any(|scope| scope == key || scope == "*"))
             {
-                let mut assessment = record.assess(
-                    source_sha,
-                    work.item.meta.source_ref.section_fingerprint.as_deref(),
-                    branch,
-                );
+                let mut assessment =
+                    record.assess_for_work(source_sha, &work.item.meta.source_ref, branch);
                 if link_stale || work.source.freshness != Freshness::Fresh {
                     assessment
                         .reasons
@@ -319,13 +316,11 @@ impl Store {
             if let Some(key)=&draft.work_item_key {
                 let work:Projected<WorkItem>=projection(tx,project,EntityKind::WorkItem,key)?;
                 item.work_item_id=Some(work.item.meta.id);
-                // Bind the record to the work item's identity+acceptance section as a
-                // second, narrower currency binding on top of the source revision.
-                //
-                // The stamp is only applied when the evidence was recorded against the
-                // work item's *current* source revision. Stamping the current section
-                // onto a record taken from an older revision would exempt that stale
-                // record from the source-SHA drift check entirely.
+                // Attest that this evidence's SHA identifies this ledger snapshot.
+                // Work-aware reads may then reuse it across ledger-only SHA drift
+                // while the task contract is unchanged. Do not stamp old snapshots
+                // or Git/code revisions with the current ledger's contract. A
+                // known-stale projection cannot attest the registration snapshot.
                 let current = work
                     .item
                     .meta
@@ -336,7 +331,10 @@ impl Store {
                     .source_sha
                     .as_deref()
                     .is_some_and(|s| s.eq_ignore_ascii_case(current));
-                if item.section_fingerprint.is_none() && recorded_against_current {
+                if item.section_fingerprint.is_none()
+                    && work.source.freshness == Freshness::Fresh
+                    && recorded_against_current
+                {
                     item.section_fingerprint =
                         work.item.meta.source_ref.section_fingerprint.clone();
                 }

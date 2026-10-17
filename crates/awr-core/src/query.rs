@@ -132,19 +132,43 @@ pub fn is_source_sha(value: &str) -> bool {
 impl EvidenceRecord {
     /// Assess currency relative to an explicitly requested source state.
     ///
-    /// Ordering is deliberate and non-overridable: the recorded/requested
-    /// **source SHA** is compared first, so a rewritten source can never be
-    /// reported as `Current` merely because the item's contract section still
-    /// matches. Only after the source revision matches is the per-work-item
-    /// section fingerprint (`section_fingerprint`) checked as a second, narrower
-    /// binding against a contract edit the source revision did not reflect. When
-    /// a source SHA is absent on either side the comparison falls back to the
-    /// section binding, and with neither binding available the result is
-    /// `Unknown`.
+    /// Without a verified work source, matching sections cannot override a source
+    /// SHA mismatch. Use `assess_for_work` to compare ledger-snapshot evidence
+    /// across unrelated edits to the same ledger. A section remains an additional
+    /// contract binding, not a replacement for exact acceptance/report validation.
     pub fn assess(
         self,
         source_sha: Option<&str>,
         section_fp: Option<&str>,
+        branch: Option<crate::Id>,
+    ) -> EvidenceAssessment {
+        self.assess_inner(source_sha, section_fp, None, branch)
+    }
+
+    /// Work-aware currency can reuse evidence whose recorded SHA identified the
+    /// ledger snapshot at registration, as attested by its stored section stamp.
+    /// Only a request for this work's current ledger snapshot may use that stamp
+    /// across SHA drift. Git/code revision requests retain strict SHA equality.
+    /// Callers must also verify the work source's freshness before using Current.
+    pub fn assess_for_work(
+        self,
+        source_sha: Option<&str>,
+        source_ref: &crate::SourceRef,
+        branch: Option<crate::Id>,
+    ) -> EvidenceAssessment {
+        self.assess_inner(
+            source_sha,
+            source_ref.section_fingerprint.as_deref(),
+            source_ref.source_fingerprint.strip_prefix("sha256:"),
+            branch,
+        )
+    }
+
+    fn assess_inner(
+        self,
+        source_sha: Option<&str>,
+        section_fp: Option<&str>,
+        ledger_sha: Option<&str>,
         branch: Option<crate::Id>,
     ) -> EvidenceAssessment {
         let mut reasons = Vec::new();
@@ -187,6 +211,17 @@ impl EvidenceRecord {
                 .as_ref()
                 .is_some_and(|s| s.freshness != Freshness::Fresh)
         };
+        // record_evidence stamps a section only when source_sha identifies the
+        // then-current ledger snapshot. Never extend this exception to an
+        // arbitrary requested revision, or infer a stamp for legacy evidence.
+        let same_ledger_contract = matches!(
+            (self.item.source_sha.as_deref(), source_sha, ledger_sha,
+             self.item.section_fingerprint.as_deref(), section_fp),
+            (Some(recorded), Some(requested), Some(current), Some(before), Some(after))
+                if recorded.len() == 64 && current.len() == 64
+                    && requested.eq_ignore_ascii_case(current)
+                    && before.eq_ignore_ascii_case(after)
+        );
         let currency = if self.item.branch_id != branch {
             reasons.push("evidence belongs to a different branch".into());
             EvidenceCurrency::Historical
@@ -194,7 +229,7 @@ impl EvidenceRecord {
             if !is_source_sha(recorded) || !is_source_sha(requested) {
                 reasons.push("source SHA is not a full hash".into());
                 EvidenceCurrency::Unknown
-            } else if !recorded.eq_ignore_ascii_case(requested) {
+            } else if !recorded.eq_ignore_ascii_case(requested) && !same_ledger_contract {
                 reasons.push("evidence was recorded for a different source SHA".into());
                 EvidenceCurrency::Historical
             } else if let (Some(recorded_section), Some(requested_section)) =
@@ -210,6 +245,11 @@ impl EvidenceRecord {
                     reasons.push("evidence source is not fresh".into());
                     EvidenceCurrency::Unknown
                 } else {
+                    if !recorded.eq_ignore_ascii_case(requested) {
+                        reasons.push(
+                            "ledger snapshot changed; the stamped work section is unchanged".into(),
+                        );
+                    }
                     EvidenceCurrency::Current
                 }
             } else if stale() {

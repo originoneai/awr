@@ -1,6 +1,6 @@
 {
   "contract_id": "awr-native-platforms",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "work_item": "AWR-QA-004",
   "rust_version": "1.93.1",
   "command_timeout_seconds": 1800,
@@ -25,7 +25,7 @@
     "awr-team-pg",
     "awr-workspace"
   ],
-  "required_gates": ["environment", "runner_tests", "build", "ignored_inventory", "workspace", "doctests", "crash_recovery", "cli_mcp_parity", "cli_lifecycle", "native_cli", "workflow_oracle", "workflow_scenarios", "format", "source_unchanged"],
+  "required_gates": ["environment", "runner_tests", "currency_runner_tests", "build", "ignored_inventory", "workspace", "doctests", "crash_recovery", "cli_mcp_parity", "cli_lifecycle", "native_cli", "workflow_oracle", "workflow_scenarios", "evidence_currency_poc", "format", "source_unchanged"],
   "ignored_tests": [
     "fixture_contender",
     "fixture_wal_writer",
@@ -45,6 +45,13 @@
     "slow_child": "execution_registry parents explicitly launch the native test binary for live recovery, supervisor interruption and final receipt recovery"
   },
   "native_cli_conditions": ["unicode_space_path", "crlf_source_intake", "wal_schema_integrity", "persisted_session", "source_write_and_receipt", "stale_write_preserved", "updated_hard_rule", "outside_source_rejected", "closed_session_health"],
+  "evidence_currency_poc": {
+    "script": "tests/evidence-currency/poc.py",
+    "contract": "tests/evidence-currency/contract.json",
+    "contract_version": "1.0.0",
+    "verification_kind": "synthetic_cli_process_poc",
+    "scenarios": ["cli_full_flow", "cross_instance_transport", "stale_revision_retry", "git_revision_strict"]
+  },
   "counting": "Each platform requires its own native execution of every gate on the recorded source commit. Report actual Rust counts per target; Unix-only tests omitted by cfg on Windows are not credited there. Repeated tests and fixture processes are not additional business scenarios. A workflow definition, cross compilation, or another platform's pass cannot supply a native result.",
   "limitations": ["Only the five listed OS/architecture/toolchain combinations are covered. Other architectures, older OS releases and filesystem or network-share variants remain unverified.", "This work does not supply native agent-client activation, independent business review, E4, performance metrics or a release."]
 }
