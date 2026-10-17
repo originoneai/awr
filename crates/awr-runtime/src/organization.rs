@@ -793,32 +793,14 @@ fn verify_completed(
     let binding = store
         .current_completion_binding(project, &work.meta.external_key, branch)?
         .filter(|binding| binding.source_sha == sha);
-    let evidence = store.evidence_for_work(project, &work.meta.external_key, Some(sha), branch)?;
-    // A completion binding proves the whole set of records it names. A binding
-    // that names even one record which is not current for this request is not
-    // proof: it is treated as absent, and the re-verification below decides
-    // instead. Keeping a partially current binding would let one stale record
-    // ride along on a neighbouring current one.
-    let selected = binding.as_ref().map(|binding| {
-        binding
-            .evidence
-            .iter()
-            .map(|record| record.id)
-            .collect::<Vec<_>>()
-    });
-    let binding = binding.filter(|_| {
-        selected.as_deref().is_some_and(|ids| {
-            binding_proven(ids, |id| {
-                evidence.iter().any(|assessment| {
-                    assessment.evidence.item.id == id
-                        && assessment.currency == EvidenceCurrency::Current
-                })
-            })
-        })
-    });
+    // The binding is proof only for the exact record set it names, so the store-side
+    // validation must see it unchanged: it rechecks every named record's currency,
+    // immutability and namespace. Narrowing or dropping the binding here would skip
+    // those checks instead of tightening them.
     if let Some(binding) = &binding {
         store.check_completion_binding(project, work, branch, binding)?;
     }
+    let evidence = store.evidence_for_work(project, &work.meta.external_key, Some(sha), branch)?;
     let mut covered = BTreeSet::new();
     let mut reports = BTreeMap::new();
     for assessment in evidence {
@@ -902,26 +884,4 @@ fn verify_completed(
         ));
     }
     Ok(())
-}
-
-/// A completion binding is proof only when every record it names is current for
-/// the request. An empty binding proves nothing, and a partially current binding
-/// is never proof: one stale record cannot ride along on a current one.
-fn binding_proven(ids: &[Id], current: impl Fn(Id) -> bool) -> bool {
-    !ids.is_empty() && ids.iter().all(|id| current(*id))
-}
-
-#[cfg(test)]
-mod binding_proof_tests {
-    use super::binding_proven;
-    use awr_core::Id;
-
-    #[test]
-    fn a_binding_needs_every_record_it_names_to_be_current() {
-        let ids = [Id::new(), Id::new()];
-        assert!(binding_proven(&ids, |_| true));
-        assert!(!binding_proven(&ids, |id| id == ids[0]));
-        assert!(!binding_proven(&ids, |id| id == ids[1]));
-        assert!(!binding_proven(&[], |_| true));
-    }
 }
