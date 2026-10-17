@@ -247,3 +247,92 @@ fn resume_preflight_uses_the_source_sessions_scoped_branch() {
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn evidence_report_read_rejects_every_byte_change_with_actionable_guidance() {
+    let mut f = Fixture::new();
+    let body: &[u8] = b"Synthetic report";
+    let locator = "report-newline.txt";
+    let evidence = f
+        .store
+        .record_evidence(
+            f.project,
+            f.rev(),
+            EvidenceDraft {
+                work_item_key: Some("W1".into()),
+                external_key: "E-NL".into(),
+                evidence_type: "report".into(),
+                level: EvidenceLevel::Designed,
+                summary: "Byte-exact evidence".into(),
+                locator: locator.into(),
+                sha256: Some(format!("{:x}", Sha256::digest(body))),
+                source_sha: None,
+                command: None,
+                scope: vec!["W1".into()],
+                branch_id: None,
+                verified_at: None,
+            },
+        )
+        .unwrap()
+        .0;
+    let denied = f.access(&[0]);
+    let allowed = f.access(&[1]);
+    let selector = WorkstreamReadSelection::default();
+    let runtime = Runtime::attach(&mut f.store, f.project).unwrap();
+    assert!(matches!(
+        runtime.read_evidence_report_in_workstream(&denied, &selector, &evidence.external_key, 100),
+        Err(Error::Workstream(WorkstreamError::AccessDenied))
+    ));
+    // The binding is byte-exact: every change after registration, including
+    // a single appended LF, CRLF or a bare CR, is rejected.
+    for changed in [
+        &b"Synthetic report\n"[..],
+        &b"Synthetic report\r\n"[..],
+        &b"Synthetic report\r"[..],
+        &b"Synthetic report\n\n"[..],
+        &b"Synthetic report\nX"[..],
+    ] {
+        fs::write(f.root.join(locator), changed).unwrap();
+        let runtime = Runtime::attach(&mut f.store, f.project).unwrap();
+        match runtime.read_evidence_report_in_workstream(
+            &allowed,
+            &selector,
+            &evidence.external_key,
+            100,
+        ) {
+            Err(Error::SourceConflict(message)) => {
+                assert!(message.contains("expected"), "{message}");
+                assert!(message.contains("actual"), "{message}");
+                assert!(message.contains("byte-identical"), "{message}");
+            }
+            other => panic!("expected a source conflict for {changed:?}, got {other:?}"),
+        }
+    }
+    // Registering the digest of the current bytes restores the binding.
+    let current = fs::read(f.root.join(locator)).unwrap();
+    f.store
+        .record_evidence(
+            f.project,
+            f.rev(),
+            EvidenceDraft {
+                work_item_key: Some("W1".into()),
+                external_key: "E-NL2".into(),
+                evidence_type: "report".into(),
+                level: EvidenceLevel::Designed,
+                summary: "Byte-exact evidence".into(),
+                locator: locator.into(),
+                sha256: Some(format!("{:x}", Sha256::digest(&current))),
+                source_sha: None,
+                command: None,
+                scope: vec!["W1".into()],
+                branch_id: None,
+                verified_at: None,
+            },
+        )
+        .unwrap();
+    let runtime = Runtime::attach(&mut f.store, f.project).unwrap();
+    let (_, bytes) = runtime
+        .read_evidence_report_in_workstream(&allowed, &selector, "E-NL2", 100)
+        .unwrap();
+    assert_eq!(bytes, current);
+}

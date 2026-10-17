@@ -905,3 +905,89 @@ fn completion_binding_errors_name_fields_without_submitted_values() {
     assert!(!message.contains("private-9f8e7d6c5b4a"), "{message}");
     assert!(!message.contains("secret-scope-9f8e7d6c5b4a"), "{message}");
 }
+
+#[test]
+fn work_prepare_completion_reports_the_normalized_digest_without_touching_the_file() {
+    let f = Fixture::new();
+    f.organize();
+    // The report is authored without the final newline that lint would add.
+    let report = f.report();
+    let locator = "report-prepare.json";
+    let bytes = serde_json::to_vec_pretty(&report).unwrap();
+    assert!(!bytes.ends_with(b"\n"));
+    fs::write(f.root.join(locator), &bytes).unwrap();
+
+    // Preflight never rewrites the caller's file: it refuses and names the
+    // digest the normalized report would have.
+    let result = f.run(&[
+        "work",
+        "prepare-completion",
+        "W",
+        "--report",
+        locator,
+        "--evidence-key",
+        "E-PREP",
+        "--source-sha",
+        SHA,
+    ]);
+    Fixture::error(&result, "InvalidInput");
+    let message = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        message.contains("exactly one trailing newline"),
+        "{message}"
+    );
+    let normalized = [bytes.as_slice(), b"\n"].concat();
+    let would = awr_source::fingerprint(&normalized)
+        .trim_start_matches("sha256:")
+        .to_string();
+    assert!(message.contains(&would), "{message}");
+    // The caller's file is untouched.
+    assert_eq!(fs::read(f.root.join(locator)).unwrap(), bytes.as_slice());
+
+    // The caller normalizes the report itself, then the preflight derives a
+    // digest over the exact stored bytes and completion verifies strictly.
+    fs::write(f.root.join(locator), &normalized).unwrap();
+    let prepared = f.ok(&[
+        "work",
+        "prepare-completion",
+        "W",
+        "--report",
+        locator,
+        "--evidence-key",
+        "E-PREP",
+        "--source-sha",
+        SHA,
+    ]);
+    assert_eq!(
+        prepared["report_sha256"].as_str().unwrap(),
+        awr_source::fingerprint(&normalized).trim_start_matches("sha256:")
+    );
+
+    // Registering the prepared digest and completing verifies strictly.
+    let selected = f.evidence("E-PREP", &report, |d| {
+        d.locator = locator.into();
+        d.sha256 = Some(
+            prepared["report_sha256"]
+                .as_str()
+                .unwrap()
+                .trim_start_matches("sha256:")
+                .into(),
+        );
+    });
+    assert!(selected.sha256.is_some());
+    let input = json!({
+        "version": 1,
+        "source_sha": SHA,
+        "acceptance": [
+            {"criterion": C1, "evidence": ["E-PREP"]},
+            {"criterion": C2, "evidence": ["E-PREP"]}
+        ]
+    });
+    let result = f.complete(&input);
+    assert!(
+        result.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+}

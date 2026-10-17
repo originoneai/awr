@@ -38,8 +38,11 @@ class ExecutionReports:
             raise ValueError('Source, output or receipt bytes changed; retain the old evidence and verify again')
 
     def store(self, suffix, value):
+        # One trailing newline is the canonical stored form: the completion
+        # preflight binds the digest to the exact stored bytes and refuses
+        # reports that do not end with a single LF.
         path = protected_file(self.wf.path.parent, suffix,
-                              json.dumps(value, ensure_ascii=False, indent=2).encode())
+                              (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode())
         return dict(path=str(path), sha256=digest(path))
 
     def read(self, record):

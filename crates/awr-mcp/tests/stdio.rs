@@ -831,6 +831,23 @@ async fn report_preflight_derives_bytes_and_coverage_without_recording_evidence(
     let bytes = serde_json::to_vec(&report).unwrap();
     fs::write(f.root.join("report.json"), &bytes).unwrap();
     let args = json!({"work":"W","report":"report.json","evidence_key":"E","source_sha":SHA,"level":"locally_verified"});
+    // Preflight never rewrites the caller's file: a report without exactly
+    // one trailing newline is refused with the digest it would have.
+    let err = error(
+        call(&client, "awr_completion_prepare", args.clone()).await,
+        "InvalidInput",
+    );
+    let err_text = err["message"].as_str().unwrap_or_default();
+    assert!(err_text.contains("exactly one trailing newline"), "{err}");
+    let normalized = [bytes.as_slice(), b"\n"].concat();
+    assert!(
+        err_text.contains(&format!("{:x}", Sha256::digest(&normalized))),
+        "{err}"
+    );
+    assert_eq!(fs::read(f.root.join("report.json")).unwrap(), bytes);
+    // The caller normalizes the report itself; the digest then binds to the
+    // exact stored bytes.
+    fs::write(f.root.join("report.json"), &normalized).unwrap();
     let result = success(call(&client, "awr_completion_prepare", args.clone()).await);
     assert_eq!(result["evidence"]["work"], "W");
     assert_eq!(result["evidence"].get("branch"), Some(&Value::Null));
@@ -838,7 +855,7 @@ async fn report_preflight_derives_bytes_and_coverage_without_recording_evidence(
     assert!(result["evidence"].get("branch_id").is_none());
     assert_eq!(
         result["report_sha256"],
-        format!("{:x}", Sha256::digest(&bytes))
+        format!("{:x}", Sha256::digest(&normalized))
     );
     assert_eq!(
         result["completion"]["acceptance"][0]["criterion"],
@@ -847,13 +864,21 @@ async fn report_preflight_derives_bytes_and_coverage_without_recording_evidence(
     assert_eq!(result["completion_claimed"], false);
     assert_eq!(result["verification_executed"], false);
     report["checks"][0]["criteria"] = json!([]);
-    fs::write(f.root.join("report.json"), report.to_string()).unwrap();
+    fs::write(
+        f.root.join("report.json"),
+        format!("{}\n", report.to_string()),
+    )
+    .unwrap();
     error(
         call(&client, "awr_completion_prepare", args.clone()).await,
         "EvidenceMissing",
     );
     report["checks"][0].as_object_mut().unwrap().remove("name");
-    fs::write(f.root.join("report.json"), report.to_string()).unwrap();
+    fs::write(
+        f.root.join("report.json"),
+        format!("{}\n", report.to_string()),
+    )
+    .unwrap();
     let err = error(
         call(&client, "awr_completion_prepare", args).await,
         "InvalidInput",

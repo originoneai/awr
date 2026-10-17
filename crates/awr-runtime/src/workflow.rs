@@ -109,6 +109,19 @@ pub fn prepare_completion(
         None,
         1024 * 1024,
     )?;
+    // Strict preflight: this command derives evidence metadata without
+    // registering or writing anything, so it never modifies the caller's
+    // report file. A report that lacks exactly one trailing newline is the
+    // common editor/lint artifact; report the digest the normalized bytes
+    // would have and let the caller normalize the file itself.
+    if !bytes.ends_with(b"\n") {
+        let mut normalized = bytes.clone();
+        normalized.push(b'\n');
+        let would = format!("{:x}", Sha256::digest(&normalized));
+        return Err(Error::InvalidInput(format!(
+            "completion report must end with exactly one trailing newline before its digest is bound: the digest of the report with one appended LF would be {would}; normalize the report file and rerun this preflight"
+        )));
+    }
     let report: CompletionReport = serde_json::from_slice(&bytes).map_err(|e| {
         Error::InvalidSource(Box::new(SourceDiagnostic {message:"invalid completion report schema".into(), location:DiagnosticLocation {
             locator:Some(request.report.clone()), pointer:None, line:(e.line()>0).then_some(e.line()), column:(e.column()>0).then_some(e.column()),
