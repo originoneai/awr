@@ -1,6 +1,6 @@
 //! Project-relative evidence locators and `#L` line selectors.
 
-use awr_source::{fingerprint, Error, Locator, Manifest, SourceSnapshot};
+use awr_source::{Error, Locator, Manifest, SourceSnapshot, fingerprint};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -109,8 +109,7 @@ fn file_locator_accepts_line_suffix_but_not_other_fragments() {
 
     // A malformed line selector is a typed error, not a filename byte.
     for suffix in ["#L", "#L12-", "#Lfoo", "#L12-14"] {
-        let error =
-            Locator::parse(&root, &manifest, &format!("{identity}{suffix}")).unwrap_err();
+        let error = Locator::parse(&root, &manifest, &format!("{identity}{suffix}")).unwrap_err();
         assert!(matches!(error, Error::InvalidInput(_)), "{suffix}: {error}");
     }
 }

@@ -19,7 +19,9 @@ pub enum Locator {
         path: PathBuf,
     },
     /// Project-root-relative path; identity is `project:///<relative-path>`.
-    Project { path: PathBuf },
+    Project {
+        path: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone)]
