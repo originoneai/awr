@@ -67,12 +67,14 @@ fn assess(
         .map(|e| json!({"key":e.to_key,"required":e.required}))
         .collect();
     // Progress, next_action, evidence additions and unrelated ledger edits do not invalidate scope.
-    let contract_fingerprint = awr_source::fingerprint(&serde_json::to_vec(
-        &json!({"id":work.meta.id,
+    let mut contract = json!({"id":work.meta.id,
         "title":work.title,"summary":work.summary,"kind":work.kind,"acceptance":work.acceptance,
         "paths":work.paths,"tags":work.tags,"goals":goals,"dependencies":dependencies,
-        "ordinary_work_policy":readiness.work.source.config["adapter_options"]["ordinary_work_policy"]}),
-    )?);
+        "ordinary_work_policy":readiness.work.source.config["adapter_options"]["ordinary_work_policy"]});
+    if !work.spec_refs.is_empty() {
+        contract["spec_refs"] = json!(work.spec_refs);
+    }
+    let contract_fingerprint = awr_source::fingerprint(&serde_json::to_vec(&contract)?);
     let previous = latest(store, project, work.meta.id, branch, "management.assessed")?;
     let prior_continuous = previous
         .as_ref()

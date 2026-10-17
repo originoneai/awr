@@ -158,6 +158,7 @@ pub(crate) fn validate_graph_projection(
                 w.summary,
                 w.kind,
                 w.acceptance,
+                w.spec_refs,
                 w.paths,
                 w.tags,
                 w.milestone

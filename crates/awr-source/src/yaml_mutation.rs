@@ -82,6 +82,7 @@ pub fn yaml_field_writable(kind: EntityKind, field: &str) -> bool {
                 | "paths"
                 | "deliverables"
                 | "acceptance"
+                | "spec_refs"
                 | "milestone"
                 | "depends_on"
                 | "dependencies"

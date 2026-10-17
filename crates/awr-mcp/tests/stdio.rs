@@ -479,6 +479,268 @@ fn success(result: CallToolResult) -> Value {
     assert_eq!(result.is_error, Some(false), "{result:?}");
     body(&result)
 }
+
+#[tokio::test]
+async fn specification_check_is_discoverable_read_only_and_conservative() {
+    let f = Fixture::new();
+    let metadata = json!({"id":"SPEC","status":"accepted","specification":{"version":"2","items":[
+        {"id":"OLD","disposition":"superseded","superseded_by":"NEW"},
+        {"id":"NEW","disposition":"future"},
+        {"id":"CANCELLED","disposition":"cancelled"}
+    ]}});
+    let document = format!(
+        "---\n{}\n---\n# Synthetic specification\n\n## Decision\nUse the reviewed boundary.\n",
+        serde_json::to_string_pretty(&metadata).unwrap()
+    );
+    fs::write(f.root.join("decisions/spec.md"), &document).unwrap();
+    let reference = json!({"specification":"SPEC","item":"OLD","approved_version":"1","source_fingerprint":format!("sha256:{}","a".repeat(64)),"criterion":CRITERION});
+    fs::write(
+        f.root.join("work.yaml"),
+        WORK.replace(
+            "  verification:\n",
+            &format!("  spec_refs: [{}]\n  verification:\n", reference),
+        ),
+    )
+    .unwrap();
+    f.reindex();
+    let client = f.client().await;
+    let before = f.logical_state();
+    let source = fs::read(f.root.join("work.yaml")).unwrap();
+    let manifest = success(call(&client, "awr_work", json!({})).await);
+    let tool = manifest["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "awr_spec_check")
+        .unwrap();
+    assert_eq!(tool["read_only"], true);
+    let result = success(
+        call(
+            &client,
+            "awr_work",
+            json!({"child_tool":"awr_spec_check","arguments":{"spec":"SPEC"}}),
+        )
+        .await,
+    );
+    assert_eq!(result["status"], "needs_review");
+    assert_eq!(result["references"][0]["replacement"], "NEW");
+    assert_eq!(result["counts"]["uncovered"], 1);
+    assert_eq!(result["counts"]["not_required"], 2);
+    assert_eq!(result["read_only"], true);
+    let unknown = success(call(&client, "awr_spec_check", json!({"spec":"missing"})).await);
+    assert_eq!(unknown["status"], "unknown");
+    error(
+        call(&client, "awr_spec_check", json!({"limit":0})).await,
+        "InvalidInput",
+    );
+    assert_eq!(f.logical_state(), before);
+    assert_eq!(fs::read(f.root.join("work.yaml")).unwrap(), source);
+    assert_eq!(
+        fs::read_to_string(f.root.join("decisions/spec.md")).unwrap(),
+        document
+    );
+    fs::write(
+        f.root.join("decisions/spec.md"),
+        document + "\nChanged source.\n",
+    )
+    .unwrap();
+    error(
+        call(&client, "awr_spec_check", json!({"spec":"SPEC"})).await,
+        "SourceStale",
+    );
+    assert_eq!(f.logical_state(), before);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn specification_queue_briefs_are_bounded_and_details_preserve_bindings() {
+    let checked = |result: CallToolResult, phase: &str| {
+        assert_eq!(result.is_error, Some(false), "{phase}: {result:?}");
+        body(&result)
+    };
+    let f = Fixture::new();
+    let criterion = "Reviewed requirement ".to_owned() + &"x".repeat(4000);
+    let refs = (0..100).map(|i|json!({"specification":"SPEC","item":format!("R{i}"),"approved_version":"1","source_fingerprint":format!("sha256:{}","a".repeat(64)),"criterion":criterion})).collect::<Vec<_>>();
+    fs::write(f.root.join("work.yaml"), serde_json::to_vec(&json!({"work_items":[{"id":"W","title":"Review specification","status":"ready","next_action":"Review","acceptance":[criterion],"spec_refs":refs}]})).unwrap()).unwrap();
+    f.reindex();
+    let client = f.client().await;
+    let before = f.logical_state();
+    let queue = checked(
+        call(&client, "awr_work_ready", json!({"limit":1})).await,
+        "queue",
+    );
+    assert_eq!(queue["ready"][0]["spec_refs_count"], 100);
+    assert!(queue["ready"][0].get("spec_refs").is_none());
+    assert!(serde_json::to_vec(&queue).unwrap().len() < 20000);
+    let status = checked(
+        call(&client, "awr_project_status", json!({"view":"full"})).await,
+        "ready status",
+    );
+    assert!(
+        !serde_json::to_string(&status)
+            .unwrap()
+            .contains("\"spec_refs\":")
+    );
+    assert!(serde_json::to_vec(&status).unwrap().len() < 20000);
+    let detail = checked(
+        call(&client, "awr_work_get", json!({"work":"W"})).await,
+        "detail",
+    );
+    assert_eq!(detail["work"]["spec_refs"].as_array().unwrap().len(), 100);
+    let check = checked(call(&client, "awr_spec_check", json!({})).await, "coverage");
+    assert_eq!(check["references"].as_array().unwrap().len(), 100);
+    assert_eq!(f.logical_state(), before);
+    let mut ledger: Value =
+        serde_json::from_slice(&fs::read(f.root.join("work.yaml")).unwrap()).unwrap();
+    ledger["work_items"][0]["status"] = json!("in_progress");
+    fs::write(
+        f.root.join("work.yaml"),
+        serde_json::to_vec(&ledger).unwrap(),
+    )
+    .unwrap();
+    f.reindex();
+    let status = checked(
+        call(&client, "awr_project_status", json!({"view":"full"})).await,
+        "current status",
+    );
+    assert_eq!(status["current"][0]["spec_refs_count"], 100);
+    assert!(status["current"][0].get("spec_refs").is_none());
+    assert!(serde_json::to_vec(&status).unwrap().len() < 20000);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn specification_document_history_and_unregistered_replacements_are_distinct() {
+    let f = Fixture::new();
+    let metadata = json!({"id":"NEW","status":"accepted","specification":{"version":"1","items":[{"id":"R","disposition":"required"}]}});
+    fs::write(
+        f.root.join("decisions/new-spec.md"),
+        format!(
+            "---\n{}\n---\n# New specification\n\n## Decision\nUse the explicit requirement.\n",
+            metadata
+        ),
+    )
+    .unwrap();
+    f.reindex();
+    let (store, project) = f.store();
+    let new = store.decision(project.id, "NEW").unwrap();
+    let replacement = json!({"source_id":new.item.meta.source_ref.source_id,"external_key":"NEW","source_fingerprint":new.item.meta.source_ref.source_fingerprint});
+    drop(store);
+    let mut old = json!({"id":"OLD","status":"superseded","superseded_by":replacement,"specification":{"version":"0","items":[{"id":"R","disposition":"required"}]}});
+    let write_old = |metadata: &Value| {
+        fs::write(f.root.join("decisions/old-spec.md"),format!("---\n{}\n---\n# Old specification\n\n## Decision\nRetain the historical requirement.\n",metadata)).unwrap()
+    };
+    write_old(&old);
+    fs::write(f.root.join("work.yaml"),serde_json::to_vec(&json!({"work_items":[{"id":"W","status":"planned","acceptance":[CRITERION],"spec_refs":[{"specification":"NEW","item":"R","approved_version":"1","source_fingerprint":replacement["source_fingerprint"],"criterion":CRITERION}]}]})).unwrap()).unwrap();
+    f.reindex();
+    let client = f.client().await;
+    let before = f.logical_state();
+    let r = success(call(&client, "awr_spec_check", json!({})).await);
+    assert_eq!(r["status"], "matched");
+    assert_eq!(r["counts"]["covered"], 1);
+    assert_eq!(r["requirements"].as_array().unwrap().len(), 1);
+    assert_eq!(f.logical_state(), before);
+    old["superseded_by"]["external_key"] = json!("MISSING");
+    write_old(&old);
+    f.reindex();
+    let before = f.logical_state();
+    let r = success(call(&client, "awr_spec_check", json!({"spec":"OLD"})).await);
+    assert_eq!(r["status"], "unknown");
+    assert_eq!(
+        r["specifications"][0]["diagnostic"],
+        "document_replacement_not_registered"
+    );
+    assert_eq!(f.logical_state(), before);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn specification_history_keeps_extraction_warnings_separate_from_receipt_validity() {
+    let f = Fixture::new();
+    for (key, status, heading) in [
+        ("OLD", "accepted", "Decision"),
+        ("SECOND", "proposed", "Requirements"),
+        ("LATEST", "proposed", "Decision"),
+    ] {
+        let metadata = json!({"id":key,"status":status,"specification":{"version":"1","items":[{"id":"R","disposition":"required"}]}});
+        fs::write(f.root.join(format!("decisions/{key}.md")), format!("---\n{}\n---\n# Synthetic specification\n\n## {heading}\nUse the reviewed requirements.\n", serde_json::to_string_pretty(&metadata).unwrap())).unwrap();
+    }
+    f.reindex();
+    for (old, new) in [("OLD", "SECOND"), ("SECOND", "LATEST")] {
+        let (mut store, project) = f.store();
+        let version = |key: &str| {
+            let d = store.decision(project.id, key).unwrap();
+            json!({"source_id":d.item.meta.source_ref.source_id,"external_key":key,"source_fingerprint":d.item.meta.source_ref.source_fingerprint})
+        };
+        let request = serde_json::from_value::<awr_runtime::BatchRequest>(json!({"version":1,"request_key":format!("adopt-{new}"),"actor":{"host":"fixture","subject":"reviewer","origin":"human"},"reason":"Adopt the reviewed specification","change":{"kind":"related","changes":[{"operation":"adopt","candidate":version(new),"supersedes":version(old)}]}})).unwrap();
+        let preview =
+            awr_runtime::change_batch(&mut store, &f.root, request.clone(), false, None, None)
+                .unwrap();
+        assert!(preview.failure.is_none());
+        let applied = awr_runtime::change_batch(
+            &mut store,
+            &f.root,
+            request,
+            true,
+            preview.value["preview"]["fingerprint"].as_str(),
+            preview.value["project_revision"].as_u64(),
+        )
+        .unwrap();
+        assert!(applied.failure.is_none());
+    }
+    let fingerprint = {
+        let (store, project) = f.store();
+        store
+            .decision(project.id, "LATEST")
+            .unwrap()
+            .item
+            .meta
+            .source_ref
+            .source_fingerprint
+    };
+    fs::write(f.root.join("work.yaml"), serde_json::to_vec(&json!({"work_items":[{"id":"W","status":"planned","spec_refs":[{"specification":"LATEST","item":"R","approved_version":"1","source_fingerprint":fingerprint}]}]})).unwrap()).unwrap();
+    f.reindex();
+    let client = f.client().await;
+    let before = f.logical_state();
+    let path = f.root.join("decisions/SECOND.md");
+    let bytes = fs::read(&path).unwrap();
+    let result = success(call(&client, "awr_spec_check", json!({"limit":5})).await);
+    assert_eq!(result["status"], "matched", "{result}");
+    assert_eq!(result["counts"]["covered"], 1);
+    assert_eq!(result["counts"]["unknown"], 0);
+    assert_eq!(result["source_warnings"], 1);
+    assert_eq!(
+        result["specifications"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|s| s["status"] == "historical")
+            .count(),
+        2
+    );
+    assert_eq!(f.logical_state(), before);
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    fs::write(
+        &path,
+        [bytes, b"\nChanged after approval.\n".to_vec()].concat(),
+    )
+    .unwrap();
+    f.reindex();
+    let before = f.logical_state();
+    let result = success(call(&client, "awr_spec_check", json!({})).await);
+    assert_eq!(result["status"], "unknown");
+    assert_eq!(
+        result["specifications"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["key"] == "SECOND")
+            .unwrap()["diagnostic"],
+        "document_replacement_adoption_unverified"
+    );
+    assert_eq!(f.logical_state(), before);
+    client.cancel().await.unwrap();
+}
 fn error(result: CallToolResult, expected: &str) -> Value {
     assert_eq!(result.is_error, Some(true), "{result:?}");
     let value = body(&result);

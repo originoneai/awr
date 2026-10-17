@@ -17,6 +17,7 @@ const FIELDS: &[&str] = &[
     "next_action",
     "blocker",
     "acceptance",
+    "spec_refs",
     "depends_on",
     "goal",
     "milestone",

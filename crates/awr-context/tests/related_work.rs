@@ -6,6 +6,7 @@ use support::Fixture;
 
 fn work(f: &Fixture, key: &str, status: WorkStatus) -> WorkItem {
     WorkItem {
+        spec_refs: vec![],
         ordinary_completion: None,
         archived: false,
         meta: f.meta(key),
@@ -79,7 +80,9 @@ fn fixture() -> Fixture {
         ("UNRELATED", DecisionStatus::Accepted, vec!["OTHER"]),
     ] {
         batch.decisions.push(Decision {
+            specification: None,
             adoption: None,
+            adoption_valid: None,
             superseded_by: None,
             meta: f.meta(key),
             title: key.into(),

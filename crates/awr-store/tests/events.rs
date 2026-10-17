@@ -5,6 +5,7 @@ use support::Fixture;
 
 fn work(f: &Fixture, key: &str) -> WorkItem {
     WorkItem {
+        spec_refs: vec![],
         ordinary_completion: None,
         archived: false,
         meta: f.meta(key),

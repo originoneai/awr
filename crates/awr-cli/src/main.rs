@@ -32,6 +32,7 @@ mod session;
 mod source;
 mod source_changes;
 mod source_relocation;
+mod specification;
 mod team;
 mod work_action;
 mod work_create;
@@ -175,6 +176,11 @@ enum Command {
         #[command(subcommand)]
         command: records::DecisionCommand,
     },
+    /// Inspect explicit specification versions, supersessions and requirement coverage.
+    Spec {
+        #[command(subcommand)]
+        command: specification::SpecificationCommand,
+    },
     /// Import, inspect or explicitly read a registered artifact.
     Artifact {
         #[command(subcommand)]
@@ -294,6 +300,7 @@ fn run(cli: &Cli) -> Result<()> {
         Some(Command::Session { command }) => session::run(&cli.project, command, cli.json),
         Some(Command::Evidence { command }) => records::evidence(&cli.project, command, cli.json),
         Some(Command::Decision { command }) => records::decision(&cli.project, command, cli.json),
+        Some(Command::Spec { command }) => specification::run(&cli.project, command, cli.json),
         Some(Command::Artifact { command }) => records::artifact(&cli.project, command, cli.json),
         Some(Command::Context { command }) => context::run(&cli.project, command, cli.json),
         Some(Command::Object { command }) => drill::object(&cli.project, command, cli.json),

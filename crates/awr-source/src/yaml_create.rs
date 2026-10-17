@@ -38,6 +38,7 @@ pub fn prepare_work_creation_with_fields(
                 "summary",
                 "goal",
                 "acceptance",
+                "spec_refs",
                 "next_action",
                 "kind",
                 "paths",
@@ -50,7 +51,7 @@ pub fn prepare_work_creation_with_fields(
             .contains(&k.as_str())
         })
     {
-        return Err(Error::InvalidInput("creation fields must be bounded source facts: summary, goal, acceptance, next_action, kind, paths, tags, priority, depends_on, owner, milestone; status remains draft".into()));
+        return Err(Error::InvalidInput("creation fields must be bounded source facts: summary, goal, acceptance, spec_refs, next_action, kind, paths, tags, priority, depends_on, owner, milestone; status remains draft".into()));
     }
     ensure_public_value(&Value::Object(input.clone()))?;
     if !["yaml-ledger-v1", "markdown-ledger-v1"].contains(&source.adapter.as_str())

@@ -38,6 +38,12 @@ Do not compare differently defined counts as progress changes.
 
 ## Source plans and recorded progress
 
+For explicitly registered requirement versions, use `awr spec check` (MCP
+`awr_spec_check`) to inspect changed/superseded task references and uncovered
+future requirements. See [specification references and coverage](specification-coverage.md).
+The check is read-only and preserves unresolved declarations as unknown; source
+freshness or declared coverage never proves semantic agreement or acceptance.
+
 `status --view action`, `status --view summary`, and `work show KEY` expose a
 `progress` object. MCP `awr_project_status` and `awr_work_get` return the same
 fields. A single-work status selection also exposes `progress` at the top level,

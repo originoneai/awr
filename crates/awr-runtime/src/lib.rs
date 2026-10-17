@@ -37,6 +37,8 @@ mod operation_readset;
 mod organization;
 mod planning_writeback;
 mod read;
+mod specification;
+pub use specification::{SpecificationCheckRequest, check_specifications};
 mod responsibility;
 mod resume;
 mod source_concurrency;

@@ -47,6 +47,7 @@ fn meta(
 
 fn work(meta: ProjectionMeta, next_action: &str) -> WorkItem {
     WorkItem {
+        spec_refs: vec![],
         ordinary_completion: None,
         archived: false,
         meta,
@@ -129,7 +130,9 @@ fn seed(fixture: &mut Fixture) -> Seed {
         ),
     ];
     batch.decisions.push(Decision {
+        specification: None,
         adoption: None,
+        adoption_valid: None,
         superseded_by: None,
         meta: meta(fixture, seed.decision_id, "D-1", 1, FP_A),
         title: "Decision".into(),

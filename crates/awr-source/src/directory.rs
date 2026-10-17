@@ -212,18 +212,22 @@ impl SourceAdapter for MarkdownDirectoryAdapter {
             } else {
                 Some(serde_json::from_value(metadata["superseded_by"].clone())?)
             };
-        if let Some(a) = &adoption {
-            a.actor.validate()?;
-            if a.version != 1
-                || a.candidate.external_key != metadata["id"].as_str().unwrap_or("")
-                || a.candidate.source_id != context.source.id
-                || a.content_fingerprint != crate::adoption::decision_content_fingerprint(text)?
-            {
-                if status == DecisionStatus::Accepted {
-                    status = DecisionStatus::Unknown;
-                }
-                warnings.push("adoption content or object identity changed; explicit review of this version is required".into());
+        let adoption_valid = adoption
+            .as_ref()
+            .map(|a| -> Result<bool> {
+                a.actor.validate()?;
+                Ok(a.version == 1
+                    && a.candidate.external_key == metadata["id"].as_str().unwrap_or("")
+                    && a.candidate.source_id == context.source.id
+                    && a.content_fingerprint
+                        == crate::adoption::decision_content_fingerprint(text)?)
+            })
+            .transpose()?;
+        if adoption_valid == Some(false) {
+            if status == DecisionStatus::Accepted {
+                status = DecisionStatus::Unknown;
             }
+            warnings.push("adoption content or object identity changed; explicit review of this version is required".into());
         }
         if status == DecisionStatus::Unknown {
             warnings.push(format!("decision status unresolved: {raw_status:?}"));
@@ -280,11 +284,20 @@ impl SourceAdapter for MarkdownDirectoryAdapter {
         )?;
         meta.source_ref.section_fingerprint = Some(snapshot.section_fingerprint(1, lines)?);
         let decision = Decision {
+            specification: if let Some(value) = metadata.get("specification") {
+                let specification: awr_core::Specification = serde_json::from_value(value.clone())
+                    .map_err(|_| Error::InvalidInput("/specification must contain version and items with explicit id/disposition and optional superseded_by".into()))?;
+                specification.validate()?;
+                Some(specification)
+            } else {
+                None
+            },
             meta,
             title,
             status,
             raw_status,
             adoption,
+            adoption_valid,
             superseded_by,
             decision,
             rationale,

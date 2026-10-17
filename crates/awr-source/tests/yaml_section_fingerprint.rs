@@ -166,3 +166,41 @@ fn writable_set_edits_change_the_section_fingerprint() {
     assert_ne!(base, section_fp(&delivered));
     assert_ne!(base, section_fp(&reassigned));
 }
+
+#[test]
+fn specification_bindings_change_only_the_owning_work_section() {
+    let reference = serde_json::json!({
+        "specification":"export-spec", "item":"EXPORT", "approved_version":"1",
+        "source_fingerprint":format!("sha256:{}", "a".repeat(64)),
+        "criterion":"Export the reviewed format"
+    });
+    let mut ledger = serde_json::json!({"work_items":[
+        {"id":"W","status":"planned","acceptance":["Export the reviewed format"],"spec_refs":[reference]},
+        {"id":"OTHER","status":"planned","acceptance":["Export the reviewed format"],"spec_refs":[reference]}
+    ]});
+    let read = |value: &serde_json::Value| parse(&value.to_string()).unwrap();
+    let base = read(&ledger);
+    assert_eq!(base.work_items[0].spec_refs[0].approved_version, "1");
+
+    ledger["work_items"][1]["spec_refs"][0]["approved_version"] = "2".into();
+    let sibling = read(&ledger);
+    assert_eq!(section_fp(&base), section_fp(&sibling));
+    assert_ne!(
+        base.work_items[1].meta.source_ref.section_fingerprint,
+        sibling.work_items[1].meta.source_ref.section_fingerprint
+    );
+
+    ledger["work_items"][0]["spec_refs"][0]["approved_version"] = "2".into();
+    ledger["work_items"][0]["spec_refs"][0]["source_fingerprint"] =
+        format!("sha256:{}", "b".repeat(64)).into();
+    let rebound = read(&ledger);
+    assert_eq!(
+        base.work_items[0].acceptance,
+        rebound.work_items[0].acceptance
+    );
+    assert_ne!(section_fp(&base), section_fp(&rebound));
+
+    ledger["work_items"][0]["status"] = "in_progress".into();
+    ledger["work_items"][0]["next_action"] = "Review the export".into();
+    assert_eq!(section_fp(&rebound), section_fp(&read(&ledger)));
+}

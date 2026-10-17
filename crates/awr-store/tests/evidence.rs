@@ -16,6 +16,7 @@ fn git_head(repo: &Path) -> String {
 
 fn work(f: &Fixture, key: &str) -> WorkItem {
     WorkItem {
+        spec_refs: vec![],
         ordinary_completion: None,
         archived: false,
         meta: f.meta(key),
@@ -114,7 +115,9 @@ fn decisions_require_acceptance_and_explicit_relevance_or_unknown_scope() {
         ("superseded", DecisionStatus::Superseded, vec!["W"], vec![]),
     ] {
         batch.decisions.push(Decision {
+            specification: None,
             adoption: None,
+            adoption_valid: None,
             superseded_by: None,
             meta: f.meta(key),
             title: key.into(),
@@ -161,7 +164,9 @@ fn unknown_work_paths_preserve_potential_decisions_and_explicit_scope_can_resolv
     let mut task = work(&f, "W");
     task.paths = vec!["crates/".into()];
     let decision = Decision {
+        specification: None,
         adoption: None,
+        adoption_valid: None,
         superseded_by: None,
         meta: f.meta("path-choice"),
         title: "Scoped choice".into(),

@@ -39,7 +39,12 @@ pub const DOMAINS: &[DomainDef] = &[
     DomainDef {
         name: "awr_work",
         description: "Apply reviewed work transitions, manage progress, and read dependency graphs.",
-        children: &["awr_work_transition", "awr_work_manage", "awr_work_graph"],
+        children: &[
+            "awr_work_transition",
+            "awr_work_manage",
+            "awr_work_graph",
+            "awr_spec_check",
+        ],
     },
     DomainDef {
         name: "awr_evidence",

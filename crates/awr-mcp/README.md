@@ -54,13 +54,20 @@ exposes twelve lifecycle/continuity tools below; HTTP adds `awr_projects_list`.
 | `awr_evidence_record` | Required `external_key`, `evidence_type`, `level`, `summary`, `locator`, nonempty `scope`, `expected_revision`; optional `work`, `sha256`, `source_sha`, `command`, `branch`, `verified_at`; record caller-supplied evidence bindings. |
 | `awr_search` | Optional `text`, `kind`, `status`, `work`, `limit` (1–100, default 10); existing FTS ranking/filtering over bounded summaries. Search includes retained history across branches; it does not feed unrelated branch events into context. |
 
+Development `main` also exposes `awr_spec_check` (under the `awr_work` domain),
+with optional `spec` and `limit` (1–10000, default 1000). It checks only explicit
+registered specification metadata and task bindings. It reports supersessions,
+changed version/fingerprints, uncovered requirements and unknown references;
+it never updates business files or proves acceptance. See
+[specification references and coverage](../../docs/dev/reference/specification-coverage.md).
+
 `work` accepts an external key or internal ID where the corresponding domain query accepts it. `branch` accepts a work-branch name/ID; `main` explicitly selects the baseline. Omission/null selects the current work branch. A named context request uses that branch's fork baseline, so do not combine it with `checkpoint` or `after_revision`. Context with no branch uses the CLI compiler's ordinary selection and delta rules. `detached: true` requires explicit work without a session. `paths: null` means unknown; `paths: []` means known empty scope.
 
 Input objects reject unknown fields. Total tool arguments are limited to 1 MiB; a completion mapping has the same 64 KiB cap as the CLI. Full source SHAs and timestamps use the core domain conventions; `verified_at` is Unix milliseconds. Tools return structured JSON and matching serialized text for clients that consume text content. The context token budget covers `work_context.rendered_context`, not the entire MCP envelope.
 
 ## Read behavior
 
-The five read tools use the existing Source, Store, Context and Search services against a disposable SQLite memory snapshot. The persistent database is opened read-only. The source indexer and lazy FTS cache may write to that private snapshot; no cache or projection is copied back. If reindexing would change a source, registration or project revision, the read returns `SourceStale` instead of presenting an ephemeral revision as real state. Sources and the live project revision are checked again before the response.
+Read tools use the existing Source, Store, Context and Search services against a disposable SQLite memory snapshot. The persistent database is opened read-only. The source indexer and lazy FTS cache may write to that private snapshot; no cache or projection is copied back. If reindexing would change a source, registration or project revision, the read returns `SourceStale` instead of presenting an ephemeral revision as real state. Sources and the live project revision are checked again before the response.
 
 On `SourceStale`, inspect and run `awr source reindex` or explicitly call
 `awr_source_reindex`, then read again. On `RevisionConflict`, review the new state

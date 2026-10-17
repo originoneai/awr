@@ -484,6 +484,22 @@ impl YamlLedgerAdapter {
                 ),
             };
             let work = WorkItem {
+                spec_refs: match value.get("spec_refs") {
+                    None => vec![],
+                    Some(value) => {
+                        let refs: Vec<awr_core::SpecificationReference> = serde_json::from_value(value.clone()).map_err(|_| invalid(
+                            &format!("{pointer}/spec_refs"), "ledger.spec_refs",
+                            "spec_refs does not match the explicit specification reference schema",
+                            "Use a list of specification, item, approved_version, source_fingerprint and optional criterion records.",
+                        ))?;
+                        awr_core::validate_specification_references(&refs).map_err(|_| invalid(
+                            &format!("{pointer}/spec_refs"), "ledger.spec_refs",
+                            "spec_refs has invalid, duplicate or oversized references",
+                            "Use distinct bounded references, sha256 fingerprints and nonblank exact criterion text.",
+                        ))?;
+                        refs
+                    }
+                },
                 archived: boolean(&value["archived"], false, &format!("{pointer}/archived"))?,
                 ordinary_completion: value
                     .get("ordinary_completion")

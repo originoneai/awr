@@ -801,6 +801,37 @@ fn registry(a: &ProjectFixture, b: &ProjectFixture) -> PathBuf {
     path
 }
 
+#[tokio::test]
+async fn specification_check_obeys_project_read_grants_and_workstream_isolation() {
+    let a = ProjectFixture::new("Explicit specification reader");
+    let b = ProjectFixture::new("Other project");
+    let mut server = Server::start(&registry(&a, &b)).await;
+    let before = a.revision();
+    let report = ok(server
+        .call(READER, "awr_spec_check", json!({"project":"alpha"}))
+        .await);
+    assert_eq!(report["status"], "unknown");
+    assert_eq!(report["read_only"], true);
+    error(
+        server
+            .call(READER, "awr_spec_check", json!({"project":"beta"}))
+            .await,
+        "RuleViolation",
+    );
+    assert_eq!(a.revision(), before);
+    server.stop().await;
+
+    let scoped = ProjectFixture::workstreams();
+    let mut server = Server::start(&registry(&scoped, &b)).await;
+    error(
+        server
+            .call(READER, "awr_spec_check", json!({"project":"alpha"}))
+            .await,
+        "Unsupported",
+    );
+    server.stop().await;
+}
+
 fn start_args(
     project: &str,
     work: &str,

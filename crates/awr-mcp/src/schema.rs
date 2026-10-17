@@ -1,7 +1,7 @@
 use rmcp::model::{Tool, ToolAnnotations};
 use serde_json::{Value, json};
 
-pub const TOOL_NAMES: [&str; 32] = [
+pub const TOOL_NAMES: [&str; 33] = [
     "awr_project_status",
     "awr_work_ready",
     "awr_work_get",
@@ -27,6 +27,7 @@ pub const TOOL_NAMES: [&str; 32] = [
     "awr_work_assess",
     "awr_work_manage",
     "awr_work_graph",
+    "awr_spec_check",
     "awr_change_preview",
     "awr_change_apply",
     "awr_change_status",
@@ -175,6 +176,16 @@ fn change_tools() -> Vec<Tool> {
             "Read dependencies, dependents, readiness and claims. Roots include required ancestors; no silent closure truncation. Host owns execution/concurrency.",
             object(
                 json!({"roots":strings(),"branch":branch(),"limit":{"type":"integer","minimum":1,"maximum":1000,"default":100}}),
+                &[],
+            ),
+            true,
+            false,
+        ),
+        tool(
+            "awr_spec_check",
+            "Read explicit approved specification bindings, supersessions and requirement coverage. Unknown refs remain unknown; never edits sources or proves acceptance. Owner stdio and unisolated project-level shared grants only; shared workstream scopes are unsupported.",
+            object(
+                json!({"spec":optional(text()),"limit":{"type":"integer","minimum":1,"maximum":10000,"default":1000}}),
                 &[],
             ),
             true,

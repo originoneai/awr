@@ -162,11 +162,16 @@ pub(crate) fn short(text: &str) -> String {
 }
 
 fn brief(work: &Projected<WorkItem>) -> Value {
-    json!({"id":work.item.meta.id,"external_key":work.item.meta.external_key,"title":work.item.title,"source_ref":work.item.meta.source_ref,
+    let mut value = json!({"id":work.item.meta.id,"external_key":work.item.meta.external_key,"title":work.item.title,"source_ref":work.item.meta.source_ref,
         "archived":work.item.archived,"ordinary_completion":work.item.ordinary_completion,"ordinary_work_policy":work.source.config["adapter_options"]["ordinary_work_policy"],
         "status":work.item.status,"raw_status":work.item.raw_status,"summary":short(if work.item.summary.is_empty(){&work.item.title}else{&work.item.summary}),
         "priority":work.item.priority,"milestone":work.item.milestone,"owner":work.item.owner,"next_action":work.item.next_action,
-        "blocker":work.item.blocker,"revision":work.item.meta.revision,"source_revision":work.item.meta.source_ref.source_revision,"freshness":work.source.freshness})
+        "blocker":work.item.blocker,"revision":work.item.meta.revision,"source_revision":work.item.meta.source_ref.source_revision,"freshness":work.source.freshness});
+    if !work.item.spec_refs.is_empty() {
+        value["spec_refs_count"] = json!(work.item.spec_refs.len());
+        value["spec_refs_detail"] = json!({"work":work.item.meta.external_key,"cli_command":"work show","mcp_tool":"awr_work_get"});
+    }
+    value
 }
 fn ready_brief(work: &WorkReadiness) -> Value {
     let mut value = brief(&work.work);
@@ -655,6 +660,9 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
             )?;
             let mut value = query.metadata();
             value["work"] = ready_brief(&work);
+            if !work.work.item.spec_refs.is_empty() {
+                value["work"]["spec_refs"] = json!(work.work.item.spec_refs);
+            }
             value["acceptance"] = json!(work.work.item.acceptance);
             value["source_ref"] = json!(work.work.item.meta.source_ref);
             value["progress"] =
