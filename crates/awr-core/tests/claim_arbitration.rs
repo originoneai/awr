@@ -12,10 +12,16 @@
 //! - expiry is a **strict** arbiter-clock comparison (`expires_at_ms <= arbiter_at_ms`); there is no
 //!   tolerance window, because a tolerance added to the arbiter clock would evict live leases;
 //! - `node_clock_ms` is evidence only and must not change any outcome (A3/A3b).
+//!
+//! A7 (a reclaimed claim must not be usable by its former holder) is a **storage-layer** criterion:
+//! it needs fence validation at all four entry points (`session progress`, `work complete`,
+//! `evidence add`, `release`) plus a migration, so it is not covered by this pure-rule target. The
+//! earlier `#[ignore]`d stub that declared it here was removed rather than registered as an ignored
+//! entry with no native execution route.
 
 use awr_core::claim_arbitration::{
-    arbitrate_claims, arbitrate_claims_legacy_node_clock, ArbitrationError, ArbitrationVerdict,
-    CandidateState, ClaimCandidate,
+    ArbitrationError, ArbitrationVerdict, CandidateState, ClaimCandidate, arbitrate_claims,
+    arbitrate_claims_legacy_node_clock,
 };
 
 fn cand(
@@ -118,8 +124,13 @@ fn a2_duplicate_max_fence_is_refused_not_guessed() {
 /// A3 / A3b — the verdict must not read any node clock, and this test must be able to notice if it did.
 #[test]
 fn a3_verdict_ignores_node_clock_skew_while_the_legacy_rule_does_not() {
+    // A3b needs the legacy node-clock rule to reach a *different* winner on this same data,
+    // otherwise the negative control is vacuous. node-a's node_clock_ms is therefore >= its own
+    // expires_at_ms: the legacy rule expires node-a (fence 2) while the arbiter clock (0) keeps it
+    // live under the production rule, so the production rule wins with fence 2 and the legacy rule
+    // with fence 1.
     let base = vec![
-        cand("node-a", "sess-1", 2, 1_000, 500),
+        cand("node-a", "sess-1", 2, 1_000, 1_000),
         cand("node-b", "sess-2", 1, 900, 100),
     ];
     let expected = arbitrate_claims("WORK-1", &base, 0).expect("unambiguous");
@@ -232,9 +243,11 @@ fn a6_record_is_reproducible_and_hashable() {
 
     let digest = first.digest().expect("digest");
     assert_eq!(digest.len(), 64);
-    assert!(digest
-        .chars()
-        .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
+    assert!(
+        digest
+            .chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+    );
     assert_eq!(digest, second.digest().expect("digest"));
 }
 
@@ -246,16 +259,6 @@ fn empty_candidate_set_is_an_error() {
         Err(ArbitrationError::EmptyCandidateSet { work_item }) => assert_eq!(work_item, "WORK-1"),
         other => panic!("expected EmptyCandidateSet, got {other:?}"),
     }
-}
-
-/// A7 is a storage-layer criterion, so it is declared here, ignored, and left unimplemented until
-/// the entry-point wiring in design §3.2 is approved. Its body belongs to
-/// `crates/awr-store/tests/claim_conflict_cross_node.rs`, which must cover **all four** named entry
-/// points — `session progress`, `work complete`, `evidence add`, `release` — not just `acquire`.
-#[test]
-#[ignore = "TODO: A7 needs migration 015 + fence validation at all four entry points (design §3.2); not implemented"]
-fn a7_reclaimed_claim_cannot_be_used_by_its_former_holder() {
-    todo!("see design §3.2 / §4 A7; requires the storage layer change, not the pure rule")
 }
 
 /// Zeros every `node_clock_ms` in a serialised record so two records can be compared outside the

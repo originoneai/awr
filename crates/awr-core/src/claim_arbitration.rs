@@ -9,7 +9,7 @@
 //! window, because a tolerance added to the arbiter clock would evict leases that are still live.
 
 use crate::error::Error;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
@@ -56,7 +56,9 @@ pub struct ArbitrationVerdict {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ArbitrationError {
-    #[error("claim fence {fence} is held by more than one live candidate on {work_item}: {node_ids:?}")]
+    #[error(
+        "claim fence {fence} is held by more than one live candidate on {work_item}: {node_ids:?}"
+    )]
     AmbiguousFence {
         work_item: String,
         fence: u64,
