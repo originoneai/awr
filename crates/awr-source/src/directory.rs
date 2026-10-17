@@ -162,10 +162,16 @@ impl SourceAdapter for MarkdownDirectoryAdapter {
             Locator::Git { revision, path } => {
                 git_files(root, &revision, &path, options.recursive)?
             }
+            Locator::Project { .. } => {
+                return Err(Error::Unsupported(
+                    "directory sources require a file:// or git:// locator".into(),
+                ));
+            }
         };
         files.sort_by_key(|locator| match locator {
             Locator::File(path) => path.to_string_lossy().into_owned(),
             Locator::Git { path, .. } => path.to_string_lossy().into_owned(),
+            Locator::Project { path } => path.to_string_lossy().into_owned(),
         });
         Ok(files)
     }
