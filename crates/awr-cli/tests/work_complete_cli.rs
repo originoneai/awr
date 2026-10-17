@@ -283,6 +283,172 @@ impl Fixture {
 }
 
 #[test]
+fn shared_ledger_completion_preserves_stamped_evidence_and_selected_reports() {
+    let f = Fixture::new();
+    f.organize();
+    let body = fs::read_to_string(f.root.join("work.yaml")).unwrap();
+    fs::write(
+        f.root.join("work.yaml"),
+        body.replace("- id: OTHER\n  status: ready\n", &format!(
+            "- id: OTHER\n  title: Deliver another report\n  goal: G\n  status: in_progress\n  next_action: Verify the other report\n  acceptance: [{C1}, {C2}]\n"
+        )),
+    ).unwrap();
+    f.ok(&["source", "reindex"]);
+    let other_session = f.ok(&[
+        "session",
+        "start",
+        "--work",
+        "OTHER",
+        "--agent",
+        "worker-b",
+        "--provider",
+        "fixture",
+        "--model",
+        "local",
+        "--claim",
+        "--expected-revision",
+        &f.revision(),
+    ])["session"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let ledger_sha = || {
+        awr_source::fingerprint(&fs::read(f.root.join("work.yaml")).unwrap())
+            .trim_start_matches("sha256:")
+            .to_owned()
+    };
+    let original_sha = ledger_sha();
+    let mut report = f.report();
+    report["source_sha"] = json!(original_sha);
+    let selected = f.evidence("E", &report, |d| d.source_sha = Some(original_sha.clone()));
+    let required = f.evidence("R", &report, |d| d.source_sha = Some(original_sha.clone()));
+    report["work_item"] = json!("OTHER");
+    report["scope"] = json!(["OTHER"]);
+    let other = f.evidence("other-report", &report, |d| {
+        d.work_item_key = Some("OTHER".into());
+        d.scope = vec!["OTHER".into()];
+        d.source_sha = Some(original_sha.clone());
+    });
+    for record in [&selected, &required, &other] {
+        assert!(record.section_fingerprint.is_some());
+    }
+    let mut input = f.input();
+    input["source_sha"] = json!(original_sha);
+    input["required_evidence"] = json!(["R"]);
+    Fixture::success(&f.complete(&input));
+    assert_ne!(ledger_sha(), original_sha);
+    // The second worker uses its original report, recorded before W completed.
+    // No report bytes or verification revision are rewritten for the new ledger.
+    input["required_evidence"] = json!([]);
+    for mapping in input["acceptance"].as_array_mut().unwrap() {
+        mapping["evidence"] = json!(["other-report"]);
+    }
+    let other_input = f.root.join("other-completion.json");
+    fs::write(&other_input, serde_json::to_vec(&input).unwrap()).unwrap();
+    f.ok(&[
+        "work",
+        "complete",
+        "OTHER",
+        "--session",
+        &other_session,
+        "--reason",
+        "Verified the independently assigned report",
+        "--input",
+        other_input.to_str().unwrap(),
+        "--expected-revision",
+        &f.revision(),
+    ]);
+    let current_sha = ledger_sha();
+    let verified = || {
+        f.ok(&["intake", "inspect", "--source-sha", &current_sha])
+        ["organization"]["verified_completed"].as_u64().unwrap()
+    };
+    assert_eq!(verified(), 2);
+    let (store, project) = f.store();
+    for (work, key) in [("W", "E"), ("OTHER", "other-report")] {
+        let evidence = store
+            .evidence_for_work(project, work, Some(&current_sha), None)
+            .unwrap();
+        let found = evidence
+            .iter()
+            .find(|e| e.evidence.item.external_key == key)
+            .unwrap();
+        assert_eq!(found.currency, EvidenceCurrency::Current);
+        assert_eq!(
+            found.evidence.item.source_sha.as_deref(),
+            Some(original_sha.as_str())
+        );
+    }
+    drop(store);
+
+    // Even across ledger drift, an unselected new passing report cannot replace
+    // a damaged selected report (including extra required evidence).
+    let mut replacement = f.report();
+    replacement["source_sha"] = json!(current_sha);
+    f.evidence("replacement", &replacement, |d| {
+        d.source_sha = Some(current_sha.clone())
+    });
+    let bytes = fs::read(f.root.join(&required.locator)).unwrap();
+    // Preserve all binding fields and passing criteria, but replace the reported
+    // observation. Re-parsing alone cannot enforce the selected proof's digest.
+    let mut changed_report: Value = serde_json::from_slice(&bytes).unwrap();
+    changed_report["checks"][0]["details"] = json!("A different passing observation");
+    fs::write(
+        f.root.join(&required.locator),
+        serde_json::to_vec_pretty(&changed_report).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(verified(), 1);
+    fs::write(f.root.join(&required.locator), bytes).unwrap();
+    assert_eq!(verified(), 2);
+
+    // Changing this task's acceptance still invalidates its original proof.
+    let body = fs::read_to_string(f.root.join("work.yaml")).unwrap();
+    fs::write(
+        f.root.join("work.yaml"),
+        body.replacen(C2, "A new review is required", 1),
+    )
+    .unwrap();
+    let changed_sha = ledger_sha();
+    let status = f.ok(&["intake", "inspect", "--source-sha", &changed_sha]);
+    assert_eq!(status["organization"]["verified_completed"], 1);
+}
+
+#[test]
+fn ledger_drift_cannot_drop_unstamped_extra_required_evidence() {
+    let f = Fixture::new();
+    f.organize();
+    let ledger_sha = || {
+        awr_source::fingerprint(&fs::read(f.root.join("work.yaml")).unwrap())
+            .trim_start_matches("sha256:")
+            .to_owned()
+    };
+    let original = ledger_sha();
+    let mut report = f.report();
+    report["source_sha"] = json!(original);
+    let selected = f.evidence("E", &report, |d| d.source_sha = Some(original.clone()));
+    let required = f.evidence("R", &report, |d| {
+        d.source_sha = Some(original.clone());
+        // Scope links this proof to W, but it was not stamped against W's contract.
+        d.work_item_key = None;
+    });
+    assert!(selected.section_fingerprint.is_some());
+    assert!(required.section_fingerprint.is_none());
+    let mut input = f.input();
+    input["source_sha"] = json!(original);
+    input["required_evidence"] = json!(["R"]);
+    Fixture::success(&f.complete(&input));
+    let current = ledger_sha();
+    assert_ne!(current, original);
+    // E can cross the ledger change, but R cannot. Keep R mandatory instead of
+    // falling back to E alone just because E covers every acceptance criterion.
+    let checked = f.ok(&["intake", "inspect", "--source-sha", &current]);
+    assert_eq!(checked["organization"]["verified_completed"], 0);
+    let original_checked = f.ok(&["intake", "inspect", "--source-sha", &original]);
+    assert_eq!(original_checked["organization"]["verified_completed"], 1);
+}
+
+#[test]
 fn completion_query_uses_applied_selection_and_keeps_rejected_attempts() {
     let f = Fixture::new();
     f.organize();

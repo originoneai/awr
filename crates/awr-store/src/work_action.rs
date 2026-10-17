@@ -329,11 +329,8 @@ pub(crate) fn validate_completion_binding(
                 .iter()
                 .any(|key| key == &work.meta.external_key || key == "*"),
         };
-        let assessment = record.assess(
-            Some(&binding.source_sha),
-            work.meta.source_ref.section_fingerprint.as_deref(),
-            branch,
-        );
+        let assessment =
+            record.assess_for_work(Some(&binding.source_sha), &work.meta.source_ref, branch);
         if !applies
             || assessment.currency != EvidenceCurrency::Current
             || !assessment.missing_bindings.is_empty()

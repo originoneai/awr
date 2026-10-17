@@ -47,8 +47,10 @@ operation. `awr_completion_prepare` provides the same preflight through MCP.
 No command runs, no evidence is registered and no task is completed by preflight.
 The level is the caller's declaration. The command, scope and time come from the
 report; the file digest is computed by AWR. The supplied source SHA must match the
-report and must include any changes relevant to verification in its accompanying
-source evidence. AWR does not assume a clean Git checkout.
+report and must be the actual revision used for verification, including any
+Git/code changes relevant to the checks. AWR does not assume a clean Git
+checkout. The task's section fingerprint is a separate contract binding; exact
+acceptance coverage still comes from the report's `checks[].criteria` mapping.
 
 The CLI's `evidence` object is ready for `awr evidence add --input` without
 renaming fields: it contains `work_item_key` and an explicit `branch_id` resolved
@@ -76,6 +78,15 @@ awr work complete WORK --session "$SESSION" --reason "Deliver verified work" \
 
 Each write requires the current project revision. If another operation advances
 it, read the current state and recheck the report, branch and claim before retrying.
+
+For this sequence, `source_sha` is the actual verification revision and the
+evidence `sha256` is the exact report digest. On development `main`, work-aware
+currency may reuse a record across ledger-only drift only under the section-stamp
+rules in [Core concepts](../../series/concepts.md#delivery-and-acceptance); generic
+evidence reads without work context remain SHA-strict. An omitted query SHA can
+use the work section binding, but verified evidence still requires `source_sha`
+and the report, branch, freshness and required-proof gates. `Current` is a
+currency label, not proof of execution or completion.
 
 The report uses this structure; replace every fixture value with actual evidence:
 
@@ -126,10 +137,12 @@ When status is checked with a source SHA, an unchanged task completed through AW
 is verified against the evidence selected by that successful completion on the
 same runtime branch. Every selected report, including extra required evidence,
 is read and checked again; another passing report cannot replace a missing or
-damaged selected report. Rejected attempts remain available in evidence history.
-If the task facts/revision, branch or requested source SHA no longer match the
-completion receipt, status uses the existing conservative source/evidence
-assessment. Source-declared completion alone never supplies a verified receipt.
+damaged selected report. Ledger-only drift recognized through matching stored
+section stamps retains that receipt's exact evidence selection. Rejected attempts
+remain available in evidence history. If the task facts/revision, branch or requested
+source revision no longer satisfies the completion receipt's bindings, status
+uses the existing conservative source/evidence assessment. Source-declared
+completion alone never supplies a verified receipt.
 
 For one preparation, the old work-get plus context-compile pair becomes one call
 with the same required context. This is a call-count reduction only, not a claim
