@@ -927,10 +927,13 @@ mod completion_binding_guard_tests {
         }
     }
 
-    /// The runtime cannot produce this state through its own operations: a binding
-    /// is only written after every named record was current. The completion
-    /// receipt is therefore planted directly, and the bound record is recorded on
-    /// main while the request asks for a branch, which makes it non-current.
+    /// The runtime cannot produce this state through its own operations: a binding is
+    /// only written after every named record was current. The completion receipt is
+    /// therefore planted directly, and the bound record is recorded on main while the
+    /// request asks for a branch, which makes it non-current.
+    ///
+    /// The assertions are the organization counters, not just the store error: a
+    /// narrowed binding would skip the check and count the item as verified.
     #[test]
     fn the_binding_check_runs_once_and_refuses_a_partially_current_binding() {
         let root = std::env::temp_dir().join(format!("awr-binding-guard-{}", Id::new()));
@@ -949,27 +952,62 @@ mod completion_binding_guard_tests {
                 },
             )
             .unwrap();
+        // A minimal context profile keeps `rules_defined` true without a rules source.
+        let source = store
+            .configure_source(&source, serde_json::json!({"context_profile": "minimal"}))
+            .unwrap();
+        let source_ref = SourceRef {
+            source_id: source.id,
+            locator: source.locator.clone(),
+            source_revision: source.revision + 1,
+            source_fingerprint: "snapshot-1".into(),
+            pointer: Some("/W".into()),
+            start_line: None,
+            end_line: None,
+            section_fingerprint: None,
+        };
         let work = work(ProjectionMeta {
             id: Id::new(),
             external_key: "W".into(),
             revision: 1,
-            source_ref: SourceRef {
-                source_id: source.id,
-                locator: source.locator.clone(),
-                source_revision: source.revision + 1,
-                source_fingerprint: "snapshot-1".into(),
-                pointer: Some("/W".into()),
-                start_line: None,
-                end_line: None,
-                section_fingerprint: None,
-            },
+            source_ref: source_ref.clone(),
         });
+        let goal = Goal {
+            meta: ProjectionMeta {
+                id: Id::new(),
+                external_key: "G".into(),
+                revision: 1,
+                source_ref: SourceRef {
+                    pointer: Some("/G".into()),
+                    ..source_ref.clone()
+                },
+            },
+            title: "Ship".into(),
+            status: "active".into(),
+            priority: None,
+            success_criteria: vec![],
+            summary: "Deliver the work".into(),
+        };
+        let edge = Edge {
+            id: Id::new(),
+            project_id: project.id,
+            from_kind: EntityKind::WorkItem,
+            from_key: "W".into(),
+            relation: "supports".into(),
+            to_kind: EntityKind::Goal,
+            to_key: "G".into(),
+            required: true,
+            revision: 1,
+            source_ref: source_ref.clone(),
+        };
         let source = store
             .commit_source_projection(
                 &source,
                 "snapshot-1",
                 ProjectionBatch {
+                    goals: vec![goal],
                     work_items: vec![work.clone()],
+                    edges: vec![edge],
                     ..Default::default()
                 },
             )
@@ -1044,23 +1082,44 @@ mod completion_binding_guard_tests {
             .unwrap();
         drop(connection);
         BINDING_CHECK_CALLS.store(0, Ordering::SeqCst);
-        let mut budget = 16 * 1024 * 1024;
-        let error = verify_completed(&store, project.id, &work, Some(branch.id), SHA, &mut budget)
-            .unwrap_err();
+        let project = store.project(project.id).unwrap();
+        let works = store.work_items(project.id).unwrap();
+        let readiness = store
+            .ready_work(project.id, Some(branch.id), now_millis().unwrap())
+            .unwrap();
+        let report = inspect_organization(
+            &store,
+            &project,
+            Some(branch.id),
+            Some(SHA),
+            true,
+            &works,
+            &readiness,
+        )
+        .unwrap();
         assert_eq!(
             BINDING_CHECK_CALLS.load(Ordering::SeqCst),
             1,
             "the completion binding check must run exactly once per binding"
         );
-        match error {
-            Error::EvidenceMissing(message) => {
-                assert!(
-                    message.contains("not current, fully bound evidence"),
-                    "{message}"
-                )
-            }
-            other => panic!("expected EvidenceMissing, got {other:?}"),
-        }
+        assert_eq!(
+            report.verified_completed, 0,
+            "a partially current binding must not be counted as verified"
+        );
+        assert_eq!(
+            report.completion_verification_failed, 1,
+            "the refusal must reach the failed counter, not the verified counter"
+        );
+        let gap = report
+            .gaps
+            .iter()
+            .find(|gap| gap.code == "completion_verification_failed")
+            .expect("the refusal must be reported as a completion gap");
+        assert!(
+            gap.detail.contains("not current, fully bound evidence"),
+            "{}",
+            gap.detail
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }
