@@ -6,6 +6,9 @@ pub const CHECKPOINT_LIMITATION: &str = "Progress record only: context hash and 
 pub const INCOMPLETE_CONTEXT_GUIDANCE: &str = "Required context has gaps. Do not claim complete understanding, passing tests or completed work. You may save an incomplete checkpoint with the actual last-used context hash, explicit gaps and open loops; do not invent a hash. A checkpoint does not change the source-backed next action.";
 
 /// Stable host conversation identity, independent of any MCP transport connection.
+/// `client` is an MCP namespace, distinct from the hook dialect in `ClientBinding`.
+/// HTTP supplies its authenticated registry client; stdio supplies `stdio`.
+/// CLI values are caller-supplied and do not themselves prove authentication.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct McpSessionBinding {

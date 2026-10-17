@@ -426,6 +426,83 @@ namespace and execution ID separate. Source `owner`, chosen Agent and actual ses
 Agent are separate facts. For a client without native hooks, call the generic
 receiver explicitly; no hook installation or client-private history access is needed.
 
+### Resolve an external session in its own namespace
+
+Resolve the full `(project, binding kind, client, external ID)` key first. Use the
+returned AWR session ID when crossing interfaces, subject to the destination's
+access checks. Shared HTTP requires an MCP binding for its authenticated client;
+the ID alone cannot enroll a local-only session. A matching conversation string
+alone never identifies a session across binding kinds or clients.
+
+| Binding kind | Meaning of `client` | External ID | Writer and lookup |
+| --- | --- | --- | --- |
+| Local client continuity (`ClientBinding`) | Hook dialect: `generic`, `codex` or `kimi` | `external_session`, normally a host-prefixed native conversation ID | `client bind` / `client hook`; inspect with `client show` |
+| MCP session identity (`McpSessionBinding`) | MCP client namespace: HTTP supplies its authenticated registry client ID; local MCP uses `stdio`; CLI values are caller-supplied | `conversation`, stable across transport reconnects | `awr_session_start` / `awr_session_resume`, or CLI `session start --client ... --conversation ...`; inspect with `awr_session_get` using `conversation` |
+
+These records serve different purposes. Local continuity stores the digest,
+next action, open loops and lifecycle checkpoint delivery receipts. MCP identity
+resolves conversation selectors and, over HTTP, participates in session access
+checks. `client bind --client generic` does not create a binding for the MCP
+`stdio` client, and a local dialect name is not an authenticated service principal.
+Even when both client strings happen to match, neither lookup falls back to the
+other record. `client show` returns a null `binding` until local continuity has
+been bound; an MCP conversation lookup reports a missing binding until an MCP
+session identity has been created. Session IDs and credentials remain separate.
+Several local continuity records may explicitly reference one AWR session; their
+saved progress and delivery receipts remain independent.
+
+### Share one AWR session between local continuity and MCP
+
+For a host using both interfaces, create the MCP-bound session first, then attach
+local continuity to the returned `session.id` with `client bind --session`.
+The actual agent/provider/model, selected work and current project revision are
+required as usual. For local stdio MCP, the CLI equivalent is:
+
+```sh
+awr --json session start --work "$AWR_WORK" --agent "$AWR_AGENT" \
+  --provider "$AWR_PROVIDER" --model "$AWR_MODEL" \
+  --client stdio --conversation "$AWR_EXTERNAL" \
+  --expected-revision "$AWR_REV"
+
+# Set AWR_SESSION to session.id from that successful receipt.
+awr --json client bind --client generic --external-session "$AWR_EXTERNAL" \
+  --work "$AWR_WORK" --session "$AWR_SESSION"
+```
+
+Here `AWR_EXTERNAL` is the actual host-prefixed native conversation ID, for
+example `cursor:<native-id>`. The two external strings may be identical, but the
+shared AWR session ID is the explicit bridge. `client show --client generic
+--external-session ...` and stdio `awr_session_get` with that `conversation` now
+refer to the same session. Attaching continuity does not create another session
+or acquire a claim.
+
+For shared HTTP, prefer `awr_session_start` under the host's authenticated
+registry client, then attach local continuity to its returned session ID. A
+server-side operator can alternatively use CLI `session start --client` with that
+exact registry client ID; HTTP requests still require its credentials and project
+grants. Changing the MCP client ID, or substituting `generic` for `stdio`, selects
+a different namespace. Starting independently through each interface without
+`--session` can create separate AWR sessions; matching external text does not
+join the binding registries. Local creation can also recover a single active
+session with its generated agent label on the current branch after an interrupted
+hook. That orphan-recovery path is not an MCP identity lookup; use the explicit
+session-ID bridge for cross-interface association.
+
+The bindings also have different continuation rules. A local continuity binding
+stays attached to its original AWR session, including after it closes. Resuming an
+MCP-bound session may reuse its conversation and resolve it to a new successor;
+CLI `session resume` also inherits the predecessor's MCP identity.
+It does not retarget an existing local continuity record. Inspect the predecessor
+and successor, and bind a new native conversation to the successor explicitly.
+If the host keeps its existing native conversation, use the successor's explicit
+session ID for session/context/checkpoint operations instead of treating the old
+local binding as updated. Shared HTTP still requires the successor's MCP binding
+to match the authenticated principal; an explicit session ID alone never grants
+access, including for resume. Existing records retain these meanings; no binding
+or access rights are inferred from another record.
+
+### Local continuity lifecycle
+
 1. Start an AWR session with `session start` and the actual Agent/provider/model,
    or let `client bind --client generic --external-session <namespaced-native-id>
    --work <key>` create it. Pass `--session <id>` to bind an already created session.
@@ -458,6 +535,9 @@ receiver explicitly; no hook installation or client-private history access is ne
    stale checkpoints do not authorize replay. Repeating a binding keeps its session.
    A raw resume that already created a successor must be inspected, not retried as a
    new continuation. Native resumption remains a separate, client-supported host action.
+
+See the [MCP lifecycle contract](mcp-service.md#work-session-lifecycle) for
+authenticated conversation selectors, reuse, explicit resume and access checks.
 
 ### Durable external reports
 

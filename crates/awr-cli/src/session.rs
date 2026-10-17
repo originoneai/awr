@@ -62,11 +62,11 @@ pub enum SessionCommand {
         claim: bool,
         #[arg(long, requires = "claim")]
         ttl_ms: Option<u64>,
-        /// Host client id for the conversation binding (MCP-compatible).
+        /// Caller-supplied MCP namespace for `--conversation`: use `stdio` for local `awr-mcp`, or the registry client ID for shared HTTP. This does not authenticate the caller and is distinct from `client bind --client` hook dialects.
         #[arg(long, requires = "conversation")]
         client: Option<String>,
-        /// Host conversation id; binds this session so the MCP channel
-        /// resolves the same session without a separate client bind.
+        /// Stable host conversation ID for the MCP binding. It is distinct from
+        /// local `client bind` continuity until that command uses `--session`.
         #[arg(long, requires = "client")]
         conversation: Option<String>,
         #[arg(long)]

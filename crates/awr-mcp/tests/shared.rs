@@ -811,6 +811,281 @@ fn start_args(
     json!({"project":project,"work":work,"conversation":conversation,"agent":"guide-editor","provider":"synthetic","model":"fixture","expected_revision":revision,"claim":claim,"request_id":Id::new().to_string()})
 }
 
+fn attach_local_continuity(
+    store: &mut Store,
+    project: Id,
+    session: Id,
+    external: &str,
+) -> ClientBinding {
+    let revision = store.project(project).unwrap().project_revision;
+    let binding = ClientBinding {
+        client: "generic".into(),
+        external_session: external.into(),
+        session_id: session,
+        revision: 0,
+        digest: "Local continuity fixture".into(),
+        next_action: "Inspect the current work".into(),
+        open_loops: vec![],
+        context_hash: Some("a".repeat(64)),
+        context_revision: Some(revision),
+        progress_revision: revision,
+        last_delivery_key: None,
+        last_hook_event: None,
+        checkpoint_id: None,
+        observed_at: now_millis().unwrap(),
+    };
+    store
+        .save_client_binding(project, revision, binding, false)
+        .unwrap()
+        .0
+}
+
+#[tokio::test]
+async fn local_and_mcp_bindings_stay_namespace_scoped_and_bridge_by_session_id() {
+    for mode in ["flat", "hierarchical"] {
+        let a = ProjectFixture::new("Namespace binding fixture");
+        let b = ProjectFixture::new("Separate namespace fixture");
+        let config = registry(&a, &b);
+        let config_text = fs::read_to_string(&config)
+            .unwrap()
+            .replace("id='writer'", "id='generic'");
+        fs::write(&config, config_text).unwrap();
+        let source = fs::read(a.root.join("work.yaml")).unwrap();
+
+        let local_only_session = {
+            let mut store = Store::open_existing(&a.root.join(".awr/state.db")).unwrap();
+            let revision = store.project(a.id).unwrap().project_revision;
+            let (started, _) = store
+                .start_session(
+                    a.id,
+                    revision,
+                    SessionDraft {
+                        work_item_key: Some("W".into()),
+                        agent_id: "local-agent".into(),
+                        provider: "fixture".into(),
+                        model: "local".into(),
+                        branch_id: None,
+                        claim: false,
+                        claim_ttl_ms: None,
+                    },
+                )
+                .unwrap();
+            let binding = attach_local_continuity(
+                &mut store,
+                a.id,
+                started.session.id,
+                "namespace-collision",
+            );
+            assert_eq!(binding.session_id, started.session.id);
+            started.session.id
+        };
+
+        let mut server = Server::start_mode(&config, mode).await;
+        error(
+            server
+                .call(
+                    WRITER,
+                    "awr_session_get",
+                    json!({"project":"alpha","conversation":"namespace-collision"}),
+                )
+                .await,
+            "NotFound",
+        );
+        error(
+            server
+                .call(
+                    WRITER,
+                    "awr_session_get",
+                    json!({"project":"alpha","session":local_only_session}),
+                )
+                .await,
+            "RuleViolation",
+        );
+        error(
+            server
+                .call(
+                    WRITER,
+                    "awr_session_resume",
+                    json!({"project":"alpha","session":local_only_session,"conversation":"namespace-collision","agent":"local-agent","provider":"fixture","model":"local","expected_revision":a.revision()}),
+                )
+                .await,
+            "RuleViolation",
+        );
+        assert!(
+            Store::open_readonly(&a.root.join(".awr/state.db"))
+                .unwrap()
+                .resumed_successor(a.id, local_only_session)
+                .unwrap()
+                .is_none()
+        );
+        let listed = ok(server
+            .call(
+                WRITER,
+                "awr_session_list",
+                json!({"project":"alpha","limit":100}),
+            )
+            .await);
+        assert!(
+            listed["sessions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|session| session["id"] != json!(local_only_session))
+        );
+
+        let started = ok(server
+            .call(
+                WRITER,
+                "awr_session_start",
+                start_args("alpha", "W", "bridge-conversation", a.revision(), false),
+            )
+            .await);
+        let bridge_session: Id = started["session"]["id"].as_str().unwrap().parse().unwrap();
+        {
+            let mut store = Store::open_existing(&a.root.join(".awr/state.db")).unwrap();
+            let binding =
+                attach_local_continuity(&mut store, a.id, bridge_session, "bridge-conversation");
+            assert_eq!(
+                store
+                    .mcp_bound_session(
+                        a.id,
+                        &McpSessionBinding {
+                            client: "generic".into(),
+                            conversation: "bridge-conversation".into(),
+                        },
+                    )
+                    .unwrap()
+                    .unwrap()
+                    .id,
+                bridge_session
+            );
+            assert_eq!(
+                store
+                    .client_binding(a.id, "generic", "bridge-conversation")
+                    .unwrap()
+                    .unwrap()
+                    .session_id,
+                binding.session_id
+            );
+        }
+        let inspected = ok(server
+            .call(
+                WRITER,
+                "awr_session_get",
+                json!({"project":"alpha","conversation":"bridge-conversation"}),
+            )
+            .await);
+        assert_eq!(inspected["session"]["id"], json!(bridge_session));
+        error(
+            server
+                .call(
+                    COLLEAGUE,
+                    "awr_session_get",
+                    json!({"project":"alpha","conversation":"bridge-conversation"}),
+                )
+                .await,
+            "NotFound",
+        );
+        error(
+            server
+                .call(
+                    COLLEAGUE,
+                    "awr_session_get",
+                    json!({"project":"alpha","session":bridge_session}),
+                )
+                .await,
+            "RuleViolation",
+        );
+
+        let resumed = ok(
+            server
+                .call(
+                    WRITER,
+                    "awr_session_resume",
+                    json!({"project":"alpha","session":bridge_session,"conversation":"bridge-conversation","agent":"successor-agent","provider":"synthetic","model":"fixture","expected_revision":a.revision()}),
+                )
+                .await,
+        );
+        let successor: Id = resumed["resumed"]["session"]["id"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_ne!(successor, bridge_session);
+        {
+            let store = Store::open_readonly(&a.root.join(".awr/state.db")).unwrap();
+            assert_eq!(
+                store
+                    .mcp_session_binding(a.id, bridge_session)
+                    .unwrap()
+                    .unwrap()
+                    .conversation,
+                "bridge-conversation"
+            );
+            assert_eq!(
+                store
+                    .mcp_bound_session(
+                        a.id,
+                        &McpSessionBinding {
+                            client: "generic".into(),
+                            conversation: "bridge-conversation".into(),
+                        },
+                    )
+                    .unwrap()
+                    .unwrap()
+                    .id,
+                successor
+            );
+            assert_eq!(
+                store
+                    .client_binding(a.id, "generic", "bridge-conversation")
+                    .unwrap()
+                    .unwrap()
+                    .session_id,
+                bridge_session
+            );
+            assert_eq!(
+                store
+                    .client_binding(a.id, "generic", "namespace-collision")
+                    .unwrap()
+                    .unwrap()
+                    .session_id,
+                local_only_session
+            );
+        }
+        let current = ok(server
+            .call(
+                WRITER,
+                "awr_session_get",
+                json!({"project":"alpha","conversation":"bridge-conversation"}),
+            )
+            .await);
+        assert_eq!(current["session"]["id"], json!(successor));
+        error(
+            server
+                .call(
+                    COLLEAGUE,
+                    "awr_session_get",
+                    json!({"project":"alpha","conversation":"bridge-conversation"}),
+                )
+                .await,
+            "NotFound",
+        );
+        error(
+            server
+                .call(
+                    COLLEAGUE,
+                    "awr_session_get",
+                    json!({"project":"alpha","session":successor}),
+                )
+                .await,
+            "RuleViolation",
+        );
+        assert_eq!(source, fs::read(a.root.join("work.yaml")).unwrap());
+        server.stop().await;
+    }
+}
+
 #[tokio::test]
 async fn checkpoint_progress_keeps_source_authority_and_caller_declarations_over_http() {
     let a = ProjectFixture::new("Progress fixture");

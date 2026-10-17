@@ -171,6 +171,14 @@ Use `session resume` only for a real session handoff.
 
 ## Bind a native conversation
 
+This section uses local client continuity. Its `--client generic` is a hook
+dialect; it is distinct from the caller-supplied MCP namespace recorded by
+`session start --client ... --conversation ...`. HTTP authenticates its registry
+principal separately. For a host mixing CLI and MCP, create the
+MCP-bound session first and attach here with its returned session ID. Follow the
+[host contract's resolution rules](../reference/host-contract.md#resolve-an-external-session-in-its-own-namespace);
+matching external strings alone do not connect the two bindings.
+
 Prefix the host's conversation ID with the host name, so the durable identity
 stays distinct per host without a new client enum or schema change. Fail fast
 if the native ID is missing: an empty suffix yields the literal `cursor:`, which
@@ -217,6 +225,12 @@ Do not pass both flags. `--client generic` is the L0 identity; use the same
 namespaced external ID on `client progress` and `client show`. `awr client
 install` is L2 and currently exists only for Codex; other values return
 `Unsupported`. That error is not a missing binary or a failed MCP connection.
+
+An existing local binding stays pinned to its original AWR session after a
+resume. Use a new native conversation when attaching continuity to a successor;
+if the native conversation stays the same, use explicit successor session
+operations. MCP's ability to reuse a conversation for a successor does not move
+the old local continuity binding.
 
 ## End
 

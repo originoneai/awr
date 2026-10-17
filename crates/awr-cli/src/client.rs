@@ -14,20 +14,22 @@ use std::{
 
 #[derive(Debug, Args)]
 pub struct Identity {
-    /// Host dialect. Required everywhere: `generic` for any host without a documented dialect; prefix its conversation ID, e.g. `--client generic --external-session cursor:<native-id>`. `codex` and `kimi` are documented native dialects. No default, so no dialect is implied as the product centre.
+    /// Local hook dialect for the continuity record (`generic`, `codex` or `kimi`). This is not an authenticated MCP client principal.
     #[arg(long)]
     client: String,
+    /// Native host conversation/session ID stored as `ClientBinding.external_session`. Use `--session` on `client bind` to attach it to an existing AWR session.
     #[arg(long)]
     external_session: String,
 }
 #[derive(Debug, Subcommand)]
 pub enum ClientCommand {
-    /// Bind one native conversation to its AWR work session, without acquiring a work claim.
+    /// Bind local native-client continuity to an AWR session without acquiring a claim. `--session` is the explicit bridge to an existing active session; without it, local continuity may create or recover a session. This does not create an MCP conversation binding.
     Bind {
         #[command(flatten)]
         identity: Identity,
         #[arg(long)]
         work: String,
+        /// Attach to this existing active AWR session, including an MCP-bound session.
         #[arg(long)]
         session: Option<Id>,
         #[arg(long)]
@@ -54,7 +56,7 @@ pub enum ClientCommand {
     },
     /// Receive a documented lifecycle event as JSON on stdin; no transcript bodies are read.
     Hook {
-        /// Host dialect for the event envelope. Required: use `generic` unless a documented native dialect applies.
+        /// Local hook dialect for the event envelope. Required: use `generic` unless a documented native dialect applies; this is distinct from the MCP client principal.
         #[arg(long)]
         client: String,
         #[arg(long)]

@@ -97,6 +97,15 @@ client identity; stdio uses the local `stdio` identity. Supply a stable `convers
 identifier from the host, not an HTTP connection identifier. The same conversation
 string in another project or authenticated client has a separate binding.
 
+This MCP identity is separate from the local `client bind --client generic|codex|kimi`
+continuity record. Those values select a hook dialect, not an HTTP principal, and
+`external_session` does not automatically become an MCP `conversation`. Both
+interfaces can use one AWR session by creating the MCP-bound session first and
+passing its returned session ID to `client bind --session`. See the
+[external-session resolution and bridging rules](host-contract.md#resolve-an-external-session-in-its-own-namespace).
+Local continuity alone does not grant shared MCP access, and MCP resume does not
+retarget a local continuity bookmark to its successor.
+
 | Tool | Purpose |
 | --- | --- |
 | `awr_session_start` | Start a work-bound session and optionally claim its work; bind the conversation atomically. |

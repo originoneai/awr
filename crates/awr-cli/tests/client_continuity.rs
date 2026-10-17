@@ -1,3 +1,5 @@
+use awr_core::{Id, McpSessionBinding};
+use awr_store::Store;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -43,8 +45,23 @@ impl Project {
     fn ok(&self, args: &[&str]) -> Value {
         decode(self.run(args, None))
     }
+    fn error(&self, args: &[&str], code: &str) {
+        let output = self.run(args, None);
+        assert!(!output.status.success(), "{args:?}");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&output.stderr).unwrap()["code"],
+            code,
+            "{args:?}"
+        );
+    }
     fn hook(&self, session: &str, event: &str, turn: Option<&str>) -> Value {
         decode(self.run(&["client","hook","--client","codex","--work","INTAKE-001"],Some(&json!({"session_id":session,"hook_event_name":event,"cwd":self.0,"turn_id":turn,"model":"client-test"}))))
+    }
+    fn generic_hook(&self, session: &str, event: &str, turn: Option<&str>) -> Value {
+        decode(self.run(
+            &["client", "hook", "--client", "generic", "--work", "INTAKE-001"],
+            Some(&json!({"session_id":session,"hook_event_name":event,"cwd":self.0,"turn_id":turn,"model":"client-test"})),
+        ))
     }
 }
 fn decode(o: Output) -> Value {
@@ -505,6 +522,271 @@ fn l0_generic_host_completes_the_same_lifecycle() {
         "conversation-a",
     ]);
     assert!(other["binding"].is_null());
+}
+
+#[test]
+fn explicit_client_bind_bridges_mcp_session_without_merging_namespaces() {
+    let p = Project::new();
+    let conversation = "cursor:bridge-conversation";
+    let started = p.ok(&[
+        "session",
+        "start",
+        "--work",
+        "INTAKE-001",
+        "--agent",
+        "bridge-agent",
+        "--provider",
+        "fixture",
+        "--model",
+        "test",
+        "--client",
+        "stdio",
+        "--conversation",
+        conversation,
+        "--expected-revision",
+        &p.ok(&["status"])["project_revision"].to_string(),
+    ]);
+    let session_text = started["session"]["id"].as_str().unwrap().to_owned();
+    let session_id: Id = session_text.parse().unwrap();
+    let project_id: Id = started["session"]["project_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let absent = p.ok(&[
+        "client",
+        "show",
+        "--client",
+        "generic",
+        "--external-session",
+        conversation,
+    ]);
+    assert!(absent["binding"].is_null());
+
+    let bound = p.ok(&[
+        "client",
+        "bind",
+        "--client",
+        "generic",
+        "--external-session",
+        conversation,
+        "--work",
+        "INTAKE-001",
+        "--session",
+        &session_text,
+    ]);
+    assert_eq!(bound["binding"]["session_id"], session_text);
+    assert_eq!(
+        p.ok(&[
+            "client",
+            "show",
+            "--client",
+            "generic",
+            "--external-session",
+            conversation,
+        ])["binding"]["session_id"],
+        session_text
+    );
+
+    {
+        let store = Store::open(&p.0.join(".awr/state.db")).unwrap();
+        let mcp = store
+            .mcp_bound_session(
+                project_id,
+                &McpSessionBinding {
+                    client: "stdio".into(),
+                    conversation: conversation.into(),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(mcp.id, session_id);
+        let local = store
+            .client_binding(project_id, "generic", conversation)
+            .unwrap()
+            .unwrap();
+        assert_eq!(local.session_id, session_id);
+        assert!(
+            store
+                .mcp_bound_session(
+                    project_id,
+                    &McpSessionBinding {
+                        client: "generic".into(),
+                        conversation: conversation.into(),
+                    },
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(store.sessions(project_id, true, 1000).unwrap().len(), 1);
+        assert!(
+            store
+                .session_claims(project_id, session_id)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    p.ok(&[
+        "client",
+        "progress",
+        "--client",
+        "generic",
+        "--external-session",
+        conversation,
+        "--next-action",
+        "Review the bridge checkpoint",
+        "--open-loop",
+        "Confirm the MCP handoff",
+    ]);
+    let checkpointed = p.generic_hook(conversation, "Stop", Some("bridge-turn"));
+    assert_eq!(checkpointed["awr"]["binding"]["session_id"], session_text);
+    assert_eq!(checkpointed["awr"]["checkpoint_saved"], true);
+
+    let store = Store::open(&p.0.join(".awr/state.db")).unwrap();
+    let local = store
+        .client_binding(project_id, "generic", conversation)
+        .unwrap()
+        .unwrap();
+    assert_eq!(local.session_id, session_id);
+    assert!(local.checkpoint_id.is_some());
+    assert!(
+        store
+            .latest_checkpoint(project_id, session_id)
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(store.sessions(project_id, true, 1000).unwrap().len(), 1);
+    assert!(
+        store
+            .session_claims(project_id, session_id)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn client_bind_never_implicitly_merges_mcp_identity_and_rejects_rebinding() {
+    let p = Project::new();
+    let conversation = "cursor:separate-conversation";
+    let started = p.ok(&[
+        "session",
+        "start",
+        "--work",
+        "INTAKE-001",
+        "--agent",
+        "mcp-agent",
+        "--provider",
+        "fixture",
+        "--model",
+        "test",
+        "--client",
+        "stdio",
+        "--conversation",
+        conversation,
+        "--expected-revision",
+        &p.ok(&["status"])["project_revision"].to_string(),
+    ]);
+    let mcp_session = started["session"]["id"].as_str().unwrap().to_owned();
+    let project_id: Id = started["session"]["project_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    // Matching text in the MCP namespace is not an implicit local bridge.
+    let local = p.ok(&[
+        "client",
+        "bind",
+        "--client",
+        "generic",
+        "--external-session",
+        conversation,
+        "--work",
+        "INTAKE-001",
+    ]);
+    let local_session = local["binding"]["session_id"].as_str().unwrap();
+    assert_ne!(local_session, mcp_session);
+
+    let other = p.ok(&[
+        "session",
+        "start",
+        "--work",
+        "INTAKE-001",
+        "--agent",
+        "other-agent",
+        "--provider",
+        "fixture",
+        "--model",
+        "test",
+        "--expected-revision",
+        &p.ok(&["status"])["project_revision"].to_string(),
+    ]);
+    let other_session = other["session"]["id"].as_str().unwrap();
+
+    p.error(
+        &[
+            "client",
+            "bind",
+            "--client",
+            "generic",
+            "--external-session",
+            conversation,
+            "--work",
+            "INTAKE-001",
+            "--session",
+            other_session,
+        ],
+        "SourceConflict",
+    );
+    p.error(
+        &[
+            "client",
+            "bind",
+            "--client",
+            "generic",
+            "--external-session",
+            conversation,
+            "--work",
+            "OTHER-WORK",
+            "--session",
+            local_session,
+        ],
+        "SourceConflict",
+    );
+
+    let store = Store::open(&p.0.join(".awr/state.db")).unwrap();
+    assert_eq!(
+        store
+            .mcp_bound_session(
+                project_id,
+                &McpSessionBinding {
+                    client: "stdio".into(),
+                    conversation: conversation.into(),
+                },
+            )
+            .unwrap()
+            .unwrap()
+            .id
+            .to_string(),
+        mcp_session
+    );
+    assert_eq!(
+        store
+            .client_binding(project_id, "generic", conversation)
+            .unwrap()
+            .unwrap()
+            .session_id
+            .to_string(),
+        local_session
+    );
+    assert_eq!(store.sessions(project_id, true, 1000).unwrap().len(), 3);
+    assert!(
+        store
+            .session_claims(project_id, local_session.parse().unwrap())
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]

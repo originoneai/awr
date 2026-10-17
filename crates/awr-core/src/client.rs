@@ -2,6 +2,9 @@ use crate::{Id, Revision};
 use serde::{Deserialize, Serialize};
 
 /// Work continuity attached to a client conversation, not a copy of that conversation.
+/// `client` is a local hook dialect, not the authenticated principal in
+/// `McpSessionBinding`. Share an AWR session by explicitly binding its session ID;
+/// this record neither grants MCP access nor follows a resumed successor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientBinding {
