@@ -284,6 +284,9 @@ pub struct Evidence {
     pub locator: String,
     pub sha256: Option<String>,
     pub source_sha: Option<String>,
+    /// Ledger-snapshot contract stamp, set by evidence registration only when
+    /// source_sha matches the target work's current source fingerprint. Distinct
+    /// from exact acceptance coverage and the revision of verified code.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section_fingerprint: Option<String>,
     pub command: Option<String>,

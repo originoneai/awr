@@ -790,9 +790,23 @@ fn verify_completed(
         .unwrap_or(Some(2))
         .ok_or_else(|| Error::EvidenceMissing("unknown required evidence level".into()))?
         .max(2);
+    // Equivalent ledger snapshots retain the successful receipt's exact proof
+    // selection; a newer passing report must not replace damaged selected proof.
     let binding = store
         .current_completion_binding(project, &work.meta.external_key, branch)?
-        .filter(|binding| binding.source_sha == sha);
+        .filter(|binding| {
+            binding.source_sha == sha
+                || binding.evidence.iter().any(|item| {
+                    EvidenceRecord {
+                        item: item.clone(),
+                        source: None,
+                        project_revision: 0,
+                    }
+                    .assess_for_work(Some(sha), &work.meta.source_ref, branch)
+                    .currency
+                        == EvidenceCurrency::Current
+                })
+        });
     // The binding is proof only for the exact record set it names, so the store-side
     // validation must see it unchanged: it rechecks every named record's currency,
     // immutability and namespace. Narrowing or dropping the binding here would skip
