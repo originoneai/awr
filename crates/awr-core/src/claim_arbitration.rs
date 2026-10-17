@@ -157,8 +157,12 @@ pub fn arbitrate_claims(
 }
 
 impl ArbitrationVerdict {
-    /// Canonical JSON: sorted keys, integers only, candidates sorted by fence. Two calls with the
-    /// same inputs produce byte-identical output, which is what makes the verdict auditable.
+    /// Canonical JSON: sorted keys, integers only, candidates in ascending `fence` order. Equal
+    /// fences are not tie-broken: the sort is stable, so candidates that share a `fence` keep the
+    /// caller's input order. The same input therefore reproduces the same bytes, and `digest()` is
+    /// stable for it, but a permutation of equal-`fence` candidates is not guaranteed to reproduce
+    /// the same record. That reproducibility is what makes the verdict auditable; giving ties a
+    /// total order would be a behaviour change and is deliberately left out of this change.
     pub fn record(&self) -> Result<String, ArbitrationError> {
         let candidates: Vec<Value> = self
             .candidates

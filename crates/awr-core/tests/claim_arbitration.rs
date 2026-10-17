@@ -1,12 +1,16 @@
-//! Cross-node claim arbitration — design XCLAIM-1 v1.0, acceptance A1–A7.
+//! Cross-node claim arbitration — design XCLAIM-1 v1.0, acceptance A1–A6.
+//! A7 (reclaimed claims) is storage-layer only — four entry points plus a migration — so it is out
+//! of scope for this pure-rule target; see the note below.
 //!
 //! These tests call the **production** rule in `awr_core::claim_arbitration`, not a local copy:
 //! a green run must mean the shipped function is correct. The only in-file implementation is the
 //! pre-feature rule that A3b uses as a deliberate counterexample.
 //!
-//! TODO(verify): **never executed** on the authoring host — `cargo`, `rustc` and `link.exe` do not
-//! resolve there, so this file has never been compiled and is not claimed to be `cargo fmt` clean.
-//! A passing result may only be quoted with a CI run id.
+//! Locally verified on a Windows/gnu host: `cargo test -p awr-core --test claim_arbitration`
+//! reported 7 passed, 0 failed, 0 ignored, and `cargo +1.93.1-x86_64-pc-windows-gnu fmt --all
+//! --check` reported no diff. That covers only this single `awr-core` test target and formatting;
+//! the native platform gate in CI remains the authority, and a passing result may only be quoted
+//! with a CI run id.
 //!
 //! Design decisions under review that these tests pin:
 //! - expiry is a **strict** arbiter-clock comparison (`expires_at_ms <= arbiter_at_ms`); there is no
