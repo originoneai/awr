@@ -148,7 +148,7 @@ pub use planning_writeback::{
     planning_changes_as_selective_replan, reevaluate_graph_consumers,
     same_request_already_completed, writeback_journal_path,
 };
-pub use response_view::summarize_work_response;
+pub use response_view::{compact_prepared_response, summarize_work_response};
 pub use resume::{ResumeReport, ResumeRequest, resume_bound_session, resume_session};
 pub use source_concurrency::{
     SourceConcurrencyReport, activate_precise_patch, activate_shard_candidate,

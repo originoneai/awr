@@ -615,6 +615,23 @@ async fn concise_http_results_keep_client_isolation_and_unknown_outcomes() {
         concise["context"]["work_context"]["rendered_context"]
     );
     assert_eq!(full["management"], concise["management"]);
+    for budget in [1, 100000] {
+        let args = json!({"project":"alpha","work":"W","session":started["session"]["id"],"response_view":"action","budget":budget});
+        let original = server.call(WRITER, "awr_work_prepare", args.clone()).await;
+        let mut opted = args;
+        opted["compact_indexes"] = json!(true);
+        let compact = server.call(WRITER, "awr_work_prepare", opted).await;
+        assert_eq!(original["isError"], compact["isError"]);
+        assert_eq!(
+            original["structuredContent"], compact["structuredContent"],
+            "errors and zero-omission responses retain their output"
+        );
+        assert!(
+            compact["structuredContent"]
+                .get("response_budget")
+                .is_none()
+        );
+    }
     let args = json!({"project":"alpha","work":"W","session":started["session"]["id"],"action":"progress","reason":"Reviewed guide context","next_action":"Review the draft guide","request_id":"concise-write","expected_revision":a.revision(),"response_view":"summary"});
     let conn = rusqlite::Connection::open(a.root.join(".awr/state.db")).unwrap();
     conn.execute_batch("CREATE TRIGGER fixture_concise_response BEFORE INSERT ON events WHEN new.event_type='mcp.operation_finished' BEGIN SELECT RAISE(ABORT,'synthetic lost response'); END;").unwrap();

@@ -1,6 +1,43 @@
 //! Optional presentation only. Domain checks and stored receipts always use full results.
 use serde_json::{Value, json};
 
+/// Opt-in low-noise prepare presentation. Only optional selection indexes move
+/// to the existing full-result query; required facts and diagnostics stay inline.
+pub fn compact_prepared_response(mut value: Value) -> Value {
+    if value["ok"] != true
+        || value["stage"] != "prepared"
+        || value["context"]["completeness"]["complete"] != true
+        || !matches!(
+            value["response_view"]["view"].as_str(),
+            Some("summary" | "action")
+        )
+        || !value["response_view"]["full_result"].is_object()
+        || !value["response_view"]["omitted_fields"].is_array()
+    {
+        return value;
+    }
+    let omitted = &value["context"]["work_context"]["omitted_chunks"];
+    if let Some(chunks) = omitted.as_array().filter(|chunks| {
+        !chunks.is_empty()
+            && chunks
+                .iter()
+                .all(|c| c["reason"] == "insufficient_budget_for_whole_chunk")
+    }) {
+        let count = chunks.len();
+        value["context"]["work_context"]
+            .as_object_mut()
+            .unwrap()
+            .remove("omitted_chunks");
+        let path = "context.work_context.omitted_chunks";
+        value["response_view"]["omitted_fields"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!(path));
+        value["response_view"]["detail_counts"] = json!({path:count});
+    }
+    value
+}
+
 pub fn summarize_work_response(mut value: Value) -> Value {
     // Preserve failures (including partial writes and unknown outcomes) verbatim.
     if value["ok"] != true {

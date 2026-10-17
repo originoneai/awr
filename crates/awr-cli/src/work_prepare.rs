@@ -20,6 +20,9 @@ pub struct PrepareArgs {
     /// Summary omits duplicate indexes; action adds one bounded conditional instruction.
     #[arg(long, default_value = "full", value_parser = ["full", "summary", "action"])]
     response_view: String,
+    /// Defer optional omission indexes in summary/action JSON; default keeps legacy output.
+    #[arg(long, default_value_t = false)]
+    compact_indexes: bool,
     /// Opt-in DEC-021 assessment explanation (capability `assessment.explain`).
     /// Default off preserves legacy full/summary/action consumers.
     #[arg(long, default_value_t = false)]
@@ -125,6 +128,9 @@ pub fn prepare(root: &Path, args: &PrepareArgs, json_output: bool) -> Result<()>
             ..Default::default()
         },
     )?;
+    if args.compact_indexes {
+        value = awr_runtime::compact_prepared_response(value);
+    }
     output(value, &query, json_output)
 }
 pub fn completion(root: &Path, args: &CompletionArgs, json_output: bool) -> Result<()> {

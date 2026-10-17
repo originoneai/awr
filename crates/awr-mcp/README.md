@@ -58,6 +58,31 @@ exposes twelve lifecycle/continuity tools below; HTTP adds `awr_projects_list`.
 
 Input objects reject unknown fields. Total tool arguments are limited to 1 MiB; a completion mapping has the same 64 KiB cap as the CLI. Full source SHAs and timestamps use the core domain conventions; `verified_at` is Unix milliseconds. Tools return structured JSON and matching serialized text for clients that consume text content. The context token budget covers `work_context.rendered_context`, not the entire MCP envelope.
 
+### Optional prepare index compaction
+
+`awr_work_prepare` accepts `compact_indexes: true` with `response_view: summary`
+or `action`. This opt-in presentation defers the optional `omitted_chunks` index
+when every entry records an optional whole-chunk budget omission. It returns a
+bounded entry count in `response_view.detail_counts` and lists the deferred path
+in `response_view.omitted_fields`. Zero omissions add no metadata. For example:
+
+```json
+{"work":"W","budget":5000,"response_view":"action","compact_indexes":true}
+```
+
+The CLI equivalent is `awr --json work prepare W --response-view action
+--compact-indexes`. Without the option (or with `compact_indexes: false`), the
+existing output is unchanged. `full` responses, incomplete contexts, errors and
+unknown omission reasons retain their fields. The projection changes neither
+`ok`, CLI exit status nor MCP `isError`. It does not impose a response token
+limit or alter the existing rendered-context `budget`.
+
+Required rendered text, `context_hash`, source identity, scope, claims/blockers,
+evidence gaps and recovery diagnostics remain inline. Use the existing
+`response_view.full_result` query for detailed indexes. It reads fresh state:
+compare `project_revision` and `context_hash` before treating details as the same
+snapshot. No report, receipt or source is rewritten.
+
 ## Read behavior
 
 The five read tools use the existing Source, Store, Context and Search services against a disposable SQLite memory snapshot. The persistent database is opened read-only. The source indexer and lazy FTS cache may write to that private snapshot; no cache or projection is copied back. If reindexing would change a source, registration or project revision, the read returns `SourceStale` instead of presenting an ephemeral revision as real state. Sources and the live project revision are checked again before the response.
