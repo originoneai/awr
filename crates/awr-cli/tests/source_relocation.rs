@@ -303,3 +303,23 @@ fn interrupted_binding_can_be_inspected_recovered_and_rejects_external_edits() {
     p.ok(&["source", "relocate-recover", key]);
     p.ok(&["work", "show", "W"]);
 }
+#[test]
+fn relocation_receipt_without_from_reports_invalid_input() {
+    let p = Project::new();
+    let id = p.source();
+    p.copy();
+    let plan = p.preview(&id);
+    let key = plan["fingerprint"].as_str().unwrap();
+    let mut receipt = p.apply(&id, key);
+    let dir = format!(
+        ".awr/mutations/source-relocate-{}",
+        key.strip_prefix("sha256:").unwrap()
+    );
+    // A receipt that still matches this project and preview, but lost the original path.
+    receipt["write_outcome"] = json!("binding_relocated");
+    receipt["ok"] = json!(false);
+    receipt["plan"].as_object_mut().unwrap().remove("from");
+    p.write(&format!("{dir}/receipt.json"), &receipt.to_string());
+    p.write(".awr/mutations/source-relocation.pending", key);
+    p.fail(&["source", "relocate-recover", key], "InvalidInput");
+}

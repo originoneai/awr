@@ -295,7 +295,10 @@ fn finish(
                     .into(),
             ));
         }
-        let old = read(root, p["from"].as_str().unwrap())?;
+        let from = p["from"].as_str().ok_or_else(|| {
+            Error::InvalidInput("relocation receipt is missing the original path".into())
+        })?;
+        let old = read(root, from)?;
         if old
             .as_ref()
             .is_some_and(|b| fingerprint(b) != before.fingerprint)
