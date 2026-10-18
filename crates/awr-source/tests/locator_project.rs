@@ -1,7 +1,6 @@
-//! Project-relative evidence locators and `#L` line selectors.
+//! Project-relative evidence locators.
 
-use awr_source::{Error, Locator, Manifest, SourceSnapshot, fingerprint};
-use sha2::{Digest, Sha256};
+use awr_source::{Error, Locator, Manifest, fingerprint};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -37,110 +36,40 @@ fn file_identity(root: &Path) -> String {
     format!("file:///{text}")
 }
 
-fn git_fingerprint(locator: &str, bytes: &[u8]) -> String {
-    let mut hash = Sha256::new();
-    hash.update(locator.as_bytes());
-    hash.update([0]);
-    hash.update(bytes);
-    format!("sha256:{:x}", hash.finalize())
-}
-
 #[test]
-fn line_suffix_is_stripped_from_identity_and_fingerprint() {
-    let root = project_root("strip");
-    let manifest = manifest();
-    let bytes = b"report bytes\n";
-
-    // git:// hashes the canonical locator, so both spellings must reach one binding.
-    let commit = "a".repeat(40);
-    let plain = format!("git://{commit}:evidence/check.json");
-    let suffixed = format!("{plain}#L12-L14");
-    let plain_locator = Locator::parse(&root, &manifest, &plain).unwrap();
-    let suffixed_locator = Locator::parse(&root, &manifest, &suffixed).unwrap();
-    let identity = plain_locator.identity().unwrap();
-    assert_eq!(identity, plain);
-    assert_eq!(suffixed_locator.identity().unwrap(), identity);
-    let snapshot = SourceSnapshot {
-        locator: identity.clone(),
-        fingerprint: git_fingerprint(&identity, bytes),
-        bytes: bytes.to_vec(),
-        content_review: None,
-    };
-    assert!(snapshot.verify_fingerprint());
-
-    // file:// hashes bytes only; the suffix must not change either identity.
-    let plain_file = file_identity(&root);
-    let suffixed_file = format!("{plain_file}#L12-L14");
-    let plain_file_locator = Locator::parse(&root, &manifest, &plain_file).unwrap();
-    let suffixed_file_locator = Locator::parse(&root, &manifest, &suffixed_file).unwrap();
-    assert_eq!(plain_file_locator.identity().unwrap(), plain_file);
-    assert_eq!(
-        suffixed_file_locator.identity().unwrap(),
-        plain_file_locator.identity().unwrap()
-    );
-    let file_snapshot = SourceSnapshot {
-        locator: plain_file_locator.identity().unwrap(),
-        fingerprint: fingerprint(bytes),
-        bytes: bytes.to_vec(),
-        content_review: None,
-    };
-    assert!(file_snapshot.verify_fingerprint());
-}
-
-#[test]
-fn file_locator_accepts_line_suffix_but_not_other_fragments() {
-    let root = project_root("fragment");
+fn file_and_git_locators_keep_their_pre_project_behaviour() {
+    let root = project_root("parity");
     let manifest = manifest();
     let identity = file_identity(&root);
 
-    let accepted = Locator::parse(&root, &manifest, &format!("{identity}#L12-L14")).unwrap();
-    assert_eq!(accepted.identity().unwrap(), identity);
-    assert_eq!(
-        accepted.identity().unwrap(),
-        Locator::parse(&root, &manifest, &identity)
-            .unwrap()
-            .identity()
-            .unwrap()
-    );
-
-    // A URL fragment that is not a line selector still fails closed.
-    let error = Locator::parse(&root, &manifest, &format!("{identity}#section-2")).unwrap_err();
-    assert!(matches!(error, Error::InvalidInput(_)), "{error}");
-
-    // A malformed line selector is a typed error, not a filename byte.
-    for suffix in ["#L", "#L12-", "#Lfoo", "#L12-14"] {
+    // A file locator never accepts a fragment, so every line selector is refused.
+    for suffix in ["#L1", "#L12-L14", "#section-2"] {
         let error = Locator::parse(&root, &manifest, &format!("{identity}{suffix}")).unwrap_err();
         assert!(matches!(error, Error::InvalidInput(_)), "{suffix}: {error}");
     }
-}
 
-#[test]
-fn git_line_suffix_is_stripped_before_the_git_object_is_built() {
-    let root = project_root("git");
-    let manifest = manifest();
-    let commit = "b".repeat(40);
-
+    // A Git locator never had a fragment guard: `#L1` stays ordinary path bytes,
+    // and only resolution fails. This is the pre-project behaviour, unchanged.
+    let commit = "c".repeat(40);
     let locator = Locator::parse(
         &root,
         &manifest,
-        &format!("git://{commit}:docs/report.md#L3"),
+        &format!("git://{commit}:evidence/check.json#L1"),
     )
     .unwrap();
-    match locator {
+    match &locator {
         Locator::Git { revision, path } => {
-            assert_eq!(revision, commit);
-            assert_eq!(path, Path::new("docs/report.md"));
-            assert!(!path.to_string_lossy().contains('#'));
+            assert_eq!(revision, &commit);
+            assert_eq!(path.as_path(), Path::new("evidence/check.json#L1"));
         }
         other => panic!("expected a Git locator, got {other:?}"),
     }
     assert_eq!(
-        Locator::parse(&root, &manifest, &format!("git://{commit}:docs/report.md"))
-            .unwrap()
-            .identity()
-            .unwrap(),
-        format!("git://{commit}:docs/report.md")
+        locator.identity().unwrap(),
+        format!("git://{commit}:evidence/check.json#L1")
     );
+    let error = locator.read(&root, 4096).unwrap_err();
+    assert!(matches!(error, Error::SourceUnavailable(_)), "{error}");
 }
 
 #[test]
@@ -166,7 +95,7 @@ fn project_locator_keeps_identity_and_fingerprint_across_checkouts() {
 }
 
 #[test]
-fn project_locator_rejects_an_authority_and_traversal() {
+fn project_locator_rejects_an_authority_traversal_and_a_selector() {
     let root = project_root("reject");
     let manifest = manifest();
     for spec in ["project://notes/a.md", "project:///../a.md", "project://"] {
@@ -176,4 +105,8 @@ fn project_locator_rejects_an_authority_and_traversal() {
             "{spec}: {error}"
         );
     }
+    // A line selector is deferred: `#L1` stays path bytes, so resolution fails
+    // with a typed error instead of being read as a selector.
+    let error = Locator::parse(&root, &manifest, "project:///evidence/check.json#L1").unwrap_err();
+    assert!(matches!(error, Error::SourceUnavailable(_)), "{error}");
 }

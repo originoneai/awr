@@ -213,8 +213,42 @@ impl<'a> Runtime<'a> {
         expected: Revision,
         draft: awr_core::EvidenceDraft,
     ) -> Result<(awr_core::Evidence, Event)> {
+        let draft = self.bind_project_locator(draft)?;
         reject_provably_outside_root(self.store, self.project, &draft.locator)?;
         self.store.record_evidence(self.project, expected, draft)
+    }
+    /// Resolve a `project://` locator exactly once, at registration.
+    ///
+    /// The stored string is the canonical project-relative identity, so the same
+    /// evidence row resolves against the same relative file on every node that
+    /// holds the checkout. A missing, escaping or ambiguous target is a typed
+    /// error at this point and never a guess at read time. `file://`, `git://`
+    /// and plain paths pass through untouched.
+    fn bind_project_locator(
+        &self,
+        mut draft: awr_core::EvidenceDraft,
+    ) -> Result<awr_core::EvidenceDraft> {
+        if !draft.locator.starts_with("project://") {
+            return Ok(draft);
+        }
+        let project = self.store.project(self.project)?;
+        let root = project.root.canonicalize()?;
+        let manifest = awr_source::Manifest::load(&root)?;
+        let locator = awr_source::Locator::parse(&root, &manifest, &draft.locator)?;
+        let snapshot = locator.read(&root, REGISTERED_CONTENT_READ_CAP)?;
+        if let Some(declared) = draft.sha256.as_deref() {
+            let actual = snapshot
+                .fingerprint
+                .strip_prefix("sha256:")
+                .unwrap_or(&snapshot.fingerprint);
+            if !actual.eq_ignore_ascii_case(declared) {
+                return Err(Error::SourceConflict(format!(
+                    "declared sha256 does not match the bytes the project locator resolves to: expected {declared}, actual {actual}"
+                )));
+            }
+        }
+        draft.locator = snapshot.locator;
+        Ok(draft)
     }
     pub fn handoff(
         &mut self,

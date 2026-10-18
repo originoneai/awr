@@ -1,5 +1,6 @@
 use awr_core::Id;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     path::PathBuf,
@@ -183,6 +184,145 @@ fn explicit_report_reads_are_bounded_hash_checked_and_do_not_promote_work() {
             .any(|f| f["code"] == "artifact_digest_mismatch")
     );
     assert_eq!(f.revision(), revision);
+}
+
+#[test]
+fn project_locator_is_parsed_at_registration_and_read_back_by_show() {
+    let f = Fixture::new();
+    fs::create_dir(f.0.join("evidence")).unwrap();
+    let body = b"{\"project\":true}\n";
+    fs::write(f.0.join("evidence/check.json"), body).unwrap();
+    let digest = format!("{:x}", Sha256::digest(body));
+    let draft = json!({"external_key":"PROJECT-1","work_item_key":"W","evidence_type":"report","level":"locally_verified","summary":"Project relative report","locator":"project:///./evidence/check.json","sha256":digest,"source_sha":"a".repeat(40),"command":"cargo test --test records_cli","scope":["W"],"branch_id":null,"verified_at":1});
+    fs::write(
+        f.0.join("evidence.json"),
+        serde_json::to_vec(&draft).unwrap(),
+    )
+    .unwrap();
+    let added = f.ok(&[
+        "evidence",
+        "add",
+        "--input",
+        "evidence.json",
+        "--expected-revision",
+        &f.revision(),
+    ]);
+    // Registration stores the canonical project identity, not the input spelling.
+    assert_eq!(
+        added["evidence"]["locator"],
+        "project:///evidence/check.json"
+    );
+    let shown = f.ok(&[
+        "evidence",
+        "show",
+        "PROJECT-1",
+        "--content",
+        "--max-bytes",
+        "4096",
+    ]);
+    assert_eq!(shown["locator_scheme"], "project");
+    assert_eq!(shown["content"], "{\"project\":true}\n");
+    assert_eq!(shown["content_hash_verified"], true);
+
+    // A project locator that does not resolve is a typed error, never a guess.
+    let revision = f.revision();
+    let missing = json!({"external_key":"PROJECT-MISSING","work_item_key":"W","evidence_type":"report","level":"implemented","summary":"Missing target","locator":"project:///evidence/missing.json","sha256":null,"source_sha":null,"command":null,"scope":["W"],"branch_id":null,"verified_at":null});
+    fs::write(
+        f.0.join("missing.json"),
+        serde_json::to_vec(&missing).unwrap(),
+    )
+    .unwrap();
+    f.error(
+        &[
+            "evidence",
+            "add",
+            "--input",
+            "missing.json",
+            "--expected-revision",
+            &revision,
+        ],
+        "SourceUnavailable",
+    );
+    assert_eq!(f.revision(), revision);
+
+    // The authority form and a traversal are refused before the file is touched.
+    for locator in ["project://evidence/check.json", "project:///../check.json"] {
+        let mut draft = draft.clone();
+        draft["locator"] = json!(locator);
+        fs::write(
+            f.0.join("invalid.json"),
+            serde_json::to_vec(&draft).unwrap(),
+        )
+        .unwrap();
+        f.error(
+            &[
+                "evidence",
+                "add",
+                "--input",
+                "invalid.json",
+                "--expected-revision",
+                &revision,
+            ],
+            if locator.starts_with("project://e") {
+                "InvalidInput"
+            } else {
+                "RuleViolation"
+            },
+        );
+    }
+
+    // A declared digest must match the bytes the locator resolves to.
+    let mut mismatched = draft.clone();
+    mismatched["sha256"] = json!("0".repeat(64));
+    fs::write(
+        f.0.join("mismatch.json"),
+        serde_json::to_vec(&mismatched).unwrap(),
+    )
+    .unwrap();
+    f.error(
+        &[
+            "evidence",
+            "add",
+            "--input",
+            "mismatch.json",
+            "--expected-revision",
+            &revision,
+        ],
+        "SourceConflict",
+    );
+    assert_eq!(f.revision(), revision);
+
+    // Other schemes are still refused on read: only project:// was opened.
+    let remote = json!({"external_key":"REMOTE-1","work_item_key":"W","evidence_type":"report","level":"implemented","summary":"Remote locator","locator":"file:///tmp/remote.html","sha256":null,"source_sha":null,"command":null,"scope":["W"],"branch_id":null,"verified_at":null});
+    fs::write(
+        f.0.join("remote.json"),
+        serde_json::to_vec(&remote).unwrap(),
+    )
+    .unwrap();
+    let remote = f.ok(&[
+        "evidence",
+        "add",
+        "--input",
+        "remote.json",
+        "--expected-revision",
+        &f.revision(),
+    ]);
+    assert_eq!(remote["evidence"]["locator"], "file:///tmp/remote.html");
+    f.error(
+        &[
+            "evidence",
+            "show",
+            "REMOTE-1",
+            "--content",
+            "--max-bytes",
+            "4096",
+        ],
+        "Unsupported",
+    );
+    assert_eq!(
+        f.ok(&["evidence", "show", "REMOTE-1"])["locator_scheme"],
+        "file"
+    );
 }
 
 #[test]

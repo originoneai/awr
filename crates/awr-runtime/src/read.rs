@@ -1,7 +1,10 @@
 use crate::{REGISTERED_CONTENT_READ_CAP, Runtime};
 use awr_core::*;
 use sha2::{Digest, Sha256};
-use std::{io::Read, path::Path};
+use std::{
+    io::Read,
+    path::{Component, Path, PathBuf},
+};
 
 impl Runtime<'_> {
     /// Load current trusted policy before calling. The selected scope authorizes
@@ -130,9 +133,6 @@ pub(crate) fn read_registered_file(
             "artifact exceeds {max_bytes} byte read limit"
         )));
     }
-    if locator.contains("://") {
-        return Err(Error::Unsupported("body reads currently support registered local paths; use the report locator for remote content".into()));
-    }
     let project = store.project(project)?;
     let root = project.root.canonicalize()?;
     if root != project.root {
@@ -140,12 +140,20 @@ pub(crate) fn read_registered_file(
             "project root moved since registration".into(),
         ));
     }
-    let path = if Path::new(locator).is_absolute() {
-        Path::new(locator).to_path_buf()
-    } else {
-        root.join(locator)
-    }
-    .canonicalize()?;
+    let path = match project_relative_path(locator)? {
+        Some(relative) => root
+            .join(relative)
+            .canonicalize()
+            .map_err(|error| Error::SourceUnavailable(error.to_string()))?,
+        None => {
+            let candidate = if Path::new(locator).is_absolute() {
+                Path::new(locator).to_path_buf()
+            } else {
+                root.join(locator)
+            };
+            candidate.canonicalize()?
+        }
+    };
     if !within_project_or_authorized(&root, &path)? {
         return Err(Error::RuleViolation(
             "registered file is outside project and authorized roots".into(),
@@ -222,4 +230,35 @@ pub(crate) fn within_project_or_authorized(root: &Path, path: &Path) -> Result<b
                 .canonicalize()
                 .is_ok_and(|resolved| path.starts_with(resolved))
         }))
+}
+
+/// Resolve a `project:///<project-relative-path>` locator to its relative path.
+///
+/// `Ok(None)` means the locator is not a project locator and keeps the
+/// pre-existing local-path handling. Every other scheme stays refused, so this
+/// opens `project://` and nothing else.
+fn project_relative_path(locator: &str) -> Result<Option<PathBuf>> {
+    let Some(rest) = locator.strip_prefix("project://") else {
+        if locator.contains("://") {
+            return Err(Error::Unsupported("body reads currently support registered local paths and project locators; use the report locator for remote content".into()));
+        }
+        return Ok(None);
+    };
+    let Some(rest) = rest.strip_prefix('/') else {
+        return Err(Error::InvalidInput(
+            "project locator syntax is project:///<project-relative-path>".into(),
+        ));
+    };
+    let path = PathBuf::from(rest);
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_) | Component::CurDir))
+    {
+        return Err(Error::RuleViolation(
+            "project source path must stay inside the project".into(),
+        ));
+    }
+    Ok(Some(path))
 }

@@ -170,38 +170,6 @@ fn relative(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Strip a `#L<start>[-L<end>]` selector; any other `#` stays part of the path.
-fn strip_line_suffix(value: &str) -> Result<&str> {
-    let Some(index) = value.find('#') else {
-        return Ok(value);
-    };
-    let Some(range) = value[index + 1..].strip_prefix('L') else {
-        return Ok(value);
-    };
-    let numeric = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
-    let mut parts = range.split('-');
-    let start = parts.next().unwrap_or_default();
-    let end = parts.next();
-    if !numeric(start) || parts.next().is_some() {
-        return Err(Error::InvalidInput(
-            "line suffix must be #L<start> or #L<start>-L<end>".into(),
-        ));
-    }
-    if let Some(end) = end {
-        let Some(end) = end.strip_prefix('L') else {
-            return Err(Error::InvalidInput(
-                "line suffix must be #L<start> or #L<start>-L<end>".into(),
-            ));
-        };
-        if !numeric(end) {
-            return Err(Error::InvalidInput(
-                "line suffix must be #L<start> or #L<start>-L<end>".into(),
-            ));
-        }
-    }
-    Ok(&value[..index])
-}
-
 impl Locator {
     /// Registration identity keeps a Git ref stable while snapshot locators bind immutable commits.
     pub fn identity(&self) -> Result<String> {
@@ -249,13 +217,12 @@ impl Locator {
             .ok_or_else(|| Error::InvalidInput("missing locator".into()))?;
         Self::parse(root, manifest, value)
     }
-    /// Parse a locator string, stripping a `#L<start>[-L<end>]` line selector first.
+    /// Parse a locator string.
     ///
-    /// The suffix is a presentation selector: it never reaches `identity()` or a
-    /// source fingerprint. Every caller that resolves a locator string goes through
-    /// this entry point, so there is exactly one strip.
+    /// The string is parsed verbatim: a `#L<start>[-L<end>]` line selector is a
+    /// presentation concern and is not accepted here, so `file://` keeps
+    /// rejecting any fragment and `git://` keeps treating `#` as path bytes.
     pub fn parse(root: &Path, manifest: &Manifest, value: &str) -> Result<Self> {
-        let value = strip_line_suffix(value)?;
         if value.starts_with("file://") {
             let url = Url::parse(value).map_err(|e| Error::InvalidInput(e.to_string()))?;
             if url.query().is_some() || url.fragment().is_some() {

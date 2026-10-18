@@ -83,6 +83,18 @@ fn evidence_brief(record: &EvidenceRecord) -> Value {
     let item = &record.item;
     json!({"id":item.id,"external_key":item.external_key,"type":item.evidence_type,"level":item.level,"summary":short(&item.summary),"locator":item.locator,"sha256":item.sha256,"source_sha":item.source_sha,"command":item.command.as_deref().map(short),"scope":item.scope.iter().take(20).collect::<Vec<_>>(),"scope_total":item.scope.len(),"work_item_id":item.work_item_id,"branch_id":item.branch_id,"verified_at":item.verified_at,"source_ref":item.source_ref,"freshness":record.source.as_ref().map(|s|s.freshness),"revision":item.revision})
 }
+/// Report how a stored locator is meant to be resolved.
+fn locator_scheme(locator: &str) -> &'static str {
+    if locator.starts_with("project://") {
+        "project"
+    } else if locator.starts_with("git://") {
+        "git"
+    } else if locator.starts_with("file://") {
+        "file"
+    } else {
+        "path"
+    }
+}
 fn print(value: &Value, text: &str, json_output: bool) -> Result<()> {
     if json_output {
         println!("{}", serde_json::to_string_pretty(value)?);
@@ -208,6 +220,7 @@ pub fn evidence(root: &Path, command: &EvidenceCommand, json_output: bool) -> Re
                     .assess(source_sha.as_deref(), None, db.project.current_branch_id);
             let mut value = db.metadata(db.project.project_revision);
             value["evidence"] = evidence_brief(&record);
+            value["locator_scheme"] = json!(locator_scheme(&record.item.locator));
             value["currency"] = json!(assessment.currency);
             value["missing_bindings"] = json!(assessment.missing_bindings);
             value["reasons"] = json!(assessment.reasons);
@@ -228,11 +241,12 @@ pub fn evidence(root: &Path, command: &EvidenceCommand, json_output: bool) -> Re
             };
             db.check_revision()?;
             let mut text = format!(
-                "Evidence: {} ({})\nSummary: {}\nReport: {}\nCurrency: {}\nMissing bindings: {}",
+                "Evidence: {} ({})\nSummary: {}\nReport: {}\nLocator scheme: {}\nCurrency: {}\nMissing bindings: {}",
                 record.item.external_key,
                 record.item.id,
                 short(&record.item.summary),
                 record.item.locator,
+                locator_scheme(&record.item.locator),
                 value["currency"],
                 assessment.missing_bindings.join(", ")
             );
