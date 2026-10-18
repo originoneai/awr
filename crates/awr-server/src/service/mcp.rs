@@ -1166,7 +1166,8 @@ mod tests {
         // Only claim.acquire carries the reason, and the legacy response is untouched.
         assert!(crate::service::claim_rejection("claim.renew", &PgError::ClaimHeld).is_none());
         assert!(
-            crate::service::claim_rejection("task.accept_assignment", &PgError::ClaimHeld).is_none()
+            crate::service::claim_rejection("task.accept_assignment", &PgError::ClaimHeld)
+                .is_none()
         );
         assert!(crate::service::claim_rejection("claim.acquire", &PgError::Forbidden).is_none());
         let (status, value) = public_error(PgError::ClaimHeld);

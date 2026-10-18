@@ -480,11 +480,13 @@ async fn request_bounds_epoch_changes_and_completed_work_fail_without_reinterpre
         )
         .await
         .unwrap();
+    // Naming the changed coordinator epoch is the variant `claim.renew` already used
+    // above; `RecoveryBlocked` now means a workstream or ownership mismatch only.
     assert!(matches!(
         commands
             .execute(TENANT, PROJECT, A, acquire(&store, "epoch-takeover").await)
             .await,
-        Err(PgError::RecoveryBlocked)
+        Err(PgError::EpochChanged)
     ));
     admin.batch_execute("UPDATE awr_team.projects SET coordinator_epoch='epoch-a' WHERE tenant_id='reader-tenant';
         INSERT INTO awr_team.completion_receipts(tenant_id,project_id,id,work_id,scope_id,
