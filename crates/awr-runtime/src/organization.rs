@@ -798,8 +798,6 @@ fn verify_completed(
     // immutability and namespace. Narrowing or dropping the binding here would skip
     // those checks instead of tightening them.
     if let Some(binding) = &binding {
-        #[cfg(test)]
-        BINDING_CHECK_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         store.check_completion_binding(project, work, branch, binding)?;
     }
     let evidence = store.evidence_for_work(project, &work.meta.external_key, Some(sha), branch)?;
@@ -888,17 +886,10 @@ fn verify_completed(
     Ok(())
 }
 
-/// Test-only counter proving the completion binding check runs exactly once per
-/// binding. Release builds do not contain it.
-#[cfg(test)]
-pub(crate) static BINDING_CHECK_CALLS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-
 #[cfg(test)]
 mod completion_binding_guard_tests {
     use super::*;
     use awr_store::SourceRegistration;
-    use std::sync::atomic::Ordering;
 
     const SHA: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const CRITERION: &str = "The report contains the requested analysis";
@@ -932,10 +923,15 @@ mod completion_binding_guard_tests {
     /// therefore planted directly, and the bound record is recorded on main while the
     /// request asks for a branch, which makes it non-current.
     ///
-    /// The assertions are the organization counters, not just the store error: a
-    /// narrowed binding would skip the check and count the item as verified.
+    /// The assertions are the organization report, not a call counter: only the
+    /// store-side binding check produces the "not current, fully bound evidence"
+    /// refusal, while skipping the check drops the record as non-current and the same
+    /// gap carries "selected evidence ... no longer meets the current verification
+    /// requirements" instead. No test hook is needed in production code, and the store
+    /// boundary itself stays pinned in
+    /// `crates/awr-store/tests/completion_binding_currency.rs`.
     #[test]
-    fn the_binding_check_runs_once_and_refuses_a_partially_current_binding() {
+    fn a_partially_current_binding_is_refused_through_the_store_check() {
         let root = std::env::temp_dir().join(format!("awr-binding-guard-{}", Id::new()));
         std::fs::create_dir(&root).unwrap();
         let mut store = Store::open(&root.join("state.db")).unwrap();
@@ -1075,13 +1071,12 @@ mod completion_binding_guard_tests {
                     work.meta.id.to_string(),
                     branch.id.to_string(),
                     payload.to_string(),
-                    i64::try_from(revision).unwrap() + 1,
+                    i64::try_from(store.project(project.id).unwrap().project_revision).unwrap(),
                     now_millis().unwrap()
                 ],
             )
             .unwrap();
         drop(connection);
-        BINDING_CHECK_CALLS.store(0, Ordering::SeqCst);
         let project = store.project(project.id).unwrap();
         let works = store.work_items(project.id).unwrap();
         let readiness = store
@@ -1098,11 +1093,6 @@ mod completion_binding_guard_tests {
         )
         .unwrap();
         assert_eq!(
-            BINDING_CHECK_CALLS.load(Ordering::SeqCst),
-            1,
-            "the completion binding check must run exactly once per binding"
-        );
-        assert_eq!(
             report.verified_completed, 0,
             "a partially current binding must not be counted as verified"
         );
@@ -1110,13 +1100,29 @@ mod completion_binding_guard_tests {
             report.completion_verification_failed, 1,
             "the refusal must reach the failed counter, not the verified counter"
         );
-        let gap = report
+        let failures = report
             .gaps
             .iter()
-            .find(|gap| gap.code == "completion_verification_failed")
-            .expect("the refusal must be reported as a completion gap");
+            .filter(|gap| gap.code == "completion_verification_failed")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            failures.len(),
+            1,
+            "the refusal must be reported once per inspection, not once per named record"
+        );
+        let gap = failures[0];
+        // Only `check_completion_binding` produces this message. Had the organization
+        // layer skipped or narrowed the binding, the record would have been dropped as
+        // non-current (`:820-825`) and the failure would read "selected evidence ...
+        // no longer meets the current verification requirements" (`:861-864`).
         assert!(
             gap.detail.contains("not current, fully bound evidence"),
+            "{}",
+            gap.detail
+        );
+        assert!(
+            !gap.detail
+                .contains("no longer meets the current verification requirements"),
             "{}",
             gap.detail
         );

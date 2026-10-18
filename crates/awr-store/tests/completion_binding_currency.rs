@@ -94,7 +94,7 @@ fn missing_message(error: Error) -> String {
 }
 
 #[test]
-fn a_bound_record_from_another_branch_is_not_current() {
+fn a_mainline_record_is_not_current_for_a_branch_request() {
     let (mut f, item) = fixture_with_work();
     let evidence = record(&mut f, "E");
     let binding = binding(vec![evidence], &[C]);
@@ -134,6 +134,18 @@ fn a_record_changed_after_binding_is_rejected() {
     );
     println!("fixture 3 EvidenceMissing: {message}");
     assert!(message.contains("changed after binding"), "{message}");
+}
+
+#[test]
+fn a_fully_current_binding_is_accepted() {
+    let (mut f, item) = fixture_with_work();
+    let evidence = record(&mut f, "E");
+    let binding = binding(vec![evidence], &[C]);
+    // Guards against over-rejection: the four refusals above are only meaningful if a
+    // binding whose records are current on the requested branch still passes.
+    f.store
+        .check_completion_binding(f.project.id, &item, None, &binding)
+        .expect("a fully current binding must be accepted");
 }
 
 #[test]
