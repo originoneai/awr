@@ -873,3 +873,57 @@ async fn claim_inspect_never_sets_execution_authorized() {
     assert_eq!(other["execution_authorized"], false);
     assert_eq!(other["owned_by_client"], false);
 }
+
+#[tokio::test]
+async fn refused_acquire_reads_the_holder_and_writes_nothing() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let commands = store.commands();
+    let claim = commands
+        .execute(TENANT, PROJECT, A, acquire(&store, "holder-read").await)
+        .await
+        .unwrap()["receipt"]["data"]
+        .clone();
+
+    // The rejection-path lookup reads the active claim it decorates: identity
+    // and lease facts must match the claim the coordinator just committed.
+    let holder = store
+        .claim_holder(TENANT, PROJECT, A, "a")
+        .await
+        .unwrap()
+        .expect("an active claim on the item must be readable");
+    assert_eq!(holder["claim_id"], claim["claim_id"]);
+    assert_eq!(holder["session_id"], "session-a");
+    assert_eq!(holder["actor_id"], "agent");
+    assert_eq!(holder["client_id"], "cli-a");
+    assert_eq!(holder["fence"], "1");
+    assert_eq!(holder["lease_version"], "1");
+    assert!(
+        !holder["expires_at"].as_str().unwrap().is_empty(),
+        "the holder must carry the lease expiry the caller needs to wait on"
+    );
+
+    // A losing acquire is refused, and the refusal writes nothing at all.
+    let before = snapshot(&admin).await;
+    assert!(matches!(
+        commands
+            .execute(TENANT, PROJECT, A, acquire(&store, "holder-loses").await)
+            .await,
+        Err(PgError::ClaimHeld)
+    ));
+    assert_eq!(snapshot(&admin).await, before);
+
+    // Without an active claim the lookup is empty, so the rejection keeps its
+    // existing shape instead of inventing a holder.
+    admin
+        .batch_execute("UPDATE awr_team.claims SET state='expired' WHERE state='active'")
+        .await
+        .unwrap();
+    assert!(
+        store
+            .claim_holder(TENANT, PROJECT, A, "a")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
