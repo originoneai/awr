@@ -368,7 +368,19 @@ pub(crate) async fn dispatch_authorized(
         Ok(Err(error)) => {
             let rejection = claim_rejection(&action, &error);
             let (status, mut value) = public_error(legacy_claim_acquire_error(&action, error));
-            if let Some(rejection) = rejection {
+            if let Some(mut rejection) = rejection {
+                // A losing acquire may name who holds the item. Read once, on the
+                // rejection path only, and keep the reason when the read fails.
+                let holder = match (rejection["reason"].as_str(), work.as_deref()) {
+                    (Some("ALREADY_CLAIMED"), Some(work)) => state
+                        .store
+                        .claim_holder(&project.tenant_id, &project.project_id, token, work)
+                        .await
+                        .ok()
+                        .flatten(),
+                    _ => None,
+                };
+                attach_holder(&mut rejection, holder);
                 value["rejection"] = rejection;
             }
             if let Some(raw) = &raw {
@@ -1234,6 +1246,19 @@ pub(crate) fn claim_rejection(action: &str, error: &PgError) -> Option<Value> {
         "next_action": next_action,
         "recheck": "After inspection or refresh. The rejection mutated nothing; the coordinator remains the only claim authority."
     }))
+}
+
+/// Name the holder inside an `ALREADY_CLAIMED` rejection.
+///
+/// Additive and optional: a reason other than `ALREADY_CLAIMED`, or a holder
+/// that could not be read, leaves the object exactly as it was.
+pub(crate) fn attach_holder(rejection: &mut Value, holder: Option<Value>) {
+    if rejection["reason"] != "ALREADY_CLAIMED" {
+        return;
+    }
+    if let Some(holder) = holder {
+        rejection["holder"] = holder;
+    }
 }
 
 pub async fn serve(path: &FilePath) -> Result<(), String> {

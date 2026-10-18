@@ -1104,7 +1104,24 @@ impl ServerHandler for Endpoint {
             Ok(Err(error)) => {
                 let rejection = super::claim_rejection(&action, &error);
                 let mut value = public_error(super::legacy_claim_acquire_error(&action, error)).1;
-                if let Some(rejection) = rejection {
+                if let Some(mut rejection) = rejection {
+                    // Same enrichment as the HTTP path: read-only, rejection path only.
+                    let holder = match (rejection["reason"].as_str(), work.as_deref()) {
+                        (Some("ALREADY_CLAIMED"), Some(work)) => self
+                            .state
+                            .store
+                            .claim_holder(
+                                &self.project.tenant_id,
+                                &self.project.project_id,
+                                &access.bearer,
+                                work,
+                            )
+                            .await
+                            .ok()
+                            .flatten(),
+                        _ => None,
+                    };
+                    super::attach_holder(&mut rejection, holder);
                     value["rejection"] = rejection;
                 }
                 if let Some(input) = diagnostic_input {
@@ -1189,6 +1206,43 @@ mod tests {
             PgError::EpochChanged,
         ));
         assert_eq!(renewed["code"], "EpochChanged");
+    }
+
+    #[test]
+    fn holder_facts_attach_only_to_an_already_claimed_rejection() {
+        let mut claimed =
+            crate::service::claim_rejection("claim.acquire", &PgError::ClaimHeld).unwrap();
+        let before = claimed.clone();
+        crate::service::attach_holder(&mut claimed, None);
+        assert_eq!(
+            claimed, before,
+            "a holder that could not be read changes nothing"
+        );
+        crate::service::attach_holder(
+            &mut claimed,
+            Some(json!({"claim_id":"claim-a","session_id":"session-a","client_id":"client-a"})),
+        );
+        assert_eq!(claimed["holder"]["claim_id"], "claim-a");
+        assert_eq!(claimed["holder"]["session_id"], "session-a");
+        assert_eq!(claimed["reason"], "ALREADY_CLAIMED");
+        assert_eq!(claimed["operation"], "claim.acquire");
+        assert_eq!(claimed["authority"], "coordinator");
+        // The pure constructor never carries a holder; only the read may add one.
+        assert!(
+            crate::service::claim_rejection("claim.acquire", &PgError::ClaimHeld)
+                .unwrap()
+                .get("holder")
+                .is_none()
+        );
+
+        let mut stale =
+            crate::service::claim_rejection("claim.acquire", &PgError::StaleFence).unwrap();
+        let before_stale = stale.clone();
+        crate::service::attach_holder(&mut stale, Some(json!({"claim_id":"claim-a"})));
+        assert_eq!(
+            stale, before_stale,
+            "only ALREADY_CLAIMED names who holds the work"
+        );
     }
 
     #[test]

@@ -331,6 +331,38 @@ async fn load(tx: &Transaction<'_>, tenant: &str, project: &str, id: &str) -> Pg
         WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.id=$3 AND c.scope_id='main'",
         &[&tenant,&project,&id]).await?.ok_or(PgError::Forbidden)
 }
+/// Read the active claim that refused an acquire, so the caller that lost the
+/// race can see who holds the work instead of only why it was refused.
+///
+/// Read-only: one statement, no lock held beyond it.
+pub(crate) async fn holder(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    work: &str,
+) -> PgResult<Option<Value>> {
+    let row = tx
+        .query_opt(
+            "SELECT c.id,c.session_id,c.actor_id,c.fence,c.lease_version,c.expires_at::text,s.client_id
+        FROM awr_team.claims c JOIN awr_team.sessions s
+          ON s.tenant_id=c.tenant_id AND s.project_id=c.project_id AND s.id=c.session_id AND s.scope_id=c.scope_id
+        WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.scope_id='main' AND c.work_id=$3
+          AND c.state='active'",
+            &[&tenant, &project, &work],
+        )
+        .await?;
+    Ok(row.map(|r| {
+        json!({
+            "claim_id":r.get::<_,String>(0),
+            "session_id":r.get::<_,String>(1),
+            "actor_id":r.get::<_,String>(2),
+            "fence":r.get::<_,i64>(3).to_string(),
+            "lease_version":r.get::<_,i64>(4).to_string(),
+            "expires_at":r.get::<_,String>(5),
+            "client_id":r.get::<_,String>(6),
+        })
+    }))
+}
 fn require_binding(r: &Row, work: &str, stream: &str, ownership: i64) -> PgResult<()> {
     if r.get::<_, String>(0) != work
         || r.get::<_, Option<String>>(7).as_deref() != Some(stream)

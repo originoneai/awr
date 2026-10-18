@@ -805,6 +805,29 @@ impl WorkstreamReadStore {
         crate::OpsAuditStore::from_pool(self.pool.clone())
     }
 
+    /// Name the holder of the claim that refused a `claim.acquire`.
+    ///
+    /// Read-only and authority-checked, on the rejection path only: one
+    /// statement against `awr_team.claims` joined to its session for the
+    /// client identity. `None` means no active claim could be read, and the
+    /// caller keeps the rejection it already has.
+    pub async fn claim_holder(
+        &self,
+        tenant: &str,
+        project: &str,
+        bearer: &str,
+        work: &str,
+    ) -> PgResult<Option<Value>> {
+        let mut client = self.pool.get().await?;
+        let tx = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .start()
+            .await?;
+        let _auth = authenticate(&tx, tenant, project, bearer).await?;
+        crate::workstream_command::claims::holder(&tx, tenant, project, work).await
+    }
+
     pub async fn query(
         &self,
         tenant: &str,
