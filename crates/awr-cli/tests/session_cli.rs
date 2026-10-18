@@ -1074,3 +1074,19 @@ fn session_start_reuse_reacquires_an_expired_claim() {
     let reacquired = reused["claim"]["id"].as_str().unwrap();
     assert_ne!(reacquired, first_claim);
 }
+
+#[test]
+fn malformed_work_history_cursor_is_reported_as_invalid_input() {
+    let f = Fixture::new();
+    let output = f.run(&["work", "history", "W", "--cursor", "{}"]);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let error: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(error["code"], "InvalidInput");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("invalid event cursor JSON")
+    );
+}

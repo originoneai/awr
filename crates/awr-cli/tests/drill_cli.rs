@@ -424,3 +424,19 @@ fn retired_source_metadata_and_history_remain_readable_without_the_manifest() {
     f.fails(&["source", "show", "plan"], "NotFound");
     f.fails(&["source", "show", id, "--content"], "SourceUnavailable");
 }
+
+#[test]
+fn malformed_event_history_cursor_is_reported_as_invalid_input() {
+    let f = Fixture::new();
+    let output = f.run(&["event", "history", "--work", "W", "--cursor", "{}"]);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let error: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(error["code"], "InvalidInput");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("invalid event cursor JSON")
+    );
+}
