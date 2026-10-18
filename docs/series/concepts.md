@@ -149,9 +149,10 @@ Keep the evidence bindings separate:
 - `source_sha` names the exact source revision used by verification. It remains
   strict for Git or code revisions; a matching task section cannot make an
   arbitrary source-SHA mismatch current.
-- `section_fingerprint` is an independent, narrower binding to the work item's
-  task contract. It is not a canonical acceptance version and does not replace
-  the report's exact criterion coverage.
+- `section_fingerprint` identifies the work item's task-contract version for
+  work-scoped currency. It participates in the existing work/acceptance binding;
+  it does not introduce a second adopted or approved version, or replace the
+  report's exact criterion coverage.
 - The evidence `sha256` is the report digest: it binds the report bytes read
   during preflight and completion. Branch, source freshness and required proof
   bindings remain separate gates.
@@ -172,7 +173,30 @@ requested SHA now matches the current ledger's hash, and
 the recorded and current section fingerprints match. The `sha256:` prefix is
 omitted when supplying these hashes as `source_sha`. This permits ledger-only
 lifecycle or unrelated-task edits; it never overrides an arbitrary Git or code
-SHA mismatch. Generic evidence listings without work context remain SHA-strict.
+SHA mismatch.
+
+Currency follows the read path's explicit scope, not whether a record happens to
+name a work item:
+
+| Read path | Currency rule |
+| --- | --- |
+| Work details and evidence groups (`awr work show`, CLI/MCP work queries), task context and completion revalidation | Resolve the current work projection and use `Store::evidence_for_work` / `assess_for_work`, with work-source freshness checks. The stamped ledger exception above applies. Groups preserve each record's assessment rather than reassessing it. |
+| Standalone `awr evidence show` | Use `assess` with the requested SHA and branch, without resolving a work projection. A SHA mismatch stays `Historical`, even when the record names a work item. |
+| Completion preflight, exact completion-report binding checks and evidence-input validation | Validate the supplied report, acceptance coverage and required fields, using the declared verification SHA where required. These checks do not classify currency or replace a work-scoped assessment. The internal plain `assess` calls used for input validation consume only missing-field diagnostics. |
+
+All work-scoped readers share the store assessment; none substitute a plain-SHA
+answer for the same record on that path. A standalone source-revision lookup and
+a work-scoped lookup ask different questions, so their answers may differ after
+unrelated ledger edits. Report byte reads and raw record lookups do not themselves
+make a currency assessment.
+
+When a successful completion receipt still matches the current work, revalidation
+keeps its entire selected evidence set and passes it unchanged to the store.
+Every selected record must pass binding validation and report verification for the
+requested revision. Neither a partially current set nor an entirely non-current
+set is discarded to fall back to a newer passing report. This preserves required
+proof beyond the records used to cover individual acceptance criteria.
+
 A work-aware query with an omitted SHA can use the section binding, but verified
 evidence still requires `source_sha` and all required report bindings. The
 original evidence/report SHA is never rewritten. Registering an old report after

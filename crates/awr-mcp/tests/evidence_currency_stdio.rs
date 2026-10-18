@@ -260,6 +260,22 @@ fn report(work: &str, source_sha: &str, criteria: &[&str]) -> Value {
 }
 
 fn evidence_currency(value: &Value, key: &str) -> Value {
+    // Flat and grouped evidence are the same work-scoped read path. Grouping
+    // must preserve each assessment, including ledger reuse and strict Git SHA.
+    for group in value["evidence_groups"].as_array().unwrap() {
+        for record in group["records"].as_array().unwrap() {
+            let flat = value["evidence"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["external_key"] == record["external_key"])
+                .unwrap();
+            assert_eq!(record["currency"], flat["currency"]);
+            assert_eq!(record["missing_bindings"], flat["missing_bindings"]);
+            assert_eq!(record["source_sha"], flat["source_sha"]);
+            assert_eq!(record["reasons"], flat["reasons"]);
+        }
+    }
     value["evidence"]
         .as_array()
         .unwrap()

@@ -147,9 +147,11 @@ same runtime branch. Every selected report, including extra required evidence,
 is read and checked again; another passing report cannot replace a missing or
 damaged selected report. Ledger-only drift recognized through matching stored
 section stamps retains that receipt's exact evidence selection. Rejected attempts
-remain available in evidence history. If the task facts/revision, branch or requested
-source revision no longer satisfies the completion receipt's bindings, status
-uses the existing conservative source/evidence assessment. Source-declared
+remain available in evidence history. A matching receipt is not discarded when
+its evidence fails validation for the requested source revision: that completion
+fails verification, even if another report passes. If the task facts/revision or
+runtime branch no longer matches the receipt, no recorded selection applies and
+status uses the existing conservative source/evidence assessment. Source-declared
 completion alone never supplies a verified receipt.
 
 For one preparation, the old work-get plus context-compile pair becomes one call

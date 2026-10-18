@@ -11,6 +11,7 @@ const WORK_KEY: &str = "W";
 const OTHER_KEY: &str = "OTHER";
 const FIRST_CRITERION: &str = "The report covers the first requirement";
 const SECOND_CRITERION: &str = "The report covers the second requirement";
+const ALTERNATE_CODE_SHA: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 struct Project {
     root: PathBuf,
@@ -24,7 +25,7 @@ impl Project {
         fs::write(root.join("work.yaml"), work_yaml(with_other)).unwrap();
         fs::write(
             root.join("manifest.toml"),
-            "[project]\nname = 'Evidence currency CLI fixture'\n\n[[sources]]\ndomain = 'ledger'\nrole = 'primary'\npath = 'work.yaml'\nadapter = 'yaml-ledger-v1'\n",
+            "[project]\nname = 'Evidence currency CLI fixture'\ncontext_profile = 'minimal'\n\n[[sources]]\ndomain = 'ledger'\nrole = 'primary'\npath = 'work.yaml'\nadapter = 'yaml-ledger-v1'\n",
         )
         .unwrap();
         let project = Self { root };
@@ -264,6 +265,23 @@ impl Project {
         .unwrap();
         self.ok(&["source", "reindex"]);
     }
+
+    fn organize(&self) {
+        let body = fs::read_to_string(self.root.join("work.yaml")).unwrap();
+        let body = body.replacen(
+            "  title: Deliver the report\n",
+            "  title: Deliver the report\n  goal: G\n",
+            1,
+        );
+        fs::write(
+            self.root.join("work.yaml"),
+            format!(
+                "goals:\n- id: G\n  title: Deliver the report\n  status: active\n  summary: The user requested the report\n  success_criteria: [The report is delivered]\n{body}"
+            ),
+        )
+        .unwrap();
+        self.ok(&["source", "reindex"]);
+    }
 }
 
 impl Drop for Project {
@@ -283,6 +301,193 @@ fn work_yaml(with_other: bool) -> String {
     format!(
         "work_items:\n- id: {WORK_KEY}\n  title: Deliver the report\n  status: in_progress\n  owner: worker-a\n  acceptance: [{FIRST_CRITERION}, {SECOND_CRITERION}]\n  next_action: Verify the report\n{other}"
     )
+}
+
+fn completion_gap(value: &Value) -> &Value {
+    value["organization"]["gaps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|gap| gap["target"] == WORK_KEY && gap["code"] == "completion_verification_failed")
+        .unwrap_or_else(|| panic!("missing completion verification gap: {value}"))
+}
+
+#[test]
+fn cli_completion_receipt_cannot_be_replaced_by_a_passing_report_for_another_sha() {
+    let project = Project::new("receipt-sha-replacement", false);
+    project.organize();
+    let session = project.start_session(WORK_KEY, "worker-a", true);
+    let original_sha = project.current_sha();
+    let report = project.write_report("selected-report.json", WORK_KEY, &original_sha);
+    let prepared = project.prepare(WORK_KEY, &report, "selected", &original_sha);
+    let evidence_file = project.write_prepared_evidence(&prepared, "selected.json");
+    project.add_prepared_evidence(&prepared, &evidence_file);
+    let completed = project.complete(WORK_KEY, &session, &prepared);
+    assert_eq!(completed["event"]["event_type"], "work.completed");
+    let completed_sha = project.current_sha();
+    let baseline = project.ok(&["intake", "inspect", "--source-sha", &completed_sha]);
+    assert_eq!(baseline["organization"]["state"], "completed");
+    assert_eq!(baseline["organization"]["verified_completed"], 1);
+
+    // This is a different Git/code revision, so the original selected proof is
+    // historical for this query. A fresh passing report must not replace it.
+    let replacement = project.write_report("replacement-report.json", WORK_KEY, ALTERNATE_CODE_SHA);
+    let prepared_replacement =
+        project.prepare(WORK_KEY, &replacement, "replacement", ALTERNATE_CODE_SHA);
+    let replacement_file =
+        project.write_prepared_evidence(&prepared_replacement, "replacement.json");
+    project.add_prepared_evidence(&prepared_replacement, &replacement_file);
+
+    let inspect = project.ok(&["intake", "inspect", "--source-sha", ALTERNATE_CODE_SHA]);
+    assert_eq!(inspect["organization"]["state"], "awaiting_verification");
+    assert_eq!(inspect["organization"]["verified_completed"], 0);
+    assert_eq!(inspect["organization"]["completion_verification_failed"], 1);
+    assert!(
+        completion_gap(&inspect)["detail"]
+            .as_str()
+            .unwrap()
+            .contains(
+                "selected evidence selected no longer meets the current verification requirements"
+            )
+    );
+
+    let status = project.ok(&[
+        "status",
+        "--view",
+        "full",
+        "--source-sha",
+        ALTERNATE_CODE_SHA,
+    ]);
+    assert_eq!(status["organization"]["state"], "awaiting_verification");
+    assert_eq!(status["organization"]["verified_completed"], 0);
+    assert_eq!(status["organization"]["completion_verification_failed"], 1);
+    assert!(
+        completion_gap(&status)["detail"]
+            .as_str()
+            .unwrap()
+            .contains(
+                "selected evidence selected no longer meets the current verification requirements"
+            )
+    );
+}
+
+#[test]
+fn cli_multiple_selected_evidence_cannot_be_replaced_after_partial_or_total_damage() {
+    let project = Project::new("multiple-selected-damage", false);
+    project.organize();
+    let session = project.start_session(WORK_KEY, "worker-a", true);
+    let original_sha = project.current_sha();
+
+    let report_a = project.write_report("selected-a-report.json", WORK_KEY, &original_sha);
+    let prepared_a = project.prepare(WORK_KEY, &report_a, "selected-a", &original_sha);
+    let evidence_a_file = project.write_prepared_evidence(&prepared_a, "selected-a.json");
+    project.add_prepared_evidence(&prepared_a, &evidence_a_file);
+
+    let report_b = project.write_report("selected-b-report.json", WORK_KEY, &original_sha);
+    let prepared_b = project.prepare(WORK_KEY, &report_b, "selected-b", &original_sha);
+    let evidence_b_file = project.write_prepared_evidence(&prepared_b, "selected-b.json");
+    project.add_prepared_evidence(&prepared_b, &evidence_b_file);
+
+    let mut completion = prepared_a.clone();
+    for mapping in completion["completion"]["acceptance"]
+        .as_array_mut()
+        .unwrap()
+    {
+        mapping["evidence"] = json!(["selected-a", "selected-b"]);
+    }
+    let completed = project.complete(WORK_KEY, &session, &completion);
+    assert_eq!(completed["event"]["event_type"], "work.completed");
+    let completed_sha = project.current_sha();
+    let baseline = project.ok(&["intake", "inspect", "--source-sha", &completed_sha]);
+    assert_eq!(baseline["organization"]["state"], "completed");
+    assert_eq!(baseline["organization"]["verified_completed"], 1);
+
+    // A passing report at the requested SHA cannot replace either selected
+    // record when the receipt's two-record selection is checked as a whole.
+    let alternate = project.write_report("alternate-report.json", WORK_KEY, ALTERNATE_CODE_SHA);
+    let prepared_alternate = project.prepare(WORK_KEY, &alternate, "alternate", ALTERNATE_CODE_SHA);
+    let alternate_file = project.write_prepared_evidence(&prepared_alternate, "alternate.json");
+    project.add_prepared_evidence(&prepared_alternate, &alternate_file);
+    let different_sha = project.ok(&[
+        "status",
+        "--view",
+        "full",
+        "--source-sha",
+        ALTERNATE_CODE_SHA,
+    ]);
+    assert_eq!(
+        different_sha["organization"]["state"],
+        "awaiting_verification"
+    );
+    assert_eq!(different_sha["organization"]["verified_completed"], 0);
+    assert!(
+        completion_gap(&different_sha)["detail"]
+            .as_str()
+            .unwrap()
+            .contains(
+                "selected evidence selected-a no longer meets the current verification requirements"
+            )
+    );
+
+    // Register a replacement at the current ledger SHA and corrupt one selected
+    // report. The remaining selected report must not make the damaged one
+    // replaceable; repeat with both selected reports damaged.
+    let current_sha = project.current_sha();
+    let current_replacement =
+        project.write_report("current-replacement-report.json", WORK_KEY, &current_sha);
+    let prepared_current = project.prepare(
+        WORK_KEY,
+        &current_replacement,
+        "current-replacement",
+        &current_sha,
+    );
+    let current_replacement_file =
+        project.write_prepared_evidence(&prepared_current, "current-replacement.json");
+    project.add_prepared_evidence(&prepared_current, &current_replacement_file);
+
+    let selected_a_bytes = fs::read(project.root.join("selected-a-report.json")).unwrap();
+    let selected_b_bytes = fs::read(project.root.join("selected-b-report.json")).unwrap();
+    let corrupt = |bytes: &[u8], details: &str| {
+        let mut report: Value = serde_json::from_slice(bytes).unwrap();
+        report["checks"][0]["details"] = json!(details);
+        serde_json::to_vec_pretty(&report).unwrap()
+    };
+
+    fs::write(
+        project.root.join("selected-a-report.json"),
+        corrupt(
+            &selected_a_bytes,
+            "The first selected observation was altered",
+        ),
+    )
+    .unwrap();
+    let partial = project.ok(&["intake", "inspect", "--source-sha", &current_sha]);
+    assert_eq!(partial["organization"]["state"], "awaiting_verification");
+    assert_eq!(partial["organization"]["verified_completed"], 0);
+    assert!(
+        completion_gap(&partial)["detail"]
+            .as_str()
+            .unwrap()
+            .contains("registered content bytes no longer match the SHA256 bound at registration")
+    );
+
+    fs::write(
+        project.root.join("selected-b-report.json"),
+        corrupt(
+            &selected_b_bytes,
+            "The second selected observation was altered",
+        ),
+    )
+    .unwrap();
+    let all = project.ok(&["status", "--view", "full", "--source-sha", &current_sha]);
+    assert_eq!(all["organization"]["state"], "awaiting_verification");
+    assert_eq!(all["organization"]["verified_completed"], 0);
+    assert!(
+        completion_gap(&all)["detail"]
+            .as_str()
+            .unwrap()
+            .contains("registered content bytes no longer match the SHA256 bound at registration")
+    );
 }
 
 #[test]
