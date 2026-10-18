@@ -1102,7 +1102,11 @@ impl ServerHandler for Endpoint {
         let result = match result {
             Ok(Ok(value)) => CallToolResult::structured(value),
             Ok(Err(error)) => {
+                let rejection = super::claim_rejection(&action, &error);
                 let mut value = public_error(error).1;
+                if let Some(rejection) = rejection {
+                    value["rejection"] = rejection;
+                }
                 if let Some(input) = diagnostic_input {
                     add_input_diagnostic(&mut value, &input, write);
                 }
@@ -1138,6 +1142,37 @@ mod tests {
         assert_eq!(unknown["code"], "InvalidInput");
         assert!(unknown.get("reason").is_none());
         assert!(!unknown.to_string().contains("private-manifest-detail"));
+    }
+
+    #[test]
+    fn rejected_claim_acquire_names_its_reason_without_changing_the_response() {
+        let rejection =
+            crate::service::claim_rejection("claim.acquire", &PgError::ClaimHeld).unwrap();
+        assert_eq!(rejection["reason"], "ALREADY_CLAIMED");
+        assert_eq!(rejection["operation"], "claim.acquire");
+        assert_eq!(rejection["authority"], "coordinator");
+        for (error, reason) in [
+            (PgError::StaleFence, "STALE_FENCE"),
+            (PgError::EpochChanged, "EPOCH_CHANGED"),
+            (PgError::WaitOpen, "WAIT_OPEN"),
+            (PgError::PreconditionsChanged, "PRECONDITIONS_CHANGED"),
+            (PgError::RecoveryBlocked, "RECOVERY_BLOCKED"),
+        ] {
+            assert_eq!(
+                crate::service::claim_rejection("claim.acquire", &error).unwrap()["reason"],
+                reason
+            );
+        }
+        // Only claim.acquire carries the reason, and the legacy response is untouched.
+        assert!(crate::service::claim_rejection("claim.renew", &PgError::ClaimHeld).is_none());
+        assert!(
+            crate::service::claim_rejection("task.accept_assignment", &PgError::ClaimHeld).is_none()
+        );
+        assert!(crate::service::claim_rejection("claim.acquire", &PgError::Forbidden).is_none());
+        let (status, value) = public_error(PgError::ClaimHeld);
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(value["code"], "ClaimHeld");
+        assert!(value.get("rejection").is_none());
     }
 
     #[test]

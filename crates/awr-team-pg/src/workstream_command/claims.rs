@@ -276,13 +276,19 @@ async fn acquire(
     let mut events = vec![];
     if let Some(r) = active {
         // Reassignment and restore require an explicit recovery/migration path;
-        // an elapsed old row must not be attributed to the new workstream.
+        // an elapsed old row must not be attributed to the new workstream. The
+        // rejection names the first fact that disagrees so the losing machine can
+        // explain why; the accepted/rejected set itself is unchanged.
         if r.get::<_, Option<String>>(1) != Some(command.workstream_id.to_string())
             || r.get::<_, Option<i64>>(2) != Some(ownership)
-            || r.get::<_, Option<String>>(3) != Some(auth.epoch.clone())
-            || r.get::<_, i64>(5) != fence
         {
             return Err(PgError::RecoveryBlocked);
+        }
+        if r.get::<_, Option<String>>(3) != Some(auth.epoch.clone()) {
+            return Err(PgError::EpochChanged);
+        }
+        if r.get::<_, i64>(5) != fence {
+            return Err(PgError::StaleFence);
         }
         if r.get::<_, bool>(4) {
             return Err(PgError::ClaimHeld);

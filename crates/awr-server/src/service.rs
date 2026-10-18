@@ -366,7 +366,11 @@ pub(crate) async fn dispatch_authorized(
     match result {
         Ok(Ok(value)) => response(StatusCode::OK, value),
         Ok(Err(error)) => {
+            let rejection = claim_rejection(&action, &error);
             let (status, mut value) = public_error(error);
+            if let Some(rejection) = rejection {
+                value["rejection"] = rejection;
+            }
             if let Some(raw) = &raw {
                 mcp::add_input_diagnostic(&mut value, raw, write);
             }
@@ -1168,6 +1172,51 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
         ),
         _ => (StatusCode::SERVICE_UNAVAILABLE, unavailable_value()),
     }
+}
+
+/// Name the existing rejection of `claim.acquire` in machine-readable form.
+///
+/// The coordinator has already decided; this only labels that decision for the
+/// caller. It performs no write, adds no command, and leaves the legacy code,
+/// status, claim rows, fence, epoch and revision exactly as they are.
+pub(crate) fn claim_rejection(action: &str, error: &PgError) -> Option<Value> {
+    if action != "claim.acquire" {
+        return None;
+    }
+    let (reason, next_action) = match error {
+        PgError::ClaimHeld => (
+            "ALREADY_CLAIMED",
+            "Inspect the active claim with claim.inspect; acquire again only after it is released or has expired.",
+        ),
+        PgError::StaleFence => (
+            "STALE_FENCE",
+            "Refresh work.prepare and retry claim.acquire with the current work version; the coordinator fence never moves backwards.",
+        ),
+        PgError::EpochChanged => (
+            "EPOCH_CHANGED",
+            "Reconnect to the current coordinator epoch and rebuild the command; a delivery from a previous epoch is never replayable.",
+        ),
+        PgError::WaitOpen => (
+            "WAIT_OPEN",
+            "Resolve the open wait on this work before acquiring it.",
+        ),
+        PgError::PreconditionsChanged => (
+            "PRECONDITIONS_CHANGED",
+            "Refresh work.prepare; the work version, fence or contract state moved since it was read.",
+        ),
+        PgError::RecoveryBlocked => (
+            "RECOVERY_BLOCKED",
+            "Inspect the current claim, handoff and workstream binding before retrying claim.acquire; reassignment needs its explicit recovery path.",
+        ),
+        _ => return None,
+    };
+    Some(json!({
+        "reason": reason,
+        "operation": "claim.acquire",
+        "authority": "coordinator",
+        "next_action": next_action,
+        "recheck": "After inspection or refresh. The rejection mutated nothing; the coordinator remains the only claim authority."
+    }))
 }
 
 pub async fn serve(path: &FilePath) -> Result<(), String> {
