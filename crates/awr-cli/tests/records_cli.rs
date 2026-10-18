@@ -239,3 +239,101 @@ fn binary_artifact_raw_output_is_exact_and_verified_evidence_needs_bindings() {
     assert_eq!(f.revision(), revision);
     f.error(&["evidence", "show", "INCOMPLETE"], "NotFound");
 }
+
+fn add_evidence(f: &Fixture, body: &Value) -> Output {
+    fs::write(f.0.join("locator.json"), serde_json::to_vec(body).unwrap()).unwrap();
+    let revision = f.revision();
+    f.run(
+        &[
+            "evidence",
+            "add",
+            "--input",
+            "locator.json",
+            "--expected-revision",
+            &revision,
+        ],
+        true,
+    )
+}
+
+fn probe_draft(key: &str, locator: &str) -> Value {
+    json!({"external_key":key,"evidence_type":"report","level":"implemented","summary":"locator root guard probe","locator":locator,"scope":["probe"]})
+}
+
+#[test]
+fn relative_locator_escaping_the_project_root_is_refused() {
+    // A relative locator that provably resolves outside the project root is unreadable
+    // (read.rs rejects it), so registering it would store a record nobody can read.
+    let f = Fixture::new();
+    let outside =
+        f.0.parent()
+            .unwrap()
+            .join(format!("awr-outside-{}.txt", Id::new()));
+    fs::write(&outside, "outside the project root").unwrap();
+    let locator = format!("../{}", outside.file_name().unwrap().to_string_lossy());
+    let refused = add_evidence(&f, &probe_draft("ESCAPE-REL", &locator));
+    assert!(
+        !refused.status.success(),
+        "registration accepted an escaping relative locator: stdout={}",
+        String::from_utf8_lossy(&refused.stdout)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&refused.stderr).unwrap()["code"],
+        "RuleViolation"
+    );
+    f.error(&["evidence", "show", "ESCAPE-REL"], "NotFound");
+    let _ = fs::remove_file(&outside);
+}
+
+#[test]
+fn absolute_locator_outside_the_project_root_is_refused() {
+    let f = Fixture::new();
+    let outside =
+        f.0.parent()
+            .unwrap()
+            .join(format!("awr-outside-{}.txt", Id::new()));
+    fs::write(&outside, "outside the project root").unwrap();
+    let refused = add_evidence(&f, &probe_draft("ESCAPE-ABS", outside.to_str().unwrap()));
+    assert!(
+        !refused.status.success(),
+        "registration accepted an absolute locator outside the root: stdout={}",
+        String::from_utf8_lossy(&refused.stdout)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&refused.stderr).unwrap()["code"],
+        "RuleViolation"
+    );
+    f.error(&["evidence", "show", "ESCAPE-ABS"], "NotFound");
+    let _ = fs::remove_file(&outside);
+}
+
+#[test]
+fn locator_inside_the_project_root_is_still_accepted() {
+    let f = Fixture::new();
+    let accepted = add_evidence(&f, &probe_draft("INSIDE", "work.yaml"));
+    assert!(
+        accepted.status.success(),
+        "registration refused an in-root locator: stderr={}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    let body: Value = serde_json::from_slice(&accepted.stdout).unwrap();
+    assert_eq!(body["ok"], json!(true));
+    assert_eq!(body["evidence"]["locator"], json!("work.yaml"));
+}
+
+#[test]
+fn unresolvable_locator_is_not_rejected_by_the_root_guard() {
+    // The guard refuses only provable escapes. A path that does not exist yet cannot be
+    // proven to escape, so registration keeps its previous behaviour.
+    let f = Fixture::new();
+    let accepted = add_evidence(&f, &probe_draft("FUTURE", "reports/future.md"));
+    assert!(
+        accepted.status.success(),
+        "registration refused a not-yet-existing in-root locator: stderr={}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&accepted.stdout).unwrap()["ok"],
+        json!(true)
+    );
+}
