@@ -116,6 +116,23 @@ fn source_first() -> AuthorityMode {
     AuthorityMode::SourceFirst
 }
 
+/// One-based line and column of a byte offset into `text`, counted the way the
+/// TOML parser reports positions: lines break on `\n` and columns count
+/// characters rather than bytes.
+fn line_column(text: &str, offset: usize) -> (usize, usize) {
+    let mut offset = offset.min(text.len());
+    while !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    let prefix = &text[..offset];
+    let line = prefix.matches('\n').count() + 1;
+    let column = prefix
+        .rsplit('\n')
+        .next()
+        .map_or(1, |line| line.chars().count() + 1);
+    (line, column)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceSpec {
@@ -143,8 +160,19 @@ impl Manifest {
     }
     pub fn parse(text: &str) -> Result<Self> {
         awr_core::ensure_public_text(text)?;
-        let value: toml::Value = toml::from_str(text)
-            .map_err(|_| Error::InvalidInput("invalid source manifest TOML".into()))?;
+        let value: toml::Value = toml::from_str(text).map_err(|error| {
+            let detail = match error.span() {
+                Some(span) => {
+                    let (line, column) = line_column(text, span.start);
+                    format!(
+                        "invalid source manifest TOML at line {line}, column {column}: {}",
+                        error.message()
+                    )
+                }
+                None => format!("invalid source manifest TOML: {}", error.message()),
+            };
+            Error::InvalidInput(detail)
+        })?;
         awr_core::ensure_public_data(&value)?;
         let manifest: Self = value.try_into().map_err(|error| {
             Error::InvalidInput(format!(
@@ -273,6 +301,25 @@ mod tests {
         assert!(message.contains("does not match its schema"), "{message}");
         assert!(message.contains("unknown variant `…`"), "{message}");
         assert!(!message.contains(secret), "{message}");
+    }
+
+    #[test]
+    fn manifest_toml_syntax_error_reports_line_and_column() {
+        let root = std::env::temp_dir().join(format!("awr-manifest-toml-{}", awr_core::Id::new()));
+        std::fs::create_dir_all(root.join(".awr")).unwrap();
+        std::fs::write(
+            root.join(".awr/project.toml"),
+            "[project]\nname = 'P'\ncontext_profile = standard\n",
+        )
+        .unwrap();
+        let error = Manifest::load(&root).unwrap_err();
+        std::fs::remove_dir_all(&root).unwrap();
+        let Error::InvalidInput(message) = error else {
+            panic!("unexpected error: {error}");
+        };
+        let prefix = "invalid source manifest TOML at line 3, column 19: ";
+        assert!(message.starts_with(prefix), "{message}");
+        assert!(message.len() > prefix.len(), "{message}");
     }
 
     #[test]
