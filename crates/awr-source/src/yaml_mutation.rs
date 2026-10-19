@@ -146,7 +146,7 @@ pub fn prepare_yaml_mutation(
     };
     if crate::is_runtime_owned_path(&root.canonicalize()?, &path) {
         return Err(unsupported(
-            "runtime-owned files cannot be source mutation targets; relocate authored documents outside .awr (except .awr/intake) and reindex",
+            "runtime-owned files cannot be source mutation targets; relocate authored documents outside .awr (except registered .awr/intake sources) and reindex",
         ));
     }
     if before.fingerprint != proposal.base_fingerprint {

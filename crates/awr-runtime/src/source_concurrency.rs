@@ -293,9 +293,9 @@ fn bind_registered_shard_paths(
                 "shard source path escapes project root".into(),
             ));
         }
-        if registered.starts_with(root.join(".awr")) {
+        if awr_source::is_runtime_owned_path(&root, &registered) {
             return Err(Error::RuleViolation(
-                "runtime-owned files cannot be shard write targets".into(),
+                "runtime-owned files cannot be shard write targets; relocate authored documents outside .awr (except registered .awr/intake sources) and reindex".into(),
             ));
         }
         if relative != shard.path.as_path() {
@@ -304,7 +304,7 @@ fn bind_registered_shard_paths(
             ));
         }
         let claimed = root.join(&shard.path);
-        if !claimed.starts_with(&root) || claimed.starts_with(root.join(".awr")) {
+        if !claimed.starts_with(&root) || awr_source::is_runtime_owned_path(&root, &claimed) {
             return Err(Error::RuleViolation(
                 "shard path escapes the writable project boundary".into(),
             ));
