@@ -164,12 +164,9 @@ impl Manifest {
             let detail = match error.span() {
                 Some(span) => {
                     let (line, column) = line_column(text, span.start);
-                    format!(
-                        "invalid source manifest TOML at line {line}, column {column}: {}",
-                        error.message()
-                    )
+                    format!("invalid source manifest TOML at line {line}, column {column}")
                 }
-                None => format!("invalid source manifest TOML: {}", error.message()),
+                None => "invalid source manifest TOML".to_string(),
             };
             Error::InvalidInput(detail)
         })?;
@@ -317,9 +314,20 @@ mod tests {
         let Error::InvalidInput(message) = error else {
             panic!("unexpected error: {error}");
         };
-        let prefix = "invalid source manifest TOML at line 3, column 19: ";
-        assert!(message.starts_with(prefix), "{message}");
-        assert!(message.len() > prefix.len(), "{message}");
+        assert_eq!(message, "invalid source manifest TOML at line 3, column 19");
+    }
+
+    #[test]
+    fn manifest_toml_syntax_error_does_not_echo_submitted_text() {
+        let secret = "private-variant-9f8e7d6c5b4a";
+        let text = format!("[project]\nname = 'P'\n{secret} = 1\n{secret} = 2\n");
+        let error = Manifest::parse(&text).unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("invalid source manifest TOML"),
+            "{message}"
+        );
+        assert!(!message.contains(secret), "{message}");
     }
 
     #[test]
