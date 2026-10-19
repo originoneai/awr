@@ -128,6 +128,10 @@ AWR is honest about what is shipped versus what is being built. The published
 - Personal Workspace file exchange
 - A personal workstream foundation: explicit source ownership, session
   attribution and scoped context in a local SQLite project
+- Workstream usage, time and ETA accounting in the local store: usage and
+  execution-time receipts and ETA checkpoints recorded from what the host
+  reports, and an accounting view in `awr nav`. AWR does not measure usage
+  itself; missing host data is shown as a gap, not estimated.
 
 This release does **not** provide an authenticated Team service or complete
 multi-client isolation. Still in development on `main`:
@@ -136,7 +140,6 @@ multi-client isolation. Still in development on `main`:
   accepted artifact and contract version; recheck consumers when it changes)
 - Team collaboration and delivery review (explicit reviewer and approval
   records)
-- Workstream usage, time and ETA accounting
 
 The release notes for each published version define the actual package
 boundary.
