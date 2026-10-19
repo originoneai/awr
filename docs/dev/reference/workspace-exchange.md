@@ -231,6 +231,29 @@ projects/<key>/handoffs/<origin host>/<name>.json  交接单元（if-none-match�
 - 那 5 次 `contended` 都如实 exit 1，并且**没有任何路径被改写**——这正是它和冲突的区别：
   冲突要人决定，`contended` 只要再发布一次。
 
+## 项目相对证据定位器
+
+`project:///<project-relative-path>` 让同一条证据在各节点都指向同一份检出里的同一个相对路径。
+
+**project root 指什么。** 指项目记录里存的根（`.awr/project.toml` 所在目录）在读取时
+`canonicalize()` 的结果。根一旦移动，读取以 `project root moved since registration` 失败，
+不会去猜新位置。
+
+**一条规则。** `project://` 只解析到 project root 之内：`..`、绝对路径与任何越界分量在
+`Locator::parse` 就被拒（`project locator must stay inside the project root`），读取时再对
+`canonicalize()` 的结果做一次 root 包含检查。**`authorized_roots` 不参与 `project://`**：它是
+各节点自己的配置，若让它满足 project 定位器，同一个字符串就会在不同节点解析到不同字节；
+`file://` 与普通路径照旧使用 `authorized_roots`。
+
+**字节不同时必须失败。** 登记时解析一次，把规范身份写进记录；声明了 `sha256` 就必须与解析到的
+字节一致。到另一个节点读取时，同一相对路径若字节不同，读取以
+`registered content bytes no longer match the SHA256 bound at registration` 失败，**绝不回退到
+本机其它副本**。因此跨节点的一致性口径是「同一相对路径 + 同一 `sha256`」，不是「同一台机器」。
+证据正文的读取路径（`evidence show` 的正文）就按记录里的 `sha256` 校验。
+
+已知边界：定位器不带 root 指纹；两个检出的相对路径相同、字节也相同时无法区分来自哪个 root，
+更强的 root 身份仍是未决问题（#348）。
+
 ## 验证入口
 
 ```sh

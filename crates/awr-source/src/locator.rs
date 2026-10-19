@@ -261,10 +261,14 @@ impl Locator {
                 ));
             };
             let path = PathBuf::from(path);
-            relative(&path)?;
-            // The same authority check as file:// sources: a project locator can
-            // never point outside the project or its authorized roots.
-            Self::file(root, manifest, &path)?;
+            // One rule, enforced here and in `read`: a project locator resolves
+            // against the project root and nothing else. Authorized roots are
+            // node-local configuration, so letting them satisfy a project
+            // locator would resolve one stored string to different bytes on
+            // another node. `file://` locators keep using authorized roots.
+            relative(&path).map_err(|_| {
+                Error::RuleViolation("project locator must stay inside the project root".into())
+            })?;
             return Ok(Self::Project { path });
         }
         Err(Error::Unsupported(

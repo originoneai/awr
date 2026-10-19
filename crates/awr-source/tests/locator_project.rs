@@ -110,3 +110,41 @@ fn project_locator_rejects_an_authority_traversal_and_a_selector() {
     let error = Locator::parse(&root, &manifest, "project:///evidence/check.json#L1").unwrap_err();
     assert!(matches!(error, Error::SourceUnavailable(_)), "{error}");
 }
+
+#[test]
+fn the_same_relative_path_with_different_bytes_never_falls_back() {
+    let first = project_root("two-roots-first");
+    let second = project_root("two-roots-second");
+    fs::write(second.join("evidence/check.json"), b"{\"check\":false}\n").unwrap();
+    let manifest = manifest();
+    let spec = "project:///evidence/check.json";
+
+    let a = Locator::parse(&first, &manifest, spec)
+        .unwrap()
+        .read(&first, 4096)
+        .unwrap();
+    let b = Locator::parse(&second, &manifest, spec)
+        .unwrap()
+        .read(&second, 4096)
+        .unwrap();
+
+    // One identity, two byte streams: each read uses its own root, and neither
+    // falls back to the other checkout.
+    assert_eq!(a.locator, b.locator);
+    assert_eq!(a.bytes, b"{\"check\":true}\n");
+    assert_eq!(b.bytes, b"{\"check\":false}\n");
+    assert_ne!(a.fingerprint, b.fingerprint);
+}
+
+#[test]
+fn a_project_locator_stays_inside_the_project_root() {
+    let root = project_root("root-rule");
+    let manifest = manifest();
+    for spec in [
+        "project:///../outside.json",
+        "project:///evidence/../../outside.json",
+    ] {
+        let error = Locator::parse(&root, &manifest, spec).unwrap_err();
+        assert!(matches!(error, Error::RuleViolation(_)), "{spec}: {error}");
+    }
+}

@@ -326,6 +326,40 @@ fn project_locator_is_parsed_at_registration_and_read_back_by_show() {
 }
 
 #[test]
+fn a_project_locator_that_escapes_is_refused_by_the_locator_parser() {
+    let f = Fixture::new();
+    let revision = f.revision();
+    let draft = json!({"external_key":"PROJECT-ESCAPE","work_item_key":"W","evidence_type":"report","level":"implemented","summary":"Escaping project locator","locator":"project:///../escape.json","sha256":null,"source_sha":null,"command":null,"scope":["W"],"branch_id":null,"verified_at":null});
+    fs::write(f.0.join("escape.json"), serde_json::to_vec(&draft).unwrap()).unwrap();
+    let r = f.run(
+        &[
+            "evidence",
+            "add",
+            "--input",
+            "escape.json",
+            "--expected-revision",
+            &revision,
+        ],
+        true,
+    );
+    assert!(!r.status.success());
+    let report: Value = serde_json::from_slice(&r.stderr).unwrap();
+    // The refusal is the parser's, not the write-side containment guard's: that
+    // guard returns early for `project://`, so the message identifies the one
+    // place that decides whether a project locator may leave the root.
+    assert_eq!(report["code"], "RuleViolation");
+    assert!(
+        report["message"]
+            .as_str()
+            .unwrap()
+            .contains("project locator must stay inside the project root"),
+        "{}",
+        report["message"]
+    );
+    assert_eq!(f.revision(), revision);
+}
+
+#[test]
 fn decision_rationale_requires_explicit_full_read_and_accepts_internal_id() {
     let f = Fixture::new();
     let hits = f.ok(&["search", "--type", "decision"]);
@@ -476,4 +510,39 @@ fn unresolvable_locator_is_not_rejected_by_the_root_guard() {
         serde_json::from_slice::<Value>(&accepted.stdout).unwrap()["ok"],
         json!(true)
     );
+#[test]
+fn project_locator_read_refuses_changed_bytes_instead_of_falling_back() {
+    let f = Fixture::new();
+    fs::create_dir(f.0.join("evidence")).unwrap();
+    let body = b"{\"project\":true}\n";
+    let path = f.0.join("evidence/check.json");
+    fs::write(&path, body).unwrap();
+    let digest = format!("{:x}", Sha256::digest(body));
+    let draft = json!({"external_key":"PROJECT-DRIFT","work_item_key":"W","evidence_type":"report","level":"locally_verified","summary":"Project relative report","locator":"project:///evidence/check.json","sha256":digest,"source_sha":"a".repeat(40),"command":"cargo test --test records_cli","scope":["W"],"branch_id":null,"verified_at":1});
+    fs::write(f.0.join("drift.json"), serde_json::to_vec(&draft).unwrap()).unwrap();
+    let revision = f.revision();
+    f.ok(&[
+        "evidence",
+        "add",
+        "--input",
+        "drift.json",
+        "--expected-revision",
+        &revision,
+    ]);
+
+    // Same relative path, different bytes: the stored sha256 wins and the read
+    // fails. Falling back to another copy would silently serve the wrong file.
+    fs::write(&path, b"{\"project\":false}\n").unwrap();
+    f.error(
+        &[
+            "evidence",
+            "show",
+            "PROJECT-DRIFT",
+            "--content",
+            "--max-bytes",
+            "4096",
+        ],
+        "SourceConflict",
+    );
+    assert_eq!(f.revision(), revision);
 }
