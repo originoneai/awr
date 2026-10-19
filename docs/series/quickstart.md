@@ -14,13 +14,13 @@ Python SDK.
 With npm (requires Node 22.14 or newer):
 
 ```sh
-npm install -g @originoneai/agent-work-runtime@0.5.1
+npm install -g @originoneai/agent-work-runtime@0.6.0
 ```
 
 Or with pip, inside a virtual environment (requires Python 3.9 or newer):
 
 ```sh
-python -m pip install agent-work-runtime==0.5.1
+python -m pip install agent-work-runtime==0.6.0
 ```
 
 Verify both executables:

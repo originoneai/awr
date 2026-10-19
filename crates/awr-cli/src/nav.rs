@@ -1,4 +1,4 @@
-//! Read-only mainline navigation (WS-042).
+//! Read-only mainline navigation.
 use awr_core::{Error, Result};
 use awr_runtime::{MainlineNavExtras, MainlineNavScope, mainline_nav};
 use clap::Args;
@@ -19,7 +19,7 @@ pub struct NavArgs {
     goal: Option<String>,
     #[arg(long)]
     milestone: Option<String>,
-    /// Optional WS-040 accounting JSON object to attach authoritatively.
+    /// Optional accounting JSON object to attach authoritatively.
     #[arg(long)]
     accounting_json: Option<String>,
     /// Use the last recorded snapshot without refreshing business sources.
@@ -143,7 +143,7 @@ fn print_human(value: &Value) {
         println!("  Recheck: {}", g["recheck"].as_str().unwrap_or(""));
     }
     println!(
-        "Read-only nav entry; Team Web collaboration writes use the WS-044 web entry ({})",
+        "Read-only nav entry; Team Web collaboration writes use the Team Web entry ({})",
         value["authorization_note"].as_str().unwrap_or("")
     );
     let _ = json!({});

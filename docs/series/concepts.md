@@ -141,8 +141,7 @@ terminate sessions, which remains your explicit responsibility at handoff.
 someone wrote `status: completed` in a ledger. It is done when a registered
 completion report verifies against the ledger's current acceptance criteria.
 
-The work-aware section-stamp currency behavior described below is available on
-development `main`; it is outside the published 0.5.1 package boundary.
+The work-aware section-stamp currency behavior described below ships in 0.6.0.
 
 Keep the evidence bindings separate:
 

@@ -156,12 +156,6 @@ pub(crate) fn domain_tools(shared: bool) -> Vec<Tool> {
         .collect()
 }
 
-pub(crate) fn top_level_bytes(tools: &[Tool]) -> usize {
-    serde_json::to_vec(&json!({"tools": tools}))
-        .expect("tool catalog serializes")
-        .len()
-}
-
 /// Level-2 manifest: exact child names and their real schemas, returned only
 /// when a caller explicitly discovers one domain.
 pub(crate) fn manifest(domain: &str, flat_tools: &[Tool], shared: bool) -> Value {

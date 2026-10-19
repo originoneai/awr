@@ -7,7 +7,7 @@ pub struct AssessArgs {
     work: String,
     #[arg(long)]
     branch: Option<String>,
-    /// Opt-in DEC-021 assessment explanation (capability `assessment.explain`).
+    /// Opt-in assessment explanation (capability `assessment.explain`).
     #[arg(long, default_value_t = false)]
     explain: bool,
 }

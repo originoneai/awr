@@ -1,13 +1,13 @@
 # Native npm and PyPI distributions
 
-AWR 0.4.0 is a stable package release. npm uses the `latest` channel and PyPI uses
-`0.4.0` without a prerelease suffix. Both install the same Rust CLI and MCP server;
+AWR 0.6.0 is a stable package release. npm uses the `latest` channel and PyPI uses
+`0.6.0` without a prerelease suffix. Both install the same Rust CLI and MCP server;
 no separate JavaScript or Python SDK is included.
 
 ```sh
-npm install -g @originoneai/agent-work-runtime@0.4.0
+npm install -g @originoneai/agent-work-runtime@0.6.0
 # or, in a virtual environment
-python -m pip install agent-work-runtime==0.4.0
+python -m pip install agent-work-runtime==0.6.0
 awr --version
 awr-mcp --version
 ```
@@ -81,9 +81,9 @@ packages, checksums and aggregate manifest. Raw execution records stay local or 
 isolated CI artifacts and are not committed to the repository.
 
 
-## Pinned host payload (0.4.0)
+## Pinned host payload (0.6.0)
 
-AWR `0.4.0` uses database schema 4. Host applications can bundle the same native CLI and MCP server without the registry launchers. A locally built payload has its own recorded source and artifact identity. The matching macOS arm64 or Intel x64 payload can be embedded directly in an application; runtime users need no Node/Python/Rust installation and no PATH changes. The build/verification machine still needs its development tools. The host is responsible for application signing, notarization and updating its bundled binary.
+AWR `0.6.0` uses database schema 14. Host applications can bundle the same native CLI and MCP server without the registry launchers. A locally built payload has its own recorded source and artifact identity. The matching macOS arm64 or Intel x64 payload can be embedded directly in an application; runtime users need no Node/Python/Rust installation and no PATH changes. The build/verification machine still needs its development tools. The host is responsible for application signing, notarization and updating its bundled binary.
 
 From clean committed source:
 
@@ -95,9 +95,57 @@ The output directory is new and never overwritten. Its archive name binds purpos
 
 Invoke the executable by its absolute application-resource path with `--project <original project root> --json`. Capability negotiation requires no project, database, model configuration, shell, or language interpreter. Initialization, source reads and work context likewise run natively; Git is a separate optional requirement for Git-bound workflows. SQLite is bundled. Do not use `npx`, `pip`, a shell command string or an opportunistic downloader as the embedded invocation path.
 
+## Upgrading from 0.5.x (schema 7 → 14)
+
+AWR 0.5.x uses SQLite schema 7; AWR 0.6.0 uses schema 14. The first explicit
+write to the project database with 0.6.0, normally `awr source reindex`, applies
+migrations 008 to 014 in order. Each migration only **adds new tables and
+indexes**; no existing table, column or row is changed, and project, work, source
+and evidence IDs are preserved. Read-only commands and previews never migrate the
+file on disk.
+
+| Migration | Adds | Used by |
+|---|---|---|
+| 008 responsibility | persons, person–agent bindings, task responsibilities and collaborators, with event and receipt tables | Team collaboration model; empty in personal use |
+| 009 operation readset receipts | readset receipts for operations | Personal runtime (consistent reads for operations) |
+| 010 agent authorization | agent authorizations and receipts | Team collaboration model; empty in personal use |
+| 011 team handoff | Team handoffs and receipts | Team only; used only when the [Team runtime switch](../reference/team-switch.md) is on |
+| 012 delivery dependencies | hard delivery dependencies, export authorizations, adoption credentials and receipts | Cross-workstream delivery adoption; empty unless that feature is used |
+| 013 usage time | usage receipts, corrections, allocations, counter snapshots, execution intervals | Personal runtime (observed usage and time on work) |
+| 014 ETA checkpoints | ETA forecasts, sample ledger, acceptance data, ingest receipts | Personal runtime (ETA and stage checkpoints in navigation) |
+
+Tables that a personal installation never uses stay empty and cost nothing at
+runtime.
+
+**Before upgrading**
+
+1. Stop every writer: CLI loops, `awr-mcp` servers (stdio and shared HTTP), host
+   applications and supervisors.
+2. Back up with the **old** 0.5.x binary, which still opens schema 7:
+
+   ```sh
+   awr runtime backup --project /path/to/project --output /path/to/new-backup-dir      --companion "$(command -v awr-mcp)"
+   awr runtime check --project /path/to/project --backup /path/to/new-backup-dir
+   ```
+
+   At minimum, keep a consistent copy of `.awr/state.db` made with SQLite's
+   backup API (copying a live file without its WAL can lose history), plus
+   `.awr/project.toml`, every registered source and the 0.5.x executables.
+3. Install 0.6.0, run `awr --version`, then `awr source reindex` once from the
+   project root and check `awr status`.
+
+**Rollback**
+
+0.5.x binaries refuse schema 14, and installing the old package does not make the
+database readable again. To roll back, stop all writers, keep a copy of the
+upgraded `.awr/` (it holds any history written after the upgrade), then restore
+the pre-upgrade backup with the matching 0.5.x program
+(`awr runtime restore-preview` and `awr runtime restore`), following the checklist
+below. Don't overwrite sources that changed after the upgrade without reviewing them.
+
 ## Matched upgrade and rollback checklist
 
-AWR 0.4.0 exposes a native `runtime.matched_snapshot` capability for
+AWR 0.6.0 exposes a native `runtime.matched_snapshot` capability for
 `runtime binding`, `backup`, `check`, `restore-preview`, `restore`, `restore-status`
 and `restore-recover`. See the [snapshot contract](../reference/runtime-snapshots.md)
 for exact program/configuration/source matching and offline history restoration.

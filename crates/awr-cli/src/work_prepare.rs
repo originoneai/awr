@@ -20,7 +20,7 @@ pub struct PrepareArgs {
     /// Summary omits duplicate indexes; action adds one bounded conditional instruction.
     #[arg(long, default_value = "full", value_parser = ["full", "summary", "action"])]
     response_view: String,
-    /// Opt-in DEC-021 assessment explanation (capability `assessment.explain`).
+    /// Opt-in assessment explanation (capability `assessment.explain`).
     /// Default off omits the explanation, independently of the response view.
     #[arg(long, default_value_t = false)]
     explain: bool,

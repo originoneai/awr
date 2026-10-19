@@ -1,4 +1,4 @@
-//! DEC-022 developer entry points: offline replay, shadow compare, advice kill-switch.
+//! Developer assessment entry points: offline replay, shadow compare, advice kill-switch.
 use awr_core::{Error, Result};
 use awr_runtime::{
     ASSESSMENT_ADVICE_MODE_CAPABILITY, ASSESSMENT_REPLAY_CAPABILITY,

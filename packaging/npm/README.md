@@ -2,11 +2,11 @@
 
 Persistent work state and minimal context for long-running AI agents.
 
-AWR 0.4.0 installs the native Rust `awr` CLI and `awr-mcp` server for stdio and shared Streamable HTTP.
+AWR 0.6.0 installs the native Rust `awr` CLI and `awr-mcp` server for stdio and shared Streamable HTTP.
 Context compilation runs locally without an AI model call.
 
 ```sh
-npm install -g @originoneai/agent-work-runtime@0.4.0
+npm install -g @originoneai/agent-work-runtime@0.6.0
 awr --version
 awr --help
 awr-mcp --help
@@ -15,8 +15,8 @@ awr-mcp --help
 Without a global installation, select the command explicitly:
 
 ```sh
-npx --package=@originoneai/agent-work-runtime@0.4.0 awr --help
-npx --package=@originoneai/agent-work-runtime@0.4.0 awr-mcp --project /absolute/project
+npx --package=@originoneai/agent-work-runtime@0.6.0 awr --help
+npx --package=@originoneai/agent-work-runtime@0.6.0 awr-mcp --project /absolute/project
 ```
 
 The project must be initialized before starting its MCP server. Follow the

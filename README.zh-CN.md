@@ -34,10 +34,10 @@ AWR 围绕同一个项目目标，把**任务与工作线、交叉依赖、上�
 
 | 核心亮点 | 对项目的实际作用 | 当前状态 |
 | --- | --- | --- |
-| **换会话、换 Agent，项目目标持续有效** | 目标、共享规则、决策和未完成事项保持关联。接手者获得当前任务必需的上下文与检查点，沿着同一个项目继续推进。 | **0.5.1 已发布** · [工作接续](docs/dev/integrations/context-continuity.md) |
-| **多条工作线独立推进，共同交付** | 前端、后端、测试分别维护任务、上下文与归属，同时遵守共享约束；支持任务归属、会话归属和按工作线组织上下文；带身份鉴权的通道隔离与资源调度仍在开发中。 | **0.5.1 提供基础能力** · [工作线机制](docs/dev/reference/workstreams.md) |
+| **换会话、换 Agent，项目目标持续有效** | 目标、共享规则、决策和未完成事项保持关联。接手者获得当前任务必需的上下文与检查点，沿着同一个项目继续推进。 | **0.6.0 已发布** · [工作接续](docs/dev/integrations/context-continuity.md) |
+| **多条工作线独立推进，共同交付** | 前端、后端、测试分别维护任务、上下文与归属，同时遵守共享约束；支持任务归属、会话归属和按工作线组织上下文；带身份鉴权的通道隔离与资源调度仍在开发中。 | **0.6.0 提供基础能力** · [工作线机制](docs/dev/reference/workstreams.md) |
 | **依赖的是已验证交付物与具体版本** | 下游采用的是经过验收的产物和合同版本。依赖发生变化时，按照采用策略重新检查受影响的下游。 | **开发中** · [交叉依赖](docs/dev/reference/workstreams.md#cross-workstream-dependencies) |
-| **“完成”有可核对的交付依据** | 完成声明关联版本与证据，分清已实现、已验证、已合并、已发布；Team 复核进一步记录实际复核者与批准结果。 | **0.5.1 已有证据基础**；[Team 交付复核](https://github.com/originoneai/awr/blob/main/docs/dev/integrations/pr-delivery-review.md)**开发中** |
+| **“完成”有可核对的交付依据** | 完成声明关联版本与证据，分清已实现、已验证、已合并、已发布；Team 复核进一步记录实际复核者与批准结果。 | **0.6.0 已有证据基础**；[Team 交付复核](https://github.com/originoneai/awr/blob/main/docs/dev/integrations/pr-delivery-review.md)**开发中** |
 | **每一份投入，都能对应到工作与结果** | 将已采集的用量和时间归属到任务与工作线；区分实际费用、API 等价估算、未知项和采集覆盖率，共享投入只核算一次。 | **开发中** · [用量与时间](https://github.com/originoneai/awr/blob/main/docs/dev/reference/usage-time-observation.md) |
 
 这些能力围绕同一个项目模型组织。一个人协调多个 Agent，同样需要清晰的依赖、复核和核算。
@@ -63,20 +63,18 @@ AWR 围绕同一个项目目标，把**任务与工作线、交叉依赖、上�
 
 ## 现在可以使用什么
 
-已发布的 **0.5.1** CLI/MCP 安装包提供有来源的目标与任务、依赖导航、聚焦上下文、
+已发布的 **0.6.0** CLI/MCP 安装包提供有来源的目标与任务、依赖导航、聚焦上下文、
 会话认领与检查点、绑定版本的证据，以及支持多个客户端和项目的
 [共享 HTTP MCP 服务](docs/dev/reference/mcp-service.md)与 Personal Workspace 文件交换。
 
-这一版新增**统一来源文件清单、内容评审记录与可信的检查点进度展示**，并修复解析和客户端接入问题。
-**个人多主线基础**支持在本地 SQLite 项目中显式声明任务归属、记录会话归属，并按工作线组织上下文。
-它尚不提供带身份鉴权的 Team 服务或完整的多客户端隔离。详见 [0.5.1 变更说明](docs/dev/release/0.5.1.md)。
+这一版新增**可选的评估解释、字段级诊断、缓存的任务图与只读主线导航**，在无关的台账编辑后保持证据有效，并修复接入、完成与恢复中的边界问题。
+Team 功能已编译在内但**默认关闭**，见 [Team 运行时开关](docs/dev/reference/team-switch.md)。安装包不提供带身份鉴权的 Team 服务。详见 [0.6.0 变更说明](docs/dev/release/0.6.0.md)。
 
-可选的 [Inspector 查看界面](https://github.com/originoneai/awr/tree/v0.5.1/tools/inspector)需从这一版本的源码启动，npm/PyPI 安装包不包含它。
+可选的 [Inspector 查看界面](https://github.com/originoneai/awr/tree/v0.6.0/tools/inspector)需从这一版本的源码启动，npm/PyPI 安装包不包含它。
 界面包含中英文切换、完整队列分页、按来源刷新，以及会话与事件面板。
 
-**`main` 中的后续能力：** 跨工作线版本交付采用、Team 协作与复核、DEC 策略扩展、
-工作线用量/时间核算及 ETA 不在本次发行范围内。
-已发布安装包的能力以 [0.5.1 发布说明](https://github.com/originoneai/awr/releases/tag/v0.5.1)为准。
+**`main` 中的后续能力：** Team 服务、跨工作线版本交付采用、Team 协作与复核不在本次发行范围内。
+已发布安装包的能力以 [0.6.0 发布说明](https://github.com/originoneai/awr/releases/tag/v0.6.0)为准。
 
 <a id="quickstart"></a>
 
@@ -87,13 +85,13 @@ AWR 围绕同一个项目目标，把**任务与工作线、交叉依赖、上�
 任选一种包管理器，两者都会安装原生的 `awr` 和 `awr-mcp` 命令。
 
 ```sh
-npm install -g @originoneai/agent-work-runtime@0.5.1
+npm install -g @originoneai/agent-work-runtime@0.6.0
 ```
 
 或者，在 Python 虚拟环境中安装：
 
 ```sh
-python -m pip install agent-work-runtime==0.5.1
+python -m pip install agent-work-runtime==0.6.0
 ```
 
 ```sh
@@ -103,11 +101,11 @@ awr --version
 预编译包支持 **macOS 15+（Apple Silicon 与 Intel）**、
 **Linux x64/arm64（glibc 2.39+）**、**Windows x64**。
 启动器需要 Node 22.14+ 或 Python 3.9+。详见
-[0.5.1 安装与升级指南](https://github.com/originoneai/awr/blob/v0.5.1/docs/release/DISTRIBUTIONS.md)。
+[0.6.0 安装与升级指南](https://github.com/originoneai/awr/blob/v0.6.0/docs/dev/release/DISTRIBUTIONS.md)。
 
-**从 0.5.0 升级：** 先停止现有写入方，保留匹配的运行数据、源文件备份和旧程序。
-显式刷新来源时，SQLite schema 将从 4 经过 5、6 升至 7。旧程序不能读取 schema 7，
-回退需要恢复匹配的升级前快照。详见[升级与回退指南](https://github.com/originoneai/awr/blob/v0.5.1/docs/release/DISTRIBUTIONS.md#matched-upgrade-and-rollback-checklist)。
+**从 0.5.x 升级：** 先停止现有写入方，用 SQLite 备份 API 备份 `.awr/state.db`，并保留源文件和旧程序。
+显式刷新来源时，SQLite schema 将从 7 升至 14，新增的表均为附加表。旧程序不能读取 schema 14，
+回退需要恢复匹配的升级前快照。详见[升级与回退指南](https://github.com/originoneai/awr/blob/v0.6.0/docs/dev/release/DISTRIBUTIONS.md#upgrading-from-05x-schema-7--14)。
 
 ### 2. 接入你的项目
 

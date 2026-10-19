@@ -152,7 +152,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "awr-cli"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "awr-context",
  "awr-core",
@@ -174,7 +174,7 @@ dependencies = [
 
 [[package]]
 name = "awr-context"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "awr-core",
  "awr-source",
@@ -187,7 +187,7 @@ dependencies = [
 
 [[package]]
 name = "awr-core"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.22.1",
  "globset",
@@ -204,7 +204,7 @@ dependencies = [
 
 [[package]]
 name = "awr-mcp"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "awr-context",
  "awr-core",
@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "awr-runtime"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "awr-context",
  "awr-core",
@@ -244,7 +244,7 @@ dependencies = [
 
 [[package]]
 name = "awr-server"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "awr-core",
  "awr-runtime",
@@ -274,7 +274,7 @@ dependencies = [
 
 [[package]]
 name = "awr-source"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "awr-core",
  "awr-store",
@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "awr-store"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "awr-core",
  "rusqlite",
@@ -305,7 +305,7 @@ dependencies = [
 
 [[package]]
 name = "awr-team"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "awr-core",
  "serde",
@@ -317,7 +317,7 @@ dependencies = [
 
 [[package]]
 name = "awr-team-pg"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "awr-core",
  "awr-source",
@@ -339,7 +339,7 @@ dependencies = [
 
 [[package]]
 name = "awr-workspace"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "awr-core",
  "hmac 0.12.1",

@@ -118,7 +118,7 @@ boundary is the shared CLI/MCP contract — not any one editor or agent.
 ## Current scope: published release vs. development
 
 AWR is honest about what is shipped versus what is being built. The published
-**0.5.1** CLI/MCP packages provide:
+**0.6.0** CLI/MCP packages provide:
 
 - Source-backed goals and tasks, with dependency navigation
 - Focused context compilation for the current task

@@ -110,7 +110,7 @@ enum Command {
         #[command(subcommand)]
         command: source::SourceCommand,
     },
-    /// Read-only mainline navigation across scope, dependencies, accounting and blockers (WS-042).
+    /// Read-only mainline navigation across scope, dependencies, accounting and blockers.
     Nav(nav::NavArgs),
     /// Refresh source projections and summarize current project work.
     Status {
@@ -150,7 +150,7 @@ enum Command {
         #[arg(long)]
         cached: bool,
     },
-    /// Offline assessment replay, shadow compare, and advice kill-switch (DEC-022).
+    /// Offline assessment replay, shadow compare, and advice kill-switch.
     Assessment {
         #[command(subcommand)]
         command: assessment::AssessmentCommand,
