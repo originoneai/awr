@@ -104,13 +104,52 @@ pub fn minimal_context(sources: &[awr_core::Source]) -> bool {
             .iter()
             .all(|s| s.config["context_profile"] == "minimal")
 }
-/// Runtime-owned paths are machine state under `.awr/` that AWR never rewrites
-/// through source mutations. Authored intake sources under `.awr/intake/` are
-/// the documented exception: takeover proposes them as authoritative source
-/// files (see docs/dev/TAKEOVER.md), so review and writeback paths treat them
-/// like any other in-project source. Both `root` and `path` must be canonical.
+/// Files AWR itself writes under `.awr/intake/` during takeover. They are
+/// runtime records, never authored sources, even when a manifest names them.
+pub const RESERVED_INTAKE_FILES: &[&str] = &["inventory.json", "project.toml"];
+
+/// The single boundary between authored sources and runtime state.
+///
+/// Everything under `.awr/` is runtime-owned machine state that source writes
+/// must not touch, with one exception: an authored intake source. A path is an
+/// authored intake source only when, after resolving symlinks, it lies inside
+/// `.awr/intake/`, is not one of [`RESERVED_INTAKE_FILES`], and is registered as
+/// a file source (or lies inside a registered directory source) in
+/// `.awr/project.toml`. Takeover proposes such files as authoritative sources
+/// (see docs/dev/TAKEOVER.md). Any doubt (unreadable manifest, unresolvable
+/// path) fails closed to runtime-owned.
 pub fn is_runtime_owned_path(root: &Path, path: &Path) -> bool {
-    path.starts_with(root.join(".awr")) && !path.starts_with(root.join(".awr/intake"))
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let runtime = root.join(".awr");
+    if !path.starts_with(&runtime) {
+        return false;
+    }
+    let Ok(relative) = path.strip_prefix(runtime.join("intake")) else {
+        return true;
+    };
+    if relative.as_os_str().is_empty()
+        || RESERVED_INTAKE_FILES
+            .iter()
+            .any(|name| relative == Path::new(name))
+    {
+        return true;
+    }
+    !registered_source_path(&root, &path)
+}
+
+fn registered_source_path(root: &Path, path: &Path) -> bool {
+    let Ok(manifest) = Manifest::load(root) else {
+        return false;
+    };
+    manifest
+        .sources
+        .iter()
+        .filter_map(|source| source.path.as_ref())
+        .filter_map(|registered| root.join(registered).canonicalize().ok())
+        .any(|registered| {
+            registered == path || (registered.is_dir() && path.starts_with(&registered))
+        })
 }
 fn source_first() -> AuthorityMode {
     AuthorityMode::SourceFirst

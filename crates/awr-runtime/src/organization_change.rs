@@ -184,9 +184,9 @@ fn plan(store: &Store, root: &Path, request: OrganizationChange) -> Result<Plan>
             "organization changes require a local file source".into(),
         ));
     };
-    if path.starts_with(root.join(".awr")) {
+    if awr_source::is_runtime_owned_path(root, &path) {
         return Err(Error::MutationUnsupported(
-            "runtime paths are not business metadata".into(),
+            "runtime paths are not business metadata; relocate authored documents outside .awr (except registered .awr/intake sources) and reindex".into(),
         ));
     }
     let (after, before_fields, after_fields) =

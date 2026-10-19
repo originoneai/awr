@@ -56,9 +56,9 @@ pub use publish_prep::{
 };
 mod safe_fs;
 pub use manifest::{
-    ContextProfile, Manifest, ProjectConfig, SOURCE_ADAPTERS, SourceSpec, TEAM_DISABLED_MESSAGE,
-    TEAM_ENABLED_ENV, TeamConfig, is_runtime_owned_path, minimal_context, team_enabled,
-    team_enabled_override,
+    ContextProfile, Manifest, ProjectConfig, RESERVED_INTAKE_FILES, SOURCE_ADAPTERS, SourceSpec,
+    TEAM_DISABLED_MESSAGE, TEAM_ENABLED_ENV, TeamConfig, is_runtime_owned_path, minimal_context,
+    team_enabled, team_enabled_override,
 };
 pub use markdown::{
     MarkdownHeadingAdapter, MarkdownRulesAdapter, MarkdownSection, markdown_sections,

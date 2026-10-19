@@ -73,7 +73,7 @@ pub fn prepare_work_creation_with_fields(
     };
     if crate::is_runtime_owned_path(&root.canonicalize()?, &path) {
         return Err(Error::RuleViolation(
-            "runtime-owned files cannot be task sources; relocate authored documents outside .awr (except .awr/intake) and reindex".into(),
+            "runtime-owned files cannot be task sources; relocate authored documents outside .awr (except registered .awr/intake sources) and reindex".into(),
         ));
     }
     if before.fingerprint != source.fingerprint {
