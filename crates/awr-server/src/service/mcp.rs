@@ -1103,7 +1103,7 @@ impl ServerHandler for Endpoint {
             Ok(Ok(value)) => CallToolResult::structured(value),
             Ok(Err(error)) => {
                 let rejection = super::claim_rejection(&action, &error);
-                let mut value = public_error(error).1;
+                let mut value = public_error(super::legacy_claim_acquire_error(&action, error)).1;
                 if let Some(rejection) = rejection {
                     value["rejection"] = rejection;
                 }
@@ -1174,6 +1174,21 @@ mod tests {
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(value["code"], "ClaimHeld");
         assert!(value.get("rejection").is_none());
+        // The finer epoch/fence fact never reaches the top-level code of acquire.
+        for error in [PgError::EpochChanged, PgError::StaleFence] {
+            let (status, value) = public_error(crate::service::legacy_claim_acquire_error(
+                "claim.acquire",
+                error,
+            ));
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert_eq!(value["code"], "RecoveryBlocked");
+        }
+        // Other commands keep their own codes.
+        let (_, renewed) = public_error(crate::service::legacy_claim_acquire_error(
+            "claim.renew",
+            PgError::EpochChanged,
+        ));
+        assert_eq!(renewed["code"], "EpochChanged");
     }
 
     #[test]

@@ -367,7 +367,7 @@ pub(crate) async fn dispatch_authorized(
         Ok(Ok(value)) => response(StatusCode::OK, value),
         Ok(Err(error)) => {
             let rejection = claim_rejection(&action, &error);
-            let (status, mut value) = public_error(error);
+            let (status, mut value) = public_error(legacy_claim_acquire_error(&action, error));
             if let Some(rejection) = rejection {
                 value["rejection"] = rejection;
             }
@@ -1171,6 +1171,23 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
             json!({"code":"ResponseTooLarge","message":"response exceeds service limit; use a smaller page or a narrower selector; inspect a command before retrying"}),
         ),
         _ => (StatusCode::SERVICE_UNAVAILABLE, unavailable_value()),
+    }
+}
+
+/// Keep the error code `claim.acquire` already published before this change.
+///
+/// The coordinator now separates a changed epoch and a stale fence from the same
+/// row facts, but `claim.acquire` answered all three with `RecoveryBlocked` and
+/// callers branch on that code. The finer fact is published only in
+/// `rejection.reason`; the code, status and body of the rejection stay as they
+/// were.
+fn legacy_claim_acquire_error(action: &str, error: PgError) -> PgError {
+    if action != "claim.acquire" {
+        return error;
+    }
+    match error {
+        PgError::EpochChanged | PgError::StaleFence => PgError::RecoveryBlocked,
+        other => other,
     }
 }
 
