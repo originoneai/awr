@@ -1,3 +1,4 @@
+use awr_source::fingerprint;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -726,7 +727,7 @@ fn a_touched_input_keeps_the_key_idempotent_while_changed_bytes_conflict() {
         report["message"]
             .as_str()
             .unwrap()
-            .contains("different input bytes")
+            .contains("input binding conflicts with the receipt recorded for this operation key")
     );
 }
 
@@ -746,6 +747,40 @@ fn adding_inputs_to_an_existing_key_is_a_named_conflict() {
         report["message"]
             .as_str()
             .unwrap()
-            .contains("different input bytes")
+            .contains("input binding conflicts with the receipt recorded for this operation key")
     );
+}
+
+/// AC8: the streaming hash behind `--bind` and `awr_source::fingerprint` agree
+/// byte for byte. The receipt is the observable side, because this crate is
+/// binary-only and its private hasher is not reachable from an integration test.
+/// Both sides could be wrong in the same way; AC1's independent check is the
+/// authority on correctness, this only pins the shared convention.
+#[test]
+fn content_sha256_matches_the_source_fingerprint_for_edge_sizes() {
+    let p = Project::new();
+    let session = p.bind("hash-parity");
+    let samples: [(&str, Vec<u8>); 3] = [
+        ("empty.bin", Vec::new()),
+        ("one-byte.bin", vec![0x5a]),
+        (
+            "one-mib.bin",
+            (0..1024 * 1024).map(|index| (index % 251) as u8).collect(),
+        ),
+    ];
+    for (index, (name, body)) in samples.iter().enumerate() {
+        fs::write(p.0.join(name), body).unwrap();
+        let key = format!("hash-{index}");
+        let run = run_managed(&p, &session, &key, "Hash parity", &["--bind", name]);
+        let input = &run["execution"]["intent"]["inputs"][0];
+        let recorded = input["sha256"].as_str().unwrap();
+        let expected = fingerprint(body);
+        assert_eq!(
+            recorded,
+            expected.strip_prefix("sha256:").unwrap(),
+            "the streaming hash must match awr_source::fingerprint for {name}"
+        );
+        assert_eq!(recorded.len(), 64);
+        assert_eq!(input["size"], body.len() as u64);
+    }
 }

@@ -271,8 +271,10 @@ fn register(root: &Path, session: Id, intent: ExecutionIntent) -> Result<(Execut
         {
             // A retry after `touch` still matches, because intent equality ignores
             // mtime. Reaching here with everything but the inputs equal means the
-            // bytes changed between the two attempts, which is the one conflict
-            // this feature exists to surface; name it precisely.
+            // recorded inputs and the requested ones disagree: either the bytes
+            // changed between the two attempts, or the earlier receipt recorded no
+            // inputs at all. The message must not claim the bytes changed, because
+            // the "recorded none" case never saw any bytes.
             let mut previous = existing.intent.clone();
             let mut requested = intent.clone();
             previous.inputs.clear();
@@ -283,7 +285,7 @@ fn register(root: &Path, session: Id, intent: ExecutionIntent) -> Result<(Execut
                 && Some(existing.work_item_id) == bound.work_item_id
                 && existing.branch_id == bound.branch_id
             {
-                return Err(Error::SourceConflict("operation key was used with different input bytes; use a new key for a new operation".into()));
+                return Err(Error::SourceConflict("input binding conflicts with the receipt recorded for this operation key; use a new key for a new operation".into()));
             }
             return Err(Error::SourceConflict("operation key belongs to different work, branch or intent; use a new key for a new operation".into()));
         }
