@@ -285,6 +285,123 @@ fn public_measurement_notes_support_preview_draft_accept_and_retry() {
 }
 
 #[test]
+fn boolean_gloss_notes_support_preview_draft_accept_and_retry_without_rewriting_source() {
+    for notes in [
+        r#"[{"comment":"FALSE=disabled; TRUE=enabled"},{"comment":"状态说明；NULL=未设置"}]"#,
+        r#"[{"comment":"；NULL=未设置；TRUE=enabled；FALSE=disabled"}]"#,
+        r#"[{"comment":"TRUE=enabled; FALSE=disabled; NULL=unset"}]"#,
+    ] {
+        let p = Project::new();
+        p.write("notes.json", notes);
+        let before = fs::read(p.0.join("notes.json")).unwrap();
+        let goal = "Reproduce public boolean gloss notes";
+
+        let preview = p.ok(&["init", "--goal", goal]);
+        assert_eq!(preview["status"], "preview");
+        assert_eq!(preview["preview"]["source_issues"], serde_json::json!([]));
+        assert_eq!(preview["preview"]["can_apply"], true);
+        assert!(!p.0.join(".awr").exists());
+        assert_eq!(fs::read(p.0.join("notes.json")).unwrap(), before);
+
+        let draft = p.0.join(".local/draft.json");
+        fs::create_dir(p.0.join(".local")).unwrap();
+        p.ok(&[
+            "init",
+            "--write-draft",
+            draft.to_str().unwrap(),
+            "--goal",
+            goal,
+        ]);
+        assert!(draft.is_file());
+        assert!(!p.0.join(".awr").exists());
+        assert_eq!(fs::read(p.0.join("notes.json")).unwrap(), before);
+
+        p.ok(&["init", "--from-draft", draft.to_str().unwrap(), "--accept"]);
+        assert!(p.0.join(".awr/state.db").is_file());
+        assert_eq!(fs::read(p.0.join("notes.json")).unwrap(), before);
+        p.ok(&["doctor"]);
+
+        // Repeating accept is the normal retry/idempotent path after a reviewed
+        // draft has been applied; it must preserve the authored notes exactly.
+        p.ok(&["init", "--accept"]);
+        assert_eq!(fs::read(p.0.join("notes.json")).unwrap(), before);
+    }
+}
+
+#[test]
+fn boolean_gloss_prefixes_do_not_allow_environment_or_secret_content() {
+    for (notes, category) in [
+        (
+            r#"[{"comment":"export HOME=/synthetic-private-value"}]"#,
+            "environment_dump",
+        ),
+        (
+            r#"[{"environment":{"HOME":"/synthetic-private-value"}}]"#,
+            "environment_dump",
+        ),
+        (
+            r#"[{"comment":"FALSE=disabled; HOME=/synthetic-private-value"}]"#,
+            "environment_dump",
+        ),
+        (
+            "FALSE=disabled\nHOME=/synthetic-private-value\nPATH=/synthetic-bin\n",
+            "environment_dump",
+        ),
+        (
+            r#"[{"comment":"FALSE=disabled; password: synthetic-private-value"}]"#,
+            "labelled_value",
+        ),
+        (
+            r#"[{"comment":"TRUE=enabled; sk-synthetic-private-value"}]"#,
+            "credential",
+        ),
+    ] {
+        let p = Project::new();
+        p.write("notes.json", notes);
+        let before = fs::read(p.0.join("notes.json")).unwrap();
+        let draft = p.0.join(".local/draft.json");
+        fs::create_dir(p.0.join(".local")).unwrap();
+        let goal = "Review public boolean gloss notes";
+        let mut reports = Vec::new();
+
+        for args in [
+            vec!["init", "--goal", goal],
+            vec![
+                "init",
+                "--write-draft",
+                draft.to_str().unwrap(),
+                "--goal",
+                goal,
+            ],
+            vec!["init", "--accept", "--goal", goal],
+        ] {
+            let out = p.run(&args);
+            assert!(!out.status.success());
+            assert!(out.stdout.is_empty());
+            let report: Value = serde_json::from_slice(&out.stderr).unwrap();
+            assert_eq!(report["code"], "RuleViolation");
+            assert_eq!(report["details"]["category"], category);
+            assert_eq!(report["details"]["rule"], "source.public_content");
+            assert!(!String::from_utf8_lossy(&out.stderr).contains("synthetic-private-value"));
+            assert!(!String::from_utf8_lossy(&out.stdout).contains("synthetic-private-value"));
+            assert!(!p.0.join(".awr").exists());
+            if draft.exists() {
+                let diagnostic = fs::read_to_string(&draft).unwrap();
+                assert!(!diagnostic.contains("synthetic-private-value"));
+                assert_eq!(
+                    serde_json::from_str::<Value>(&diagnostic).unwrap()["status"],
+                    "content_review_required"
+                );
+            }
+            assert_eq!(fs::read(p.0.join("notes.json")).unwrap(), before);
+            reports.push(report);
+        }
+        assert_eq!(reports[0], reports[1]);
+        assert_eq!(reports[0], reports[2]);
+    }
+}
+
+#[test]
 fn rejected_measurement_sources_have_consistent_locations_and_leave_no_partial_init() {
     for (tail, category) in [
         ("password: synthetic-private-value\n", "labelled_value"),

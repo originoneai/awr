@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{borrow::Cow, cell::OnceCell, sync::LazyLock};
 
-pub const SECRET_POLICY_VERSION: u32 = 7;
+pub const SECRET_POLICY_VERSION: u32 = 8;
 pub const SENSITIVE_CONTENT_WITHHELD: &str = "[sensitive content withheld]";
 const REJECTION: &str =
     "sensitive content is not accepted; remove secret values or use explicit redacted placeholders";
@@ -50,6 +50,16 @@ static ASSIGNMENT: LazyLock<Regex> = LazyLock::new(|| {
 static ENV_ASSIGNMENT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:^|[\s;])(?:export[ \t]+)?[A-Z_][A-Z0-9_]{1,80}[ \t]*=[ \t]*")
         .expect("fixed environment assignment pattern")
+});
+
+// A complete, single-line legend describes literal values rather than exporting
+// variables. Require exact literal names and a known state label per clause;
+// arbitrary values, shell syntax and incomplete clauses do not qualify.
+static LITERAL_GLOSS: LazyLock<Regex> = LazyLock::new(|| {
+    let label = r"(?i:enabled|disabled|unset|on|off|yes|no|empty|missing|unknown)|未设置|开启|关闭";
+    let clause = format!(r"(?:TRUE|FALSE|NULL) *= *(?:{label})");
+    Regex::new(&format!(r"\A *;? *{clause}(?: *; *{clause})* *\z"))
+        .expect("fixed complete literal gloss pattern")
 });
 
 // Only complete, value-free declarations qualify. A bare YAML field, object
@@ -576,8 +586,13 @@ fn sensitive_matches(text: &str, limit: usize) -> Vec<(SensitiveCategory, usize)
     }) {
         record!(SensitiveCategory::LabelledValue, m.start());
     }
+    // Classify the entire text, not individual matches: a public literal prefix
+    // must never hide a later HOME assignment or export. The independent secret
+    // and explicit environment-block checks still apply to every input.
+    let literal_gloss = LITERAL_GLOSS.is_match(text);
     for m in ENV_ASSIGNMENT.find_iter(text).filter(|m| {
-        environment_assignment(text, m.as_str(), m.start())
+        !literal_gloss
+            && environment_assignment(text, m.as_str(), m.start())
             && assignment_has_value(text, m.end(), &strings)
             && !definition_after_assignment(&text[m.end()..])
     }) {
@@ -1518,6 +1533,139 @@ mod tests {
             assert!(
                 crate::render_diagnostic_details(Some(details))
                     .contains(&format!("README.md:{line}:{column}"))
+            );
+        }
+    }
+
+    #[test]
+    fn complete_literal_legends_are_public_across_text_and_decoded_values() {
+        for text in [
+            "FALSE=disabled",
+            "TRUE=enabled",
+            "NULL=未设置",
+            "FALSE=disabled; TRUE=enabled; NULL=未设置",
+            "；NULL=未设置；TRUE=enabled；FALSE=disabled",
+            "ＦＡＬＳＥ＝关闭；ＴＲＵＥ＝开启",
+            "FALSE = disabled ; TRUE = enabled",
+            "  FALSE=Disabled; TRUE=ON; NULL=empty  ",
+        ] {
+            ensure_public_text(text).unwrap_or_else(|e| panic!("{text}: {e}"));
+            let value = json!([{"comment": text}]);
+            ensure_public_value(&value).unwrap();
+            let bytes = serde_json::to_vec(&value).unwrap();
+            ensure_public_bytes(&bytes).unwrap();
+            ensure_public_source(&bytes, "notes.json").unwrap();
+            assert!(
+                crate::ContentAssessment::scan(&bytes, "notes.json")
+                    .unwrap()
+                    .findings
+                    .is_empty()
+            );
+            assert!(
+                crate::ContentAssessment::derived_value(&value)
+                    .unwrap()
+                    .findings
+                    .is_empty()
+            );
+            for limit in [1, 10, 20, 240] {
+                let summary = public_summary(text, limit).unwrap();
+                assert!(summary.chars().count() <= limit);
+                ensure_public_text(&summary).unwrap();
+            }
+        }
+        let notes = json!([
+            {"comment": "FALSE=disabled; TRUE=enabled"},
+            {"comment": "状态说明；NULL=未设置"}
+        ]);
+        ensure_public_value(&notes).unwrap();
+        ensure_public_bytes(&serde_json::to_vec_pretty(&notes).unwrap()).unwrap();
+        let long = format!("FALSE=disabled{}", "; TRUE=enabled".repeat(40));
+        ensure_public_text(&long).unwrap();
+        // A shortened fragment is checked independently. Falling back to an
+        // ellipsis is safer than granting an incomplete assignment an exemption.
+        assert_eq!(public_summary(&long, 240).unwrap(), "…");
+    }
+
+    #[test]
+    fn literal_legends_do_not_hide_environment_or_sensitive_values() {
+        for text in [
+            "MODE=enabled",
+            "FALSE_MODE=disabled",
+            "XTRUE=enabled",
+            "TRUE1=enabled",
+            "FALSE=/synthetic-private-value",
+            "FALSE=123",
+            "FALSE='disabled'",
+            "FALSE=secret",
+            "TRUE=password",
+            "NULL=privatevalue",
+            "FALSE=这是秘密",
+            "\nFALSE=disabled\n",
+            "\tFALSE=disabled\t",
+            "FALSE=disabled; TRUE=enabled echo",
+            "FALSE=disabled; TRUE=enabled python",
+            "FALSE=disabled; HOME=/synthetic-private-value",
+            "FALSE=disabled; export HOME=/synthetic-private-value",
+            "FALSE=disabled\nTRUE=enabled",
+            "FALSE=disabled; TRUE=enabled\nHOME=/synthetic-private-value",
+            "FALSE=disabled; TRUE=enabled;",
+            "FALSE=disabled;;TRUE=enabled",
+            "export FALSE=disabled",
+            "export TRUE=enabled",
+            "export NULL=unset",
+            "environment:\n  FALSE=disabled",
+            "environment:\n  - TRUE=enabled",
+            "environment: {FALSE: disabled}",
+            "FALSE=disabled; password: synthetic-private-value",
+            "FALSE=disabled; TRUE=sk-synthetic-private-value",
+            "FALSE=disabled\n# Private prompt\nsynthetic-private-value",
+        ] {
+            assert!(ensure_public_text(text).is_err(), "{text}");
+            let value = json!({"comment": text});
+            assert!(ensure_public_value(&value).is_err(), "{text}");
+            let bytes = serde_json::to_vec(&value).unwrap();
+            let report = ensure_public_source(&bytes, "notes.json")
+                .unwrap_err()
+                .report();
+            assert!(
+                !serde_json::to_string(&report)
+                    .unwrap()
+                    .contains("synthetic-private-value")
+            );
+            assert!(
+                !crate::ContentAssessment::scan(&bytes, "notes.json")
+                    .unwrap()
+                    .findings
+                    .is_empty()
+            );
+            assert!(
+                !crate::ContentAssessment::derived_value(&value)
+                    .unwrap()
+                    .findings
+                    .is_empty()
+            );
+        }
+        for value in [
+            json!({"environment": {"FALSE": "disabled"}}),
+            json!({"environment": ["TRUE=enabled"]}),
+            json!([{"comment": "FALSE=disabled"}, {"comment": "HOME=/synthetic-private-value"}]),
+            json!({"comment": "FALSE=disabled", "token": "synthetic-private-value"}),
+            json!({"notes": [["TRUE=enabled"], ["export HOME=/synthetic-private-value"]]}),
+        ] {
+            assert!(ensure_public_value(&value).is_err());
+            let bytes = serde_json::to_vec(&value).unwrap();
+            assert!(ensure_public_bytes(&bytes).is_err());
+            assert!(
+                !crate::ContentAssessment::scan(&bytes, "notes.json")
+                    .unwrap()
+                    .findings
+                    .is_empty()
+            );
+            assert!(
+                !crate::ContentAssessment::derived_value(&value)
+                    .unwrap()
+                    .findings
+                    .is_empty()
             );
         }
     }
