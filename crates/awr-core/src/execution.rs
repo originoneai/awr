@@ -88,6 +88,59 @@ impl ExecutionState {
     }
 }
 
+/// How an input file entered the receipt: named with `--bind`, or detected from argv.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InputSource {
+    Bind,
+    ArgvScript,
+}
+/// What the receipt can say about the bytes that were executed.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum InputBinding {
+    Declared,
+    ArgvScript,
+    /// No input could be named or hashed; receipts written before inputs existed decode to this.
+    #[default]
+    None,
+}
+/// One input file bound to the receipt, hashed when the execution was registered.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionInput {
+    /// The path as the caller wrote it; it is an identifier, not a promise that another node has the file.
+    pub path: String,
+    /// Lowercase hex, the same bytes-to-hex form the source locators use.
+    pub sha256: String,
+    pub size: u64,
+    /// Diagnostic only: excluded from intent equality so that a retry after `touch`
+    /// still matches the stored intent, while different bytes do not.
+    pub mtime_ns: i64,
+    pub source: InputSource,
+}
+/// Lexical spelling of a path for intent equality only: separators are unified and
+/// empty / `.` components are dropped. No filesystem access, no `..` resolution and
+/// no case folding, so two strings that name different files never compare equal.
+fn normalized_path(path: &str) -> String {
+    let mut parts = Vec::new();
+    for part in path.split(['/', '\\']) {
+        match part {
+            "" | "." => continue,
+            other => parts.push(other),
+        }
+    }
+    parts.join("/")
+}
+impl PartialEq for ExecutionInput {
+    fn eq(&self, other: &Self) -> bool {
+        normalized_path(&self.path) == normalized_path(&other.path)
+            && self.sha256 == other.sha256
+            && self.size == other.size
+            && self.source == other.source
+    }
+}
+impl Eq for ExecutionInput {}
 /// Immutable intent. An operation key is project-wide, including across session handoffs.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -98,6 +151,10 @@ pub struct ExecutionIntent {
     pub command: Vec<String>,
     pub cwd: String,
     pub external_reference: Option<String>,
+    #[serde(default)]
+    pub inputs: Vec<ExecutionInput>,
+    #[serde(default)]
+    pub input_binding: InputBinding,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -218,5 +275,67 @@ impl Execution {
                 "Current outcome is unverified by context compilation. Use awr execution inspect before acting; do not automatically retry or kill this operation."
             }
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn input(path: &str, sha256: &str, mtime_ns: i64) -> ExecutionInput {
+        ExecutionInput {
+            path: path.into(),
+            sha256: sha256.into(),
+            size: 3,
+            mtime_ns,
+            source: InputSource::Bind,
+        }
+    }
+
+    #[test]
+    fn a_receipt_written_before_inputs_existed_decodes_with_no_binding() {
+        let legacy = r#"{"operation_key":"k","purpose":"p","executor":"managed_local","command":["true"],"cwd":"/tmp","external_reference":null}"#;
+        let intent: ExecutionIntent = serde_json::from_str(legacy).unwrap();
+        assert!(intent.inputs.is_empty());
+        assert_eq!(intent.input_binding, InputBinding::None);
+        assert_eq!(
+            serde_json::to_value(intent.input_binding).unwrap(),
+            json!("none")
+        );
+    }
+
+    #[test]
+    fn input_equality_ignores_mtime_and_path_spelling() {
+        assert_eq!(input("a.py", "x", 1), input("a.py", "x", 2));
+        assert_eq!(input("./a.py", "x", 1), input("a.py", "x", 1));
+        assert_eq!(input("dir//a.py", "x", 1), input("dir/a.py", "x", 1));
+        assert_ne!(input("a.py", "x", 1), input("a.py", "y", 1));
+        assert_ne!(input("a.py", "x", 1), input("dir/a.py", "x", 1));
+        assert_ne!(input("a.py", "x", 1), input("b.py", "x", 1));
+    }
+
+    #[test]
+    fn binding_and_source_variants_serialize_as_snake_case() {
+        assert_eq!(
+            serde_json::to_value(InputBinding::Declared).unwrap(),
+            json!("declared")
+        );
+        assert_eq!(
+            serde_json::to_value(InputBinding::ArgvScript).unwrap(),
+            json!("argv_script")
+        );
+        assert_eq!(
+            serde_json::to_value(InputBinding::None).unwrap(),
+            json!("none")
+        );
+        assert_eq!(
+            serde_json::to_value(InputSource::ArgvScript).unwrap(),
+            json!("argv_script")
+        );
+        assert_eq!(
+            serde_json::to_value(InputSource::Bind).unwrap(),
+            json!("bind")
+        );
     }
 }
