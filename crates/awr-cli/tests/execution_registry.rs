@@ -691,7 +691,9 @@ fn a_missing_input_fails_registration_when_required() {
         "Require input",
         &["--bind", "missing.py", "--require-input-hash"],
     );
-    assert!(!output.status.success());
+    // AC5 names exit code 1 for a domain error, so pin the code rather than
+    // accepting any non-zero status.
+    assert_eq!(output.status.code(), Some(1));
     let report: Value = serde_json::from_slice(&output.stderr).unwrap();
     assert_eq!(report["code"], "SourceUnavailable");
     assert!(
@@ -720,7 +722,9 @@ fn a_touched_input_keeps_the_key_idempotent_while_changed_bytes_conflict() {
 
     fs::write(&path, b"print('two')\n").unwrap();
     let output = run_managed_output(&p, &session, "same-1", "Same key", &["--bind", "a.py"]);
-    assert!(!output.status.success());
+    // AC9 names exit code 1 for a domain error, so pin the code rather than
+    // accepting any non-zero status.
+    assert_eq!(output.status.code(), Some(1));
     let report: Value = serde_json::from_slice(&output.stderr).unwrap();
     assert_eq!(report["code"], "SourceConflict");
     assert!(
@@ -740,7 +744,9 @@ fn adding_inputs_to_an_existing_key_is_a_named_conflict() {
     assert_eq!(first["execution"]["intent"]["input_binding"], "none");
 
     let output = run_managed_output(&p, &session, "upgrade-1", "No inputs", &["--bind", "a.py"]);
-    assert!(!output.status.success());
+    // AC10 names exit code 1 for a domain error, so pin the code rather than
+    // accepting any non-zero status.
+    assert_eq!(output.status.code(), Some(1));
     let report: Value = serde_json::from_slice(&output.stderr).unwrap();
     assert_eq!(report["code"], "SourceConflict");
     assert!(
