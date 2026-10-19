@@ -80,11 +80,18 @@ class ExecutionReports:
         session, item = wf.session_identity(wf.state['session'], wf.state['work'])
         if session['session']['status'] != 'active':
             raise ValueError('Execution requires an active session')
+        script = self.script(command)
+        script_sha256 = script_size = None
+        if script is not None:
+            resolved = Path(script) if Path(script).is_absolute() else self.root / script
+            if resolved.is_file():
+                script_sha256, script_size = digest(resolved), resolved.stat().st_size
         run = dict(request=request, operation_key='host/' + str(uuid.uuid4()),
                    snapshot_at=time.time_ns() // 1_000_000, source_sha=fingerprint(sources),
                    source_basis='sha256 of explicit project-relative file hashes; not a Git commit',
                    session=wf.state['session'], work=wf.state['work'], work_id=item['work']['id'],
-                   branch=session['session']['branch_id'], context_hash=wf.state['context']['hash'])
+                   branch=session['session']['branch_id'], context_hash=wf.state['context']['hash'],
+                   script_sha256=script_sha256, script_size=script_size)
         runs[key] = run
         wf.save()  # Persist the source snapshot and unique runtime key before dispatch.
         value = wf.perform('run', ['execution', 'run', '--session', run['session'], '--key',
@@ -101,11 +108,8 @@ class ExecutionReports:
                         executor='managed_local', command=run['request']['command'],
                         external_reference=None)
         intent = dict(execution['intent'])
-        # This host never declares input files, so the receipt has to record
-        # exactly that: no inputs and the explicit `none` binding. Receipts
-        # written before inputs existed omit both keys and mean the same thing.
-        if (intent.pop('inputs', []) != [] or intent.pop('input_binding', 'none') != 'none'):
-            raise ValueError('Execution declares inputs this host never requested')
+        # The receipt must describe exactly the inputs this host dispatched.
+        self.binding(run, intent.pop('input_binding', 'none'), intent.pop('inputs', []))
         # Rust canonical paths use the verbatim prefix on Windows; Python may not.
         # Compare filesystem identity, while retaining exact argv and execution bindings.
         cwd_matches = Path(intent.pop('cwd')).samefile(self.root)
@@ -113,6 +117,50 @@ class ExecutionReports:
                 or execution['session_id'] != run['session'] or execution['work_item_id'] != run['work_id']
                 or execution['branch_id'] != run['branch'] or execution['registered_at'] < run['snapshot_at']):
             raise ValueError('Execution does not match the saved pre-dispatch source and identity')
+
+    # Mirrors the runtime rule that decides whether a command names a script.
+    INTERPRETERS = ('node', 'bash', 'sh', 'zsh', 'pwsh', 'powershell', 'ruby', 'perl')
+
+    def script(self, command):
+        """The script an interpreter command names, when argv makes it determinable."""
+        if not command:
+            return None
+        name = Path(command[0]).name.lower()
+        if name.endswith('.exe'):
+            name = name[:-4]
+        if not (name in self.INTERPRETERS or name == 'python' or name.startswith('python3')):
+            return None
+        for argument in command[1:]:
+            if argument in ('-m', '-c', '-e'):
+                return None
+            if argument.startswith('-'):
+                continue
+            return argument
+        return None
+
+    def binding(self, run, binding, inputs):
+        """The receipt must describe exactly the inputs this host dispatched.
+
+        This host never passes --bind, so `declared` can only come from another
+        caller. An interpreter command binds its script automatically, and the
+        runtime records that as one `argv_script` entry whose bytes are the ones
+        this host hashed just before dispatch.
+        """
+        if binding == 'none':
+            if inputs:
+                raise ValueError('Execution recorded inputs for a command that declared none')
+            return
+        if binding != 'argv_script':
+            raise ValueError('Execution declares inputs this host never requested')
+        script = self.script(run['request']['command'])
+        if script is None or len(inputs) != 1:
+            raise ValueError('Execution input binding does not match the dispatched command')
+        entry = inputs[0]
+        if entry.get('source') != 'argv_script' or entry.get('path') != script:
+            raise ValueError('Execution input does not match the dispatched script')
+        if run.get('script_sha256') is not None and (
+                entry.get('sha256') != run['script_sha256'] or entry.get('size') != run['script_size']):
+            raise ValueError('Execution input bytes do not match the dispatched script')
 
     def observe(self, run):
         wf = self.wf
