@@ -1370,7 +1370,7 @@
           "key_assertion": "真实CLI返回Unsupported且未连接；远端认证传输尚未实现",
           "reviewed_source_sha": "259b235de75f63ee45832a8352deaad7e8366ce5",
           "last_run": null,
-          "test_file_sha256": "5f814e48969c25de8019b42f129604618dff3d2b73e00829fe9d8a99c063312f"
+          "test_file_sha256": "fcd9d180a02700e7ede84bdf276d807c9571d04c210477b31746afad1e2ab985"
         }
       ],
       "real_postgresql": false,

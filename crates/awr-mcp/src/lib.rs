@@ -26,6 +26,16 @@ pub struct AwrServer {
     project: Option<Arc<ProjectService>>,
     hub: Option<Arc<Hub>>,
     capacity: Arc<tokio::sync::Semaphore>,
+    /// Runtime Team switch, resolved once when the server binds its projects.
+    team: bool,
+}
+/// MCP tools offered only while the Team switch is on.
+const TEAM_TOOLS: &[&str] = &["awr_team_handoff", "awr_team_review"];
+fn without_team_tools(mut catalog: Vec<Tool>, team: bool) -> Vec<Tool> {
+    if !team {
+        catalog.retain(|tool| !TEAM_TOOLS.contains(&tool.name.as_ref()));
+    }
+    catalog
 }
 impl AwrServer {
     /// Bind one project directory. Each operation validates its database/source state;
@@ -35,16 +45,26 @@ impl AwrServer {
             project: Some(Arc::new(ProjectService::open(root, None)?)),
             hub: None,
             capacity: Arc::new(tokio::sync::Semaphore::new(64)),
+            // An explicit override must parse; a broken manifest must not stop
+            // the server, because status is how users learn to repair it.
+            team: match awr_source::team_enabled_override()? {
+                Some(enabled) => enabled,
+                None => awr_source::team_enabled(root).unwrap_or(false),
+            },
         })
     }
     pub(crate) fn shared(hub: Arc<Hub>) -> Self {
         Self {
             project: None,
             capacity: hub.capacity.clone(),
+            team: hub.team,
             hub: Some(hub),
         }
     }
     fn catalog(&self) -> Vec<Tool> {
+        without_team_tools(self.full_catalog(), self.team)
+    }
+    fn full_catalog(&self) -> Vec<Tool> {
         let shared = self.hub.is_some();
         if domains::ExposureMode::from_env() == domains::ExposureMode::Hierarchical {
             let mut catalog = domains::domain_tools(shared);
@@ -107,6 +127,12 @@ impl ServerHandler for AwrServer {
         context: RequestContext<RoleServer>,
     ) -> std::result::Result<CallToolResponse, ErrorData> {
         let mut name: String = request.name.to_string();
+        if !self.team && TEAM_TOOLS.contains(&name.as_str()) {
+            return Err(ErrorData::invalid_request(
+                awr_source::TEAM_DISABLED_MESSAGE,
+                None,
+            ));
+        }
         if !self.callable(&name) && !domains::is_domain(&name) {
             return Err(ErrorData::new(
                 ErrorCode::METHOD_NOT_FOUND,
@@ -132,11 +158,14 @@ impl ServerHandler for AwrServer {
                 .and_then(|v| v.as_object().cloned());
             match (child_tool, child_args) {
                 (None, _) if args.is_empty() => {
-                    let flat = if shared {
-                        schema::shared_tools()
-                    } else {
-                        tools()
-                    };
+                    let flat = without_team_tools(
+                        if shared {
+                            schema::shared_tools()
+                        } else {
+                            tools()
+                        },
+                        self.team,
+                    );
                     if let (Some(hub), Some(key)) = (&self.hub, &project_key) {
                         let principal = context
                             .extensions

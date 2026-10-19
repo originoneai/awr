@@ -303,8 +303,14 @@ fn run(cli: &Cli) -> Result<()> {
         Some(Command::Branch { command }) => branch::run(&cli.project, command, cli.json),
         Some(Command::Doctor(args)) => doctor::run(&cli.project, args, cli.json),
         Some(Command::Workspace(args)) => workspace::run(&cli.project, args, cli.json),
-        Some(Command::Team { command }) => team::run(&cli.project, command, cli.json),
-        Some(Command::Remote { command }) => remote::run(&cli.project, command, cli.json),
+        Some(Command::Team { command }) => {
+            require_team(&cli.project)?;
+            team::run(&cli.project, command, cli.json)
+        }
+        Some(Command::Remote { command }) => {
+            require_team(&cli.project)?;
+            remote::run(&cli.project, command, cli.json)
+        }
         None => {
             Cli::command().print_help()?;
             println!();
@@ -368,5 +374,14 @@ fn main() -> std::process::ExitCode {
             }
             std::process::ExitCode::from(1)
         }
+    }
+}
+
+/// Team code is always built; the runtime switch decides whether it may run.
+fn require_team(project: &std::path::Path) -> Result<()> {
+    if awr_source::team_enabled(project)? {
+        Ok(())
+    } else {
+        Err(Error::Unsupported(awr_source::TEAM_DISABLED_MESSAGE.into()))
     }
 }

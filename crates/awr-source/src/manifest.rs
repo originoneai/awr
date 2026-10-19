@@ -20,6 +20,57 @@ pub const SOURCE_ADAPTERS: &[&str] = &[
 pub struct Manifest {
     pub project: ProjectConfig,
     pub sources: Vec<SourceSpec>,
+    /// Runtime switch for Team surfaces. Omitted (and therefore off) unless set.
+    #[serde(default, skip_serializing_if = "TeamConfig::is_default")]
+    pub team: TeamConfig,
+}
+/// `[team]` table in `.awr/project.toml`. Team code is always compiled; this
+/// switch only decides whether Team commands and MCP tools are offered.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamConfig {
+    #[serde(default)]
+    pub enabled: bool,
+}
+impl TeamConfig {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Environment override for the Team switch; takes precedence over `[team]`.
+pub const TEAM_ENABLED_ENV: &str = "AWR_TEAM_ENABLED";
+/// Error detail returned when a Team surface is used while the switch is off.
+pub const TEAM_DISABLED_MESSAGE: &str = "team features are disabled; enable them with `[team] enabled = true` in .awr/project.toml or AWR_TEAM_ENABLED=1";
+
+/// Reads the `AWR_TEAM_ENABLED` override. The submitted value is never echoed.
+pub fn team_enabled_override() -> Result<Option<bool>> {
+    let Some(raw) = std::env::var_os(TEAM_ENABLED_ENV) else {
+        return Ok(None);
+    };
+    match raw
+        .to_str()
+        .map(|v| v.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("1" | "true" | "yes" | "on") => Ok(Some(true)),
+        Some("" | "0" | "false" | "no" | "off") => Ok(Some(false)),
+        _ => Err(Error::InvalidInput(format!(
+            "{TEAM_ENABLED_ENV} must be one of 1, true, yes, on, 0, false, no or off"
+        ))),
+    }
+}
+
+/// Resolves the Team switch for a project: the environment override first,
+/// then `[team] enabled` in `.awr/project.toml`, otherwise off.
+pub fn team_enabled(root: &Path) -> Result<bool> {
+    if let Some(enabled) = team_enabled_override()? {
+        return Ok(enabled);
+    }
+    if !root.join(".awr/project.toml").is_file() {
+        return Ok(false);
+    }
+    Ok(Manifest::load(root)?.team.enabled)
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

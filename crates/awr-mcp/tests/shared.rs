@@ -862,7 +862,15 @@ impl Server {
         Self::start_mode(registry, "hierarchical").await
     }
     async fn start_mode(registry: &std::path::Path, mode: &str) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_awr-mcp"))
+        Self::start_with_team(registry, mode, None).await
+    }
+    async fn start_with_team(registry: &std::path::Path, mode: &str, team: Option<&str>) -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_awr-mcp"));
+        command.env_remove("AWR_TEAM_ENABLED");
+        if let Some(value) = team {
+            command.env("AWR_TEAM_ENABLED", value);
+        }
+        let mut child = command
             .arg("--registry")
             .arg(registry)
             .arg("--listen")
@@ -903,6 +911,44 @@ impl Server {
             arguments["request_id"] = json!(Id::new().to_string());
         }
         self.raw_call(credential, name, arguments).await
+    }
+    async fn rpc(
+        &self,
+        credential: &str,
+        method: &str,
+        name: Option<&str>,
+        mut params: Value,
+    ) -> Value {
+        params["_meta"] = json!({
+            "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities":{},
+            "io.modelcontextprotocol/clientInfo":{"name":"synthetic-http-client","version":"1"}
+        });
+        let mut request = reqwest::Client::new()
+            .post(&self.url)
+            .bearer_auth(credential)
+            .header("Accept", "application/json, text/event-stream")
+            .header("MCP-Protocol-Version", "2026-07-28")
+            .header("Mcp-Method", method);
+        if let Some(name) = name {
+            request = request.header("Mcp-Name", name);
+        }
+        let response = request
+            .json(&json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        response.json().await.unwrap()
+    }
+    async fn tool_names(&self, credential: &str) -> Vec<String> {
+        let body = self.rpc(credential, "tools/list", None, json!({})).await;
+        body["result"]["tools"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{body}"))
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect()
     }
     async fn raw_call(&self, credential: &str, name: &str, arguments: Value) -> Value {
         let response = reqwest::Client::new().post(&self.url).bearer_auth(credential)
@@ -1499,7 +1545,9 @@ async fn official_sdk_clients_discover_and_call_the_same_http_endpoint() {
     let a = ProjectFixture::new("Write the team guide");
     let b = ProjectFixture::new("Write the other guide");
     let config = registry(&a, &b);
-    let mut server = Server::start(&config).await;
+    // This test covers the Team-enabled catalog; the switch-off catalog is
+    // covered by `team_tools_follow_the_runtime_switch`.
+    let mut server = Server::start_with_team(&config, "hierarchical", Some("1")).await;
     for (credential, expected_projects) in [(WRITER, 2), (READER, 1)] {
         let transport = StreamableHttpClientTransport::with_client(
             reqwest::Client::new(),
@@ -2886,5 +2934,59 @@ async fn workstream_nav_explains_a_cancelled_dependency_for_an_authorized_reader
     );
     assert!(!nav.to_string().contains("PRIVATE_CLIENT"));
     assert_eq!(a.revision(), before);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn team_tools_follow_the_runtime_switch() {
+    let a = ProjectFixture::new("Write the team guide");
+    let b = ProjectFixture::new("Write the other guide");
+    let config = registry(&a, &b);
+    let team = ["awr_team_handoff", "awr_team_review"];
+    for mode in ["hierarchical", "flat"] {
+        // Off by default: not advertised, and calls get a clear disabled error.
+        let mut server = Server::start_with_team(&config, mode, None).await;
+        let names = server.tool_names(WRITER).await;
+        assert!(
+            team.iter().all(|t| !names.iter().any(|n| n == t)),
+            "{names:?}"
+        );
+        for tool in team {
+            let body = server
+                .rpc(
+                    WRITER,
+                    "tools/call",
+                    Some(tool),
+                    json!({"name":tool,"arguments":{}}),
+                )
+                .await;
+            let message = body["error"]["message"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{body}"));
+            assert!(message.contains("team features are disabled"), "{message}");
+        }
+        server.stop().await;
+    }
+    // The registry key turns Team tools on.
+    let original = fs::read_to_string(&config).unwrap();
+    fs::write(
+        &config,
+        original.replacen("version=1\n", "version=1\nteam_enabled=true\n", 1),
+    )
+    .unwrap();
+    let mut server = Server::start_with_team(&config, "hierarchical", None).await;
+    let names = server.tool_names(WRITER).await;
+    assert!(
+        team.iter().all(|t| names.iter().any(|n| n == t)),
+        "{names:?}"
+    );
+    server.stop().await;
+    // The environment override takes precedence over the registry key.
+    let mut server = Server::start_with_team(&config, "hierarchical", Some("0")).await;
+    let names = server.tool_names(WRITER).await;
+    assert!(
+        team.iter().all(|t| !names.iter().any(|n| n == t)),
+        "{names:?}"
+    );
     server.stop().await;
 }

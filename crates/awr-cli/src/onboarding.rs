@@ -337,6 +337,7 @@ fn draft(root: &Path, goal: Option<&str>) -> Result<IntakeDraft> {
     let git = git(root);
     let (existing, candidates, ambiguous) = crate::source::discover(root)?;
     let mut mapping = existing.unwrap_or(Manifest {
+        team: Default::default(),
         project: ProjectConfig {
             name: root
                 .file_name()

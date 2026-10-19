@@ -149,7 +149,8 @@ cross-agent is supported; disconnect/reject/no-receiver preserve original duty.
 
 Authenticated Team HTTP/MCP: `handoff.propose|inspect|accept|reject|cancel|timeout`
 commands and `handoff.inspect` query. Local MCP `awr_team_handoff` validates packages
-and explains duty without mutating Team state. Persist in SQLite (`010`) and Team PG
+and explains duty without mutating Team state; it is offered only when the
+[Team runtime switch](team-switch.md) is on. Persist in SQLite (`010`) and Team PG
 (schema 21).
 
 ## Versioned delivery dependencies and adoption credentials (WS-030)

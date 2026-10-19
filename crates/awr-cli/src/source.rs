@@ -534,6 +534,7 @@ pub(crate) fn discover(root: &Path) -> Result<(Option<Manifest>, Vec<Value>, Vec
         None
     } else {
         Some(Manifest {
+            team: Default::default(),
             project: ProjectConfig {
                 name,
                 external_key: None,

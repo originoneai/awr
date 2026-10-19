@@ -1,8 +1,12 @@
 use serde_json::Value;
 use std::process::Command;
 
+/// These tests exercise Team surfaces, so they turn the runtime switch on.
+/// Switch-off behaviour is covered by `team_switch.rs`.
 fn awr() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_awr"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_awr"));
+    command.env("AWR_TEAM_ENABLED", "1");
+    command
 }
 
 #[test]

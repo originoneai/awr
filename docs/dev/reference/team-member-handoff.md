@@ -3,6 +3,9 @@
 What a **project member** receives after deploy. Keep this list short so
 operators do not accidentally over-share.
 
+Local Team commands and MCP tools are off by default on personal installations;
+see [Team runtime switch](team-switch.md).
+
 ## Members receive
 
 1. **MCP address** — HTTPS Streamable HTTP URL for their project alias, e.g.

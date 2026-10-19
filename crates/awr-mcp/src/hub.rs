@@ -31,6 +31,9 @@ struct Config {
     allowed_hosts: Vec<String>,
     #[serde(default)]
     allowed_origins: Vec<String>,
+    /// Offer Team MCP tools on this endpoint. `AWR_TEAM_ENABLED` overrides it.
+    #[serde(default)]
+    team_enabled: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -167,6 +170,7 @@ pub struct Hub {
     credentials: Vec<Credential>,
     allowed_hosts: Vec<String>,
     allowed_origins: Vec<String>,
+    pub(crate) team: bool,
 }
 fn key(value: &str) -> bool {
     !value.is_empty()
@@ -294,6 +298,7 @@ impl Hub {
             credentials,
             allowed_hosts: config.allowed_hosts,
             allowed_origins: config.allowed_origins,
+            team: awr_source::team_enabled_override()?.unwrap_or(config.team_enabled),
         }))
     }
     fn authenticate(&self, headers: &HeaderMap) -> Option<Principal> {
