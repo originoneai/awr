@@ -170,10 +170,18 @@ pub const REGISTERED_CONTENT_READ_CAP: u64 = 16 * 1024 * 1024;
 /// Refuse a locator that provably resolves outside the project root and its authorized roots.
 ///
 /// This is the write-side twin of the read-path rule, so registration cannot store a record
-/// that `read_registered_file` is already guaranteed to reject. Only provable escapes are
-/// refused: a locator that cannot be resolved yet keeps its previous behaviour, because this
-/// guard does not predict where a caller will place the file next.
+/// that `read_registered_file` is already guaranteed to reject. Both sides call
+/// `read::within_project_or_authorized`, so the containment rule exists once. Only provable
+/// escapes are refused: a locator that cannot be resolved yet keeps its previous behaviour,
+/// because this guard does not predict where a caller will place the file next.
 fn reject_provably_outside_root(store: &Store, project: Id, locator: &str) -> Result<()> {
+    // Project locators carry their own rule: `awr_source::Locator` resolves them
+    // against the project root only and refuses every escaping component at parse
+    // time. Returning early keeps this guard's domain disjoint from that rule, so
+    // the two checks cannot disagree about which one sees the locator first.
+    if locator.starts_with("project://") {
+        return Ok(());
+    }
     let project = store.project(project)?;
     let Ok(root) = project.root.canonicalize() else {
         return Ok(());
@@ -186,20 +194,7 @@ fn reject_provably_outside_root(store: &Store, project: Id, locator: &str) -> Re
     let Ok(path) = candidate.canonicalize() else {
         return Ok(());
     };
-    if path.starts_with(&root) {
-        return Ok(());
-    }
-    let authorized = root.join(".awr/project.toml").exists()
-        && awr_source::Manifest::load(&root)?
-            .project
-            .authorized_roots
-            .iter()
-            .any(|p| {
-                root.join(p)
-                    .canonicalize()
-                    .is_ok_and(|r| path.starts_with(r))
-            });
-    if authorized {
+    if read::within_project_or_authorized(&root, &path)? {
         Ok(())
     } else {
         Err(Error::RuleViolation(

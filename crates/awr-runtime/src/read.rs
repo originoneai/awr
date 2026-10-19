@@ -146,18 +146,7 @@ pub(crate) fn read_registered_file(
         root.join(locator)
     }
     .canonicalize()?;
-    let allowed = path.starts_with(&root)
-        || (root.join(".awr/project.toml").exists()
-            && awr_source::Manifest::load(&root)?
-                .project
-                .authorized_roots
-                .iter()
-                .any(|p| {
-                    root.join(p)
-                        .canonicalize()
-                        .is_ok_and(|r| path.starts_with(r))
-                }));
-    if !allowed {
+    if !within_project_or_authorized(&root, &path)? {
         return Err(Error::RuleViolation(
             "registered file is outside project and authorized roots".into(),
         ));
@@ -209,4 +198,28 @@ pub(crate) fn read_registered_file(
     }
     ensure_public_bytes(&bytes)?;
     Ok(bytes)
+}
+
+/// The one containment rule for registered content: a canonical path is allowed
+/// when it stays under the project root or under one of the manifest's
+/// authorized roots.
+///
+/// Both the read path and the registration guard call this, so registration
+/// cannot store a locator that a later read is guaranteed to refuse.
+pub(crate) fn within_project_or_authorized(root: &Path, path: &Path) -> Result<bool> {
+    if path.starts_with(root) {
+        return Ok(true);
+    }
+    if !root.join(".awr/project.toml").exists() {
+        return Ok(false);
+    }
+    Ok(awr_source::Manifest::load(root)?
+        .project
+        .authorized_roots
+        .iter()
+        .any(|extra| {
+            root.join(extra)
+                .canonicalize()
+                .is_ok_and(|resolved| path.starts_with(resolved))
+        }))
 }
