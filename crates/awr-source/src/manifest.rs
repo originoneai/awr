@@ -198,6 +198,12 @@ impl Manifest {
         Self::parse(text)
     }
     pub fn parse(text: &str) -> Result<Self> {
+        Ok(Self::parse_with_document(text)?.0)
+    }
+    /// Parses a manifest and also returns the authored document it was built
+    /// from. Callers that must know which keys the author actually wrote use
+    /// the returned value instead of parsing the same text a second time.
+    pub fn parse_with_document(text: &str) -> Result<(Self, toml::Value)> {
         awr_core::ensure_public_text(text)?;
         let value: toml::Value = toml::from_str(text).map_err(|error| {
             let detail = match error.span() {
@@ -210,14 +216,14 @@ impl Manifest {
             Error::InvalidInput(detail)
         })?;
         awr_core::ensure_public_data(&value)?;
-        let manifest: Self = value.try_into().map_err(|error| {
+        let manifest: Self = value.clone().try_into().map_err(|error| {
             Error::InvalidInput(format!(
                 "source manifest does not match its schema: {}",
                 awr_core::redact_schema_error_detail(&error.to_string())
             ))
         })?;
         manifest.validate()?;
-        Ok(manifest)
+        Ok((manifest, value))
     }
     pub fn validate(&self) -> Result<()> {
         awr_core::ensure_public_data(self)?;

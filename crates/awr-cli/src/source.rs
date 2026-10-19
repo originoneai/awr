@@ -250,13 +250,6 @@ pub fn initialize(
     Ok(())
 }
 
-/// Reports whether the manifest text declares a `[team]` table.
-fn declares_team_table(text: &str) -> Result<bool> {
-    let document: toml::Value = toml::from_str(text)
-        .map_err(|_| Error::InvalidInput("invalid source manifest TOML".into()))?;
-    Ok(document.get("team").is_some())
-}
-
 fn configure(
     root: &Path,
     path: &Path,
@@ -274,12 +267,23 @@ fn configure(
     let bytes = awr_source::read_capped(&input, 64 * 1024)?;
     let text = std::str::from_utf8(&bytes)
         .map_err(|_| Error::InvalidInput("manifest must be UTF-8".into()))?;
-    let mut candidate = Manifest::parse(text)?;
-    // `Manifest.team` cannot tell an omitted `[team]` table apart from an
-    // explicit `enabled = false`, so a manifest that says nothing about Team
-    // keeps the project's current switch instead of silently turning Team off.
-    if !declares_team_table(text)? {
+    // The typed manifest cannot tell an omitted key or table from an explicitly
+    // written default, so the authored document decides what a submitted
+    // manifest actually said. Both checks below read the same parse.
+    let (mut candidate, document) = Manifest::parse_with_document(text)?;
+    if document.get("team").is_none() {
+        // A manifest that says nothing about Team keeps the project's current
+        // switch instead of silently turning Team off.
         candidate.team = existing.team.clone();
+    }
+    if document
+        .get("project")
+        .and_then(|project| project.get("context_profile"))
+        .is_none()
+    {
+        // Likewise, an omitted context profile keeps the project's current one
+        // instead of silently resetting it to `standard`.
+        candidate.project.context_profile = existing.project.context_profile;
     }
     if candidate.project.name != existing.project.name
         || candidate.project.external_key != existing.project.external_key
