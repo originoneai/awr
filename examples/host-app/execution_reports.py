@@ -101,6 +101,11 @@ class ExecutionReports:
                         executor='managed_local', command=run['request']['command'],
                         external_reference=None)
         intent = dict(execution['intent'])
+        # This host never declares input files, so the receipt has to record
+        # exactly that: no inputs and the explicit `none` binding. Receipts
+        # written before inputs existed omit both keys and mean the same thing.
+        if (intent.pop('inputs', []) != [] or intent.pop('input_binding', 'none') != 'none'):
+            raise ValueError('Execution declares inputs this host never requested')
         # Rust canonical paths use the verbatim prefix on Windows; Python may not.
         # Compare filesystem identity, while retaining exact argv and execution bindings.
         cwd_matches = Path(intent.pop('cwd')).samefile(self.root)
