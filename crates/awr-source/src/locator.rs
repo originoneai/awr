@@ -260,6 +260,11 @@ impl Locator {
                     "project locator syntax is project:///<project-relative-path>".into(),
                 ));
             };
+            if path.contains('#') {
+                return Err(Error::InvalidInput(
+                    "project locator does not support a line selector".into(),
+                ));
+            }
             let path = PathBuf::from(path);
             // One rule, enforced here and in `read`: a project locator resolves
             // against the project root and nothing else. Authorized roots are

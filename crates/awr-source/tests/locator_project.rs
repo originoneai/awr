@@ -105,10 +105,17 @@ fn project_locator_rejects_an_authority_traversal_and_a_selector() {
             "{spec}: {error}"
         );
     }
-    // A line selector is deferred: `#L1` stays path bytes, so resolution fails
-    // with a typed error instead of being read as a selector.
+    // A line selector is refused here, like `file://`: a project locator names a
+    // file, so `#L1` is neither a fragment to strip nor a literal file name to
+    // keep — both readings would leave one suffix with two meanings.
     let error = Locator::parse(&root, &manifest, "project:///evidence/check.json#L1").unwrap_err();
-    assert!(matches!(error, Error::SourceUnavailable(_)), "{error}");
+    assert!(matches!(error, Error::InvalidInput(_)), "{error}");
+    assert!(
+        error
+            .to_string()
+            .contains("project locator does not support a line selector"),
+        "{error}"
+    );
 }
 
 #[test]
