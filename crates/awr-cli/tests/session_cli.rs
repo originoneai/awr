@@ -1078,7 +1078,8 @@ fn session_start_reuse_reacquires_an_expired_claim() {
 #[test]
 fn malformed_work_history_cursor_is_reported_as_invalid_input() {
     let f = Fixture::new();
-    let output = f.run(&["work", "history", "W", "--cursor", "{}"]);
+    let cursor = r#"{"secret_marker":"S3CR3T_CURSOR_VALUE"}"#;
+    let output = f.run(&["work", "history", "W", "--cursor", cursor]);
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let error: Value = serde_json::from_slice(&output.stderr).unwrap();
@@ -1089,4 +1090,7 @@ fn malformed_work_history_cursor_is_reported_as_invalid_input() {
             .unwrap()
             .contains("invalid event cursor JSON")
     );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("S3CR3T_CURSOR_VALUE"));
+    assert!(!stderr.contains("secret_marker"));
 }
