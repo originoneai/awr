@@ -250,6 +250,13 @@ pub fn initialize(
     Ok(())
 }
 
+/// Reports whether the manifest text declares a `[team]` table.
+fn declares_team_table(text: &str) -> Result<bool> {
+    let document: toml::Value = toml::from_str(text)
+        .map_err(|_| Error::InvalidInput("invalid source manifest TOML".into()))?;
+    Ok(document.get("team").is_some())
+}
+
 fn configure(
     root: &Path,
     path: &Path,
@@ -265,10 +272,15 @@ fn configure(
         root.join(path)
     };
     let bytes = awr_source::read_capped(&input, 64 * 1024)?;
-    let candidate = Manifest::parse(
-        std::str::from_utf8(&bytes)
-            .map_err(|_| Error::InvalidInput("manifest must be UTF-8".into()))?,
-    )?;
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|_| Error::InvalidInput("manifest must be UTF-8".into()))?;
+    let mut candidate = Manifest::parse(text)?;
+    // `Manifest.team` cannot tell an omitted `[team]` table apart from an
+    // explicit `enabled = false`, so a manifest that says nothing about Team
+    // keeps the project's current switch instead of silently turning Team off.
+    if !declares_team_table(text)? {
+        candidate.team = existing.team.clone();
+    }
     if candidate.project.name != existing.project.name
         || candidate.project.external_key != existing.project.external_key
         || candidate.project.authority_mode != existing.project.authority_mode
