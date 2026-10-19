@@ -529,6 +529,8 @@ fn project_locator_read_refuses_changed_bytes_instead_of_falling_back() {
         "--expected-revision",
         &revision,
     ]);
+    // Registration writes, so the revision to hold still is the one after it.
+    let revision = f.revision();
 
     // Same relative path, different bytes: the stored sha256 wins and the read
     // fails. Falling back to another copy would silently serve the wrong file.
