@@ -224,6 +224,11 @@ impl<'a> Runtime<'a> {
     /// holds the checkout. A missing, escaping or ambiguous target is a typed
     /// error at this point and never a guess at read time. `file://`, `git://`
     /// and plain paths pass through untouched.
+    ///
+    /// The bytes are bound at registration either way: a declared `sha256` must
+    /// match the resolved content, and without one the resolved digest is stored
+    /// in its place. Otherwise the row would name a file but not the content a
+    /// later node is expected to serve.
     fn bind_project_locator(
         &self,
         mut draft: awr_core::EvidenceDraft,
@@ -236,16 +241,24 @@ impl<'a> Runtime<'a> {
         let manifest = awr_source::Manifest::load(&root)?;
         let locator = awr_source::Locator::parse(&root, &manifest, &draft.locator)?;
         let snapshot = locator.read(&root, REGISTERED_CONTENT_READ_CAP)?;
-        if let Some(declared) = draft.sha256.as_deref() {
-            let actual = snapshot
-                .fingerprint
-                .strip_prefix("sha256:")
-                .unwrap_or(&snapshot.fingerprint);
-            if !actual.eq_ignore_ascii_case(declared) {
+        let actual = snapshot
+            .fingerprint
+            .strip_prefix("sha256:")
+            .ok_or_else(|| {
+                Error::Unsupported(format!(
+                    "project locator resolved to a non-SHA256 fingerprint: {}",
+                    snapshot.fingerprint
+                ))
+            })?
+            .to_ascii_lowercase();
+        match draft.sha256.as_deref() {
+            Some(declared) if !declared.eq_ignore_ascii_case(&actual) => {
                 return Err(Error::SourceConflict(format!(
                     "declared sha256 does not match the bytes the project locator resolves to: expected {declared}, actual {actual}"
                 )));
             }
+            Some(_) => {}
+            None => draft.sha256 = Some(actual),
         }
         draft.locator = snapshot.locator;
         Ok(draft)

@@ -510,6 +510,8 @@ fn unresolvable_locator_is_not_rejected_by_the_root_guard() {
         serde_json::from_slice::<Value>(&accepted.stdout).unwrap()["ok"],
         json!(true)
     );
+}
+
 #[test]
 fn project_locator_read_refuses_changed_bytes_instead_of_falling_back() {
     let f = Fixture::new();
@@ -540,6 +542,52 @@ fn project_locator_read_refuses_changed_bytes_instead_of_falling_back() {
             "evidence",
             "show",
             "PROJECT-DRIFT",
+            "--content",
+            "--max-bytes",
+            "4096",
+        ],
+        "SourceConflict",
+    );
+    assert_eq!(f.revision(), revision);
+}
+
+#[test]
+fn project_locator_registration_without_sha256_still_binds_the_bytes() {
+    let f = Fixture::new();
+    fs::create_dir(f.0.join("evidence")).unwrap();
+    let body = b"{\"bound\":true}\n";
+    let path = f.0.join("evidence/bound.json");
+    fs::write(&path, body).unwrap();
+    let draft = json!({"external_key":"PROJECT-BOUND","work_item_key":"W","evidence_type":"report","level":"locally_verified","summary":"Project relative report without a declared digest","locator":"project:///evidence/bound.json","sha256":null,"source_sha":"a".repeat(40),"command":"cargo test --test records_cli","scope":["W"],"branch_id":null,"verified_at":1});
+    fs::write(f.0.join("bound.json"), serde_json::to_vec(&draft).unwrap()).unwrap();
+    let revision = f.revision();
+    let added = f.run(
+        &[
+            "evidence",
+            "add",
+            "--input",
+            "bound.json",
+            "--expected-revision",
+            &revision,
+        ],
+        true,
+    );
+    let added: Value = serde_json::from_slice(&added.stdout).unwrap();
+    assert_eq!(
+        added["evidence"]["sha256"],
+        json!(format!("{:x}", Sha256::digest(body))),
+        "registration without a declared digest must still bind the resolved bytes"
+    );
+    let revision = f.revision();
+
+    // The digest earned at registration is what a later read enforces, so drift
+    // on the same relative path fails even though the caller declared nothing.
+    fs::write(&path, b"{\"bound\":false}\n").unwrap();
+    f.error(
+        &[
+            "evidence",
+            "show",
+            "PROJECT-BOUND",
             "--content",
             "--max-bytes",
             "4096",
