@@ -375,6 +375,17 @@ renewing it first. Release does not release resources; the receipt explicitly
 reports `resource_release_performed: false`. Claimed work becomes `unclaimed`,
 without inventing readiness.
 
+A rejected `claim.acquire` keeps its existing error code and status and adds a
+`rejection` object: `{reason, operation, authority, next_action, recheck}` where
+`reason` is one of `ALREADY_CLAIMED`, `STALE_FENCE`, `EPOCH_CHANGED`, `WAIT_OPEN`,
+`PRECONDITIONS_CHANGED` or `RECOVERY_BLOCKED`. A workstream, ownership, epoch or
+fence mismatch keeps the top-level `code` `RecoveryBlocked` that callers already
+branch on; the finer fact appears only in `rejection.reason`. The object is
+diagnostic only: the rejected call writes nothing, advances no fence and no
+epoch, and leaves claim rows, work version and project revision unchanged. It is
+not a reservation, and no caller may use it to skip `claim.acquire` or its
+`expected_work_version`.
+
 Receipts are historical: `lease_state_basis: "at_commit"` describes the original
 commit. Replaying an old acquire after expiry or release returns that same receipt
 without creating or extending a lease. Use `claim.inspect` for current state:

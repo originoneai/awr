@@ -480,11 +480,13 @@ async fn request_bounds_epoch_changes_and_completed_work_fail_without_reinterpre
         )
         .await
         .unwrap();
+    // Naming the changed coordinator epoch is the variant `claim.renew` already used
+    // above; `RecoveryBlocked` now means a workstream or ownership mismatch only.
     assert!(matches!(
         commands
             .execute(TENANT, PROJECT, A, acquire(&store, "epoch-takeover").await)
             .await,
-        Err(PgError::RecoveryBlocked)
+        Err(PgError::EpochChanged)
     ));
     admin.batch_execute("UPDATE awr_team.projects SET coordinator_epoch='epoch-a' WHERE tenant_id='reader-tenant';
         INSERT INTO awr_team.completion_receipts(tenant_id,project_id,id,work_id,scope_id,
@@ -741,6 +743,52 @@ async fn legacy_or_reassigned_active_rows_cannot_be_silently_adopted_after_expir
 }
 
 #[tokio::test]
+async fn rejected_claim_acquire_leaves_claims_fence_and_revision_unchanged() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let commands = store.commands();
+    commands
+        .execute(TENANT, PROJECT, A, acquire(&store, "take").await)
+        .await
+        .unwrap();
+    let live = snapshot(&admin).await;
+    assert!(matches!(
+        commands
+            .execute(TENANT, PROJECT, A, acquire(&store, "second").await)
+            .await,
+        Err(PgError::ClaimHeld)
+    ));
+    assert_eq!(snapshot(&admin).await, live);
+    admin
+        .batch_execute("UPDATE awr_team.claims SET fence=fence+1")
+        .await
+        .unwrap();
+    let stale = snapshot(&admin).await;
+    assert!(matches!(
+        commands
+            .execute(TENANT, PROJECT, A, acquire(&store, "stale").await)
+            .await,
+        Err(PgError::StaleFence)
+    ));
+    assert_eq!(snapshot(&admin).await, stale);
+    admin
+        .batch_execute(
+            "UPDATE awr_team.claims SET fence=fence-1;
+             UPDATE awr_team.projects SET coordinator_epoch='new-epoch' WHERE tenant_id='reader-tenant';",
+        )
+        .await
+        .unwrap();
+    let moved = snapshot(&admin).await;
+    assert!(matches!(
+        commands
+            .execute(TENANT, PROJECT, A, acquire(&store, "epoch").await)
+            .await,
+        Err(PgError::EpochChanged)
+    ));
+    assert_eq!(snapshot(&admin).await, moved);
+}
+
+#[tokio::test]
 async fn schema_eleven_is_atomic_and_preserves_unattributed_claim_history() {
     let (_guard, admin, _) = common::historical_team_schema(10).await;
     admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('reader-tenant','Readers','active');
@@ -824,4 +872,58 @@ async fn claim_inspect_never_sets_execution_authorized() {
     let other = inspect(&store, B, &claim).await;
     assert_eq!(other["execution_authorized"], false);
     assert_eq!(other["owned_by_client"], false);
+}
+
+#[tokio::test]
+async fn refused_acquire_reads_the_holder_and_writes_nothing() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let commands = store.commands();
+    let claim = commands
+        .execute(TENANT, PROJECT, A, acquire(&store, "holder-read").await)
+        .await
+        .unwrap()["receipt"]["data"]
+        .clone();
+
+    // The rejection-path lookup reads the active claim it decorates: identity
+    // and lease facts must match the claim the coordinator just committed.
+    let holder = store
+        .claim_holder(TENANT, PROJECT, A, "a")
+        .await
+        .unwrap()
+        .expect("an active claim on the item must be readable");
+    assert_eq!(holder["claim_id"], claim["claim_id"]);
+    assert_eq!(holder["session_id"], "session-a");
+    assert_eq!(holder["actor_id"], "agent");
+    assert_eq!(holder["client_id"], "cli-a");
+    assert_eq!(holder["fence"], "1");
+    assert_eq!(holder["lease_version"], "1");
+    assert!(
+        !holder["expires_at"].as_str().unwrap().is_empty(),
+        "the holder must carry the lease expiry the caller needs to wait on"
+    );
+
+    // A losing acquire is refused, and the refusal writes nothing at all.
+    let before = snapshot(&admin).await;
+    assert!(matches!(
+        commands
+            .execute(TENANT, PROJECT, A, acquire(&store, "holder-loses").await)
+            .await,
+        Err(PgError::ClaimHeld)
+    ));
+    assert_eq!(snapshot(&admin).await, before);
+
+    // Without an active claim the lookup is empty, so the rejection keeps its
+    // existing shape instead of inventing a holder.
+    admin
+        .batch_execute("UPDATE awr_team.claims SET state='expired' WHERE state='active'")
+        .await
+        .unwrap();
+    assert!(
+        store
+            .claim_holder(TENANT, PROJECT, A, "a")
+            .await
+            .unwrap()
+            .is_none()
+    );
 }

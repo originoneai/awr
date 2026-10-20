@@ -1102,7 +1102,28 @@ impl ServerHandler for Endpoint {
         let result = match result {
             Ok(Ok(value)) => CallToolResult::structured(value),
             Ok(Err(error)) => {
-                let mut value = public_error(error).1;
+                let rejection = super::claim_rejection(&action, &error);
+                let mut value = public_error(super::legacy_claim_acquire_error(&action, error)).1;
+                if let Some(mut rejection) = rejection {
+                    // Same enrichment as the HTTP path: read-only, rejection path only.
+                    let holder = match (rejection["reason"].as_str(), work.as_deref()) {
+                        (Some("ALREADY_CLAIMED"), Some(work)) => self
+                            .state
+                            .store
+                            .claim_holder(
+                                &self.project.tenant_id,
+                                &self.project.project_id,
+                                &access.bearer,
+                                work,
+                            )
+                            .await
+                            .ok()
+                            .flatten(),
+                        _ => None,
+                    };
+                    super::attach_holder(&mut rejection, holder);
+                    value["rejection"] = rejection;
+                }
                 if let Some(input) = diagnostic_input {
                     add_input_diagnostic(&mut value, &input, write);
                 }
@@ -1138,6 +1159,90 @@ mod tests {
         assert_eq!(unknown["code"], "InvalidInput");
         assert!(unknown.get("reason").is_none());
         assert!(!unknown.to_string().contains("private-manifest-detail"));
+    }
+
+    #[test]
+    fn rejected_claim_acquire_names_its_reason_without_changing_the_response() {
+        let rejection =
+            crate::service::claim_rejection("claim.acquire", &PgError::ClaimHeld).unwrap();
+        assert_eq!(rejection["reason"], "ALREADY_CLAIMED");
+        assert_eq!(rejection["operation"], "claim.acquire");
+        assert_eq!(rejection["authority"], "coordinator");
+        for (error, reason) in [
+            (PgError::StaleFence, "STALE_FENCE"),
+            (PgError::EpochChanged, "EPOCH_CHANGED"),
+            (PgError::WaitOpen, "WAIT_OPEN"),
+            (PgError::PreconditionsChanged, "PRECONDITIONS_CHANGED"),
+            (PgError::RecoveryBlocked, "RECOVERY_BLOCKED"),
+        ] {
+            assert_eq!(
+                crate::service::claim_rejection("claim.acquire", &error).unwrap()["reason"],
+                reason
+            );
+        }
+        // Only claim.acquire carries the reason, and the legacy response is untouched.
+        assert!(crate::service::claim_rejection("claim.renew", &PgError::ClaimHeld).is_none());
+        assert!(
+            crate::service::claim_rejection("task.accept_assignment", &PgError::ClaimHeld)
+                .is_none()
+        );
+        assert!(crate::service::claim_rejection("claim.acquire", &PgError::Forbidden).is_none());
+        let (status, value) = public_error(PgError::ClaimHeld);
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(value["code"], "ClaimHeld");
+        assert!(value.get("rejection").is_none());
+        // The finer epoch/fence fact never reaches the top-level code of acquire.
+        for error in [PgError::EpochChanged, PgError::StaleFence] {
+            let (status, value) = public_error(crate::service::legacy_claim_acquire_error(
+                "claim.acquire",
+                error,
+            ));
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert_eq!(value["code"], "RecoveryBlocked");
+        }
+        // Other commands keep their own codes.
+        let (_, renewed) = public_error(crate::service::legacy_claim_acquire_error(
+            "claim.renew",
+            PgError::EpochChanged,
+        ));
+        assert_eq!(renewed["code"], "EpochChanged");
+    }
+
+    #[test]
+    fn holder_facts_attach_only_to_an_already_claimed_rejection() {
+        let mut claimed =
+            crate::service::claim_rejection("claim.acquire", &PgError::ClaimHeld).unwrap();
+        let before = claimed.clone();
+        crate::service::attach_holder(&mut claimed, None);
+        assert_eq!(
+            claimed, before,
+            "a holder that could not be read changes nothing"
+        );
+        crate::service::attach_holder(
+            &mut claimed,
+            Some(json!({"claim_id":"claim-a","session_id":"session-a","client_id":"client-a"})),
+        );
+        assert_eq!(claimed["holder"]["claim_id"], "claim-a");
+        assert_eq!(claimed["holder"]["session_id"], "session-a");
+        assert_eq!(claimed["reason"], "ALREADY_CLAIMED");
+        assert_eq!(claimed["operation"], "claim.acquire");
+        assert_eq!(claimed["authority"], "coordinator");
+        // The pure constructor never carries a holder; only the read may add one.
+        assert!(
+            crate::service::claim_rejection("claim.acquire", &PgError::ClaimHeld)
+                .unwrap()
+                .get("holder")
+                .is_none()
+        );
+
+        let mut stale =
+            crate::service::claim_rejection("claim.acquire", &PgError::StaleFence).unwrap();
+        let before_stale = stale.clone();
+        crate::service::attach_holder(&mut stale, Some(json!({"claim_id":"claim-a"})));
+        assert_eq!(
+            stale, before_stale,
+            "only ALREADY_CLAIMED names who holds the work"
+        );
     }
 
     #[test]

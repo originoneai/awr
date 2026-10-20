@@ -366,7 +366,23 @@ pub(crate) async fn dispatch_authorized(
     match result {
         Ok(Ok(value)) => response(StatusCode::OK, value),
         Ok(Err(error)) => {
-            let (status, mut value) = public_error(error);
+            let rejection = claim_rejection(&action, &error);
+            let (status, mut value) = public_error(legacy_claim_acquire_error(&action, error));
+            if let Some(mut rejection) = rejection {
+                // A losing acquire may name who holds the item. Read once, on the
+                // rejection path only, and keep the reason when the read fails.
+                let holder = match (rejection["reason"].as_str(), work.as_deref()) {
+                    (Some("ALREADY_CLAIMED"), Some(work)) => state
+                        .store
+                        .claim_holder(&project.tenant_id, &project.project_id, token, work)
+                        .await
+                        .ok()
+                        .flatten(),
+                    _ => None,
+                };
+                attach_holder(&mut rejection, holder);
+                value["rejection"] = rejection;
+            }
             if let Some(raw) = &raw {
                 mcp::add_input_diagnostic(&mut value, raw, write);
             }
@@ -1167,6 +1183,81 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
             json!({"code":"ResponseTooLarge","message":"response exceeds service limit; use a smaller page or a narrower selector; inspect a command before retrying"}),
         ),
         _ => (StatusCode::SERVICE_UNAVAILABLE, unavailable_value()),
+    }
+}
+
+/// Keep the error code `claim.acquire` already published before this change.
+///
+/// The coordinator now separates a changed epoch and a stale fence from the same
+/// row facts, but `claim.acquire` answered all three with `RecoveryBlocked` and
+/// callers branch on that code. The finer fact is published only in
+/// `rejection.reason`; the code, status and body of the rejection stay as they
+/// were.
+fn legacy_claim_acquire_error(action: &str, error: PgError) -> PgError {
+    if action != "claim.acquire" {
+        return error;
+    }
+    match error {
+        PgError::EpochChanged | PgError::StaleFence => PgError::RecoveryBlocked,
+        other => other,
+    }
+}
+
+/// Name the existing rejection of `claim.acquire` in machine-readable form.
+///
+/// The coordinator has already decided; this only labels that decision for the
+/// caller. It performs no write, adds no command, and leaves the legacy code,
+/// status, claim rows, fence, epoch and revision exactly as they are.
+pub(crate) fn claim_rejection(action: &str, error: &PgError) -> Option<Value> {
+    if action != "claim.acquire" {
+        return None;
+    }
+    let (reason, next_action) = match error {
+        PgError::ClaimHeld => (
+            "ALREADY_CLAIMED",
+            "Inspect the active claim with claim.inspect; acquire again only after it is released or has expired.",
+        ),
+        PgError::StaleFence => (
+            "STALE_FENCE",
+            "Refresh work.prepare and retry claim.acquire with the current work version; the coordinator fence never moves backwards.",
+        ),
+        PgError::EpochChanged => (
+            "EPOCH_CHANGED",
+            "Reconnect to the current coordinator epoch and rebuild the command; a delivery from a previous epoch is never replayable.",
+        ),
+        PgError::WaitOpen => (
+            "WAIT_OPEN",
+            "Resolve the open wait on this work before acquiring it.",
+        ),
+        PgError::PreconditionsChanged => (
+            "PRECONDITIONS_CHANGED",
+            "Refresh work.prepare; the work version, fence or contract state moved since it was read.",
+        ),
+        PgError::RecoveryBlocked => (
+            "RECOVERY_BLOCKED",
+            "Inspect the current claim, handoff and workstream binding before retrying claim.acquire; reassignment needs its explicit recovery path.",
+        ),
+        _ => return None,
+    };
+    Some(json!({
+        "reason": reason,
+        "operation": "claim.acquire",
+        "authority": "coordinator",
+        "next_action": next_action,
+        "recheck": "After inspection or refresh. The rejection mutated nothing; the coordinator remains the only claim authority."
+    }))
+}
+
+/// Name the holder inside an `ALREADY_CLAIMED` rejection.
+///
+/// Additive and optional: a reason other than `ALREADY_CLAIMED`, or a holder
+/// that could not be read, leaves the object exactly as it was.
+pub(crate) fn attach_holder(rejection: &mut Value, holder: Option<Value>) {
+    if rejection["reason"] != "ALREADY_CLAIMED" {
+        return;
+    }
+    if let Some(holder) = holder {
+        rejection["holder"] = holder;
     }
 }
 
