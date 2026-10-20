@@ -1,6 +1,6 @@
 # 秘密数据边界
 
-当前使用 `awr-core` 的秘密策略 8。组件合同 `tests/security/payloads/contract.json` 1.9.0 保持 32 个条件，覆盖布尔和空值字面量、字面量释义、无凭据结构定义、公开命令说明、授权叙述、Bearer 普通文字和伪装夹带检查。[Content-bound Agent review](content-review.md) can authorize suspected public local-file content; recognizable credentials remain nonreviewable. 原始来源仍由项目维护者负责；AWR 不改写或删除包含敏感值的源文件。
+The current `awr-core` secret policy is 8. Component contract `tests/security/payloads/contract.json` 1.9.0 still covers 32 conditions, including boolean and null literals, literal glosses, credential-free structure definitions, public command notes, authorization narratives, ordinary Bearer prose, and smuggled-secret checks. [Content-bound Agent review](content-review.md) can authorize suspected public local-file content; recognizable credentials remain nonreviewable. 原始来源仍由项目维护者负责；AWR 不改写或删除包含敏感值的源文件。
 
 写入前检查原始文本和解析后的结构。覆盖来源文件及直接解析、Manifest、直接投影与来源配置、提案 patch、所有事件、checkpoint 的 digest/列表、证据元数据和产物元数据。拒绝保留 `RuleViolation`，并提供 `details.policy_version`、`details.category` 和按类别区分的 `details.next_action`/`repair`：真实凭据和环境转储明确指示“不属于 AWR 管理，保持在注册来源之外，真实值放 env/secret 管理并用 `${VAR}` 引用”；`labelled_value` 同时给出真实秘密的安置路径与公开 schema 的结构化写法。诊断不附带命中的值、键或片段。来源索引问题保留这些分类，CLI/MCP 使用同一合同。来源读取失败会保留旧投影并报告非新鲜状态；直接运行态写入被拒绝时不提交记录和事件。
 
@@ -33,7 +33,7 @@ not create string envelopes. Markdown backticks must belong to a complete code
 span; a Shell command substitution after a literal remains a nonempty value.
 Raw source checks, event summaries and structured payloads share these boundaries.
 
-完整的单行字面量释义可以保留，例如 `FALSE=disabled; TRUE=enabled; NULL=未设置`。整段文本只能包含精确的 `TRUE`、`FALSE`、`NULL` 名称、等号和已知状态标签，用分号分隔。状态标签限于 `enabled/disabled/unset/on/off/yes/no/empty/missing/unknown`（不区分大小写）及 `未设置/开启/关闭`；不接受任意字符串值。允许普通空格、一个前导分号和标点归一化后的全角写法。额外变量、路径、数字、引号、脚本符号、换行、tab 或不完整的分隔条目不属于此例外。JSON 解码后的说明使用同一规则，不依赖字段名。真实 `export`、明确的 environment 对象/列表/块、敏感标签和可识别凭据仍独立检查；一个公开释义不能掩盖同一输入中其他字段或条目的敏感内容。较长释义的摘要仍须独立通过检查，必要时只保留安全的省略号。
+Complete single-line literal glosses may remain, for example `FALSE=disabled; TRUE=enabled; NULL=未设置`. The entire string may contain only the exact names `TRUE`, `FALSE`, and `NULL`, equals signs, and known state labels, separated by semicolons. State labels are limited to `enabled`/`disabled`/`unset`/`on`/`off`/`yes`/`no`/`empty`/`missing`/`unknown` (case-insensitive) and the literals `未设置`/`开启`/`关闭`; arbitrary string values are not accepted. Ordinary spaces, one leading semicolon, and fullwidth forms after punctuation normalization are allowed. Extra variables, paths, numbers, quotes, script tokens, newlines, tabs, or incomplete separated clauses are outside this exemption. JSON-decoded notes use the same rule and do not depend on field names. Real `export` statements, explicit environment objects/lists/blocks, sensitive labels, and recognizable credentials remain independently checked; a public gloss cannot hide sensitive content in other fields or entries of the same input. Longer gloss summaries must still pass independently, falling back to a safe ellipsis when needed.
 
 公开配置的命令说明也可以保留，例如 `PROJECT_ROOT=/public/project EXPECTED_ITEMS=42 cargo test --offline`，以及叙述或注释中的 `EXPECTED_ITEMS=42`。识别范围限于简单的无引号变量前缀加可识别命令词；不执行命令，不按项目名或某个变量名豁免。独立赋值、只有若干赋值的环境转储、`export` 和明确的 environment 对象继续拒绝。所有位置的敏感键赋值和可识别凭据仍独立检查；把实际密钥放在命令前缀中不能使其通过。
 
@@ -43,7 +43,7 @@ Raw source checks, event summaries and structured payloads share these boundarie
 
 对旧数据的输出保护：
 
-- FTS 策略为 10，首次读取时重建旧缓存，包括旧策略下误删的字面量释义、布尔/空值说明、普通认证说明、公开配置和结构定义。失败来源重索引时重新读取原始内容；来源映射和适配器配置变更同样使缓存失效。摘要检查完整字段后才取短文本；敏感摘要标为 `[redacted]`。身份、关联工作或来源引用含敏感值时，整条搜索文档不进入索引。查询参数也经过检查。
+- FTS policy is 10. On first read it rebuilds old caches, including literal glosses, boolean/null notes, ordinary auth notes, public configuration, and structure definitions that earlier policies redacted by mistake. Failed source reindexes reread the original content; source-map and adapter-config changes also invalidate the cache. Summaries are shortened only after the full field passes; sensitive summaries become `[redacted]`. When identity, linked work, or source references contain sensitive values, the whole search document stays out of the index. Query parameters are checked as well.
 - L0、L1、硬规则/关联事实及 delta 检查实际选中的输出。选中的必需事实包含敏感值时返回 `ContextIncomplete`，不返回看似完整的包、哈希或渲染文本。原本不进入 Context 的正文仍然被排除；例如 delta 只使用 checkpoint 的基线和身份，不返回 digest。
 - CLI 的敏感参数在参数解析报错前拒绝；证据、完成输入、分支关闭输入及 Manifest 的结构错误不回显字段内容。CLI 和 MCP 共用安全错误报告；MCP 同时保护结构化结果、文本副本与读取输出。
 
