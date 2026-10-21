@@ -20,6 +20,9 @@ class SecretTransports(unittest.TestCase):
         for summary in [
             "FALSE=disabled; TRUE=enabled; NULL=未设置",
             "；NULL=未设置；TRUE=enabled",
+            "FALSE=无附件；TRUE=有附件",
+            "FALSE=关闭同库位多目的地；TRUE=开启",
+            "NULL=历史未设置",
         ]:
             response = self.client.rpc("tools/call", {"name": "awr_event_append", "arguments": {
                 "expected_revision": self.revision(), "event_type": "work.observed", "summary": summary,
@@ -56,7 +59,7 @@ class SecretTransports(unittest.TestCase):
             "event_type": "work.observed", "summary": "password: " + SENTINEL})
         self.assertEqual(result["code"], "RuleViolation")
         self.assertEqual(result["details"]["category"], "labelled_value")
-        self.assertEqual(result["details"]["policy_version"], 8)
+        self.assertEqual(result["details"]["policy_version"], 9)
         self.assertIn("outside registered sources", result["details"]["next_action"])
         public_schema = "# Deliver useful analysis\n\ninterface Login { password: string; }\n"
         (self.root / "goal.md").write_text(public_schema)

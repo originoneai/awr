@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
 // Rebuild derived summaries when content classification changes.
-const POLICY_VERSION: i64 = 10;
+const POLICY_VERSION: i64 = 11;
 const KINDS: &[&str] = &[
     "goal",
     "plan",

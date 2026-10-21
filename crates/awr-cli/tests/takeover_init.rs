@@ -290,6 +290,7 @@ fn boolean_gloss_notes_support_preview_draft_accept_and_retry_without_rewriting_
         r#"[{"comment":"FALSE=disabled; TRUE=enabled"},{"comment":"状态说明；NULL=未设置"}]"#,
         r#"[{"comment":"；NULL=未设置；TRUE=enabled；FALSE=disabled"}]"#,
         r#"[{"comment":"TRUE=enabled; FALSE=disabled; NULL=unset"}]"#,
+        r#"[{"comment":"FALSE=无附件；TRUE=有附件"},{"comment":"FALSE=关闭同库位多目的地；TRUE=开启"},{"comment":"NULL=历史未设置"}]"#,
     ] {
         let p = Project::new();
         p.write("notes.json", notes);
@@ -355,6 +356,15 @@ fn boolean_gloss_prefixes_do_not_allow_environment_or_secret_content() {
             r#"[{"comment":"TRUE=enabled; sk-synthetic-private-value"}]"#,
             "credential",
         ),
+        (
+            r#"[{"comment":"export FALSE=disabled"}]"#,
+            "environment_dump",
+        ),
+        (
+            r#"[{"comment":"FALSE=disabled; TRUE=sk-synthetic-private-value"}]"#,
+            "credential",
+        ),
+        ("environment:\n  FALSE=无附件\n", "environment_dump"),
     ] {
         let p = Project::new();
         p.write("notes.json", notes);

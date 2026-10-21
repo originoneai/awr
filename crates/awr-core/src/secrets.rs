@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{borrow::Cow, cell::OnceCell, sync::LazyLock};
 
-pub const SECRET_POLICY_VERSION: u32 = 8;
+pub const SECRET_POLICY_VERSION: u32 = 9;
 pub const SENSITIVE_CONTENT_WITHHELD: &str = "[sensitive content withheld]";
 const REJECTION: &str =
     "sensitive content is not accepted; remove secret values or use explicit redacted placeholders";
@@ -52,15 +52,106 @@ static ENV_ASSIGNMENT: LazyLock<Regex> = LazyLock::new(|| {
         .expect("fixed environment assignment pattern")
 });
 
-// A complete, single-line legend describes literal values rather than exporting
-// variables. Require exact literal names and a known state label per clause;
-// arbitrary values, shell syntax and incomplete clauses do not qualify.
-static LITERAL_GLOSS: LazyLock<Regex> = LazyLock::new(|| {
-    let label = r"(?i:enabled|disabled|unset|on|off|yes|no|empty|missing|unknown)|未设置|开启|关闭";
-    let clause = format!(r"(?:TRUE|FALSE|NULL) *= *(?:{label})");
-    Regex::new(&format!(r"\A *;? *{clause}(?: *; *{clause})* *\z"))
-        .expect("fixed complete literal gloss pattern")
-});
+// A complete, single-line legend describes literal states rather than exporting
+// variables. Each clause is exactly TRUE, FALSE, or NULL plus one short public
+// phrase. Shell syntax, extra variables, and incomplete clauses do not qualify,
+// and a matching prefix must never hide a later assignment.
+const GLOSS_VALUE_MAX_CHARS: usize = 32;
+const GLOSS_SENSITIVE_STEMS: &[&str] = &[
+    "secret",
+    "password",
+    "passwd",
+    "pwd",
+    "token",
+    "private",
+    "credential",
+    "authorization",
+    "apikey",
+    "accesstoken",
+    "refreshtoken",
+    "idtoken",
+    "clientsecret",
+    "秘密",
+    "密码",
+    "密碼",
+    "口令",
+    "令牌",
+    "密钥",
+    "密鑰",
+    "私有",
+];
+
+fn complete_literal_gloss(text: &str) -> bool {
+    if text.chars().any(|c| matches!(c, '\n' | '\r' | '\t')) {
+        return false;
+    }
+    let mut body = text.trim_matches(' ');
+    if let Some(rest) = body.strip_prefix(';') {
+        body = rest.trim_matches(' ');
+        if body.is_empty() || body.starts_with(';') {
+            return false;
+        }
+    }
+    !body.is_empty() && body.split(';').all(literal_gloss_clause)
+}
+
+fn literal_gloss_clause(clause: &str) -> bool {
+    let Some((name, value)) = clause.trim_matches(' ').split_once('=') else {
+        return false;
+    };
+    matches!(name.trim_matches(' '), "TRUE" | "FALSE" | "NULL")
+        && public_gloss_value(value.trim_matches(' '))
+}
+
+fn public_gloss_value(value: &str) -> bool {
+    let count = value.chars().count();
+    if !(1..=GLOSS_VALUE_MAX_CHARS).contains(&count) || !value.chars().all(char::is_alphabetic) {
+        return false;
+    }
+    // Variable-shaped ASCII, including HOME embedded in a longer phrase, is not
+    // a public gloss. Known labels such as ON and YES stay available in any case.
+    if embeds_variable_token(value) {
+        return false;
+    }
+    let lower = value.to_lowercase();
+    !GLOSS_SENSITIVE_STEMS
+        .iter()
+        .any(|stem| lower.contains(stem))
+}
+
+fn embeds_variable_token(value: &str) -> bool {
+    if known_state_label(value) {
+        return false;
+    }
+    let mut run = 0;
+    for c in value.chars() {
+        if c.is_ascii_uppercase() {
+            run += 1;
+            if run >= 2 || value.chars().all(|c| c.is_ascii_uppercase()) {
+                return true;
+            }
+        } else {
+            run = 0;
+        }
+    }
+    value.chars().all(|c| c.is_ascii_uppercase())
+}
+
+fn known_state_label(value: &str) -> bool {
+    matches!(
+        value.to_ascii_lowercase().as_str(),
+        "enabled"
+            | "disabled"
+            | "unset"
+            | "on"
+            | "off"
+            | "yes"
+            | "no"
+            | "empty"
+            | "missing"
+            | "unknown"
+    )
+}
 
 // Only complete, value-free declarations qualify. A bare YAML field, object
 // literal, initializer, literal type or arbitrary type expression does not.
@@ -589,7 +680,7 @@ fn sensitive_matches(text: &str, limit: usize) -> Vec<(SensitiveCategory, usize)
     // Classify the entire text, not individual matches: a public literal prefix
     // must never hide a later HOME assignment or export. The independent secret
     // and explicit environment-block checks still apply to every input.
-    let literal_gloss = LITERAL_GLOSS.is_match(text);
+    let literal_gloss = complete_literal_gloss(text);
     for m in ENV_ASSIGNMENT.find_iter(text).filter(|m| {
         !literal_gloss
             && environment_assignment(text, m.as_str(), m.start())
@@ -1548,6 +1639,10 @@ mod tests {
             "ＦＡＬＳＥ＝关闭；ＴＲＵＥ＝开启",
             "FALSE = disabled ; TRUE = enabled",
             "  FALSE=Disabled; TRUE=ON; NULL=empty  ",
+            "FALSE=无附件；TRUE=有附件",
+            "FALSE=关闭同库位多目的地；TRUE=开启",
+            "NULL=历史未设置",
+            "FALSE=无附件; TRUE=有附件",
         ] {
             ensure_public_text(text).unwrap_or_else(|e| panic!("{text}: {e}"));
             let value = json!([{"comment": text}]);
@@ -1575,10 +1670,19 @@ mod tests {
         }
         let notes = json!([
             {"comment": "FALSE=disabled; TRUE=enabled"},
-            {"comment": "状态说明；NULL=未设置"}
+            {"comment": "状态说明；NULL=未设置"},
+            {"comment": "FALSE=无附件；TRUE=有附件"},
+            {"comment": "FALSE=关闭同库位多目的地；TRUE=开启"},
+            {"note": "NULL=历史未设置"}
         ]);
         ensure_public_value(&notes).unwrap();
         ensure_public_bytes(&serde_json::to_vec_pretty(&notes).unwrap()).unwrap();
+        let max_phrase = format!("FALSE={}", "a".repeat(32));
+        ensure_public_text(&max_phrase).unwrap();
+        ensure_public_value(&json!([{"comment": max_phrase}])).unwrap();
+        let escaped = "FALSE=\\u65e0\\u9644\\u4ef6";
+        ensure_public_text(escaped).unwrap();
+        ensure_public_value(&json!({"comment": escaped})).unwrap();
         let long = format!("FALSE=disabled{}", "; TRUE=enabled".repeat(40));
         ensure_public_text(&long).unwrap();
         // A shortened fragment is checked independently. Falling back to an
@@ -1600,6 +1704,11 @@ mod tests {
             "TRUE=password",
             "NULL=privatevalue",
             "FALSE=这是秘密",
+            "FALSE=未设置密码",
+            "FALSE=HOME",
+            "FALSE=关闭HOME",
+            "FALSE=目的地2",
+            "FALSE=无附件。",
             "\nFALSE=disabled\n",
             "\tFALSE=disabled\t",
             "FALSE=disabled; TRUE=enabled echo",
@@ -1645,6 +1754,7 @@ mod tests {
                     .is_empty()
             );
         }
+        assert!(ensure_public_text(&format!("FALSE={}", "a".repeat(33))).is_err());
         for value in [
             json!({"environment": {"FALSE": "disabled"}}),
             json!({"environment": ["TRUE=enabled"]}),
