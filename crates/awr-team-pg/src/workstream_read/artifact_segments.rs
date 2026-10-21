@@ -40,7 +40,7 @@ pub(super) async fn read(
          WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND scope_id='main' AND work_id=$4",
         &[&tenant, &project, &auth.snapshot, &work],
     ).await?.get(0);
-    let binding = hash(&json!({
+    let cursor_basis = hash(&json!({
         "op":"artifact.segment", "tenant":tenant, "project":project,
         "actor":auth.actor_id, "client":auth.client_id, "auth":auth.binding,
         "membership":auth.membership_version, "epoch":auth.epoch,
@@ -56,8 +56,11 @@ pub(super) async fn read(
         Some(raw) => {
             let cursor: SegmentCursor =
                 serde_json::from_str(raw).map_err(|_| PgError::CursorExpired)?;
+            let expected_binding = hash(&json!({
+                "artifact_binding":cursor_basis, "offset":cursor.offset
+            }))?;
             if cursor.version != 1
-                || cursor.binding != binding
+                || cursor.binding != expected_binding
                 || (cursor.offset >= bytes.len() && !(cursor.offset == 0 && bytes.is_empty()))
             {
                 return Err(PgError::CursorExpired);
@@ -74,7 +77,9 @@ pub(super) async fn read(
         Some(
             serde_json::to_string(&SegmentCursor {
                 version: 1,
-                binding,
+                binding: hash(&json!({
+                    "artifact_binding":cursor_basis, "offset":end
+                }))?,
                 offset: end,
             })
             .map_err(|_| PgError::SourceDivergence)?,

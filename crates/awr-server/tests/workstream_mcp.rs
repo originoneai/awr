@@ -148,6 +148,14 @@ async fn artifact_segments_reauthorize_each_page_and_reject_stale_or_invalid_ran
         second["data"],
         call(&client, "awr_team_query", next.clone(), false).await["data"]
     );
+    let mut smaller_page = next.clone();
+    smaller_page["max_context_bytes"] = json!(2);
+    let smaller = call(&client, "awr_team_query", smaller_page, false).await;
+    assert_eq!(
+        smaller["data"]["range"],
+        json!({"start":3,"end_exclusive":5})
+    );
+    assert_eq!(smaller["data"]["next_query"]["max_context_bytes"], 2);
     for (field, value) in [
         ("cursor", json!("bad")),
         ("expected_sha256", json!("f".repeat(64))),
@@ -159,7 +167,7 @@ async fn artifact_segments_reauthorize_each_page_and_reject_stale_or_invalid_ran
         bad[field] = value;
         call(&client, "awr_team_query", bad, true).await;
     }
-    for offset in [9_u64, u64::MAX] {
+    for offset in [2_u64, 4, 9, u64::MAX] {
         let mut bad = next.clone();
         let mut cursor: Value = serde_json::from_str(bad["cursor"].as_str().unwrap()).unwrap();
         cursor["offset"] = json!(offset);
