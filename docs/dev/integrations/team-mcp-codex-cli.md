@@ -153,8 +153,14 @@ After real progress (reuse a fresh prepare when the read set may have moved):
 }
 ```
 
-MCP disconnect ≠ session end. Exit with `session.end` only when finished or
-handing off.
+MCP disconnect or native process exit does not end the logical Team session.
+Ongoing work may checkpoint and keep its valid ownership. Only when logical
+closure is intended, settle execution effects, resolve open waits, release the
+owned claim with its current fence and lease version, then call `session.end`
+with the current session version. This closes coordination state; it does not
+complete, approve or integrate the work. A returned `known_rejection` is a known
+refusal: follow its action guidance rather than treating it as a missing response
+or repeating the unchanged request.
 
 ### 5. PR link
 

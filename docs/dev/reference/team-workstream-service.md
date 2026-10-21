@@ -330,6 +330,22 @@ claims, open waits or nonterminal/unknown execution on the work, and never treat
 an ended session as proof that an external effect stopped. Execution admission,
 claim transfer and resource release are not performed by these commands.
 
+A native client exit or MCP disconnect is separate from logical session closure.
+Ongoing work may save a checkpoint and retain its valid claim. When the caller
+intentionally ends the logical session, it first reports and settles execution
+effects, resolves any open wait, releases its own claim with the current session,
+claim, fence and lease versions, and only then submits `session.end` with the
+current session version. This sequence does not complete the work, approve a
+review, integrate a delivery or prove that an external process stopped.
+
+A known synchronous `session.end` refusal keeps HTTP 409 and the public
+`RecoveryBlocked` code, and adds a bounded `rejection` object with
+`operation: "session.end"`, `outcome: "known_rejection"`, one finite `reason`,
+and `action_guidance` containing `when`, `because`, `action` and `recheck_on`.
+Reasons are `UNRESOLVED_EFFECTS`, `WAIT_OPEN` and `ACTIVE_CLAIM`, in that
+precedence when more than one condition applies. Guidance exposes no row counts,
+peer identities or object values, performs no release, and grants no authority.
+
 On timeout or an unconsumed response, query `command.inspect` with the original
 `request_id` and work. It returns only this authenticated actor/client's receipt
 under the current workstream and ownership boundary. A found receipt preserves
@@ -339,6 +355,9 @@ payload**: replay returns the original receipt without duplicating a session,
 checkpoint or event; changing the payload returns `IdempotencyConflict`. Current
 authorization and epoch/ownership still apply to replay. Already committed
 receipts remain queryable during a freeze; replay performs no new mutation.
+A returned `known_rejection` is not a missing or uncertain transport outcome:
+follow its guidance and do not use `command.inspect` or repeat the unchanged
+request merely because rejected commands have no committed operation receipt.
 
 ## Coordination claims
 

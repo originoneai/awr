@@ -788,13 +788,28 @@ async fn apply(
                 ownership,
             )
             .await?;
-            let blocked: bool = tx.query_one("SELECT
-                EXISTS(SELECT 1 FROM awr_team.claims WHERE tenant_id=$1 AND project_id=$2 AND session_id=$3 AND state='active') OR
-                EXISTS(SELECT 1 FROM awr_team.executions WHERE tenant_id=$1 AND project_id=$2 AND work_id=$4 AND state NOT IN ('succeeded','failed','cancelled')) OR
+            let blockers = tx.query_one("SELECT
+                EXISTS(SELECT 1 FROM awr_team.claims WHERE tenant_id=$1 AND project_id=$2 AND session_id=$3 AND state='active'),
+                EXISTS(SELECT 1 FROM awr_team.executions WHERE tenant_id=$1 AND project_id=$2 AND work_id=$4 AND state NOT IN ('succeeded','failed','cancelled')),
                 EXISTS(SELECT 1 FROM awr_team.wait_items WHERE tenant_id=$1 AND project_id=$2 AND session_id=$3 AND state='open')",
-                &[&tenant,&project,&a.session_id,&command.work_id]).await?.get(0);
-            if blocked {
+                &[&tenant,&project,&a.session_id,&command.work_id]).await?;
+            let active_claim = blockers.get::<_, bool>(0);
+            let nonterminal_execution = blockers.get::<_, bool>(1);
+            let open_wait = blockers.get::<_, bool>(2);
+            if nonterminal_execution {
                 return Err(PgError::RecoveryBlocked);
+            }
+            // An active claim or open wait already blocks closure. Before naming
+            // either next action, apply the existing release readiness check so
+            // unresolved effects retain priority without adding a session.end guard.
+            if active_claim || open_wait {
+                claims::require_resolved_effects(tx, tenant, project, &command.work_id).await?;
+            }
+            if open_wait {
+                return Err(PgError::WaitOpen);
+            }
+            if active_claim {
+                return Err(PgError::ClaimHeld);
             }
             tx.execute(
                 "UPDATE awr_team.sessions SET state='ended',session_version=session_version+1

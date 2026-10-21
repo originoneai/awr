@@ -376,6 +376,41 @@ async fn prepared(client: &Client) -> Value {
     )
     .await
 }
+
+fn assert_session_end_rejection(
+    response: &Value,
+    reason: &str,
+    action_fragment: &str,
+    private_values: &[&str],
+) {
+    assert_eq!(response["code"], "RecoveryBlocked");
+    assert_eq!(response["message"], "recovery blocked");
+    assert_eq!(response["rejection"]["reason"], reason);
+    assert_eq!(response["rejection"]["operation"], "session.end");
+    assert_eq!(response["rejection"]["outcome"], "known_rejection");
+    assert_eq!(response["rejection"].as_object().unwrap().len(), 4);
+    assert_eq!(
+        response["rejection"]["action_guidance"]
+            .as_object()
+            .unwrap()
+            .len(),
+        4
+    );
+    for field in ["when", "because", "action", "recheck_on"] {
+        assert!(response["rejection"]["action_guidance"][field].is_string());
+    }
+    assert!(
+        response["rejection"]["action_guidance"]["action"]
+            .as_str()
+            .unwrap()
+            .contains(action_fragment)
+    );
+    assert!(serde_json::to_vec(response).unwrap().len() < 1024);
+    assert!(!response.to_string().contains("command.inspect"));
+    for private in private_values {
+        assert!(!response.to_string().contains(private));
+    }
+}
 fn rpc(method: &str, params: Value) -> Value {
     json!({"jsonrpc":"2.0","id":1,"method":method,"params":params})
 }
@@ -2412,6 +2447,163 @@ async fn mcp_session_journal_reconnects_replays_and_shares_http_outcomes() {
     assert_eq!(count, 3);
     a.cancel().await.unwrap();
     b.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn mcp_session_end_known_rejection_guides_release_without_private_state() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let claimed = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "session-close-claim",
+            "claim.acquire",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "expected_work_version":"0","ttl_seconds":60}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    let claim = claimed["receipt"]["data"].clone();
+    let rejected_request_id = "session-close-known-rejection";
+    let rejected = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            rejected_request_id,
+            "session.end",
+            json!({"session_id":"session-a","expected_session_version":"1"}),
+        ))
+        .unwrap(),
+        true,
+    )
+    .await;
+    assert_session_end_rejection(
+        &rejected,
+        "ACTIVE_CLAIM",
+        "claim.release",
+        &["session-a", claim["claim_id"].as_str().unwrap(), A],
+    );
+    let inspected = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"command.inspect","work_id":"a",
+            "request_id":rejected_request_id}),
+        false,
+    )
+    .await;
+    assert_eq!(inspected["data"]["state"], "unknown");
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT count(*) FROM awr_team.operations WHERE request_id=$1",
+                &[&rejected_request_id],
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+
+    admin.batch_execute("INSERT INTO awr_team.wait_items(tenant_id,project_id,id,session_id,work_id,question,state)
+        VALUES('reader-tenant','reader-project','mcp-private-wait','session-a','a','private wait','open')").await.unwrap();
+    let wait_request_id = "session-close-known-wait";
+    let waiting = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            wait_request_id,
+            "session.end",
+            json!({"session_id":"session-a","expected_session_version":"1"}),
+        ))
+        .unwrap(),
+        true,
+    )
+    .await;
+    assert_session_end_rejection(
+        &waiting,
+        "WAIT_OPEN",
+        "resolve the wait",
+        &["session-a", "mcp-private-wait", "private wait", A],
+    );
+
+    admin.batch_execute("INSERT INTO awr_team.executions(tenant_id,project_id,id,work_id,session_id,fence,contract_hash,executor_actor_id,state)
+        VALUES('reader-tenant','reader-project','mcp-private-execution','a','session-a',1,'contract','agent','unknown')").await.unwrap();
+    let recovery_request_id = "session-close-known-recovery";
+    let recovering = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            recovery_request_id,
+            "session.end",
+            json!({"session_id":"session-a","expected_session_version":"1"}),
+        ))
+        .unwrap(),
+        true,
+    )
+    .await;
+    assert_session_end_rejection(
+        &recovering,
+        "UNRESOLVED_EFFECTS",
+        "execution and recovery",
+        &["session-a", "mcp-private-execution", "private wait", A],
+    );
+    let rejected_operations = admin
+        .query_one(
+            "SELECT count(*) FROM awr_team.operations WHERE request_id=ANY($1)",
+            &[&&[rejected_request_id, wait_request_id, recovery_request_id][..]],
+        )
+        .await
+        .unwrap()
+        .get::<_, i64>(0);
+    assert_eq!(rejected_operations, 0);
+    admin
+        .batch_execute(
+            "UPDATE awr_team.executions SET state='succeeded' WHERE id='mcp-private-execution';
+        UPDATE awr_team.wait_items SET state='replied' WHERE id='mcp-private-wait'",
+        )
+        .await
+        .unwrap();
+
+    let released = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "session-close-release",
+            "claim.release",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+                "expected_lease_version":claim["lease_version"]}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    assert_eq!(released["receipt"]["data"]["state"], "released");
+    let ended = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "session-close-after-release",
+            "session.end",
+            json!({"session_id":"session-a","expected_session_version":"1"}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    assert_eq!(ended["receipt"]["data"]["state"], "ended");
+    client.cancel().await.unwrap();
 }
 
 #[tokio::test]

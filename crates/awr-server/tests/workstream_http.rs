@@ -200,6 +200,41 @@ async fn http_prepare(server: &Server) -> Value {
     .unwrap()
 }
 
+fn assert_session_end_rejection(
+    response: &Value,
+    reason: &str,
+    action_fragment: &str,
+    private_values: &[&str],
+) {
+    assert_eq!(response["code"], "RecoveryBlocked");
+    assert_eq!(response["message"], "recovery blocked");
+    assert_eq!(response["rejection"]["reason"], reason);
+    assert_eq!(response["rejection"]["operation"], "session.end");
+    assert_eq!(response["rejection"]["outcome"], "known_rejection");
+    assert_eq!(response["rejection"].as_object().unwrap().len(), 4);
+    assert_eq!(
+        response["rejection"]["action_guidance"]
+            .as_object()
+            .unwrap()
+            .len(),
+        4
+    );
+    for field in ["when", "because", "action", "recheck_on"] {
+        assert!(response["rejection"]["action_guidance"][field].is_string());
+    }
+    assert!(
+        response["rejection"]["action_guidance"]["action"]
+            .as_str()
+            .unwrap()
+            .contains(action_fragment)
+    );
+    assert!(serde_json::to_vec(response).unwrap().len() < 1024);
+    assert!(!response.to_string().contains("command.inspect"));
+    for private in private_values {
+        assert!(!response.to_string().contains(private));
+    }
+}
+
 #[tokio::test]
 async fn http_claims_require_write_authority_and_report_live_lease_conflicts() {
     let (_guard, admin, _, store) = setup().await;
@@ -235,6 +270,79 @@ async fn http_claims_require_write_authority_and_report_live_lease_conflicts() {
         .await
         .unwrap();
     assert_eq!(inspected["data"]["lease_live"], true);
+    let rejected_end = post_command(
+        &server,
+        A,
+        serde_json::to_value(command(
+            &http_prepare(&server).await,
+            "http-known-session-end",
+            "session.end",
+            json!({"session_id":"session-a","expected_session_version":"1"}),
+        ))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(rejected_end.status(), 409);
+    let rejected_end: Value = rejected_end.json().await.unwrap();
+    assert_session_end_rejection(
+        &rejected_end,
+        "ACTIVE_CLAIM",
+        "claim.release",
+        &["session-a", claim["claim_id"].as_str().unwrap(), A],
+    );
+
+    admin.batch_execute("INSERT INTO awr_team.wait_items(tenant_id,project_id,id,session_id,work_id,question,state)
+        VALUES('reader-tenant','reader-project','http-private-wait','session-a','a','private wait','open')").await.unwrap();
+    let waiting = post_command(
+        &server,
+        A,
+        serde_json::to_value(command(
+            &http_prepare(&server).await,
+            "http-known-session-wait",
+            "session.end",
+            json!({"session_id":"session-a","expected_session_version":"1"}),
+        ))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(waiting.status(), 409);
+    let waiting: Value = waiting.json().await.unwrap();
+    assert_session_end_rejection(
+        &waiting,
+        "WAIT_OPEN",
+        "resolve the wait",
+        &["session-a", "http-private-wait", "private wait", A],
+    );
+
+    admin.batch_execute("INSERT INTO awr_team.executions(tenant_id,project_id,id,work_id,session_id,fence,contract_hash,executor_actor_id,state)
+        VALUES('reader-tenant','reader-project','http-private-execution','a','session-a',1,'contract','agent','unknown')").await.unwrap();
+    let recovering = post_command(
+        &server,
+        A,
+        serde_json::to_value(command(
+            &http_prepare(&server).await,
+            "http-known-session-recovery",
+            "session.end",
+            json!({"session_id":"session-a","expected_session_version":"1"}),
+        ))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(recovering.status(), 409);
+    let recovering: Value = recovering.json().await.unwrap();
+    assert_session_end_rejection(
+        &recovering,
+        "UNRESOLVED_EFFECTS",
+        "execution and recovery",
+        &["session-a", "http-private-execution", "private wait", A],
+    );
+    admin
+        .batch_execute(
+            "UPDATE awr_team.executions SET state='succeeded' WHERE id='http-private-execution';
+        UPDATE awr_team.wait_items SET state='replied' WHERE id='http-private-wait'",
+        )
+        .await
+        .unwrap();
     let mut competing = acquire_args;
     competing["expected_work_version"] = json!("1");
     let conflict = post_command(

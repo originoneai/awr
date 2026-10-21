@@ -14,6 +14,41 @@ async fn counts(admin: &tokio_postgres::Client) -> Value {
     json!((0..5).map(|i| r.get::<_, i64>(i)).collect::<Vec<_>>())
 }
 
+async fn session_end_snapshot(admin: &tokio_postgres::Client, work: &str, session: &str) -> Value {
+    admin
+        .query_one(
+            "SELECT jsonb_build_object(
+                'session',(SELECT jsonb_build_object('state',state,'version',session_version)
+                    FROM awr_team.sessions WHERE tenant_id=$1 AND project_id=$2 AND id=$3),
+                'claims',(SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                    'state',state,'fence',fence,'lease_version',lease_version) ORDER BY id),'[]'::jsonb)
+                    FROM awr_team.claims WHERE tenant_id=$1 AND project_id=$2 AND work_id=$4),
+                'runtime',(SELECT jsonb_build_object('state',state,'work_version',work_version,
+                    'last_fence',last_fence,'recovery_blocked',recovery_blocked,
+                    'recovery_execution_id',recovery_execution_id,'recovery_receipt_id',recovery_receipt_id)
+                    FROM awr_team.work_runtime WHERE tenant_id=$1 AND project_id=$2
+                      AND scope_id='main' AND work_id=$4),
+                'executions',(SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                    'state',state,'version',execution_version,'terminal_reported',terminal_reported)
+                    ORDER BY id),'[]'::jsonb) FROM awr_team.executions
+                    WHERE tenant_id=$1 AND project_id=$2 AND work_id=$4),
+                'waits',(SELECT COALESCE(jsonb_agg(jsonb_build_object('state',state) ORDER BY id),'[]'::jsonb)
+                    FROM awr_team.wait_items WHERE tenant_id=$1 AND project_id=$2 AND work_id=$4),
+                'reservations',(SELECT COALESCE(jsonb_agg(jsonb_build_object('state',state) ORDER BY id),'[]'::jsonb)
+                    FROM awr_team.resource_reservations WHERE tenant_id=$1 AND project_id=$2 AND work_id=$4),
+                'operation_count',(SELECT count(*) FROM awr_team.operations
+                    WHERE tenant_id=$1 AND project_id=$2),
+                'event_count',(SELECT count(*) FROM awr_team.events
+                    WHERE tenant_id=$1 AND project_id=$2),
+                'project_revision',(SELECT project_revision FROM awr_team.projects
+                    WHERE tenant_id=$1 AND id=$2))",
+            &[&TENANT, &PROJECT, &session, &work],
+        )
+        .await
+        .unwrap()
+        .get(0)
+}
+
 #[tokio::test]
 async fn authenticated_session_checkpoint_end_and_replay_commit_attribution_atomically() {
     let (_guard, admin, _, store) = setup().await;
@@ -468,6 +503,258 @@ async fn unknown_execution_blocks_session_end_without_erasing_recovery_responsib
     let r=admin.query_one("SELECT s.state,e.state FROM awr_team.sessions s JOIN awr_team.executions e ON e.session_id=s.id WHERE s.id='session-a'",&[]).await.unwrap();
     assert_eq!(r.get::<_, String>(0), "active");
     assert_eq!(r.get::<_, String>(1), "unknown");
+}
+
+#[tokio::test]
+async fn session_end_preserves_recovery_precedence_without_adding_recovery_only_guards() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let commands = store.commands();
+    let started = commands
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            command(
+                &prepare(&store, A, "c").await,
+                "recovery-only-session",
+                "session.start",
+                json!({"conversation_id":"recovery-only-session"}),
+            ),
+        )
+        .await
+        .unwrap();
+    let session = started["receipt"]["data"]["session_id"].as_str().unwrap();
+    admin
+        .execute(
+            "INSERT INTO awr_team.executions(tenant_id,project_id,id,work_id,session_id,fence,
+                contract_hash,executor_actor_id,state,terminal_reported)
+             VALUES($1,$2,'recovery-only-terminal','c',$3,1,'contract','agent','succeeded',true)",
+            &[&TENANT, &PROJECT, &session],
+        )
+        .await
+        .unwrap();
+    admin.batch_execute("INSERT INTO awr_team.work_runtime(tenant_id,project_id,scope_id,work_id,state,recovery_blocked)
+        VALUES('reader-tenant','reader-project','main','c','unclaimed',true)
+        ON CONFLICT (tenant_id,project_id,scope_id,work_id) DO UPDATE SET recovery_blocked=true;
+        INSERT INTO awr_team.resource_reservations(tenant_id,project_id,id,work_id,resource_kind,canonical_key,state)
+        VALUES('reader-tenant','reader-project','recovery-only-reservation','c','named','recovery-only','unknown')").await.unwrap();
+    admin
+        .execute(
+            "INSERT INTO awr_team.wait_items(tenant_id,project_id,id,session_id,work_id,question,state)
+             VALUES($1,$2,'recovery-priority-wait',$3,'c','wait','open')",
+            &[&TENANT, &PROJECT, &session],
+        )
+        .await
+        .unwrap();
+
+    // The open wait is an original guard, so unresolved effects may safely take
+    // diagnostic precedence without changing the command's allow/deny set.
+    let before = session_end_snapshot(&admin, "c", session).await;
+    let recovery = command(
+        &prepare(&store, A, "c").await,
+        "recovery-priority-end",
+        "session.end",
+        json!({"session_id":session,"expected_session_version":"1"}),
+    );
+    assert!(matches!(
+        commands.execute(TENANT, PROJECT, A, recovery).await,
+        Err(PgError::RecoveryBlocked)
+    ));
+    assert_eq!(session_end_snapshot(&admin, "c", session).await, before);
+
+    admin
+        .batch_execute(
+            "UPDATE awr_team.wait_items SET state='replied' WHERE id='recovery-priority-wait'",
+        )
+        .await
+        .unwrap();
+
+    // With the original wait guard gone, recovery-only facts must not become a
+    // new reason to reject session.end.
+    let ended = commands
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            command(
+                &prepare(&store, A, "c").await,
+                "recovery-only-end",
+                "session.end",
+                json!({"session_id":session,"expected_session_version":"1"}),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ended["receipt"]["data"]["state"], "ended");
+    let after = session_end_snapshot(&admin, "c", session).await;
+    assert_eq!(after["session"], json!({"state":"ended","version":2}));
+    assert_eq!(after["runtime"]["recovery_blocked"], true);
+    assert_eq!(after["executions"][0]["state"], "succeeded");
+    assert_eq!(after["reservations"][0]["state"], "unknown");
+}
+
+#[tokio::test]
+async fn session_end_classifies_blockers_before_explicit_release_without_writes() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let commands = store.commands();
+    let prepared = prepare(&store, A, "a").await;
+    let acquired = commands
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            command(
+                &prepared,
+                "end-guidance-acquire",
+                "claim.acquire",
+                json!({"session_id":"session-a","expected_session_version":"1",
+                    "expected_work_version":"0","ttl_seconds":60}),
+            ),
+        )
+        .await
+        .unwrap();
+    let claim = acquired["receipt"]["data"].clone();
+
+    let before = session_end_snapshot(&admin, "a", "session-a").await;
+    let active = command(
+        &prepare(&store, A, "a").await,
+        "end-active-claim",
+        "session.end",
+        json!({"session_id":"session-a","expected_session_version":"1"}),
+    );
+    assert!(matches!(
+        commands.execute(TENANT, PROJECT, A, active).await,
+        Err(PgError::ClaimHeld)
+    ));
+    assert_eq!(session_end_snapshot(&admin, "a", "session-a").await, before);
+
+    admin.batch_execute("INSERT INTO awr_team.wait_items(tenant_id,project_id,id,session_id,work_id,question,state)
+        VALUES('reader-tenant','reader-project','end-wait','session-a','a','synthetic wait','open')").await.unwrap();
+    let before = session_end_snapshot(&admin, "a", "session-a").await;
+    let waiting = command(
+        &prepare(&store, A, "a").await,
+        "end-open-wait",
+        "session.end",
+        json!({"session_id":"session-a","expected_session_version":"1"}),
+    );
+    assert!(matches!(
+        commands.execute(TENANT, PROJECT, A, waiting).await,
+        Err(PgError::WaitOpen)
+    ));
+    assert_eq!(session_end_snapshot(&admin, "a", "session-a").await, before);
+
+    admin.batch_execute("INSERT INTO awr_team.executions(tenant_id,project_id,id,work_id,session_id,fence,contract_hash,executor_actor_id,state)
+        VALUES('reader-tenant','reader-project','end-execution','a','session-a',1,'contract','agent','unknown')").await.unwrap();
+    let before = session_end_snapshot(&admin, "a", "session-a").await;
+    let executing = command(
+        &prepare(&store, A, "a").await,
+        "end-unresolved-execution",
+        "session.end",
+        json!({"session_id":"session-a","expected_session_version":"1"}),
+    );
+    assert!(matches!(
+        commands.execute(TENANT, PROJECT, A, executing).await,
+        Err(PgError::RecoveryBlocked)
+    ));
+    assert_eq!(session_end_snapshot(&admin, "a", "session-a").await, before);
+
+    admin.batch_execute("UPDATE awr_team.executions SET state='succeeded',terminal_reported=true WHERE id='end-execution';
+        INSERT INTO awr_team.resource_reservations(tenant_id,project_id,id,work_id,resource_kind,canonical_key,state)
+        VALUES('reader-tenant','reader-project','end-unknown-reservation','a','named','end-unknown','unknown')").await.unwrap();
+    let before = session_end_snapshot(&admin, "a", "session-a").await;
+    let recovery = command(
+        &prepare(&store, A, "a").await,
+        "end-unknown-reservation",
+        "session.end",
+        json!({"session_id":"session-a","expected_session_version":"1"}),
+    );
+    assert!(matches!(
+        commands.execute(TENANT, PROJECT, A, recovery).await,
+        Err(PgError::RecoveryBlocked)
+    ));
+    assert_eq!(session_end_snapshot(&admin, "a", "session-a").await, before);
+
+    admin.batch_execute("UPDATE awr_team.resource_reservations SET state='released' WHERE id='end-unknown-reservation';
+        UPDATE awr_team.work_runtime SET recovery_blocked=true WHERE work_id='a'").await.unwrap();
+    let before = session_end_snapshot(&admin, "a", "session-a").await;
+    let recovery = command(
+        &prepare(&store, A, "a").await,
+        "end-recovery-barrier",
+        "session.end",
+        json!({"session_id":"session-a","expected_session_version":"1"}),
+    );
+    assert!(matches!(
+        commands.execute(TENANT, PROJECT, A, recovery).await,
+        Err(PgError::RecoveryBlocked)
+    ));
+    assert_eq!(session_end_snapshot(&admin, "a", "session-a").await, before);
+
+    admin
+        .batch_execute(
+            "UPDATE awr_team.work_runtime SET recovery_blocked=false WHERE work_id='a';
+        UPDATE awr_team.wait_items SET state='replied' WHERE id='end-wait'",
+        )
+        .await
+        .unwrap();
+    let before = session_end_snapshot(&admin, "a", "session-a").await;
+    let active = command(
+        &prepare(&store, A, "a").await,
+        "end-after-settlement",
+        "session.end",
+        json!({"session_id":"session-a","expected_session_version":"1"}),
+    );
+    assert!(matches!(
+        commands.execute(TENANT, PROJECT, A, active).await,
+        Err(PgError::ClaimHeld)
+    ));
+    assert_eq!(session_end_snapshot(&admin, "a", "session-a").await, before);
+
+    let released = commands
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            command(
+                &prepare(&store, A, "a").await,
+                "end-guidance-release",
+                "claim.release",
+                json!({"session_id":"session-a","expected_session_version":"1",
+                    "claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+                    "expected_lease_version":claim["lease_version"]}),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(released["receipt"]["data"]["state"], "released");
+    let ended = commands
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            command(
+                &prepare(&store, A, "a").await,
+                "end-after-release",
+                "session.end",
+                json!({"session_id":"session-a","expected_session_version":"1"}),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ended["receipt"]["data"]["state"], "ended");
+    let states = admin
+        .query_one(
+            "SELECT s.state,c.state,(SELECT count(*) FROM awr_team.executions WHERE id='end-execution' AND state='succeeded')
+             FROM awr_team.sessions s JOIN awr_team.claims c ON c.session_id=s.id
+             WHERE s.id='session-a'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(states.get::<_, String>(0), "ended");
+    assert_eq!(states.get::<_, String>(1), "released");
+    assert_eq!(states.get::<_, i64>(2), 1);
 }
 
 #[tokio::test]
