@@ -24,7 +24,16 @@ pub(super) async fn load(
         &[&tenant,&project,&request],
     ).await?;
     let Some(row) = row else { return Ok(None) };
-    parse(&row, tenant, project, request).map(Some)
+    match parse(&row, tenant, project, request) {
+        Ok(journal) => Ok(Some(journal)),
+        Err(PgError::WritebackRefused(_) | PgError::SourceDivergence)
+            if row.get::<_, String>(0) == "refused"
+                && operator_decision(&row.get::<_, Value>(11)).is_some() =>
+        {
+            Err(operator_closed_error())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Columns 0..=10 are the journal facts in `load` order; column 11 is `body_json`.
@@ -65,6 +74,10 @@ pub(super) fn parse(
 /// The schema owner's recorded decision, when it closed the journal.
 pub(super) fn operator_decision(body: &Value) -> Option<&Value> {
     body.get("operator_decision").filter(|d| d.is_object())
+}
+
+pub(super) fn operator_closed_error() -> PgError {
+    PgError::WritebackRefused("the schema owner closed this pending writeback without activating it; inspect the source and use a new reviewed request".into())
 }
 
 fn unknown() -> PgError {

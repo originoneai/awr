@@ -3012,6 +3012,18 @@ async fn a_journal_without_a_recorded_intent_is_closed_only_by_naming_it_unbound
     assert_eq!(closed["decision"]["intent_hash"], serde_json::Value::Null);
     assert_eq!(fingerprint(&std::fs::read(p.ledger()).unwrap()), written);
     assert_eq!(p.pending_journals().await, 0);
+    let facts_before_retry = activation_facts(&p.admin).await;
+    let retry = p
+        .store
+        .activate_planning_writeback(TENANT, PROJECT, A, &p.req)
+        .await
+        .unwrap_err();
+    assert!(is_refused(&retry, "schema owner closed"), "{retry:?}");
+    assert_eq!(fingerprint(&std::fs::read(p.ledger()).unwrap()), written);
+    assert_eq!(activation_facts(&p.admin).await, facts_before_retry);
+    let status = p.status().await;
+    assert_eq!(status["original_intent_bound"], false);
+    assert_eq!(status["operator_closed"], true);
     // Source activation is open again for the rest of the project.
     let other = workspace_activation(&p.tmp, p.receipt.clone(), "after-the-legacy-one");
     let attempt = p
@@ -3070,6 +3082,15 @@ async fn an_inconsistent_intent_with_a_valid_recorded_hash_uses_that_hash_only_a
     assert_eq!(closed["decision"]["source_retained"], true);
     assert_eq!(fingerprint(&std::fs::read(p.ledger()).unwrap()), written);
     assert_eq!(p.pending_journals().await, 0);
+    let facts_before_retry = activation_facts(&p.admin).await;
+    let retry = p
+        .store
+        .activate_planning_writeback(TENANT, PROJECT, A, &p.req)
+        .await
+        .unwrap_err();
+    assert!(is_refused(&retry, "schema owner closed"), "{retry:?}");
+    assert_eq!(fingerprint(&std::fs::read(p.ledger()).unwrap()), written);
+    assert_eq!(activation_facts(&p.admin).await, facts_before_retry);
     let status = p.status().await;
     assert_eq!(status["original_intent_bound"], false);
     assert_eq!(status["operator_closed"], true);

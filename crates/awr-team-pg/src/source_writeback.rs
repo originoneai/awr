@@ -129,7 +129,7 @@ impl SourceStore {
             }
             if prior.phase == "refused" {
                 return Err(if prior.operator_closed {
-                    PgError::WritebackRefused("the schema owner closed this pending writeback without activating it; inspect the source and use a new reviewed request".into())
+                    journal::operator_closed_error()
                 } else {
                     PgError::ActivationImpactUnproven("the original request explicitly refused activation; use a new reviewed request after inspection".into())
                 });
