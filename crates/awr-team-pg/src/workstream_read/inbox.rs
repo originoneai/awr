@@ -525,10 +525,15 @@ pub(super) async fn read(
         let ready = observed["dependencies_ready_advisory"] == true;
         let hint = condition(auth, &observed, stream_id, &work, ready);
         if let Some(hint) = hint {
+            let mut collaboration = observed["collaboration"].clone();
+            // Query timing describes this read, not a change in the underlying facts.
+            if let Some(source_state) = collaboration["source_state"].as_object_mut() {
+                source_state.remove("query_started_at_unix_ms");
+            }
             let semantic = json!({"work":work,"contract":observed["contract_hash"],"code":hint["code"],
                 "responsibility":observed["responsibility"]["version"],"runtime":observed["runtime"],
                 "progress":{"phase":observed["progress"]["phase"],"blockers":observed["progress"]["blockers"]},
-                "waiting_user":observed["waiting_user"],"collaboration":observed["collaboration"],"dependencies_ready":ready});
+                "waiting_user":observed["waiting_user"],"collaboration":collaboration,"dependencies_ready":ready});
             items.push(json!({"item_key":hash(&semantic)?,"work_id":work,"workstream_id":stream,
                 "contract_hash":observed["contract_hash"],"title":row.get::<_,String>(1).chars().take(160).collect::<String>(),
                 "title_truncated":row.get::<_,String>(1).chars().count()>160,

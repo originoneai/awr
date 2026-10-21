@@ -734,6 +734,8 @@ async fn current_neutral_check_changes_are_deduplicated_without_becoming_awr_acc
         sync.ingest_facts(TENANT, PROJECT, A, request)
             .await
             .unwrap();
+        // Force the next observation across the source-query timestamp boundary.
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         assert_eq!(
             page["data"]["items"],
             inbox(&store, A).await["data"]["items"]
