@@ -2530,7 +2530,7 @@ async fn mcp_session_end_known_rejection_guides_release_without_private_state() 
     assert_session_end_rejection(
         &waiting,
         "WAIT_OPEN",
-        "resolve the wait",
+        "Resolve the open wait",
         &["session-a", "mcp-private-wait", "private wait", A],
     );
 
@@ -2553,7 +2553,7 @@ async fn mcp_session_end_known_rejection_guides_release_without_private_state() 
     assert_session_end_rejection(
         &recovering,
         "UNRESOLVED_EFFECTS",
-        "execution and recovery",
+        "work.observe",
         &["session-a", "mcp-private-execution", "private wait", A],
     );
     let rejected_operations = admin

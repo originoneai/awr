@@ -310,7 +310,7 @@ async fn http_claims_require_write_authority_and_report_live_lease_conflicts() {
     assert_session_end_rejection(
         &waiting,
         "WAIT_OPEN",
-        "resolve the wait",
+        "Resolve the open wait",
         &["session-a", "http-private-wait", "private wait", A],
     );
 
@@ -333,7 +333,7 @@ async fn http_claims_require_write_authority_and_report_live_lease_conflicts() {
     assert_session_end_rejection(
         &recovering,
         "UNRESOLVED_EFFECTS",
-        "execution and recovery",
+        "work.observe",
         &["session-a", "http-private-execution", "private wait", A],
     );
     admin

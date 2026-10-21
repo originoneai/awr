@@ -333,10 +333,11 @@ claim transfer and resource release are not performed by these commands.
 A native client exit or MCP disconnect is separate from logical session closure.
 Ongoing work may save a checkpoint and retain its valid claim. When the caller
 intentionally ends the logical session, it first reports and settles execution
-effects, resolves any open wait, releases its own claim with the current session,
-claim, fence and lease versions, and only then submits `session.end` with the
-current session version. This sequence does not complete the work, approve a
-review, integrate a delivery or prove that an external process stopped.
+effects and resolves any open wait. If this session holds an active claim, it
+releases that claim with the current session, claim, fence and lease versions.
+It then submits `session.end` with the current session version. This sequence
+does not complete the work, approve a review, integrate a delivery or prove that
+an external process stopped.
 
 A known synchronous `session.end` refusal keeps HTTP 409 and the public
 `RecoveryBlocked` code, and adds a bounded `rejection` object with

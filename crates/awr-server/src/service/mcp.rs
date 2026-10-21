@@ -1249,14 +1249,40 @@ mod tests {
 
     #[test]
     fn rejected_session_end_has_bounded_known_guidance_and_legacy_code() {
-        for (error, reason, action_fragment) in [
+        for (error, reason, primary_action, deferred_actions, recheck_actions) in [
             (
                 PgError::RecoveryBlocked,
                 "UNRESOLVED_EFFECTS",
-                "execution and recovery",
+                "work.observe",
+                &[
+                    "execution.report",
+                    "execution.reconcile",
+                    "claim.release",
+                    "session.end",
+                    "refresh",
+                ][..],
+                &[
+                    "execution.report",
+                    "execution.reconcile",
+                    "claim.release",
+                    "session.end",
+                    "refresh",
+                ][..],
             ),
-            (PgError::WaitOpen, "WAIT_OPEN", "resolve the wait"),
-            (PgError::ClaimHeld, "ACTIVE_CLAIM", "claim.release"),
+            (
+                PgError::WaitOpen,
+                "WAIT_OPEN",
+                "Resolve the open wait",
+                &["claim.release", "session.end", "refresh"][..],
+                &["session.end", "refresh"][..],
+            ),
+            (
+                PgError::ClaimHeld,
+                "ACTIVE_CLAIM",
+                "claim.release",
+                &["claim.inspect", "session.end", "refresh"][..],
+                &["session.end", "refresh"][..],
+            ),
         ] {
             let rejection = crate::service::session_end_rejection("session.end", &error).unwrap();
             assert_eq!(rejection["reason"], reason);
@@ -1265,12 +1291,15 @@ mod tests {
             for field in ["when", "because", "action", "recheck_on"] {
                 assert!(rejection["action_guidance"][field].is_string());
             }
-            assert!(
-                rejection["action_guidance"]["action"]
-                    .as_str()
-                    .unwrap()
-                    .contains(action_fragment)
-            );
+            let action = rejection["action_guidance"]["action"].as_str().unwrap();
+            let recheck = rejection["action_guidance"]["recheck_on"].as_str().unwrap();
+            assert!(action.contains(primary_action));
+            for deferred in deferred_actions {
+                assert!(!action.contains(deferred));
+            }
+            for deferred in recheck_actions {
+                assert!(recheck.contains(deferred));
+            }
             assert!(!rejection.to_string().contains("command.inspect"));
             let (status, mut response) = public_error(crate::service::legacy_session_end_error(
                 "session.end",
