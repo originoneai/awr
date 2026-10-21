@@ -1249,7 +1249,7 @@ mod tests {
 
     #[test]
     fn rejected_session_end_has_bounded_known_guidance_and_legacy_code() {
-        for (error, reason, primary_action, deferred_actions, recheck_actions) in [
+        for (error, reason, primary_action, deferred_actions, recheck_fragments) in [
             (
                 PgError::RecoveryBlocked,
                 "UNRESOLVED_EFFECTS",
@@ -1274,14 +1274,26 @@ mod tests {
                 "WAIT_OPEN",
                 "Resolve the open wait",
                 &["claim.release", "session.end", "refresh"][..],
-                &["session.end", "refresh"][..],
+                &[
+                    "confirmed wait resolution",
+                    "refresh current facts",
+                    "remaining close obligations",
+                    "active claim",
+                    "no close blocker",
+                    "session.end",
+                ][..],
             ),
             (
                 PgError::ClaimHeld,
                 "ACTIVE_CLAIM",
                 "claim.release",
                 &["claim.inspect", "session.end", "refresh"][..],
-                &["session.end", "refresh"][..],
+                &[
+                    "claim.release succeeds",
+                    "refresh current facts",
+                    "no close blocker",
+                    "session.end",
+                ][..],
             ),
         ] {
             let rejection = crate::service::session_end_rejection("session.end", &error).unwrap();
@@ -1297,8 +1309,8 @@ mod tests {
             for deferred in deferred_actions {
                 assert!(!action.contains(deferred));
             }
-            for deferred in recheck_actions {
-                assert!(recheck.contains(deferred));
+            for fragment in recheck_fragments {
+                assert!(recheck.contains(fragment));
             }
             assert!(!rejection.to_string().contains("command.inspect"));
             let (status, mut response) = public_error(crate::service::legacy_session_end_error(

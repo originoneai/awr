@@ -1275,14 +1275,14 @@ pub(crate) fn session_end_rejection(action: &str, error: &PgError) -> Option<Val
             "Logical session.end was rejected while this session has an open wait.",
             "The wait must be resolved before claim release and logical session closure.",
             "Resolve the open wait through its existing authorized workflow.",
-            "After the wait is resolved, refresh current versions; submit a new session.end only if closure is still intended.",
+            "After confirmed wait resolution, refresh current facts and assess all remaining close obligations, including any active claim; submit a new session.end only when no close blocker remains and closure is still intended.",
         ),
         PgError::ClaimHeld => (
             "ACTIVE_CLAIM",
             "Logical session.end was rejected while this session owns an active, release-ready claim.",
             "session.end does not release ownership or bypass claim fence and lease checks.",
             "Call claim.release with the current session, claim, fence and lease versions.",
-            "After claim.release returns, refresh current versions; submit a new session.end only if closure is still intended. Session closure does not complete, approve or integrate work.",
+            "After claim.release succeeds, refresh current facts and confirm no close blocker remains; submit a new session.end only if closure is still intended. Session closure does not complete, approve or integrate work.",
         ),
         _ => return None,
     };
