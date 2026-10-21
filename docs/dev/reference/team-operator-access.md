@@ -60,6 +60,12 @@ redacted identity and auth metadata — never raw secrets.
 Owner-only surfaces (recovery-inspect, history migration, quarantine,
 planning writeback close, execution attribution, backup/fencing/rebuild) stay
 on `awr-server access` and remain unreachable from client HTTP/MCP.
+Planning writeback inspection supplies the exact source fingerprint used by its
+close command for readable states; `unreadable` and provenance-`unknown` states
+use an explicit null fingerprint and require source retention. Close replay is
+accepted only for a `refused` journal with a structurally valid recorded owner
+decision, so a decision marker cannot turn a still-pending journal into a false
+success response.
 
 ---
 

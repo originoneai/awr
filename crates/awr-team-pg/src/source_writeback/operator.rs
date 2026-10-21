@@ -38,6 +38,10 @@ fn hex(s: &str) -> bool {
             .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
 }
 
+fn source_fingerprint(s: &str) -> bool {
+    s.strip_prefix("sha256:").is_some_and(hex)
+}
+
 /// Where the physical source stands against the pending journal's recorded fingerprints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SourceState {
@@ -90,6 +94,8 @@ pub struct AbandonRequest {
     pub expected_intent_hash: String,
     /// The inspected `source_state` (`unknown` when the intent cannot establish a source).
     pub expected_source_state: String,
+    /// The inspected source fingerprint, or `None` when no source bytes could be fingerprinted.
+    pub expected_source_fingerprint: Option<String>,
     /// Required unless the source is `at_before`: the file keeps whatever bytes it has.
     pub retain_source: bool,
     pub reason: String,
@@ -192,6 +198,60 @@ fn observe(intent: Option<&Intent>) -> Observed {
     }
 }
 
+fn fingerprint_matches_state(state: SourceState, value: Option<&Value>) -> bool {
+    match state {
+        SourceState::AtBefore | SourceState::AtAfter | SourceState::Drifted => value
+            .and_then(Value::as_str)
+            .is_some_and(source_fingerprint),
+        SourceState::Unreadable | SourceState::Unknown => value.is_some_and(Value::is_null),
+        SourceState::WriterBusy => false,
+    }
+}
+
+fn valid_operator_decision(decision: &Value, view: &View) -> bool {
+    let Some(source_state) = decision
+        .get("source_state")
+        .and_then(Value::as_str)
+        .and_then(|state| SourceState::parse(state).ok())
+    else {
+        return false;
+    };
+    decision.get("protocol").and_then(Value::as_str) == Some(PROTOCOL)
+        && decision.get("action").and_then(Value::as_str) == Some("abandon")
+        && decision.get("request_id").and_then(Value::as_str) == Some(view.request_id.as_str())
+        && decision
+            .get("previous_phase")
+            .and_then(Value::as_str)
+            .is_some_and(|phase| PENDING.contains(&phase))
+        && decision.get("intent_hash").is_some_and(|hash| {
+            match (hash.as_str(), view.recorded_hash.as_deref()) {
+                (Some(decision), Some(recorded)) => hex(decision) && decision == recorded,
+                (None, None) => hash.is_null(),
+                _ => false,
+            }
+        })
+        && fingerprint_matches_state(source_state, decision.get("source_fingerprint"))
+        && decision.get("source_retained").and_then(Value::as_bool)
+            == Some(source_state != SourceState::AtBefore)
+        && decision
+            .get("operator_role")
+            .and_then(Value::as_str)
+            .is_some_and(identity)
+        && decision
+            .get("reason")
+            .and_then(Value::as_str)
+            .is_some_and(|reason| {
+                !reason.trim().is_empty()
+                    && reason.chars().count() <= MAX_REASON
+                    && !reason.chars().any(char::is_control)
+            })
+        && decision
+            .get("project_revision")
+            .and_then(Value::as_str)
+            .and_then(|revision| revision.parse::<i64>().ok())
+            .is_some_and(|revision| revision >= 0)
+}
+
 fn item(view: &View, observed: Option<&Observed>) -> Value {
     let pending = PENDING.contains(&view.phase.as_str());
     let hash_token = match view.recorded_hash.as_deref() {
@@ -234,6 +294,7 @@ fn item(view: &View, observed: Option<&Observed>) -> Value {
             "expected_phase": view.phase,
             "expected_intent_hash": hash_token,
             "expected_source_state": state.as_str(),
+            "expected_source_fingerprint": observed.fingerprint,
         });
     }
     item
@@ -326,6 +387,18 @@ impl OperatorWriteback {
             return Err(invalid());
         }
         let expected_state = SourceState::parse(&req.expected_source_state)?;
+        let expected_fingerprint = match req.expected_source_fingerprint.as_deref() {
+            Some(value) if source_fingerprint(value) => Some(value),
+            None => None,
+            Some(_) => return Err(invalid()),
+        };
+        if matches!(
+            expected_state,
+            SourceState::AtBefore | SourceState::AtAfter | SourceState::Drifted
+        ) != expected_fingerprint.is_some()
+        {
+            return Err(invalid());
+        }
         let expected_hash = match req.expected_intent_hash.as_str() {
             "unbound" => None,
             hash if hex(hash) => Some(hash),
@@ -375,6 +448,16 @@ impl OperatorWriteback {
             })?;
         let now = view(&row, tenant, project)?;
         if let Some(decision) = &now.decision {
+            if now.phase != "refused" {
+                return Err(PgError::WritebackRefused(
+                    "the recorded operator decision is inconsistent with its journal phase; inspect the retained journal before recovery".into(),
+                ));
+            }
+            if !valid_operator_decision(decision, &now) {
+                return Err(PgError::WritebackRefused(
+                    "the recorded operator decision is malformed; inspect the retained journal before recovery".into(),
+                ));
+            }
             // The owner already closed it: report the recorded decision, change nothing.
             tx.commit().await?;
             return Ok(json!({"protocol": PROTOCOL, "replayed": true, "decision": decision}));
@@ -390,7 +473,11 @@ impl OperatorWriteback {
                 && before.recorded_hash == now.recorded_hash
                 && before.intent.is_some() == now.intent.is_some()
         });
-        if now.phase != req.expected_phase || !same_journal || observed.state != expected_state {
+        if now.phase != req.expected_phase
+            || !same_journal
+            || observed.state != expected_state
+            || observed.fingerprint.as_deref() != expected_fingerprint
+        {
             return Err(PgError::PreconditionsChanged);
         }
         if now.recorded_hash.as_deref().is_some_and(|hash| !hex(hash)) {

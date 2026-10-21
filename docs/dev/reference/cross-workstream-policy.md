@@ -304,11 +304,21 @@ are not reachable through HTTP or MCP.
 
 2. `awr-server access writeback-abandon --tenant-id T --project-id P
    --request-id R --expected-phase … --expected-intent-hash …
-   --expected-source-state … --reason "…"` closes it. Pass the item's
+   --expected-source-state … --expected-source-fingerprint sha256:…
+   --reason "…"` closes it. Pass the item's
    `abandon.expected_*` values exactly as shown (`unbound` as the hash for a
    journal without a recorded intent). Any difference (the original request
    moved on, the file changed, another owner got there first) refuses the close.
    Unless the source is `at_before`, `--retain-source` must also be passed.
+
+   `expected_source_fingerprint` is the exact fingerprint read by inspection for
+   `at_before`, `at_after` and `drifted`; it prevents two different drifted byte
+   sequences from being treated as the same reviewed state. Inspection returns
+   this value as `null` for `unreadable`, `unknown` and `writer_busy`; omit the
+   CLI flag only for that null value. A null fingerprint means no source bytes
+   were available to bind. The state is still rechecked, but persistent
+   unreadability cannot prove byte identity and `unknown` never establishes
+   source authority.
 
    An intent hash retained on an inconsistent journal is only a compare token for
    that journal; it does not verify the source intent. The source remains
@@ -323,8 +333,11 @@ never changes the active snapshot and does not release claims or settle
 effects. The fences end. The original request can no longer resume and is told
 that the schema owner closed it; `awr_team_planning_outcome` reports
 `operator_closed` without the owner's text. Closing again returns the recorded
-decision. A journal that finished, was refused by its own client or does not
-exist is not closed.
+decision only when the journal is `refused` and that decision has the expected
+closure shape. A decision marker on a pending phase, or a malformed decision on
+a refused phase, is reported as inconsistent rather than as a successful
+replay. A journal that finished, was refused by its own client or does not exist
+is not closed.
 
 If the source was `at_before`, the publication is still pending and a new
 reviewed request can write it back. If the file keeps other bytes, closing does

@@ -2296,6 +2296,9 @@ async fn abandoning_an_untouched_pending_writeback_reopens_public_execution_admi
                 .as_str()
                 .unwrap()
                 .into(),
+            expected_source_fingerprint: item["abandon"]["expected_source_fingerprint"]
+                .as_str()
+                .map(str::to_owned),
             retain_source: false,
             reason: "the original client cannot resume".into(),
         };
@@ -2477,6 +2480,9 @@ impl Pending {
                 .as_str()
                 .unwrap()
                 .into(),
+            expected_source_fingerprint: item["abandon"]["expected_source_fingerprint"]
+                .as_str()
+                .map(str::to_owned),
             retain_source,
             reason: "the original client is gone".into(),
         }
@@ -2510,6 +2516,35 @@ fn is_refused(error: &PgError, needle: &str) -> bool {
     matches!(error, PgError::WritebackRefused(text) if text.contains(needle))
 }
 
+async fn abandonment_facts(
+    admin: &tokio_postgres::Client,
+    request_id: &str,
+) -> (i64, i64, String, Option<String>, serde_json::Value, String) {
+    let row = admin
+        .query_one(
+            "SELECT p.project_revision,
+              (SELECT count(*) FROM awr_team.events e
+               WHERE e.tenant_id=p.tenant_id AND e.project_id=p.id
+                 AND e.event_type='operator.planning_writeback_abandon'),
+              j.phase,j.refuse_reason,j.body_json,j.updated_at::text
+             FROM awr_team.projects p
+             JOIN awr_team.planning_writeback_journals j
+               ON j.tenant_id=p.tenant_id AND j.project_id=p.id
+             WHERE p.tenant_id=$1 AND p.id=$2 AND j.request_id=$3",
+            &[&TENANT, &PROJECT, &request_id],
+        )
+        .await
+        .unwrap();
+    (
+        row.get(0),
+        row.get(1),
+        row.get(2),
+        row.get(3),
+        row.get(4),
+        row.get(5),
+    )
+}
+
 #[tokio::test]
 async fn the_owner_sees_each_pending_writeback_with_the_source_state_and_what_closing_needs() {
     let mut p = pending_at("after_intent").await;
@@ -2533,6 +2568,7 @@ async fn the_owner_sees_each_pending_writeback_with_the_source_state_and_what_cl
     assert_eq!(item["abandon"]["allowed"], true);
     assert_eq!(item["abandon"]["retain_source_required"], false);
     assert_eq!(item["abandon"]["expected_phase"], "validated");
+    assert_eq!(item["abandon"]["expected_source_fingerprint"], p.before);
     let stored: String = p
         .admin
         .query_one(
@@ -2756,11 +2792,14 @@ async fn closing_needs_the_inspected_facts_and_refuses_everything_else() {
     unbound.expected_intent_hash = "unbound".into();
     let mut wrong_state = good.clone();
     wrong_state.expected_source_state = "at_after".into();
+    let mut wrong_fingerprint = good.clone();
+    wrong_fingerprint.expected_source_fingerprint = Some(format!("sha256:{}", "0".repeat(64)));
     for (name, request) in [
         ("phase", &wrong_phase),
         ("intent hash", &wrong_hash),
         ("claimed unbound", &unbound),
         ("source state", &wrong_state),
+        ("source fingerprint", &wrong_fingerprint),
     ] {
         assert!(
             matches!(p.close(request).await, Err(PgError::PreconditionsChanged)),
@@ -2773,7 +2812,14 @@ async fn closing_needs_the_inspected_facts_and_refuses_everything_else() {
     no_reason.reason = "  ".into();
     let mut unknown_phase = good.clone();
     unknown_phase.expected_phase = "completed".into();
-    for request in [&malformed_hash, &no_reason, &unknown_phase] {
+    let mut missing_fingerprint = good.clone();
+    missing_fingerprint.expected_source_fingerprint = None;
+    for request in [
+        &malformed_hash,
+        &no_reason,
+        &unknown_phase,
+        &missing_fingerprint,
+    ] {
         assert!(matches!(p.close(request).await, Err(PgError::Protocol(_))));
     }
     let mut missing = good.clone();
@@ -2795,6 +2841,142 @@ async fn closing_needs_the_inspected_facts_and_refuses_everything_else() {
     assert_eq!(p.status().await["phase"], "validated");
     p.close(&good).await.unwrap();
     assert_eq!(p.pending_journals().await, 0);
+}
+
+#[tokio::test]
+async fn closing_rechecks_the_exact_drifted_fingerprint_inspected_by_the_owner() {
+    use awr_source::fingerprint;
+    let mut p = pending_at("after_intent").await;
+    std::fs::write(p.ledger(), b"# first external edit\n").unwrap();
+    let inspected = p.inspect().await;
+    assert_eq!(inspected["items"][0]["source_state"], "drifted");
+    let inspected_fingerprint = fingerprint(&std::fs::read(p.ledger()).unwrap());
+    assert_eq!(
+        inspected["items"][0]["source_fingerprint"],
+        inspected_fingerprint
+    );
+    let close = p.close_request(true).await;
+    let journal_before = abandonment_facts(&p.admin, &p.req.request_id).await;
+    let activation_before = activation_facts(&p.admin).await;
+
+    std::fs::write(p.ledger(), b"# different external edit\n").unwrap();
+    let retained_bytes = std::fs::read(p.ledger()).unwrap();
+    assert_ne!(fingerprint(&retained_bytes), inspected_fingerprint);
+    let error = p.close(&close).await.unwrap_err();
+    assert!(matches!(error, PgError::PreconditionsChanged), "{error:?}");
+
+    assert_eq!(std::fs::read(p.ledger()).unwrap(), retained_bytes);
+    assert_eq!(
+        abandonment_facts(&p.admin, &p.req.request_id).await,
+        journal_before
+    );
+    assert_eq!(activation_facts(&p.admin).await, activation_before);
+    assert_eq!(p.pending_journals().await, 1);
+}
+
+#[tokio::test]
+async fn an_unreadable_source_uses_an_explicit_null_fingerprint_token() {
+    let mut p = pending_at("after_intent").await;
+    std::fs::remove_file(p.ledger()).unwrap();
+    let page = p.inspect().await;
+    let item = &page["items"][0];
+    assert_eq!(item["source_state"], "unreadable");
+    assert_eq!(item["source_fingerprint"], serde_json::Value::Null);
+    assert!(
+        item["abandon"]
+            .as_object()
+            .unwrap()
+            .contains_key("expected_source_fingerprint")
+    );
+    assert_eq!(
+        item["abandon"]["expected_source_fingerprint"],
+        serde_json::Value::Null
+    );
+    let close = p.close_request(true).await;
+    assert_eq!(close.expected_source_fingerprint, None);
+    let activation_before = activation_facts(&p.admin).await;
+    let closed = p.close(&close).await.unwrap();
+    assert_eq!(closed["decision"]["source_state"], "unreadable");
+    assert_eq!(
+        closed["decision"]["source_fingerprint"],
+        serde_json::Value::Null
+    );
+    assert!(!p.ledger().exists());
+    assert_eq!(activation_facts(&p.admin).await, activation_before);
+    assert_eq!(p.pending_journals().await, 0);
+}
+
+#[tokio::test]
+async fn a_pending_journal_with_an_operator_decision_is_not_a_successful_replay() {
+    let mut p = pending_at("after_intent").await;
+    let close = p.close_request(false).await;
+    let revision = abandonment_facts(&p.admin, &p.req.request_id).await.0;
+    let decision = serde_json::json!({
+        "protocol": "awr-operator-planning-writeback-v1",
+        "action": "abandon",
+        "request_id": p.req.request_id,
+        "previous_phase": "validated",
+        "intent_hash": close.expected_intent_hash,
+        "source_state": "at_before",
+        "source_fingerprint": p.before,
+        "source_retained": false,
+        "operator_role": "postgres",
+        "reason": "injected inconsistent decision",
+        "project_revision": revision.to_string(),
+    });
+    p.admin
+        .execute(
+            "UPDATE awr_team.planning_writeback_journals
+             SET body_json=jsonb_build_object('phase',phase,'operator_decision',$1::jsonb)
+             WHERE tenant_id=$2 AND project_id=$3 AND request_id=$4",
+            &[&decision, &TENANT, &PROJECT, &p.req.request_id],
+        )
+        .await
+        .unwrap();
+    let journal_before = abandonment_facts(&p.admin, &p.req.request_id).await;
+    let activation_before = activation_facts(&p.admin).await;
+    let source_before = std::fs::read(p.ledger()).unwrap();
+
+    let error = p.close(&close).await.unwrap_err();
+    assert!(
+        is_refused(&error, "inconsistent with its journal phase"),
+        "{error:?}"
+    );
+    assert_eq!(std::fs::read(p.ledger()).unwrap(), source_before);
+    assert_eq!(
+        abandonment_facts(&p.admin, &p.req.request_id).await,
+        journal_before
+    );
+    assert_eq!(activation_facts(&p.admin).await, activation_before);
+    assert_eq!(p.pending_journals().await, 1);
+}
+
+#[tokio::test]
+async fn a_refused_journal_replays_only_a_well_formed_operator_decision() {
+    let mut p = pending_at("after_intent").await;
+    let close = p.close_request(false).await;
+    p.close(&close).await.unwrap();
+    p.admin
+        .execute(
+            "UPDATE awr_team.planning_writeback_journals
+             SET body_json=jsonb_build_object('phase','refused','operator_decision','{}'::jsonb)
+             WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
+            &[&TENANT, &PROJECT, &p.req.request_id],
+        )
+        .await
+        .unwrap();
+    let journal_before = abandonment_facts(&p.admin, &p.req.request_id).await;
+    let activation_before = activation_facts(&p.admin).await;
+    let source_before = std::fs::read(p.ledger()).unwrap();
+
+    let error = p.close(&close).await.unwrap_err();
+    assert!(is_refused(&error, "decision is malformed"), "{error:?}");
+    assert_eq!(std::fs::read(p.ledger()).unwrap(), source_before);
+    assert_eq!(
+        abandonment_facts(&p.admin, &p.req.request_id).await,
+        journal_before
+    );
+    assert_eq!(activation_facts(&p.admin).await, activation_before);
 }
 
 #[tokio::test]
@@ -2820,6 +3002,7 @@ async fn a_finished_writeback_is_not_pending_and_cannot_be_closed() {
         expected_phase: "pg_activating".into(),
         expected_intent_hash: page["items"][0]["intent_hash"].as_str().unwrap().into(),
         expected_source_state: "at_after".into(),
+        expected_source_fingerprint: Some(format!("sha256:{}", "0".repeat(64))),
         retain_source: true,
         reason: "too late".into(),
     };
@@ -2860,6 +3043,7 @@ async fn a_writeback_refused_by_the_original_client_cannot_be_operator_closed() 
         expected_phase: "validated".into(),
         expected_intent_hash: item["intent_hash"].as_str().unwrap().into(),
         expected_source_state: "unknown".into(),
+        expected_source_fingerprint: None,
         retain_source: true,
         reason: "must stay a client refusal".into(),
     };
@@ -2960,6 +3144,9 @@ async fn a_cooperating_writer_holding_the_source_blocks_closing() {
             .as_str()
             .unwrap()
             .into(),
+        expected_source_fingerprint: item["abandon"]["expected_source_fingerprint"]
+            .as_str()
+            .map(str::to_owned),
         retain_source: true,
         reason: "the original client is gone".into(),
     };
@@ -2992,6 +3179,10 @@ async fn a_journal_without_a_recorded_intent_is_closed_only_by_naming_it_unbound
     let item = &page["items"][0];
     assert_eq!(item["original_intent_bound"], false);
     assert_eq!(item["source_state"], "unknown");
+    assert_eq!(
+        item["abandon"]["expected_source_fingerprint"],
+        serde_json::Value::Null
+    );
     assert_eq!(item["abandon"]["expected_intent_hash"], "unbound");
     assert_eq!(item["abandon"]["retain_source_required"], true);
     assert_eq!(p.status().await["original_intent_bound"], false);
@@ -3007,6 +3198,13 @@ async fn a_journal_without_a_recorded_intent_is_closed_only_by_naming_it_unbound
         "retain_source"
     ));
     let with = p.close_request(true).await;
+    assert_eq!(with.expected_source_fingerprint, None);
+    let mut invented_fingerprint = with.clone();
+    invented_fingerprint.expected_source_fingerprint = Some(format!("sha256:{}", "0".repeat(64)));
+    assert!(matches!(
+        p.close(&invented_fingerprint).await,
+        Err(PgError::Protocol(_))
+    ));
     let closed = p.close(&with).await.unwrap();
     assert_eq!(closed["decision"]["source_state"], "unknown");
     assert_eq!(closed["decision"]["intent_hash"], serde_json::Value::Null);
@@ -3126,6 +3324,7 @@ async fn a_malformed_recorded_hash_is_visible_but_not_advertised_as_a_close_toke
         expected_phase: "validated".into(),
         expected_intent_hash: "unbound".into(),
         expected_source_state: "unknown".into(),
+        expected_source_fingerprint: None,
         retain_source: true,
         reason: "the original client is gone".into(),
     };

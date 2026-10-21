@@ -265,6 +265,9 @@ pub enum AccessCommand {
         /// The inspected source state: at_before, at_after, drifted, unreadable or unknown.
         #[arg(long)]
         expected_source_state: String,
+        /// The inspected sha256 source fingerprint. Omit only when inspection returned null.
+        #[arg(long)]
+        expected_source_fingerprint: Option<String>,
         /// Required unless the source is at_before: leave the file exactly as it is.
         #[arg(long)]
         retain_source: bool,
@@ -790,6 +793,7 @@ pub async fn run(command: AccessCommand) -> Result<Value, Error> {
             expected_phase,
             expected_intent_hash,
             expected_source_state,
+            expected_source_fingerprint,
             retain_source,
             reason,
         } => {
@@ -802,6 +806,7 @@ pub async fn run(command: AccessCommand) -> Result<Value, Error> {
                     expected_phase,
                     expected_intent_hash,
                     expected_source_state,
+                    expected_source_fingerprint,
                     retain_source,
                     reason,
                 },
