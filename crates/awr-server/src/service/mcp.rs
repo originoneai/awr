@@ -58,6 +58,38 @@ fn add_evidence_input_schema(command: &mut Value, query: &mut Value) {
     }
 }
 
+fn add_baseline_transition_schema(command: &mut Value) {
+    let revision = json!({"type":"object","additionalProperties":false,
+        "required":["resource","format","value"],"properties":{
+            "resource":{"type":"string","minLength":1,"maxLength":1024,
+                "description":"Opaque repository identity, at most 1024 UTF-8 bytes; not a path or permission."},
+            "format":{"enum":["git_sha1","git_sha256"]},
+            "value":{"type":"string"}},
+        "allOf":[{"if":{"properties":{"format":{"const":"git_sha1"}},"required":["format"]},
+            "then":{"properties":{"value":{"pattern":"^[0-9a-f]{40}$"}}},
+            "else":{"properties":{"value":{"pattern":"^[0-9a-f]{64}$"}}}}]});
+    let path = json!({"type":"string","minLength":1,"maxLength":4096,
+        "description":"Canonical project-relative path, at most 4096 UTF-8 bytes; no empty, dot or parent components, backslashes, colons or controls."});
+    let fields = command["properties"]["args"]["properties"]
+        .as_object_mut()
+        .unwrap();
+    fields.insert("observed_paths".into(), json!({"type":"array","maxItems":128,"items":path,
+        "description":"execution.report: all actual workspace effects from before to after this execution, including imported baseline paths. Always scope checked; never substitute the contribution diff against the imported target."}));
+    fields.insert("baseline_transition".into(), json!({"type":["object","null"],"additionalProperties":false,
+        "description":"execution.report only: optional caller-asserted Git attribution, never scope, release, target approval or filesystem proof. Revisions share one resource and format. If importing a baseline would exceed the coding scope, first settle coding, then use a separately source-reviewed exact-path baseline task; publish only after workspace settlement. Recheck source, claim, scope and actual effects.",
+        "required":["kind","operation","workspace_before_revision","imported_revision","workspace_after_revision","contribution_paths"],
+        "properties":{
+            "kind":{"const":"caller_asserted_git_baseline_v1"},
+            "operation":{"enum":["fast_forward_only","merge_no_ff"],
+                "description":"Caller-reported local operation; does not verify Git ancestry or parents."},
+            "workspace_before_revision":revision,
+            "imported_revision":revision,
+            "workspace_after_revision":revision,
+            "contribution_paths":{"type":"array","maxItems":128,"uniqueItems":true,"items":path,
+                "description":"Paths in the contribution diff from imported revision to result; may be empty. Provenance only: no path is subtracted from observed_paths."}
+        }}));
+}
+
 fn add_review_input_schema(command: &mut Value) {
     let identity = json!({"type":"string","minLength":1,"maxLength":128,
         "description":"Opaque identity; at most 128 UTF-8 bytes, without control characters."});
@@ -492,7 +524,7 @@ fn catalog() -> Vec<Tool> {
         "expected_authority_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
         "expected_ownership_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
         "expected_contract_hash":{"type":"string"},
-        "args":{"type":"object","description":"session.start: conversation_id, optional client_info. session.checkpoint: session_id, expected_session_version, context_hash, next_action, open_loops; optional client_info, progress, usage (schemas below). Batch feedback at meaningful boundaries; execution.report is terminal-only. session.end: session_id, expected_session_version. All claim/execution actions: session_id, expected_session_version. claim.acquire adds expected_work_version (0 when runtime absent), ttl_seconds (1..3600). claim.renew/release add claim_id, expected_fence, expected_lease_version; renew also ttl_seconds. execution.prepare adds claim_id, expected_fence, expected_lease_version, expected_work_version, input_digest (64 lowercase hex), declared_scope (canonical relative paths). execution.cancel adds execution_id, expected_execution_version. execution.start adds execution_id, expected_execution_version, claim_id, expected_fence, expected_lease_version, expected_work_version, execution_mode (caller_managed or reference_write_v1), optional expected_input_digest. reference_write_v1 requires the prepared input digest and system attestation authority; the service does not dispatch the local runner. execution.report adds execution_id, expected_execution_version, outcome (succeeded/failed/cancelled/unknown), optional output_digest (required for success), observed_paths, note, optional workspace_settlement (schema below). For an admitted caller_managed independent_workspace_v1/v2 run, include workspace_settlement to settle a terminal result even while the lease is live; execution.start/inspect expose terminal_reporting bindings. V1 requires a live claim; V2 also permits elapsed time on the unchanged original current claim. Omission keeps conservative recovery; tests and expiry do not prove stopping. execution.attest adds execution_id, expected_execution_version, facts; optional reviewed_receipt_id (latest inspected caller receipt) and facts.executor_stopped=true may clear only its attributed reference_write_v1 report barrier with unchanged admission authority and exact resources. Missing confirmation fields preserve legacy settlement without automatic recovery clearing. execution.reconcile also adds expected_work_version, reviewed_receipt_id (latest inspected ID or null), clear_recovery_block, optional previous_epoch_recovery. Old-epoch recovery requires {execution_epoch (exact inspected epoch), executor_stopped (true to settle), review_reference (nonempty, <=2048 bytes, no controls)}; this is an authorized operator assertion, not independently verified fencing. facts: outcome, input_digest, optional output_digest (required for success), environment_digest, observed_paths, note. Digests are 64 lowercase hex. Versions are decimal strings; unknown fields fail. handoff.propose: session_id, expected_session_version, handoff_id, kind (execution|responsibility), to_person_id; the server derives the package from the latest actual checkpoint, artifacts and dependencies. Optional supplied package selectors must match. handoff.inspect returns the complete package, prepared context and consumption receipt; a read-only query is not consumption. handoff.accept adds acceptor_person_id, successor_execution, inspection_request_id from this member/client/session's actual inspection, and current runtime.last_fence as expected_current_fence whenever runtime exists. Read the returned package and context, then accept; reinspect after related facts, session or authority changes. The server verifies execution settlement and expiry using its database clock. Legacy now_ms and assurance booleans are optional annotations and confer no authority. All handoff receiving/closing commands use session_id, expected_session_version, handoff_id, expected_handoff_version; inspect adds inspector_person_id, reject/cancel add by_person_id and reason. Timeout closes the proposal only and does not stop execution. evidence.submit: session_id, expected_session_version, payload, dirty_tree (required boolean); optional claimed_trust/input_digest, conditional execution_id, and artifact_text or legacy artifact_hex (schemas below). Agent completion requires payload.passed=true, payload.output_digest matching execution.report, input_digest matching execution.prepare, execution_id and artifact bytes. For workspace-settled success, execution output_digest and payload.output_digest bind the SHA-256 of the exact submitted artifact bytes. Other policies retain separate output/artifact digest semantics. Inspect evidence and artifact.content before review. review.open / delivery.submit_and_request_review: session_id, expected_session_version, evidence_id. Configured neutral delivery or a selected candidate requires current payload.delivery_candidate_digest and readable bytes for every manifest entry; report-only submissions return ReviewSubmissionIncomplete. Inspect delivery.neutral.inspect for scoped submission context, then review.inspect submission.artifacts[].query for exact content; never peer paths. Approval rechecks the current binding. review.accept/return: session_id, expected_session_version, round_id, reason. review.decide: session_id, expected_session_version, round_id, decision (approve|reject), reason — requires the matching human or Agent review grant and policy. work.rework: session_id, expected_session_version, round_id, note. work.complete / delivery.finalize: session_id, expected_session_version, evidence_id, context_complete, optional requested_policy. Finalization needs maintainer/project_admin permission and, for an Agent, an explicit finalize_delivery delegation; independent review and current evidence remain required. delivery.register_pr: session_id, expected_session_version, repository, pr_number, pr_url, head_sha, fact_source (authorized_human_github_verification|operator_recorded_observation), observed_at (RFC3339), optional merge_sha/test_evidence_id/gh_* flags — v1 manual GitHub verification, not webhook sync. delivery.observe_pr: session_id, expected_session_version, delivery_id, expected_head_sha, fact_source, observed_at, optional gh_approved/gh_merged/merge_sha. Query delivery.inspect separates GitHub submitted/approved/merged from AWR acceptance complete."}
+        "args":{"type":"object","description":"session.start: conversation_id, optional client_info. session.checkpoint: session_id, expected_session_version, context_hash, next_action, open_loops; optional client_info, progress, usage (schemas below). Batch feedback at meaningful boundaries; execution.report is terminal-only. session.end: session_id, expected_session_version. All claim/execution actions: session_id, expected_session_version. claim.acquire adds expected_work_version (0 when runtime absent), ttl_seconds (1..3600). claim.renew/release add claim_id, expected_fence, expected_lease_version; renew also ttl_seconds. execution.prepare adds claim_id, expected_fence, expected_lease_version, expected_work_version, input_digest (64 lowercase hex), declared_scope (canonical relative paths). execution.cancel adds execution_id, expected_execution_version. execution.start adds execution_id, expected_execution_version, claim_id, expected_fence, expected_lease_version, expected_work_version, execution_mode (caller_managed or reference_write_v1), optional expected_input_digest. reference_write_v1 requires the prepared input digest and system attestation authority; the service does not dispatch the local runner. execution.report adds execution_id, expected_execution_version, outcome (succeeded/failed/cancelled/unknown), optional output_digest (required for success), observed_paths (all actual workspace effects, including baseline imports), note, optional workspace_settlement and baseline_transition (schemas below). Contribution provenance never exempts observed paths from scope. For an admitted caller_managed independent_workspace_v1/v2 run, include workspace_settlement to settle a terminal result even while the lease is live; execution.start/inspect expose terminal_reporting bindings. V1 requires a live claim; V2 also permits elapsed time on the unchanged original current claim. Omission keeps conservative recovery; tests and expiry do not prove stopping. execution.attest adds execution_id, expected_execution_version, facts; optional reviewed_receipt_id (latest inspected caller receipt) and facts.executor_stopped=true may clear only its attributed reference_write_v1 report barrier with unchanged admission authority and exact resources. Missing confirmation fields preserve legacy settlement without automatic recovery clearing. execution.reconcile also adds expected_work_version, reviewed_receipt_id (latest inspected ID or null), clear_recovery_block, optional previous_epoch_recovery. Old-epoch recovery requires {execution_epoch (exact inspected epoch), executor_stopped (true to settle), review_reference (nonempty, <=2048 bytes, no controls)}; this is an authorized operator assertion, not independently verified fencing. facts: outcome, input_digest, optional output_digest (required for success), environment_digest, observed_paths, note. Digests are 64 lowercase hex. Versions are decimal strings; unknown fields fail. handoff.propose: session_id, expected_session_version, handoff_id, kind (execution|responsibility), to_person_id; the server derives the package from the latest actual checkpoint, artifacts and dependencies. Optional supplied package selectors must match. handoff.inspect returns the complete package, prepared context and consumption receipt; a read-only query is not consumption. handoff.accept adds acceptor_person_id, successor_execution, inspection_request_id from this member/client/session's actual inspection, and current runtime.last_fence as expected_current_fence whenever runtime exists. Read the returned package and context, then accept; reinspect after related facts, session or authority changes. The server verifies execution settlement and expiry using its database clock. Legacy now_ms and assurance booleans are optional annotations and confer no authority. All handoff receiving/closing commands use session_id, expected_session_version, handoff_id, expected_handoff_version; inspect adds inspector_person_id, reject/cancel add by_person_id and reason. Timeout closes the proposal only and does not stop execution. evidence.submit: session_id, expected_session_version, payload, dirty_tree (required boolean); optional claimed_trust/input_digest, conditional execution_id, and artifact_text or legacy artifact_hex (schemas below). Agent completion requires payload.passed=true, payload.output_digest matching execution.report, input_digest matching execution.prepare, execution_id and artifact bytes. For workspace-settled success, execution output_digest and payload.output_digest bind the SHA-256 of the exact submitted artifact bytes. Other policies retain separate output/artifact digest semantics. Inspect evidence and artifact.content before review. review.open / delivery.submit_and_request_review: session_id, expected_session_version, evidence_id. Configured neutral delivery or a selected candidate requires current payload.delivery_candidate_digest and readable bytes for every manifest entry; report-only submissions return ReviewSubmissionIncomplete. Inspect delivery.neutral.inspect for scoped submission context, then review.inspect submission.artifacts[].query for exact content; never peer paths. Approval rechecks the current binding. review.accept/return: session_id, expected_session_version, round_id, reason. review.decide: session_id, expected_session_version, round_id, decision (approve|reject), reason — requires the matching human or Agent review grant and policy. work.rework: session_id, expected_session_version, round_id, note. work.complete / delivery.finalize: session_id, expected_session_version, evidence_id, context_complete, optional requested_policy. Finalization needs maintainer/project_admin permission and, for an Agent, an explicit finalize_delivery delegation; independent review and current evidence remain required. delivery.register_pr: session_id, expected_session_version, repository, pr_number, pr_url, head_sha, fact_source (authorized_human_github_verification|operator_recorded_observation), observed_at (RFC3339), optional merge_sha/test_evidence_id/gh_* flags — v1 manual GitHub verification, not webhook sync. delivery.observe_pr: session_id, expected_session_version, delivery_id, expected_head_sha, fact_source, observed_at, optional gh_approved/gh_merged/merge_sha. Query delivery.inspect separates GitHub submitted/approved/merged from AWR acceptance complete."}
     }});
     command["properties"]["args"]["properties"] = json!({
         "conversation_id":{"type":"string","minLength":1,"maxLength":128,
@@ -587,6 +619,7 @@ fn catalog() -> Vec<Tool> {
     add_neutral_delivery_schema(&mut command);
     add_evidence_input_schema(&mut command, &mut query);
     add_review_input_schema(&mut command);
+    add_baseline_transition_schema(&mut command);
     command["properties"]["args"]["properties"]["assignee_person_id"] = json!({"type":"string","minLength":1,"maxLength":128,
         "description":"task.assign: active eligible project member. This is a target, never the acting identity."});
     command["properties"]["args"]["properties"]["expected_responsibility_version"] = json!({"type":"string","pattern":"^(0|[1-9][0-9]*)$",
@@ -1647,6 +1680,33 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("exact artifact bytes")
+        );
+        let baseline = &fields["baseline_transition"];
+        assert_eq!(baseline["additionalProperties"], false);
+        assert!(
+            baseline["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("operation"))
+        );
+        assert_eq!(
+            baseline["properties"]["operation"]["enum"],
+            json!(["fast_forward_only", "merge_no_ff"])
+        );
+        assert_eq!(
+            baseline["properties"]["contribution_paths"]["maxItems"],
+            128
+        );
+        assert_eq!(
+            baseline["properties"]["contribution_paths"]["uniqueItems"],
+            true
+        );
+        assert!(fields.get("baseline_transition_provenance").is_none());
+        assert!(
+            fields["observed_paths"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("all actual workspace effects")
         );
     }
 

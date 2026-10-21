@@ -1851,6 +1851,205 @@ async fn previous_epoch_recovery_requires_explicit_review_over_http_and_replays_
     recovery_over_transports(true, "reference_write_v1", true).await;
 }
 
+#[tokio::test]
+async fn baseline_transition_discovery_and_report_are_concise_and_transport_stable() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let mut contract: awr_team::WorkContract = serde_json::from_value(
+        admin
+            .query_one(
+                "SELECT contract_json FROM awr_team.work_contracts WHERE work_id='a'",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0),
+    )
+    .unwrap();
+    contract.codec = awr_team::WorkContract::CODEC_V3.into();
+    contract.completion_policy = awr_team::ExecutionSettlementPolicy::COMPLETION_POLICY.into();
+    contract.execution_settlement = Some(awr_team::ExecutionSettlementPolicy {
+        mode: awr_team::ExecutionSettlementMode::IndependentWorkspaceV1,
+        workspace_id: "mcp-workspace".into(),
+    });
+    admin
+        .execute(
+            "UPDATE awr_team.work_contracts SET contract_json=$1,contract_hash=$2 WHERE work_id='a'",
+            &[&json!(contract), &contract.hash().unwrap()],
+        )
+        .await
+        .unwrap();
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let tools = client.list_all_tools().await.unwrap();
+    let command_schema = &tools
+        .iter()
+        .find(|tool| tool.name == "awr_team_command")
+        .unwrap()
+        .input_schema;
+    let fields = &command_schema["properties"]["args"]["properties"];
+    let transition_schema = &fields["baseline_transition"];
+    assert_eq!(transition_schema["additionalProperties"], false);
+    assert_eq!(
+        transition_schema["required"],
+        json!([
+            "kind",
+            "operation",
+            "workspace_before_revision",
+            "imported_revision",
+            "workspace_after_revision",
+            "contribution_paths"
+        ])
+    );
+    assert_eq!(
+        transition_schema["properties"]["operation"]["enum"],
+        json!(["fast_forward_only", "merge_no_ff"])
+    );
+    assert_eq!(
+        transition_schema["properties"]["contribution_paths"]["maxItems"],
+        128
+    );
+    assert_eq!(
+        transition_schema["properties"]["contribution_paths"]["uniqueItems"],
+        true
+    );
+    assert!(fields.get("baseline_transition_provenance").is_none());
+    assert!(
+        fields["observed_paths"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("all actual workspace effects")
+    );
+    let transition_description = transition_schema["description"].as_str().unwrap();
+    assert!(transition_description.contains("caller-asserted Git attribution"));
+    assert!(transition_description.contains("never scope"));
+    assert!(
+        transition_schema["properties"]["contribution_paths"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("Provenance only")
+    );
+    let claim = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "transition-claim",
+            "claim.acquire",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "expected_work_version":"0","ttl_seconds":60}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    let claim = &claim["receipt"]["data"];
+    let prepared_execution = prepared(&client).await;
+    let execution = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared_execution,
+            "transition-prepare",
+            "execution.prepare",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+                "expected_lease_version":claim["lease_version"],
+                "expected_work_version":prepared_execution["data"]["runtime"]["work_version"],
+                "input_digest":"a".repeat(64),"declared_scope":["src"]}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    let execution = &execution["receipt"]["data"];
+    let prepared_start = prepared(&client).await;
+    let started = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared_start,
+            "transition-start",
+            "execution.start",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "execution_id":execution["execution_id"],
+                "expected_execution_version":execution["execution_version"],
+                "claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+                "expected_lease_version":claim["lease_version"],
+                "expected_work_version":prepared_start["data"]["runtime"]["work_version"],
+                "execution_mode":"caller_managed"}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    let transition = json!({
+        "kind":"caller_asserted_git_baseline_v1",
+        "operation":"fast_forward_only",
+        "workspace_before_revision":{
+            "resource":"local-repository:mcp-regression","format":"git_sha1","value":"1".repeat(40)},
+        "imported_revision":{
+            "resource":"local-repository:mcp-regression","format":"git_sha1","value":"2".repeat(40)},
+        "workspace_after_revision":{
+            "resource":"local-repository:mcp-regression","format":"git_sha1","value":"2".repeat(40)},
+        "contribution_paths":[]
+    });
+    let report = serde_json::to_value(command(
+        &prepared(&client).await,
+        "transition-report",
+        "execution.report",
+        json!({"session_id":"session-a","expected_session_version":"1",
+            "execution_id":execution["execution_id"],
+            "expected_execution_version":started["receipt"]["data"]["execution_version"],
+            "outcome":"succeeded","output_digest":"b".repeat(64),
+            "observed_paths":["src/imported.rs"],"note":"Reported the actual transition.",
+            "workspace_settlement":{"workspace_id":"mcp-workspace","input_digest":"a".repeat(64),
+                "environment_digest":"c".repeat(64),"claim_id":claim["claim_id"],
+                "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
+                "executor_stopped":true,"no_external_effects":true},
+            "baseline_transition":transition.clone()}),
+    ))
+    .unwrap();
+    let reported = call(&client, "awr_team_command", report.clone(), false).await;
+    let data = &reported["receipt"]["data"];
+    assert_eq!(data["state"], "succeeded");
+    assert_eq!(
+        data["baseline_transition_provenance"],
+        json!({"origin":"caller_asserted","purpose":"provenance_only"})
+    );
+    assert!(data.get("baseline_transition").is_none());
+    let payload: Value = admin
+        .query_one(
+            "SELECT payload_json FROM awr_team.execution_receipts WHERE id=$1",
+            &[&data["receipt_id"].as_str().unwrap()],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(payload["baseline_transition"], transition);
+    let replay: Value = http()
+        .post(format!("{}/one/command", server.url))
+        .bearer_auth(A)
+        .json(&report)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(replay["receipt"], reported["receipt"]);
+    assert_eq!(replay["replayed"], true);
+    let mut changed = report;
+    changed["args"]["baseline_transition"]["contribution_paths"] = json!(["src/relabelled.rs"]);
+    assert_eq!(
+        call(&client, "awr_team_command", changed, true).await["code"],
+        "IdempotencyConflict"
+    );
+    client.cancel().await.unwrap();
+}
+
 async fn recovery_over_transports(trusted: bool, mode: &str, previous_epoch: bool) {
     let (_guard, admin, _, store) = setup().await;
     enable_writes(&admin).await;

@@ -170,7 +170,7 @@ pub(super) fn reporting_hint(run: &Row, policy: &ExecutionSettlementPolicy) -> V
                 "expected_lease_version":run.get::<_,i64>("claim_lease_version").to_string(),
                 "executor_stopped":null,"no_external_effects":null
             },
-            "note":"Include a measured non-sensitive environment digest and truthful stop/effect assertions even with a live lease. Stop and report workspace execution before repository push/publication, external review, merge or deployment; use separate delivery operations. Prior or unknown external effects from this run require recovery; never declare no_external_effects=true for them. Omission preserves recovery. V1 needs a live lease; V2 allows elapsed time, never further execution after expiry. Success binds exact submitted artifact bytes. This advice grants no execution or approval."
+            "note":"Measure a non-sensitive environment digest; report all actual effects, including imports. Contributions are provenance only; outside-scope imports need a reviewed baseline task. Settle before push/publication, external review, shared-target merge or deployment; use separate delivery operations. Prior or unknown external effects from this run require recovery; never declare no_external_effects=true for them. V1 needs a live lease; V2 allows unchanged-claim elapsed time, never execution after expiry. Success binds exact artifact bytes. Omission keeps recovery; no new authority."
         },
         "recheck_on":"contract, epoch, claim, execution or effects change"
     })
@@ -442,6 +442,10 @@ struct WorkspaceReceipt {
     resource_proof: Vec<ResourceProof>,
     #[serde(default)]
     lease_observation: Option<LeaseObservation>,
+    #[serde(default, rename = "baseline_transition")]
+    _baseline_transition: Option<baseline_transition::BaselineTransition>,
+    #[serde(default, rename = "baseline_transition_provenance")]
+    _baseline_transition_provenance: Option<Value>,
 }
 
 /// The caller supplies a digest only after re-reading and verifying artifact bytes.
@@ -457,6 +461,7 @@ pub(crate) async fn verify_receipt(
 ) -> PgResult<Value> {
     let receipt: WorkspaceReceipt =
         serde_json::from_value(payload.clone()).map_err(|_| PgError::EvidenceInvalid)?;
+    let baseline_transition_provenance = baseline_transition::validate_stored_receipt(payload)?;
     receipt
         .workspace_settlement
         .validate()
@@ -589,9 +594,11 @@ pub(crate) async fn verify_receipt(
     if resources != receipt.resource_proof {
         return Err(PgError::EvidenceInvalid);
     }
-    Ok(
-        json!({"execution_basis": "caller_asserted_workspace_settled", "settlement_mode": stored.mode,
+    let mut binding = json!({"execution_basis": "caller_asserted_workspace_settled", "settlement_mode": stored.mode,
         "workspace_id": stored.workspace_id, "terminal_reported": true, "artifact_verified": true,
-        "effects_settled": true, "settlement_scope": "admitted_workspace_paths"}),
-    )
+        "effects_settled": true, "settlement_scope": "admitted_workspace_paths"});
+    if let Some(provenance) = baseline_transition_provenance {
+        binding["baseline_transition_provenance"] = provenance;
+    }
+    Ok(binding)
 }

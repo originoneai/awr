@@ -56,6 +56,7 @@ pub(crate) struct Report {
     observed_paths: Vec<String>,
     note: String,
     workspace_settlement: Option<settlement::Declaration>,
+    baseline_transition: Option<baseline_transition::BaselineTransition>,
 }
 impl Report {
     pub(super) fn parse(args: Value) -> PgResult<Self> {
@@ -78,6 +79,9 @@ impl Report {
         }
         if let Some(declaration) = &a.workspace_settlement {
             declaration.validate()?;
+        }
+        if let Some(transition) = &a.baseline_transition {
+            transition.validate()?;
         }
         Ok(a)
     }
@@ -380,7 +384,7 @@ pub(super) async fn start(
         None
     };
     let next_action = if terminal_reporting.is_some() {
-        "Execute once under the current lease. Stop and report workspace execution before repository push/publication, external review, merge or deployment; use separate delivery operations. Prior or unknown external effects from this run require recovery; never declare no_external_effects=true for them. A replay or unknown response never authorizes another start. Do not claim OS/sandbox isolation from AWR metadata alone."
+        "Execute once under the current lease. Stop and report workspace execution before repository push/publication, external review, shared-target merge or deployment; use separate delivery operations. Prior or unknown external effects from this run require recovery; never declare no_external_effects=true for them. A replay or unknown response never authorizes another start. Do not claim OS/sandbox isolation from AWR metadata alone."
     } else {
         "Execute once under the current lease; report observations. A replay or unknown response never authorizes another start. Do not claim OS/sandbox isolation from AWR metadata alone."
     };
@@ -467,6 +471,12 @@ pub(super) async fn report(
         "workstream_id":command.workstream_id,"ownership_version":ownership.to_string(),
         "execution_version":a.expected_execution_version,"coordinator_epoch":auth.epoch,
         "contract_hash":r.get::<_,String>("contract_hash"),"scope_violation":exceeded});
+    let baseline_transition_provenance = a.baseline_transition.as_ref().map(|transition| {
+        payload["baseline_transition"] = json!(transition);
+        let provenance = baseline_transition::provenance_descriptor();
+        payload["baseline_transition_provenance"] = provenance.clone();
+        provenance
+    });
     if settled.is_none() && a.workspace_settlement.is_some() {
         payload["workspace_settlement"] = json!(a.workspace_settlement);
         payload["terminal_reported"] = json!(terminal_reported);
@@ -532,8 +542,7 @@ pub(super) async fn report(
     if attributable {
         recovery_cause::attribute(tx, tenant, project, &r, &id).await?;
     }
-    Ok(
-        json!({"execution_id":a.execution_id,"execution_version":(r.get::<_,i64>("execution_version")+1).to_string(),
+    let mut response = json!({"execution_id":a.execution_id,"execution_version":(r.get::<_,i64>("execution_version")+1).to_string(),
         "session_id":a.session_id,"state":next,"receipt_id":id,"receipt_kind":"caller_asserted",
         "reported_outcome":a.outcome,"scope_violation":exceeded,"recovery_blocked":!effects_settled,
         "terminal_reported":terminal_reported,"artifact_verified":false,"effects_settled":effects_settled,
@@ -543,6 +552,9 @@ pub(super) async fn report(
         "reconciliation_supported":true,
         "next_action":if effects_settled && a.outcome == "succeeded" {"Refresh work context; submit the exact readable artifact for independent Agent review. Workspace settlement is a caller assertion, not external delivery or acceptance."}
             else if effects_settled {"Refresh work context and assess a new attempt or handoff. Settled failure or cancellation is not task completion; do not replay the stopped execution."}
-            else {"Have an authorized recovery operator inspect the receipt and reconcile actual effects. Do not retry or complete while recovery is blocked."}}),
-    )
+            else {"Have an authorized recovery operator inspect the receipt and reconcile actual effects. Do not retry or complete while recovery is blocked."}});
+    if let Some(provenance) = baseline_transition_provenance {
+        response["baseline_transition_provenance"] = provenance;
+    }
+    Ok(response)
 }

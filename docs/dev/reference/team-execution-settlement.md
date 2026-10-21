@@ -262,11 +262,119 @@ second writer's recovery cause.
 
 ## Workspace effects and repository delivery
 
-Workspace settlement does not settle a repository push, external review, merge,
+Workspace settlement does not settle a repository push, external review, shared-target merge,
 deployment or shared integration operation. Close the workspace phase before
 starting a separate delivery operation, carrying its exact source revision and
 artifact digest. If an external effect already occurred or its result is
 unknown, do not declare `no_external_effects: true` to bypass recovery.
+
+### Actual effects and contribution provenance
+
+`observed_paths` describes every caller-observed workspace effect of the admitted
+execution, including files imported from another revision. Every path is checked
+against the original declared scope. The contribution diff against an imported
+target is a different fact and must not replace that list.
+
+For example, a frontend workspace starts at `B` and imports an agreed backend
+revision `I`, producing `A`. `git diff --name-only --no-renames B A` describes the
+committed transition in that workspace; `git diff --name-only --no-renames I A`
+describes its contribution relative to the imported target. The first list can
+contain backend files while the second contains only frontend files. Also report
+uncommitted, untracked or transient effects: Git commit diffs cannot enumerate
+those effects by themselves.
+
+An optional `execution.report` argument records this distinction:
+
+```json
+{
+  "baseline_transition": {
+    "kind": "caller_asserted_git_baseline_v1",
+    "operation": "merge_no_ff",
+    "workspace_before_revision": {
+      "resource": "local-repository:example",
+      "format": "git_sha1",
+      "value": "1111111111111111111111111111111111111111"
+    },
+    "imported_revision": {
+      "resource": "local-repository:example",
+      "format": "git_sha1",
+      "value": "2222222222222222222222222222222222222222"
+    },
+    "workspace_after_revision": {
+      "resource": "local-repository:example",
+      "format": "git_sha1",
+      "value": "3333333333333333333333333333333333333333"
+    },
+    "contribution_paths": ["public/app.js"]
+  }
+}
+```
+
+This fragment is not a complete command. Replace the illustrative revisions with
+the actual local observations. When present, the closed object requires all six
+fields. `operation` is `fast_forward_only` or `merge_no_ff`. Revisions use one
+resource and format (`git_sha1` or `git_sha256`), with lowercase hexadecimal
+values of the matching length. `contribution_paths` contains at most 128 unique,
+canonical relative paths and may be empty. A path has the existing 4 KiB UTF-8
+limit. These structural checks do not verify Git ancestry, parents, checkout
+state, target approval or filesystem completeness.
+
+The full object is stored in the immutable original caller receipt, covered by
+its digest and visible through existing authorized receipt reads. Report
+acknowledgements and direct or reconciled artifact verification return only:
+
+```json
+{
+  "baseline_transition_provenance": {
+    "origin": "caller_asserted",
+    "purpose": "provenance_only"
+  }
+}
+```
+
+The descriptor is server produced, not an input field. Reconciliation validates
+the statement in the referenced original caller receipt rather than copying it
+into a new reconciliation receipt. Artifact verification, review and repository
+integration keep their separate meanings and do not upgrade this origin. If no
+transition was reported, both the full field and descriptor are absent; existing
+V1/V2 receipt shapes and canonical digests remain unchanged.
+
+### A bounded local baseline update
+
+When an import would exceed a coding task's scope, settle the coding execution
+before attempting it. Have an authorized planner create and review a separate
+baseline task, or review an exact scope amendment before a fresh execution. Bind
+the intended `B`, agreed `I`, operation, affected paths and stop conditions in the
+source contract. Do not widen scope around a running or unknown execution.
+
+1. Prefer a clean fast-forward to an already available local `I` before coding.
+   Review the exact incoming path set, use it as the baseline task's declared
+   scope, and report all actual effects. The recorded operation is
+   `fast_forward_only`; normally `A = I` and the contribution list is empty.
+2. For a divergent workspace, first preserve and settle the coding result at
+   `B`. Review the exact incoming paths from the merge base to `I`, then admit a
+   separate baseline execution with those paths. Perform the local merge and
+   report the complete transition from `B` to `A`, with `merge_no_ff` attribution.
+   Existing contributions relative to `I` are provenance only.
+3. If conflicts or other effects cannot be bounded before the operation, stop.
+   Preserve the work and obtain a fresh reviewed plan, or replay the preserved
+   scoped contribution in a clean workspace at `I`. Effects already outside
+   scope or otherwise unknown retain recovery and all affected reservations.
+
+The baseline task authorizes only its reviewed paths under the existing
+caller-asserted settlement agreement. Its revision intent is contract hashed;
+the service does not independently prove that the caller used those revisions.
+No metadata field supplies approval for an arbitrary target or exempts a path.
+Keep the workspace exclusive through the host while synchronizing; AWR path
+reservations do not provide an OS lock. Do not replace a large incoming set with
+repository-root scope to evade the 128-path limit.
+
+A source-reviewed workspace-local merge is part of that bounded workspace
+execution. A push, publication, shared-target merge or deployment is a separate
+external operation and must follow workspace settlement. This ordering lets a
+new local `A` settle before publication; it does not require a remote adapter to
+read an unpublished commit. Acquiring a missing `I` needs separately authorized
+host/network work; a baseline report does not grant fetch or publication rights.
 
 Existing dependency assurance modes do not accept the new workspace basis.
 In particular, `agent_reviewed_caller_asserted_reconciled` still requires actual

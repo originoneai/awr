@@ -272,7 +272,7 @@ Assert `executor_stopped` and
 `no_external_effects` only when both facts hold. For success, compute
 `output_digest` from the exact artifact bytes you will submit as evidence and
 retain those bytes unchanged. Stop and report the workspace execution **before**
-repository push/publication, external review, merge or deployment; those are
+repository push/publication, external review, shared-target merge or deployment; those are
 separate delivery operations with their own authorization and recovery. If this
 run already caused or may have caused an external effect, use recovery instead
 of declaring `no_external_effects: true`. Earlier settled delivery operations
@@ -283,8 +283,24 @@ outcome conservatively and requires recovery; it does not settle the workspace.
 Recheck after contract, lease, execution or effect changes. See the
 [ordinary workspace report](../reference/team-execution-settlement.md#report-an-ordinary-workspace-outcome).
 
+Before importing a baseline, check the complete workspace transition against
+the admitted scope. If incoming files exceed the coding scope, first settle the
+coding result, then ask an authorized planner for a separately reviewed,
+exact-path baseline task and start a fresh execution. Keep exact before/imported/
+after revisions and the local operation in that task's source-backed agreement.
+Report every actual effect in `observed_paths`. Optional `baseline_transition`
+records the separate contribution diff for attribution; it grants no scope
+exception or target approval. A source-reviewed workspace-local baseline merge
+can settle before publishing its new commit. If effects cannot be bounded,
+preserve the work and follow recovery or a fresh plan. Recheck source, ownership,
+claim and effects after any change. See the
+[bounded baseline workflow](../reference/team-execution-settlement.md#a-bounded-local-baseline-update).
+
 Reconnecting MCP does not end a durable work session or renew its lease. A second
-Agent belonging to the same person is not an independent reviewer. Keep
+client using the same recorded member identity is not an independent reviewer.
+The simulated-member policy can use distinct member, actor and client identities
+under one physical controller; record that simulation instead of implying human
+approval. Keep
 implementation, verification, GitHub merge and AWR acceptance as separate facts.
 
 ## Publish an execution workspace declaration

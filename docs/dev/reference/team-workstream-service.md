@@ -499,6 +499,16 @@ Only the original actor/client with current write authority may report. An elaps
 claim does not prevent recording an observation; current session, ownership and
 epoch binding still apply. Reports may be recorded while the workstream is paused.
 
+`observed_paths` includes every actual workspace effect, including baseline
+imports; contribution paths relative to an imported target cannot replace it.
+An optional closed `baseline_transition` records caller-asserted Git revisions,
+operation and contribution paths for provenance only. It never changes the
+scope check or releases resources. The full statement stays in the original
+caller receipt; ordinary acknowledgements and verification expose only a compact
+`baseline_transition_provenance` descriptor. Legacy fields remain absent when no
+transition was supplied. See [actual effects and bounded baseline updates](team-execution-settlement.md#actual-effects-and-contribution-provenance)
+for the exact input and separately reviewed baseline-task workflow.
+
 These are **caller assertions**, not trusted result or stop confirmations. Each
 report is kept verbatim in an attributed execution receipt, including observations
 outside the declared scope and conflicting later reports. The execution becomes

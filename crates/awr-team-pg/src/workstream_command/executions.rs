@@ -1,5 +1,6 @@
 //! Execution intents and caller-managed admission under live authority.
 //! Preparation never dispatches. Admission is not physical effect confinement.
+pub(super) mod baseline_transition;
 mod lifecycle;
 mod recovery;
 mod recovery_cause;

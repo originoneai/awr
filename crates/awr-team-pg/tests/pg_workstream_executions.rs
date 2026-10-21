@@ -14,6 +14,259 @@ use tokio_postgres::Client;
 mod workspace_settlement_tests {
     use super::*;
     use awr_team::{ExecutionSettlementMode, ExecutionSettlementPolicy, WorkContract};
+    use std::{
+        path::{Path, PathBuf},
+        process::Command,
+    };
+
+    const BASELINE_RESOURCE: &str = "local-repository:z-regression";
+
+    struct GitFixture(PathBuf);
+
+    impl Drop for GitFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    struct GitTransition {
+        _fixture: GitFixture,
+        statement: Value,
+        actual_paths: Vec<String>,
+        contribution_paths: Vec<String>,
+    }
+
+    fn git(root: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    fn commit(root: &Path, path: Option<&str>, contents: &str, message: &str) -> String {
+        if let Some(path) = path {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, contents).unwrap();
+            git(
+                root,
+                &[
+                    "add",
+                    "--",
+                    path.strip_prefix(root).unwrap().to_str().unwrap(),
+                ],
+            );
+            git(root, &["commit", "-q", "-m", message]);
+        } else {
+            git(root, &["commit", "-q", "--allow-empty", "-m", message]);
+        }
+        git(root, &["rev-parse", "HEAD"])
+    }
+
+    fn revision(value: &str) -> Value {
+        json!({"resource":BASELINE_RESOURCE,"format":"git_sha1","value":value})
+    }
+
+    fn changed_paths(root: &Path, before: &str, after: &str) -> Vec<String> {
+        let output = git(root, &["diff", "--name-only", before, after]);
+        output
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn init_git_fixture() -> GitFixture {
+        let path =
+            std::env::temp_dir().join(format!("awr-z-baseline-transition-{}", awr_core::Id::new()));
+        std::fs::create_dir_all(&path).unwrap();
+        git(&path, &["init", "-q", "-b", "main"]);
+        git(&path, &["config", "user.name", "AWR regression"]);
+        git(
+            &path,
+            &["config", "user.email", "awr-regression@example.invalid"],
+        );
+        GitFixture(path)
+    }
+
+    fn fast_forward_transition() -> GitTransition {
+        let fixture = init_git_fixture();
+        let before = commit(&fixture.0, Some("README.md"), "baseline\n", "baseline");
+        let imported = commit(
+            &fixture.0,
+            Some("src/api/baseline/imported.rs"),
+            "pub const IMPORTED: bool = true;\n",
+            "imported baseline",
+        );
+        git(&fixture.0, &["reset", "--hard", &before]);
+        git(&fixture.0, &["merge", "--ff-only", &imported]);
+        let after = git(&fixture.0, &["rev-parse", "HEAD"]);
+        let actual_paths = changed_paths(&fixture.0, &before, &after);
+        let contribution_paths = changed_paths(&fixture.0, &imported, &after);
+        assert_eq!(after, imported);
+        assert_eq!(contribution_paths, Vec::<String>::new());
+        GitTransition {
+            statement: json!({
+                "kind":"caller_asserted_git_baseline_v1",
+                "operation":"fast_forward_only",
+                "workspace_before_revision":revision(&before),
+                "imported_revision":revision(&imported),
+                "workspace_after_revision":revision(&after),
+                "contribution_paths":contribution_paths,
+            }),
+            _fixture: fixture,
+            actual_paths,
+            contribution_paths: Vec::new(),
+        }
+    }
+
+    fn no_ff_transition() -> GitTransition {
+        let fixture = init_git_fixture();
+        let merge_base = commit(&fixture.0, Some("README.md"), "baseline\n", "baseline");
+        git(&fixture.0, &["switch", "-q", "-c", "imported"]);
+        let imported = commit(
+            &fixture.0,
+            Some("src/api/baseline/imported.rs"),
+            "pub const IMPORTED: bool = true;\n",
+            "imported baseline",
+        );
+        git(
+            &fixture.0,
+            &["switch", "-q", "-c", "workspace", &merge_base],
+        );
+        let before = commit(
+            &fixture.0,
+            Some("src/api/frontend/preexisting.rs"),
+            "pub const PREEXISTING: bool = true;\n",
+            "pre-existing workspace contribution",
+        );
+        git(
+            &fixture.0,
+            &[
+                "merge",
+                "-q",
+                "--no-ff",
+                "imported",
+                "-m",
+                "merge imported baseline",
+            ],
+        );
+        let after = git(&fixture.0, &["rev-parse", "HEAD"]);
+        let actual_paths = changed_paths(&fixture.0, &before, &after);
+        let contribution_paths = changed_paths(&fixture.0, &imported, &after);
+        assert_eq!(
+            git(&fixture.0, &["rev-list", "--parents", "-n", "1", &after])
+                .split_whitespace()
+                .count(),
+            3,
+            "the fixture must be a genuine two-parent merge"
+        );
+        GitTransition {
+            statement: json!({
+                "kind":"caller_asserted_git_baseline_v1",
+                "operation":"merge_no_ff",
+                "workspace_before_revision":revision(&before),
+                "imported_revision":revision(&imported),
+                "workspace_after_revision":revision(&after),
+                "contribution_paths":contribution_paths,
+            }),
+            _fixture: fixture,
+            actual_paths,
+            contribution_paths,
+        }
+    }
+
+    fn conflicted_no_ff_transition(include_imported_path: bool) -> GitTransition {
+        let fixture = init_git_fixture();
+        let conflict_path = "src/api/frontend/conflict.rs";
+        let merge_base = commit(
+            &fixture.0,
+            Some(conflict_path),
+            "pub const VALUE: &str = \"base\";\n",
+            "baseline",
+        );
+        git(&fixture.0, &["switch", "-q", "-c", "imported"]);
+        std::fs::write(
+            fixture.0.join(conflict_path),
+            "pub const VALUE: &str = \"imported\";\n",
+        )
+        .unwrap();
+        if include_imported_path {
+            let imported_path = fixture.0.join("src/api/baseline/imported.rs");
+            std::fs::create_dir_all(imported_path.parent().unwrap()).unwrap();
+            std::fs::write(imported_path, "pub const IMPORTED: bool = true;\n").unwrap();
+        }
+        git(&fixture.0, &["add", "--", "src/api"]);
+        git(&fixture.0, &["commit", "-q", "-m", "imported baseline"]);
+        let imported = git(&fixture.0, &["rev-parse", "HEAD"]);
+        git(
+            &fixture.0,
+            &["switch", "-q", "-c", "workspace", &merge_base],
+        );
+        let before = commit(
+            &fixture.0,
+            Some(conflict_path),
+            "pub const VALUE: &str = \"workspace\";\n",
+            "workspace before baseline merge",
+        );
+        let merge = Command::new("git")
+            .arg("-C")
+            .arg(&fixture.0)
+            .args([
+                "merge",
+                "--no-ff",
+                "imported",
+                "-m",
+                "merge imported baseline",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            !merge.status.success(),
+            "fixture must produce a merge conflict"
+        );
+        std::fs::write(
+            fixture.0.join(conflict_path),
+            "pub const VALUE: &str = \"authored-resolution\";\n",
+        )
+        .unwrap();
+        git(&fixture.0, &["add", "--", conflict_path]);
+        git(
+            &fixture.0,
+            &["commit", "-q", "-m", "resolve imported baseline"],
+        );
+        let after = git(&fixture.0, &["rev-parse", "HEAD"]);
+        let actual_paths = changed_paths(&fixture.0, &before, &after);
+        let contribution_paths = changed_paths(&fixture.0, &imported, &after);
+        assert_eq!(
+            git(&fixture.0, &["rev-list", "--parents", "-n", "1", &after])
+                .split_whitespace()
+                .count(),
+            3,
+            "the fixture must retain the two-parent merge after resolution"
+        );
+        GitTransition {
+            statement: json!({
+                "kind":"caller_asserted_git_baseline_v1",
+                "operation":"merge_no_ff",
+                "workspace_before_revision":revision(&before),
+                "imported_revision":revision(&imported),
+                "workspace_after_revision":revision(&after),
+                "contribution_paths":contribution_paths,
+            }),
+            _fixture: fixture,
+            actual_paths,
+            contribution_paths,
+        }
+    }
 
     async fn policy(admin: &Client, work: &str, workspace: &str) {
         policy_mode(
@@ -73,6 +326,140 @@ mod workspace_settlement_tests {
         cmd
     }
 
+    async fn running_with_scope(
+        admin: &Client,
+        store: &WorkstreamReadStore,
+        scope: &str,
+    ) -> (Value, Value) {
+        policy(admin, "a", "clone-alpha").await;
+        let mut contract: WorkContract = serde_json::from_value(
+            admin
+                .query_one(
+                    "SELECT contract_json FROM awr_team.work_contracts
+                     WHERE tenant_id=$1 AND project_id=$2 AND work_id='a'",
+                    &[&TENANT, &PROJECT],
+                )
+                .await
+                .unwrap()
+                .get(0),
+        )
+        .unwrap();
+        contract.scope_paths = vec![scope.into()];
+        admin
+            .execute(
+                "UPDATE awr_team.work_contracts SET contract_json=$1,contract_hash=$2
+                 WHERE tenant_id=$3 AND project_id=$4 AND work_id='a'",
+                &[
+                    &json!(contract),
+                    &contract.hash().unwrap(),
+                    &TENANT,
+                    &PROJECT,
+                ],
+            )
+            .await
+            .unwrap();
+        let c = claim(store).await;
+        let mut prepare = intent(store, &c, "prepare-transition").await;
+        prepare.args["declared_scope"] = json!([scope]);
+        let e = store
+            .commands()
+            .execute(TENANT, PROJECT, A, prepare)
+            .await
+            .unwrap()["receipt"]["data"]
+            .clone();
+        let started = start(store, &c, &e).await;
+        (c, started)
+    }
+
+    async fn transition_declaration(
+        store: &WorkstreamReadStore,
+        claim: &Value,
+        execution: &Value,
+        request_id: &str,
+        observed_paths: &[String],
+        transition: &Value,
+    ) -> WorkstreamCommand {
+        let mut cmd = declaration(store, claim, execution, request_id, "succeeded").await;
+        cmd.args["observed_paths"] = json!(observed_paths);
+        cmd.args["baseline_transition"] = transition.clone();
+        cmd
+    }
+
+    fn normalize_legacy_payload(mut payload: Value) -> Value {
+        payload["execution_id"] = json!("execution-id");
+        payload["claim_id"] = json!("claim-id");
+        payload["workspace_settlement"]["claim_id"] = json!("claim-id");
+        payload["contract_hash"] = json!("0".repeat(64));
+        payload["coordinator_epoch"] = json!("coordinator-epoch");
+        payload["workstream_id"] = json!("workstream-id");
+        payload["resource_proof"][0]["reservation_id"] = json!("reservation-id");
+        if let Some(observation) = payload
+            .get_mut("lease_observation")
+            .and_then(Value::as_object_mut)
+        {
+            observation.insert("expires_at".into(), json!("lease-expires-at"));
+            observation.insert("observed_at".into(), json!("lease-observed-at"));
+        }
+        payload
+    }
+
+    fn expected_legacy_payload(mode: ExecutionSettlementMode) -> Value {
+        let mut payload = json!({
+            "outcome":"succeeded",
+            "output_digest":"b".repeat(64),
+            "observed_paths":["src/api/result.json"],
+            "note":"Client observed the process exit.",
+            "client_id":"cli-a",
+            "session_id":"session-a",
+            "session_version":"1",
+            "workstream_id":"workstream-id",
+            "ownership_version":"1",
+            "execution_version":"2",
+            "coordinator_epoch":"coordinator-epoch",
+            "contract_hash":"0".repeat(64),
+            "scope_violation":false,
+            "execution_id":"execution-id",
+            "work_id":"a",
+            "claim_id":"claim-id",
+            "fence":"1",
+            "input_digest":"a".repeat(64),
+            "environment_digest":"c".repeat(64),
+            "admission_mode":"caller_managed",
+            "admission_lease_version":"1",
+            "settlement_policy":{"mode":mode,"workspace_id":"clone-alpha"},
+            "workspace_settlement":{
+                "workspace_id":"clone-alpha",
+                "input_digest":"a".repeat(64),
+                "environment_digest":"c".repeat(64),
+                "claim_id":"claim-id",
+                "expected_fence":"1",
+                "expected_lease_version":"1",
+                "executor_stopped":true,
+                "no_external_effects":true
+            },
+            "terminal_reported":true,
+            "effects_settled":true,
+            "artifact_verified":false,
+            "settlement_scope":"admitted_workspace_paths",
+            "resource_proof":[{
+                "reservation_id":"reservation-id",
+                "kind":"dir",
+                "key":"src/api",
+                "workspace_id":"clone-alpha",
+                "fence":"1",
+                "admission_lease_version":"1"
+            }]
+        });
+        if mode == ExecutionSettlementMode::IndependentWorkspaceV2 {
+            payload["lease_observation"] = json!({
+                "basis":"live",
+                "expires_at":"lease-expires-at",
+                "observed_at":"lease-observed-at"
+            });
+        }
+        payload
+    }
+
     #[tokio::test]
     async fn terminal_reporting_binds_live_workspace_runs_without_inferred_facts() {
         for mode in [
@@ -92,11 +479,16 @@ mod workspace_settlement_tests {
             q.work_id = Some("a".into());
             let work = store.query(TENANT, PROJECT, A, q).await.unwrap();
             assert_eq!(work["data"]["execution"]["terminal_reporting"], *hint);
+            assert!(started["next_action"].as_str().unwrap().contains(
+                "Stop and report workspace execution before repository push/publication, external review, shared-target merge or deployment"
+            ));
+            assert!(hint["action"]["note"].as_str().unwrap().contains(
+                "Settle before push/publication, external review, shared-target merge or deployment"
+            ));
             for note in [
                 started["next_action"].as_str().unwrap(),
                 hint["action"]["note"].as_str().unwrap(),
             ] {
-                assert!(note.contains("Stop and report workspace execution before repository push/publication, external review, merge or deployment"));
                 assert!(note.contains("use separate delivery operations"));
                 assert!(
                     note.contains(
@@ -382,7 +774,7 @@ mod workspace_settlement_tests {
                     observed["terminal_reporting"]["action"]["note"]
                         .as_str()
                         .unwrap()
-                        .contains("never further execution after expiry")
+                        .contains("never execution after expiry")
                 );
             }
             assert_eq!(snapshot(&admin).await, before);
@@ -455,6 +847,354 @@ mod workspace_settlement_tests {
                 Err(PgError::PreconditionsChanged)
             ));
             assert_eq!(snapshot(&admin).await, before);
+        }
+    }
+
+    #[tokio::test]
+    async fn real_git_fast_forward_records_full_receipt_but_only_returns_provenance() {
+        let transition = fast_forward_transition();
+        assert_eq!(
+            transition.actual_paths,
+            vec!["src/api/baseline/imported.rs"]
+        );
+        assert!(transition.contribution_paths.is_empty());
+        let (_g, admin, _, store) = setup().await;
+        enable_writes(&admin).await;
+        let (claim, execution) = running_with_scope(&admin, &store, "src/api/baseline").await;
+        let cmd = transition_declaration(
+            &store,
+            &claim,
+            &execution,
+            "fast-forward-transition",
+            &transition.actual_paths,
+            &transition.statement,
+        )
+        .await;
+        let response = store
+            .commands()
+            .execute(TENANT, PROJECT, A, cmd.clone())
+            .await
+            .unwrap();
+        let result = &response["receipt"]["data"];
+        assert_eq!(result["state"], "succeeded");
+        assert_eq!(result["scope_violation"], false);
+        assert_eq!(result["effects_settled"], true);
+        assert!(result.get("baseline_transition").is_none());
+        assert_eq!(
+            result["baseline_transition_provenance"],
+            json!({"origin":"caller_asserted","purpose":"provenance_only"})
+        );
+        let receipt_id = result["receipt_id"].as_str().unwrap();
+        let row = admin
+            .query_one(
+                "SELECT digest,payload_json FROM awr_team.execution_receipts WHERE id=$1",
+                &[&receipt_id],
+            )
+            .await
+            .unwrap();
+        let stored_digest: String = row.get(0);
+        let payload: Value = row.get(1);
+        assert_eq!(payload["baseline_transition"], transition.statement);
+        assert_eq!(
+            payload["baseline_transition_provenance"],
+            result["baseline_transition_provenance"]
+        );
+        assert_eq!(stored_digest, awr_team::request_hash(&payload).unwrap());
+        let before_replay = snapshot(&admin).await;
+        let replay = store
+            .commands()
+            .execute(TENANT, PROJECT, A, cmd.clone())
+            .await
+            .unwrap();
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["receipt"], response["receipt"]);
+        assert_eq!(snapshot(&admin).await, before_replay);
+        let mut changed = cmd;
+        changed.args["baseline_transition"]["contribution_paths"] =
+            json!(["src/api/baseline/relabelled.rs"]);
+        assert!(matches!(
+            store.commands().execute(TENANT, PROJECT, A, changed).await,
+            Err(PgError::IdempotencyConflict)
+        ));
+        assert_eq!(snapshot(&admin).await, before_replay);
+    }
+
+    #[tokio::test]
+    async fn real_git_actual_effects_remain_the_unconditional_scope_boundary() {
+        let fast_forward = fast_forward_transition();
+        let authored_only = conflicted_no_ff_transition(false);
+        let mixed = conflicted_no_ff_transition(true);
+        assert_eq!(
+            authored_only.actual_paths,
+            vec!["src/api/frontend/conflict.rs"]
+        );
+        assert_eq!(authored_only.actual_paths, authored_only.contribution_paths);
+        assert_eq!(
+            mixed.actual_paths,
+            vec![
+                "src/api/baseline/imported.rs".to_owned(),
+                "src/api/frontend/conflict.rs".to_owned(),
+            ]
+        );
+        assert_eq!(
+            mixed.contribution_paths,
+            vec!["src/api/frontend/conflict.rs"]
+        );
+        let mut omitted = mixed.statement.clone();
+        omitted["contribution_paths"] = json!([]);
+        let mut relabelled = mixed.statement.clone();
+        relabelled["contribution_paths"] = json!(["src/api/baseline/imported.rs"]);
+        for (case, actual_paths, statement) in [
+            (
+                "same-import-under-old-frontend-scope",
+                fast_forward.actual_paths.clone(),
+                fast_forward.statement.clone(),
+            ),
+            (
+                "authored-outside-baseline-scope",
+                authored_only.actual_paths.clone(),
+                authored_only.statement.clone(),
+            ),
+            (
+                "mixed-import-and-authored-effects",
+                mixed.actual_paths.clone(),
+                mixed.statement.clone(),
+            ),
+            (
+                "omitted-contribution-attribution",
+                mixed.actual_paths.clone(),
+                omitted,
+            ),
+            (
+                "relabelled-contribution-attribution",
+                mixed.actual_paths.clone(),
+                relabelled,
+            ),
+        ] {
+            let (_g, admin, _, store) = setup().await;
+            enable_writes(&admin).await;
+            let scope = if case == "same-import-under-old-frontend-scope" {
+                "src/api/frontend"
+            } else {
+                "src/api/baseline"
+            };
+            let (claim, execution) = running_with_scope(&admin, &store, scope).await;
+            let cmd =
+                transition_declaration(&store, &claim, &execution, case, &actual_paths, &statement)
+                    .await;
+            let result = store
+                .commands()
+                .execute(TENANT, PROJECT, A, cmd)
+                .await
+                .unwrap()["receipt"]["data"]
+                .clone();
+            assert_eq!(result["state"], "unknown", "{case}");
+            assert_eq!(result["scope_violation"], true, "{case}");
+            assert_eq!(result["effects_settled"], false, "{case}");
+            assert_eq!(result["resource_release_performed"], false, "{case}");
+            assert_eq!(
+                result["baseline_transition_provenance"],
+                json!({"origin":"caller_asserted","purpose":"provenance_only"}),
+                "{case}"
+            );
+            let state = snapshot(&admin).await;
+            assert!(
+                state["resources"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|resource| resource["state"] == "unknown"),
+                "{case}"
+            );
+            assert_eq!(state["work"][0]["recovery_blocked"], true, "{case}");
+        }
+    }
+
+    #[tokio::test]
+    async fn real_git_no_ff_uses_pre_merge_workspace_as_b_and_imported_revision_as_i() {
+        let transition = no_ff_transition();
+        assert_eq!(
+            transition.actual_paths,
+            vec!["src/api/baseline/imported.rs"]
+        );
+        assert_eq!(
+            transition.contribution_paths,
+            vec!["src/api/frontend/preexisting.rs"]
+        );
+        let (_g, admin, _, store) = setup().await;
+        enable_writes(&admin).await;
+        let (claim, execution) = running_with_scope(&admin, &store, "src/api/baseline").await;
+        let cmd = transition_declaration(
+            &store,
+            &claim,
+            &execution,
+            "no-ff-transition",
+            &transition.actual_paths,
+            &transition.statement,
+        )
+        .await;
+        let result = store
+            .commands()
+            .execute(TENANT, PROJECT, A, cmd)
+            .await
+            .unwrap()["receipt"]["data"]
+            .clone();
+        assert_eq!(result["state"], "succeeded");
+        assert_eq!(result["scope_violation"], false);
+        assert_eq!(result["effects_settled"], true);
+        assert_eq!(result["resources_released"], 1);
+        assert_eq!(
+            result["baseline_transition_provenance"],
+            json!({"origin":"caller_asserted","purpose":"provenance_only"})
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_baseline_transitions_fail_closed_before_any_write() {
+        let transition = fast_forward_transition();
+        let (_g, admin, _, store) = setup().await;
+        enable_writes(&admin).await;
+        let (claim, execution) = running_with_scope(&admin, &store, "src/api").await;
+        let base = transition_declaration(
+            &store,
+            &claim,
+            &execution,
+            "valid-transition",
+            &transition.actual_paths,
+            &transition.statement,
+        )
+        .await;
+        let mut malformed = Vec::new();
+        let mut value = transition.statement.clone();
+        value.as_object_mut().unwrap().remove("operation");
+        malformed.push(("missing-operation", value));
+        let mut value = transition.statement.clone();
+        value["operation"] = json!("rebase");
+        malformed.push(("unknown-operation", value));
+        let mut value = transition.statement.clone();
+        value["imported_revision"]["resource"] = json!("local-repository:other");
+        malformed.push(("mismatched-resource", value));
+        let mut value = transition.statement.clone();
+        value["imported_revision"]["format"] = json!("git_sha256");
+        value["imported_revision"]["value"] = json!("d".repeat(64));
+        malformed.push(("mismatched-format", value));
+        let mut value = transition.statement.clone();
+        value["workspace_after_revision"]["value"] = json!("NOT-A-GIT-SHA");
+        malformed.push(("invalid-revision", value));
+        let mut value = transition.statement.clone();
+        value["contribution_paths"] = json!(["src/api/../secret"]);
+        malformed.push(("noncanonical-path", value));
+        let mut value = transition.statement.clone();
+        value["contribution_paths"] = json!(["src/api/a", "src/api/a"]);
+        malformed.push(("duplicate-path", value));
+        let mut value = transition.statement.clone();
+        value["contribution_paths"] = json!(
+            (0..129)
+                .map(|index| format!("src/api/path-{index}"))
+                .collect::<Vec<_>>()
+        );
+        malformed.push(("excessive-paths", value));
+        let mut value = transition.statement.clone();
+        value["verified"] = json!(true);
+        malformed.push(("unknown-field", value));
+        let before = snapshot(&admin).await;
+        for (index, (case, transition)) in malformed.into_iter().enumerate() {
+            let mut cmd = base.clone();
+            cmd.request_id = format!("malformed-transition-{index}");
+            cmd.args["baseline_transition"] = transition;
+            assert!(
+                store
+                    .commands()
+                    .execute(TENANT, PROJECT, A, cmd)
+                    .await
+                    .is_err(),
+                "{case}"
+            );
+            assert_eq!(snapshot(&admin).await, before, "{case}");
+        }
+    }
+
+    #[tokio::test]
+    async fn baseline_transition_does_not_bypass_source_or_claim_fencing() {
+        let transition = fast_forward_transition();
+        for mutation in ["claim", "source"] {
+            let (_g, admin, _, store) = setup().await;
+            enable_writes(&admin).await;
+            let (claim, execution) = running_with_scope(&admin, &store, "src/api").await;
+            let cmd = transition_declaration(
+                &store,
+                &claim,
+                &execution,
+                &format!("fenced-{mutation}"),
+                &transition.actual_paths,
+                &transition.statement,
+            )
+            .await;
+            if mutation == "claim" {
+                store.commands().execute(TENANT,PROJECT,A,command(&prepare(&store,A,"a").await,"renew-before-transition","claim.renew",
+                    json!({"session_id":"session-a","expected_session_version":"1","claim_id":claim["claim_id"],
+                        "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],"ttl_seconds":600}))).await.unwrap();
+            } else {
+                policy(&admin, "a", "changed-workspace").await;
+            }
+            let before = snapshot(&admin).await;
+            assert!(matches!(
+                store.commands().execute(TENANT, PROJECT, A, cmd).await,
+                Err(PgError::PreconditionsChanged)
+            ));
+            assert_eq!(snapshot(&admin).await, before, "{mutation}");
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_v1_v2_receipts_keep_exact_absent_shape_and_normalized_hash_goldens() {
+        for (mode, golden) in [
+            (
+                ExecutionSettlementMode::IndependentWorkspaceV1,
+                "a1b7a19610712f1c2fca2924a1907f354b5f875ed0b0448d7551d83c7b8665c7",
+            ),
+            (
+                ExecutionSettlementMode::IndependentWorkspaceV2,
+                "e5ad077f05791d1af901d15b50b9592db452d4b7cc3f470af84a52d550a12049",
+            ),
+        ] {
+            let (_g, admin, _, store) = setup().await;
+            enable_writes(&admin).await;
+            policy_mode(&admin, "a", "clone-alpha", mode).await;
+            let (claim, execution) = ready_intent(&store).await;
+            let started = start(&store, &claim, &execution).await;
+            let cmd = declaration(
+                &store,
+                &claim,
+                &started,
+                "legacy-workspace-report",
+                "succeeded",
+            )
+            .await;
+            let response = store
+                .commands()
+                .execute(TENANT, PROJECT, A, cmd)
+                .await
+                .unwrap();
+            let result = &response["receipt"]["data"];
+            assert!(result.get("baseline_transition").is_none());
+            assert!(result.get("baseline_transition_provenance").is_none());
+            let receipt_id = result["receipt_id"].as_str().unwrap();
+            let row = admin
+                .query_one(
+                    "SELECT digest,payload_json FROM awr_team.execution_receipts WHERE id=$1",
+                    &[&receipt_id],
+                )
+                .await
+                .unwrap();
+            let stored_digest: String = row.get(0);
+            let payload: Value = row.get(1);
+            assert!(payload.get("baseline_transition").is_none());
+            assert!(payload.get("baseline_transition_provenance").is_none());
+            assert_eq!(stored_digest, awr_team::request_hash(&payload).unwrap());
+            let normalized = normalize_legacy_payload(payload);
+            assert_eq!(normalized, expected_legacy_payload(mode));
+            assert_eq!(awr_team::request_hash(&normalized).unwrap(), golden);
         }
     }
 

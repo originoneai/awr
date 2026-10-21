@@ -103,6 +103,8 @@ pub(crate) async fn verify_execution(
          WHERE tenant_id=$1 AND project_id=$2 AND execution_id=$3 AND id=$4",
         &[&tenant,&project,&id,&caller_id]).await?.ok_or(PgError::EvidenceInvalid)?;
     let report: Value = caller.get(2);
+    let baseline_transition_provenance =
+        executions::baseline_transition::validate_stored_receipt(&report)?;
     if caller.get::<_, String>(0) != "caller_asserted"
         || caller.get::<_, String>(3) != exec.get::<_, String>("executor_actor_id")
         || awr_team::request_hash(&report).map_err(|_| PgError::EvidenceInvalid)?
@@ -123,8 +125,10 @@ pub(crate) async fn verify_execution(
     {
         return Err(PgError::EvidenceInvalid);
     }
-    Ok(
-        json!({"caller_receipt_id":caller_id,"reconcile_receipt_id":receipt_id,
-        "executor_client_id":client,"execution_basis":"caller_asserted_reconciled"}),
-    )
+    let mut binding = json!({"caller_receipt_id":caller_id,"reconcile_receipt_id":receipt_id,
+        "executor_client_id":client,"execution_basis":"caller_asserted_reconciled"});
+    if let Some(provenance) = baseline_transition_provenance {
+        binding["baseline_transition_provenance"] = provenance;
+    }
+    Ok(binding)
 }

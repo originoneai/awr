@@ -15,6 +15,123 @@ use integration_fixture::*;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+fn baseline_transition() -> Value {
+    json!({
+        "kind":"caller_asserted_git_baseline_v1",
+        "operation":"merge_no_ff",
+        "workspace_before_revision":{
+            "resource":"local-repository:delivery-regression","format":"git_sha1","value":"1".repeat(40)
+        },
+        "imported_revision":{
+            "resource":"local-repository:delivery-regression","format":"git_sha1","value":"2".repeat(40)
+        },
+        "workspace_after_revision":{
+            "resource":"local-repository:delivery-regression","format":"git_sha1","value":"3".repeat(40)
+        },
+        "contribution_paths":["src/api/result.json"]
+    })
+}
+
+async fn put_baseline_transition(
+    admin: &tokio_postgres::Client,
+    transition: Value,
+) -> (String, Value) {
+    let row = admin
+        .query_one(
+            "SELECT id,payload_json FROM awr_team.execution_receipts
+             WHERE receipt_kind='caller_asserted' ORDER BY created_at,id LIMIT 1",
+            &[],
+        )
+        .await
+        .unwrap();
+    let id: String = row.get(0);
+    let mut payload: Value = row.get(1);
+    payload["baseline_transition"] = transition;
+    payload["baseline_transition_provenance"] =
+        json!({"origin":"caller_asserted","purpose":"provenance_only"});
+    let digest = awr_team::request_hash(&payload).unwrap();
+    admin
+        .execute(
+            "UPDATE awr_team.execution_receipts SET payload_json=$1,digest=$2 WHERE id=$3",
+            &[&payload, &digest, &id],
+        )
+        .await
+        .unwrap();
+    (id, payload)
+}
+
+async fn reconcile_fixture_execution(f: &SourceFixture, key: &str) -> Value {
+    f.f.admin
+        .batch_execute(
+            "UPDATE awr_team.actors SET kind='human' WHERE id='supervisor';
+        UPDATE awr_team.project_memberships SET role='admin',business_roles=NULL
+        WHERE actor_id='supervisor';
+        UPDATE awr_team.workstream_grants SET can_manage=true,can_reconcile_execution=true
+        WHERE client_id='cli-supervisor'",
+        )
+        .await
+        .unwrap();
+    let row =
+        f.f.admin
+            .query_one(
+                "SELECT id,execution_version,input_digest,result_digest,
+        environment_digest,observed_paths_json FROM awr_team.executions WHERE work_id='a'",
+                &[],
+            )
+            .await
+            .unwrap();
+    let execution_id: String = row.get(0);
+    let execution_version: i64 = row.get(1);
+    let input_digest: String = row.get::<_, Option<String>>(2).unwrap();
+    let output_digest: String = row.get::<_, Option<String>>(3).unwrap();
+    let environment_digest: String = row.get::<_, Option<String>>(4).unwrap();
+    let observed_paths: Value = row.get::<_, Option<Value>>(5).unwrap();
+    let receipt_id: String =
+        f.f.admin
+            .query_one(
+                "SELECT id FROM awr_team.execution_receipts
+        WHERE execution_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1",
+                &[&execution_id],
+            )
+            .await
+            .unwrap()
+            .get(0);
+    let prepared = prepare(&f.f.reads, SUPERVISOR, "a").await;
+    f.f.reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            SUPERVISOR,
+            command(
+                &prepared,
+                key,
+                "execution.reconcile",
+                json!({
+                    "session_id":"session-supervisor",
+                    "expected_session_version":"1",
+                    "execution_id":execution_id,
+                    "expected_execution_version":execution_version.to_string(),
+                    "expected_work_version":prepared["data"]["runtime"]["work_version"],
+                    "reviewed_receipt_id":receipt_id,
+                    "clear_recovery_block":true,
+                    "facts":{
+                        "outcome":"succeeded",
+                        "input_digest":input_digest,
+                        "output_digest":output_digest,
+                        "environment_digest":environment_digest,
+                        "observed_paths":observed_paths,
+                        "note":"Authorized reconciliation preserved caller provenance.",
+                        "executor_stopped":true
+                    }
+                }),
+            ),
+        )
+        .await
+        .unwrap()["receipt"]["data"]
+        .clone()
+}
+
 #[tokio::test]
 async fn actual_acceptance_atomically_schedules_receipt_backed_source_sync_without_observers() {
     for simulated in [false, true] {
@@ -81,6 +198,115 @@ async fn concurrent_exact_finalization_replays_one_receipt_and_one_domain_queue(
                 .get::<_, i64>(0),
             count
         );
+    }
+}
+
+#[tokio::test]
+async fn direct_completion_validates_original_transition_without_upgrading_provenance() {
+    let f = SourceFixture::new(false).await;
+    let (caller_receipt_id, caller_payload) =
+        put_baseline_transition(&f.f.admin, baseline_transition()).await;
+    f.f.check(
+        "transition-provider-check",
+        awr_team::delivery::VerificationOutcome::Passed,
+    )
+    .await;
+    let completed = f.finalize("transition-direct-finalize").await;
+    let binding = &completed["caller_execution_binding"];
+    assert_eq!(binding["caller_receipt_id"], caller_receipt_id);
+    assert_eq!(binding["artifact_verified"], true);
+    assert_eq!(
+        binding["baseline_transition_provenance"],
+        json!({"origin":"caller_asserted","purpose":"provenance_only"})
+    );
+    assert!(binding.get("baseline_transition").is_none());
+    assert!(completed.get("baseline_transition").is_none());
+    assert_eq!(completed["approval_basis"], "agent_review");
+    assert_eq!(completed["human_approval"], false);
+    assert_eq!(
+        completed["execution_basis"],
+        "caller_asserted_workspace_settled"
+    );
+    assert_eq!(caller_payload["baseline_transition"], baseline_transition());
+    assert_eq!(
+        f.f.admin
+            .query_one(
+                "SELECT trust_basis FROM awr_team.evidence WHERE id=$1",
+                &[&f.f.evidence["evidence_id"].as_str().unwrap()],
+            )
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "caller_asserted"
+    );
+}
+
+#[tokio::test]
+async fn reconciled_completion_reads_original_transition_and_keeps_reconcile_receipt_compact() {
+    let f = SourceFixture::new(false).await;
+    let (caller_receipt_id, _) = put_baseline_transition(&f.f.admin, baseline_transition()).await;
+    let reconciled = reconcile_fixture_execution(&f, "transition-reconcile").await;
+    assert_eq!(reconciled["receipt_kind"], "reconcile");
+    let reconcile_payload: Value =
+        f.f.admin
+            .query_one(
+                "SELECT payload_json FROM awr_team.execution_receipts WHERE id=$1",
+                &[&reconciled["receipt_id"].as_str().unwrap()],
+            )
+            .await
+            .unwrap()
+            .get(0);
+    assert!(reconcile_payload.get("baseline_transition").is_none());
+    assert!(
+        reconcile_payload
+            .get("baseline_transition_provenance")
+            .is_none()
+    );
+    let completed = f.finalize("transition-reconciled-finalize").await;
+    let binding = &completed["caller_execution_binding"];
+    assert_eq!(binding["caller_receipt_id"], caller_receipt_id);
+    assert_eq!(binding["reconcile_receipt_id"], reconciled["receipt_id"]);
+    assert_eq!(binding["execution_basis"], "caller_asserted_reconciled");
+    assert_eq!(
+        binding["baseline_transition_provenance"],
+        json!({"origin":"caller_asserted","purpose":"provenance_only"})
+    );
+    assert!(binding.get("baseline_transition").is_none());
+}
+
+#[tokio::test]
+async fn completion_rejects_transition_tampering_and_malformed_original_metadata() {
+    for case in ["digest-tamper", "malformed-direct", "malformed-reconciled"] {
+        let f = SourceFixture::new(false).await;
+        let (caller_receipt_id, mut caller_payload) =
+            put_baseline_transition(&f.f.admin, baseline_transition()).await;
+        if case == "malformed-reconciled" {
+            reconcile_fixture_execution(&f, "reconcile-before-malformed").await;
+        }
+        caller_payload["baseline_transition"]["contribution_paths"] = json!(["src/api/../outside"]);
+        if case == "digest-tamper" {
+            f.f.admin
+                .execute(
+                    "UPDATE awr_team.execution_receipts SET payload_json=$1 WHERE id=$2",
+                    &[&caller_payload, &caller_receipt_id],
+                )
+                .await
+                .unwrap();
+        } else {
+            let digest = awr_team::request_hash(&caller_payload).unwrap();
+            f.f.admin
+                .execute(
+                    "UPDATE awr_team.execution_receipts SET payload_json=$1,digest=$2 WHERE id=$3",
+                    &[&caller_payload, &digest, &caller_receipt_id],
+                )
+                .await
+                .unwrap();
+        }
+        assert!(
+            matches!(f.try_finalize(case).await, Err(PgError::EvidenceInvalid)),
+            "{case}"
+        );
+        f.assert_no_completion().await;
     }
 }
 
