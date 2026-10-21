@@ -21,6 +21,27 @@ mod input_diagnostics;
 mod planning_schema;
 pub(super) use input_diagnostics::add_input_diagnostic;
 
+fn add_checkpoint_input_schema(command: &mut Value) {
+    let fields = &command["properties"]["args"]["properties"];
+    let properties = json!({
+        "session_id":fields["session_id"].clone(),
+        "expected_session_version":fields["expected_session_version"].clone(),
+        "context_hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+        "next_action":{"type":"string","minLength":1,"maxLength":8192},
+        "open_loops":{"type":"array","maxItems":32,"items":{
+            "type":"string","minLength":1,"maxLength":4096}},
+        "client_info":fields["client_info"].clone(),
+        "progress":fields["progress"].clone(),
+        "usage":fields["usage"].clone()
+    });
+    command["allOf"].as_array_mut().unwrap().push(json!({
+        "if":{"properties":{"op":{"const":"session.checkpoint"}},"required":["op"]},
+        "then":{"properties":{"args":{"type":"object","additionalProperties":false,
+            "required":["session_id","expected_session_version","context_hash","next_action","open_loops"],
+            "properties":properties}}}
+    }));
+}
+
 fn add_evidence_input_schema(command: &mut Value, query: &mut Value) {
     let fields = command["properties"]["args"]["properties"]
         .as_object_mut()
@@ -615,6 +636,7 @@ fn catalog() -> Vec<Tool> {
             }
         }
     ]);
+    add_checkpoint_input_schema(&mut command);
     add_handoff_input_schema(&mut command);
     add_neutral_delivery_schema(&mut command);
     add_evidence_input_schema(&mut command, &mut query);

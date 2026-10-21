@@ -205,6 +205,109 @@ mod tests {
             "expected_contract_hash":"a".repeat(64),"args":args})
     }
 
+    fn checkpoint(args: Value) -> Value {
+        let mut input = command(args);
+        input["op"] = json!("session.checkpoint");
+        input
+    }
+
+    fn checkpoint_args() -> Value {
+        json!({
+            "session_id":"session",
+            "expected_session_version":"1",
+            "context_hash":"a".repeat(64),
+            "next_action":"Review the focused change",
+            "open_loops":["Independent review pending"]
+        })
+    }
+
+    #[test]
+    fn checkpoint_rejections_name_missing_fields_and_hide_unknown_args() {
+        for field in ["session_id", "context_hash"] {
+            let mut args = checkpoint_args();
+            args.as_object_mut().unwrap().remove(field);
+            let error = rejected(checkpoint(args), true);
+            assert_eq!(error["invalid_field"], format!("/args/{field}"));
+            assert_eq!(error["constraint"], "required");
+        }
+
+        let mut args = checkpoint_args();
+        args["private-key-sentinel"] = json!("private-value-sentinel");
+        let error = rejected(checkpoint(args), true);
+        assert_eq!(error["invalid_field"], "/args");
+        assert_eq!(error["constraint"], "unexpected_field");
+        assert_eq!(error["expected_fields"].as_array().unwrap().len(), 8);
+        assert!(!error.to_string().contains("private-"));
+        assert!(error.to_string().len() < 1024);
+    }
+
+    #[test]
+    fn checkpoint_schema_accepts_required_shape_and_optional_feedback() {
+        let schema = catalog()
+            .into_iter()
+            .find(|tool| tool.name == "awr_team_command")
+            .unwrap()
+            .input_schema;
+        let branch = schema["allOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|branch| branch["if"]["properties"]["op"]["const"] == "session.checkpoint")
+            .unwrap();
+        let args_schema = &branch["then"]["properties"]["args"];
+        assert_eq!(args_schema["additionalProperties"], false);
+        assert_eq!(
+            args_schema["required"],
+            json!([
+                "session_id",
+                "expected_session_version",
+                "context_hash",
+                "next_action",
+                "open_loops"
+            ])
+        );
+        let fields = args_schema["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            fields,
+            std::collections::BTreeSet::from([
+                "client_info",
+                "context_hash",
+                "expected_session_version",
+                "next_action",
+                "open_loops",
+                "progress",
+                "session_id",
+                "usage",
+            ])
+        );
+
+        let required_only = checkpoint(checkpoint_args());
+        assert!(rejected(required_only, true).get("invalid_field").is_none());
+
+        let mut optional = checkpoint_args();
+        optional["client_info"] = json!({"product":"Synthetic Agent"});
+        optional["progress"] = json!({"phase":"testing","summary":"Focused checks are running."});
+        optional["usage"] = json!({
+            "source":"synthetic-test",
+            "source_ref":"unit",
+            "counter_id":"counter",
+            "scope":"host_session",
+            "coverage":"complete",
+            "observed_at_unix_ms":1,
+            "input_tokens":1
+        });
+        assert!(
+            rejected(checkpoint(optional), true)
+                .get("invalid_field")
+                .is_none()
+        );
+    }
+
     #[test]
     fn evidence_rejection_points_to_required_fields_and_the_closed_container() {
         let args = json!({"session_id":"session","expected_session_version":"1","payload":null,"dirty_tree":false});
