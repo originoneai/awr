@@ -16,10 +16,10 @@ use crate::operator_access::require_owner_project;
 use crate::{PgError, PgResult};
 use tokio_postgres::{Client, Row};
 
-const PROTOCOL: &str = "awr-operator-planning-writeback-v1";
-const PENDING: [&str; 3] = ["validated", "source_written", "pg_activating"];
+const PROTOCOL: &str = journal::OPERATOR_DECISION_PROTOCOL;
+const PENDING: [&str; 3] = journal::PENDING_PHASES;
 const LIMIT: i64 = 50;
-const MAX_REASON: usize = 500;
+const MAX_REASON: usize = journal::MAX_OPERATOR_REASON;
 const AFFECTED_SAMPLE: usize = 20;
 const MALFORMED_HASH_BLOCK: &str =
     "the recorded intent hash is malformed and cannot be used as a safe close token";
@@ -146,7 +146,7 @@ fn view(row: &Row, tenant: &str, project: &str) -> PgResult<View> {
         dependency: row.get(10),
         created_at: row.get(13),
         updated_at: row.get(14),
-        decision: journal::operator_decision(&body).cloned(),
+        decision: journal::recorded_operator_decision(&body).cloned(),
     })
 }
 
@@ -196,60 +196,6 @@ fn observe(intent: Option<&Intent>) -> Observed {
         state,
         fingerprint: Some(observed),
     }
-}
-
-fn fingerprint_matches_state(state: SourceState, value: Option<&Value>) -> bool {
-    match state {
-        SourceState::AtBefore | SourceState::AtAfter | SourceState::Drifted => value
-            .and_then(Value::as_str)
-            .is_some_and(source_fingerprint),
-        SourceState::Unreadable | SourceState::Unknown => value.is_some_and(Value::is_null),
-        SourceState::WriterBusy => false,
-    }
-}
-
-fn valid_operator_decision(decision: &Value, view: &View) -> bool {
-    let Some(source_state) = decision
-        .get("source_state")
-        .and_then(Value::as_str)
-        .and_then(|state| SourceState::parse(state).ok())
-    else {
-        return false;
-    };
-    decision.get("protocol").and_then(Value::as_str) == Some(PROTOCOL)
-        && decision.get("action").and_then(Value::as_str) == Some("abandon")
-        && decision.get("request_id").and_then(Value::as_str) == Some(view.request_id.as_str())
-        && decision
-            .get("previous_phase")
-            .and_then(Value::as_str)
-            .is_some_and(|phase| PENDING.contains(&phase))
-        && decision.get("intent_hash").is_some_and(|hash| {
-            match (hash.as_str(), view.recorded_hash.as_deref()) {
-                (Some(decision), Some(recorded)) => hex(decision) && decision == recorded,
-                (None, None) => hash.is_null(),
-                _ => false,
-            }
-        })
-        && fingerprint_matches_state(source_state, decision.get("source_fingerprint"))
-        && decision.get("source_retained").and_then(Value::as_bool)
-            == Some(source_state != SourceState::AtBefore)
-        && decision
-            .get("operator_role")
-            .and_then(Value::as_str)
-            .is_some_and(identity)
-        && decision
-            .get("reason")
-            .and_then(Value::as_str)
-            .is_some_and(|reason| {
-                !reason.trim().is_empty()
-                    && reason.chars().count() <= MAX_REASON
-                    && !reason.chars().any(char::is_control)
-            })
-        && decision
-            .get("project_revision")
-            .and_then(Value::as_str)
-            .and_then(|revision| revision.parse::<i64>().ok())
-            .is_some_and(|revision| revision >= 0)
 }
 
 fn item(view: &View, observed: Option<&Observed>) -> Value {
@@ -453,7 +399,12 @@ impl OperatorWriteback {
                     "the recorded operator decision is inconsistent with its journal phase; inspect the retained journal before recovery".into(),
                 ));
             }
-            if !valid_operator_decision(decision, &now) {
+            if !journal::valid_operator_decision(
+                decision,
+                &now.phase,
+                &now.request_id,
+                now.recorded_hash.as_deref(),
+            ) {
                 return Err(PgError::WritebackRefused(
                     "the recorded operator decision is malformed; inspect the retained journal before recovery".into(),
                 ));

@@ -2980,6 +2980,76 @@ async fn a_refused_journal_replays_only_a_well_formed_operator_decision() {
 }
 
 #[tokio::test]
+async fn a_malformed_refused_decision_never_reports_owner_closure_or_changes_on_retry() {
+    for corrupt_intent in [false, true] {
+        let mut p = pending_at("after_intent").await;
+        let close = p.close_request(false).await;
+        p.close(&close).await.unwrap();
+        p.admin
+            .execute(
+                "UPDATE awr_team.planning_writeback_journals
+                 SET body_json=jsonb_build_object('phase','refused','operator_decision','{}'::jsonb)
+                 WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
+                &[&TENANT, &PROJECT, &p.req.request_id],
+            )
+            .await
+            .unwrap();
+        if corrupt_intent {
+            p.admin
+                .execute(
+                    "UPDATE awr_team.planning_writeback_journals
+                     SET intent_json=jsonb_build_object('codec','corrupt-intent')
+                     WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
+                    &[&TENANT, &PROJECT, &p.req.request_id],
+                )
+                .await
+                .unwrap();
+        }
+        let journal_before = abandonment_facts(&p.admin, &p.req.request_id).await;
+        let activation_before = activation_facts(&p.admin).await;
+        let source_before = std::fs::read(p.ledger()).unwrap();
+
+        let status = p.status().await;
+        assert_eq!(status["phase"], "refused");
+        assert_eq!(status["original_intent_bound"], !corrupt_intent);
+        assert!(status.get("operator_closed").is_none());
+        assert!(
+            !status["next_step"]
+                .as_str()
+                .unwrap()
+                .contains("schema owner closed")
+        );
+
+        let retry = p
+            .store
+            .activate_planning_writeback(TENANT, PROJECT, A, &p.req)
+            .await
+            .unwrap_err();
+        assert!(!is_refused(&retry, "schema owner closed"), "{retry:?}");
+        if corrupt_intent {
+            assert!(
+                is_refused(&retry, "original writeback intent is unknown"),
+                "{retry:?}"
+            );
+        } else {
+            assert!(
+                matches!(retry, PgError::ActivationImpactUnproven(_)),
+                "{retry:?}"
+            );
+        }
+        let replay = p.close(&close).await.unwrap_err();
+        assert!(is_refused(&replay, "decision is malformed"), "{replay:?}");
+
+        assert_eq!(std::fs::read(p.ledger()).unwrap(), source_before);
+        assert_eq!(
+            abandonment_facts(&p.admin, &p.req.request_id).await,
+            journal_before
+        );
+        assert_eq!(activation_facts(&p.admin).await, activation_before);
+    }
+}
+
+#[tokio::test]
 async fn a_finished_writeback_is_not_pending_and_cannot_be_closed() {
     let mut done = pending_at("after_final_commit").await;
     let page = awr_team_pg::OperatorWriteback::inspect(

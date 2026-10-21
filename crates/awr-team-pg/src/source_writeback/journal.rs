@@ -2,6 +2,10 @@
 use super::*;
 use request_binding::Intent;
 
+pub(super) const OPERATOR_DECISION_PROTOCOL: &str = "awr-operator-planning-writeback-v1";
+pub(super) const PENDING_PHASES: [&str; 3] = ["validated", "source_written", "pg_activating"];
+pub(super) const MAX_OPERATOR_REASON: usize = 500;
+
 pub(super) struct Journal {
     pub phase: String,
     pub intent: Intent,
@@ -27,8 +31,12 @@ pub(super) async fn load(
     match parse(&row, tenant, project, request) {
         Ok(journal) => Ok(Some(journal)),
         Err(PgError::WritebackRefused(_) | PgError::SourceDivergence)
-            if row.get::<_, String>(0) == "refused"
-                && operator_decision(&row.get::<_, Value>(11)).is_some() =>
+            if operator_closed(
+                &row.get::<_, Value>(11),
+                &row.get::<_, String>(0),
+                request,
+                row.get::<_, Option<String>>(1).as_deref(),
+            ) =>
         {
             Err(operator_closed_error())
         }
@@ -44,6 +52,8 @@ pub(super) fn parse(
     request: &str,
 ) -> PgResult<Journal> {
     let hash: String = row.get::<_, Option<String>>(1).ok_or_else(unknown)?;
+    let phase: String = row.get(0);
+    let body: Value = row.get(11);
     let intent: Intent =
         serde_json::from_value(row.get::<_, Option<Value>>(2).ok_or_else(unknown)?)
             .map_err(|_| unknown())?;
@@ -63,17 +73,99 @@ pub(super) fn parse(
         return Err(PgError::SourceDivergence);
     };
     Ok(Journal {
-        phase: row.get(0),
+        phase: phase.clone(),
         intent,
-        hash,
+        hash: hash.clone(),
         receipt_id: row.get(3),
-        operator_closed: operator_decision(&row.get::<_, Value>(11)).is_some(),
+        operator_closed: operator_closed(&body, &phase, request, Some(&hash)),
     })
 }
 
-/// The schema owner's recorded decision, when it closed the journal.
-pub(super) fn operator_decision(body: &Value) -> Option<&Value> {
+/// A recorded decision object, including a malformed or phase-inconsistent one.
+pub(super) fn recorded_operator_decision(body: &Value) -> Option<&Value> {
     body.get("operator_decision").filter(|d| d.is_object())
+}
+
+fn identity(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 200 && !value.chars().any(char::is_control)
+}
+
+fn hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn source_fingerprint(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(hex)
+}
+
+/// Whether a retained decision proves that the schema owner closed this exact journal.
+/// All readers and the operator replay path use this same structural classification.
+pub(super) fn valid_operator_decision(
+    decision: &Value,
+    phase: &str,
+    request: &str,
+    recorded_hash: Option<&str>,
+) -> bool {
+    if phase != "refused" {
+        return false;
+    }
+    let Some(source_state) = decision.get("source_state").and_then(Value::as_str) else {
+        return false;
+    };
+    let source_shape = match source_state {
+        "at_before" | "at_after" | "drifted" => decision
+            .get("source_fingerprint")
+            .and_then(Value::as_str)
+            .is_some_and(source_fingerprint),
+        "unreadable" | "unknown" => decision
+            .get("source_fingerprint")
+            .is_some_and(Value::is_null),
+        _ => false,
+    };
+    decision.get("protocol").and_then(Value::as_str) == Some(OPERATOR_DECISION_PROTOCOL)
+        && decision.get("action").and_then(Value::as_str) == Some("abandon")
+        && decision.get("request_id").and_then(Value::as_str) == Some(request)
+        && decision
+            .get("previous_phase")
+            .and_then(Value::as_str)
+            .is_some_and(|previous| PENDING_PHASES.contains(&previous))
+        && decision
+            .get("intent_hash")
+            .is_some_and(|hash| match (hash.as_str(), recorded_hash) {
+                (Some(decision_hash), Some(saved_hash)) => {
+                    hex(decision_hash) && decision_hash == saved_hash
+                }
+                (None, None) => hash.is_null(),
+                _ => false,
+            })
+        && source_shape
+        && decision.get("source_retained").and_then(Value::as_bool)
+            == Some(source_state != "at_before")
+        && decision
+            .get("operator_role")
+            .and_then(Value::as_str)
+            .is_some_and(identity)
+        && decision
+            .get("reason")
+            .and_then(Value::as_str)
+            .is_some_and(|reason| {
+                !reason.trim().is_empty()
+                    && reason.chars().count() <= MAX_OPERATOR_REASON
+                    && !reason.chars().any(char::is_control)
+            })
+        && decision
+            .get("project_revision")
+            .and_then(Value::as_str)
+            .and_then(|revision| revision.parse::<i64>().ok())
+            .is_some_and(|revision| revision >= 0)
+}
+
+fn operator_closed(body: &Value, phase: &str, request: &str, recorded_hash: Option<&str>) -> bool {
+    recorded_operator_decision(body)
+        .is_some_and(|decision| valid_operator_decision(decision, phase, request, recorded_hash))
 }
 
 pub(super) fn operator_closed_error() -> PgError {
@@ -184,7 +276,12 @@ pub(crate) async fn outcome_in_tx(
         false
     };
     // The schema owner closed a pending journal without resuming it. Nothing was activated.
-    let closed = phase == "refused" && operator_decision(&row.get::<_, Value>(11)).is_some();
+    let closed = operator_closed(
+        &row.get::<_, Value>(11),
+        &phase,
+        request,
+        row.get::<_, Option<String>>(1).as_deref(),
+    );
     let mut outcome = json!({"request_id":request,"phase":phase,"original_intent_bound":bound,
         "pending":matches!(phase.as_str(),"validated"|"source_written"|"pg_activating"),
         "source_writeback_pending":!applied,"applied":applied,
