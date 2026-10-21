@@ -585,21 +585,32 @@ async fn revocation_drop_and_explicit_credential_rotation_preserve_original_work
 #[cfg(unix)]
 #[tokio::test]
 async fn cancellation_after_real_effect_and_restart_queries_original_without_another_launch() {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::{ffi::OsStrExt, fs::PermissionsExt};
     fn quote(path: &std::path::Path) -> String {
         format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"))
     }
+    fn cancellation_config(repo: &git::GitFixture, name: &str) -> LocalGitWorkerConfig {
+        let mut value = config(repo, name, true);
+        let worker = &mut value.workers[0];
+        worker.repository.command_timeout_ms = 8000;
+        worker.repository.inspection_timeout_ms = 8000;
+        worker.operation_timeout_ms = 9000;
+        value
+    }
     let mut repo = git::GitFixture::integration(false);
     let marker = repo.root.join("actual-launches");
+    let gate = repo.root.join("post-effect-gate");
     let real = quote(&repo.config.git_executable);
     let wrapper = repo.root.join("fixed-test-git");
-    std::fs::write(&wrapper, format!("#!/bin/sh\ncase \"$*\" in *'update-ref --no-deref'*)\n{real} \"$@\" || exit $?\nprintf x >> {}\nexec sleep 2;; esac\nexec {real} \"$@\"\n", quote(&marker))).unwrap();
+    let gate_path = std::ffi::CString::new(gate.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `gate_path` is a fresh, NUL-free path inside the fixture directory.
+    assert_eq!(unsafe { libc::mkfifo(gate_path.as_ptr(), 0o600) }, 0);
+    std::fs::write(&wrapper, format!("#!/bin/sh\ncase \"$*\" in *'update-ref --no-deref'*)\n{real} \"$@\" || exit $?\nprintf x >> {}\nread _ < {}\nexit 0;; esac\nexec {real} \"$@\"\n", quote(&marker), quote(&gate))).unwrap();
     std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
     repo.config.git_executable = wrapper;
-    repo.config.command_timeout_ms = 1000;
     let f = setup_local(&repo).await;
     f.prepared().await;
-    let runtime = start(&f, config(&repo, "cancel", true)).await;
+    let runtime = start(&f, cancellation_config(&repo, "cancel")).await;
     let monitor = runtime.monitor();
     tokio::time::timeout(Duration::from_secs(15), async {
         while !marker.exists() {
@@ -612,7 +623,7 @@ async fn cancellation_after_real_effect_and_restart_queries_original_without_ano
     wait(&monitor, |s| s.state == WorkerState::Stopped).await;
     assert_eq!(std::fs::read(&marker).unwrap(), b"x");
     assert_eq!(repo.bare(&["rev-parse", "refs/heads/main"]), repo.source);
-    let runtime = start(&f, config(&repo, "recover-cancel", true)).await;
+    let runtime = start(&f, cancellation_config(&repo, "recover-cancel")).await;
     let monitor = runtime.monitor();
     wait(&monitor, |s| s.confirmed == 1).await;
     runtime.shutdown().await;
