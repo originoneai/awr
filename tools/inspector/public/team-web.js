@@ -84,13 +84,13 @@
     let refreshTimer = null;
     let inboxGeneration = 0;
     let inboxInteraction = 0;
-    let detailPosition = { identity: null, top: 0 };
+    let detailPosition = { identity: null, top: 0, renderedTop: 0 };
     let detailRenderedIdentity = null;
     const adminModule = root.AWR_TEAM_ADMIN || (typeof require === 'function' ? require('./team-admin') : null);
     const admin = adminModule && adminModule.createTeamAdmin({ $, i18n, api, onAuthError: failed });
 
     function resetDetailPosition() {
-      detailPosition = { identity: null, top: 0 };
+      detailPosition = { identity: null, top: 0, renderedTop: 0 };
       detailRenderedIdentity = null;
       const detail = $('teamDetail');
       if (detail) detail.scrollTop = 0;
@@ -1203,17 +1203,25 @@
       if (detail) {
         const maximum = Math.max(0, detail.scrollHeight - detail.clientHeight);
         if (detailIdentity && detailRenderedIdentity === detailIdentity
-          && detailPosition.identity === detailIdentity && maximum >= detailPosition.top) {
-          detailPosition.top = Math.max(0, Number(detail.scrollTop) || 0);
+          && detailPosition.identity === detailIdentity) {
+          const currentTop = Math.max(0, Number(detail.scrollTop) || 0);
+          if (currentTop !== detailPosition.renderedTop || maximum >= detailPosition.top) {
+            detailPosition.top = currentTop;
+          }
         }
-        if (detailPosition.identity !== detailIdentity) detailPosition = { identity: detailIdentity, top: 0 };
+        if (detailPosition.identity !== detailIdentity) {
+          detailPosition = { identity: detailIdentity, top: 0, renderedTop: 0 };
+        }
       }
       if (auth) { auth.classList.toggle('signed-in', signedIn); renderAuth(auth); }
       if (projects) renderProjects(projects);
       if (overview) renderOverview(overview);
       if (detail) {
         renderDetail(detail);
-        if (detailIdentity && detailPosition.identity === detailIdentity) detail.scrollTop = detailPosition.top;
+        if (detailIdentity && detailPosition.identity === detailIdentity) {
+          detail.scrollTop = detailPosition.top;
+          detailPosition.renderedTop = detail.scrollTop;
+        }
         detailRenderedIdentity = detailIdentity;
       }
       if (overview && net) {

@@ -143,9 +143,13 @@ test('a temporarily shorter same-task detail does not replace the desired readin
   assert.ok(shorterMaximum < desired);
   assert.equal(view.scrollTop, shorterMaximum);
 
+  view.scrollTop = 120;
+  await ui._refreshProgress();
+  assert.equal(view.scrollTop, 120);
+
   rich = true;
   await ui._refreshProgress();
-  assert.equal(view.scrollTop, desired);
+  assert.equal(view.scrollTop, 120);
 });
 
 test('project changes reset detail position even when the task key repeats', async () => {
