@@ -74,6 +74,119 @@ test('background refresh displays changed facts while retaining selection and la
   assert.equal(visualStatus(ui._selectedWork()), 'blocked');
 });
 
+test('detail reading position survives peer-first polling and a failed read that recovers', async () => {
+  live((url, works) => detail(works.find(w => w.key === new URL(url, 'http://test').searchParams.get('work'))), 2);
+  await ui.refresh();
+  await ui._selectWork('W-1');
+  const view = node('teamDetail');
+  view.scrollTop = 240;
+  assert.equal(view.scrollTop, 240);
+
+  let releaseSelected, peerFinished;
+  const selectedGate = new Promise(resolve => { releaseSelected = resolve; });
+  const peerReady = new Promise(resolve => { peerFinished = resolve; });
+  live(async (url, works) => {
+    const key = new URL(url, 'http://test').searchParams.get('work');
+    if (key === 'W-1') await selectedGate;
+    else peerFinished();
+    return { ok: true, work: { ...detail(works.find(w => w.key === key)).work, next_step: 'Fresh ' + key } };
+  }, 2);
+  const polling = ui._refreshProgress();
+  await peerReady;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(view.scrollTop, 240);
+  releaseSelected();
+  await polling;
+  assert.equal(view.scrollTop, 240);
+
+  live((url, works) => {
+    const key = new URL(url, 'http://test').searchParams.get('work');
+    return key === 'W-1' ? { ok: false, error: { code: 'SourceChanged' } }
+      : detail(works.find(w => w.key === key));
+  }, 2);
+  await ui._refreshProgress();
+  assert.match(view.textContent, /does not mean the Agent has not reported/);
+  assert.ok(view.scrollTop < 240);
+
+  live((url, works) => ({ ok: true, work: {
+    ...detail(works.find(w => w.key === new URL(url, 'http://test').searchParams.get('work'))).work,
+    next_step: 'Recovered detail',
+  } }), 2);
+  await view.find(el => el.tagName === 'BUTTON' && el.textContent === 'Retry reading details').click();
+  assert.match(view.textContent, /Recovered detail/);
+  assert.equal(view.scrollTop, 240);
+
+  await ui._selectWork('W-0');
+  assert.equal(view.scrollTop, 0);
+});
+
+test('a temporarily shorter same-task detail does not replace the desired reading position', async () => {
+  let rich = true;
+  const response = work => rich ? { ok: true, work: {
+    ...detail(work).work,
+    observation_available: true,
+    pr_reference: { url: 'https://example.test/pull/1', registration: 'registered', expected_head: 'abcdef01' },
+    github: { head_sha: 'abcdef01', observed_at_ms: 1000, ci: 'success' },
+    checkpoint: { next_action: 'Continue verification', created_at_unix_ms: 1000, contract_matches_current: true },
+    execution: { state: 'completed', report: { kind: 'success', note: 'Verified' } },
+  } } : detail(work);
+  live((url, works) => response(works.find(w => w.key === new URL(url, 'http://test').searchParams.get('work'))), 1);
+  await ui.refresh();
+  const view = node('teamDetail');
+  const desired = view.scrollHeight - view.clientHeight;
+  view.scrollTop = desired;
+  assert.ok(desired > 0);
+
+  rich = false;
+  await ui._refreshProgress();
+  const shorterMaximum = view.scrollHeight - view.clientHeight;
+  assert.ok(shorterMaximum < desired);
+  assert.equal(view.scrollTop, shorterMaximum);
+
+  rich = true;
+  await ui._refreshProgress();
+  assert.equal(view.scrollTop, desired);
+});
+
+test('project changes reset detail position even when the task key repeats', async () => {
+  let secondProjectRead;
+  const secondProjectReady = new Promise(resolve => { secondProjectRead = resolve; });
+  global.fetch = async url => ({ ok: true, json: async () => {
+    if (url.includes('/projects?')) return { ok: true, projects: [{ key: 'one' }, { key: 'two' }], session: { session_id: 'test' } };
+    if (url.includes('/overview?')) return { ok: true, interaction_mode: 'mcp', workstreams: [{ id: 'stream' }],
+      works: [{ key: 'W-0', workstream_id: 'stream', contract_hash: 'current' }] };
+    const project = new URL(url, 'http://test').searchParams.get('project');
+    if (project === 'two') secondProjectRead();
+    return detail({ key: 'W-0', workstream_id: 'stream', contract_hash: 'current' });
+  } });
+  await ui.refresh();
+  const view = node('teamDetail');
+  view.scrollTop = 240;
+  assert.equal(view.scrollTop, 240);
+
+  const picker = node('teamProjects').find(el => el.tagName === 'SELECT');
+  picker.value = 'two';
+  picker.listeners.change[0]();
+  await secondProjectReady;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(ui.state.projectKey, 'two');
+  assert.equal(ui.state.selected, 'W-0');
+  assert.equal(view.scrollTop, 0);
+});
+
+test('logout discards a remembered position before the same detail is opened again', async () => {
+  live((url, works) => url.endsWith('/logout') ? { ok: true }
+    : detail(works.find(w => w.key === new URL(url, 'http://test').searchParams.get('work'))), 1);
+  await ui.refresh();
+  const view = node('teamDetail');
+  view.scrollTop = 240;
+  assert.equal(view.scrollTop, 240);
+  await node('teamAuth').find(el => el.tagName === 'BUTTON' && el.textContent === 'Log out').click();
+  assert.equal(view.scrollTop, 0);
+  await ui.refresh();
+  assert.equal(view.scrollTop, 0);
+});
+
 test('background refresh does not disturb member forms, overlap, or restore revoked data', async () => {
   let reads = 0, release;
   live(async (url, works) => { reads++; return detail(works[0]); }, 1);

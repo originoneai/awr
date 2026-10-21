@@ -26,7 +26,24 @@ class StubElement {
     };
     this.hidden = false;
     this._value = '';
+    this._scrollTop = 0;
+    this.clientHeight = 0;
     this.own = ''; // Own text, excluding child nodes.
+  }
+
+  get scrollHeight() {
+    // Approximate block layout so clearing a scroll container exercises the
+    // browser behavior relevant to rendering tests.
+    return Math.max(this.clientHeight, this.children.length * 40 + (this.own ? 20 : 0));
+  }
+
+  get scrollTop() {
+    return this._scrollTop;
+  }
+
+  set scrollTop(value) {
+    const maximum = Math.max(0, this.scrollHeight - this.clientHeight);
+    this._scrollTop = Math.max(0, Math.min(Number(value) || 0, maximum));
   }
 
   get value() {
@@ -42,6 +59,7 @@ class StubElement {
   set textContent(v) {
     this.own = v == null ? '' : String(v);
     this.children = [];
+    this.scrollTop = this._scrollTop;
     if (this.tagName === 'SELECT') this._value = '';
   }
 
@@ -65,6 +83,7 @@ class StubElement {
 
   removeChild(child) {
     this.children = this.children.filter((c) => c !== child);
+    this.scrollTop = this._scrollTop;
     if (this.tagName === 'SELECT' && child.value === this._value) this._value = this.children[0]?.value || '';
     return child;
   }
@@ -115,6 +134,9 @@ const IDS = [
 function install() {
   const byId = new Map();
   for (const id of IDS) byId.set(id, new StubElement(id === 'fWork' ? 'select' : 'div'));
+  // The persistent detail host is the scroll container in the Inspector UI.
+  byId.set('teamDetail', new StubElement('div'));
+  byId.get('teamDetail').clientHeight = 120;
 
   // Explanatory paragraphs selected by app.js with [data-note="..."].
   const bySelector = new Map();

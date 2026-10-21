@@ -84,11 +84,21 @@
     let refreshTimer = null;
     let inboxGeneration = 0;
     let inboxInteraction = 0;
+    let detailPosition = { identity: null, top: 0 };
+    let detailRenderedIdentity = null;
     const adminModule = root.AWR_TEAM_ADMIN || (typeof require === 'function' ? require('./team-admin') : null);
     const admin = adminModule && adminModule.createTeamAdmin({ $, i18n, api, onAuthError: failed });
 
+    function resetDetailPosition() {
+      detailPosition = { identity: null, top: 0 };
+      detailRenderedIdentity = null;
+      const detail = $('teamDetail');
+      if (detail) detail.scrollTop = 0;
+    }
+
     function clearProjectData() {
       if (admin) admin.reset();
+      resetDetailPosition();
       state.projects = [];
       state.projectKey = null;
       state.works = [];
@@ -160,6 +170,7 @@
       }
       picker.value = state.projectKey;
       picker.addEventListener('change', () => {
+        if (picker.value !== state.projectKey) resetDetailPosition();
         state.projectKey = picker.value;
         try { root.sessionStorage.setItem('awr-team-project', state.projectKey); } catch (_) { /* Storage is optional. */ }
         state.selected = null;
@@ -638,6 +649,7 @@
 
     async function selectWork(key) {
       const request = ++detailGeneration;
+      if (key !== state.selected) resetDetailPosition();
       state.selected = key;
       state.detailResponse = null;
       const work = selectedWork();
@@ -678,10 +690,7 @@
         if (!d.visible) continue;
         const li = el('li');
         const link = el('button', { class: 'linkish', type: 'button' }, d.key);
-        link.addEventListener('click', () => {
-          state.selected = d.key;
-          render();
-        });
+        link.addEventListener('click', () => selectWork(d.key));
         li.appendChild(link);
         li.appendChild(
           document.createTextNode(
@@ -1189,10 +1198,24 @@
       const inboxFocus = active?.dataset?.inboxFocus;
       const frame = overview && overview.querySelector('.scene-frame');
       const scroll = frame ? [frame.scrollLeft, frame.scrollTop] : [0, 0];
+      const detailIdentity = state.projectKey && state.selected
+        ? JSON.stringify([state.projectKey, state.selected]) : null;
+      if (detail) {
+        const maximum = Math.max(0, detail.scrollHeight - detail.clientHeight);
+        if (detailIdentity && detailRenderedIdentity === detailIdentity
+          && detailPosition.identity === detailIdentity && maximum >= detailPosition.top) {
+          detailPosition.top = Math.max(0, Number(detail.scrollTop) || 0);
+        }
+        if (detailPosition.identity !== detailIdentity) detailPosition = { identity: detailIdentity, top: 0 };
+      }
       if (auth) { auth.classList.toggle('signed-in', signedIn); renderAuth(auth); }
       if (projects) renderProjects(projects);
       if (overview) renderOverview(overview);
-      if (detail) renderDetail(detail);
+      if (detail) {
+        renderDetail(detail);
+        if (detailIdentity && detailPosition.identity === detailIdentity) detail.scrollTop = detailPosition.top;
+        detailRenderedIdentity = detailIdentity;
+      }
       if (overview && net) {
         network.layout(overview, net);
         const nextFrame = overview.querySelector('.scene-frame');
@@ -1337,10 +1360,11 @@
           if (!observationCurrent() || state.error || $('teamWorkspaceGrid')?.hidden || editing()) return;
           const foreground = selectedWork();
           state.works = works.map(work => {
-            if (selection !== detailGeneration && foreground?.key === work.key
-              && foreground.workstream_id === work.workstream_id && foreground.contract_hash === work.contract_hash
-              && foreground.detail_loaded && (!work.detail_loaded
-                || (detailReadOrder.get(foreground) || 0) > (detailReadOrder.get(work) || 0))) return foreground;
+            const sameDetail = foreground?.key === work.key && foreground.workstream_id === work.workstream_id
+              && foreground.contract_hash === work.contract_hash && foreground.detail_loaded;
+            if (sameDetail && !work.detail_loaded && !work.detail_error) return foreground;
+            if (selection !== detailGeneration && sameDetail && (!work.detail_loaded
+              || (detailReadOrder.get(foreground) || 0) > (detailReadOrder.get(work) || 0))) return foreground;
             return work;
           });
           state.streams = overview.workstreams || [];
