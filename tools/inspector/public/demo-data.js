@@ -357,6 +357,22 @@
       },
     },
 
+    executionInspects: {
+      exe_4411: {
+        observation: {
+          execution_id: 'exe_4411',
+          operation_key: 'live-report',
+          purpose: 'slow_child',
+          origin_session_id: 101,
+          state: 'unknown',
+          verified: false,
+          basis: 'missing supervisor',
+          next_action: 'Inspect the registered execution before retrying',
+        },
+        side_effects_performed: false,
+      },
+    },
+
     events: [
       {
         id: 501,

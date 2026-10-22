@@ -151,7 +151,7 @@
             <span class="sub" id="pendingSub"></span>
           </header>
           <p class="why-note" data-note="pending" hidden>
-            <span data-i18n="ui.these_operations_were_interrupted_and_their_outcomes">These operations were interrupted and their outcomes are unknown. AWR neither guesses nor retries automatically. Select a session-scoped row to run</span> <code>awr recovery inspect --session</code><span data-i18n="ui.to_inspect_the_outcome_before_proceeding">; the command never resumes, reruns or kills.</span>
+            <span data-i18n="ui.these_operations_were_interrupted_and_their_outcomes">These operations were interrupted and their outcomes are unknown. AWR neither guesses nor retries automatically. Select a session row for</span> <code>awr recovery inspect --session</code><span data-i18n="ui.pending_or_execution">, or an execution row for</span> <code>awr execution inspect</code><span data-i18n="ui.to_inspect_the_outcome_before_proceeding">. These reads never resume, rerun or kill.</span>
           </p>
           <ul class="loops" id="pendingList"></ul>
           <div class="session-detail" id="recoveryDetail" hidden></div>

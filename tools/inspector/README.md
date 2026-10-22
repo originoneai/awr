@@ -69,7 +69,7 @@ Team 工作区复用 AWR 官网的蓝白协作关系图：项目 → 工作线 �
 
 | 页面 | 回答什么 | 背后的命令 |
 | --- | --- | --- |
-| 概览 | 现在该干什么 | `awr status`（+ `awr ready` / `awr session list --active` / `awr session show` / `awr session compaction inspect` / `awr recovery inspect` / `awr event history` / `awr event show`）|
+| 概览 | 现在该干什么 | `awr status`（+ `awr ready` / `awr session list --active` / `awr session show` / `awr session compaction inspect` / `awr recovery inspect` / `awr execution inspect` / `awr event history` / `awr event show`）|
 | 工作项 | 这件活要做成什么样、卡在哪 | `awr work show` |
 | 上下文 | 给 agent 的那包东西里装了什么 | `awr context compile` |
 | 索引源 | 看到的东西还算数吗 | `awr intake inspect`（读 `organization.sources`）|
@@ -83,7 +83,7 @@ Team 工作区复用 AWR 官网的蓝白协作关系图：项目 → 工作线 �
 | 概览 · 状态条 | 四个队列计数、结构缺口数、组织状态、project revision |
 | 上下文 · 这个包有多大 | 必需内容 / 这次装进去的 / 预算上限，都是这次编译实际返回的数。就画在编译按钮下面 |
 | 概览 · 结构缺口 | `organization.gaps` 的 code / target / 说明 |
-| 概览 · 待查的运行时操作 | `pending_operations`（字段缺失时整块隐藏）；`kind=session` 的行点开后跑只读 `awr recovery inspect --session`：checkpoint / 执行观察态 / `side_effects_performed` |
+| 概览 · 待查的运行时操作 | `pending_operations`（字段缺失时整块隐藏）；`kind=session` 的行点开后跑只读 `awr recovery inspect --session`：checkpoint / 执行观察态 / `side_effects_performed`；`kind=execution` 的行点开后跑只读 `awr execution inspect ID`：观察态 / `side_effects_performed`（不展示 `external_report` / stdout / stderr） |
 | 概览 · 活跃 session | `awr session list --active`：agent / status / work / last checkpoint；点行后 `awr session show`：next_action / open_loops / 继承 checkpoint / claims，以及只读 `awr session compaction inspect --session`：state / occupancy / guidance（`Unsupported` 时整块隐藏）|
 | 概览 · 最近事件 | `awr event history`：type / summary / importance / 时间；点行后只读 `awr event show --full --max-bytes 65536`：metadata / payload（`history` Unsupported 时整块隐藏）|
 | 工作项 · 表格 | 队列、源状态、负责人、认领状态、诊断码、source revision |
@@ -93,7 +93,7 @@ Team 工作区复用 AWR 官网的蓝白协作关系图：项目 → 工作线 �
 
 ### Session 与事件
 
-当前源码里 `awr session list --active`、`awr session show`、`awr session compaction inspect`、`awr recovery inspect`、`awr event history` 和 `awr event show` 已经实现。概览页列出活跃 session；点一行会调用 `session show`，展开 checkpoint 的 `next_action`、open loops、继承的 checkpoint 和 claims，并调用只读的 `session compaction inspect --session`，展示占用率、`state` 和 guidance。inspect 不带 `--include-observation`，也不提供 observe / defer。占用率缺失时保持空白，不当成 0%。待查运行时操作里，`kind=session` 的行会调用只读的 `recovery inspect --session`，展示上次 checkpoint 和执行观察（running / succeeded / failed / unknown）；该命令不 refresh 源、不 resume、不重跑。其他 kind 的行说明 recovery inspect 需要 session，不把非 session id 送进 CLI。最近事件点一行会调用只读的 `event show --full`（`--max-bytes 65536`），展开 metadata 和 payload；不提供 `event append`。缺少的字段保持空白，不从别处补。发布版若仍返回 `Unsupported`，列表面板会隐藏，不会用空列表冒充「没有会话」。`session show`、`compaction inspect`、`recovery inspect` 或 `event show` 单独 Unsupported 时列表仍在，详情区显示该错误。
+当前源码里 `awr session list --active`、`awr session show`、`awr session compaction inspect`、`awr recovery inspect`、`awr execution inspect`、`awr event history` 和 `awr event show` 已经实现。概览页列出活跃 session；点一行会调用 `session show`，展开 checkpoint 的 `next_action`、open loops、继承的 checkpoint 和 claims，并调用只读的 `session compaction inspect --session`，展示占用率、`state` 和 guidance。inspect 不带 `--include-observation`，也不提供 observe / defer。占用率缺失时保持空白，不当成 0%。待查运行时操作里，`kind=session` 的行会调用只读的 `recovery inspect --session`，展示上次 checkpoint 和执行观察（running / succeeded / failed / unknown）；该命令不 refresh 源、不 resume、不重跑。`kind=execution` 的行会调用只读的 `execution inspect ID`，展示该条执行的观察态（running / succeeded / failed / unknown）和 `side_effects_performed`；不展示 `external_report`、stdout、stderr 或 receipt，查询参数也不能加上 kill / 重跑。其他 kind 的行说明没有对应 inspect 命令，不把非 session / 非 execution id 送进 CLI。最近事件点一行会调用只读的 `event show --full`（`--max-bytes 65536`），展开 metadata 和 payload；不提供 `event append`。缺少的字段保持空白，不从别处补。发布版若仍返回 `Unsupported`，列表面板会隐藏，不会用空列表冒充「没有会话」。`session show`、`compaction inspect`、`recovery inspect`、`execution inspect` 或 `event show` 单独 Unsupported 时列表仍在，详情区显示该错误。
 
 ---
 

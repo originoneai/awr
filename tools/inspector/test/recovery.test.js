@@ -80,7 +80,7 @@ test('non-session pending rows do not invent a recovery inspect command', () => 
   const app = loadApp();
   const $ = (id) => document.getElementById(id);
   app.state.status = statusWithPending([
-    { code: 'execution_outcome_unknown', kind: 'execution', id: 'exe_4411' },
+    { code: 'checkpoint_incomplete', kind: 'checkpoint', id: 'cp_9' },
   ]);
   app.renderPending(app.state.status);
   const row = $('pendingList').find((n) => n.tagName === 'LI');
@@ -88,7 +88,7 @@ test('non-session pending rows do not invent a recovery inspect command', () => 
   row.click();
   assert.equal($('recoveryDetail').hidden, false);
   assert.ok($('recoveryDetail').textContent.includes(
-    i18n.t('ui.recovery_needs_session', { kind: 'execution', id: 'exe_4411' })
+    i18n.t('ui.pending_no_inspect', { kind: 'checkpoint', id: 'cp_9' })
   ));
   assert.equal(app.state.recoveryDetail.command, null);
 });
