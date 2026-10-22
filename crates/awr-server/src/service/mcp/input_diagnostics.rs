@@ -221,6 +221,89 @@ mod tests {
         })
     }
 
+    fn prepare(args: Value) -> Value {
+        let mut input = command(args);
+        input["op"] = json!("execution.prepare");
+        input
+    }
+
+    fn prepare_args() -> Value {
+        json!({
+            "session_id":"session",
+            "expected_session_version":"1",
+            "claim_id":"claim",
+            "expected_fence":"1",
+            "expected_lease_version":"1",
+            "expected_work_version":"1",
+            "input_digest":"a".repeat(64),
+            "declared_scope":["src/filter.js", "test/filter.test.js"]
+        })
+    }
+
+    #[test]
+    fn execution_prepare_rejections_guide_missing_fields_and_foreign_args() {
+        let mut args = prepare_args();
+        args.as_object_mut().unwrap().remove("claim_id");
+        args.as_object_mut().unwrap().remove("declared_scope");
+        args["claimed_trust"] = Value::Null;
+        args["execution_id"] = Value::Null;
+
+        let error = rejected(prepare(args.clone()), true);
+        assert_eq!(error["invalid_field"], "/args/claim_id");
+        assert_eq!(error["constraint"], "required");
+
+        args["claim_id"] = json!("claim");
+        let error = rejected(prepare(args.clone()), true);
+        assert_eq!(error["invalid_field"], "/args/declared_scope");
+        assert_eq!(error["constraint"], "required");
+
+        args["declared_scope"] = json!(["src/filter.js"]);
+        args["private-key-sentinel"] = json!("private-value-sentinel");
+        let error = rejected(prepare(args), true);
+        assert_eq!(error["invalid_field"], "/args");
+        assert_eq!(error["constraint"], "unexpected_field");
+        let fields = error["expected_fields"].as_array().unwrap();
+        assert_eq!(fields.len(), 8);
+        assert!(fields.contains(&json!("claim_id")));
+        assert!(fields.contains(&json!("declared_scope")));
+        assert!(!fields.contains(&json!("claimed_trust")));
+        assert!(!fields.contains(&json!("execution_id")));
+        assert!(!error.to_string().contains("private-"));
+        assert!(error.to_string().len() < 1024);
+    }
+
+    #[test]
+    fn execution_prepare_required_fields_are_diagnosed_without_affecting_valid_shapes() {
+        for field in prepare_args().as_object().unwrap().keys() {
+            let mut args = prepare_args();
+            args.as_object_mut().unwrap().remove(field);
+            let error = rejected(prepare(args), true);
+            assert_eq!(error["invalid_field"], format!("/args/{field}"));
+            assert_eq!(error["constraint"], "required");
+        }
+        for scope in [json!([]), json!(["src/filter.js"])] {
+            let mut args = prepare_args();
+            args["declared_scope"] = scope;
+            assert!(rejected(prepare(args), true).get("invalid_field").is_none());
+        }
+        for (field, value, constraint) in [
+            ("claim_id", Value::Null, "type"),
+            ("claim_id", json!(""), "minLength"),
+            ("declared_scope", Value::Null, "type"),
+            ("declared_scope", json!("private-value-sentinel"), "type"),
+            ("input_digest", Value::Null, "type"),
+            ("input_digest", json!("private-value-sentinel"), "pattern"),
+            ("expected_work_version", json!("0"), "pattern"),
+        ] {
+            let mut args = prepare_args();
+            args[field] = value;
+            let error = rejected(prepare(args), true);
+            assert_eq!(error["invalid_field"], format!("/args/{field}"));
+            assert_eq!(error["constraint"], constraint);
+            assert!(!error.to_string().contains("private-"));
+        }
+    }
+
     #[test]
     fn checkpoint_rejections_name_missing_fields_and_hide_unknown_args() {
         for field in ["session_id", "context_hash"] {

@@ -21,6 +21,32 @@ mod input_diagnostics;
 mod planning_schema;
 pub(super) use input_diagnostics::add_input_diagnostic;
 
+fn add_execution_prepare_input_schema(command: &mut Value) {
+    let fields = &command["properties"]["args"]["properties"];
+    let properties = json!({
+        "session_id":fields["session_id"].clone(),
+        "expected_session_version":fields["expected_session_version"].clone(),
+        "claim_id":{"type":"string","minLength":1,"maxLength":128,
+            "description":"Exact current owned claim ID from task intake or work.prepare."},
+        "expected_fence":fields["expected_fence"].clone(),
+        "expected_lease_version":fields["expected_lease_version"].clone(),
+        "expected_work_version":{"type":"string","pattern":"^[1-9][0-9]*$",
+            "description":"Current runtime work version after acquiring the coordination claim."},
+        "input_digest":{"type":"string","pattern":"^[0-9a-f]{64}$",
+            "description":"SHA-256 of the measured execution inputs; retain it for execution.start and reporting."},
+        "declared_scope":{"type":"array","maxItems":128,"uniqueItems":true,
+            "items":{"type":"string","minLength":1,"maxLength":4096},
+            "description":"Canonical project-relative paths within the published scope. No empty, dot or parent components, backslashes, colons or control characters. The server rechecks scope and authority."}
+    });
+    command["allOf"].as_array_mut().unwrap().push(json!({
+        "if":{"properties":{"op":{"const":"execution.prepare"}},"required":["op"]},
+        "then":{"properties":{"args":{"type":"object","additionalProperties":false,
+            "required":["session_id","expected_session_version","claim_id","expected_fence",
+                "expected_lease_version","expected_work_version","input_digest","declared_scope"],
+            "properties":properties}}}
+    }));
+}
+
 fn add_checkpoint_input_schema(command: &mut Value) {
     let fields = &command["properties"]["args"]["properties"];
     let properties = json!({
@@ -560,7 +586,7 @@ fn catalog() -> Vec<Tool> {
             "description":"evidence.submit: legacy exact bytes encoded as even-length hex, at most 1 MiB decoded; whole MCP request limit is 64 KiB. Generate mechanically for binary artifacts; prefer artifact_text for text. Omit artifact_text when using this field."},
         "input_digest":{"type":["string","null"],"pattern":"^[0-9a-f]{64}$",
             "description":"Evidence input binding; Agent completion must match execution.prepare input_digest."},
-        "execution_id":{"type":["string","null"],"description":"Required for execution actions; conditional for evidence (see evidence.submit). Use the matching execution.prepare receipt."},
+        "execution_id":{"type":["string","null"],"description":"Required for execution actions except execution.prepare; conditional for evidence (see evidence.submit). Use the matching execution.prepare receipt."},
         "expected_session_version":{"type":"string","pattern":"^[1-9][0-9]*$",
             "description":"Required for session lifecycle, claim, execution, handoff, evidence, review, rework and delivery actions except session.start. Use current session_version from work.next resume or session.inspect items; send a JSON decimal string."},
         "expected_work_version":{"type":"string","pattern":"^(0|[1-9][0-9]*)$",
@@ -625,17 +651,9 @@ fn catalog() -> Vec<Tool> {
             "then":{
                 "properties":{"args":{"required":["conversation_id"]}}
             }
-        },
-        {
-            "if":{
-                "properties":{"op":{"const":"execution.prepare"}},
-                "required":["op"]
-            },
-            "then":{
-                "properties":{"args":{"required":["session_id","expected_session_version"]}}
-            }
         }
     ]);
+    add_execution_prepare_input_schema(&mut command);
     add_checkpoint_input_schema(&mut command);
     add_handoff_input_schema(&mut command);
     add_neutral_delivery_schema(&mut command);
@@ -2201,7 +2219,7 @@ mod tests {
     }
 
     #[test]
-    fn discovery_types_and_requires_execution_prepare_session_binding() {
+    fn discovery_types_and_requires_exact_execution_prepare_args() {
         let command = catalog()
             .into_iter()
             .find(|tool| tool.name == "awr_team_command")
@@ -2214,6 +2232,12 @@ mod tests {
         let description = session_id["description"].as_str().unwrap();
         assert!(description.contains("except session.start"));
         assert!(description.contains("work.next resume or session.inspect"));
+        assert!(
+            args["properties"]["execution_id"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("except execution.prepare")
+        );
 
         let condition = command.input_schema["allOf"]
             .as_array()
@@ -2222,10 +2246,35 @@ mod tests {
             .find(|condition| condition["if"]["properties"]["op"]["const"] == "execution.prepare")
             .unwrap();
         assert_eq!(condition["if"]["required"], json!(["op"]));
-        assert_eq!(
-            condition["then"]["properties"]["args"]["required"],
-            json!(["session_id", "expected_session_version"])
-        );
+        let prepare = &condition["then"]["properties"]["args"];
+        let required = json!([
+            "session_id",
+            "expected_session_version",
+            "claim_id",
+            "expected_fence",
+            "expected_lease_version",
+            "expected_work_version",
+            "input_digest",
+            "declared_scope"
+        ]);
+        assert_eq!(prepare["required"], required);
+        assert_eq!(prepare["additionalProperties"], false);
+        let fields = prepare["properties"].as_object().unwrap();
+        assert_eq!(fields.len(), required.as_array().unwrap().len());
+        for field in required.as_array().unwrap() {
+            assert!(fields.contains_key(field.as_str().unwrap()));
+        }
+        assert_eq!(fields["claim_id"]["type"], "string");
+        assert_eq!(fields["claim_id"]["minLength"], 1);
+        assert_eq!(fields["input_digest"]["type"], "string");
+        assert_eq!(fields["input_digest"]["pattern"], "^[0-9a-f]{64}$");
+        assert_eq!(fields["expected_work_version"]["pattern"], "^[1-9][0-9]*$");
+        assert_eq!(fields["declared_scope"]["type"], "array");
+        assert_eq!(fields["declared_scope"]["maxItems"], 128);
+        assert_eq!(fields["declared_scope"]["uniqueItems"], true);
+        assert_eq!(fields["declared_scope"]["items"]["type"], "string");
+        assert_eq!(fields["declared_scope"]["items"]["minLength"], 1);
+        assert_eq!(fields["declared_scope"]["items"]["maxLength"], 4096);
     }
 
     #[test]
