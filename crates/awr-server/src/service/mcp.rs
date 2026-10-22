@@ -21,22 +21,40 @@ mod input_diagnostics;
 mod planning_schema;
 pub(super) use input_diagnostics::add_input_diagnostic;
 
+/// Publish an operation field in the flat args vocabulary.
+/// An existing shared definition stays in place: a later operation branch may be narrower.
+fn publish_missing_flat_arg(command: &mut Value, name: &str, schema: Value) {
+    command["properties"]["args"]["properties"]
+        .as_object_mut()
+        .unwrap()
+        .entry(name.to_owned())
+        .or_insert(schema);
+}
+
 fn add_execution_prepare_input_schema(command: &mut Value) {
+    let claim_id = json!({"type":"string","minLength":1,"maxLength":128,
+        "description":"Exact current owned claim ID from task intake or work.prepare."});
+    let declared_scope = json!({"type":"array","maxItems":128,"uniqueItems":true,
+        "items":{"type":"string","minLength":1,"maxLength":4096},
+        "description":"Canonical project-relative paths within the published scope. No empty, dot or parent components, backslashes, colons or control characters. The server rechecks scope and authority."});
+    publish_missing_flat_arg(command, "claim_id", claim_id.clone());
+    publish_missing_flat_arg(command, "declared_scope", declared_scope.clone());
+    // Keep the shared args definitions wider. claim.acquire still accepts
+    // expected_work_version "0", and input_digest stays null-compatible.
+    let expected_work_version = json!({"type":"string","pattern":"^[1-9][0-9]*$",
+        "description":"Current runtime work version after acquiring the coordination claim."});
+    let input_digest = json!({"type":"string","pattern":"^[0-9a-f]{64}$",
+        "description":"SHA-256 of the measured execution inputs; retain it for execution.start and reporting."});
     let fields = &command["properties"]["args"]["properties"];
     let properties = json!({
         "session_id":fields["session_id"].clone(),
         "expected_session_version":fields["expected_session_version"].clone(),
-        "claim_id":{"type":"string","minLength":1,"maxLength":128,
-            "description":"Exact current owned claim ID from task intake or work.prepare."},
+        "claim_id":claim_id,
         "expected_fence":fields["expected_fence"].clone(),
         "expected_lease_version":fields["expected_lease_version"].clone(),
-        "expected_work_version":{"type":"string","pattern":"^[1-9][0-9]*$",
-            "description":"Current runtime work version after acquiring the coordination claim."},
-        "input_digest":{"type":"string","pattern":"^[0-9a-f]{64}$",
-            "description":"SHA-256 of the measured execution inputs; retain it for execution.start and reporting."},
-        "declared_scope":{"type":"array","maxItems":128,"uniqueItems":true,
-            "items":{"type":"string","minLength":1,"maxLength":4096},
-            "description":"Canonical project-relative paths within the published scope. No empty, dot or parent components, backslashes, colons or control characters. The server rechecks scope and authority."}
+        "expected_work_version":expected_work_version,
+        "input_digest":input_digest,
+        "declared_scope":declared_scope
     });
     command["allOf"].as_array_mut().unwrap().push(json!({
         "if":{"properties":{"op":{"const":"execution.prepare"}},"required":["op"]},
@@ -48,14 +66,31 @@ fn add_execution_prepare_input_schema(command: &mut Value) {
 }
 
 fn add_checkpoint_input_schema(command: &mut Value) {
+    let context_hash = json!({"type":"string","pattern":"^[0-9a-f]{64}$"});
+    let next_action = json!({"type":"string","minLength":1,"maxLength":8192});
+    let open_loops = json!({"type":"array","maxItems":32,"items":{
+        "type":"string","minLength":1,"maxLength":4096}});
+    let mut flat_context_hash = context_hash.clone();
+    flat_context_hash["description"] = json!(
+        "64 lowercase hexadecimal characters from the consumed work.prepare context_hash, without a sha256: prefix. A session.inspect context_hash is historical."
+    );
+    let mut flat_next_action = next_action.clone();
+    flat_next_action["description"] =
+        json!("Nonblank next action recorded by session.checkpoint, at most 8192 UTF-8 bytes.");
+    let mut flat_open_loops = open_loops.clone();
+    flat_open_loops["description"] = json!(
+        "Unfinished items retained by session.checkpoint. At most 32 nonblank entries, each at most 4096 UTF-8 bytes."
+    );
+    publish_missing_flat_arg(command, "context_hash", flat_context_hash);
+    publish_missing_flat_arg(command, "next_action", flat_next_action);
+    publish_missing_flat_arg(command, "open_loops", flat_open_loops);
     let fields = &command["properties"]["args"]["properties"];
     let properties = json!({
         "session_id":fields["session_id"].clone(),
         "expected_session_version":fields["expected_session_version"].clone(),
-        "context_hash":{"type":"string","pattern":"^[0-9a-f]{64}$"},
-        "next_action":{"type":"string","minLength":1,"maxLength":8192},
-        "open_loops":{"type":"array","maxItems":32,"items":{
-            "type":"string","minLength":1,"maxLength":4096}},
+        "context_hash":context_hash,
+        "next_action":next_action,
+        "open_loops":open_loops,
         "client_info":fields["client_info"].clone(),
         "progress":fields["progress"].clone(),
         "usage":fields["usage"].clone()
@@ -2275,6 +2310,187 @@ mod tests {
         assert_eq!(fields["declared_scope"]["items"]["type"], "string");
         assert_eq!(fields["declared_scope"]["items"]["minLength"], 1);
         assert_eq!(fields["declared_scope"]["items"]["maxLength"], 4096);
+    }
+
+    #[test]
+    fn flat_args_discover_checkpoint_and_prepare_fields_without_narrowing_shared_types() {
+        let command = catalog()
+            .into_iter()
+            .find(|tool| tool.name == "awr_team_command")
+            .unwrap();
+        let args = &command.input_schema["properties"]["args"];
+        assert!(args.get("required").is_none());
+        let flat = args["properties"].as_object().unwrap();
+        let branch = |op: &str| {
+            command.input_schema["allOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|branch| branch["if"]["properties"]["op"]["const"] == op)
+                .unwrap_or_else(|| panic!("missing operation branch: {op}"))
+                .clone()
+        };
+        let checkpoint = branch("session.checkpoint");
+        let prepare = branch("execution.prepare");
+        let checkpoint_args = &checkpoint["then"]["properties"]["args"];
+        let prepare_args = &prepare["then"]["properties"]["args"];
+        assert_eq!(checkpoint_args["additionalProperties"], false);
+        assert_eq!(prepare_args["additionalProperties"], false);
+        assert_eq!(
+            checkpoint_args["required"],
+            json!([
+                "session_id",
+                "expected_session_version",
+                "context_hash",
+                "next_action",
+                "open_loops"
+            ])
+        );
+        assert_eq!(
+            prepare_args["required"],
+            json!([
+                "session_id",
+                "expected_session_version",
+                "claim_id",
+                "expected_fence",
+                "expected_lease_version",
+                "expected_work_version",
+                "input_digest",
+                "declared_scope"
+            ])
+        );
+        for name in checkpoint_args["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(prepare_args["required"].as_array().unwrap())
+        {
+            assert!(
+                flat.contains_key(name.as_str().unwrap()),
+                "operation-required {name} must be discoverable from args.properties"
+            );
+        }
+        let without_description = |value: &Value| {
+            let mut copy = value.clone();
+            copy.as_object_mut().unwrap().remove("description");
+            copy
+        };
+        for name in ["context_hash", "next_action", "open_loops"] {
+            assert_eq!(
+                without_description(&flat[name]),
+                without_description(&checkpoint_args["properties"][name]),
+                "{name}"
+            );
+        }
+        let context_hash = flat["context_hash"]["description"].as_str().unwrap();
+        assert!(context_hash.contains("consumed work.prepare"));
+        assert!(context_hash.contains("session.inspect"));
+        assert!(context_hash.contains("64 lowercase hexadecimal"));
+        assert!(
+            flat["next_action"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("8192 UTF-8 bytes")
+        );
+        assert!(
+            flat["open_loops"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("4096 UTF-8 bytes")
+        );
+        assert_eq!(flat["claim_id"], prepare_args["properties"]["claim_id"]);
+        assert_eq!(
+            flat["declared_scope"],
+            prepare_args["properties"]["declared_scope"]
+        );
+        assert_eq!(
+            flat["expected_work_version"]["pattern"],
+            "^(0|[1-9][0-9]*)$"
+        );
+        assert_eq!(flat["input_digest"]["type"], json!(["string", "null"]));
+        assert_eq!(flat["input_digest"]["pattern"], "^[0-9a-f]{64}$");
+        assert_eq!(
+            prepare_args["properties"]["expected_work_version"]["pattern"],
+            "^[1-9][0-9]*$"
+        );
+        assert_eq!(prepare_args["properties"]["input_digest"]["type"], "string");
+        assert!(
+            flat["workspace_settlement"]["properties"]["claim_id"]
+                .get("minLength")
+                .is_none()
+        );
+
+        let envelope = |op: &str, arguments: Value| {
+            json!({"protocol_version":1,"request_id":"request","op":op,
+                "workstream_id":"00000000000000000000000001","work_id":"work",
+                "coordinator_epoch":"epoch","expected_project_revision":"1",
+                "expected_authority_version":"1","expected_ownership_version":"1",
+                "expected_contract_hash":"a".repeat(64),"args":arguments})
+        };
+        let diagnosed = |input: Value| {
+            let mut error = json!({"code":"InvalidInput","message":"invalid input"});
+            add_input_diagnostic(&mut error, &input, true);
+            error
+        };
+        let mut prepare_input = json!({
+            "session_id":"session","expected_session_version":"1","claim_id":"claim",
+            "expected_fence":"1","expected_lease_version":"1","expected_work_version":"1",
+            "input_digest":"a".repeat(64),"declared_scope":["src/lib.rs"]
+        });
+        prepare_input["expected_work_version"] = json!("0");
+        assert_eq!(
+            diagnosed(envelope("execution.prepare", prepare_input.clone()))["constraint"],
+            "pattern"
+        );
+        prepare_input["expected_work_version"] = json!("1");
+        prepare_input["input_digest"] = Value::Null;
+        assert_eq!(
+            diagnosed(envelope("execution.prepare", prepare_input.clone()))["constraint"],
+            "type"
+        );
+        prepare_input["input_digest"] = json!("a".repeat(64));
+        prepare_input["unlisted_field"] = json!("hidden");
+        let rejected = diagnosed(envelope("execution.prepare", prepare_input));
+        assert_eq!(rejected["constraint"], "unexpected_field");
+        assert!(!rejected.to_string().contains("unlisted_field"));
+        let mut checkpoint_input = json!({
+            "session_id":"session","expected_session_version":"1",
+            "context_hash":"a".repeat(64),"next_action":"Review the schema change",
+            "open_loops":["Native acceptance remains open"]
+        });
+        checkpoint_input
+            .as_object_mut()
+            .unwrap()
+            .remove("open_loops");
+        assert_eq!(
+            diagnosed(envelope("session.checkpoint", checkpoint_input.clone()))["invalid_field"],
+            "/args/open_loops"
+        );
+        checkpoint_input["open_loops"] = json!(["Native acceptance remains open"]);
+        checkpoint_input["unlisted_field"] = json!("hidden");
+        assert_eq!(
+            diagnosed(envelope("session.checkpoint", checkpoint_input))["constraint"],
+            "unexpected_field"
+        );
+        assert!(
+            diagnosed(envelope(
+                "claim.acquire",
+                json!({"expected_work_version":"0"})
+            ))
+            .get("invalid_field")
+            .is_none()
+        );
+        assert!(
+            diagnosed(envelope(
+                "evidence.submit",
+                json!({
+                    "session_id":"session","expected_session_version":"1",
+                    "payload":{"note":"measured"},"dirty_tree":true,"input_digest":null
+                })
+            ))
+            .get("invalid_field")
+            .is_none()
+        );
     }
 
     #[test]
