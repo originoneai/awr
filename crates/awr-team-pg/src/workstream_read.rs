@@ -1002,7 +1002,8 @@ pub(crate) async fn authenticated_read(
         .unwrap_or(0);
     crate::delegation_auth::resolve_agent_read_delegation(tx, &mut auth, project, request, now_ms)
         .await?;
-    read(tx, tenant, project, &auth, request).await
+    // Keep shared read state off nested handoff and checkpoint command stacks.
+    Box::pin(read(tx, tenant, project, &auth, request)).await
 }
 
 #[derive(Serialize, Deserialize, Default)]
