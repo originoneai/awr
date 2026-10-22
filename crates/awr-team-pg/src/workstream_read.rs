@@ -1729,7 +1729,7 @@ pub(crate) async fn read(
             let fallback_hint = hint.clone();
             if q.op == "work.prepare" {
                 if let Some(inputs) = prepare_inputs {
-                    hint = guidance::with_execution_prepare_command_base(hint, inputs);
+                    hint = guidance::with_command_base(hint, inputs, &context_hash);
                 }
             }
             let budget = q.max_context_bytes.unwrap_or(65536);

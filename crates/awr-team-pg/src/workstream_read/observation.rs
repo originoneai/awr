@@ -36,7 +36,7 @@ pub(super) async fn read_for_prepare(
     stream: &str,
     ownership: i64,
     requested_session: Option<&str>,
-) -> PgResult<(Value, Option<super::guidance::NextExecutionPrepareInputs>)> {
+) -> PgResult<(Value, Option<super::guidance::NextCommandInputs>)> {
     // The caller has resolved current snapshot ownership and WorkRead authority.
     // Do not change work.prepare's context hash or weaken receipt visibility.
     let contract_row = tx
@@ -285,22 +285,45 @@ pub(super) async fn read_for_prepare(
                             (claim_id, expected_fence, expected_lease_version),
                         ),
                         expected_work_version,
-                    )| super::guidance::NextExecutionPrepareInputs {
-                        workstream_id: stream_id,
-                        work_id: work.to_string(),
-                        coordinator_epoch: auth.epoch.clone(),
-                        expected_project_revision: auth.revision.to_string(),
-                        expected_authority_version: expected_authority_version.clone(),
-                        expected_ownership_version: ownership.to_string(),
-                        expected_contract_hash: contract.clone(),
-                        session_id,
-                        expected_session_version,
-                        claim_id,
-                        expected_fence,
-                        expected_lease_version,
-                        expected_work_version: expected_work_version.to_string(),
+                    )| {
+                        super::guidance::NextCommandInputs::ExecutionPrepare(
+                            super::guidance::NextExecutionPrepareInputs {
+                                workstream_id: stream_id,
+                                work_id: work.to_string(),
+                                coordinator_epoch: auth.epoch.clone(),
+                                expected_project_revision: auth.revision.to_string(),
+                                expected_authority_version: expected_authority_version.clone(),
+                                expected_ownership_version: ownership.to_string(),
+                                expected_contract_hash: contract.clone(),
+                                session_id,
+                                expected_session_version,
+                                claim_id,
+                                expected_fence,
+                                expected_lease_version,
+                                expected_work_version: expected_work_version.to_string(),
+                            },
+                        )
                     },
                 )
+        } else if owns_session && hint["action"]["op"] == "session.checkpoint" {
+            selected_session_id.zip(selected_session_version).map(
+                |(session_id, expected_session_version)| {
+                    super::guidance::NextCommandInputs::SessionCheckpoint(
+                        super::guidance::NextSessionCheckpointInputs {
+                            workstream_id: stream_id,
+                            work_id: work.to_string(),
+                            coordinator_epoch: auth.epoch.clone(),
+                            expected_project_revision: auth.revision.to_string(),
+                            expected_authority_version: expected_authority_version.clone(),
+                            expected_ownership_version: ownership.to_string(),
+                            expected_contract_hash: contract.clone(),
+                            session_id,
+                            expected_session_version,
+                            require_client_info: hint["code"] == "declare_client",
+                        },
+                    )
+                },
+            )
         } else {
             None
         };

@@ -725,6 +725,33 @@ async fn start(store: &WorkstreamReadStore, token: &str, work: &str, request: &s
         .into()
 }
 
+async fn start_without_client(
+    store: &WorkstreamReadStore,
+    token: &str,
+    work: &str,
+    request: &str,
+) -> String {
+    let p = prepare(store, token, work).await;
+    store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            token,
+            command(
+                &p,
+                request,
+                "session.start",
+                json!({"conversation_id": request}),
+            ),
+        )
+        .await
+        .unwrap()["receipt"]["data"]["session_id"]
+        .as_str()
+        .unwrap()
+        .into()
+}
+
 async fn assign(
     store: &WorkstreamReadStore,
     work: &str,
@@ -837,8 +864,15 @@ async fn assert_entry_guidance(store: &WorkstreamReadStore, session: &str, op: &
     assert_eq!(hint["action"]["op"], op);
     if op == "execution.prepare" {
         assert!(hint["action"]["command_base"].is_object());
+        assert_eq!(
+            hint["action"]["caller_slots"],
+            json!(["request_id", "args.input_digest", "args.declared_scope"])
+        );
+    } else if op == "session.checkpoint" {
+        assert_checkpoint_command_base(hint, session, &p);
     } else {
         assert!(hint["action"].get("command_base").is_none());
+        assert!(hint["action"].get("caller_slots").is_none());
     }
     assert_eq!(p["data"]["execution_admission"], "not_evaluated");
     let mut q = query("work.snapshot");
@@ -850,14 +884,14 @@ async fn assert_entry_guidance(store: &WorkstreamReadStore, session: &str, op: &
     assert_eq!(snapshot_hint["action"]["op"], op);
     assert_no_prepare_base(snapshot_hint);
     assert_eq!(snapshot["data"]["observation"]["guidance"], *snapshot_hint);
-    if op != "execution.prepare" {
+    if op != "execution.prepare" && op != "session.checkpoint" {
         assert_eq!(*snapshot_hint, *hint);
     }
     assert_eq!(
         snapshot["data"]["observation"]["execution_authorized"],
         false
     );
-    if op == "execution.prepare" {
+    if op == "execution.prepare" || op == "session.checkpoint" {
         let mut mandatory = snapshot["data"].clone();
         mandatory.as_object_mut().unwrap().remove("guidance");
         let budget = serde_json::to_vec(&mandatory).unwrap().len();
@@ -916,6 +950,65 @@ async fn current_prepare_guidance(
 
 fn assert_no_prepare_base(hint: &Value) {
     assert!(hint["action"].get("command_base").is_none(), "{hint}");
+    assert!(hint["action"].get("caller_slots").is_none(), "{hint}");
+}
+
+fn assert_checkpoint_command_base(hint: &Value, session: &str, prepared: &Value) {
+    let action = &hint["action"];
+    assert_eq!(action["op"], "session.checkpoint");
+    let base = &action["command_base"];
+    assert!(base.is_object(), "{hint}");
+    assert_eq!(base["protocol_version"], 1);
+    assert_eq!(base["op"], "session.checkpoint");
+    assert_eq!(base["work_id"], prepared["data"]["work_id"]);
+    assert_eq!(base["coordinator_epoch"], prepared["coordinator_epoch"]);
+    assert_eq!(
+        base["expected_project_revision"],
+        prepared["project_revision"]
+    );
+    assert_eq!(
+        base["expected_authority_version"],
+        prepared["authority_version"]
+    );
+    assert_eq!(
+        base["expected_ownership_version"],
+        prepared["data"]["ownership_version"]
+    );
+    assert_eq!(
+        base["expected_contract_hash"],
+        prepared["data"]["contract_hash"]
+    );
+    assert_eq!(base["args"]["session_id"], session);
+    assert_eq!(
+        base["args"]["context_hash"],
+        prepared["data"]["context_hash"]
+    );
+    assert_eq!(base["args"]["context_hash"].as_str().unwrap().len(), 64);
+    assert!(
+        !base["args"]["context_hash"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+    assert!(base.get("request_id").is_none());
+    assert!(base["args"].get("next_action").is_none());
+    assert!(base["args"].get("open_loops").is_none());
+    assert!(base["args"].get("client_info").is_none());
+    assert!(base["args"].get("progress").is_none());
+    assert!(base["args"].get("usage").is_none());
+    assert!(base["args"].get("claim_id").is_none());
+    assert!(base["args"].get("expected_fence").is_none());
+    assert!(base["args"].get("expected_lease_version").is_none());
+    assert!(base["args"].get("expected_work_version").is_none());
+    let mut slots = vec![
+        json!("request_id"),
+        json!("args.next_action"),
+        json!("args.open_loops"),
+    ];
+    if hint["code"] == "declare_client" {
+        slots.push(json!("args.client_info"));
+    }
+    assert_eq!(action["caller_slots"], json!(slots));
 }
 
 fn intake_prepare_query(response: &Value, session: &str) -> WorkstreamQuery {
@@ -1085,6 +1178,202 @@ async fn both_intake_paths_guide_owned_preparation_and_exact_execution_admission
         let p = prepare(&store, A, "a").await;
         assert_eq!(p["data"]["guidance"]["action"]["op"], "work.next");
     }
+}
+
+#[tokio::test]
+async fn declare_client_checkpoint_base_then_refresh_prepare_uses_new_session_version() {
+    let (_guard, admin, db, store) = setup().await;
+    enable_writes(&admin).await;
+    members(&admin, &db).await;
+    let session = start_without_client(&store, A, "a", "undeclared-session").await;
+    let mut intake = take(&store, A, "a", &session, "undeclared-take", false).await;
+    intake.args["ttl_seconds"] = json!(300);
+    let taken = store
+        .commands()
+        .execute(TENANT, PROJECT, A, intake)
+        .await
+        .unwrap();
+    assert_eq!(taken["execution_authorized"], false);
+    assert_no_prepare_base(&current_prepare_guidance(&store, OTHER_CLIENT, &session).await);
+
+    admin
+        .execute(
+            "UPDATE awr_team.work_contracts SET definition_state='archived' WHERE tenant_id=$1 AND project_id=$2 AND work_id='a'",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap();
+    let inactive = current_prepare_guidance(&store, A, &session).await;
+    assert_ne!(inactive["action"]["op"], "execution.prepare");
+    assert_no_prepare_base(&inactive);
+    admin
+        .execute(
+            "UPDATE awr_team.work_contracts SET definition_state='enabled' WHERE tenant_id=$1 AND project_id=$2 AND work_id='a'",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap();
+
+    let pointed = store
+        .query(TENANT, PROJECT, A, intake_prepare_query(&taken, &session))
+        .await
+        .unwrap();
+    let hint = &pointed["data"]["guidance"];
+    assert_eq!(hint["code"], "declare_client");
+    assert_eq!(hint["action"]["op"], "session.checkpoint");
+    assert_checkpoint_command_base(hint, &session, &pointed);
+    assert_eq!(
+        hint["action"]["command_base"]["args"]["expected_session_version"],
+        "1"
+    );
+    assert_eq!(
+        hint["action"]["caller_slots"],
+        json!([
+            "request_id",
+            "args.next_action",
+            "args.open_loops",
+            "args.client_info"
+        ])
+    );
+    let p = assert_entry_guidance(&store, &session, "session.checkpoint").await;
+    assert_eq!(p["data"]["guidance"]["code"], "declare_client");
+    assert_eq!(p["data"]["guidance"], pointed["data"]["guidance"]);
+
+    let enriched_bytes = serde_json::to_vec(&p["data"]).unwrap().len();
+    let mut bounded_query = query("work.prepare");
+    bounded_query.work_id = Some("a".into());
+    bounded_query.session_id = Some(session.clone());
+    bounded_query.max_context_bytes = Some(enriched_bytes - 1);
+    let bounded = store
+        .query(TENANT, PROJECT, A, bounded_query)
+        .await
+        .unwrap();
+    assert_eq!(
+        bounded["data"]["guidance"]["action"]["op"],
+        "session.checkpoint"
+    );
+    assert_no_prepare_base(&bounded["data"]["guidance"]);
+
+    let mut checkpoint = p["data"]["guidance"]["action"]["command_base"].clone();
+    checkpoint["request_id"] = json!("declare-client");
+    checkpoint["args"]["next_action"] =
+        json!("Continue owned preparation after declaring client capabilities");
+    checkpoint["args"]["open_loops"] = json!(["Keep the live claim until execution is prepared"]);
+    checkpoint["args"]["client_info"] = json!({
+        "product":"Synthetic Agent",
+        "capabilities":{"model":"unknown","usage":"unknown","progress":"unknown"}
+    });
+    let committed = store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            serde_json::from_value(checkpoint.clone()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(committed["receipt"]["data"]["session_version"], "2");
+
+    checkpoint["request_id"] = json!("stale-declare-client");
+    assert!(matches!(
+        store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                serde_json::from_value(checkpoint.clone()).unwrap()
+            )
+            .await,
+        Err(PgError::PreconditionsChanged)
+    ));
+
+    let refreshed = prepare(&store, A, "a").await;
+    assert_eq!(
+        refreshed["data"]["guidance"]["action"]["op"],
+        "execution.prepare"
+    );
+    let base = &refreshed["data"]["guidance"]["action"]["command_base"];
+    assert!(base.is_object());
+    assert_eq!(base["args"]["session_id"], session);
+    assert_eq!(base["args"]["expected_session_version"], "2");
+    assert_eq!(
+        refreshed["data"]["guidance"]["action"]["caller_slots"],
+        json!(["request_id", "args.input_digest", "args.declared_scope"])
+    );
+    // Refresh every other binding so the old session version is the sole stale
+    // precondition, rather than letting an old project revision hide a regression.
+    checkpoint["request_id"] = json!("stale-session-version-only");
+    checkpoint["expected_project_revision"] = refreshed["project_revision"].clone();
+    checkpoint["args"]["context_hash"] = refreshed["data"]["context_hash"].clone();
+    assert_eq!(checkpoint["args"]["expected_session_version"], "1");
+    assert!(matches!(
+        store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                serde_json::from_value(checkpoint).unwrap()
+            )
+            .await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    assert_no_prepare_base(&current_prepare_guidance(&store, OTHER_CLIENT, &session).await);
+}
+
+#[tokio::test]
+async fn checkpoint_base_without_a_claim_preserves_read_only_and_session_guards() {
+    let (_guard, admin, db, store) = setup().await;
+    enable_writes(&admin).await;
+    members(&admin, &db).await;
+    let session = start_without_client(&store, A, "a", "unclaimed-session").await;
+    let mut q = query("work.prepare");
+    q.work_id = Some("a".into());
+    q.session_id = Some(session.clone());
+    let prepared = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(prepared["data"]["guidance"]["code"], "declare_client");
+    assert_checkpoint_command_base(&prepared["data"]["guidance"], &session, &prepared);
+    let before = entry_state(&admin).await;
+    assert!(before["claims"].is_null());
+    assert_eq!(before["executions"], json!([]));
+
+    admin.batch_execute("UPDATE awr_team.workstream_grants SET can_write=false,grant_version=grant_version+1 WHERE client_id='cli-a'").await.unwrap();
+    assert_no_prepare_base(&current_prepare_guidance(&store, A, &session).await);
+    admin.batch_execute("UPDATE awr_team.workstream_grants SET can_write=true,grant_version=grant_version+1 WHERE client_id='cli-a'").await.unwrap();
+
+    let prepared = store.query(TENANT, PROJECT, A, q).await.unwrap();
+    let hint = &prepared["data"]["guidance"];
+    assert_checkpoint_command_base(hint, &session, &prepared);
+    let mut checkpoint = hint["action"]["command_base"].clone();
+    checkpoint["request_id"] = json!("declare-without-claim");
+    checkpoint["args"]["next_action"] = json!("Inspect the ready pool after declaring the client");
+    checkpoint["args"]["open_loops"] = json!([]);
+    checkpoint["args"]["client_info"] = json!({"product":"Synthetic Agent"});
+    let committed = store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            serde_json::from_value(checkpoint).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(committed["receipt"]["data"]["session_version"], "2");
+    let after = entry_state(&admin).await;
+    assert_eq!(after["claims"], before["claims"]);
+    assert_eq!(after["executions"], before["executions"]);
+
+    admin
+        .execute(
+            "UPDATE awr_team.sessions SET state='ended',session_version=session_version+1 WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+            &[&TENANT, &PROJECT, &session],
+        )
+        .await
+        .unwrap();
+    assert_no_prepare_base(&current_prepare_guidance(&store, A, &session).await);
 }
 
 #[tokio::test]
