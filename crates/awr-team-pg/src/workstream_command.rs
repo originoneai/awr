@@ -150,6 +150,20 @@ fn digest(s: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+fn refresh_prepare_guidance(
+    stream: Id,
+    work: &str,
+    session: &str,
+    when: &str,
+    because: &str,
+) -> Value {
+    json!({"code":"refresh_prepare","when":when,"because":[because],
+        "action":{"op":"work.prepare","query":{"protocol_version":1,"op":"work.prepare",
+            "workstream_id":stream,"work_id":work,"session_id":session},
+            "note":"Read fresh work.prepare and use only its current authorized guidance."},
+        "recheck_on":"fresh work.prepare facts"})
+}
+
 impl WorkstreamCommand {
     pub const OPERATIONS: &'static [&'static str] = COMMANDS;
 
@@ -429,9 +443,25 @@ impl WorkstreamCommandStore {
                 &crate::responsibility::current(&tx, tenant, project, &command.work_id).await?,
             );
             tx.commit().await?;
-            return Ok(
-                json!({"replayed":true,"receipt":result,"current_responsibility":responsibility,"execution_authorized":false}),
-            );
+            let mut response = json!({"replayed":true,"receipt":result,
+                "current_responsibility":responsibility,"execution_authorized":false});
+            if matches!(
+                command.op.as_str(),
+                "task.accept_assignment" | "task.claim_available"
+            ) {
+                let session_id = result["data"]["session_id"]
+                    .as_str()
+                    .or_else(|| command.args["session_id"].as_str())
+                    .ok_or(PgError::SourceDivergence)?;
+                response["guidance"] = refresh_prepare_guidance(
+                    stream,
+                    &command.work_id,
+                    session_id,
+                    "this intake request is an exact replay",
+                    "the stored receipt is historical and cannot supply a current command base",
+                );
+            }
+            return Ok(response);
         }
         if auth.project_status != "active" {
             return Err(PgError::ProjectNotAvailable);
@@ -583,6 +613,25 @@ impl WorkstreamCommandStore {
             "authority_version":auth.catalog.get(stream)?.authority_version.to_string(),
             "coordinator_epoch":auth.epoch,"source_snapshot_id":auth.snapshot,"contract_hash":contract_hash,
             "committed_project_revision":next.to_string(),"data":data,"execution_authorized":false});
+        let intake_guidance = if matches!(
+            command.op.as_str(),
+            "task.accept_assignment" | "task.claim_available"
+        ) && data["state"] == "active"
+        {
+            data["session_id"]
+                .as_str()
+                .map(|session_id| {
+                    refresh_prepare_guidance(
+                        stream,
+                        &command.work_id,
+                        session_id,
+                        "task intake committed",
+                        "fresh work.prepare must select current protective guidance before any execution request",
+                    )
+                })
+        } else {
+            None
+        };
         // State, attribution, monotonically ordered event and replay receipt are
         // one transaction. No network work or source scan occurs under this lock.
         for (index, (kind, payload)) in applied
@@ -609,9 +658,13 @@ impl WorkstreamCommandStore {
         tx.commit().await?;
         // Only the original committed start response permits one caller-managed
         // execution. Stored/replayed receipts are historical, never a new grant.
-        Ok(
-            json!({"replayed":false,"receipt":receipt,"current_responsibility":responsibility,"execution_authorized":command.op == "execution.start"}),
-        )
+        let mut response = json!({"replayed":false,"receipt":receipt,
+            "current_responsibility":responsibility,
+            "execution_authorized":command.op == "execution.start"});
+        if let Some(guidance) = intake_guidance {
+            response["guidance"] = guidance;
+        }
+        Ok(response)
     }
 }
 

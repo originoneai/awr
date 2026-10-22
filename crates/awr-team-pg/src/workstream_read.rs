@@ -1691,32 +1691,62 @@ pub(crate) async fn read(
             data["context_hash_protocol"] = json!("awr-team-workstream-context-v1");
             // Advice is not consumed context or execution admission. Preserve the
             // original context hash and fit optional advice inside the read budget.
-            let mut observed = observation::read(
-                tx,
-                tenant,
-                project,
-                auth,
-                work,
-                &stream,
-                ownership,
-                q.session_id.as_deref(),
-            )
-            .await?;
+            let (mut observed, prepare_inputs) = if q.op == "work.prepare" {
+                observation::read_for_prepare(
+                    tx,
+                    tenant,
+                    project,
+                    auth,
+                    work,
+                    &stream,
+                    ownership,
+                    q.session_id.as_deref(),
+                )
+                .await?
+            } else {
+                (
+                    observation::read(
+                        tx,
+                        tenant,
+                        project,
+                        auth,
+                        work,
+                        &stream,
+                        ownership,
+                        q.session_id.as_deref(),
+                    )
+                    .await?,
+                    None,
+                )
+            };
             let mut hint = observed["guidance"].clone();
             if !reasons.is_empty() {
                 hint = guidance::select(&observed, false, false);
             }
             hint = crate::workstream_command::task_intake::guidance(&observed, hint);
             hint = guidance::authorized(auth, resolved.workstream_id, work, hint);
-            let mut with_hint = data.clone();
-            with_hint["guidance"] = hint.clone();
-            if serde_json::to_vec(&with_hint)
-                .map_err(|_| PgError::SourceDivergence)?
-                .len()
-                <= q.max_context_bytes.unwrap_or(65536)
-            {
-                data = with_hint;
+            let fallback_hint = hint.clone();
+            if q.op == "work.prepare" {
+                if let Some(inputs) = prepare_inputs {
+                    hint = guidance::with_execution_prepare_command_base(hint, inputs);
+                }
             }
+            let budget = q.max_context_bytes.unwrap_or(65536);
+            let mut selected_hint = None;
+            for candidate in [hint, fallback_hint.clone()] {
+                let mut with_hint = data.clone();
+                with_hint["guidance"] = candidate.clone();
+                if serde_json::to_vec(&with_hint)
+                    .map_err(|_| PgError::SourceDivergence)?
+                    .len()
+                    <= budget
+                {
+                    data = with_hint;
+                    selected_hint = Some(candidate);
+                    break;
+                }
+            }
+            let hint = selected_hint.unwrap_or(fallback_hint);
 
             if q.op == "work.snapshot" {
                 // Context and observations come from this same authenticated

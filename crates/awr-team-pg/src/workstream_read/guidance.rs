@@ -1,5 +1,151 @@
 //! One bounded, deterministic next-step hint. Advice never grants execution.
+use awr_core::Id;
+use serde::Serialize;
 use serde_json::{Value, json};
+
+/// The complete enriched guidance packet must fit as one value. It is never
+/// truncated because a partial command could invite callers to guess bindings.
+pub(crate) const EXECUTION_PREPARE_GUIDANCE_MAX_BYTES: usize = 4096;
+
+#[derive(Clone, Debug)]
+pub(crate) struct NextExecutionPrepareInputs {
+    pub workstream_id: Id,
+    pub work_id: String,
+    pub coordinator_epoch: String,
+    pub expected_project_revision: String,
+    pub expected_authority_version: String,
+    pub expected_ownership_version: String,
+    pub expected_contract_hash: String,
+    pub session_id: String,
+    pub expected_session_version: String,
+    pub claim_id: String,
+    pub expected_fence: String,
+    pub expected_lease_version: String,
+    pub expected_work_version: String,
+}
+
+#[derive(Serialize)]
+struct ExecutionPrepareCommandBase<'a> {
+    protocol_version: u32,
+    op: &'static str,
+    workstream_id: Id,
+    work_id: &'a str,
+    coordinator_epoch: &'a str,
+    expected_project_revision: &'a str,
+    expected_authority_version: &'a str,
+    expected_ownership_version: &'a str,
+    expected_contract_hash: &'a str,
+    args: ExecutionPrepareArgsBase<'a>,
+}
+
+#[derive(Serialize)]
+struct ExecutionPrepareArgsBase<'a> {
+    session_id: &'a str,
+    expected_session_version: &'a str,
+    claim_id: &'a str,
+    expected_fence: &'a str,
+    expected_lease_version: &'a str,
+    expected_work_version: &'a str,
+}
+
+fn identity(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 128 && !value.chars().any(char::is_control)
+}
+
+fn version(value: &str, allow_zero: bool) -> bool {
+    !value.is_empty()
+        && (value == "0" || !value.starts_with('0'))
+        && value.bytes().all(|b| b.is_ascii_digit())
+        && value
+            .parse::<i64>()
+            .is_ok_and(|parsed| parsed >= i64::from(!allow_zero))
+}
+
+fn digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn execution_prepare_command_base(inputs: &NextExecutionPrepareInputs) -> Option<Value> {
+    if !identity(&inputs.work_id)
+        || !identity(&inputs.coordinator_epoch)
+        || !version(&inputs.expected_project_revision, true)
+        || !version(&inputs.expected_authority_version, false)
+        || !version(&inputs.expected_ownership_version, false)
+        || !digest(&inputs.expected_contract_hash)
+        || !identity(&inputs.session_id)
+        || !version(&inputs.expected_session_version, false)
+        || !identity(&inputs.claim_id)
+        || !version(&inputs.expected_fence, false)
+        || !version(&inputs.expected_lease_version, false)
+        || !version(&inputs.expected_work_version, false)
+    {
+        return None;
+    }
+    let base = ExecutionPrepareCommandBase {
+        protocol_version: 1,
+        op: "execution.prepare",
+        workstream_id: inputs.workstream_id,
+        work_id: &inputs.work_id,
+        coordinator_epoch: &inputs.coordinator_epoch,
+        expected_project_revision: &inputs.expected_project_revision,
+        expected_authority_version: &inputs.expected_authority_version,
+        expected_ownership_version: &inputs.expected_ownership_version,
+        expected_contract_hash: &inputs.expected_contract_hash,
+        args: ExecutionPrepareArgsBase {
+            session_id: &inputs.session_id,
+            expected_session_version: &inputs.expected_session_version,
+            claim_id: &inputs.claim_id,
+            expected_fence: &inputs.expected_fence,
+            expected_lease_version: &inputs.expected_lease_version,
+            expected_work_version: &inputs.expected_work_version,
+        },
+    };
+    serde_json::to_value(base).ok()
+}
+
+pub(crate) fn prepare_execution_hint() -> Value {
+    json!({"code":"prepare_execution",
+        "when":"your current live claim has no execution",
+        "because":["the active own session and current executor match task ownership"],
+        "action":{"op":"execution.prepare",
+            "note":"Prepare your execution with current work/session/claim versions, a measured input_digest and declared_scope from the contract. Preparation does not admit effects; execution.start must succeed before editing or running work."},
+        "recheck_on":"execution preparation, claim, contract, scope or authority changes"})
+}
+
+/// Attach only a complete, current server-known base to the selected action.
+/// The three caller-known fields remain absent for the caller to supply.
+pub(crate) fn with_execution_prepare_command_base(
+    mut hint: Value,
+    inputs: NextExecutionPrepareInputs,
+) -> Value {
+    if hint["code"] != "prepare_execution" || hint["action"]["op"] != "execution.prepare" {
+        return hint;
+    }
+    let fallback = hint.clone();
+    let Some(selected_note) = hint["action"]["note"].as_str().map(str::to_owned) else {
+        return hint;
+    };
+    if let Some(base) = execution_prepare_command_base(&inputs) {
+        hint["action"]["command_base"] = base;
+        hint["action"]["caller_slots"] =
+            json!(["request_id", "args.input_digest", "args.declared_scope"]);
+        hint["action"]["note"] = json!(format!(
+            "Use command_base unchanged. Fill exactly request_id, args.input_digest and args.declared_scope; measure input_digest from consumed inputs and choose your intended declared_scope subset from work.prepare.data.visible_contract.scope_paths under the same expected_contract_hash. {selected_note}"
+        ));
+    }
+    if hint["action"]["command_base"].is_null()
+        || serde_json::to_vec(&hint).map_or(true, |bytes| {
+            bytes.len() > EXECUTION_PREPARE_GUIDANCE_MAX_BYTES
+        })
+    {
+        fallback
+    } else {
+        hint
+    }
+}
 
 /// Advice belongs to the selected session. A different participant's historical
 /// execution is display evidence, not admission for the current session.
@@ -329,14 +475,7 @@ pub(super) fn select(data: &Value, context_complete: bool, owns_session: bool) -
         && claim["lease_live"] == true
         && execution.is_null()
     {
-        (
-            "prepare_execution",
-            "your current live claim has no execution",
-            "the active own session and current executor match task ownership",
-            "execution.prepare",
-            "Prepare your execution with current work/session/claim versions, a measured input_digest and declared_scope from the contract. Preparation does not admit effects; execution.start must succeed before editing or running work.",
-            "execution preparation, claim, contract, scope or authority changes",
-        )
+        return prepare_execution_hint();
     } else if data["responsibility"]["relation"] == "owned_by_me"
         && data["responsibility"]["current_executor_matches_client"] == true
         && claim["state"] == "active"
@@ -376,6 +515,24 @@ pub(super) fn select(data: &Value, context_complete: bool, owns_session: bool) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn prepare_inputs(identity: &str) -> NextExecutionPrepareInputs {
+        NextExecutionPrepareInputs {
+            workstream_id: Id::from(1),
+            work_id: identity.to_string(),
+            coordinator_epoch: identity.to_string(),
+            expected_project_revision: i64::MAX.to_string(),
+            expected_authority_version: i64::MAX.to_string(),
+            expected_ownership_version: i64::MAX.to_string(),
+            expected_contract_hash: "a".repeat(64),
+            session_id: identity.to_string(),
+            expected_session_version: i64::MAX.to_string(),
+            claim_id: identity.to_string(),
+            expected_fence: i64::MAX.to_string(),
+            expected_lease_version: i64::MAX.to_string(),
+            expected_work_version: i64::MAX.to_string(),
+        }
+    }
 
     fn active() -> Value {
         json!({"runtime":{"state":"in_progress"},"session":{"state":"active"},"client":{"product":"Agent"},
@@ -495,6 +652,69 @@ mod tests {
                 assert!(!hint[key].is_null());
             }
         }
+    }
+
+    #[test]
+    fn execution_prepare_packet_is_complete_and_bounded_by_serialized_bytes() {
+        let all_quotes = "\"".repeat(128);
+        let multibyte = "é".repeat(64);
+        assert_eq!(all_quotes.len(), 128);
+        assert_eq!(multibyte.len(), 128);
+        let mut tested_max = 0;
+        for identity in [all_quotes, multibyte] {
+            let hint = with_execution_prepare_command_base(
+                prepare_execution_hint(),
+                prepare_inputs(&identity),
+            );
+            let bytes = serde_json::to_vec(&hint).unwrap();
+            tested_max = tested_max.max(bytes.len());
+            assert!(bytes.len() <= EXECUTION_PREPARE_GUIDANCE_MAX_BYTES);
+            let action = &hint["action"];
+            assert_eq!(
+                action["caller_slots"],
+                json!(["request_id", "args.input_digest", "args.declared_scope"])
+            );
+            let base = &action["command_base"];
+            assert_eq!(base["op"], "execution.prepare");
+            assert!(base.get("request_id").is_none());
+            assert!(base["args"].get("input_digest").is_none());
+            assert!(base["args"].get("declared_scope").is_none());
+            assert_eq!(base["work_id"], identity);
+        }
+        eprintln!(
+            "largest tested execution-prepare guidance packet: {} bytes",
+            tested_max
+        );
+    }
+
+    #[test]
+    fn execution_prepare_packet_preserves_the_selected_action_note() {
+        let selected_note = "Keep this selected action's existing update and retest instructions.";
+        let mut hint = prepare_execution_hint();
+        hint["action"]["note"] = json!(selected_note);
+        let enriched = with_execution_prepare_command_base(hint, prepare_inputs("id"));
+        let note = enriched["action"]["note"].as_str().unwrap();
+        assert!(note.starts_with("Use command_base unchanged."));
+        assert!(note.ends_with(selected_note));
+        assert_eq!(note.matches(selected_note).count(), 1);
+        assert!(enriched["action"]["command_base"].is_object());
+    }
+
+    #[test]
+    fn execution_prepare_packet_overflow_omits_the_entire_base() {
+        let mut fallback = prepare_execution_hint();
+        fallback["when"] = json!("x".repeat(EXECUTION_PREPARE_GUIDANCE_MAX_BYTES));
+        let enriched = with_execution_prepare_command_base(fallback.clone(), prepare_inputs("id"));
+        assert_eq!(enriched, fallback);
+        assert_eq!(enriched["action"]["op"], "execution.prepare");
+        assert!(enriched["action"].get("command_base").is_none());
+        assert!(enriched["action"].get("caller_slots").is_none());
+        assert!(
+            !enriched["action"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("command_base")
+        );
     }
 
     #[test]
