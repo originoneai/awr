@@ -171,6 +171,20 @@ if (mode === 'slow') {
   });
 } else if (joined.includes('source reindex')) {
   emit({ ok: true, project_revision: 8 });
+} else if (joined.includes('execution inspect')) {
+  emit({
+    observation: {
+      execution_id: 'exe_4411',
+      operation_key: 'live-report',
+      purpose: 'slow_child',
+      origin_session_id: 11,
+      state: 'unknown',
+      verified: false,
+      basis: 'supervisor_unreachable_without_completion_receipt',
+      next_action: 'Inspect the registered execution before retrying',
+    },
+    side_effects_performed: false,
+  });
 } else if (joined.includes('recovery inspect')) {
   emit({
     ok: true,

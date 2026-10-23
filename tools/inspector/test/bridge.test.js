@@ -639,6 +639,55 @@ test('session show rejects a missing or invalid id before execution', async () =
   }
 });
 
+test('execution inspect is forwarded with a validated id and no write flags', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awr-argv-'));
+  const argvLog = path.join(dir, 'argv.jsonl');
+  let b;
+  try {
+    b = await startBridge({ env: { STUB_ARGV_OUT: argvLog } });
+    const shown = await (await fetch(
+      `${b.base}/api/execution?id=exe_4411&kill=1&retry=1`,
+      { headers: GUARD }
+    )).json();
+    assert.equal(shown.ok, true, JSON.stringify(shown));
+    assert.equal(shown.data.side_effects_performed, false);
+    assert.equal(shown.data.observation.state, 'unknown');
+    assert.match(shown.command, /execution inspect exe_4411/);
+    assert.doesNotMatch(shown.command, /kill|retry/);
+    const calls = fs.readFileSync(argvLog, 'utf8').trim().split('\n').map(JSON.parse);
+    const args = calls.find((row) => row.includes('execution') && row.includes('inspect'));
+    assert.ok(args);
+    assert.equal(args[args.indexOf('inspect') + 1], 'exe_4411');
+    assert.ok(!args.includes('kill'));
+    assert.ok(!args.includes('--kill'));
+    assert.ok(!args.includes('retry'));
+  } finally {
+    if (b) await b.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('execution inspect rejects a missing or invalid id before execution', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awr-argv-'));
+  const argvLog = path.join(dir, 'argv.jsonl');
+  let b;
+  try {
+    b = await startBridge({ env: { STUB_ARGV_OUT: argvLog } });
+    const before = fs.existsSync(argvLog) ? fs.readFileSync(argvLog, 'utf8') : '';
+    for (const pathName of ['/api/execution', '/api/execution?id=', '/api/execution?id=bad%20id']) {
+      const invalid = await (await fetch(`${b.base}${pathName}`, { headers: GUARD })).json();
+      assert.equal(invalid.ok, false);
+      assert.equal(invalid.error.code, 'BadRequest');
+      assert.ok(!invalid.command, 'Do not spawn a child process');
+    }
+    const after = fs.existsSync(argvLog) ? fs.readFileSync(argvLog, 'utf8') : '';
+    assert.equal(after, before, 'Do not spawn a child process');
+  } finally {
+    if (b) await b.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('recovery inspect is forwarded with a validated session', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awr-argv-'));
   const argvLog = path.join(dir, 'argv.jsonl');

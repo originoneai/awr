@@ -156,6 +156,13 @@
       operation:  ['operation_key'],
       purpose:    ['purpose'],
       exitCode:   ['exit_code'],
+      originSession:['origin_session_id'],
+    },
+    // awr execution inspect --json: one observation plus side_effects_performed.
+    // Do not map external_report, stdout, stderr or receipt; those stay off the panel.
+    executionInspect: {
+      observation:['observation'],
+      sideEffects:['side_effects_performed'],
     },
     // event history uses event_brief: type, not event_type.
     // event show --full uses the Event struct (event_type) plus payload_included.
@@ -288,6 +295,7 @@
     compactionDetail: null,
     selectedRecovery: null,
     recoveryDetail: null,
+    executionDetail: null,
     events: { items: [], loaded: false, error: null, command: null, mayHaveMore: false },
     selectedEvent: null,
     eventDetail: null,
@@ -934,6 +942,25 @@
     return String(op.id);
   }
 
+  function pendingExecutionId(op) {
+    if (!op || op.kind !== 'execution' || op.id == null || op.id === '') return null;
+    return String(op.id);
+  }
+
+  function pendingDetailLoaded() {
+    return Boolean(
+      (state.recoveryDetail && state.recoveryDetail.loaded)
+      || (state.executionDetail && state.executionDetail.loaded)
+    );
+  }
+
+  function clearPendingSelection() {
+    recoveryGuard.invalidate();
+    state.selectedRecovery = null;
+    state.recoveryDetail = null;
+    state.executionDetail = null;
+  }
+
   function renderPending(s) {
     const panel = $('pendingPanel');
     if (!s || (!s.pendingOps.length && !s.pendingTotal)) {
@@ -963,12 +990,13 @@
       });
       list.appendChild(li);
     }
-    renderRecoveryDetail();
+    renderPendingDetail();
   }
 
   function applyRecoveryInspect(id, response) {
     const sid = id == null ? '' : String(id);
     state.selectedRecovery = sid;
+    state.executionDetail = null;
     if (isUnsupported(response)) {
       state.unsupported.add('recovery.inspect');
       state.recoveryDetail = {
@@ -1000,27 +1028,65 @@
     };
   }
 
+  function applyExecutionInspect(id, response) {
+    const eid = id == null ? '' : String(id);
+    state.selectedRecovery = eid;
+    state.recoveryDetail = null;
+    if (isUnsupported(response)) {
+      state.unsupported.add('execution.inspect');
+      state.executionDetail = {
+        id: eid,
+        loaded: true,
+        error: response.error,
+        data: null,
+        command: response.command,
+      };
+      return;
+    }
+    state.unsupported.delete('execution.inspect');
+    if (response && response.ok) {
+      state.executionDetail = {
+        id: eid,
+        loaded: true,
+        error: null,
+        data: response.data || {},
+        command: response.command,
+      };
+      return;
+    }
+    state.executionDetail = {
+      id: eid,
+      loaded: true,
+      error: (response && response.error) || { code: 'Error', message: '' },
+      data: null,
+      command: response && response.command,
+    };
+  }
+
   async function selectRecovery(op) {
     const sessionId = pendingSessionId(op);
+    const executionId = pendingExecutionId(op);
     const rowId = op && op.id != null ? String(op.id) : '';
     if (!rowId) return;
-    if (state.selectedRecovery === rowId && state.recoveryDetail && state.recoveryDetail.loaded) {
-      recoveryGuard.invalidate();
-      state.selectedRecovery = null;
-      state.recoveryDetail = null;
+    if (state.selectedRecovery === rowId && pendingDetailLoaded()) {
+      clearPendingSelection();
       renderPending(state.status);
       return;
+    }
+    if (executionId) {
+      return selectExecutionInspect(executionId);
     }
     if (!sessionId) {
       recoveryGuard.invalidate();
       state.selectedRecovery = rowId;
+      state.executionDetail = null;
       state.recoveryDetail = {
         id: rowId,
         loaded: true,
         error: null,
         data: null,
         command: null,
-        needsSession: true,
+        noCommand: true,
         kind: op.kind || '',
       };
       renderPending(state.status);
@@ -1028,6 +1094,7 @@
     }
     const token = recoveryGuard.begin(sessionId);
     state.selectedRecovery = sessionId;
+    state.executionDetail = null;
     state.recoveryDetail = { id: sessionId, loaded: false, error: null, data: null, command: null };
     renderPending(state.status);
 
@@ -1047,6 +1114,57 @@
     renderPending(state.status);
   }
 
+  async function selectExecutionInspect(executionId) {
+    const eid = executionId == null ? '' : String(executionId);
+    if (!eid) return;
+    const token = recoveryGuard.begin(eid);
+    state.selectedRecovery = eid;
+    state.recoveryDetail = null;
+    state.executionDetail = { id: eid, loaded: false, error: null, data: null, command: null };
+    renderPending(state.status);
+
+    let response;
+    if (state.mode === 'demo') {
+      const inspects = window.AWR_DEMO && window.AWR_DEMO.executionInspects
+        ? window.AWR_DEMO.executionInspects
+        : null;
+      const demo = inspects ? (inspects[eid] || inspects[executionId]) : null;
+      response = demo
+        ? { ok: true, data: demo, command: 'awr execution inspect ' + eid }
+        : { ok: false, error: { code: 'NotFound', message: i18n.t('ui.execution_show_missing') } };
+    } else {
+      response = await callApi('/api/execution?id=' + encodeURIComponent(eid));
+    }
+    if (!recoveryGuard.isCurrent(token)) return;
+    applyExecutionInspect(eid, response);
+    renderPending(state.status);
+  }
+
+  function renderPendingDetail() {
+    if (state.executionDetail) {
+      renderExecutionDetail();
+      return;
+    }
+    renderRecoveryDetail();
+  }
+
+  function observationBits(item) {
+    const E = FIELD_MAP.executionObservation;
+    return [
+      pick(item, E.id, null) != null ? String(pick(item, E.id)) : '',
+      pick(item, E.state, null),
+      pick(item, E.verified, null) === true
+        ? i18n.t('ui.recovery_verified')
+        : pick(item, E.verified, null) === false
+          ? i18n.t('ui.recovery_unverified')
+          : '',
+      pick(item, E.operation, null),
+      pick(item, E.purpose, null),
+      pick(item, E.exitCode, null) != null ? 'exit=' + pick(item, E.exitCode) : '',
+      pick(item, E.basis, null),
+    ].filter(Boolean);
+  }
+
   function renderRecoveryDetail() {
     const host = $('recoveryDetail');
     if (!host) return;
@@ -1061,11 +1179,11 @@
       host.appendChild(el('p', 'sub', i18n.t('ui.recovery_detail_loading')));
       return;
     }
-    if (bag.needsSession) {
+    if (bag.noCommand || bag.needsSession) {
       host.appendChild(el(
         'p',
         null,
-        i18n.t('ui.recovery_needs_session', { kind: bag.kind || 'unknown', id: bag.id })
+        i18n.t('ui.pending_no_inspect', { kind: bag.kind || 'unknown', id: bag.id })
       ));
       return;
     }
@@ -1116,19 +1234,7 @@
     if (Array.isArray(executions) && executions.length) {
       const ul = el('ul', 'open-loops');
       for (const item of executions) {
-        const bits = [
-          pick(item, E.id, null) != null ? String(pick(item, E.id)) : '',
-          pick(item, E.state, null),
-          pick(item, E.verified, null) === true
-            ? i18n.t('ui.recovery_verified')
-            : pick(item, E.verified, null) === false
-              ? i18n.t('ui.recovery_unverified')
-              : '',
-          pick(item, E.operation, null),
-          pick(item, E.exitCode, null) != null ? 'exit=' + pick(item, E.exitCode) : '',
-          pick(item, E.basis, null),
-        ].filter(Boolean);
-        const li = el('li', null, bits.join(' · '));
+        const li = el('li', null, observationBits(item).join(' · '));
         const action = pick(item, E.nextAction, null);
         if (action) {
           li.appendChild(document.createTextNode(' — ' + action));
@@ -1153,6 +1259,59 @@
     }
     if (session && pick(session, FIELD_MAP.session.id, null) != null) {
       host.appendChild(el('p', 'sub', 'session=' + pick(session, FIELD_MAP.session.id)));
+    }
+  }
+
+  function renderExecutionDetail() {
+    const host = $('recoveryDetail');
+    if (!host) return;
+    clear(host);
+    if (!state.selectedRecovery) {
+      host.hidden = true;
+      return;
+    }
+    host.hidden = false;
+    const bag = state.executionDetail;
+    if (!bag || !bag.loaded) {
+      host.appendChild(el('p', 'sub', i18n.t('ui.execution_detail_loading')));
+      return;
+    }
+    if (bag.error) {
+      host.appendChild(errorBlock(bag.error, bag.command));
+      return;
+    }
+    const data = bag.data || {};
+    const I = FIELD_MAP.executionInspect;
+    const E = FIELD_MAP.executionObservation;
+    const observation = pick(data, I.observation, null);
+    const sideEffects = pick(data, I.sideEffects, null);
+
+    host.appendChild(el('h3', null, i18n.t('ui.execution_inspect')));
+    if (bag.command) {
+      const cmd = el('div', 'cmd');
+      cmd.appendChild(el('span', 'prompt', '$'));
+      cmd.appendChild(el('code', null, bag.command));
+      host.appendChild(cmd);
+    }
+    if (sideEffects === false) {
+      host.appendChild(el('p', 'sub', i18n.t('ui.execution_no_side_effects')));
+    }
+    if (!observation || typeof observation !== 'object') {
+      host.appendChild(el('p', null, i18n.t('ui.execution_no_observation')));
+      return;
+    }
+    const bits = observationBits(observation);
+    host.appendChild(el('p', null, bits.join(' · ')));
+    const action = pick(observation, E.nextAction, null);
+    if (action) {
+      const next = el('p', null);
+      next.appendChild(el('span', 'sub', i18n.t('ui.recovery_next_step') + ' '));
+      next.appendChild(document.createTextNode(String(action)));
+      host.appendChild(next);
+    }
+    const origin = pick(observation, E.originSession, null);
+    if (origin != null && origin !== '') {
+      host.appendChild(el('p', 'sub', i18n.t('ui.execution_origin_session') + ' ' + origin));
     }
   }
 
@@ -2495,6 +2654,7 @@
     state.compactionDetail = null;
     state.selectedRecovery = null;
     state.recoveryDetail = null;
+    state.executionDetail = null;
     state.events = { items: [], loaded: false, error: null, command: null, mayHaveMore: false };
     state.selectedEvent = null;
     state.eventDetail = null;
@@ -3017,7 +3177,7 @@
       createGenerationGuard, state, detailGuard, renderWorkDetail, normStatus, renderWork, loadWorkPage,
       renderPacketSize, doCompile, renderQueueList, fillWorkSelect, loadAll,
       renderSessions, renderEvents, applyListResponse, applySessionShow, applyCompactionInspect, selectSession,
-      renderPending, applyRecoveryInspect, selectRecovery,
+      renderPending, applyRecoveryInspect, applyExecutionInspect, selectRecovery,
       applyEventShow, selectEvent,
     };
   }

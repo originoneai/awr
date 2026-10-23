@@ -269,6 +269,7 @@ const COMMANDS = {
   eventHistory: { argv: ['event', 'history'], write: false },
   eventShow: { argv: ['event', 'show'], write: false },
   compactionInspect: { argv: ['session', 'compaction', 'inspect'], write: false },
+  executionInspect: { argv: ['execution', 'inspect'], write: false },
   // Project map: the official read-only commands behind the snapshot (see public/project-map/extract.js).
   mapWorkGraph: { argv: ['work', 'graph'], write: false },
   mapNav: { argv: ['nav', '--cached'], write: false },
@@ -710,6 +711,15 @@ const routes = {
     // Read-only inspect only. Query strings cannot add --include-observation,
     // observe or defer; those write runtime records or expand host telemetry.
     return runCommand('compactionInspect', ['--session', session]);
+  },
+
+  'GET /api/execution': async (url) => {
+    const id = asKey(url.searchParams.get('id'));
+    if (!id) {
+      return { ok: false, error: { code: 'BadRequest', message: 'A valid id parameter is required' } };
+    }
+    // Read-only inspect. Query strings cannot add run/kill/retry flags.
+    return runCommand('executionInspect', [id]);
   },
 
   // Project map data. Each route is one allowlisted read-only command with validated arguments.
