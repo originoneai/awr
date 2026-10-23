@@ -365,6 +365,18 @@ fn boolean_gloss_prefixes_do_not_allow_environment_or_secret_content() {
             "credential",
         ),
         ("environment:\n  FALSE=无附件\n", "environment_dump"),
+        (
+            r#"[{"comment":"FALSE=xKqZmPwRtYvBnLsDfGhJaQ"}]"#,
+            "environment_dump",
+        ),
+        (
+            r#"[{"note":"TRUE=ghpxKqZmPwRtYvBnLsDfGhJaQeUi"}]"#,
+            "environment_dump",
+        ),
+        (
+            r#"[{"comment":"FALSE=hunter; TRUE=admin"}]"#,
+            "environment_dump",
+        ),
     ] {
         let p = Project::new();
         p.write("notes.json", notes);
@@ -394,6 +406,15 @@ fn boolean_gloss_prefixes_do_not_allow_environment_or_secret_content() {
             assert_eq!(report["details"]["rule"], "source.public_content");
             assert!(!String::from_utf8_lossy(&out.stderr).contains("synthetic-private-value"));
             assert!(!String::from_utf8_lossy(&out.stdout).contains("synthetic-private-value"));
+            for value in [
+                "xKqZmPwRtYvBnLsDfGhJaQ",
+                "ghpxKqZmPwRtYvBnLsDfGhJaQeUi",
+                "hunter",
+                "admin",
+            ] {
+                assert!(!String::from_utf8_lossy(&out.stderr).contains(value));
+                assert!(!String::from_utf8_lossy(&out.stdout).contains(value));
+            }
             assert!(!p.0.join(".awr").exists());
             if draft.exists() {
                 let diagnostic = fs::read_to_string(&draft).unwrap();

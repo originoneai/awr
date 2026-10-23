@@ -34,6 +34,9 @@ class SecretTransports(unittest.TestCase):
             "payload": {"body": "Completed native authorization: 用户确认；原记录保留。"}}})
         self.assertFalse(response["result"].get("isError", False), response)
         for body, category in [
+            ("FALSE=xKqZmPwRtYvBnLsDfGhJaQ", "environment_dump"),
+            ("TRUE=ghpxKqZmPwRtYvBnLsDfGhJaQeUi", "environment_dump"),
+            ("FALSE=hunter; TRUE=admin", "environment_dump"),
             ("FALSE=disabled; HOME=/" + SENTINEL, "environment_dump"),
             ("FALSE=disabled; export HOME=/" + SENTINEL, "environment_dump"),
             ("export TRUE=enabled", "environment_dump"),
@@ -54,12 +57,15 @@ class SecretTransports(unittest.TestCase):
                         "summary": body if use_summary else "Reviewed synthetic results",
                         "payload": {} if use_summary else {"body": body}})
                     self.assertEqual(rejected["details"]["category"], category)
+                    diagnostic = json.dumps(rejected)
+                    for value in ["xKqZmPwRtYvBnLsDfGhJaQ", "ghpxKqZmPwRtYvBnLsDfGhJaQeUi", "hunter", "admin"]:
+                        self.assertNotIn(value, diagnostic)
                     self.assertEqual(self.snapshot(), before)
         result = self.tool_error("awr_event_append", {"expected_revision": self.revision(),
             "event_type": "work.observed", "summary": "password: " + SENTINEL})
         self.assertEqual(result["code"], "RuleViolation")
         self.assertEqual(result["details"]["category"], "labelled_value")
-        self.assertEqual(result["details"]["policy_version"], 9)
+        self.assertEqual(result["details"]["policy_version"], 10)
         self.assertIn("outside registered sources", result["details"]["next_action"])
         public_schema = "# Deliver useful analysis\n\ninterface Login { password: string; }\n"
         (self.root / "goal.md").write_text(public_schema)
