@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{borrow::Cow, cell::OnceCell, sync::LazyLock};
 
-pub const SECRET_POLICY_VERSION: u32 = 9;
+pub const SECRET_POLICY_VERSION: u32 = 10;
 pub const SENSITIVE_CONTENT_WITHHELD: &str = "[sensitive content withheld]";
 const REJECTION: &str =
     "sensitive content is not accepted; remove secret values or use explicit redacted placeholders";
@@ -53,10 +53,12 @@ static ENV_ASSIGNMENT: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 // A complete, single-line legend describes literal states rather than exporting
-// variables. Each clause is exactly TRUE, FALSE, or NULL plus one short public
-// phrase. Shell syntax, extra variables, and incomplete clauses do not qualify,
+// variables. Each clause is exactly TRUE, FALSE, or NULL plus a known state
+// label or short Han-letter phrase. Extra variables and incomplete clauses do not qualify,
 // and a matching prefix must never hide a later assignment.
 const GLOSS_VALUE_MAX_CHARS: usize = 32;
+static HAN_GLOSS_PHRASE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\A[\p{Han}&&\p{L}]+\z").expect("fixed Han-letter gloss pattern"));
 const GLOSS_SENSITIVE_STEMS: &[&str] = &[
     "secret",
     "password",
@@ -104,37 +106,19 @@ fn literal_gloss_clause(clause: &str) -> bool {
 }
 
 fn public_gloss_value(value: &str) -> bool {
-    let count = value.chars().count();
-    if !(1..=GLOSS_VALUE_MAX_CHARS).contains(&count) || !value.chars().all(char::is_alphabetic) {
-        return false;
+    if known_state_label(value) {
+        return true;
     }
-    // Variable-shaped ASCII, including HOME embedded in a longer phrase, is not
-    // a public gloss. Known labels such as ON and YES stay available in any case.
-    if embeds_variable_token(value) {
+    let count = value.chars().count();
+    // Alphabetic shape or case alternation cannot establish that an ASCII word
+    // is public. Keep ASCII on the label list and exclude mixed-script tokens.
+    if !(1..=GLOSS_VALUE_MAX_CHARS).contains(&count) || !HAN_GLOSS_PHRASE.is_match(value) {
         return false;
     }
     let lower = value.to_lowercase();
     !GLOSS_SENSITIVE_STEMS
         .iter()
         .any(|stem| lower.contains(stem))
-}
-
-fn embeds_variable_token(value: &str) -> bool {
-    if known_state_label(value) {
-        return false;
-    }
-    let mut run = 0;
-    for c in value.chars() {
-        if c.is_ascii_uppercase() {
-            run += 1;
-            if run >= 2 || value.chars().all(|c| c.is_ascii_uppercase()) {
-                return true;
-            }
-        } else {
-            run = 0;
-        }
-    }
-    value.chars().all(|c| c.is_ascii_uppercase())
 }
 
 fn known_state_label(value: &str) -> bool {
@@ -1677,7 +1661,7 @@ mod tests {
         ]);
         ensure_public_value(&notes).unwrap();
         ensure_public_bytes(&serde_json::to_vec_pretty(&notes).unwrap()).unwrap();
-        let max_phrase = format!("FALSE={}", "a".repeat(32));
+        let max_phrase = format!("FALSE={}", "无".repeat(32));
         ensure_public_text(&max_phrase).unwrap();
         ensure_public_value(&json!([{"comment": max_phrase}])).unwrap();
         let escaped = "FALSE=\\u65e0\\u9644\\u4ef6";
@@ -1707,6 +1691,16 @@ mod tests {
             "FALSE=未设置密码",
             "FALSE=HOME",
             "FALSE=关闭HOME",
+            "FALSE=xKqZmPwRtYvBnLsDfGhJaQ",
+            "TRUE=ghpxKqZmPwRtYvBnLsDfGhJaQeUi",
+            "FALSE=hunter; TRUE=admin",
+            "FALSE=xkqzmpwrtyvbnlsdfghjaq",
+            "FALSE=关闭admin",
+            "FALSE=关闭xKqZmPwRtYvBnLsDfGhJaQ",
+            "FALSE=еnabled",
+            "FALSE=αβγδεζηθ",
+            "FALSE=éteint",
+            "FALSE=㇀",
             "FALSE=目的地2",
             "FALSE=无附件。",
             "\nFALSE=disabled\n",
@@ -1754,7 +1748,7 @@ mod tests {
                     .is_empty()
             );
         }
-        assert!(ensure_public_text(&format!("FALSE={}", "a".repeat(33))).is_err());
+        assert!(ensure_public_text(&format!("FALSE={}", "无".repeat(33))).is_err());
         for value in [
             json!({"environment": {"FALSE": "disabled"}}),
             json!({"environment": ["TRUE=enabled"]}),
