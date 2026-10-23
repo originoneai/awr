@@ -7,7 +7,10 @@ use std::{
 struct Project(PathBuf);
 impl Project {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("awr 接入 project {}", awr_core::Id::new()));
+        Self::named("project")
+    }
+    fn named(label: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("awr 接入 {label} {}", awr_core::Id::new()));
         fs::create_dir(&path).unwrap();
         Self(path)
     }
@@ -378,8 +381,14 @@ fn boolean_gloss_prefixes_do_not_allow_environment_or_secret_content() {
             "environment_dump",
         ),
     ] {
-        let p = Project::new();
+        // Diagnostic locators may legitimately contain fixture-value substrings,
+        // as Windows runneradmin paths do. Exercise that collision on every host.
+        let p = Project::named("runneradmin hunter");
         p.write("notes.json", notes);
+        let expected_locator =
+            awr_source::Locator::File(p.0.join("notes.json").canonicalize().unwrap())
+                .identity()
+                .unwrap();
         let before = fs::read(p.0.join("notes.json")).unwrap();
         let draft = p.0.join(".local/draft.json");
         fs::create_dir(p.0.join(".local")).unwrap();
@@ -404,16 +413,24 @@ fn boolean_gloss_prefixes_do_not_allow_environment_or_secret_content() {
             assert_eq!(report["code"], "RuleViolation");
             assert_eq!(report["details"]["category"], category);
             assert_eq!(report["details"]["rule"], "source.public_content");
-            assert!(!String::from_utf8_lossy(&out.stderr).contains("synthetic-private-value"));
-            assert!(!String::from_utf8_lossy(&out.stdout).contains("synthetic-private-value"));
+            // Verify the locator before excluding only that known metadata field.
+            // All other diagnostic fields must still withhold fixture values.
+            let mut diagnostic = report.clone();
+            let locator = diagnostic["details"]["location"]
+                .as_object_mut()
+                .unwrap()
+                .remove("locator")
+                .unwrap();
+            assert_eq!(locator, Value::String(expected_locator.clone()));
+            let diagnostic = serde_json::to_string(&diagnostic).unwrap();
             for value in [
+                "synthetic-private-value",
                 "xKqZmPwRtYvBnLsDfGhJaQ",
                 "ghpxKqZmPwRtYvBnLsDfGhJaQeUi",
                 "hunter",
                 "admin",
             ] {
-                assert!(!String::from_utf8_lossy(&out.stderr).contains(value));
-                assert!(!String::from_utf8_lossy(&out.stdout).contains(value));
+                assert!(!diagnostic.contains(value));
             }
             assert!(!p.0.join(".awr").exists());
             if draft.exists() {
