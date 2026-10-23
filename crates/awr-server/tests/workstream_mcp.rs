@@ -2824,3 +2824,386 @@ async fn mcp_envelope_limit_never_returns_a_partial_large_checkpoint() {
     assert!(body.contains("ResponseTooLarge"));
     assert!(!body.contains("PRIVATE_LARGE_CONTENT"));
 }
+
+async fn assert_command_rejection(
+    server: &Server,
+    client: &Client,
+    input: &Value,
+    status: reqwest::StatusCode,
+    field: Option<&str>,
+    constraint: Option<&str>,
+    hidden: &[&str],
+) {
+    let mcp = call(client, "awr_team_command", input.clone(), true).await;
+    let response = http()
+        .post(format!("{}/one/command", server.url))
+        .bearer_auth(A)
+        .json(input)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), status);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(mcp, body);
+    if let Some(field) = field {
+        assert_eq!(body["invalid_field"], field);
+        assert_eq!(body["constraint"], constraint.unwrap());
+        assert!(
+            body["next_step"]
+                .as_str()
+                .unwrap()
+                .contains("decimal strings")
+        );
+    } else {
+        assert!(body.get("invalid_field").is_none());
+    }
+    let text = body.to_string();
+    for secret in hidden {
+        assert!(!text.contains(secret), "{secret}");
+    }
+    assert!(text.len() < 1024, "{}", text.len());
+}
+
+#[tokio::test]
+async fn execution_start_schema_names_missing_mode_on_http_and_mcp() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let tools = client.list_all_tools().await.unwrap();
+    let schema = &tools
+        .iter()
+        .find(|tool| tool.name == "awr_team_command")
+        .unwrap()
+        .input_schema;
+    let flat = &schema["properties"]["args"]["properties"];
+    assert_eq!(
+        flat["execution_mode"]["enum"],
+        json!(["caller_managed", "reference_write_v1"])
+    );
+    assert_eq!(
+        flat["expected_input_digest"]["type"],
+        json!(["string", "null"])
+    );
+    assert_eq!(
+        flat["expected_work_version"]["pattern"],
+        "^(0|[1-9][0-9]*)$"
+    );
+    assert_eq!(flat["input_digest"]["type"], json!(["string", "null"]));
+    let start_branch = schema["allOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|branch| branch["if"]["properties"]["op"]["const"] == "execution.start")
+        .unwrap();
+    let start_args = &start_branch["then"]["properties"]["args"];
+    assert_eq!(start_args["additionalProperties"], false);
+    assert!(
+        start_args["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("execution_mode"))
+    );
+    assert!(
+        !start_args["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("expected_input_digest"))
+    );
+
+    let taken = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "start-schema-claim",
+            "claim.acquire",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "expected_work_version":"0","ttl_seconds":60}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    assert_eq!(taken["receipt"]["execution_authorized"], false);
+    let claim = taken["receipt"]["data"].clone();
+    let prepared_for_intent = prepared(&client).await;
+    let intent = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared_for_intent,
+            "start-schema-prepare",
+            "execution.prepare",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+                "expected_lease_version":claim["lease_version"],
+                "expected_work_version":prepared_for_intent["data"]["runtime"]["work_version"],
+                "input_digest":"a".repeat(64),"declared_scope":["src"]}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    assert_eq!(intent["receipt"]["execution_authorized"], false);
+    assert_eq!(intent["receipt"]["data"]["dispatched"], false);
+    let execution = intent["receipt"]["data"].clone();
+    let header = prepared(&client).await;
+    let revision = header["project_revision"].clone();
+    let digest = "a".repeat(64);
+    let accepted = json!({
+        "session_id":"session-a",
+        "expected_session_version":"1",
+        "execution_id":execution["execution_id"],
+        "expected_execution_version":execution["execution_version"],
+        "claim_id":claim["claim_id"],
+        "expected_fence":claim["fence"],
+        "expected_lease_version":claim["lease_version"],
+        "expected_work_version":header["data"]["runtime"]["work_version"],
+        "execution_mode":"caller_managed",
+        "expected_input_digest":Value::Null
+    });
+    let request = |id: &str, args: &Value| {
+        serde_json::to_value(command(&header, id, "execution.start", args.clone())).unwrap()
+    };
+    let hidden = [
+        "synthetic-private-mode",
+        "synthetic-secret-key",
+        "synthetic-secret-value",
+        "private-digest-sentinel",
+    ];
+
+    let mut missing_mode = accepted.clone();
+    missing_mode
+        .as_object_mut()
+        .unwrap()
+        .remove("execution_mode");
+    assert_command_rejection(
+        &server,
+        &client,
+        &request("start-missing-mode", &missing_mode),
+        reqwest::StatusCode::BAD_REQUEST,
+        Some("/args/execution_mode"),
+        Some("required"),
+        &hidden,
+    )
+    .await;
+
+    let mut missing_claim = accepted.clone();
+    missing_claim.as_object_mut().unwrap().remove("claim_id");
+    assert_command_rejection(
+        &server,
+        &client,
+        &request("start-missing-claim", &missing_claim),
+        reqwest::StatusCode::BAD_REQUEST,
+        Some("/args/claim_id"),
+        Some("required"),
+        &hidden,
+    )
+    .await;
+
+    let mut unknown = accepted.clone();
+    unknown["synthetic-secret-key"] = json!("synthetic-secret-value");
+    assert_command_rejection(
+        &server,
+        &client,
+        &request("start-unknown-field", &unknown),
+        reqwest::StatusCode::BAD_REQUEST,
+        Some("/args"),
+        Some("unexpected_field"),
+        &hidden,
+    )
+    .await;
+
+    let mut null_execution = accepted.clone();
+    null_execution["execution_id"] = Value::Null;
+    assert_command_rejection(
+        &server,
+        &client,
+        &request("start-null-execution", &null_execution),
+        reqwest::StatusCode::BAD_REQUEST,
+        Some("/args/execution_id"),
+        Some("type"),
+        &hidden,
+    )
+    .await;
+
+    let mut zero_version = accepted.clone();
+    zero_version["expected_work_version"] = json!("0");
+    assert_command_rejection(
+        &server,
+        &client,
+        &request("start-zero-version", &zero_version),
+        reqwest::StatusCode::BAD_REQUEST,
+        Some("/args/expected_work_version"),
+        Some("pattern"),
+        &hidden,
+    )
+    .await;
+
+    let mut bad_type = accepted.clone();
+    bad_type["expected_fence"] = json!(1);
+    assert_command_rejection(
+        &server,
+        &client,
+        &request("start-fence-type", &bad_type),
+        reqwest::StatusCode::BAD_REQUEST,
+        Some("/args/expected_fence"),
+        Some("type"),
+        &hidden,
+    )
+    .await;
+
+    let mut bad_digest = accepted.clone();
+    bad_digest["expected_input_digest"] = json!("private-digest-sentinel");
+    assert_command_rejection(
+        &server,
+        &client,
+        &request("start-bad-digest", &bad_digest),
+        reqwest::StatusCode::BAD_REQUEST,
+        Some("/args/expected_input_digest"),
+        Some("pattern"),
+        &hidden,
+    )
+    .await;
+
+    let mut reference_missing = accepted.clone();
+    reference_missing["execution_mode"] = json!("reference_write_v1");
+    reference_missing
+        .as_object_mut()
+        .unwrap()
+        .remove("expected_input_digest");
+    assert_command_rejection(
+        &server,
+        &client,
+        &request("start-reference-missing-digest", &reference_missing),
+        reqwest::StatusCode::BAD_REQUEST,
+        Some("/args/expected_input_digest"),
+        Some("required"),
+        &hidden,
+    )
+    .await;
+
+    let mut reference_null = accepted.clone();
+    reference_null["execution_mode"] = json!("reference_write_v1");
+    assert_command_rejection(
+        &server,
+        &client,
+        &request("start-reference-null-digest", &reference_null),
+        reqwest::StatusCode::BAD_REQUEST,
+        Some("/args/expected_input_digest"),
+        Some("type"),
+        &hidden,
+    )
+    .await;
+
+    let mut unknown_mode = accepted.clone();
+    unknown_mode["execution_mode"] = json!("synthetic-private-mode");
+    unknown_mode["expected_input_digest"] = json!(digest);
+    assert_command_rejection(
+        &server,
+        &client,
+        &request("start-unknown-mode", &unknown_mode),
+        reqwest::StatusCode::NOT_IMPLEMENTED,
+        None,
+        None,
+        &hidden,
+    )
+    .await;
+    let unknown_body = call(
+        &client,
+        "awr_team_command",
+        request("start-unknown-mode", &unknown_mode),
+        true,
+    )
+    .await;
+    assert_eq!(unknown_body["code"], "Unsupported");
+
+    let mut unattested = accepted.clone();
+    unattested["execution_mode"] = json!("reference_write_v1");
+    unattested["expected_input_digest"] = json!(digest);
+    assert_command_rejection(
+        &server,
+        &client,
+        &request("start-reference-unattested", &unattested),
+        reqwest::StatusCode::FORBIDDEN,
+        None,
+        None,
+        &hidden,
+    )
+    .await;
+
+    let mut mismatched = accepted.clone();
+    mismatched["expected_input_digest"] = json!("b".repeat(64));
+    assert_command_rejection(
+        &server,
+        &client,
+        &request("start-mismatched-digest", &mismatched),
+        reqwest::StatusCode::CONFLICT,
+        None,
+        None,
+        &hidden,
+    )
+    .await;
+    assert_eq!(
+        call(
+            &client,
+            "awr_team_command",
+            request("start-mismatched-digest", &mismatched),
+            true,
+        )
+        .await["code"],
+        "PreconditionsChanged"
+    );
+    assert_eq!(prepared(&client).await["project_revision"], revision);
+
+    let started: Value = http()
+        .post(format!("{}/one/command", server.url))
+        .bearer_auth(A)
+        .json(&request("start-caller-null-digest", &accepted))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(started["execution_authorized"], true);
+    assert_eq!(
+        started["receipt"]["data"]["execution_mode"],
+        "caller_managed"
+    );
+    assert_eq!(started["receipt"]["data"]["input_digest"], digest);
+    assert_eq!(started["receipt"]["data"]["dispatched"], false);
+    assert_eq!(started["receipt"]["data"]["state"], "running");
+    let replay = call(
+        &client,
+        "awr_team_command",
+        request("start-caller-null-digest", &accepted),
+        false,
+    )
+    .await;
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(replay["receipt"], started["receipt"]);
+    assert_eq!(replay["execution_authorized"], false);
+    let inspected = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"execution.inspect","work_id":"a",
+            "execution_id":execution["execution_id"]}),
+        false,
+    )
+    .await;
+    assert_eq!(inspected["data"]["state"], "running");
+    assert_eq!(inspected["data"]["execution_authorized"], false);
+    assert_eq!(
+        admin
+            .query_one("SELECT count(*) FROM awr_team.outbox", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+    client.cancel().await.unwrap();
+}

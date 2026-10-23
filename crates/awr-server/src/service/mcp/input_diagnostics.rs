@@ -17,8 +17,8 @@ pub(in crate::service) fn add_input_diagnostic(error: &mut Value, input: &Value,
         .unwrap()
         .input_schema;
     let Some(detail) = shape_issue(input, &Value::Object((*schema).clone()), "") else {
-        // The selected operation can add required fields or a closed args shape.
-        // All domain checks and successful requests remain untouched.
+        // The selected operation can add required fields, a closed args shape,
+        // or a const-conditioned args constraint. Domain checks stay authoritative.
         let op = input.get("op").and_then(Value::as_str);
         for branch in schema["allOf"].as_array().into_iter().flatten() {
             if branch["if"]["properties"]["op"]["const"].as_str() != op || op.is_none() {
@@ -27,6 +27,14 @@ pub(in crate::service) fn add_input_diagnostic(error: &mut Value, input: &Value,
             if let Some(detail) = shape_issue(input, &branch["then"], "") {
                 attach(error, detail, write);
                 return;
+            }
+            if let Some(args) = input.get("args") {
+                if let Some(detail) =
+                    conditional_args_issue(args, &branch["then"]["properties"]["args"])
+                {
+                    attach(error, detail, write);
+                    return;
+                }
             }
         }
         return;
@@ -173,6 +181,38 @@ fn shape_issue(input: &Value, schema: &Value, path: &str) -> Option<Value> {
                         return Some(detail);
                     }
                 }
+            }
+        }
+    }
+    None
+}
+
+/// Apply a const-conditioned constraint published on one operation's args object.
+/// This reads the same catalog schema; it does not parse or admit the command.
+fn conditional_args_issue(args: &Value, args_schema: &Value) -> Option<Value> {
+    for branch in args_schema["allOf"].as_array()? {
+        let Some(properties) = branch["if"]["properties"].as_object() else {
+            continue;
+        };
+        let Some(required) = branch["if"]["required"].as_array() else {
+            continue;
+        };
+        let names = required
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        if names.is_empty() || names.len() != required.len() {
+            continue;
+        }
+        let matched = names.iter().all(|field| {
+            properties
+                .get(*field)
+                .and_then(|schema| schema.get("const"))
+                .is_some_and(|expected| args.get(*field) == Some(expected))
+        });
+        if matched {
+            if let Some(detail) = shape_issue(args, &branch["then"], "/args") {
+                return Some(detail);
             }
         }
     }
@@ -491,6 +531,134 @@ mod tests {
         let mut forbidden = json!({"code":"Forbidden"});
         add_input_diagnostic(&mut forbidden, &json!({}), true);
         assert_eq!(forbidden, json!({"code":"Forbidden"}));
+    }
+
+    fn start(args: Value) -> Value {
+        let mut input = command(args);
+        input["op"] = json!("execution.start");
+        input
+    }
+
+    fn start_args() -> Value {
+        json!({
+            "session_id":"session",
+            "expected_session_version":"1",
+            "execution_id":"execution",
+            "expected_execution_version":"1",
+            "expected_work_version":"1",
+            "claim_id":"claim",
+            "expected_fence":"1",
+            "expected_lease_version":"1",
+            "execution_mode":"caller_managed"
+        })
+    }
+
+    #[test]
+    fn execution_start_missing_mode_names_the_required_field() {
+        let mut args = start_args();
+        args.as_object_mut().unwrap().remove("execution_mode");
+        let error = rejected(start(args), true);
+        assert_eq!(error["invalid_field"], "/args/execution_mode");
+        assert_eq!(error["constraint"], "required");
+        assert!(!error.to_string().contains("private-"));
+        assert!(error.to_string().len() < 1024);
+    }
+
+    #[test]
+    fn execution_start_rejections_name_bounds_types_and_conditional_digests() {
+        for field in [
+            "session_id",
+            "expected_session_version",
+            "execution_id",
+            "expected_execution_version",
+            "expected_work_version",
+            "claim_id",
+            "expected_fence",
+            "expected_lease_version",
+            "execution_mode",
+        ] {
+            let mut args = start_args();
+            args.as_object_mut().unwrap().remove(field);
+            let error = rejected(start(args), true);
+            assert_eq!(error["invalid_field"], format!("/args/{field}"), "{field}");
+            assert_eq!(error["constraint"], "required", "{field}");
+        }
+        for (field, value, constraint) in [
+            ("expected_work_version", json!("0"), "pattern"),
+            ("expected_fence", json!("0"), "pattern"),
+            ("expected_lease_version", json!("0"), "pattern"),
+            ("expected_execution_version", json!("0"), "pattern"),
+            ("expected_session_version", json!("0"), "pattern"),
+            ("execution_id", Value::Null, "type"),
+            ("execution_mode", Value::Null, "type"),
+            ("claim_id", json!(1), "type"),
+            ("expected_fence", json!(1), "type"),
+            ("execution_mode", json!("private-value-sentinel"), "enum"),
+            (
+                "expected_input_digest",
+                json!("private-value-sentinel"),
+                "pattern",
+            ),
+        ] {
+            let mut args = start_args();
+            args[field] = value;
+            let error = rejected(start(args), true);
+            assert_eq!(error["invalid_field"], format!("/args/{field}"), "{field}");
+            assert_eq!(error["constraint"], constraint, "{field}");
+            assert!(!error.to_string().contains("private-"));
+            assert!(error.to_string().len() < 1024);
+        }
+
+        let mut unknown = start_args();
+        unknown["private-key-sentinel"] = json!("private-value-sentinel");
+        let error = rejected(start(unknown), true);
+        assert_eq!(error["invalid_field"], "/args");
+        assert_eq!(error["constraint"], "unexpected_field");
+        let fields = error["expected_fields"].as_array().unwrap();
+        assert_eq!(fields.len(), 10);
+        assert!(fields.contains(&json!("execution_mode")));
+        assert!(fields.contains(&json!("expected_input_digest")));
+        assert!(!error.to_string().contains("private-"));
+
+        let digest = "a".repeat(64);
+        for mode in ["caller_managed", "reference_write_v1"] {
+            let mut args = start_args();
+            args["execution_mode"] = json!(mode);
+            let omitted = rejected(start(args.clone()), true);
+            args["expected_input_digest"] = Value::Null;
+            let null_digest = rejected(start(args.clone()), true);
+            args["expected_input_digest"] = json!(digest);
+            let supplied = rejected(start(args), true);
+            if mode == "caller_managed" {
+                assert!(omitted.get("invalid_field").is_none(), "{mode} omitted");
+                assert!(null_digest.get("invalid_field").is_none(), "{mode} null");
+                assert!(supplied.get("invalid_field").is_none(), "{mode} digest");
+            } else {
+                assert_eq!(omitted["invalid_field"], "/args/expected_input_digest");
+                assert_eq!(omitted["constraint"], "required");
+                assert_eq!(null_digest["invalid_field"], "/args/expected_input_digest");
+                assert_eq!(null_digest["constraint"], "type");
+                assert!(supplied.get("invalid_field").is_none(), "{mode} digest");
+            }
+        }
+
+        let mut acquire = command(json!({"expected_work_version":"0"}));
+        acquire["op"] = json!("claim.acquire");
+        assert!(rejected(acquire, true).get("invalid_field").is_none());
+        let evidence = command(json!({
+            "session_id":"session",
+            "expected_session_version":"1",
+            "payload":{"note":"measured"},
+            "dirty_tree":true,
+            "input_digest":null
+        }));
+        assert!(rejected(evidence, true).get("invalid_field").is_none());
+        let mut prepare_zero = prepare_args();
+        prepare_zero["expected_work_version"] = json!("0");
+        assert_eq!(
+            rejected(prepare(prepare_zero), true)["constraint"],
+            "pattern"
+        );
     }
 
     #[test]

@@ -65,6 +65,50 @@ fn add_execution_prepare_input_schema(command: &mut Value) {
     }));
 }
 
+fn add_execution_start_input_schema(command: &mut Value) {
+    let execution_mode = json!({"type":"string","enum":["caller_managed","reference_write_v1"],
+        "description":"Required for execution.start. caller_managed admits the caller. reference_write_v1 also requires expected_input_digest and system attestation authority. The service does not infer or default a mode and does not dispatch the local runner."});
+    let expected_input_digest = json!({"type":["string","null"],"pattern":"^[0-9a-f]{64}$",
+        "description":"execution.start input binding. caller_managed accepts omission, null, or the prepared digest; any supplied digest must match. reference_write_v1 requires the prepared digest as 64 lowercase hexadecimal characters."});
+    publish_missing_flat_arg(command, "execution_mode", execution_mode.clone());
+    publish_missing_flat_arg(
+        command,
+        "expected_input_digest",
+        expected_input_digest.clone(),
+    );
+    // Reuse wider shared fields. claim.acquire still accepts work version 0, and
+    // evidence input_digest stays null-compatible. This branch narrows only start.
+    let fields = &command["properties"]["args"]["properties"];
+    let execution_id = json!({"type":"string","minLength":1,"maxLength":128,
+        "description":"execution.start: execution_id from the matching execution.prepare receipt."});
+    let expected_work_version = json!({"type":"string","pattern":"^[1-9][0-9]*$",
+        "description":"Current runtime work version. execution.start does not accept 0."});
+    let properties = json!({
+        "session_id":fields["session_id"].clone(),
+        "expected_session_version":fields["expected_session_version"].clone(),
+        "execution_id":execution_id,
+        "expected_execution_version":fields["expected_execution_version"].clone(),
+        "expected_work_version":expected_work_version,
+        "claim_id":fields["claim_id"].clone(),
+        "expected_fence":fields["expected_fence"].clone(),
+        "expected_lease_version":fields["expected_lease_version"].clone(),
+        "execution_mode":execution_mode,
+        "expected_input_digest":expected_input_digest
+    });
+    command["allOf"].as_array_mut().unwrap().push(json!({
+        "if":{"properties":{"op":{"const":"execution.start"}},"required":["op"]},
+        "then":{"properties":{"args":{"type":"object","additionalProperties":false,
+            "required":["session_id","expected_session_version","execution_id",
+                "expected_execution_version","expected_work_version","claim_id","expected_fence",
+                "expected_lease_version","execution_mode"],
+            "properties":properties,
+            "allOf":[{"if":{"properties":{"execution_mode":{"const":"reference_write_v1"}},
+                "required":["execution_mode"]},
+                "then":{"required":["expected_input_digest"],"properties":{"expected_input_digest":{
+                    "type":"string","pattern":"^[0-9a-f]{64}$"}}}}]}}}
+    }));
+}
+
 fn add_checkpoint_input_schema(command: &mut Value) {
     let context_hash = json!({"type":"string","pattern":"^[0-9a-f]{64}$"});
     let next_action = json!({"type":"string","minLength":1,"maxLength":8192});
@@ -689,6 +733,7 @@ fn catalog() -> Vec<Tool> {
         }
     ]);
     add_execution_prepare_input_schema(&mut command);
+    add_execution_start_input_schema(&mut command);
     add_checkpoint_input_schema(&mut command);
     add_handoff_input_schema(&mut command);
     add_neutral_delivery_schema(&mut command);
@@ -2310,6 +2355,108 @@ mod tests {
         assert_eq!(fields["declared_scope"]["items"]["type"], "string");
         assert_eq!(fields["declared_scope"]["items"]["minLength"], 1);
         assert_eq!(fields["declared_scope"]["items"]["maxLength"], 4096);
+    }
+
+    #[test]
+    fn discovery_publishes_execution_start_without_narrowing_shared_args() {
+        let command = catalog()
+            .into_iter()
+            .find(|tool| tool.name == "awr_team_command")
+            .unwrap();
+        let flat = command.input_schema["properties"]["args"]["properties"]
+            .as_object()
+            .unwrap();
+        assert!(
+            command.input_schema["properties"]["args"]
+                .get("required")
+                .is_none()
+        );
+        assert_eq!(
+            flat["execution_mode"]["enum"],
+            json!(["caller_managed", "reference_write_v1"])
+        );
+        assert_eq!(
+            flat["expected_input_digest"]["type"],
+            json!(["string", "null"])
+        );
+        assert_eq!(flat["expected_input_digest"]["pattern"], "^[0-9a-f]{64}$");
+        assert_eq!(
+            flat["expected_work_version"]["pattern"],
+            "^(0|[1-9][0-9]*)$"
+        );
+        assert_eq!(flat["input_digest"]["type"], json!(["string", "null"]));
+        assert_eq!(flat["execution_id"]["type"], json!(["string", "null"]));
+
+        let start = command.input_schema["allOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|branch| branch["if"]["properties"]["op"]["const"] == "execution.start")
+            .unwrap();
+        let args = &start["then"]["properties"]["args"];
+        assert_eq!(args["additionalProperties"], false);
+        assert_eq!(
+            args["required"],
+            json!([
+                "session_id",
+                "expected_session_version",
+                "execution_id",
+                "expected_execution_version",
+                "expected_work_version",
+                "claim_id",
+                "expected_fence",
+                "expected_lease_version",
+                "execution_mode"
+            ])
+        );
+        assert!(
+            !args["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("expected_input_digest"))
+        );
+        assert_eq!(args["properties"]["execution_id"]["type"], "string");
+        assert_eq!(args["properties"]["execution_id"]["minLength"], 1);
+        assert_eq!(args["properties"]["execution_id"]["maxLength"], 128);
+        assert_eq!(
+            args["properties"]["expected_work_version"]["pattern"],
+            "^[1-9][0-9]*$"
+        );
+        assert_eq!(
+            args["properties"]["expected_input_digest"]["type"],
+            json!(["string", "null"])
+        );
+        let conditional = &args["allOf"][0];
+        assert_eq!(
+            conditional["if"]["properties"]["execution_mode"]["const"],
+            "reference_write_v1"
+        );
+        assert_eq!(
+            conditional["then"]["required"],
+            json!(["expected_input_digest"])
+        );
+        assert_eq!(
+            conditional["then"]["properties"]["expected_input_digest"]["type"],
+            "string"
+        );
+        let prepare = command.input_schema["allOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|branch| branch["if"]["properties"]["op"]["const"] == "execution.prepare")
+            .unwrap();
+        assert_eq!(
+            prepare["then"]["properties"]["args"]["required"]
+                .as_array()
+                .unwrap()
+                .len(),
+            8
+        );
+        assert!(
+            prepare["then"]["properties"]["args"]["properties"]
+                .get("execution_mode")
+                .is_none()
+        );
     }
 
     #[test]
