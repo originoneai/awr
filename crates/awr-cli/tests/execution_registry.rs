@@ -1,4 +1,6 @@
-use serde_json::Value;
+use awr_source::fingerprint;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::Write,
@@ -551,4 +553,240 @@ fn execution_context_is_deterministic_and_never_silently_drops_registered_work()
     let too_small = p.run(&["context", "compile", "--session", &s, "--budget", "500"]);
     assert!(!too_small.status.success());
     assert!(String::from_utf8_lossy(&too_small.stderr).contains("BudgetExceeded"));
+}
+
+fn helper_command() -> String {
+    std::env::current_exe()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned()
+}
+
+fn managed_args<'a>(
+    session: &'a str,
+    key: &'a str,
+    purpose: &'a str,
+    extra: &[&'a str],
+    exe: &'a str,
+) -> Vec<&'a str> {
+    let mut args = vec![
+        "execution",
+        "run",
+        "--session",
+        session,
+        "--key",
+        key,
+        "--purpose",
+        purpose,
+    ];
+    args.extend_from_slice(extra);
+    args.push("--");
+    args.push(exe);
+    args.extend_from_slice(&["--ignored", "--exact", "failed_child", "--nocapture"]);
+    args
+}
+
+fn run_managed(p: &Project, session: &str, key: &str, purpose: &str, extra: &[&str]) -> Value {
+    let exe = helper_command();
+    p.ok(&managed_args(session, key, purpose, extra, &exe))
+}
+
+fn run_managed_output(
+    p: &Project,
+    session: &str,
+    key: &str,
+    purpose: &str,
+    extra: &[&str],
+) -> Output {
+    let exe = helper_command();
+    p.run(&managed_args(session, key, purpose, extra, &exe))
+}
+
+#[test]
+fn an_execution_receipt_binds_input_bytes_and_reports_drift() {
+    let p = Project::new();
+    let body = b"print('one')\n";
+    fs::write(p.0.join("a.py"), body).unwrap();
+    let session = p.bind("input-binding");
+    let run = run_managed(&p, &session, "bind-1", "Bind inputs", &["--bind", "a.py"]);
+    let execution = &run["execution"];
+    assert_eq!(execution["intent"]["input_binding"], "declared");
+    let inputs = execution["intent"]["inputs"].as_array().unwrap();
+    assert_eq!(inputs.len(), 1);
+    assert_eq!(inputs[0]["path"], "a.py");
+    assert_eq!(inputs[0]["source"], "bind");
+    assert_eq!(inputs[0]["size"], body.len() as u64);
+    let expected = format!("{:x}", Sha256::digest(body));
+    assert_eq!(inputs[0]["sha256"], expected);
+    assert_eq!(inputs[0]["sha256"].as_str().unwrap().len(), 64);
+    let id = execution["id"].as_str().unwrap().to_owned();
+
+    let first = p.ok(&["execution", "inspect", &id]);
+    assert_eq!(first["input_binding"], "declared");
+    assert_eq!(first["input_drift"]["any"], false);
+    assert_eq!(first["input_drift"]["files"][0]["state"], "unchanged");
+
+    fs::write(p.0.join("a.py"), b"print('two')\n").unwrap();
+    let second = p.ok(&["execution", "inspect", &id]);
+    assert_eq!(second["input_drift"]["any"], true);
+    assert_eq!(second["input_drift"]["files"][0]["state"], "changed");
+    assert_eq!(second["input_drift"]["files"][0]["sha256_at_run"], expected);
+    assert_ne!(
+        second["input_drift"]["files"][0]["sha256_now"],
+        second["input_drift"]["files"][0]["sha256_at_run"]
+    );
+}
+
+#[test]
+fn an_interpreter_script_is_bound_from_argv_and_absence_is_explicit() {
+    let p = Project::new();
+    fs::write(p.0.join("script.py"), b"print('x')\n").unwrap();
+    let session = p.bind("argv-binding");
+    let run = p.ok(&[
+        "execution",
+        "run",
+        "--session",
+        &session,
+        "--key",
+        "argv-1",
+        "--purpose",
+        "Argv script",
+        "--",
+        "python",
+        "script.py",
+    ]);
+    let execution = &run["execution"];
+    assert_eq!(execution["intent"]["input_binding"], "argv_script");
+    assert_eq!(execution["intent"]["inputs"][0]["path"], "script.py");
+    assert_eq!(execution["intent"]["inputs"][0]["source"], "argv_script");
+
+    let none = p.ok(&[
+        "execution",
+        "run",
+        "--session",
+        &session,
+        "--key",
+        "argv-2",
+        "--purpose",
+        "No script",
+        "--",
+        "node",
+        "-e",
+        "console.log(1)",
+    ]);
+    assert_eq!(none["execution"]["intent"]["inputs"], json!([]));
+    assert_eq!(none["execution"]["intent"]["input_binding"], "none");
+}
+
+#[test]
+fn a_missing_input_fails_registration_when_required() {
+    let p = Project::new();
+    let session = p.bind("require-input");
+    let revision = p.ok(&["status"])["project_revision"].to_string();
+    let output = run_managed_output(
+        &p,
+        &session,
+        "require-1",
+        "Require input",
+        &["--bind", "missing.py", "--require-input-hash"],
+    );
+    // AC5 names exit code 1 for a domain error, so pin the code rather than
+    // accepting any non-zero status.
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(report["code"], "SourceUnavailable");
+    assert!(
+        report["message"]
+            .as_str()
+            .unwrap()
+            .contains("cannot be read")
+    );
+    assert_eq!(p.ok(&["status"])["project_revision"].to_string(), revision);
+}
+
+#[test]
+fn a_touched_input_keeps_the_key_idempotent_while_changed_bytes_conflict() {
+    let p = Project::new();
+    let path = p.0.join("a.py");
+    fs::write(&path, b"print('one')\n").unwrap();
+    let session = p.bind("idempotent");
+    let first = run_managed(&p, &session, "same-1", "Same key", &["--bind", "a.py"]);
+    let id = first["execution"]["id"].as_str().unwrap().to_owned();
+
+    // Same bytes, rewritten (mtime changes) and spelled `./a.py`: still the same intent.
+    fs::write(&path, b"print('one')\n").unwrap();
+    let touched = run_managed(&p, &session, "same-1", "Same key", &["--bind", "./a.py"]);
+    assert_eq!(touched["created"], false);
+    assert_eq!(touched["execution"]["id"], id);
+
+    fs::write(&path, b"print('two')\n").unwrap();
+    let output = run_managed_output(&p, &session, "same-1", "Same key", &["--bind", "a.py"]);
+    // AC9 names exit code 1 for a domain error, so pin the code rather than
+    // accepting any non-zero status.
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(report["code"], "SourceConflict");
+    assert!(
+        report["message"]
+            .as_str()
+            .unwrap()
+            .contains("input binding conflicts with the receipt recorded for this operation key")
+    );
+}
+
+#[test]
+fn adding_inputs_to_an_existing_key_is_a_named_conflict() {
+    let p = Project::new();
+    fs::write(p.0.join("a.py"), b"print('one')\n").unwrap();
+    let session = p.bind("upgrade");
+    let first = run_managed(&p, &session, "upgrade-1", "No inputs", &[]);
+    assert_eq!(first["execution"]["intent"]["input_binding"], "none");
+
+    let output = run_managed_output(&p, &session, "upgrade-1", "No inputs", &["--bind", "a.py"]);
+    // AC10 names exit code 1 for a domain error, so pin the code rather than
+    // accepting any non-zero status.
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(report["code"], "SourceConflict");
+    assert!(
+        report["message"]
+            .as_str()
+            .unwrap()
+            .contains("input binding conflicts with the receipt recorded for this operation key")
+    );
+}
+
+/// AC8: the streaming hash behind `--bind` and `awr_source::fingerprint` agree
+/// byte for byte. The receipt is the observable side, because this crate is
+/// binary-only and its private hasher is not reachable from an integration test.
+/// Both sides could be wrong in the same way; AC1's independent check is the
+/// authority on correctness, this only pins the shared convention.
+#[test]
+fn content_sha256_matches_the_source_fingerprint_for_edge_sizes() {
+    let p = Project::new();
+    let session = p.bind("hash-parity");
+    let samples: [(&str, Vec<u8>); 3] = [
+        ("empty.bin", Vec::new()),
+        ("one-byte.bin", vec![0x5a]),
+        (
+            "one-mib.bin",
+            (0..1024 * 1024).map(|index| (index % 251) as u8).collect(),
+        ),
+    ];
+    for (index, (name, body)) in samples.iter().enumerate() {
+        fs::write(p.0.join(name), body).unwrap();
+        let key = format!("hash-{index}");
+        let run = run_managed(&p, &session, &key, "Hash parity", &["--bind", name]);
+        let input = &run["execution"]["intent"]["inputs"][0];
+        let recorded = input["sha256"].as_str().unwrap();
+        let expected = fingerprint(body);
+        assert_eq!(
+            recorded,
+            expected.strip_prefix("sha256:").unwrap(),
+            "the streaming hash must match awr_source::fingerprint for {name}"
+        );
+        assert_eq!(recorded.len(), 64);
+        assert_eq!(input["size"], body.len() as u64);
+    }
 }
