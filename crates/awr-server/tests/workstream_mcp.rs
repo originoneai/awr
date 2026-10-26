@@ -3207,3 +3207,368 @@ async fn execution_start_schema_names_missing_mode_on_http_and_mcp() {
     );
     client.cancel().await.unwrap();
 }
+
+#[tokio::test]
+async fn execution_report_schema_names_fields_on_http_and_mcp() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let tools = client.list_all_tools().await.unwrap();
+    let schema = &tools
+        .iter()
+        .find(|tool| tool.name == "awr_team_command")
+        .unwrap()
+        .input_schema;
+    let flat = &schema["properties"]["args"]["properties"];
+    assert_eq!(
+        flat["outcome"]["enum"],
+        json!(["succeeded", "failed", "cancelled", "unknown"])
+    );
+    assert!(flat["note"].get("x-nonblank-utf8").is_none());
+    assert_eq!(flat["output_digest"]["type"], json!(["string", "null"]));
+    assert_eq!(
+        flat["workspace_settlement"]["type"],
+        json!(["object", "null"])
+    );
+    assert_eq!(
+        flat["baseline_transition"]["type"],
+        json!(["object", "null"])
+    );
+    assert_eq!(
+        flat["expected_work_version"]["pattern"],
+        "^(0|[1-9][0-9]*)$"
+    );
+    assert_eq!(flat["execution_id"]["type"], json!(["string", "null"]));
+    let report_branch = schema["allOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|branch| branch["if"]["properties"]["op"]["const"] == "execution.report")
+        .unwrap();
+    let report_args = &report_branch["then"]["properties"]["args"];
+    assert_eq!(report_args["additionalProperties"], false);
+    for required in [
+        "outcome",
+        "note",
+        "observed_paths",
+        "execution_id",
+        "expected_execution_version",
+    ] {
+        assert!(
+            report_args["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(required)),
+            "{required}"
+        );
+    }
+    assert!(
+        !report_args["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("output_digest"))
+    );
+    assert_eq!(report_args["properties"]["note"]["x-nonblank-utf8"], true);
+    let start_required = &schema["allOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|branch| branch["if"]["properties"]["op"]["const"] == "execution.start")
+        .unwrap()["then"]["properties"]["args"]["required"];
+    assert!(
+        start_required
+            .as_array()
+            .unwrap()
+            .contains(&json!("execution_mode"))
+    );
+    assert!(
+        !start_required
+            .as_array()
+            .unwrap()
+            .contains(&json!("outcome"))
+    );
+    assert!(!start_required.as_array().unwrap().contains(&json!("note")));
+
+    let taken = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "report-schema-claim",
+            "claim.acquire",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "expected_work_version":"0","ttl_seconds":60}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    assert_eq!(taken["receipt"]["execution_authorized"], false);
+    let claim = taken["receipt"]["data"].clone();
+    let prepared_execution = prepared(&client).await;
+    let intent = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared_execution,
+            "report-schema-prepare",
+            "execution.prepare",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+                "expected_lease_version":claim["lease_version"],
+                "expected_work_version":prepared_execution["data"]["runtime"]["work_version"],
+                "input_digest":"a".repeat(64),"declared_scope":["src"]}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    let execution = intent["receipt"]["data"].clone();
+    let header = prepared(&client).await;
+    let started = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &header,
+            "report-schema-start",
+            "execution.start",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "execution_id":execution["execution_id"],
+                "expected_execution_version":execution["execution_version"],
+                "claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+                "expected_lease_version":claim["lease_version"],
+                "expected_work_version":header["data"]["runtime"]["work_version"],
+                "execution_mode":"caller_managed","expected_input_digest":Value::Null}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    assert_eq!(started["execution_authorized"], true);
+    assert_eq!(started["receipt"]["data"]["state"], "running");
+    let header = prepared(&client).await;
+    let revision = header["project_revision"].clone();
+    let version = started["receipt"]["data"]["execution_version"].clone();
+    let request = |header: &Value, id: &str, args: Value| {
+        serde_json::to_value(command(header, id, "execution.report", args)).unwrap()
+    };
+    let accepted = json!({
+        "session_id":"session-a",
+        "expected_session_version":"1",
+        "execution_id":execution["execution_id"],
+        "expected_execution_version":version,
+        "outcome":"failed",
+        "output_digest":Value::Null,
+        "observed_paths":["src/output"],
+        "note":"Recorded a failed synthetic result.",
+        "workspace_settlement":Value::Null,
+        "baseline_transition":Value::Null
+    });
+    let hidden = [
+        "private-outcome-sentinel",
+        "private-digest-sentinel",
+        "private-note-sentinel",
+        "private-settlement",
+        "synthetic-secret-key",
+        "synthetic-secret-value",
+    ];
+    let mut missing_outcome = accepted.clone();
+    missing_outcome.as_object_mut().unwrap().remove("outcome");
+    let mut missing_note = accepted.clone();
+    missing_note.as_object_mut().unwrap().remove("note");
+    let mut missing_paths = accepted.clone();
+    missing_paths
+        .as_object_mut()
+        .unwrap()
+        .remove("observed_paths");
+    let mut bad_outcome = accepted.clone();
+    bad_outcome["outcome"] = json!("private-outcome-sentinel");
+    let mut bad_type = accepted.clone();
+    bad_type["outcome"] = json!(1);
+    let mut bad_digest = accepted.clone();
+    bad_digest["output_digest"] = json!("private-digest-sentinel");
+    let mut succeeded_missing = accepted.clone();
+    succeeded_missing["outcome"] = json!("succeeded");
+    succeeded_missing
+        .as_object_mut()
+        .unwrap()
+        .remove("output_digest");
+    let mut succeeded_null = accepted.clone();
+    succeeded_null["outcome"] = json!("succeeded");
+    let mut empty_note = accepted.clone();
+    empty_note["note"] = json!("");
+    let mut blank_note = accepted.clone();
+    blank_note["note"] = json!(" \n\t");
+    let mut nul_note = accepted.clone();
+    nul_note["note"] = json!("private-note-sentinel\u{0000}tail");
+    let mut long_note = accepted.clone();
+    long_note["note"] = json!("private-note-sentinel".repeat(196));
+    let mut unknown_field = accepted.clone();
+    unknown_field["synthetic-secret-key"] = json!("synthetic-secret-value");
+    let mut bad_settlement = accepted.clone();
+    bad_settlement["workspace_settlement"] = json!("private-settlement");
+    let mut null_execution = accepted.clone();
+    null_execution["execution_id"] = Value::Null;
+    for (id, args, field, constraint) in [
+        (
+            "report-missing-outcome",
+            missing_outcome,
+            "/args/outcome",
+            "required",
+        ),
+        (
+            "report-missing-note",
+            missing_note,
+            "/args/note",
+            "required",
+        ),
+        (
+            "report-missing-paths",
+            missing_paths,
+            "/args/observed_paths",
+            "required",
+        ),
+        ("report-bad-outcome", bad_outcome, "/args/outcome", "enum"),
+        ("report-outcome-type", bad_type, "/args/outcome", "type"),
+        (
+            "report-bad-digest",
+            bad_digest,
+            "/args/output_digest",
+            "pattern",
+        ),
+        (
+            "report-success-missing-digest",
+            succeeded_missing,
+            "/args/output_digest",
+            "required",
+        ),
+        (
+            "report-success-null-digest",
+            succeeded_null,
+            "/args/output_digest",
+            "type",
+        ),
+        ("report-empty-note", empty_note, "/args/note", "minLength"),
+        ("report-blank-note", blank_note, "/args/note", "minLength"),
+        ("report-nul-note", nul_note, "/args/note", "pattern"),
+        ("report-long-note", long_note, "/args/note", "maxLength"),
+        (
+            "report-unknown-field",
+            unknown_field,
+            "/args",
+            "unexpected_field",
+        ),
+        (
+            "report-bad-settlement",
+            bad_settlement,
+            "/args/workspace_settlement",
+            "type",
+        ),
+        (
+            "report-null-execution",
+            null_execution,
+            "/args/execution_id",
+            "type",
+        ),
+    ] {
+        assert_command_rejection(
+            &server,
+            &client,
+            &request(&header, id, args),
+            reqwest::StatusCode::BAD_REQUEST,
+            Some(field),
+            Some(constraint),
+            &hidden,
+        )
+        .await;
+    }
+    assert_eq!(prepared(&client).await["project_revision"], revision);
+    let inspected = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"execution.inspect","work_id":"a",
+            "execution_id":execution["execution_id"]}),
+        false,
+    )
+    .await;
+    assert_eq!(inspected["data"]["state"], "running");
+    assert_eq!(
+        admin
+            .query_one("SELECT count(*) FROM awr_team.execution_receipts", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+
+    let mut version = version;
+    for (id, outcome, digest) in [
+        ("report-failed", "failed", Value::Null),
+        ("report-succeeded", "succeeded", json!("b".repeat(64))),
+        ("report-cancelled", "cancelled", Value::Null),
+        ("report-unknown", "unknown", Value::Null),
+    ] {
+        let fresh = prepared(&client).await;
+        let mut args = accepted.clone();
+        args["expected_execution_version"] = version.clone();
+        args["outcome"] = json!(outcome);
+        args["output_digest"] = digest;
+        args["note"] = json!(format!("Recorded a {outcome} synthetic result."));
+        if outcome == "unknown" {
+            args.as_object_mut().unwrap().remove("output_digest");
+            args.as_object_mut().unwrap().remove("workspace_settlement");
+            args.as_object_mut().unwrap().remove("baseline_transition");
+        }
+        let body = request(&fresh, id, args);
+        let reported: Value = http()
+            .post(format!("{}/one/command", server.url))
+            .bearer_auth(A)
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let data = &reported["receipt"]["data"];
+        assert_eq!(data["reported_outcome"], outcome);
+        assert_eq!(data["effects_settled"], false);
+        assert_eq!(data["work_completed"], false);
+        assert_eq!(data["state"], "unknown");
+        if id == "report-failed" {
+            let replay = call(&client, "awr_team_command", body, false).await;
+            assert_eq!(replay["replayed"], true);
+            assert_eq!(replay["receipt"], reported["receipt"]);
+            assert_eq!(replay["execution_authorized"], false);
+        }
+        version = data["execution_version"].clone();
+    }
+    assert_eq!(
+        admin
+            .query_one("SELECT count(*) FROM awr_team.execution_receipts", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        4
+    );
+    let prepare_again = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"work.prepare","work_id":"a"}),
+        false,
+    )
+    .await;
+    assert!(prepare_again["data"]["work_id"].is_string());
+    assert_eq!(
+        admin
+            .query_one("SELECT count(*) FROM awr_team.outbox", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+    client.cancel().await.unwrap();
+}

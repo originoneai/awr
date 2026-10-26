@@ -109,6 +109,43 @@ fn add_execution_start_input_schema(command: &mut Value) {
     }));
 }
 
+fn add_execution_report_input_schema(command: &mut Value) {
+    let outcome = json!({"type":"string","enum":["succeeded","failed","cancelled","unknown"],
+        "description":"Required for execution.report. Terminal caller assertion: succeeded, failed, cancelled, or unknown. The service does not infer or default an outcome."});
+    let mut note = json!({"type":"string","minLength":1,"maxLength":4096,
+        "description":"Required for execution.report. Nonblank text, at most 4096 UTF-8 bytes, without a NUL. Whitespace-only text is rejected. The service does not infer this note."});
+    // Flat minLength/maxLength stay JSON Schema character counts. Only the closed
+    // branch sets x-nonblank-utf8, opting that note into parser byte, trim, and NUL checks.
+    publish_missing_flat_arg(command, "outcome", outcome.clone());
+    publish_missing_flat_arg(command, "note", note.clone());
+    note["x-nonblank-utf8"] = json!(true);
+    let fields = &command["properties"]["args"]["properties"];
+    let execution_id = json!({"type":"string","minLength":1,"maxLength":128,
+        "description":"execution.report: execution_id from the matching execution.prepare or execution.start receipt."});
+    let properties = json!({
+        "session_id":fields["session_id"].clone(),
+        "expected_session_version":fields["expected_session_version"].clone(),
+        "execution_id":execution_id,
+        "expected_execution_version":fields["expected_execution_version"].clone(),
+        "outcome":outcome,
+        "output_digest":fields["output_digest"].clone(),
+        "observed_paths":fields["observed_paths"].clone(),
+        "note":note,
+        "workspace_settlement":fields["workspace_settlement"].clone(),
+        "baseline_transition":fields["baseline_transition"].clone()
+    });
+    command["allOf"].as_array_mut().unwrap().push(json!({
+        "if":{"properties":{"op":{"const":"execution.report"}},"required":["op"]},
+        "then":{"properties":{"args":{"type":"object","additionalProperties":false,
+            "required":["session_id","expected_session_version","execution_id",
+                "expected_execution_version","outcome","observed_paths","note"],
+            "properties":properties,
+            "allOf":[{"if":{"properties":{"outcome":{"const":"succeeded"}},"required":["outcome"]},
+                "then":{"required":["output_digest"],"properties":{"output_digest":{
+                    "type":"string","pattern":"^[0-9a-f]{64}$"}}}}]}}}
+    }));
+}
+
 fn add_checkpoint_input_schema(command: &mut Value) {
     let context_hash = json!({"type":"string","pattern":"^[0-9a-f]{64}$"});
     let next_action = json!({"type":"string","minLength":1,"maxLength":8192});
@@ -740,6 +777,7 @@ fn catalog() -> Vec<Tool> {
     add_evidence_input_schema(&mut command, &mut query);
     add_review_input_schema(&mut command);
     add_baseline_transition_schema(&mut command);
+    add_execution_report_input_schema(&mut command);
     command["properties"]["args"]["properties"]["assignee_person_id"] = json!({"type":"string","minLength":1,"maxLength":128,
         "description":"task.assign: active eligible project member. This is a target, never the acting identity."});
     command["properties"]["args"]["properties"]["expected_responsibility_version"] = json!({"type":"string","pattern":"^(0|[1-9][0-9]*)$",

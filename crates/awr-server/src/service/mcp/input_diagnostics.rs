@@ -121,6 +121,8 @@ fn shape_issue(input: &Value, schema: &Value, path: &str) -> Option<Value> {
         }
     }
     if let Some(text) = input.as_str() {
+        // JSON Schema lengths count Unicode scalars. Do not switch this default
+        // to bytes; unrelated fields publish character bounds.
         let length = text.chars().count() as u64;
         for (key, bad) in [
             (
@@ -134,6 +136,29 @@ fn shape_issue(input: &Value, schema: &Value, path: &str) -> Option<Value> {
         ] {
             if bad {
                 return Some(issue(path, key));
+            }
+        }
+        // Parser byte, trim, and NUL rules apply only where the selected schema
+        // sets x-nonblank-utf8. The numeric bounds stay character counts above.
+        if schema.get("x-nonblank-utf8").and_then(Value::as_bool) == Some(true) {
+            let bytes = text.len() as u64;
+            if schema["minLength"]
+                .as_u64()
+                .is_some_and(|bound| bytes < bound)
+            {
+                return Some(issue(path, "minLength"));
+            }
+            if schema["maxLength"]
+                .as_u64()
+                .is_some_and(|bound| bytes > bound)
+            {
+                return Some(issue(path, "maxLength"));
+            }
+            if text.trim().is_empty() {
+                return Some(issue(path, "minLength"));
+            }
+            if text.contains('\0') {
+                return Some(issue(path, "pattern"));
             }
         }
         let bad_pattern = match schema["pattern"].as_str() {
@@ -716,5 +741,260 @@ mod tests {
         let before = state.clone();
         add_input_diagnostic(&mut state, &input, true);
         assert_eq!(state, before);
+    }
+
+    fn report(args: Value) -> Value {
+        let mut input = command(args);
+        input["op"] = json!("execution.report");
+        input
+    }
+
+    fn report_args(outcome: &str) -> Value {
+        let mut args = json!({
+            "session_id":"session",
+            "expected_session_version":"1",
+            "execution_id":"execution",
+            "expected_execution_version":"2",
+            "outcome":outcome,
+            "observed_paths":["src/output.rs"],
+            "note":"Recorded the observed result.",
+            "output_digest":Value::Null,
+            "workspace_settlement":Value::Null,
+            "baseline_transition":Value::Null
+        });
+        if outcome == "succeeded" {
+            args["output_digest"] = json!("b".repeat(64));
+        }
+        args
+    }
+
+    #[test]
+    fn execution_report_schema_names_required_outcome_note_and_closed_branch() {
+        let schema = catalog()
+            .into_iter()
+            .find(|tool| tool.name == "awr_team_command")
+            .unwrap()
+            .input_schema;
+        let flat = &schema["properties"]["args"]["properties"];
+        assert_eq!(
+            flat["outcome"]["enum"],
+            json!(["succeeded", "failed", "cancelled", "unknown"])
+        );
+        assert_eq!(flat["note"]["minLength"], 1);
+        assert_eq!(flat["note"]["maxLength"], 4096);
+        assert!(flat["note"].get("x-nonblank-utf8").is_none());
+        assert_eq!(flat["output_digest"]["type"], json!(["string", "null"]));
+        assert_eq!(flat["output_digest"]["pattern"], "^[0-9a-f]{64}$");
+        assert_eq!(
+            flat["workspace_settlement"]["type"],
+            json!(["object", "null"])
+        );
+        assert_eq!(
+            flat["baseline_transition"]["type"],
+            json!(["object", "null"])
+        );
+        assert_eq!(flat["observed_paths"]["type"], "array");
+        assert!(flat["observed_paths"].get("uniqueItems").is_none());
+        assert_eq!(
+            flat["expected_work_version"]["pattern"],
+            "^(0|[1-9][0-9]*)$"
+        );
+        assert_eq!(flat["input_digest"]["type"], json!(["string", "null"]));
+        assert_eq!(flat["execution_id"]["type"], json!(["string", "null"]));
+        let report_branch = schema["allOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|branch| branch["if"]["properties"]["op"]["const"] == "execution.report")
+            .unwrap();
+        let report_args_schema = &report_branch["then"]["properties"]["args"];
+        assert_eq!(report_args_schema["additionalProperties"], false);
+        assert_eq!(
+            report_args_schema["required"],
+            json!([
+                "session_id",
+                "expected_session_version",
+                "execution_id",
+                "expected_execution_version",
+                "outcome",
+                "observed_paths",
+                "note"
+            ])
+        );
+        assert_eq!(
+            report_args_schema["properties"]["execution_id"]["type"],
+            "string"
+        );
+        assert_eq!(
+            report_args_schema["properties"]["output_digest"]["type"],
+            json!(["string", "null"])
+        );
+        assert_eq!(
+            report_args_schema["properties"]["note"]["x-nonblank-utf8"],
+            true
+        );
+        let succeeded = &report_args_schema["allOf"][0];
+        assert_eq!(
+            succeeded["if"]["properties"]["outcome"]["const"],
+            "succeeded"
+        );
+        assert_eq!(succeeded["then"]["required"], json!(["output_digest"]));
+        assert_eq!(
+            succeeded["then"]["properties"]["output_digest"]["type"],
+            "string"
+        );
+        let start_branch = schema["allOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|branch| branch["if"]["properties"]["op"]["const"] == "execution.start")
+            .unwrap();
+        let start_required = &start_branch["then"]["properties"]["args"]["required"];
+        assert!(
+            start_required
+                .as_array()
+                .unwrap()
+                .contains(&json!("execution_mode"))
+        );
+        assert!(
+            !start_required
+                .as_array()
+                .unwrap()
+                .contains(&json!("outcome"))
+        );
+        assert!(!start_required.as_array().unwrap().contains(&json!("note")));
+
+        for field in [
+            "session_id",
+            "expected_session_version",
+            "execution_id",
+            "expected_execution_version",
+            "outcome",
+            "observed_paths",
+            "note",
+        ] {
+            let mut args = report_args("failed");
+            args.as_object_mut().unwrap().remove(field);
+            let error = rejected(report(args), true);
+            assert_eq!(error["invalid_field"], format!("/args/{field}"), "{field}");
+            assert_eq!(error["constraint"], "required", "{field}");
+        }
+        for outcome in ["failed", "cancelled", "unknown"] {
+            let error = rejected(report(report_args(outcome)), true);
+            assert!(error.get("invalid_field").is_none(), "{outcome}");
+        }
+        assert!(
+            rejected(report(report_args("succeeded")), true)
+                .get("invalid_field")
+                .is_none()
+        );
+        let mut omitted_digest = report_args("succeeded");
+        omitted_digest
+            .as_object_mut()
+            .unwrap()
+            .remove("output_digest");
+        let missing_digest = rejected(report(omitted_digest), true);
+        assert_eq!(missing_digest["invalid_field"], "/args/output_digest");
+        assert_eq!(missing_digest["constraint"], "required");
+        let mut null_success = report_args("succeeded");
+        null_success["output_digest"] = Value::Null;
+        let null_digest = rejected(report(null_success), true);
+        assert_eq!(null_digest["invalid_field"], "/args/output_digest");
+        assert_eq!(null_digest["constraint"], "type");
+
+        for (field, value, constraint) in [
+            ("outcome", json!(1), "type"),
+            ("outcome", json!("private-outcome-sentinel"), "enum"),
+            ("note", json!(""), "minLength"),
+            ("note", json!(" \n\t"), "minLength"),
+            ("note", json!("private-note-sentinel\u{0000}"), "pattern"),
+            ("note", json!("你".repeat(1366)), "maxLength"),
+            ("output_digest", json!("private-digest-sentinel"), "pattern"),
+            ("observed_paths", Value::Null, "type"),
+            ("workspace_settlement", json!("private-settlement"), "type"),
+            ("execution_id", Value::Null, "type"),
+        ] {
+            let mut args = report_args("failed");
+            args[field] = value;
+            let error = rejected(report(args), true);
+            assert_eq!(error["invalid_field"], format!("/args/{field}"), "{field}");
+            assert_eq!(error["constraint"], constraint, "{field}:{constraint}");
+            let text = error.to_string();
+            assert!(!text.contains("private-"));
+            assert!(!text.contains("你"));
+            assert!(text.len() < 1024);
+        }
+        let mut exact = report_args("failed");
+        exact["note"] = json!(format!("{}x", "你".repeat(1365)));
+        assert_eq!(exact["note"].as_str().unwrap().len(), 4096);
+        assert!(
+            rejected(report(exact), true).get("invalid_field").is_none(),
+            "4096 UTF-8 bytes stay inside the parser bound"
+        );
+
+        let mut unknown = report_args("unknown");
+        unknown["private-key-sentinel"] = json!("private-value-sentinel");
+        let error = rejected(report(unknown), true);
+        assert_eq!(error["invalid_field"], "/args");
+        assert_eq!(error["constraint"], "unexpected_field");
+        let fields = error["expected_fields"].as_array().unwrap();
+        assert_eq!(fields.len(), 10);
+        for name in [
+            "outcome",
+            "note",
+            "output_digest",
+            "observed_paths",
+            "workspace_settlement",
+            "baseline_transition",
+        ] {
+            assert!(fields.contains(&json!(name)), "{name}");
+        }
+        assert!(!error.to_string().contains("private-"));
+
+        let mut omitted_failed = report_args("failed");
+        omitted_failed
+            .as_object_mut()
+            .unwrap()
+            .remove("output_digest");
+        omitted_failed
+            .as_object_mut()
+            .unwrap()
+            .remove("workspace_settlement");
+        omitted_failed
+            .as_object_mut()
+            .unwrap()
+            .remove("baseline_transition");
+        assert!(
+            rejected(report(omitted_failed), true)
+                .get("invalid_field")
+                .is_none()
+        );
+        let mut rework = command(json!({
+            "session_id":"session",
+            "expected_session_version":"1",
+            "round_id":"round",
+            "note":"你".repeat(1366)
+        }));
+        rework["op"] = json!("work.rework");
+        assert!(
+            rejected(rework, true).get("invalid_field").is_none(),
+            "character maxLength on unrelated notes stays unchanged"
+        );
+        let mut acquire = command(json!({"expected_work_version":"0","ttl_seconds":60}));
+        acquire["op"] = json!("claim.acquire");
+        assert!(rejected(acquire, true).get("invalid_field").is_none());
+        let evidence = command(json!({
+            "session_id":"session",
+            "expected_session_version":"1",
+            "payload":{"note":"measured"},
+            "dirty_tree":true,
+            "input_digest":null
+        }));
+        assert!(rejected(evidence, true).get("invalid_field").is_none());
+        assert!(
+            rejected(start(start_args()), true)
+                .get("invalid_field")
+                .is_none()
+        );
     }
 }
