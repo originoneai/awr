@@ -1118,6 +1118,7 @@ async fn evidence_input_diagnostics_are_safe_and_identical_over_http_and_mcp() {
         assert!(mcp.to_string().len() < 1024);
     }
     for (op, selector) in [
+        ("claim.inspect", "claim_id"),
         ("review.inspect", "review_round_id"),
         ("evidence.inspect", "evidence_id"),
     ] {
@@ -1168,6 +1169,7 @@ async fn discovered_review_and_evidence_selectors_reach_scoped_records() {
     for field in [
         "evidence_id",
         "review_round_id",
+        "claim_id",
         "change_id",
         "member_actor_id",
         "category",
@@ -1259,6 +1261,159 @@ async fn discovered_review_and_evidence_selectors_reach_scoped_records() {
         .await["code"],
         "InvalidInput"
     );
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn claim_and_review_inspection_missing_scope_have_http_mcp_parity() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let taken = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "scope-parity-claim",
+            "claim.acquire",
+            json!({"session_id":"session-a","expected_session_version":"1","expected_work_version":"0","ttl_seconds":60}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    let claim_id = taken["receipt"]["data"]["claim_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let submitted = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "scope-parity-evidence",
+            "evidence.submit",
+            json!({"session_id":"session-a","expected_session_version":"1","payload":{},"dirty_tree":false}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    let opened = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "scope-parity-review",
+            "review.open",
+            json!({"session_id":"session-a","expected_session_version":"1","evidence_id":submitted["receipt"]["data"]["evidence_id"]}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    let round_id = opened["receipt"]["data"]["round_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let before = prepared(&client).await;
+    let counts_sql = "SELECT json_build_array((SELECT count(*) FROM awr_team.operations), (SELECT count(*) FROM awr_team.claims), (SELECT count(*) FROM awr_team.review_rounds), (SELECT count(*) FROM awr_team.events))";
+    let before_counts: Value = admin.query_one(counts_sql, &[]).await.unwrap().get(0);
+    // Missing work/session scope shares one bounded diagnostic across
+    // transports; a workstream id is not a scope; selector values stay hidden.
+    for (op, selector, value) in [
+        ("claim.inspect", "claim_id", claim_id.clone()),
+        ("review.inspect", "review_round_id", round_id.clone()),
+    ] {
+        for extra in [
+            json!({}),
+            json!({"workstream_id":before["workstream_id"].clone()}),
+        ] {
+            let mut input = json!({"protocol_version":1,"op":op});
+            input[selector] = json!(value);
+            input
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let mcp = call(&client, "awr_team_query", input.clone(), true).await;
+            let response = http()
+                .post(format!("{}/one/query", server.url))
+                .bearer_auth(A)
+                .json(&input)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST, "{op}");
+            let http: Value = response.json().await.unwrap();
+            assert_eq!(mcp, http, "{op}");
+            assert_eq!(mcp["code"], "InvalidInput", "{op}");
+            assert_eq!(mcp["invalid_field"], "/work_id", "{op}");
+            assert_eq!(mcp["constraint"], "required_selection", "{op}");
+            assert!(!mcp.to_string().contains(&value), "{op}");
+        }
+    }
+    // The record selector stays required in addition to the work/session scope.
+    let input = json!({"protocol_version":1,"op":"claim.inspect","work_id":"a"});
+    let mcp = call(&client, "awr_team_query", input.clone(), true).await;
+    let response = http()
+        .post(format!("{}/one/query", server.url))
+        .bearer_auth(A)
+        .json(&input)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    let http: Value = response.json().await.unwrap();
+    assert_eq!(mcp, http);
+    assert_eq!(mcp["code"], "InvalidInput");
+    assert_eq!(mcp["invalid_field"], "/claim_id");
+    assert_eq!(mcp["constraint"], "required");
+    // work_id, session_id and both consistent selectors reach the records.
+    for scope in [
+        json!({"work_id":"a"}),
+        json!({"session_id":"session-a"}),
+        json!({"work_id":"a","session_id":"session-a"}),
+    ] {
+        let mut input = json!({"protocol_version":1,"op":"claim.inspect"});
+        input["claim_id"] = json!(claim_id);
+        input
+            .as_object_mut()
+            .unwrap()
+            .extend(scope.as_object().unwrap().clone());
+        let record = call(&client, "awr_team_query", input, false).await;
+        assert!(record["data"].to_string().contains(&claim_id));
+        let mut input = json!({"protocol_version":1,"op":"review.inspect"});
+        input["review_round_id"] = json!(round_id);
+        input
+            .as_object_mut()
+            .unwrap()
+            .extend(scope.as_object().unwrap().clone());
+        let record = call(&client, "awr_team_query", input, false).await;
+        assert!(record["data"].to_string().contains(&round_id));
+    }
+    // An unauthorized work scope stays Forbidden without exposing the record.
+    for (op, selector, value) in [
+        ("claim.inspect", "claim_id", claim_id.clone()),
+        ("review.inspect", "review_round_id", round_id.clone()),
+    ] {
+        let mut input = json!({"protocol_version":1,"op":op,"work_id":"b-private"});
+        input[selector] = json!(value);
+        let denied = call(&client, "awr_team_query", input, true).await;
+        assert_eq!(
+            denied,
+            json!({"code":"Forbidden","message":"access denied"}),
+            "{op}"
+        );
+        assert!(!denied.to_string().contains(&value), "{op}");
+    }
+    // Rejected and successful inspections stay read-only.
+    assert_eq!(
+        prepared(&client).await["project_revision"],
+        before["project_revision"]
+    );
+    let after_counts: Value = admin.query_one(counts_sql, &[]).await.unwrap().get(0);
+    assert_eq!(after_counts, before_counts);
     client.cancel().await.unwrap();
 }
 

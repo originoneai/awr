@@ -243,6 +243,7 @@ fn add_evidence_input_schema(command: &mut Value, query: &mut Value) {
             "properties":delivery_properties,
             "description":"Typed bound delivery evidence. delivery_payload is a required JSON object with delivery_candidate_digest (64 lowercase hex from the selection receipt), optional passed and output_digest; other keys are preserved. Artifact bytes, simulated-member execution_id and Agent completion bindings follow the evidence.submit rules. Submission does not assert candidate selection, currentness or acceptance."}}}}));
     for (op, selector) in [
+        ("claim.inspect", "claim_id"),
         ("review.inspect", "review_round_id"),
         ("evidence.inspect", "evidence_id"),
     ] {
@@ -686,7 +687,8 @@ fn catalog() -> Vec<Tool> {
         "workstream_id":{"type":"string","description":"Omit for work.next and work.inbox; follow the returned next_query to select work."},
         "work_id":{"type":"string","description":"Omit for work.next and work.inbox."},
         "session_id":{"type":"string","description":"Omit for work.next and work.inbox; session.inspect requires this selector."},
-        "request_id":{"type":"string","description":"For delivery.integration.inspect, use IntegrationRequest.request_id (receipt data.integration_id). For delivery.neutral.outcome, use the original client command retry ID."},"claim_id":{"type":"string"},
+        "request_id":{"type":"string","description":"For delivery.integration.inspect, use IntegrationRequest.request_id (receipt data.integration_id). For delivery.neutral.outcome, use the original client command retry ID."},"claim_id":{"type":"string","minLength":1,"maxLength":128,
+            "description":"Required for claim.inspect; use claim_id from the claim.acquire receipt. Omit for other operations. The runtime bound is 128 UTF-8 bytes; JSON Schema maxLength counts characters."},
         "execution_id":{"type":"string"},"handoff_id":{"type":"string","description":"Actual handoff.id from a proposal receipt or handoff.inspect; events.list item IDs identify events, not handoffs. Read the exact handoff before receiving it."},
         "evidence_id":{"type":"string","minLength":1,"maxLength":128,
             "description":"Required for evidence.inspect; omit for other operations."},
@@ -710,6 +712,8 @@ fn catalog() -> Vec<Tool> {
         "expected_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}
     }});
     query["allOf"] = json!([
+        {"if":{"properties":{"op":{"enum":WorkstreamQuery::WORK_SELECTION_OPERATIONS}},"required":["op"]},
+            "then":{"anyOf":[{"required":["work_id"]},{"required":["session_id"]}]}},
         {"if":{"properties":{"op":{"const":"artifact.segment"}},"required":["op"]},
             "then":{"required":["expected_sha256"],"properties":{"max_context_bytes":{"maximum":WorkstreamQuery::MAX_ARTIFACT_SEGMENT_BYTES}}}},
         {"if":{"properties":{"op":{"enum":WorkstreamQuery::CONTEXT_BUDGET_OPERATIONS}},"required":["op"]},
@@ -1897,6 +1901,91 @@ mod tests {
                 .find(|v| v["if"]["properties"]["op"]["const"] == op)
                 .expect("Inspection must expose its required record selector");
             assert_eq!(branch["then"]["required"], json!([field]));
+        }
+    }
+
+    #[test]
+    fn query_discovery_reuses_runtime_work_selection_set() {
+        let tool = catalog()
+            .into_iter()
+            .find(|t| t.name == "awr_team_query")
+            .unwrap();
+        let branches: Vec<_> = tool.input_schema["allOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|branch| {
+                branch["if"]["properties"]["op"]["enum"]
+                    == json!(WorkstreamQuery::WORK_SELECTION_OPERATIONS)
+            })
+            .collect();
+        assert_eq!(
+            branches.len(),
+            1,
+            "exactly one branch publishes the runtime work-or-session set"
+        );
+        let then = &branches[0]["then"];
+        assert_eq!(
+            then["anyOf"],
+            json!([{"required":["work_id"]},{"required":["session_id"]}])
+        );
+        assert!(
+            then.get("oneOf").is_none(),
+            "anyOf keeps both consistent selectors valid"
+        );
+        assert!(
+            then.get("required").is_none(),
+            "work_id alone is never required unconditionally"
+        );
+        assert_eq!(
+            WorkstreamQuery::WORK_SELECTION_OPERATIONS
+                .iter()
+                .collect::<BTreeSet<_>>()
+                .len(),
+            WorkstreamQuery::WORK_SELECTION_OPERATIONS.len(),
+            "the shared set has no duplicates"
+        );
+        for op in ["claim.inspect", "review.inspect", "evidence.inspect"] {
+            assert!(
+                WorkstreamQuery::WORK_SELECTION_OPERATIONS.contains(&op),
+                "{op} shares the runtime work-or-session set"
+            );
+        }
+    }
+
+    #[test]
+    fn inspection_record_selectors_are_discoverable_and_bounded() {
+        let tool = catalog()
+            .into_iter()
+            .find(|t| t.name == "awr_team_query")
+            .unwrap();
+        let schema = &tool.input_schema;
+        let claim_id = &schema["properties"]["claim_id"];
+        assert_eq!(claim_id["type"], "string");
+        assert_eq!(claim_id["minLength"], 1);
+        assert_eq!(claim_id["maxLength"], 128);
+        assert!(
+            claim_id["description"]
+                .as_str()
+                .unwrap()
+                .contains("claim.inspect")
+        );
+        let review_round_id = &schema["properties"]["review_round_id"];
+        assert_eq!(review_round_id["type"], "string");
+        assert_eq!(review_round_id["minLength"], 1);
+        assert_eq!(review_round_id["maxLength"], 128);
+        for (op, field) in [
+            ("claim.inspect", "claim_id"),
+            ("review.inspect", "review_round_id"),
+            ("evidence.inspect", "evidence_id"),
+        ] {
+            let branch = schema["allOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["if"]["properties"]["op"]["const"] == op)
+                .expect("inspection must expose its required record selector");
+            assert_eq!(branch["then"]["required"], json!([field]), "{op}");
         }
     }
 

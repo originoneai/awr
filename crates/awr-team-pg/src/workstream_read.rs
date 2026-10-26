@@ -115,6 +115,25 @@ impl WorkstreamQuery {
         "delivery.neutral.inspect",
         "delivery.submission.describe",
     ];
+    /// Operations scoped by one work or session; workstream_id alone is not a
+    /// scope. Shared by validation and MCP discovery so the sets cannot drift.
+    pub const WORK_SELECTION_OPERATIONS: &'static [&'static str] = &[
+        "work.prepare",
+        "work.snapshot",
+        "work.observe",
+        "work.recovery",
+        "command.inspect",
+        "claim.inspect",
+        "execution.inspect",
+        "handoff.inspect",
+        "evidence.inspect",
+        "review.inspect",
+        "completion.inspect",
+        "delivery.inspect",
+        "artifact.content",
+        "artifact.segment",
+        "delivery.exports",
+    ];
     /// Maximum explicit raw-byte budget for stored artifact reads and encodings.
     /// Command envelopes retain their separate, smaller transport bound.
     pub const MAX_ARTIFACT_BYTES: usize = 1_048_576;
@@ -399,24 +418,8 @@ impl WorkstreamQuery {
         if exact_work && self.work_id.is_none() {
             return Err(PgError::query_field("work_id", "required"));
         }
-        if matches!(
-            self.op.as_str(),
-            "work.prepare"
-                | "work.snapshot"
-                | "work.observe"
-                | "work.recovery"
-                | "command.inspect"
-                | "claim.inspect"
-                | "execution.inspect"
-                | "handoff.inspect"
-                | "evidence.inspect"
-                | "review.inspect"
-                | "completion.inspect"
-                | "delivery.inspect"
-                | "artifact.content"
-                | "artifact.segment"
-                | "delivery.exports"
-        ) && self.work_id.is_none()
+        if Self::WORK_SELECTION_OPERATIONS.contains(&self.op.as_str())
+            && self.work_id.is_none()
             && self.session_id.is_none()
         {
             return Err(PgError::query_field("work_id", "work_selection"));
@@ -662,6 +665,77 @@ mod input_guidance_tests {
         let missing_search: WorkstreamQuery =
             serde_json::from_value(json!({"protocol_version":1,"op":"work.search"})).unwrap();
         assert!(missing_search.validate().is_err());
+    }
+
+    #[test]
+    fn work_selection_operation_matrix_matches_runtime_validation() {
+        let mut claimed_selectors = 0;
+        for op in WorkstreamQuery::WORK_SELECTION_OPERATIONS {
+            let mut input = json!({"protocol_version":1,"op":op});
+            match *op {
+                "command.inspect" => input["request_id"] = json!("request"),
+                "claim.inspect" => input["claim_id"] = json!("claim"),
+                "execution.inspect" => input["execution_id"] = json!("execution"),
+                "handoff.inspect" => input["handoff_id"] = json!("handoff"),
+                "evidence.inspect" => input["evidence_id"] = json!("evidence"),
+                "review.inspect" => input["review_round_id"] = json!("round"),
+                "artifact.content" => input["artifact_id"] = json!("artifact"),
+                "artifact.segment" => {
+                    input["artifact_id"] = json!("artifact");
+                    input["expected_sha256"] = json!("a".repeat(64));
+                }
+                _ => {}
+            }
+            if *op == "claim.inspect" {
+                claimed_selectors += 1;
+            }
+            let scoped = |mut input: Value, field: &str, value: Value| {
+                input[field] = value;
+                serde_json::from_value::<WorkstreamQuery>(input).unwrap()
+            };
+            let unscoped: WorkstreamQuery = serde_json::from_value(input.clone()).unwrap();
+            let error = unscoped.validate().unwrap_err();
+            let detail = error.query_input_diagnostic().unwrap();
+            assert_eq!(detail["invalid_field"], "/work_id", "{op}");
+            assert_eq!(detail["constraint"], "required_selection", "{op}");
+            assert!(
+                scoped(input.clone(), "work_id", json!("work"))
+                    .validate()
+                    .is_ok(),
+                "{op} accepts work_id"
+            );
+            assert!(
+                scoped(input.clone(), "session_id", json!("session"))
+                    .validate()
+                    .is_ok(),
+                "{op} accepts session_id"
+            );
+            let mut stream_only = input.clone();
+            stream_only["workstream_id"] = json!("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+            let stream_only: WorkstreamQuery = serde_json::from_value(stream_only).unwrap();
+            let detail = stream_only
+                .validate()
+                .unwrap_err()
+                .query_input_diagnostic()
+                .unwrap();
+            assert_eq!(detail["invalid_field"], "/work_id", "{op}");
+            assert_eq!(
+                detail["constraint"], "required_selection",
+                "{op}: workstream_id alone is not a scope"
+            );
+            let mut both = input.clone();
+            both["work_id"] = json!("work");
+            both["session_id"] = json!("session");
+            let both: WorkstreamQuery = serde_json::from_value(both).unwrap();
+            assert!(
+                both.validate().is_ok(),
+                "{op} accepts both consistent selectors at input validation"
+            );
+        }
+        assert_eq!(
+            claimed_selectors, 1,
+            "claim.inspect appears exactly once in the shared set"
+        );
     }
 
     #[test]
