@@ -1412,6 +1412,291 @@ async fn rework_field_and_lifecycle_rejections_share_http_mcp_facts_without_muta
 }
 
 #[tokio::test]
+async fn review_completion_fields_are_flat_discoverable_and_event_id_is_not_an_alias() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let tools = client.list_all_tools().await.unwrap();
+    let schema = &tools
+        .iter()
+        .find(|tool| tool.name == "awr_team_command")
+        .unwrap()
+        .input_schema;
+    let flat = &schema["properties"]["args"]["properties"];
+    for selector in ["evidence_id", "round_id"] {
+        assert_eq!(flat[selector]["type"], "string", "{selector}");
+        assert_eq!(flat[selector]["minLength"], 1, "{selector}");
+        assert_eq!(flat[selector]["maxLength"], 128, "{selector}");
+    }
+    assert!(
+        flat["evidence_id"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("review.open")
+    );
+    assert!(
+        flat["round_id"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("work.rework")
+    );
+    assert_eq!(flat["decision"]["enum"], json!(["approve", "reject"]));
+    assert_eq!(flat["context_complete"]["type"], "boolean");
+    assert_eq!(flat["requested_policy"]["type"], json!(["string", "null"]));
+    // Shared definitions keep their wider publications; event_id stays a
+    // separate delivery.facts.ingest field, never an evidence_id alias.
+    assert_eq!(flat["session_id"]["maxLength"], 128);
+    assert_eq!(flat["note"]["maxLength"], 4096);
+    assert!(flat["note"].get("x-nonblank-utf8").is_none());
+    assert_eq!(flat["reason"]["type"], "string");
+    assert_eq!(
+        flat["expected_work_version"]["pattern"],
+        "^(0|[1-9][0-9]*)$"
+    );
+    assert_eq!(flat["input_digest"]["type"], json!(["string", "null"]));
+    assert!(flat.get("event_id").is_some());
+    assert_ne!(flat["evidence_id"], flat["event_id"]);
+
+    for (op, extra, optional) in [
+        ("review.open", vec!["evidence_id"], vec![]),
+        (
+            "delivery.submit_and_request_review",
+            vec!["evidence_id"],
+            vec![],
+        ),
+        ("review.accept", vec!["round_id", "reason"], vec![]),
+        ("review.return", vec!["round_id", "reason"], vec![]),
+        (
+            "review.decide",
+            vec!["round_id", "decision", "reason"],
+            vec![],
+        ),
+        ("work.rework", vec!["round_id", "note"], vec![]),
+        (
+            "work.complete",
+            vec!["evidence_id", "context_complete"],
+            vec!["requested_policy"],
+        ),
+        (
+            "delivery.finalize",
+            vec!["evidence_id", "context_complete"],
+            vec!["requested_policy"],
+        ),
+    ] {
+        let branch = schema["allOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|branch| branch["if"]["properties"]["op"]["const"] == op)
+            .unwrap_or_else(|| panic!("missing operation branch: {op}"));
+        let args = &branch["then"]["properties"]["args"];
+        assert_eq!(args["additionalProperties"], false, "{op}");
+        let required: Vec<&str> = ["session_id", "expected_session_version"]
+            .into_iter()
+            .chain(extra.iter().copied())
+            .collect();
+        assert_eq!(args["required"], json!(required), "{op}");
+        let mut keys: Vec<&str> = args["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        let mut expected: Vec<&str> = required
+            .iter()
+            .copied()
+            .chain(optional.iter().copied())
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(keys, expected, "{op}");
+        assert_eq!(
+            args["properties"]["expected_session_version"]["pattern"], "^[1-9][0-9]*$",
+            "{op}"
+        );
+        for selector in ["evidence_id", "round_id"] {
+            if let Some(field) = args["properties"].get(selector) {
+                assert_eq!(field["type"], "string", "{op}");
+                assert_eq!(field["minLength"], 1, "{op}");
+                assert_eq!(field["maxLength"], 128, "{op}");
+            }
+        }
+        if op == "review.decide" {
+            assert_eq!(
+                args["properties"]["decision"]["enum"],
+                json!(["approve", "reject"])
+            );
+        }
+        if matches!(op, "work.complete" | "delivery.finalize") {
+            assert_eq!(args["properties"]["context_complete"]["type"], "boolean");
+            assert_eq!(
+                args["properties"]["requested_policy"]["type"],
+                json!(["string", "null"])
+            );
+        }
+    }
+
+    let evidence = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "flat-vocabulary-evidence",
+            "evidence.submit",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "payload":{"passed":true},"artifact_text":"flat vocabulary evidence","dirty_tree":false}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    let evidence_id = evidence["receipt"]["data"]["evidence_id"].clone();
+    let base = prepared(&client).await;
+    let state_sql = "SELECT jsonb_build_object(
+        'reviews',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM awr_team.review_rounds r),
+        'operations',(SELECT jsonb_agg(to_jsonb(o) ORDER BY id) FROM awr_team.operations o),
+        'events',(SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM awr_team.events e),
+        'completions',(SELECT count(*) FROM awr_team.completion_receipts))";
+    let before: Value = admin.query_one(state_sql, &[]).await.unwrap().get(0);
+
+    let hidden = [
+        "private-evidence-sentinel",
+        "private-key-sentinel",
+        "private-value-sentinel",
+    ];
+    let valid_open =
+        json!({"session_id":"session-a","expected_session_version":"1","evidence_id":evidence_id});
+    let mut missing = valid_open.clone();
+    missing.as_object_mut().unwrap().remove("evidence_id");
+    let mut wrong_type = valid_open.clone();
+    wrong_type["evidence_id"] = json!(1);
+    let mut unknown = valid_open.clone();
+    unknown["private-key-sentinel"] = json!("private-value-sentinel");
+    let mut open_event_alias = valid_open.clone();
+    open_event_alias
+        .as_object_mut()
+        .unwrap()
+        .remove("evidence_id");
+    open_event_alias["event_id"] = json!("private-evidence-sentinel");
+    let complete_event_alias = json!({"session_id":"session-a","expected_session_version":"1",
+        "context_complete":true,"event_id":"private-evidence-sentinel"});
+    for (id, op, args, field, constraint) in [
+        (
+            "flat-open-missing",
+            "review.open",
+            missing,
+            "/args/evidence_id",
+            "required",
+        ),
+        (
+            "flat-open-wrong-type",
+            "review.open",
+            wrong_type,
+            "/args/evidence_id",
+            "type",
+        ),
+        (
+            "flat-open-unknown",
+            "review.open",
+            unknown,
+            "/args",
+            "unexpected_field",
+        ),
+        (
+            "flat-open-event-id",
+            "review.open",
+            open_event_alias.clone(),
+            "/args/evidence_id",
+            "required",
+        ),
+        (
+            "flat-submit-event-id",
+            "delivery.submit_and_request_review",
+            open_event_alias,
+            "/args/evidence_id",
+            "required",
+        ),
+        (
+            "flat-finalize-event-id",
+            "delivery.finalize",
+            complete_event_alias.clone(),
+            "/args/evidence_id",
+            "required",
+        ),
+        (
+            "flat-complete-event-id",
+            "work.complete",
+            complete_event_alias.clone(),
+            "/args/evidence_id",
+            "required",
+        ),
+    ] {
+        let input = serde_json::to_value(command(&base, id, op, args)).unwrap();
+        assert_command_rejection(
+            &server,
+            &client,
+            &input,
+            reqwest::StatusCode::BAD_REQUEST,
+            Some(field),
+            Some(constraint),
+            &hidden,
+        )
+        .await;
+    }
+    let missing_context = valid_open.clone();
+    let input = serde_json::to_value(command(
+        &base,
+        "flat-complete-missing-context",
+        "work.complete",
+        missing_context,
+    ))
+    .unwrap();
+    assert_command_rejection(
+        &server,
+        &client,
+        &input,
+        reqwest::StatusCode::BAD_REQUEST,
+        Some("/args/context_complete"),
+        Some("required"),
+        &hidden,
+    )
+    .await;
+    let after: Value = admin.query_one(state_sql, &[]).await.unwrap().get(0);
+    assert_eq!(after, before);
+    assert_eq!(
+        prepared(&client).await["project_revision"],
+        base["project_revision"]
+    );
+
+    // Replay the identical request, including its original project revision.
+    let open_request = serde_json::to_value(command(
+        &prepared(&client).await,
+        "flat-vocabulary-open",
+        "review.open",
+        valid_open,
+    ))
+    .unwrap();
+    let opened = call(&client, "awr_team_command", open_request.clone(), false).await;
+    assert!(opened["receipt"]["data"]["round_id"].is_string());
+    let replayed: Value = http()
+        .post(format!("{}/one/command", server.url))
+        .bearer_auth(A)
+        .json(&open_request)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(replayed["receipt"], opened["receipt"]);
+    assert_eq!(replayed["replayed"], true);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn mcp_snapshot_is_discoverable_consumable_and_keeps_feedback_separate_from_authority() {
     let (_guard, admin, _, store) = setup().await;
     enable_writes(&admin).await;

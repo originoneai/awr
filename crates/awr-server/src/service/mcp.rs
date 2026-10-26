@@ -264,6 +264,33 @@ fn add_review_input_schema(command: &mut Value) {
         "decision":{"type":"string","enum":["approve","reject"]},
         "context_complete":{"type":"boolean"},"requested_policy":{"type":["string","null"]}
     });
+    // Publish the review/completion selectors in the flat args vocabulary so
+    // clients discover them directly. event_id stays a delivery.facts.ingest
+    // field and is never an alias. Shared publications of session_id,
+    // expected_session_version, note and reason stay untouched.
+    for (name, description) in [
+        (
+            "evidence_id",
+            "review.open / delivery.submit_and_request_review: the evidence under review. work.complete / delivery.finalize: the current bound evidence. Not the delivery.facts.ingest event_id.",
+        ),
+        (
+            "round_id",
+            "review.accept / review.return / review.decide / work.rework: round_id from the review receipt; inspect it as review_round_id.",
+        ),
+        ("decision", "review.decide only: approve or reject."),
+        (
+            "context_complete",
+            "work.complete / delivery.finalize: caller assertion that the required context was consumed completely.",
+        ),
+        (
+            "requested_policy",
+            "Optional for work.complete / delivery.finalize; a downgrade of the bound completion policy is rejected.",
+        ),
+    ] {
+        let mut flat = fields[name].clone();
+        flat["description"] = json!(description);
+        publish_missing_flat_arg(command, name, flat);
+    }
     for (op, extra, optional) in [
         ("review.open", vec!["evidence_id"], vec![]),
         (
