@@ -439,6 +439,7 @@ pub fn command_business_action(op: &str) -> Option<awr_team::Action> {
         "execution.prepare" | "execution.start" | "execution.cancel" | "execution.report"
         | "delivery.adopt" => ExecutionRequestAndReportOwn,
         "evidence.submit"
+        | "delivery.evidence.submit"
         | "review.open"
         | "delivery.submit_and_request_review"
         | "delivery.register_pr"
@@ -651,6 +652,7 @@ pub(crate) fn command_authority(op: &str) -> Option<DomainAuthority> {
         | "handoff.propose"
         | "handoff.accept"
         | "evidence.submit"
+        | "delivery.evidence.submit"
         | "review.open"
         | "review.accept"
         | "review.decide"
@@ -1058,6 +1060,7 @@ mod tests {
             "delivery.candidate.select",
             "delivery.inspection.reserve",
             "delivery.facts.ingest",
+            "delivery.evidence.submit",
         ] {
             assert_eq!(command_authority(op), Some(DomainAuthority::WriteActive));
             assert_eq!(
@@ -1343,6 +1346,16 @@ mod tests {
             )
             .is_ok()
         );
+        assert!(
+            authorize_command(
+                &developer,
+                id(1),
+                "w",
+                "delivery.evidence.submit",
+                CommandAuthPhase::Admission
+            )
+            .is_ok()
+        );
         assert!(matches!(
             authorize_command(
                 &developer,
@@ -1377,6 +1390,16 @@ mod tests {
                 id(1),
                 "w",
                 "evidence.submit",
+                CommandAuthPhase::Admission
+            ),
+            Err(PgError::Forbidden)
+        ));
+        assert!(matches!(
+            authorize_command(
+                &reviewer,
+                id(1),
+                "w",
+                "delivery.evidence.submit",
                 CommandAuthPhase::Admission
             ),
             Err(PgError::Forbidden)

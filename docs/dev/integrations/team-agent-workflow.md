@@ -215,7 +215,10 @@ The diagnostic identifies the fixed field without reflecting artifact content.
 
 Publish actual code/tests through the authorized
 project channel, select the exact candidate, and persist every manifest entry as
-evidence with its `payload.delivery_candidate_digest`. Bind the primary execution
+evidence through `delivery.evidence.submit`, using the selection receipt's digest
+in `args.delivery_payload.delivery_candidate_digest`. Submit `delivery_payload`
+as a JSON object; optional `passed` is boolean and `output_digest` is lowercase
+64-hex. Other properties remain unchanged. Bind the primary execution
 report to that same candidate; the report may stay in AWR without being committed
 to the repository. Its exact bytes and every manifest file are checked separately.
 Report-only submissions with missing manifest evidence
@@ -239,7 +242,8 @@ the operation's known `expected_fields`. Correct the field using current
 discovery; after an uncertain command outcome, inspect its original request first.
 Diagnostics are advice on a rejection, not a second validator or an approval.
 
-Under simulated-member completion, every `evidence.submit` needs the actual
+Under simulated-member completion, both `evidence.submit` and
+`delivery.evidence.submit` need the actual
 `args.execution_id`, including auxiliary code, styles and tests. A missing or null
 selector keeps the `EvidenceInvalid` conflict and identifies `/args/execution_id`;
 inspect this work's actual execution before correcting it. Other invalid bindings

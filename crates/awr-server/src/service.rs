@@ -885,6 +885,9 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
     if let Some(diagnostic) = error.query_input_diagnostic() {
         return (StatusCode::BAD_REQUEST, diagnostic);
     }
+    if let Some(diagnostic) = error.delivery_payload_invalid_diagnostic() {
+        return (StatusCode::BAD_REQUEST, diagnostic);
+    }
     if error.is_expired_agent_authorization() {
         return (
             StatusCode::FORBIDDEN,
@@ -934,7 +937,7 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
             json!({"code":"EvidenceInvalid","message":"args.execution_id is required",
             "invalid_field":"/args/execution_id","constraint":"required_by_completion_policy",
             "action_guidance":{
-                "when":"evidence.submit under simulated-member completion, including auxiliary files",
+                "when":"evidence.submit or delivery.evidence.submit under simulated-member completion, including auxiliary files",
                 "because":"Every evidence item must retain the actual executor's member identity.",
                 "action":"Inspect this work's actual execution with work.observe, then submit its execution_id in args.",
                 "recheck_on":"Session, contract, execution or authority changes."

@@ -55,7 +55,7 @@ fn guidance(work: &str, reason: &str) -> Value {
     };
     json!({"when":when,"because":[basis],
         "action":{"op":"delivery.neutral.inspect","work_id":work,
-            "note":"Publish the deliverable, select its exact candidate, and submit readable primary report and manifest evidence with payload.delivery_candidate_digest. The report may stay in AWR; every manifest file still needs exact bytes. Refresh work.prepare and claim.inspect before selection; never inspect peer paths."},
+            "note":"Publish the deliverable, select its exact candidate, and submit readable primary report and manifest evidence through delivery.evidence.submit with args.delivery_payload.delivery_candidate_digest. The report may stay in AWR; every manifest file still needs exact bytes. Refresh work.prepare and claim.inspect before selection; never inspect peer paths."},
         "recheck_on":"candidate, contract, artifact, scope or authority changes"})
 }
 

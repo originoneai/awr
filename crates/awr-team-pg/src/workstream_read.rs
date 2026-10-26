@@ -1191,7 +1191,8 @@ pub(crate) async fn read(
             "queries":["delivery.neutral.inspect","review.inspect"],
             "requires":"configured_delivery_or_selected_candidate",
             "opening_and_approval":"current_candidate_and_readable_bound_manifest",
-            "evidence_binding":"payload.delivery_candidate_digest",
+            "evidence_command":"delivery.evidence.submit",
+            "evidence_binding":"args.delivery_payload.delivery_candidate_digest",
             "artifact_read":"submission.artifacts[].query",
             "peer_paths_allowed":false,"inspectability_is_acceptance":false
         });

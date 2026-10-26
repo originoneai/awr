@@ -3857,3 +3857,146 @@ async fn execution_report_schema_names_fields_on_http_and_mcp() {
     );
     client.cancel().await.unwrap();
 }
+
+#[tokio::test]
+async fn typed_delivery_evidence_shares_http_mcp_rejection_and_success() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let before = prepare(&store, A, "a").await;
+    let counts = "SELECT (SELECT count(*) FROM awr_team.evidence),
+                         (SELECT count(*) FROM awr_team.artifacts),
+                         (SELECT count(*) FROM awr_team.events),
+                         (SELECT count(*) FROM awr_team.operations)";
+    let counts_before = admin.query_one(counts, &[]).await.unwrap();
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    // Discovery: the flat MCP schema declares the typed object directly while
+    // the generic payload stays untyped, and capability guidance names the entry.
+    let tools = client.list_all_tools().await.unwrap();
+    let schema = &tools
+        .iter()
+        .find(|t| t.name == "awr_team_command")
+        .unwrap()
+        .input_schema;
+    assert!(
+        schema["properties"]["op"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("delivery.evidence.submit"))
+    );
+    let flat = &schema["properties"]["args"]["properties"];
+    assert_eq!(flat["delivery_payload"]["type"], "object");
+    assert!(flat["payload"].get("type").is_none());
+    let caps = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"capabilities"}),
+        false,
+    )
+    .await;
+    assert_eq!(
+        caps["neutral_delivery"]["review_submission"]["evidence_command"],
+        "delivery.evidence.submit"
+    );
+    assert_eq!(
+        caps["neutral_delivery"]["review_submission"]["evidence_binding"],
+        "args.delivery_payload.delivery_candidate_digest"
+    );
+    // A malformed delivery_payload is a definite dedicated rejection, identical
+    // and value-free on both transports.
+    let digest = "c".repeat(64);
+    let bad = json!({"session_id":"session-a","expected_session_version":"1",
+        "dirty_tree":false,
+        "delivery_payload":"private-payload-sentinel"});
+    let envelope = serde_json::to_value(command(
+        &before,
+        "typed-evidence",
+        "delivery.evidence.submit",
+        bad,
+    ))
+    .unwrap();
+    let rejected_response = http()
+        .post(format!("{}/one/command", server.url))
+        .bearer_auth(A)
+        .json(&envelope)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rejected_response.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body = rejected_response.json::<Value>().await.unwrap();
+    assert_eq!(body["code"], "InvalidInput");
+    assert_eq!(body["reason"], "delivery_payload_invalid");
+    assert_eq!(body["invalid_field"], "/args/delivery_payload");
+    assert_eq!(body["constraint"], "type");
+    assert!(
+        body["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("delivery.submission.describe")
+    );
+    assert!(serde_json::to_vec(&body).unwrap().len() < 1024);
+    assert!(!body.to_string().contains("private-payload-sentinel"));
+    let mcp = call(&client, "awr_team_command", envelope, true).await;
+    assert_eq!(mcp, body);
+    // The definite rejection persisted nothing and moved no revision; the
+    // corrected request under the same request id then succeeds for real.
+    let counts_after = admin.query_one(counts, &[]).await.unwrap();
+    for (index, table) in ["evidence", "artifacts", "events", "operations"]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(
+            counts_after.get::<_, i64>(index),
+            counts_before.get::<_, i64>(index),
+            "invalid delivery_payload must not persist {table}"
+        );
+    }
+    let after = prepared(&client).await;
+    assert_eq!(after["project_revision"], before["project_revision"]);
+    let corrected = serde_json::to_value(command(
+        &after,
+        "typed-evidence",
+        "delivery.evidence.submit",
+        json!({"session_id":"session-a","expected_session_version":"1",
+            "dirty_tree":false,
+            "delivery_payload":{"delivery_candidate_digest":digest,"passed":true,"output_digest":"b".repeat(64)}}),
+    ))
+    .unwrap();
+    let http = http()
+        .post(format!("{}/one/command", server.url))
+        .bearer_auth(A)
+        .json(&corrected)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(http.status(), reqwest::StatusCode::OK);
+    let accepted: Value = http.json().await.unwrap();
+    let data = &accepted["receipt"]["data"];
+    assert!(data["evidence_id"].is_string());
+    assert_eq!(data["review_state_basis"], "at_commit");
+    assert_eq!(accepted["execution_authorized"], false);
+    let via_mcp = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "typed-evidence-mcp",
+            "delivery.evidence.submit",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "dirty_tree":false,
+                "delivery_payload":{"delivery_candidate_digest":digest}}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    assert_eq!(
+        via_mcp["receipt"]["data"]["review_state_basis"],
+        "at_commit"
+    );
+    assert_ne!(
+        via_mcp["receipt"]["data"]["evidence_id"],
+        accepted["receipt"]["data"]["evidence_id"]
+    );
+    client.cancel().await.unwrap();
+}

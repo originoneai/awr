@@ -25,6 +25,38 @@ pub(super) struct SubmitEvidence {
     dirty_tree: bool,
     execution_id: Option<String>,
 }
+/// Typed delivery evidence entry. The real delivery_payload object moves
+/// unchanged into the shared SubmitEvidence payload — no string parsing,
+/// normalization or field injection.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SubmitDeliveryEvidence {
+    session_id: String,
+    expected_session_version: String,
+    claimed_trust: Option<String>,
+    delivery_payload: Value,
+    artifact_hex: Option<String>,
+    artifact_text: Option<String>,
+    input_digest: Option<String>,
+    dirty_tree: bool,
+    execution_id: Option<String>,
+}
+
+impl SubmitDeliveryEvidence {
+    fn into_submit_evidence(self) -> SubmitEvidence {
+        SubmitEvidence {
+            session_id: self.session_id,
+            expected_session_version: self.expected_session_version,
+            claimed_trust: self.claimed_trust,
+            payload: self.delivery_payload,
+            artifact_hex: self.artifact_hex,
+            artifact_text: self.artifact_text,
+            input_digest: self.input_digest,
+            dirty_tree: self.dirty_tree,
+            execution_id: self.execution_id,
+        }
+    }
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct OpenReview {
@@ -123,6 +155,7 @@ impl Action {
         }
         let action = match op {
             "evidence.submit" => Self::Submit(parse_args(args)?),
+            "delivery.evidence.submit" => Self::Submit(parse_delivery_evidence(args)?),
             "review.open" => Self::Open(parse_args(args)?),
             "review.accept" => Self::Accept(parse_args(args)?),
             "review.return" => Self::Return(parse_args(args)?),
@@ -163,6 +196,27 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+/// Parse the typed delivery evidence entry during command parsing, before any
+/// database transaction. A malformed delivery_payload is a definite dedicated
+/// input rejection; other session/authority/business failures keep their own
+/// errors and are never masked as payload errors.
+fn parse_delivery_evidence(args: Value) -> PgResult<SubmitEvidence> {
+    if args.is_object() && args.get("expected_session_version").is_none() {
+        return Err(PgError::missing_review_session_version());
+    }
+    match args.get("delivery_payload") {
+        None => {
+            return Err(PgError::delivery_payload_invalid(
+                "delivery_payload",
+                "required",
+            ));
+        }
+        Some(payload) => artifact_input::validate_delivery_payload(payload)?,
+    }
+    let parsed: SubmitDeliveryEvidence = serde_json::from_value(args).map_err(|_| invalid())?;
+    Ok(parsed.into_submit_evidence())
+}
+
 #[cfg(test)]
 mod input_guidance_tests {
     use super::*;
@@ -171,6 +225,10 @@ mod input_guidance_tests {
     fn review_actions_require_an_explicit_session_version() {
         let cases = [
             ("evidence.submit", json!({"payload":{},"dirty_tree":false})),
+            (
+                "delivery.evidence.submit",
+                json!({"delivery_payload":{"delivery_candidate_digest":"a".repeat(64)},"dirty_tree":false}),
+            ),
             ("review.open", json!({"evidence_id":"evidence"})),
             (
                 "review.accept",
@@ -246,6 +304,96 @@ mod input_guidance_tests {
                 .unwrap()
                 .is_invalid_command_fields()
         );
+    }
+
+    #[test]
+    fn delivery_evidence_submit_rejects_malformed_payloads_before_persistence() {
+        let digest = "a".repeat(64);
+        let base =
+            json!({"session_id":"session","expected_session_version":"1","dirty_tree":false});
+        for (delivery_payload, field, constraint) in [
+            (
+                json!("private-value-sentinel"),
+                "/args/delivery_payload",
+                "type",
+            ),
+            (Value::Null, "/args/delivery_payload", "type"),
+            (json!([]), "/args/delivery_payload", "type"),
+            (
+                json!({}),
+                "/args/delivery_payload/delivery_candidate_digest",
+                "required",
+            ),
+            (
+                json!({"delivery_candidate_digest":"private-value-sentinel"}),
+                "/args/delivery_payload/delivery_candidate_digest",
+                "pattern",
+            ),
+            (
+                json!({"delivery_candidate_digest":digest,"passed":"yes"}),
+                "/args/delivery_payload/passed",
+                "type",
+            ),
+        ] {
+            let mut args = base.clone();
+            args["delivery_payload"] = delivery_payload;
+            let error = Action::parse("delivery.evidence.submit", args)
+                .err()
+                .unwrap();
+            assert!(error.is_delivery_payload_invalid());
+            let diagnostic = error.delivery_payload_invalid_diagnostic().unwrap();
+            assert_eq!(diagnostic["invalid_field"], field);
+            assert_eq!(diagnostic["constraint"], constraint);
+            assert!(!diagnostic.to_string().contains("private-value-sentinel"));
+        }
+        // A missing delivery_payload is a dedicated rejection, never a session,
+        // lease, authority or contract failure.
+        let error = Action::parse("delivery.evidence.submit", base.clone())
+            .err()
+            .unwrap();
+        assert!(error.is_delivery_payload_invalid());
+        // The generic payload alias is not accepted by the typed entry.
+        let mut alias = base.clone();
+        alias["payload"] = json!({"delivery_candidate_digest":digest});
+        assert!(
+            Action::parse("delivery.evidence.submit", alias)
+                .err()
+                .unwrap()
+                .is_delivery_payload_invalid()
+        );
+        // Unknown args fields remain a generic closed-shape rejection.
+        let mut unknown = base.clone();
+        unknown["delivery_payload"] = json!({"delivery_candidate_digest":digest});
+        unknown["unexpected"] = json!("private-value-sentinel");
+        let error = Action::parse("delivery.evidence.submit", unknown)
+            .err()
+            .unwrap();
+        assert!(error.is_invalid_command_fields());
+        assert!(!error.to_string().contains("private-value-sentinel"));
+        // A valid object, including preserved unknown payload keys, parses into
+        // the shared evidence submission with the payload unchanged.
+        let mut valid = base;
+        valid["delivery_payload"] = json!({"delivery_candidate_digest":digest,
+            "passed":true,"output_digest":"b".repeat(64),"note":"kept"});
+        let action = Action::parse("delivery.evidence.submit", valid)
+            .ok()
+            .unwrap();
+        let Action::Submit(evidence) = action else {
+            panic!("delivery.evidence.submit must reuse the shared evidence submission")
+        };
+        assert_eq!(
+            evidence.payload,
+            json!({"delivery_candidate_digest":digest,"passed":true,
+                "output_digest":"b".repeat(64),"note":"kept"})
+        );
+        // A missing expected_session_version keeps its own dedicated error.
+        let error = Action::parse(
+            "delivery.evidence.submit",
+            json!({"session_id":"session","dirty_tree":false,"delivery_payload":{}}),
+        )
+        .err()
+        .unwrap();
+        assert!(error.is_missing_review_session_version());
     }
 }
 

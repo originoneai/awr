@@ -38,6 +38,24 @@ caller identity or filesystem path in `args`. The complete command must fit
 | `delivery.source.abandon` | `publication_id`, `fence` |
 | `delivery.integration.prepare` | `connector_id`, `connector_version`, `candidate_digest`, `selection_version`, `evidence_id`, `review_round_id`, `review_decision_id`, `operation: "fast_forward"` |
 | `delivery.integration.reject_prepared` | `integration_id`, nonblank `reason` (at most 1,024 UTF-8 bytes) |
+| `delivery.evidence.submit` | owned `session_id`, `expected_session_version`, `dirty_tree`, required typed `delivery_payload` object (`delivery_candidate_digest`; optional `passed`, `output_digest`), optional `claimed_trust`, `input_digest`, conditional `execution_id`, `artifact_text` or `artifact_hex` |
+
+Bound delivery evidence uses the typed `delivery.evidence.submit` entry. Its
+`args.delivery_payload` is a required JSON object whose
+`delivery_candidate_digest` is the successful selection receipt's
+`data.candidate_digest` (64 lowercase hex); optional `passed` (boolean) and
+`output_digest` (64 lowercase hex) share the object and any other properties
+are stored and hashed unchanged. The generic `payload` alias is refused here.
+A malformed `delivery_payload` — stringified JSON, null, array, a missing or
+invalid digest, or a wrongly typed declared field — is a definite rejection
+before any persistence: HTTP 400 / MCP error with `code: InvalidInput` and
+`reason: delivery_payload_invalid`, naming the field, constraint and
+`delivery.submission.describe` as the discovery entry, without echoing
+values. The corrected request succeeds under the same `request_id`. Legacy
+`evidence.submit` keeps its arbitrary JSON `payload`, including scalar, null,
+array and the established object form that carries
+`payload.delivery_candidate_digest`; both entries share the same submission
+storage, permissions and receipt path.
 
 Candidates contain the strict `binding` and `manifest` objects from
 [the neutral delivery protocol](pr-delivery-review.md). Records are typed

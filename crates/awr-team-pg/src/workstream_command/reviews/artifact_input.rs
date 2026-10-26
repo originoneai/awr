@@ -3,6 +3,51 @@ use super::*;
 
 const MAX_BYTES: usize = crate::WorkstreamQuery::MAX_ARTIFACT_BYTES;
 
+/// The typed delivery evidence payload is a real JSON object whose declared
+/// fields match the published schema. Unknown keys are preserved untouched and
+/// never walked; the object itself is stored and hashed exactly as submitted.
+pub(super) fn validate_delivery_payload(payload: &Value) -> PgResult<()> {
+    let Some(object) = payload.as_object() else {
+        return Err(PgError::delivery_payload_invalid(
+            "delivery_payload",
+            "type",
+        ));
+    };
+    match object.get("delivery_candidate_digest") {
+        None => {
+            return Err(PgError::delivery_payload_invalid(
+                "delivery_candidate_digest",
+                "required",
+            ));
+        }
+        Some(value) if !value.as_str().is_some_and(digest) => {
+            return Err(PgError::delivery_payload_invalid(
+                "delivery_candidate_digest",
+                "pattern",
+            ));
+        }
+        _ => {}
+    }
+    if let Some(passed) = object.get("passed") {
+        if !passed.is_boolean() {
+            return Err(PgError::delivery_payload_invalid("passed", "type"));
+        }
+    }
+    if let Some(output) = object.get("output_digest") {
+        match output.as_str() {
+            None => return Err(PgError::delivery_payload_invalid("output_digest", "type")),
+            Some(text) if !digest(text) => {
+                return Err(PgError::delivery_payload_invalid(
+                    "output_digest",
+                    "pattern",
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn decode(hex: Option<&str>, text: Option<&str>) -> PgResult<Option<Vec<u8>>> {
     match (hex, text) {
         (Some(_), Some(_)) => Err(invalid()),
@@ -38,6 +83,67 @@ pub(super) fn decode(hex: Option<&str>, text: Option<&str>) -> PgResult<Option<V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delivery_payload_requires_a_typed_object_with_a_bound_candidate_digest() {
+        let digest = "a".repeat(64);
+        let valid = json!({"delivery_candidate_digest":digest,"passed":true,
+            "output_digest":"b".repeat(64),"note":"kept","extra":[1,null]});
+        validate_delivery_payload(&valid).unwrap();
+
+        for (payload, invalid_field, constraint) in [
+            (json!(null), "/args/delivery_payload", "type"),
+            (json!("{}"), "/args/delivery_payload", "type"),
+            (json!([]), "/args/delivery_payload", "type"),
+            (json!(true), "/args/delivery_payload", "type"),
+            (
+                json!({}),
+                "/args/delivery_payload/delivery_candidate_digest",
+                "required",
+            ),
+            (
+                json!({"delivery_candidate_digest":null}),
+                "/args/delivery_payload/delivery_candidate_digest",
+                "pattern",
+            ),
+            (
+                json!({"delivery_candidate_digest":"A".repeat(64)}),
+                "/args/delivery_payload/delivery_candidate_digest",
+                "pattern",
+            ),
+            (
+                json!({"delivery_candidate_digest":"a".repeat(63)}),
+                "/args/delivery_payload/delivery_candidate_digest",
+                "pattern",
+            ),
+            (
+                json!({"delivery_candidate_digest":digest,"passed":"yes"}),
+                "/args/delivery_payload/passed",
+                "type",
+            ),
+            (
+                json!({"delivery_candidate_digest":digest,"output_digest":7}),
+                "/args/delivery_payload/output_digest",
+                "type",
+            ),
+            (
+                json!({"delivery_candidate_digest":digest,"output_digest":"g".repeat(64)}),
+                "/args/delivery_payload/output_digest",
+                "pattern",
+            ),
+        ] {
+            let error = validate_delivery_payload(&payload).err().unwrap();
+            assert!(error.is_delivery_payload_invalid(), "{payload}");
+            let diagnostic = error.delivery_payload_invalid_diagnostic().unwrap();
+            assert_eq!(diagnostic["reason"], "delivery_payload_invalid");
+            assert_eq!(diagnostic["invalid_field"], invalid_field);
+            assert_eq!(diagnostic["constraint"], constraint, "{payload}");
+            // Caller values are never echoed; the response stays bounded.
+            let serialized = diagnostic.to_string();
+            assert!(!serialized.contains("kept"), "{serialized}");
+            assert!(serialized.len() < 1024, "{serialized}");
+        }
+    }
 
     #[test]
     fn text_and_legacy_hex_preserve_exact_bytes() {

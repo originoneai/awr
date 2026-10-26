@@ -653,6 +653,7 @@ projects; do not route enabled traffic through them.
 | Command | Role |
 |---|---|
 | `evidence.submit` | Record evidence bound to the current contract (and optional execution). Agent self-report is `caller_asserted` and never equals trusted execution or human approval. |
+| `delivery.evidence.submit` | Submit candidate-bound evidence with a typed `args.delivery_payload` object. Requires `delivery_candidate_digest`; optional `passed` and `output_digest` have declared types. Uses the same evidence storage and authority checks; submission does not prove currentness or approval. |
 | `review.open` | Open a review round bound to exact `contract_hash`, artifact digest, execution result digest and round index. |
 | `review.accept` / `review.return` | Human reviewer decision. Independence is by responsible **person**, not by a second agent of the same person. Personal self-review is allowed only when `completion_policy` is `trusted_execution_and_author_self_review`, and is labeled `personal_self_review` — never `team_independent`. |
 | `work.rework` | Acknowledge a returned/rejected round. History is retained. |

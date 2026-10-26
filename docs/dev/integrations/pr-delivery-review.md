@@ -66,7 +66,7 @@ GitHub PR facts visually and mechanically separate from AWR acceptance.
 
 | Business action | Command ops | Who |
 | --- | --- | --- |
-| `delivery.submit_and_request_review` | `evidence.submit`, `review.open`, `delivery.submit_and_request_review`, `delivery.register_pr`, `delivery.observe_pr`, `work.rework` | developer / maintainer / project_admin (template). `work.rework` is author acknowledgment of a return, not independent review. |
+| `delivery.submit_and_request_review` | `evidence.submit`, `delivery.evidence.submit`, `review.open`, `delivery.submit_and_request_review`, `delivery.register_pr`, `delivery.observe_pr`, `work.rework` | developer / maintainer / project_admin (template). `work.rework` is author acknowledgment of a return, not independent review. |
 | `review.decide` | `review.accept`, `review.return`, `review.decide` | **explicit** `independent_review` membership grant on an eligible template (developer / maintainer / project_admin). Never implied by role name, admin, or agent delegation. |
 | `delivery.finalize` | `work.complete`, `delivery.finalize` | maintainer / project_admin |
 
@@ -137,8 +137,8 @@ session, claim and versions; settlement grants no new repository authority.
 
 Publish code and tests in the intended shared version, then
 select the exact candidate using `delivery.candidate.select`. For each manifest
-entry, submit its bytes with `evidence.submit` and
-`payload.delivery_candidate_digest` equal to that selection's binding digest.
+entry, submit its bytes with `delivery.evidence.submit` and
+`args.delivery_payload.delivery_candidate_digest` equal to that selection's binding digest.
 Submit the primary execution report with the same candidate binding. It may stay
 in AWR without becoming a repository file. Its exact stored artifact ID, bytes and
 digest are checked independently; all manifest files still require their own
@@ -184,6 +184,15 @@ Agent-reviewed caller completion, provide `execution_id`, the `input_digest`
 from `execution.prepare`, and a payload object with `passed: true` and
 `output_digest` matching the successful `execution.report`. These bindings are
 checked again at completion against the reconciled execution and review.
+
+For selected delivery candidates, use `delivery.evidence.submit` with
+`args.delivery_payload` instead of `args.payload`. Supply a JSON object with the
+selection receipt's lowercase 64-hex `delivery_candidate_digest`; `passed` must be
+a boolean and `output_digest` a lowercase 64-hex string when present. Other
+object properties are preserved. Malformed typed payloads are rejected before
+storage with a field-specific correction; session, execution and review checks
+still apply. Existing generic `evidence.submit` records, including object-based
+delivery bindings, remain compatible.
 
 For a text report, send `artifact_text` directly. The service stores the exact
 UTF-8 bytes after JSON decoding, including whitespace, line endings and Unicode

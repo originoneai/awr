@@ -478,6 +478,61 @@ mod tests {
     }
 
     #[test]
+    fn delivery_evidence_rejections_name_known_fields_without_walking_the_payload() {
+        let delivery = |args: Value| {
+            let mut input = command(args);
+            input["op"] = json!("delivery.evidence.submit");
+            input
+        };
+        let digest = "a".repeat(64);
+        let base = json!({"session_id":"session","expected_session_version":"1","dirty_tree":false,
+            "delivery_payload":{"delivery_candidate_digest":digest,"passed":true,"note":"kept"}});
+        // A valid shape, including preserved unknown payload keys, is not diagnosed.
+        assert!(
+            rejected(delivery(base.clone()), true)
+                .get("invalid_field")
+                .is_none()
+        );
+        // A missing typed payload is named at its known field.
+        let mut missing = base.clone();
+        missing.as_object_mut().unwrap().remove("delivery_payload");
+        let error = rejected(delivery(missing), true);
+        assert_eq!(error["invalid_field"], "/args/delivery_payload");
+        assert_eq!(error["constraint"], "required");
+        // A stringified or scalar payload is a type error, without echoing it.
+        for payload in [json!("private-value-sentinel"), Value::Null, json!([])] {
+            let mut typed = base.clone();
+            typed["delivery_payload"] = payload;
+            let error = rejected(delivery(typed), true);
+            assert_eq!(error["invalid_field"], "/args/delivery_payload");
+            assert_eq!(error["constraint"], "type");
+            assert!(!error.to_string().contains("private-value-sentinel"));
+        }
+        // A missing known digest inside the object is named; arbitrary payload
+        // keys are never walked or echoed.
+        let mut no_digest = base.clone();
+        no_digest["delivery_payload"] = json!({"note":"private-value-sentinel"});
+        let error = rejected(delivery(no_digest), true);
+        assert_eq!(
+            error["invalid_field"],
+            "/args/delivery_payload/delivery_candidate_digest"
+        );
+        assert_eq!(error["constraint"], "required");
+        assert!(!error.to_string().contains("private-value-sentinel"));
+        // Unknown args fields close at the container without echoing their names.
+        let mut unknown = base.clone();
+        unknown["private-key-sentinel"] = json!("private-value-sentinel");
+        let error = rejected(delivery(unknown), true);
+        assert_eq!(error["invalid_field"], "/args");
+        assert_eq!(error["constraint"], "unexpected_field");
+        let fields = error["expected_fields"].as_array().unwrap();
+        assert!(fields.contains(&json!("delivery_payload")));
+        assert!(!fields.contains(&json!("payload")));
+        assert!(!error.to_string().contains("private-"));
+        assert!(error.to_string().len() < 1024);
+    }
+
+    #[test]
     fn diagnostics_do_not_echo_values_or_malformed_operation_names() {
         let mut input = command(
             json!({"session_id":"session","expected_session_version":"1","payload":{},"dirty_tree":false}),

@@ -45,6 +45,7 @@ pub(crate) const COMMANDS: &[&str] = &[
     "handoff.cancel",
     "handoff.timeout",
     "evidence.submit",
+    "delivery.evidence.submit",
     "review.open",
     "review.accept",
     "review.return",
@@ -219,6 +220,7 @@ impl WorkstreamCommand {
                 self.args.clone(),
             )?)),
             "evidence.submit"
+            | "delivery.evidence.submit"
             | "review.open"
             | "review.accept"
             | "review.return"
@@ -592,6 +594,7 @@ impl WorkstreamCommandStore {
         if command.op.starts_with("evidence.")
             || command.op.starts_with("review.")
             || matches!(command.op.as_str(), "work.rework" | "work.complete")
+            || command.op == "delivery.evidence.submit"
         {
             data["review_state_basis"] = json!("at_commit");
         }

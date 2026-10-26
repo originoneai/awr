@@ -337,6 +337,72 @@ impl PgError {
         matches!(self, Self::Protocol(message) if message == Self::MISSING_SESSION_START_CONVERSATION_ID)
     }
 
+    const DELIVERY_PAYLOAD_INVALID: &'static str = "delivery_payload_invalid";
+
+    /// Definite pre-persistence rejection of a malformed delivery_payload.
+    /// Field and constraint are fixed allowlisted labels; caller values are
+    /// never stored or echoed.
+    pub fn delivery_payload_invalid(field: &'static str, constraint: &'static str) -> Self {
+        Self::Protocol(format!(
+            "{}/{field}/{constraint}",
+            Self::DELIVERY_PAYLOAD_INVALID
+        ))
+    }
+
+    pub fn is_delivery_payload_invalid(&self) -> bool {
+        matches!(self, Self::Protocol(message) if message.starts_with("delivery_payload_invalid/"))
+    }
+
+    /// Bounded diagnostics for the typed delivery evidence entry, shared by HTTP
+    /// and MCP. Both parts are allowlisted again so an unrelated Protocol error
+    /// cannot echo input.
+    pub fn delivery_payload_invalid_diagnostic(&self) -> Option<serde_json::Value> {
+        let Self::Protocol(message) = self else {
+            return None;
+        };
+        let rest = message.strip_prefix("delivery_payload_invalid/")?;
+        let (field, constraint) = rest.split_once('/')?;
+        let invalid_field = match field {
+            "delivery_payload" => "/args/delivery_payload",
+            "delivery_candidate_digest" => "/args/delivery_payload/delivery_candidate_digest",
+            "passed" => "/args/delivery_payload/passed",
+            "output_digest" => "/args/delivery_payload/output_digest",
+            _ => return None,
+        };
+        let correction = match (field, constraint) {
+            ("delivery_payload", "required") => {
+                "Include args.delivery_payload as a JSON object; the generic payload alias is not accepted here."
+            }
+            ("delivery_payload", "type") => {
+                "Submit args.delivery_payload as a JSON object, not a stringified JSON text, null, array or scalar."
+            }
+            ("delivery_candidate_digest", "required") => {
+                "Include delivery_candidate_digest in args.delivery_payload."
+            }
+            ("delivery_candidate_digest", "pattern") => {
+                "Use exactly 64 lowercase hexadecimal characters from the successful selection receipt's data.candidate_digest."
+            }
+            ("passed", "type") => "Use a JSON boolean for passed, or omit it.",
+            ("output_digest", "type") => "Use a string for output_digest, or omit it.",
+            ("output_digest", "pattern") => {
+                "Use exactly 64 lowercase hexadecimal characters for output_digest, or omit it."
+            }
+            _ => return None,
+        };
+        Some(serde_json::json!({
+            "code":"InvalidInput","reason":"delivery_payload_invalid",
+            "message":"args.delivery_payload violates the delivery.evidence.submit input contract",
+            "invalid_field":invalid_field,"constraint":constraint,
+            "next_step":"Correct the indicated field and retry with the same request_id; query delivery.submission.describe for this work's typed input shape. Nothing was recorded.",
+            "action_guidance":{
+                "condition":"delivery.evidence.submit rejected the delivery_payload before any persistence.",
+                "basis":"The typed entry requires a JSON object whose declared fields match its discovered schema.",
+                "action":correction,
+                "recheck":"After correcting args.delivery_payload. Current session, ownership, contract and authority checks still apply; this advice does not authorize execution or command replay."
+            }
+        }))
+    }
+
     const WORK_NEXT_SELECTORS: &'static str = "work.next does not accept work selectors";
     const MISSING_REVIEW_SESSION_VERSION: &'static str =
         "review command requires expected_session_version";

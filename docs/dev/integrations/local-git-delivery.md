@@ -111,7 +111,8 @@ completion and integration verify both the pinned report and all manifest bytes.
 Only manifest entries are treated as repository artifacts.
 
 After selection, bind every persisted artifact's evidence to
-`receipt.data.candidate_digest` with `payload.delivery_candidate_digest`. Submit
+`receipt.data.candidate_digest` through `delivery.evidence.submit`, with the digest
+in the JSON object field `args.delivery_payload.delivery_candidate_digest`. Submit
 the exact bytes through `artifact_text` or `artifact_hex`; logical manifest IDs
 are distinct from the server-assigned stored artifact IDs. Reinspect readiness
 before requesting review. This read-only description does not publish code,

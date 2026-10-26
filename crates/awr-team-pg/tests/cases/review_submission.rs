@@ -165,6 +165,24 @@ async fn evidence(
     .await
 }
 
+async fn delivery_evidence(
+    reads: &WorkstreamReadStore,
+    key: &str,
+    text: &str,
+    digest: &str,
+) -> Value {
+    run(
+        reads,
+        A,
+        key,
+        "delivery.evidence.submit",
+        json!({"session_id":"session-a","expected_session_version":"1",
+        "dirty_tree":false,"artifact_text":text,
+        "delivery_payload":{"delivery_candidate_digest":digest,"passed":true,"output_digest":sha(text)}}),
+    )
+    .await
+}
+
 fn opening(evidence: &Value) -> Value {
     json!({"session_id":"session-a","expected_session_version":"1","evidence_id":evidence["evidence_id"]})
 }
@@ -1083,4 +1101,93 @@ async fn settled_producer_gets_submission_guidance_without_hiding_wait_or_recove
         "work.recovery"
     );
     assert_ne!(protected["data"]["guidance"]["code"], "submission");
+}
+
+#[tokio::test]
+async fn typed_delivery_evidence_binds_selection_to_a_readable_review() {
+    let (_guard, admin, db, reads) = setup().await;
+    seed_review_actors(&admin).await;
+    let delivery = connector(&admin, &db, &reads, "configure", "0", true).await;
+    let selection = select(&admin, &reads, &delivery).await;
+    let binding = selection.candidate.binding.digest().unwrap();
+    // Discovery and neutral inspection name the typed entry and its binding
+    // argument exactly; an agent never has to guess the payload shape.
+    let description = describe(&reads, A, "a").await.unwrap()["data"].clone();
+    assert_eq!(
+        description["evidence"]["command"],
+        "delivery.evidence.submit"
+    );
+    assert!(
+        description["evidence"]["candidate_binding"]
+            .as_str()
+            .unwrap()
+            .contains("args.delivery_payload.delivery_candidate_digest")
+    );
+    let mut q = query("delivery.neutral.inspect");
+    q.work_id = Some("a".into());
+    let neutral = reads.query(TENANT, PROJECT, A, q).await.unwrap()["data"].clone();
+    let note = neutral["submission"]["guidance"]["action"]["note"]
+        .as_str()
+        .unwrap();
+    assert!(note.contains("delivery.evidence.submit"));
+    assert!(note.contains("args.delivery_payload.delivery_candidate_digest"));
+    // Typed evidence with preserved extra keys binds the selected candidate and
+    // stores the object unchanged.
+    let report_payload = json!({"delivery_candidate_digest":binding,"passed":true,
+        "output_digest":sha(REPORT),"note":"typed submission report"});
+    let report = run(
+        &reads,
+        A,
+        "typed-report",
+        "delivery.evidence.submit",
+        json!({"session_id":"session-a","expected_session_version":"1",
+            "dirty_tree":false,"artifact_text":REPORT,"delivery_payload":report_payload.clone()}),
+    )
+    .await;
+    assert_eq!(report["review_state_basis"], "at_commit");
+    let stored: Value = admin
+        .query_one(
+            "SELECT payload_json FROM awr_team.evidence
+             WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+            &[&TENANT, &PROJECT, &report["evidence_id"].as_str().unwrap()],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(stored, report_payload);
+    delivery_evidence(&reads, "typed-code", CODE, &binding).await;
+    let round = run(
+        &reads,
+        A,
+        "typed-review",
+        "delivery.submit_and_request_review",
+        opening(&report),
+    )
+    .await;
+    assert_eq!(round["state"], "open");
+    let before = rework_business_snapshot(&admin).await;
+    let review = inspect_round(&reads, &round).await;
+    let submission = &review["submission"];
+    assert_eq!(submission["inspectable"], true);
+    assert_eq!(submission["candidate_current"], true);
+    assert_eq!(submission["candidate_digest"], binding);
+    assert_eq!(submission["artifacts"].as_array().unwrap().len(), 2);
+    for (reference, expected) in submission["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip([CODE, REPORT])
+    {
+        let q: awr_team_pg::WorkstreamQuery =
+            serde_json::from_value(reference["query"].clone()).unwrap();
+        let content = reads
+            .query(TENANT, PROJECT, REVIEWER_TOKEN, q.clone())
+            .await
+            .unwrap();
+        assert_eq!(content["data"]["text"], expected);
+        assert_eq!(content["data"]["path_bypass"], false);
+        assert!(reads.query(TENANT, PROJECT, NONE, q.clone()).await.is_err());
+        assert!(reads.query(TENANT, PROJECT, B, q).await.is_err());
+    }
+    assert_eq!(rework_business_snapshot(&admin).await, before);
 }

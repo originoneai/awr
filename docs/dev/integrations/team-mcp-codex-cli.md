@@ -196,6 +196,12 @@ A URL alone is not acceptance. Submit evidence / request review with
 `evidence.submit`, `review.open`, `delivery.submit_and_request_review` as
 authorized.
 
+For configured neutral delivery or a selected delivery candidate, use
+`delivery.evidence.submit` with a JSON object in `args.delivery_payload` and the
+selection receipt's digest in `delivery_candidate_digest`. Inspect
+`delivery.submission.describe` for the current input contract before requesting
+review. Ordinary evidence and the legacy PR flow retain `evidence.submit`.
+
 ### 6. Rework
 
 When review returns the round, acknowledge with `work.rework` (author

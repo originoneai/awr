@@ -175,6 +175,12 @@ Then `evidence.submit` / `review.open` / `delivery.submit_and_request_review` as
 authorized. See [pr-delivery-review.md](pr-delivery-review.md). GitHub UI state
 is not AWR completion.
 
+For configured neutral delivery or a selected delivery candidate, use
+`delivery.evidence.submit` with a JSON object in `args.delivery_payload` and the
+selection receipt's digest in `delivery_candidate_digest`. Inspect
+`delivery.submission.describe` for the current input contract before requesting
+review. Ordinary evidence and the legacy PR flow retain `evidence.submit`.
+
 ### 6. Rework
 
 On `review.return`, author runs `work.rework`, fixes the head, notifies with
