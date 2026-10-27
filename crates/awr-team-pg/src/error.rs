@@ -425,8 +425,109 @@ impl PgError {
         Self::Protocol(Self::REVIEW_SUBMISSION_INCOMPLETE.into())
     }
 
+    /// A rejected neutral review submission carrying the precise failed check
+    /// on the caller-selected evidence. The reason is a fixed allowlisted
+    /// label; caller values are never stored or echoed.
+    pub fn review_submission_incomplete_reason(reason: &'static str) -> Self {
+        Self::Protocol(format!("{}/{reason}", Self::REVIEW_SUBMISSION_INCOMPLETE))
+    }
+
     pub fn is_review_submission_incomplete(&self) -> bool {
-        matches!(self, Self::Protocol(message) if message == Self::REVIEW_SUBMISSION_INCOMPLETE)
+        matches!(self, Self::Protocol(message) if message == Self::REVIEW_SUBMISSION_INCOMPLETE
+            || message
+                .strip_prefix(Self::REVIEW_SUBMISSION_INCOMPLETE)
+                .is_some_and(|rest| rest.starts_with('/')))
+    }
+
+    /// The allowlisted reason label of a rejected submission, re-validated so
+    /// an unrelated Protocol error cannot echo input. `None` for the bare
+    /// legacy form and for unknown labels.
+    pub fn review_submission_reason(&self) -> Option<&'static str> {
+        let Self::Protocol(message) = self else {
+            return None;
+        };
+        let reason = message
+            .strip_prefix(Self::REVIEW_SUBMISSION_INCOMPLETE)?
+            .strip_prefix('/')?;
+        [
+            "candidate_missing",
+            "evidence_missing",
+            "candidate_not_bound_in_evidence",
+            "evidence_binding_changed",
+            "original_candidate_unavailable",
+            "evidence_integrity_unavailable",
+            "manifest_content_unavailable",
+            "selection_changed",
+            "submission_incomplete",
+        ]
+        .into_iter()
+        .find(|known| *known == reason)
+    }
+
+    /// Bounded selected-evidence diagnosis shared by HTTP and MCP. Condition,
+    /// basis, next step and recheck trigger name only the caller's own
+    /// submitted evidence and current candidate state; they never reveal
+    /// foreign existence, secret values or artifact bytes.
+    pub fn review_submission_incomplete_diagnostic(&self) -> Option<serde_json::Value> {
+        let reason = self.review_submission_reason()?;
+        let (condition, basis, next_action) = match reason {
+            "candidate_missing" => (
+                "No current delivery candidate is selected for this work.",
+                "This delivery chain requires a version-bound candidate before review.",
+                "Select the exact candidate through delivery.candidate.select (discover its input with delivery.submission.describe), submit the primary report through delivery.evidence.submit with args.delivery_payload.delivery_candidate_digest set to the selection receipt's data.candidate_digest, then open the review with that new evidence_id.",
+            ),
+            "evidence_missing" => (
+                "The submitted evidence_id is not recorded as this work's review evidence.",
+                "A current candidate is selected, but the evidence under review is missing from this work's records.",
+                "Inspect delivery.neutral.inspect for this work, submit readable bound evidence through delivery.evidence.submit and retry review.open with the newly returned evidence_id.",
+            ),
+            "candidate_not_bound_in_evidence" => (
+                "The evidence_id you submitted does not bind the current delivery candidate.",
+                "Its stored payload has no valid delivery_candidate_digest, so it cannot stand as the candidate's primary report even when the candidate and its manifest artifacts are readable.",
+                "Resubmit the same report through delivery.evidence.submit with args.delivery_payload.delivery_candidate_digest set to the current selection receipt's data.candidate_digest, then open the review with the new evidence_id. A global delivery.neutral.inspect lookup reports overall submission state; it does not identify which evidence_id binds the candidate.",
+            ),
+            "evidence_binding_changed" => (
+                "The evidence digest no longer matches the bundle under review.",
+                "The submission being decided differs from the evidence's current stored digest.",
+                "Refresh review.inspect for the round and delivery.neutral.inspect for the work, then reopen the review against the current evidence instead of replaying the stale bundle.",
+            ),
+            "original_candidate_unavailable" => (
+                "The candidate bound by the submitted evidence is no longer available.",
+                "Its recorded binding digest has no stored candidate on this work.",
+                "Select the candidate again through delivery.candidate.select, resubmit bound evidence through delivery.evidence.submit and open the review with the new evidence_id.",
+            ),
+            "evidence_integrity_unavailable" => (
+                "The submitted evidence no longer matches its immutable receipt.",
+                "Its stored payload and digests diverged from the recorded evidence digest.",
+                "Record fresh bound evidence through delivery.evidence.submit and open the review with the new evidence_id; do not replay the drifted one.",
+            ),
+            "manifest_content_unavailable" => (
+                "The original report or a manifest artifact is missing or its stored bytes changed.",
+                "The pinned report and every manifest entry must match their stored bytes and bindings.",
+                "Restore or republish the exact artifact bytes, verify readability through the delivery.neutral.inspect artifact queries, then resubmit bound evidence and reopen the review.",
+            ),
+            "selection_changed" => (
+                "The submitted evidence binds a candidate that is not the current selection.",
+                "Historical artifacts cannot approve a replacement selection; candidate, execution or contract versions drifted.",
+                "Refresh work.prepare and claim.inspect, inspect the current selection through delivery.neutral.inspect, bind fresh evidence to its data.candidate_digest through delivery.evidence.submit and open a new review with that evidence_id.",
+            ),
+            _ => (
+                "The original submission binding is unavailable.",
+                "Candidate and evidence integrity must be established before review.",
+                "Inspect delivery.neutral.inspect for submission context; refresh before retrying.",
+            ),
+        };
+        Some(serde_json::json!({
+            "code":"ReviewSubmissionIncomplete",
+            "message":"review requires a current candidate and its readable manifest evidence",
+            "reason":reason,
+            "action_guidance":{
+                "condition":condition,
+                "basis":basis,
+                "next_action":next_action,
+                "recheck":"After the stated correction. Candidate, contract, selection, artifact and authority checks still apply; this advice does not authorize execution or command replay."
+            }
+        }))
     }
 
     pub fn work_next_selectors() -> Self {

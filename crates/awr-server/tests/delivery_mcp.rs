@@ -532,6 +532,178 @@ async fn lazy_submission_contract_has_http_mcp_parity_and_preserves_command_auth
         selected["receipt"]["data"]["candidate_digest"]
     );
     assert_eq!(state["data"]["stored_selection"]["current"], true);
+    let digest = selected["receipt"]["data"]["candidate_digest"]
+        .as_str()
+        .unwrap();
+    let mut bound_report = Value::Null;
+    for (key, text) in [("bound-empty", ""), ("bound-result", content)] {
+        let prepared = call(&client, "awr_team_query", read("work.prepare", None), false).await;
+        bound_report = call(
+            &client,
+            "awr_team_command",
+            serde_json::to_value(command(
+                &prepared,
+                key,
+                "delivery.evidence.submit",
+                json!({
+                    "session_id":"session-a","expected_session_version":"1","dirty_tree":false,
+                    "artifact_text":text, "delivery_payload":{"delivery_candidate_digest":digest,
+                    "passed":true,"output_digest":format!("{:x}", Sha256::digest(text.as_bytes()))}
+                }),
+            ))
+            .unwrap(),
+            false,
+        )
+        .await;
+    }
+    // A real review request must diagnose the selected report, consistently
+    // through both transports, without committing a failed submission.
+    let p = call(&client, "awr_team_query", read("work.prepare", None), false).await;
+    let report = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &p,
+            "unbound-primary",
+            "evidence.submit",
+            json!({
+                "session_id":"session-a","expected_session_version":"1","dirty_tree":false,
+                "artifact_text":"private-report-sentinel", "payload":{"passed":true}
+            }),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    let p = call(&client, "awr_team_query", read("work.prepare", None), false).await;
+    let open = serde_json::to_value(command(
+        &p,
+        "unbound-review",
+        "review.open",
+        json!({
+            "session_id":"session-a","expected_session_version":"1",
+            "evidence_id":report["receipt"]["data"]["evidence_id"]
+        }),
+    ))
+    .unwrap();
+    let counts = "SELECT json_build_array((SELECT count(*) FROM awr_team.operations),
+        (SELECT count(*) FROM awr_team.review_rounds), (SELECT count(*) FROM awr_team.events))";
+    let before: Value = admin.query_one(counts, &[]).await.unwrap().get(0);
+    let (status, error) = request(&server, "one", A, "command", &open).await;
+    assert_eq!(status, reqwest::StatusCode::CONFLICT);
+    assert_eq!(
+        error,
+        call(&client, "awr_team_command", open.clone(), true).await
+    );
+    assert_eq!(error["code"], "ReviewSubmissionIncomplete");
+    assert_eq!(error["reason"], "candidate_not_bound_in_evidence");
+    for field in ["condition", "basis", "next_action", "recheck"] {
+        assert!(
+            error["action_guidance"][field]
+                .as_str()
+                .is_some_and(|s| !s.is_empty())
+        );
+    }
+    assert!(serde_json::to_vec(&error).unwrap().len() < 4096);
+    assert!(!error.to_string().contains("private-report-sentinel"));
+    let after: Value = admin.query_one(counts, &[]).await.unwrap().get(0);
+    assert_eq!(before, after);
+    let refreshed = call(&client, "awr_team_query", read("work.prepare", None), false).await;
+    assert_eq!(p["project_revision"], refreshed["project_revision"]);
+    let report_id = report["receipt"]["data"]["evidence_id"].as_str().unwrap();
+    let original_payload: Value = admin.query_one(
+        "SELECT payload_json FROM awr_team.evidence WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+        &[&TENANT, &PROJECT, &report_id],
+    ).await.unwrap().get(0);
+    let mut corrupt_payload = original_payload.clone();
+    corrupt_payload["passed"] = json!(false);
+    admin.execute(
+        "UPDATE awr_team.evidence SET payload_json=$4 WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+        &[&TENANT, &PROJECT, &report_id, &corrupt_payload],
+    ).await.unwrap();
+    let (status, corrupt) = request(&server, "one", A, "command", &open).await;
+    assert_eq!(status, reqwest::StatusCode::CONFLICT);
+    assert_eq!(
+        corrupt,
+        call(&client, "awr_team_command", open.clone(), true).await
+    );
+    assert_eq!(corrupt["reason"], "evidence_integrity_unavailable");
+    assert!(!corrupt.to_string().contains("private-report-sentinel"));
+    assert_eq!(
+        before,
+        admin
+            .query_one(counts, &[])
+            .await
+            .unwrap()
+            .get::<_, Value>(0)
+    );
+    admin.execute(
+        "UPDATE awr_team.evidence SET payload_json=$4 WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+        &[&TENANT, &PROJECT, &report_id, &original_payload],
+    ).await.unwrap();
+    admin.execute(
+        "UPDATE awr_team.delivery_selections SET fence=fence+1 WHERE tenant_id=$1 AND project_id=$2 AND work_id='a'",
+        &[&TENANT, &PROJECT],
+    ).await.unwrap();
+    let (status, stale) = request(&server, "one", A, "command", &open).await;
+    assert_eq!(status, reqwest::StatusCode::CONFLICT);
+    assert_eq!(
+        stale,
+        call(&client, "awr_team_command", open.clone(), true).await
+    );
+    assert_eq!(stale["reason"], "submission_incomplete");
+    assert_eq!(
+        before,
+        admin
+            .query_one(counts, &[])
+            .await
+            .unwrap()
+            .get::<_, Value>(0)
+    );
+    admin.execute(
+        "UPDATE awr_team.delivery_selections SET fence=fence-1 WHERE tenant_id=$1 AND project_id=$2 AND work_id='a'",
+        &[&TENANT, &PROJECT],
+    ).await.unwrap();
+    admin
+        .execute(
+            "INSERT INTO awr_team.evidence(tenant_id,project_id,id,work_id,contract_hash,
+         evidence_kind,trust_basis,digest,payload_json,created_by)
+         VALUES($1,$2,'foreign-private-sentinel','b-private',$3,'report','caller_asserted',
+         'foreign-digest','{\"passed\":true}','agent')",
+            &[
+                &TENANT,
+                &PROJECT,
+                &p["data"]["contract_hash"].as_str().unwrap(),
+            ],
+        )
+        .await
+        .unwrap();
+    for evidence_id in ["unknown-private-sentinel", "foreign-private-sentinel"] {
+        let mut denied_open = open.clone();
+        denied_open["args"]["evidence_id"] = json!(evidence_id);
+        let (status, denied) = request(&server, "one", A, "command", &denied_open).await;
+        assert!(!status.is_success());
+        assert_eq!(
+            denied,
+            call(&client, "awr_team_command", denied_open, true).await
+        );
+        assert!(denied.get("reason").is_none());
+        assert!(!denied.to_string().contains(evidence_id));
+    }
+    let prepared = call(&client, "awr_team_query", read("work.prepare", None), false).await;
+    let corrected = serde_json::to_value(command(
+        &prepared,
+        "bound-review",
+        "review.open",
+        json!({
+            "session_id":"session-a","expected_session_version":"1",
+            "evidence_id":bound_report["receipt"]["data"]["evidence_id"]
+        }),
+    ))
+    .unwrap();
+    let (status, opened) = request(&server, "one", A, "command", &corrected).await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    assert_eq!(opened["receipt"]["data"]["state"], "open");
     let other = connect(&server, B).await;
     let denied = call(&other, "awr_team_query", input.clone(), true).await;
     assert_eq!(

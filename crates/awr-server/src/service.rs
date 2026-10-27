@@ -958,6 +958,9 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
         );
     }
     if error.is_review_submission_incomplete() {
+        if let Some(diagnostic) = error.review_submission_incomplete_diagnostic() {
+            return (StatusCode::CONFLICT, diagnostic);
+        }
         return (
             StatusCode::CONFLICT,
             json!({"code":"ReviewSubmissionIncomplete",

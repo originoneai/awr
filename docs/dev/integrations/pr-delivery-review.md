@@ -171,7 +171,11 @@ default; at most 262,144); increase it on `ResponseTooLarge` rather than treatin
 an incomplete read as complete.
 
 Opening or approving an incomplete/stale submission returns HTTP 409/MCP
-`ReviewSubmissionIncomplete` with one neutral inspection action. Approval
+`ReviewSubmissionIncomplete`. The response names the precise `reason` for the
+submitted evidence (for example `candidate_not_bound_in_evidence` when the
+selected evidence does not bind the current candidate) with one corrective
+action, falling back to one neutral inspection action when no specific
+diagnosis applies. Approval
 rechecks currentness and stored content integrity. Rejection remains available
 for business rework. These checks establish **inspectability**, not passing tests,
 independent approval, verified repository publication or task completion. Adapter

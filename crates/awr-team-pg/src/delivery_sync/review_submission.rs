@@ -112,16 +112,71 @@ pub(crate) async fn inspect(
         result["guidance"] = guidance(work, result["reason"].as_str().unwrap());
         return Ok(result);
     }
+    let contract: String = row.get(3);
+    let output: Option<String> = row.get(2);
+    let input: Option<String> = row.get(5);
+    let execution_result: Option<String> = row.get(6);
+    if crate::review::evidence_digest(
+        work,
+        &contract,
+        input.as_deref(),
+        output.as_deref(),
+        execution_result.as_deref(),
+        &payload,
+    )? != row.get::<_, String>(4)
+    {
+        result["reason"] = json!("evidence_integrity_unavailable");
+        result["guidance"] = guidance(work, result["reason"].as_str().unwrap());
+        return Ok(result);
+    }
     let Some(original) = declared.and_then(Value::as_str).filter(|s| {
         s.len() == 64
             && s.bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
     }) else {
-        result["reason"] = json!(if selected.is_some() {
-            "candidate_not_bound_in_evidence"
+        let reason = if let Some((candidate, digest, source, owner, fence, _)) = &selected {
+            let epoch_current: bool = tx.query_one(
+                "SELECT EXISTS(SELECT 1 FROM awr_team.delivery_selections s
+                 JOIN awr_team.claims c ON (c.tenant_id,c.project_id,c.id)=(s.tenant_id,s.project_id,s.claim_id)
+                 WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.work_id=$3
+                   AND c.coordinator_epoch=$4)",
+                &[&tenant, &project, &work, &auth.epoch],
+            ).await?.get(0);
+            let binding = &candidate.binding;
+            let binding_valid = binding.digest().map_err(|_| PgError::SourceDivergence)? == *digest
+                && binding.tenant_id.as_str() == tenant
+                && binding.project_id.as_str() == project
+                && binding.scope_id.as_str() == "main"
+                && binding.workstream_id == work_binding.workstream_id.to_string()
+                && binding.work_id.as_str() == work;
+            if !binding_valid {
+                return Err(PgError::SourceDivergence);
+            }
+            if *owner != ownership || !*fence || !epoch_current {
+                "submission_incomplete"
+            } else {
+                match completion::require_contracts(
+                    tx,
+                    tenant,
+                    project,
+                    work,
+                    source,
+                    &auth.snapshot,
+                    &binding.contract_hash,
+                )
+                .await
+                {
+                    Ok(()) if binding.contract_hash == contract => {
+                        "candidate_not_bound_in_evidence"
+                    }
+                    Ok(()) | Err(PgError::PreconditionsChanged) => "submission_incomplete",
+                    Err(error) => return Err(error),
+                }
+            }
         } else {
             "candidate_missing"
-        });
+        };
+        result["reason"] = json!(reason);
         result["guidance"] = guidance(work, result["reason"].as_str().unwrap());
         return Ok(result);
     };
@@ -139,7 +194,6 @@ pub(crate) async fn inspect(
     };
     let candidate: DeliveryCandidate =
         serde_json::from_value(candidate_row.get(0)).map_err(|_| PgError::SourceDivergence)?;
-    let contract: String = row.get(3);
     if candidate
         .binding
         .digest()
@@ -188,20 +242,7 @@ pub(crate) async fn inspect(
     };
     result["candidate_current"] = json!(current);
     let artifact: Option<String> = row.get(1);
-    let output: Option<String> = row.get(2);
-    let input: Option<String> = row.get(5);
-    let execution_result: Option<String> = row.get(6);
-    if crate::review::evidence_digest(
-        work,
-        &contract,
-        input.as_deref(),
-        output.as_deref(),
-        execution_result.as_deref(),
-        &payload,
-    )? != row.get::<_, String>(4)
     {
-        result["reason"] = json!("evidence_integrity_unavailable");
-    } else {
         match completion::artifact_refs(
             tx,
             tenant,
@@ -266,7 +307,20 @@ pub(crate) async fn require(
     if state["delivery_required"] == true
         && (state["inspectable"] != true || state["candidate_current"] != true)
     {
-        return Err(PgError::review_submission_incomplete());
+        // Diagnose the exact caller-selected evidence; never substitute or
+        // silently select a different one. The label set mirrors inspect().
+        let reason: &'static str = match state["reason"].as_str() {
+            Some("candidate_missing") => "candidate_missing",
+            Some("evidence_missing") => "evidence_missing",
+            Some("candidate_not_bound_in_evidence") => "candidate_not_bound_in_evidence",
+            Some("evidence_binding_changed") => "evidence_binding_changed",
+            Some("original_candidate_unavailable") => "original_candidate_unavailable",
+            Some("evidence_integrity_unavailable") => "evidence_integrity_unavailable",
+            Some("manifest_content_unavailable") => "manifest_content_unavailable",
+            Some("selection_changed") => "selection_changed",
+            _ => "submission_incomplete",
+        };
+        return Err(PgError::review_submission_incomplete_reason(reason));
     }
     Ok(())
 }

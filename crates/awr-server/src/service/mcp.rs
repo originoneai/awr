@@ -2282,6 +2282,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn selected_evidence_rejection_diagnoses_the_exact_submitted_binding() {
+        let http = error_response(PgError::review_submission_incomplete_reason(
+            "candidate_not_bound_in_evidence",
+        ));
+        assert_eq!(http.status(), StatusCode::CONFLICT);
+        let bytes = axum::body::to_bytes(http.into_body(), 4096).await.unwrap();
+        assert!(bytes.len() < 1400);
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        // The public code and status are preserved; the reasoned body names
+        // the exact submitted evidence and the corrective typed entry.
+        assert_eq!(body["code"], "ReviewSubmissionIncomplete");
+        assert_eq!(body["reason"], "candidate_not_bound_in_evidence");
+        let guidance = &body["action_guidance"];
+        for field in ["condition", "basis", "next_action", "recheck"] {
+            assert!(
+                guidance[field].as_str().is_some_and(|s| !s.is_empty()),
+                "{field}"
+            );
+        }
+        let next = guidance["next_action"].as_str().unwrap();
+        assert!(next.contains("delivery.evidence.submit"));
+        assert!(next.contains("delivery_candidate_digest"));
+        assert!(
+            guidance["condition"]
+                .as_str()
+                .unwrap()
+                .contains("evidence_id")
+        );
+        let mcp = CallToolResult::structured_error(body.clone());
+        assert_eq!(mcp.is_error, Some(true));
+        assert_eq!(mcp.structured_content, Some(body));
+        // Every allowlisted reason renders a bounded, fielded diagnosis.
+        for reason in [
+            "candidate_missing",
+            "evidence_missing",
+            "evidence_binding_changed",
+            "original_candidate_unavailable",
+            "evidence_integrity_unavailable",
+            "manifest_content_unavailable",
+            "selection_changed",
+            "submission_incomplete",
+        ] {
+            let diagnostic = PgError::review_submission_incomplete_reason(reason)
+                .review_submission_incomplete_diagnostic()
+                .unwrap();
+            assert_eq!(diagnostic["code"], "ReviewSubmissionIncomplete");
+            assert_eq!(diagnostic["reason"], reason);
+            assert!(diagnostic.to_string().len() < 1400, "{reason}");
+        }
+        // An unknown label never renders and can never echo stored text; the
+        // bare legacy form keeps its original generic body.
+        let forged = PgError::Protocol(
+            "neutral review submission is incomplete or no longer current/private-sentinel".into(),
+        );
+        assert!(forged.is_review_submission_incomplete());
+        assert_eq!(forged.review_submission_reason(), None);
+        let (_, body) = public_error(forged);
+        assert_eq!(body["code"], "ReviewSubmissionIncomplete");
+        assert!(body.get("reason").is_none());
+        assert!(!body.to_string().contains("private-sentinel"));
+    }
+
+    #[tokio::test]
     async fn simulated_evidence_execution_guidance_is_bounded_and_shared_by_http_and_mcp() {
         let http = error_response(PgError::missing_simulated_evidence_execution());
         assert_eq!(http.status(), StatusCode::CONFLICT);

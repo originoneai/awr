@@ -499,14 +499,13 @@ async fn configured_and_disabled_delivery_refuse_report_only_review_atomically()
         let before = rework_business_snapshot(&admin).await;
         let err = run_err(&reads, A, &format!("missing-{i}"), op, opening(&report)).await;
         assert!(err.is_review_submission_incomplete());
+        assert_eq!(err.review_submission_reason(), Some("candidate_missing"));
         assert_eq!(rework_business_snapshot(&admin).await, before);
     }
     connector(&admin, &db, &reads, "disable", "1", false).await;
-    assert!(
-        run_err(&reads, A, "disabled-open", "review.open", opening(&report))
-            .await
-            .is_review_submission_incomplete()
-    );
+    let err = run_err(&reads, A, "disabled-open", "review.open", opening(&report)).await;
+    assert!(err.is_review_submission_incomplete());
+    assert_eq!(err.review_submission_reason(), Some("candidate_missing"));
     let mut q = query("delivery.neutral.inspect");
     q.work_id = Some("a".into());
     let state = reads.query(TENANT, PROJECT, A, q).await.unwrap()["data"].clone();
@@ -532,10 +531,13 @@ async fn review_needs_every_bound_manifest_artifact_and_returns_exact_authorized
     let binding = selection.candidate.binding.digest().unwrap();
     let report = evidence(&reads, "report", REPORT, Some(&binding)).await;
     evidence(&reads, "wrong-source-binding", CODE, Some(&"f".repeat(64))).await;
-    assert!(
-        run_err(&reads, A, "missing-code", "review.open", opening(&report))
-            .await
-            .is_review_submission_incomplete()
+    let err = run_err(&reads, A, "missing-code", "review.open", opening(&report)).await;
+    assert!(err.is_review_submission_incomplete());
+    // The manifest artifact exists but is not bound to the selected candidate,
+    // so its content cannot be established as readable for this submission.
+    assert_eq!(
+        err.review_submission_reason(),
+        Some("manifest_content_unavailable")
     );
     evidence(&reads, "code", CODE, Some(&binding)).await;
     let round = run(
@@ -1190,4 +1192,286 @@ async fn typed_delivery_evidence_binds_selection_to_a_readable_review() {
         assert!(reads.query(TENANT, PROJECT, B, q).await.is_err());
     }
     assert_eq!(rework_business_snapshot(&admin).await, before);
+}
+
+#[tokio::test]
+async fn unbound_selected_primary_report_is_diagnosed_without_mutation_or_substitution() {
+    let (_guard, admin, db, reads) = setup().await;
+    seed_review_actors(&admin).await;
+    let delivery = connector(&admin, &db, &reads, "configure", "0", true).await;
+    let selection = select(&admin, &reads, &delivery).await;
+    let binding = selection.candidate.binding.digest().unwrap();
+    // The candidate is current and every manifest artifact has readable,
+    // correctly bound evidence; only the caller-selected primary report lacks
+    // the candidate binding (the observed run13 root cause).
+    evidence(&reads, "bound-code", CODE, Some(&binding)).await;
+    let unbound = evidence(&reads, "unbound-report", REPORT, None).await;
+    let malformed = run(
+        &reads,
+        A,
+        "malformed-report",
+        "evidence.submit",
+        json!({"session_id":"session-a","expected_session_version":"1",
+        "dirty_tree":false,"artifact_text":REPORT,
+        "payload":{"passed":true,"output_digest":sha(REPORT),
+            "delivery_candidate_digest":"private-malformed-sentinel"}}),
+    )
+    .await;
+    for (key, report) in [("unbound", &unbound), ("malformed", &malformed)] {
+        let before = rework_business_snapshot(&admin).await;
+        let before_delivery = delivery_snapshot(&admin).await;
+        let err = run_err(
+            &reads,
+            A,
+            &format!("{key}-open"),
+            "review.open",
+            opening(report),
+        )
+        .await;
+        assert!(err.is_review_submission_incomplete(), "{key}: {err:?}");
+        // The diagnosis names the exact submitted evidence binding failure; it
+        // must not silently substitute another, correctly bound evidence.
+        assert_eq!(
+            err.review_submission_reason(),
+            Some("candidate_not_bound_in_evidence"),
+            "{key}"
+        );
+        assert!(!err.to_string().contains("private-malformed-sentinel"));
+        assert_eq!(rework_business_snapshot(&admin).await, before, "{key}");
+        assert_eq!(delivery_snapshot(&admin).await, before_delivery, "{key}");
+    }
+    // An unbound payload is not sufficient to diagnose a missing binding when
+    // the stored receipt has drifted or the selection is no longer current.
+    let id = unbound["evidence_id"].as_str().unwrap();
+    let payload: Value = admin.query_one(
+        "SELECT payload_json FROM awr_team.evidence WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+        &[&TENANT, &PROJECT, &id],
+    ).await.unwrap().get(0);
+    let mut changed_payload = payload.clone();
+    changed_payload["passed"] = json!(false);
+    admin.execute(
+        "UPDATE awr_team.evidence SET payload_json=$4 WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+        &[&TENANT, &PROJECT, &id, &changed_payload],
+    ).await.unwrap();
+    let before = rework_business_snapshot(&admin).await;
+    let err = run_err(
+        &reads,
+        A,
+        "corrupt-unbound-open",
+        "review.open",
+        opening(&unbound),
+    )
+    .await;
+    assert_eq!(
+        err.review_submission_reason(),
+        Some("evidence_integrity_unavailable")
+    );
+    assert_eq!(rework_business_snapshot(&admin).await, before);
+    admin.execute(
+        "UPDATE awr_team.evidence SET payload_json=$4 WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+        &[&TENANT, &PROJECT, &id, &payload],
+    ).await.unwrap();
+    admin.execute(
+        "UPDATE awr_team.delivery_selections SET fence=fence+1 WHERE tenant_id=$1 AND project_id=$2 AND work_id='a'",
+        &[&TENANT, &PROJECT],
+    ).await.unwrap();
+    let before = rework_business_snapshot(&admin).await;
+    let err = run_err(
+        &reads,
+        A,
+        "stale-unbound-open",
+        "review.open",
+        opening(&unbound),
+    )
+    .await;
+    assert_eq!(
+        err.review_submission_reason(),
+        Some("submission_incomplete")
+    );
+    assert_eq!(rework_business_snapshot(&admin).await, before);
+    admin.execute(
+        "UPDATE awr_team.delivery_selections SET fence=fence-1 WHERE tenant_id=$1 AND project_id=$2 AND work_id='a'",
+        &[&TENANT, &PROJECT],
+    ).await.unwrap();
+    // Foreign and unknown selectors keep the existing denial: same error, no
+    // reason label, no existence disclosure, no state change.
+    let contract = current_contract(&admin).await.hash().unwrap();
+    admin
+        .execute(
+            "INSERT INTO awr_team.evidence(tenant_id,project_id,id,work_id,contract_hash,
+                evidence_kind,trust_basis,digest,payload_json,created_by)
+             VALUES($1,$2,'foreign-evidence','b-private',$3,'report','caller_asserted',
+                'foreign-digest','{\"passed\":true}','agent')",
+            &[&TENANT, &PROJECT, &contract],
+        )
+        .await
+        .unwrap();
+    for (key, id) in [
+        ("foreign", "foreign-evidence"),
+        ("unknown", "missing-evidence-sentinel"),
+    ] {
+        let before = rework_business_snapshot(&admin).await;
+        let err = run_err(
+            &reads,
+            A,
+            &format!("{key}-open"),
+            "review.open",
+            json!({"session_id":"session-a","expected_session_version":"1","evidence_id":id}),
+        )
+        .await;
+        assert!(matches!(err, PgError::EvidenceInvalid), "{key}: {err:?}");
+        assert_eq!(err.review_submission_reason(), None, "{key}");
+        assert!(!err.to_string().contains("b-private"));
+        assert_eq!(rework_business_snapshot(&admin).await, before, "{key}");
+    }
+    // Correctly bound evidence on the same report bytes succeeds.
+    let bound = delivery_evidence(&reads, "bound-report", REPORT, &binding).await;
+    let round = run(&reads, A, "bound-open", "review.open", opening(&bound)).await;
+    assert_eq!(round["state"], "open");
+    let review = inspect_round(&reads, &round).await;
+    assert_eq!(review["submission"]["inspectable"], true);
+    assert_eq!(review["submission"]["candidate_current"], true);
+    assert_eq!(review["submission"]["candidate_digest"], binding);
+}
+
+#[tokio::test]
+async fn stale_drifted_or_unreadable_submissions_keep_their_precise_reason() {
+    let (_guard, admin, db, reads) = setup().await;
+    seed_review_actors(&admin).await;
+    let delivery = connector(&admin, &db, &reads, "configure", "0", true).await;
+    let mut selection = select(&admin, &reads, &delivery).await;
+    let binding = selection.candidate.binding.digest().unwrap();
+    let code = evidence(&reads, "code", CODE, Some(&binding)).await;
+    let report = evidence(&reads, "report", REPORT, Some(&binding)).await;
+    let round = run(&reads, A, "open", "review.open", opening(&report)).await;
+    assert_eq!(round["state"], "open");
+    // Unreadable manifest content blocks both reopen and approval.
+    admin
+        .execute(
+            "UPDATE awr_team.artifacts SET content=$2 WHERE id=$1",
+            &[
+                &code["artifact_id"].as_str().unwrap(),
+                &b"changed code".to_vec(),
+            ],
+        )
+        .await
+        .unwrap();
+    let before = rework_business_snapshot(&admin).await;
+    for (token, key, op, args) in [
+        (A, "corrupt-open", "review.open", opening(&report)),
+        (
+            REVIEWER_TOKEN,
+            "corrupt-approve",
+            "review.decide",
+            decision(&round, "approve"),
+        ),
+    ] {
+        let err = run_err(&reads, token, key, op, args).await;
+        assert!(err.is_review_submission_incomplete(), "{key}: {err:?}");
+        assert_eq!(
+            err.review_submission_reason(),
+            Some("manifest_content_unavailable"),
+            "{key}"
+        );
+    }
+    assert_eq!(rework_business_snapshot(&admin).await, before);
+    admin
+        .execute(
+            "UPDATE awr_team.artifacts SET content=$2 WHERE id=$1",
+            &[
+                &code["artifact_id"].as_str().unwrap(),
+                &CODE.as_bytes().to_vec(),
+            ],
+        )
+        .await
+        .unwrap();
+    // A drifted stored receipt digest is rejected as a version drift.
+    let stored_digest: String = admin
+        .query_one(
+            "SELECT digest FROM awr_team.evidence
+             WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+            &[&TENANT, &PROJECT, &report["evidence_id"].as_str().unwrap()],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    admin
+        .execute(
+            "UPDATE awr_team.evidence SET digest=$4
+             WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+            &[
+                &TENANT,
+                &PROJECT,
+                &report["evidence_id"].as_str().unwrap(),
+                &"0".repeat(64),
+            ],
+        )
+        .await
+        .unwrap();
+    let before = rework_business_snapshot(&admin).await;
+    let err = run_err(
+        &reads,
+        REVIEWER_TOKEN,
+        "drifted-approve",
+        "review.decide",
+        decision(&round, "approve"),
+    )
+    .await;
+    assert!(err.is_review_submission_incomplete());
+    assert_eq!(
+        err.review_submission_reason(),
+        Some("evidence_binding_changed")
+    );
+    assert_eq!(rework_business_snapshot(&admin).await, before);
+    admin
+        .execute(
+            "UPDATE awr_team.evidence SET digest=$4
+             WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+            &[
+                &TENANT,
+                &PROJECT,
+                &report["evidence_id"].as_str().unwrap(),
+                &stored_digest,
+            ],
+        )
+        .await
+        .unwrap();
+    // A replaced selection makes the original submission historical.
+    selection.request_id = "select-replacement".into();
+    selection.expected_selected_digest = Some(binding.clone());
+    selection.candidate.binding.candidate_version = "2".into();
+    selection.read_set = read_set(&prepare(&reads, A, "a").await);
+    delivery
+        .select_candidate(TENANT, PROJECT, A, selection)
+        .await
+        .unwrap();
+    let before = rework_business_snapshot(&admin).await;
+    for (token, key, op, args) in [
+        (A, "stale-open", "review.open", opening(&report)),
+        (
+            REVIEWER_TOKEN,
+            "stale-approve",
+            "review.decide",
+            decision(&round, "approve"),
+        ),
+    ] {
+        let err = run_err(&reads, token, key, op, args).await;
+        assert!(err.is_review_submission_incomplete(), "{key}: {err:?}");
+        assert_eq!(
+            err.review_submission_reason(),
+            Some("selection_changed"),
+            "{key}"
+        );
+    }
+    assert_eq!(rework_business_snapshot(&admin).await, before);
+    // Review gating is unchanged: returning the stale round still works.
+    let returned = run(
+        &reads,
+        REVIEWER_TOKEN,
+        "return",
+        "review.decide",
+        decision(&round, "reject"),
+    )
+    .await;
+    assert_eq!(returned["state"], "rejected");
 }
