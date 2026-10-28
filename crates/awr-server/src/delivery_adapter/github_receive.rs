@@ -866,6 +866,7 @@ mod tests {
                 contract_hash: "e".repeat(64),
                 manifest_digest: manifest.digest().unwrap(),
                 source_revision: Some(revision(new)),
+                source_fetch_ref: None,
                 required_checks: vec![],
                 target: DeliveryTarget {
                     resource: "repo:oracle".into(),

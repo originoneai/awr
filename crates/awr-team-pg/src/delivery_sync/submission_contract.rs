@@ -1,7 +1,9 @@
 //! Lazy, descriptive input discovery. Material facts and authority are never invented.
 use crate::{PgError, PgResult};
 use awr_core::Id;
-use awr_team::delivery::DeliveryCandidate;
+use awr_team::delivery::{
+    DeliveryCandidate, SOURCE_FETCH_REF_FORBIDDEN_PATTERNS, SOURCE_FETCH_REF_PATTERN,
+};
 use serde_json::{Value, json};
 
 pub(super) fn context(
@@ -53,6 +55,16 @@ fn revision() -> Value {
                 "then":{"properties":{"value":{"pattern":"^[0-9a-f]{64}$"}}}}]})
 }
 
+fn source_fetch_ref() -> Value {
+    let exclusions = SOURCE_FETCH_REF_FORBIDDEN_PATTERNS
+        .iter()
+        .map(|pattern| json!({"not":{"pattern":pattern}}))
+        .collect::<Vec<_>>();
+    json!({"type":"string","maxLength":1024,"pattern":SOURCE_FETCH_REF_PATTERN,
+        "allOf":exclusions,
+        "description":"Optional ordinary advertised Git ref using only portable ASCII letters, digits, '.', '_', '/', '-', '+', and '@'. Other Git-legal names are outside this contract. The ref is mutable and only locates an object; pass it as one process argument without a shell, fetch it exactly, and verify the resulting commit against source_revision."})
+}
+
 fn candidate_schema() -> Value {
     let revision = revision();
     json!({"type":"object","additionalProperties":false,"required":["binding","manifest"],
@@ -65,6 +77,7 @@ fn candidate_schema() -> Value {
                     "workstream_id":text(128),"work_id":text(128),"candidate_id":text(128),
                     "candidate_version":version(true),"contract_hash":digest(),"manifest_digest":digest(),
                     "source_revision":{"anyOf":[revision,{"type":"null"}]},
+                    "source_fetch_ref":{"anyOf":[source_fetch_ref(),{"type":"null"}]},
                     "required_checks":{"type":"array","maxItems":64,"uniqueItems":true,"items":text(128)},
                     "target":{"type":"object","additionalProperties":false,"required":["resource","precondition"],
                         "properties":{"resource":text(1024),"reference":{"anyOf":[text(1024),{"type":"null"}]},
@@ -72,7 +85,13 @@ fn candidate_schema() -> Value {
                                 {"type":"object","additionalProperties":false,"required":["kind"],
                                     "properties":{"kind":{"const":"missing"}}},
                                 {"type":"object","additionalProperties":false,"required":["kind","revision"],
-                                    "properties":{"kind":{"const":"exact"},"revision":revision}}]}}}}},
+                                    "properties":{"kind":{"const":"exact"},"revision":revision}}]}}}},
+                "allOf":[
+                    {"if":{"required":["source_fetch_ref"],
+                        "properties":{"source_fetch_ref":{"type":"string"}}},
+                     "then":{"required":["source_revision"],
+                        "properties":{"source_revision":{"type":"object","required":["format"],
+                            "properties":{"format":{"enum":["git_sha1","git_sha256"]}}}}}}]},
             "manifest":{"type":"object","additionalProperties":false,"required":["entries"],
                 "properties":{"entries":{"type":"array","minItems":1,"maxItems":128,
                     "description":"Each artifact_id must be unique. Hash and length refer to the actual immutable bytes.",
@@ -120,6 +139,7 @@ pub(super) fn describe(mut inspection: Value) -> PgResult<Value> {
             "candidate_identity":"Choose a stable candidate_id and a positive decimal candidate_version for this immutable submission; never silently reuse its identity for changed facts.",
             "manifest":"Measure every actual artifact's SHA-256 and decimal byte_length; use its inspectable locator. Compute binding.manifest_digest over the full manifest using manifest_hash_codec.",
             "source_revision":"Observe the actual published immutable revision using its opaque connector resource and git_sha1, git_sha256 or artifact format. Null is only a structural option; the configured adapter may require an exact revision.",
+            "source_fetch_ref":"For a Git source revision, optionally declare the full ordinary advertised refs/heads/... or refs/tags/... ref from which that exact commit can be fetched. Only the documented portable ASCII subset is accepted; other Git-legal names are outside this contract. Pass the ref as one argv value without shell interpolation or eval. This ref is candidate-bound but mutable; it is not target.reference and never replaces verification of source_revision after fetch.",
             "target":"Use the authorized connector resource and project target reference. Observe its exact current revision, or confirmed absence; errors and inaccessible targets never mean missing. An exact precondition's revision.resource must equal target.resource."},
         "manifest_hash_codec":context["manifest_hash_codec"],
         "evidence":{"command":"delivery.evidence.submit",
@@ -158,6 +178,51 @@ pub(super) fn describe(mut inspection: Value) -> PgResult<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use regex::Regex;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct SourceFetchRefCorpus {
+        codec: String,
+        cases: Vec<SourceFetchRefCase>,
+    }
+
+    #[derive(Deserialize)]
+    struct SourceFetchRefCase {
+        name: String,
+        value: String,
+        accepted: bool,
+    }
+
+    fn source_fetch_ref_corpus() -> SourceFetchRefCorpus {
+        serde_json::from_str(include_str!(
+            "../../../awr-team/tests/fixtures/source-fetch-refs-v1.json"
+        ))
+        .unwrap()
+    }
+
+    fn source_condition_allows(binding: &Value, condition: &Value) -> bool {
+        let Some(binding) = binding.as_object() else {
+            return false;
+        };
+        let applies = binding
+            .get("source_fetch_ref")
+            .is_some_and(Value::is_string);
+        if !applies {
+            return true;
+        }
+        let Some(format) = binding
+            .get("source_revision")
+            .and_then(Value::as_object)
+            .and_then(|revision| revision.get("format"))
+        else {
+            return false;
+        };
+        condition["then"]["properties"]["source_revision"]["properties"]["format"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(format)
+    }
 
     #[test]
     fn submission_description_exposes_evidence_and_review_inputs() {
@@ -191,5 +256,78 @@ mod tests {
         );
         assert_eq!(result["evidence"]["next_query"]["work_id"], "work");
         assert_eq!(result["execution_authorized"], false);
+    }
+
+    #[test]
+    fn source_fetch_ref_schema_matches_the_domain_corpus_and_git_revision_condition() {
+        let candidate = candidate_schema();
+        let binding = &candidate["properties"]["binding"];
+        let reference = &binding["properties"]["source_fetch_ref"]["anyOf"][0];
+        assert_eq!(reference["pattern"], SOURCE_FETCH_REF_PATTERN);
+        assert_eq!(reference["maxLength"], 1024);
+        let shape = Regex::new(reference["pattern"].as_str().unwrap()).unwrap();
+        let exclusions = reference["allOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|rule| Regex::new(rule["not"]["pattern"].as_str().unwrap()).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            reference["allOf"],
+            json!(
+                SOURCE_FETCH_REF_FORBIDDEN_PATTERNS
+                    .iter()
+                    .map(|pattern| json!({"not":{"pattern":pattern}}))
+                    .collect::<Vec<_>>()
+            )
+        );
+        let corpus = source_fetch_ref_corpus();
+        assert_eq!(corpus.codec, "awr-source-fetch-ref-corpus-v1");
+        for case in corpus.cases {
+            let accepted = shape.is_match(&case.value)
+                && exclusions
+                    .iter()
+                    .all(|pattern| !pattern.is_match(&case.value));
+            assert_eq!(
+                accepted, case.accepted,
+                "source fetch ref schema mismatch for {} ({:?})",
+                case.name, case.value
+            );
+        }
+
+        let condition = &binding["allOf"][0];
+        assert_eq!(condition["if"]["required"], json!(["source_fetch_ref"]));
+        assert_eq!(
+            condition["if"]["properties"]["source_fetch_ref"]["type"],
+            "string"
+        );
+        assert_eq!(condition["then"]["required"], json!(["source_revision"]));
+        for (value, accepted) in [
+            (json!({}), true),
+            (json!({"source_fetch_ref":null}), true),
+            (json!({"source_fetch_ref":"refs/heads/candidate"}), false),
+            (
+                json!({"source_fetch_ref":"refs/heads/candidate","source_revision":null}),
+                false,
+            ),
+            (
+                json!({"source_fetch_ref":"refs/tags/v1","source_revision":{"format":"artifact"}}),
+                false,
+            ),
+            (
+                json!({"source_fetch_ref":"refs/heads/candidate","source_revision":{"format":"git_sha1"}}),
+                true,
+            ),
+            (
+                json!({"source_fetch_ref":"refs/heads/candidate","source_revision":{"format":"git_sha256"}}),
+                true,
+            ),
+        ] {
+            assert_eq!(
+                source_condition_allows(&value, condition),
+                accepted,
+                "{value}"
+            );
+        }
     }
 }
