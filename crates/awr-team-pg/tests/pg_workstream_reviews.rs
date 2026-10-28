@@ -11,6 +11,7 @@ use awr_team::WorkContract;
 use awr_team_pg::{PgError, WorkstreamReadStore, workstream_credential_hash};
 use fixture::*;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tokio_postgres::Client;
 
 const RUNNER: &str =
@@ -22,6 +23,26 @@ const RESULT: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn stored_evidence_digest(
+    work_id: &str,
+    contract_hash: &str,
+    input_digest: Option<&str>,
+    output_digest: Option<&str>,
+    execution_result_digest: Option<&str>,
+    payload: &Value,
+) -> String {
+    let canonical = awr_team::canonical_json(&json!({
+        "work_id": work_id,
+        "contract_hash": contract_hash,
+        "input_digest": input_digest,
+        "output_digest": output_digest,
+        "execution_result_digest": execution_result_digest,
+        "payload": payload,
+    }))
+    .unwrap();
+    format!("{:x}", Sha256::digest(canonical))
 }
 
 async fn seed_review_actors(admin: &Client) {
@@ -110,13 +131,13 @@ async fn seed_review_actors(admin: &Client) {
         .unwrap();
 }
 
-async fn insert_succeeded_execution(admin: &Client, id: &str, contract_hash: &str, fence: i64) {
+async fn insert_execution(admin: &Client, id: &str, contract_hash: &str, fence: i64, state: &str) {
     admin
         .execute(
             "INSERT INTO awr_team.executions(
                 tenant_id,project_id,id,work_id,fence,contract_hash,input_digest,
                 executor_actor_id,state,result_digest,scope_id)
-             VALUES($1,$2,$3,'a',$4,$5,$6,'runner','succeeded',$7,'main')",
+             VALUES($1,$2,$3,'a',$4,$5,$6,'runner',$7,$8,'main')",
             &[
                 &TENANT,
                 &PROJECT,
@@ -124,7 +145,64 @@ async fn insert_succeeded_execution(admin: &Client, id: &str, contract_hash: &st
                 &fence,
                 &contract_hash,
                 &INPUT,
+                &state,
                 &RESULT,
+            ],
+        )
+        .await
+        .unwrap();
+}
+
+async fn insert_succeeded_execution(admin: &Client, id: &str, contract_hash: &str, fence: i64) {
+    insert_execution(admin, id, contract_hash, fence, "succeeded").await;
+}
+
+async fn insert_currently_bound_execution(
+    admin: &Client,
+    id: &str,
+    contract_hash: &str,
+    fence: i64,
+    state: &str,
+) {
+    let claim_id = format!("{id}-claim");
+    admin
+        .execute(
+            "INSERT INTO awr_team.claims(
+                tenant_id,project_id,id,scope_id,work_id,session_id,actor_id,
+                fence,expires_at,state,workstream_id,ownership_version,coordinator_epoch)
+             SELECT s.tenant_id,s.project_id,$1,'main','a',s.id,'runner',$2,
+                clock_timestamp()+interval '1 hour','active',s.workstream_id,
+                s.ownership_version,p.coordinator_epoch
+             FROM awr_team.sessions s
+             JOIN awr_team.projects p ON p.tenant_id=s.tenant_id AND p.id=s.project_id
+             WHERE s.tenant_id=$3 AND s.project_id=$4 AND s.id='session-runner'",
+            &[&claim_id, &fence, &TENANT, &PROJECT],
+        )
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "INSERT INTO awr_team.executions(
+                tenant_id,project_id,id,work_id,session_id,claim_id,fence,
+                contract_hash,input_digest,executor_actor_id,state,result_digest,
+                scope_id,workstream_id,ownership_version,executor_client_id,
+                coordinator_epoch)
+             SELECT s.tenant_id,s.project_id,$1,'a',s.id,$2,$3,$4,$5,
+                'runner',$6,$7,'main',s.workstream_id,s.ownership_version,
+                s.client_id,p.coordinator_epoch
+             FROM awr_team.sessions s
+             JOIN awr_team.projects p ON p.tenant_id=s.tenant_id AND p.id=s.project_id
+             WHERE s.tenant_id=$8 AND s.project_id=$9 AND s.id='session-runner'",
+            &[
+                &id,
+                &claim_id,
+                &fence,
+                &contract_hash,
+                &INPUT,
+                &state,
+                &RESULT,
+                &TENANT,
+                &PROJECT,
             ],
         )
         .await
@@ -339,6 +417,227 @@ async fn malformed_rework_fields_stay_input_errors_and_cannot_change_review_hist
 }
 
 #[tokio::test]
+async fn execution_consistency_rejects_success_claim_for_failed_execution_before_storage() {
+    let (_guard, admin, _, store) = setup().await;
+    seed_review_actors(&admin).await;
+    let prepared = prepare(&store, A, "a").await;
+    let contract_hash = prepared["data"]["contract_hash"].as_str().unwrap();
+    insert_execution(&admin, "exec-failed-claim", contract_hash, 1, "failed").await;
+    let counts = "SELECT (SELECT count(*) FROM awr_team.evidence),
+                         (SELECT count(*) FROM awr_team.artifacts)";
+    let before = admin.query_one(counts, &[]).await.unwrap();
+
+    let error = run_err(
+        &store,
+        RUNNER,
+        "failed-claim",
+        "evidence.submit",
+        submit_args(
+            "session-runner",
+            "exec-failed-claim",
+            &hex_encode(b"must-not-persist"),
+        ),
+    )
+    .await;
+    assert!(matches!(error, PgError::EvidenceInvalid));
+
+    let after = admin.query_one(counts, &[]).await.unwrap();
+    assert_eq!(after.get::<_, i64>(0), before.get::<_, i64>(0));
+    assert_eq!(after.get::<_, i64>(1), before.get::<_, i64>(1));
+}
+
+#[tokio::test]
+async fn execution_consistency_keeps_nonterminal_execution_unverifiable_without_success() {
+    let (_guard, admin, _, store) = setup().await;
+    seed_review_actors(&admin).await;
+    let prepared = prepare(&store, A, "a").await;
+    let contract_hash = prepared["data"]["contract_hash"].as_str().unwrap();
+    insert_execution(&admin, "exec-unknown-claim", contract_hash, 1, "unknown").await;
+
+    let evidence = run(
+        &store,
+        RUNNER,
+        "unknown-claim",
+        "evidence.submit",
+        submit_args(
+            "session-runner",
+            "exec-unknown-claim",
+            &hex_encode(b"unknown-report"),
+        ),
+    )
+    .await;
+    assert_eq!(evidence["claimed_success"], true);
+    assert!(evidence["execution_success"].is_null());
+    assert_eq!(evidence["execution_consistency"]["status"], "unverifiable");
+    assert_eq!(
+        evidence["execution_consistency"]["recorded_state"],
+        "unknown"
+    );
+    assert_eq!(
+        evidence["execution_consistency"]["independent_verification"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn execution_consistency_inspects_legacy_contradiction_without_receipt_upgrade_or_mutation() {
+    let (_guard, admin, _, store) = setup().await;
+    seed_review_actors(&admin).await;
+    let prepared = prepare(&store, A, "a").await;
+    let contract_hash = prepared["data"]["contract_hash"].as_str().unwrap();
+    insert_currently_bound_execution(&admin, "exec-legacy-failed", contract_hash, 1, "failed")
+        .await;
+    let payload = json!({"passed":true,"output_digest":RESULT});
+    let evidence_digest = stored_evidence_digest(
+        "a",
+        contract_hash,
+        Some(INPUT),
+        None,
+        Some(RESULT),
+        &payload,
+    );
+    admin
+        .execute(
+            "INSERT INTO awr_team.execution_receipts(
+                tenant_id,project_id,id,execution_id,reporter_actor_id,
+                receipt_kind,digest,payload_json)
+             VALUES($1,$2,'receipt-legacy-trusted','exec-legacy-failed','agent',
+                'trusted_executor',$3,$4)",
+            &[
+                &TENANT,
+                &PROJECT,
+                &"e".repeat(64),
+                &json!({"outcome":"failed"}),
+            ],
+        )
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "INSERT INTO awr_team.evidence(
+                tenant_id,project_id,id,work_id,execution_id,contract_hash,
+                input_digest,execution_result_digest,evidence_kind,trust_basis,
+                digest,payload_json,created_by)
+             VALUES($1,$2,'legacy-contradiction','a','exec-legacy-failed',$3,
+                $4,$5,'report','caller_asserted',$6,$7,'agent')",
+            &[
+                &TENANT,
+                &PROJECT,
+                &contract_hash,
+                &INPUT,
+                &RESULT,
+                &evidence_digest,
+                &payload,
+            ],
+        )
+        .await
+        .unwrap();
+    let stored_before: Value = admin
+        .query_one(
+            "SELECT to_jsonb(e) FROM awr_team.evidence e WHERE id='legacy-contradiction'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+
+    let mut inspect = query("evidence.inspect");
+    inspect.work_id = Some("a".into());
+    inspect.evidence_id = Some("legacy-contradiction".into());
+    let evidence =
+        store.query(TENANT, PROJECT, A, inspect).await.unwrap()["data"]["evidence"].clone();
+    let consistency = &evidence["execution_consistency"];
+    assert_eq!(consistency["status"], "contradicted");
+    assert_eq!(consistency["claimed_success"], true);
+    assert_eq!(consistency["execution_success"], false);
+    assert_eq!(consistency["recorded_state"], "failed");
+    assert_eq!(consistency["fact_source"], "team_execution_record");
+    assert_eq!(consistency["independent_verification"], false);
+    let stored_after: Value = admin
+        .query_one(
+            "SELECT to_jsonb(e) FROM awr_team.evidence e WHERE id='legacy-contradiction'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(stored_after, stored_before);
+
+    admin
+        .execute(
+            "UPDATE awr_team.evidence SET payload_json=$1 WHERE id='legacy-contradiction'",
+            &[&json!({"passed":false,"output_digest":RESULT})],
+        )
+        .await
+        .unwrap();
+    let mut inspect = query("evidence.inspect");
+    inspect.work_id = Some("a".into());
+    inspect.evidence_id = Some("legacy-contradiction".into());
+    let tampered = store.query(TENANT, PROJECT, A, inspect).await.unwrap()["data"]["evidence"]
+        ["execution_consistency"]
+        .clone();
+    assert_eq!(tampered["status"], "unverifiable");
+    assert_eq!(tampered["reason"], "evidence_digest_mismatch");
+    assert!(tampered["claimed_success"].is_null());
+    assert!(tampered["execution_success"].is_null());
+    assert!(tampered["recorded_state"].is_null());
+    assert!(tampered["fact_source"].is_null());
+    assert_eq!(tampered["independent_verification"], false);
+}
+
+#[tokio::test]
+async fn execution_consistency_sanitizes_legacy_execution_without_current_binding() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let prepared = prepare(&store, A, "a").await;
+    let contract_hash = prepared["data"]["contract_hash"].as_str().unwrap();
+    insert_execution(&admin, "exec-legacy-unbound", contract_hash, 1, "failed").await;
+    let payload = json!({"passed":true,"output_digest":RESULT});
+    let evidence_digest = stored_evidence_digest(
+        "a",
+        contract_hash,
+        Some(INPUT),
+        None,
+        Some(RESULT),
+        &payload,
+    );
+    admin
+        .execute(
+            "INSERT INTO awr_team.evidence(
+                tenant_id,project_id,id,work_id,execution_id,contract_hash,
+                input_digest,execution_result_digest,evidence_kind,trust_basis,
+                digest,payload_json,created_by)
+             VALUES($1,$2,'legacy-unbound-evidence','a','exec-legacy-unbound',$3,
+                $4,$5,'report','caller_asserted',$6,$7,'agent')",
+            &[
+                &TENANT,
+                &PROJECT,
+                &contract_hash,
+                &INPUT,
+                &RESULT,
+                &evidence_digest,
+                &payload,
+            ],
+        )
+        .await
+        .unwrap();
+
+    let mut inspect = query("evidence.inspect");
+    inspect.work_id = Some("a".into());
+    inspect.evidence_id = Some("legacy-unbound-evidence".into());
+    let consistency = store.query(TENANT, PROJECT, A, inspect).await.unwrap()["data"]["evidence"]
+        ["execution_consistency"]
+        .clone();
+    assert_eq!(consistency["status"], "unverifiable");
+    assert_eq!(consistency["reason"], "execution_not_inspectable");
+    assert!(consistency["claimed_success"].is_null());
+    assert!(consistency["execution_success"].is_null());
+    assert!(consistency["recorded_state"].is_null());
+    assert!(consistency["fact_source"].is_null());
+    assert_eq!(consistency["independent_verification"], false);
+}
+
+#[tokio::test]
 async fn mainline_submit_open_accept_complete_is_team_independent() {
     let (_g, admin, _, store) = setup().await;
     seed_review_actors(&admin).await;
@@ -362,6 +661,13 @@ async fn mainline_submit_open_accept_complete_is_team_independent() {
     )
     .await;
     assert_eq!(evidence["trust_basis"], "trusted_executor");
+    assert_eq!(evidence["claimed_success"], true);
+    assert_eq!(evidence["execution_success"], true);
+    assert_eq!(evidence["execution_consistency"]["status"], "consistent");
+    assert_eq!(
+        evidence["execution_consistency"]["independent_verification"],
+        false
+    );
     assert_eq!(evidence["author_self_report"], false);
     assert_eq!(evidence["task_complete"], false);
     let evidence_id = evidence["evidence_id"].as_str().unwrap().to_string();
