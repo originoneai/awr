@@ -556,6 +556,24 @@ fn require_binding(r: &Row, work: &str, stream: &str, ownership: i64) -> PgResul
     Ok(())
 }
 
+/// Reuse the exact execution.inspect record/binding gate when another scoped
+/// read wants to offer an execution.inspect query without exposing its data.
+pub(crate) async fn matches_inspect_binding(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    work: &str,
+    stream: &str,
+    ownership: i64,
+    id: &str,
+) -> PgResult<bool> {
+    match load(tx, tenant, project, id).await {
+        Ok(row) => Ok(require_binding(&row, work, stream, ownership).is_ok()),
+        Err(PgError::Forbidden) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 pub(crate) async fn inspect(
     tx: &Transaction<'_>,
     tenant: &str,
