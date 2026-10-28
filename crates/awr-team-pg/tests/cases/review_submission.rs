@@ -4,8 +4,8 @@ use awr_team::delivery::{
     ArtifactEntry, ArtifactManifest, DeliveryCandidate, FactSource, RevisionFormat,
 };
 use awr_team_pg::{
-    ConfigureDeliveryConnector, DeliveryConnectorMapping, DeliveryReadSet, DeliverySyncStore,
-    PgResult, ReviewStore, SelectDeliveryCandidate,
+    ConfigureDeliveryConnector, DeliveryConnectorMapping, DeliveryReadSet, DeliverySourceLocator,
+    DeliverySourceLocatorUpdate, DeliverySyncStore, PgResult, ReviewStore, SelectDeliveryCandidate,
 };
 use sha2::{Digest, Sha256};
 
@@ -59,12 +59,56 @@ async fn connector(
                     principal_client_id: "cli-runner".into(),
                     fact_source: FactSource::AdapterObservation,
                     enabled,
+                    source_locator: Some(DeliverySourceLocatorUpdate::Set {
+                        locator: DeliverySourceLocator {
+                            contract: "awr-git-source-v1".into(),
+                            url: "https://git.example.invalid/team/shared-repository.git".into(),
+                        },
+                    }),
                 },
             },
         )
         .await
         .unwrap();
     store
+}
+
+async fn configure_source_locator(
+    reads: &WorkstreamReadStore,
+    request: &str,
+    expected_version: &str,
+    connector_id: &str,
+    resource: &str,
+    enabled: bool,
+    source_locator: Option<DeliverySourceLocatorUpdate>,
+) -> PgResult<Value> {
+    let p = prepare(reads, A, "a").await;
+    reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            command(
+                &p,
+                request,
+                "delivery.connector.configure",
+                json!({
+                    "source_snapshot_id":p["source_snapshot_id"],
+                    "expected_connector_version":expected_version,
+                    "mapping":DeliveryConnectorMapping {
+                    connector_id: connector_id.into(),
+                    provider: "local_git".into(),
+                    resource: resource.into(),
+                    principal_actor_id: "runner".into(),
+                    principal_client_id: "cli-runner".into(),
+                    fact_source: FactSource::AdapterObservation,
+                    enabled,
+                    source_locator,
+                }}),
+            ),
+        )
+        .await
 }
 
 async fn claim(reads: &WorkstreamReadStore) -> Value {
@@ -578,6 +622,26 @@ async fn review_needs_every_bound_manifest_artifact_and_returns_exact_authorized
         serde_json::to_value(&selection.candidate.binding.source_revision).unwrap()
     );
     assert_eq!(submission["repository_verification_inferred"], false);
+    assert_eq!(submission["source_navigation"]["available"], true);
+    assert_eq!(
+        submission["source_navigation"]["url"],
+        "https://git.example.invalid/team/shared-repository.git"
+    );
+    assert_eq!(
+        submission["source_navigation"]["exact_revision"],
+        submission["source_revision"]
+    );
+    assert_eq!(submission["source_navigation"]["connector_version"], "1");
+    assert_eq!(
+        submission["source_navigation"]["awr_checkout_verified"],
+        false
+    );
+    assert!(
+        submission["source_navigation"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("server support for fetching an unadvertised SHA")
+    );
     assert_eq!(submission["artifacts"].as_array().unwrap().len(), 2);
     let action = &submission["guidance"]["action"];
     assert_eq!(action["op"], action["query"]["op"]);
@@ -658,6 +722,10 @@ async fn review_without_source_revision_requires_a_verifiable_binding_instead_of
     let submission = &review["submission"];
     assert_eq!(submission["candidate_current"], true);
     assert_eq!(submission["source_revision"], Value::Null);
+    assert_eq!(
+        submission["source_navigation"]["reason"],
+        "source_revision_missing"
+    );
     let note = submission["guidance"]["action"]["note"].as_str().unwrap();
     assert!(note.contains("Extra content lacks submission.source_revision: do not guess"));
     assert!(
@@ -666,6 +734,231 @@ async fn review_without_source_revision_requires_a_verifiable_binding_instead_of
     assert!(note.contains("version is unverified"));
     assert!(!note.contains("use this round's submission.source_revision"));
     assert!(!submission.to_string().contains("git-blob:"));
+}
+
+#[tokio::test]
+async fn review_source_navigation_is_managed_versioned_exact_and_fail_closed() {
+    let (_guard, admin, db, reads) = setup().await;
+    seed_review_actors(&admin).await;
+    let delivery = connector(&admin, &db, &reads, "configure", "0", true).await;
+    let selection = select(&admin, &reads, &delivery).await;
+    let binding = selection.candidate.binding.digest().unwrap();
+    evidence(&reads, "code", CODE, Some(&binding)).await;
+    let report = evidence(&reads, "report", REPORT, Some(&binding)).await;
+    let round = run(&reads, A, "open", "review.open", opening(&report)).await;
+
+    let exact = inspect_round(&reads, &round).await;
+    assert_eq!(exact["submission"]["source_navigation"]["available"], true);
+    assert_eq!(
+        exact["submission"]["source_navigation"]["exact_revision"],
+        serde_json::to_value(&selection.candidate.binding.source_revision).unwrap()
+    );
+
+    // A second current connector for the same resource is not guessed.
+    configure_source_locator(
+        &reads,
+        "configure-ambiguous",
+        "0",
+        "second-delivery",
+        "fixture://shared-repository",
+        true,
+        Some(DeliverySourceLocatorUpdate::Set {
+            locator: DeliverySourceLocator {
+                contract: "awr-git-source-v1".into(),
+                url: "https://git.example.invalid/team/second.git".into(),
+            },
+        }),
+    )
+    .await
+    .unwrap();
+    let ambiguous = inspect_round(&reads, &round).await;
+    assert_eq!(
+        ambiguous["submission"]["source_navigation"]["reason"],
+        "connector_ambiguous"
+    );
+    assert!(
+        ambiguous["submission"]["source_navigation"]
+            .get("url")
+            .is_none()
+    );
+    configure_source_locator(
+        &reads,
+        "disable-ambiguous",
+        "1",
+        "second-delivery",
+        "fixture://shared-repository",
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Existing clients can omit the new field. The request succeeds but an old
+    // locator cannot silently follow the new connector version.
+    configure_source_locator(
+        &reads,
+        "legacy-update",
+        "1",
+        "shared-delivery",
+        "fixture://shared-repository",
+        true,
+        None,
+    )
+    .await
+    .unwrap();
+    let stale = inspect_round(&reads, &round).await;
+    assert_eq!(
+        stale["submission"]["source_navigation"]["reason"],
+        "source_locator_stale"
+    );
+
+    configure_source_locator(
+        &reads,
+        "set-ssh",
+        "2",
+        "shared-delivery",
+        "fixture://shared-repository",
+        true,
+        Some(DeliverySourceLocatorUpdate::Set {
+            locator: DeliverySourceLocator {
+                contract: "awr-git-source-v1".into(),
+                url: "ssh://git@git.example.invalid/team/shared-repository.git".into(),
+            },
+        }),
+    )
+    .await
+    .unwrap();
+    let ssh = inspect_round(&reads, &round).await;
+    assert_eq!(ssh["submission"]["source_navigation"]["available"], true);
+    assert_eq!(
+        ssh["submission"]["source_navigation"]["connector_version"],
+        "3"
+    );
+    assert_eq!(
+        ssh["submission"]["source_navigation"]["url"],
+        "ssh://git@git.example.invalid/team/shared-repository.git"
+    );
+
+    // URL validation refuses credentials, local schemes, unsafe suffixes and
+    // personal SSH usernames without changing the current version.
+    for (index, url) in [
+        "https://token@git.example.invalid/team/repository.git",
+        "https://git.example.invalid/team/repository.git?token=secret",
+        "https://git.example.invalid/team/repository.git#moving-ref",
+        "ssh://git:secret@git.example.invalid/team/repository.git",
+        "ssh://alice@git.example.invalid/team/repository.git",
+        "https://git.example.invalid/team/repository.git ",
+        "https://git.example.invalid/team\\repository.git",
+        "https://git.example.invalid/team/repository.git\n",
+        "ssh://git@git.example.invalid/team/repository.git ",
+        "ssh://git@git.example.invalid/team\\repository.git",
+        "file:///srv/private/repository.git",
+        "http://git.example.invalid/team/repository.git",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert!(
+            configure_source_locator(
+                &reads,
+                &format!("invalid-url-{index}"),
+                "3",
+                "shared-delivery",
+                "fixture://shared-repository",
+                true,
+                Some(DeliverySourceLocatorUpdate::Set {
+                    locator: DeliverySourceLocator {
+                        contract: "awr-git-source-v1".into(),
+                        url: url.into(),
+                    },
+                }),
+            )
+            .await
+            .is_err()
+        );
+    }
+    assert_eq!(
+        inspect_round(&reads, &round).await["submission"]["source_navigation"]["connector_version"],
+        "3"
+    );
+
+    configure_source_locator(
+        &reads,
+        "clear-locator",
+        "3",
+        "shared-delivery",
+        "fixture://shared-repository",
+        true,
+        Some(DeliverySourceLocatorUpdate::Clear),
+    )
+    .await
+    .unwrap();
+    let cleared = inspect_round(&reads, &round).await;
+    assert_eq!(
+        cleared["submission"]["source_navigation"]["reason"],
+        "source_locator_not_configured"
+    );
+    assert!(
+        cleared["submission"]["source_navigation"]
+            .get("url")
+            .is_none()
+    );
+
+    let mut unauthorized = query("review.inspect");
+    unauthorized.work_id = Some("a".into());
+    unauthorized.review_round_id = Some(round["round_id"].as_str().unwrap().into());
+    assert!(
+        reads
+            .query(TENANT, PROJECT, B, unauthorized.clone())
+            .await
+            .is_err()
+    );
+    assert!(
+        reads
+            .query(TENANT, PROJECT, NONE, unauthorized)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn review_source_navigation_refuses_candidate_connector_resource_mismatch() {
+    let (_guard, admin, db, reads) = setup().await;
+    seed_review_actors(&admin).await;
+    let delivery = connector(&admin, &db, &reads, "configure", "0", true).await;
+    let mut selection = select(&admin, &reads, &delivery).await;
+    let original = selection.candidate.binding.digest().unwrap();
+    selection.request_id = "select-resource-mismatch".into();
+    selection.expected_selected_digest = Some(original);
+    selection.candidate.binding.candidate_version = "2".into();
+    selection
+        .candidate
+        .binding
+        .source_revision
+        .as_mut()
+        .unwrap()
+        .resource = "fixture://different-repository".into();
+    selection.read_set = read_set(&prepare(&reads, A, "a").await);
+    let binding = selection.candidate.binding.digest().unwrap();
+    delivery
+        .select_candidate(TENANT, PROJECT, A, selection)
+        .await
+        .unwrap();
+    evidence(&reads, "code", CODE, Some(&binding)).await;
+    let report = evidence(&reads, "report", REPORT, Some(&binding)).await;
+    let round = run(&reads, A, "open", "review.open", opening(&report)).await;
+    let review = inspect_round(&reads, &round).await;
+    assert_eq!(review["submission"]["candidate_current"], true);
+    assert_eq!(review["submission"]["inspectable"], true);
+    assert_eq!(
+        review["submission"]["source_navigation"]["reason"],
+        "connector_resource_mismatch"
+    );
+    assert!(
+        review["submission"]["source_navigation"]
+            .get("url")
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -699,6 +992,10 @@ async fn opaque_artifact_revision_still_requires_immutability_and_candidate_bind
     let submission = &review["submission"];
     assert_eq!(submission["source_revision"]["format"], "artifact");
     assert_eq!(submission["source_revision"]["value"], "opaque-release-42");
+    assert_eq!(
+        submission["source_navigation"]["reason"],
+        "source_revision_unsupported"
+    );
     let note = submission["guidance"]["action"]["note"].as_str().unwrap();
     assert!(note.contains("authorized-channel immutability + candidate-binding check"));
     assert!(note.contains("else version unverified"));
@@ -1022,6 +1319,10 @@ async fn changed_selection_preserves_original_review_content_but_blocks_approval
     );
     assert_eq!(review["submission"]["inspectable"], true);
     assert_eq!(review["submission"]["candidate_current"], false);
+    assert_eq!(
+        review["submission"]["source_navigation"]["reason"],
+        "candidate_stale"
+    );
     assert_eq!(
         review["submission"]["guidance"]["action"]["op"],
         "delivery.neutral.inspect"

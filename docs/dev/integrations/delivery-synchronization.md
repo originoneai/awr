@@ -27,7 +27,7 @@ caller identity or filesystem path in `args`. The complete command must fit
 
 | Operation | Additional `args` |
 | --- | --- |
-| `delivery.connector.configure` | `expected_connector_version`, `mapping` (connector, provider, resource, subject actor/client, fact origin, enabled) |
+| `delivery.connector.configure` | `expected_connector_version`, `mapping` (connector, provider, resource, subject actor/client, fact origin, enabled, optional `source_locator`) |
 | `delivery.candidate.select` | `expected_selected_digest` (or null), owned `session_id`, `claim_id`, `fence`, `lease_version`, typed `candidate` |
 | `delivery.inspection.reserve` | `connector_id`, `connector_version`, `candidate_digest`, `lease_seconds` |
 | `delivery.facts.ingest` | `connector_id`, `inspection_id`, `event_id`, typed `records` |
@@ -117,6 +117,22 @@ never grant permissions. Configuration and revocation require current project
 management authority, an explicit workstream management grant and an eligible
 human/system operator. Ordinary delegated developer Agents cannot configure
 connectors. Configuration does not give the target principal a grant.
+
+Project managers may add or update a credential-free Git locator through the
+same operation with
+`mapping.source_locator: {"action":"set","locator":{"contract":"awr-git-source-v1","url":"..."}}`.
+`https://host/path` and canonical `ssh://git@host/path` remotes are supported.
+Embedded passwords, HTTPS user information, non-`git` SSH usernames, query
+strings, fragments, control characters, backslashes, trailing whitespace,
+local paths, other schemes and any non-canonical URL that the parser would
+rewrite are rejected. SSH keys and host verification remain client-owned and
+are never stored in this locator.
+Use `{"action":"clear"}` to remove it. Omitting `source_locator` preserves
+old wire requests but does not silently carry the locator to the new connector
+version: source navigation remains unavailable until a manager sets it again.
+This prevents a changed resource or connector from inheriting an obsolete
+remote. The locator is descriptive configuration only; the server does not
+clone, fetch or validate repository contents.
 
 Every mutation authenticates the current credential and rechecks membership,
 delegation, grants, ownership, authority version, source snapshot and the actual

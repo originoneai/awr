@@ -47,11 +47,11 @@ pub use delivery_adoption::DeliveryAdoptionStore;
 pub use delivery_sync::{
     ClaimDeliverySyncIntent, ConfigureDeliveryConnector, ConfirmDeliveryIntegration,
     DeliveryConnectorMapping, DeliveryIntegrationDispatch, DeliveryIntegrationPermit,
-    DeliveryPublicationStep, DeliveryReadSet, DeliveryScheduleQuery, DeliverySyncLease,
-    DeliverySyncStore, DispatchDeliveryIntegration, IngestDeliveryFacts, LeaseDeliveryIntegration,
-    PrepareDeliveryIntegration, PrepareDeliverySourcePublication,
-    RejectPreparedDeliveryIntegration, RenewDeliveryPublicationLease, ReserveDeliveryInspection,
-    SelectDeliveryCandidate,
+    DeliveryPublicationStep, DeliveryReadSet, DeliveryScheduleQuery, DeliverySourceLocator,
+    DeliverySourceLocatorUpdate, DeliverySyncLease, DeliverySyncStore, DispatchDeliveryIntegration,
+    IngestDeliveryFacts, LeaseDeliveryIntegration, PrepareDeliveryIntegration,
+    PrepareDeliverySourcePublication, RejectPreparedDeliveryIntegration,
+    RenewDeliveryPublicationLease, ReserveDeliveryInspection, SelectDeliveryCandidate,
 };
 pub use error::{PgError, PgResult};
 pub use execution::{
@@ -149,6 +149,6 @@ mod tests {
     #[test]
     fn schema_contract_is_stable() {
         assert_eq!(SCHEMA, "awr_team");
-        assert_eq!(EXPECTED_SCHEMA_VERSION, 54);
+        assert_eq!(EXPECTED_SCHEMA_VERSION, 55);
     }
 }

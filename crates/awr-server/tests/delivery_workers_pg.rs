@@ -366,6 +366,7 @@ async fn last_group_denial_preserves_both_admitted_source_and_local_git_groups()
                     principal_client_id: "combined-client".into(),
                     fact_source: FactSource::AdapterObservation,
                     enabled: true,
+                    source_locator: None,
                 },
             },
         )

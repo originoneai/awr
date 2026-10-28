@@ -58,6 +58,7 @@ async fn configure_github(
                     principal_client_id: "cli-worker".into(),
                     fact_source: FactSource::AdapterObservation,
                     enabled: true,
+                    source_locator: None,
                 },
             },
         )

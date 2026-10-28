@@ -580,7 +580,14 @@ fn add_neutral_delivery_schema(command: &mut Value) {
             "properties":{"connector_id":identity,"provider":{"type":"string","maxLength":128},
                 "resource":{"type":"string","maxLength":1024},"principal_actor_id":identity,
                 "principal_client_id":identity,"fact_source":{"enum":["caller_declared","adapter_observation","operator_recorded"]},
-                "enabled":{"type":"boolean"}}},
+                "enabled":{"type":"boolean"},
+                "source_locator":{"oneOf":[
+                    {"type":"object","additionalProperties":false,"required":["action","locator"],
+                        "properties":{"action":{"const":"set"},"locator":{"type":"object","additionalProperties":false,
+                            "required":["contract","url"],"properties":{"contract":{"const":"awr-git-source-v1"},
+                                "url":{"type":"string","maxLength":2048,"pattern":"^(https://|ssh://git@)"}}}}},
+                    {"type":"object","additionalProperties":false,"required":["action"],
+                        "properties":{"action":{"const":"clear"}}}]}}},
         "expected_selected_digest":{"anyOf":[digest,{"type":"null"}]},
         "candidate":{"type":"object","additionalProperties":false,"required":["binding","manifest"],
             "properties":{"binding":{"type":"object"},"manifest":{"type":"object"}},
@@ -1452,6 +1459,37 @@ mod tests {
         assert_eq!(unknown["code"], "InvalidInput");
         assert!(unknown.get("reason").is_none());
         assert!(!unknown.to_string().contains("private-manifest-detail"));
+    }
+
+    #[test]
+    fn delivery_connector_discovery_exposes_only_safe_managed_source_locator_shapes() {
+        let tool = catalog()
+            .into_iter()
+            .find(|tool| tool.name == "awr_team_command")
+            .unwrap();
+        let locator = &tool.input_schema["properties"]["args"]["properties"]["mapping"]["properties"]
+            ["source_locator"];
+        assert_eq!(locator["oneOf"][0]["properties"]["action"]["const"], "set");
+        assert_eq!(
+            locator["oneOf"][0]["properties"]["locator"]["properties"]["contract"]["const"],
+            "awr-git-source-v1"
+        );
+        assert_eq!(
+            locator["oneOf"][0]["properties"]["locator"]["properties"]["url"]["pattern"],
+            "^(https://|ssh://git@)"
+        );
+        assert_eq!(
+            locator["oneOf"][1]["properties"]["action"]["const"],
+            "clear"
+        );
+        assert!(
+            tool.input_schema["properties"]["args"]["properties"]["mapping"]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|field| field != "source_locator"),
+            "old connector requests must remain valid"
+        );
     }
 
     #[test]

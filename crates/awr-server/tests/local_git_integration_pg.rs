@@ -967,6 +967,7 @@ async fn changed_source_and_connector_epoch_recover_the_original_version_as_hist
                     principal_client_id: "cli-worker".into(),
                     fact_source: FactSource::AdapterObservation,
                     enabled: true,
+                    source_locator: None,
                 },
             },
         )

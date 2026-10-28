@@ -334,6 +334,7 @@ dependencies = [
  "tokio-postgres",
  "tokio-postgres-rustls",
  "ulid",
+ "url",
  "webpki-roots 0.26.11",
 ]
 

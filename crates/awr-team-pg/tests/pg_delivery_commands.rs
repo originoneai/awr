@@ -308,6 +308,7 @@ impl Fixture {
                 principal_client_id: "cli-a".into(),
                 fact_source: FactSource::CallerDeclared,
                 enabled: true,
+                source_locator: None,
             },
         }
     }
