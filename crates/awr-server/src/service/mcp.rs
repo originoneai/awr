@@ -17,6 +17,7 @@ use rmcp::{
 };
 use tokio::{sync::OwnedSemaphorePermit, time::Instant};
 
+mod input_contracts;
 mod input_diagnostics;
 mod planning_schema;
 pub(super) use input_diagnostics::add_input_diagnostic;
@@ -1067,6 +1068,7 @@ fn catalog() -> Vec<Tool> {
         }
     });
     vec![
+        input_contracts::tool(),
         Tool::new("awr_team_query",
             "Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. Supervisors use selector-free work.inbox. work.observe shares bounded neutral candidate/check/review/integration/publication facts and independently scoped role guidance with prepare/snapshot/inbox, preserving context hashes. Follow one action.op and its optional action.query; recheck_on names refresh triggers. Required context and unknown effects retain priority. max_context_bytes bounds the full observation response. Receipt access and unknown model/usage remain explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission. Approved cross-stream content: delivery.exports with consumer work_id, then artifact.content or bounded artifact.segment with export_id and expected_sha256. For segments follow every next_query, concatenate contiguous ranges from zero and verify the full length/digest; the last page alone is not a complete read. Disclosure never satisfies adoption. Neutral facts: delivery.neutral.inspect. Current source synchronization: delivery.source.status. Missing neutral command response: delivery.neutral.outcome with actual work_id and original client retry ID. delivery.integration.inspect uses the generated IntegrationRequest.request_id (data.integration_id), preserving the original candidate. Neutral inspection includes scoped connector versions; review.inspect includes decision IDs. Descriptions grant no authority.",
             query.as_object().unwrap().clone())
@@ -1197,10 +1199,13 @@ impl ServerHandler for Endpoint {
         let diagnostic_input =
             matches!(request.name.as_ref(), "awr_team_query" | "awr_team_command")
                 .then(|| args.clone());
+        let input_contract = (request.name == input_contracts::TOOL_NAME).then(|| args.clone());
         let write = request.name == "awr_team_command";
         let segmented = request.name == "awr_team_query" && args["op"] == "artifact.segment";
         let result = tokio::time::timeout_at(access.deadline, super::audited(&self.state, &self.project, &access.bearer, &action, work.as_deref(), async {
             match request.name.as_ref() {
+                input_contracts::TOOL_NAME => input_contracts::describe(&args, &catalog())
+                    .map_err(|_| PgError::Protocol("invalid input contract request".into())),
                 "awr_team_query" => {
                     let q: WorkstreamQuery = serde_json::from_value(args)
                         .map_err(|_| PgError::Protocol("invalid query".into()))?;
@@ -1420,7 +1425,11 @@ impl ServerHandler for Endpoint {
                 let rejection = super::claim_rejection(&action, &error)
                     .or_else(|| super::session_end_rejection(&action, &error));
                 let error = super::legacy_claim_acquire_error(&action, error);
-                let mut value = public_error(super::legacy_session_end_error(&action, error)).1;
+                let mut value = if let Some(input) = &input_contract {
+                    input_contracts::public_error(input)
+                } else {
+                    public_error(super::legacy_session_end_error(&action, error)).1
+                };
                 if let Some(rejection) = rejection {
                     value["rejection"] = rejection;
                 }

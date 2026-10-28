@@ -67,6 +67,17 @@ Use the discovered `awr_team_query` and `awr_team_command` tool schemas and the
 [Team protocol reference](../reference/team-workstream-service.md) for exact
 arguments. Each query/command rechecks the caller's current permissions.
 
+Prefer the matching `action.command_base` from a fresh `work.prepare`: keep its
+header unchanged and fill only the advertised caller slots. When no matching base
+exists or an operation's shape is unclear, call `awr_team_input_contract` with
+the selected tool and operation. This on-demand read projects that operation from
+the current MCP catalog, including conditional query fields and closed command
+arguments; it is not an extra discovery step before every call. The contract
+contains navigation to current values, never the values themselves. Refresh the
+named reads and use their real IDs, versions, digests and facts rather than an
+example or old receipt. Contract discovery grants no permission, execution
+admission, replay or acceptance.
+
 For a rejected read query, `InvalidInput.invalid_field` identifies one known
 field and `constraint` explains the violated rule. The short `action_guidance`
 gives its condition, basis, correction and recheck trigger without echoing input

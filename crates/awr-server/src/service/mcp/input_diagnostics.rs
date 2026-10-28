@@ -69,7 +69,7 @@ fn issue(path: &str, constraint: &str) -> Value {
     json!({"invalid_field":if path.is_empty() { "/" } else { path },"constraint":constraint})
 }
 
-fn shape_issue(input: &Value, schema: &Value, path: &str) -> Option<Value> {
+pub(super) fn shape_issue(input: &Value, schema: &Value, path: &str) -> Option<Value> {
     let required = schema["required"].as_array();
     if let Some(fields) = required {
         for field in fields.iter().filter_map(Value::as_str) {

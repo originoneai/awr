@@ -20,6 +20,128 @@ use std::time::Duration;
 type Client = RunningService<RoleClient, ()>;
 
 #[tokio::test]
+async fn operation_input_contracts_project_the_live_catalog_without_dynamic_values() {
+    let (_guard, _admin, _, store) = setup().await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let listed = client.list_tools(Default::default()).await.unwrap();
+    let contract_tool = listed
+        .tools
+        .iter()
+        .find(|tool| tool.name == "awr_team_input_contract")
+        .unwrap();
+    assert_eq!(
+        contract_tool.annotations.as_ref().unwrap().read_only_hint,
+        Some(true)
+    );
+    let command_tool = listed
+        .tools
+        .iter()
+        .find(|tool| tool.name == "awr_team_command")
+        .unwrap();
+    let query_tool = listed
+        .tools
+        .iter()
+        .find(|tool| tool.name == "awr_team_query")
+        .unwrap();
+
+    let checkpoint_result = client
+        .call_tool(
+            CallToolRequestParams::new("awr_team_input_contract").with_arguments(
+                json!({"protocol_version":1,"tool":"awr_team_command","op":"session.checkpoint"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert!(!checkpoint_result.is_error.unwrap_or(false));
+    assert!(serde_json::to_vec(&checkpoint_result).unwrap().len() < 32_768);
+    let checkpoint = checkpoint_result.structured_content.unwrap();
+    assert_eq!(checkpoint["protocol"], "awr-team-mcp-input-contract-v1");
+    assert_eq!(
+        checkpoint["schema_source"],
+        "current tools/list inputSchema"
+    );
+    assert_eq!(
+        checkpoint["schema"]["properties"]["op"]["const"],
+        "session.checkpoint"
+    );
+    assert_eq!(
+        checkpoint["schema"]["required"],
+        command_tool.input_schema["required"]
+    );
+    assert_eq!(
+        checkpoint["schema"]["properties"]["args"]["properties"]["client_info"]["properties"]["product"]
+            ["type"],
+        "string"
+    );
+    assert_eq!(
+        checkpoint["schema"]["properties"]["args"]["properties"]["progress"]["properties"]["tests"]
+            ["items"]["properties"]["outcome"]["enum"],
+        json!(["passed", "failed", "not_run"])
+    );
+    assert_eq!(checkpoint["usage"]["dynamic_values_included"], false);
+    assert_eq!(checkpoint["usage"]["authority_granted"], false);
+    assert_eq!(checkpoint["execution_authorized"], false);
+
+    let report_result = client
+        .call_tool(
+            CallToolRequestParams::new("awr_team_input_contract").with_arguments(
+                json!({"protocol_version":1,"tool":"awr_team_command","op":"execution.report"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert!(!report_result.is_error.unwrap_or(false));
+    assert!(serde_json::to_vec(&report_result).unwrap().len() < 32_768);
+    let report = report_result.structured_content.unwrap();
+    assert_eq!(
+        report["schema"]["properties"]["args"]["properties"]["outcome"]["enum"],
+        json!(["succeeded", "failed", "cancelled", "unknown"])
+    );
+
+    let claim = call(
+        &client,
+        "awr_team_input_contract",
+        json!({"protocol_version":1,"tool":"awr_team_query","op":"claim.inspect"}),
+        false,
+    )
+    .await;
+    assert_eq!(
+        claim["schema"]["required"],
+        query_tool.input_schema["required"]
+    );
+    let constraints = claim["schema"]["allOf"].as_array().unwrap();
+    assert!(
+        constraints
+            .iter()
+            .any(|branch| branch["required"] == json!(["claim_id"]))
+    );
+    assert!(constraints.iter().any(|branch| {
+        branch["anyOf"] == json!([{"required":["work_id"]},{"required":["session_id"]}])
+    }));
+
+    let unknown = call(
+        &client,
+        "awr_team_input_contract",
+        json!({"protocol_version":1,"tool":"awr_team_command","op":"private-unknown-op"}),
+        true,
+    )
+    .await;
+    assert_eq!(unknown["code"], "UnsupportedOperation");
+    assert_eq!(unknown["invalid_field"], "/op");
+    assert!(unknown["next_step"].is_string());
+    assert!(!unknown.to_string().contains("private-unknown-op"));
+    assert!(serde_json::to_vec(&unknown).unwrap().len() < 1024);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn artifact_segments_reconstruct_exact_bytes_with_bounded_mcp_envelopes() {
     use base64::Engine;
     use sha2::Digest;
@@ -2053,9 +2175,9 @@ async fn sdk_clients_negotiate_tools_and_isolate_workstreams_on_one_service() {
     assert_eq!(info.server_info.as_ref().unwrap().name, "awr-team-mcp");
     assert!(info.capabilities.tools.is_some());
     let tools = a.list_all_tools().await.unwrap();
-    // Query/command, member access and planning are discoverable; calls still
-    // recheck the actor's effective authority.
-    assert_eq!(tools.len(), 12);
+    // Query/command, their on-demand input-contract projection, member access
+    // and planning are discoverable; calls still recheck effective authority.
+    assert_eq!(tools.len(), 13);
     let caps = call(
         &a,
         "awr_team_query",
