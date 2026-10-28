@@ -1051,6 +1051,7 @@ mod agent_review_tests {
     }
 
     include!("cases/agent_completion.rs");
+    include!("cases/review_provenance.rs");
     include!("cases/workspace_completion.rs");
     mod simulated_member_tests {
         use super::*;

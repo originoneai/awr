@@ -2086,6 +2086,136 @@ pub(crate) async fn inspect_evidence(
     }}))
 }
 
+async fn inspect_review_evidence_provenance(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    auth: &ReaderAuthority,
+    work_id: &str,
+    round_contract_hash: &str,
+    bundle_hash: &str,
+    evidence_id: Option<&str>,
+    execution_id: Option<&str>,
+    artifact_digest: Option<&str>,
+    execution_result_digest: Option<&str>,
+) -> PgResult<Value> {
+    let (work_binding, ownership_version) =
+        crate::workstream_read::work_binding(tx, tenant, project, auth, work_id).await?;
+    let current_contract_hash: String = tx
+        .query_opt(
+            "SELECT contract_hash FROM awr_team.work_contracts
+             WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3
+               AND scope_id='main' AND work_id=$4",
+            &[&tenant, &project, &auth.snapshot, &work_id],
+        )
+        .await?
+        .ok_or(PgError::Forbidden)?
+        .get(0);
+    let workstream_id = work_binding.workstream_id.to_string();
+    let contract_matches_current = current_contract_hash == round_contract_hash;
+    let boundary = "Stored trust_basis describes evidence provenance only; caller_asserted is not independent verification, and review.inspect does not execute or verify commands.";
+    let unavailable = |reason: &str| json!({"available":false,"reason":reason,"query":Value::Null});
+    let Some(evidence_id) = evidence_id else {
+        return Ok(json!({
+            "binding_status":"not_bound",
+            "trust_basis":Value::Null,
+            "author_self_report":Value::Null,
+            "review_contract_matches_current":contract_matches_current,
+            "currentness":if contract_matches_current {"current_contract"} else {"stale_contract"},
+            "evidence_inspection":unavailable("no_bound_evidence"),
+            "execution_inspection":unavailable("no_exact_bound_evidence"),
+            "boundary":boundary,
+        }));
+    };
+    // Scope the evidence lookup before exposing provenance. A malformed or
+    // historical cross-work reference must not turn review.inspect into an
+    // evidence disclosure path that evidence.inspect itself would refuse.
+    let evidence = tx
+        .query_opt(
+            "SELECT contract_hash, digest, trust_basis, execution_id,
+                    output_digest, execution_result_digest
+             FROM awr_team.evidence
+             WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND work_id=$4",
+            &[&tenant, &project, &evidence_id, &work_id],
+        )
+        .await?;
+    let evidence_query = json!({
+        "protocol_version":1,
+        "op":"evidence.inspect",
+        "workstream_id":workstream_id,
+        "work_id":work_id,
+        "evidence_id":evidence_id,
+    });
+    let Some(evidence) = evidence else {
+        return Ok(json!({
+            "binding_status":"not_inspectable",
+            "trust_basis":Value::Null,
+            "author_self_report":Value::Null,
+            "review_contract_matches_current":contract_matches_current,
+            "currentness":if contract_matches_current {"current_contract"} else {"stale_contract"},
+            "evidence_inspection":unavailable("not_in_review_work_scope"),
+            "execution_inspection":unavailable("no_exact_bound_evidence"),
+            "boundary":boundary,
+        }));
+    };
+    let evidence_execution_id: Option<String> = evidence.get(3);
+    let evidence_artifact_digest: Option<String> = evidence.get(4);
+    let evidence_execution_result_digest: Option<String> = evidence.get(5);
+    let exact = evidence.get::<_, String>(0) == round_contract_hash
+        && evidence.get::<_, String>(1) == bundle_hash
+        && evidence_execution_id.as_deref() == execution_id
+        && evidence_artifact_digest.as_deref() == artifact_digest
+        && evidence_execution_result_digest.as_deref() == execution_result_digest;
+    if !exact {
+        return Ok(json!({
+            "binding_status":"mismatched",
+            "trust_basis":Value::Null,
+            "author_self_report":Value::Null,
+            "review_contract_matches_current":contract_matches_current,
+            "currentness":if contract_matches_current {"current_contract"} else {"stale_contract"},
+            "evidence_inspection":{"available":true,"reason":Value::Null,"query":evidence_query},
+            "execution_inspection":unavailable("no_exact_bound_evidence"),
+            "boundary":boundary,
+        }));
+    }
+    let trust_basis: String = evidence.get(2);
+    let execution_inspection = if let Some(execution_id) = execution_id {
+        let inspectable = crate::workstream_command::executions::matches_inspect_binding(
+            tx,
+            tenant,
+            project,
+            work_id,
+            &workstream_id,
+            ownership_version,
+            execution_id,
+        )
+        .await?;
+        if inspectable {
+            json!({"available":true,"reason":Value::Null,"query":{
+                "protocol_version":1,
+                "op":"execution.inspect",
+                "workstream_id":workstream_id,
+                "work_id":work_id,
+                "execution_id":execution_id,
+            }})
+        } else {
+            unavailable("not_inspectable_in_current_work_binding")
+        }
+    } else {
+        unavailable("no_bound_execution")
+    };
+    Ok(json!({
+        "binding_status":"exact",
+        "trust_basis":trust_basis,
+        "author_self_report":trust_basis == "caller_asserted",
+        "review_contract_matches_current":contract_matches_current,
+        "currentness":if contract_matches_current {"current_contract"} else {"stale_contract"},
+        "evidence_inspection":{"available":true,"reason":Value::Null,"query":evidence_query},
+        "execution_inspection":execution_inspection,
+        "boundary":boundary,
+    }))
+}
+
 pub(crate) async fn inspect_review(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -2156,6 +2286,20 @@ pub(crate) async fn inspect_review(
     }
     let work: String = row.get(1);
     let evidence: Option<String> = row.get(8);
+    data["review"]["evidence_provenance"] = inspect_review_evidence_provenance(
+        tx,
+        tenant,
+        project,
+        auth,
+        &work,
+        row.get::<_, String>(4).as_str(),
+        row.get::<_, String>(3).as_str(),
+        evidence.as_deref(),
+        row.get::<_, Option<String>>(9).as_deref(),
+        row.get::<_, Option<String>>(10).as_deref(),
+        row.get::<_, Option<String>>(11).as_deref(),
+    )
+    .await?;
     data["review"]["submission"] = crate::delivery_sync::review_submission::inspect(
         tx,
         tenant,
