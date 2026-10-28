@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 /// The complete enriched guidance packet must fit as one value. It is never
 /// truncated because a partial command could invite callers to guess bindings.
-/// Session.checkpoint packets share this same serialized-byte bound.
+/// Every attached command packet shares this serialized-byte bound.
 pub(crate) const EXECUTION_PREPARE_GUIDANCE_MAX_BYTES: usize = 4096;
 
 #[derive(Clone, Debug)]
@@ -40,9 +40,35 @@ pub(crate) struct NextSessionCheckpointInputs {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct NextCommandBaseInputs {
+    pub workstream_id: Id,
+    pub work_id: String,
+    pub coordinator_epoch: String,
+    pub expected_project_revision: String,
+    pub expected_authority_version: String,
+    pub expected_ownership_version: String,
+    pub expected_contract_hash: String,
+}
+
+pub(crate) type NextSessionStartInputs = NextCommandBaseInputs;
+
+#[derive(Clone, Debug)]
+pub(crate) struct NextTaskTakeInputs {
+    pub command: NextCommandBaseInputs,
+    pub session_id: String,
+    pub expected_session_version: String,
+    pub expected_responsibility_version: String,
+    pub expected_work_version: String,
+    pub assignment_request_key: Option<String>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) enum NextCommandInputs {
     ExecutionPrepare(NextExecutionPrepareInputs),
     SessionCheckpoint(NextSessionCheckpointInputs),
+    SessionStart(NextSessionStartInputs),
+    TaskClaimAvailable(NextTaskTakeInputs),
+    TaskAcceptAssignment(NextTaskTakeInputs),
 }
 
 #[derive(Serialize)]
@@ -76,6 +102,19 @@ struct SessionCheckpointArgsBase<'a> {
     context_hash: &'a str,
 }
 
+#[derive(Serialize)]
+struct SessionStartArgsBase {}
+
+#[derive(Serialize)]
+struct TaskTakeArgsBase<'a> {
+    session_id: &'a str,
+    expected_session_version: &'a str,
+    expected_responsibility_version: &'a str,
+    expected_work_version: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    assignment_request_key: Option<&'a str>,
+}
+
 fn identity(value: &str) -> bool {
     !value.is_empty() && value.len() <= 128 && !value.chars().any(char::is_control)
 }
@@ -96,7 +135,23 @@ fn digest(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-fn envelope_ready(
+fn command_envelope_ready(
+    work_id: &str,
+    coordinator_epoch: &str,
+    expected_project_revision: &str,
+    expected_authority_version: &str,
+    expected_ownership_version: &str,
+    expected_contract_hash: &str,
+) -> bool {
+    identity(work_id)
+        && identity(coordinator_epoch)
+        && version(expected_project_revision, true)
+        && version(expected_authority_version, false)
+        && version(expected_ownership_version, false)
+        && digest(expected_contract_hash)
+}
+
+fn session_envelope_ready(
     work_id: &str,
     coordinator_epoch: &str,
     expected_project_revision: &str,
@@ -106,18 +161,19 @@ fn envelope_ready(
     session_id: &str,
     expected_session_version: &str,
 ) -> bool {
-    identity(work_id)
-        && identity(coordinator_epoch)
-        && version(expected_project_revision, true)
-        && version(expected_authority_version, false)
-        && version(expected_ownership_version, false)
-        && digest(expected_contract_hash)
-        && identity(session_id)
+    command_envelope_ready(
+        work_id,
+        coordinator_epoch,
+        expected_project_revision,
+        expected_authority_version,
+        expected_ownership_version,
+        expected_contract_hash,
+    ) && identity(session_id)
         && version(expected_session_version, false)
 }
 
 fn execution_prepare_command_base(inputs: &NextExecutionPrepareInputs) -> Option<Value> {
-    if !envelope_ready(
+    if !session_envelope_ready(
         &inputs.work_id,
         &inputs.coordinator_epoch,
         &inputs.expected_project_revision,
@@ -159,7 +215,7 @@ fn session_checkpoint_command_base(
     inputs: &NextSessionCheckpointInputs,
     context_hash: &str,
 ) -> Option<Value> {
-    if !envelope_ready(
+    if !session_envelope_ready(
         &inputs.work_id,
         &inputs.coordinator_epoch,
         &inputs.expected_project_revision,
@@ -189,6 +245,68 @@ fn session_checkpoint_command_base(
         },
     })
     .ok()
+}
+
+fn session_start_command_base(inputs: &NextSessionStartInputs) -> Option<Value> {
+    command_base(inputs, "session.start", SessionStartArgsBase {})
+}
+
+fn command_base<Args: Serialize>(
+    inputs: &NextCommandBaseInputs,
+    op: &'static str,
+    args: Args,
+) -> Option<Value> {
+    if !command_envelope_ready(
+        &inputs.work_id,
+        &inputs.coordinator_epoch,
+        &inputs.expected_project_revision,
+        &inputs.expected_authority_version,
+        &inputs.expected_ownership_version,
+        &inputs.expected_contract_hash,
+    ) {
+        return None;
+    }
+    serde_json::to_value(CommandEnvelope {
+        protocol_version: 1,
+        op,
+        workstream_id: inputs.workstream_id,
+        work_id: inputs.work_id.as_str(),
+        coordinator_epoch: &inputs.coordinator_epoch,
+        expected_project_revision: &inputs.expected_project_revision,
+        expected_authority_version: &inputs.expected_authority_version,
+        expected_ownership_version: &inputs.expected_ownership_version,
+        expected_contract_hash: &inputs.expected_contract_hash,
+        args,
+    })
+    .ok()
+}
+
+fn task_take_command_base(
+    inputs: &NextTaskTakeInputs,
+    op: &'static str,
+    requires_assignment_key: bool,
+) -> Option<Value> {
+    let assignment_request_key = inputs.assignment_request_key.as_deref();
+    if !identity(&inputs.session_id)
+        || !version(&inputs.expected_session_version, false)
+        || !version(&inputs.expected_responsibility_version, true)
+        || !version(&inputs.expected_work_version, true)
+        || requires_assignment_key != assignment_request_key.is_some_and(identity)
+        || !requires_assignment_key && assignment_request_key.is_some()
+    {
+        return None;
+    }
+    command_base(
+        &inputs.command,
+        op,
+        TaskTakeArgsBase {
+            session_id: &inputs.session_id,
+            expected_session_version: &inputs.expected_session_version,
+            expected_responsibility_version: &inputs.expected_responsibility_version,
+            expected_work_version: &inputs.expected_work_version,
+            assignment_request_key,
+        },
+    )
 }
 
 fn attach_command_base(
@@ -269,6 +387,40 @@ pub(crate) fn with_session_checkpoint_command_base(
     )
 }
 
+pub(crate) fn with_session_start_command_base(
+    hint: Value,
+    inputs: NextSessionStartInputs,
+) -> Value {
+    attach_command_base(
+        hint,
+        "session.start",
+        true,
+        session_start_command_base(&inputs),
+        json!(["request_id", "args.conversation_id"]),
+        "Use command_base unchanged. Fill request_id and args.conversation_id from the current host. args.client_info is optional and may be added only from known host facts; never invent a host identity or client metadata.",
+    )
+}
+
+pub(crate) fn with_task_take_command_base(
+    hint: Value,
+    inputs: NextTaskTakeInputs,
+    accept_assignment: bool,
+) -> Value {
+    let op = if accept_assignment {
+        "task.accept_assignment"
+    } else {
+        "task.claim_available"
+    };
+    attach_command_base(
+        hint,
+        op,
+        true,
+        task_take_command_base(&inputs, op, accept_assignment),
+        json!(["request_id", "args.ttl_seconds"]),
+        "Use command_base unchanged. Fill request_id and choose args.ttl_seconds from 1 through 3600; refresh work.prepare instead of reconstructing session, assignment, responsibility or work bindings.",
+    )
+}
+
 pub(crate) fn with_command_base(
     hint: Value,
     inputs: NextCommandInputs,
@@ -280,6 +432,13 @@ pub(crate) fn with_command_base(
         }
         NextCommandInputs::SessionCheckpoint(inputs) => {
             with_session_checkpoint_command_base(hint, inputs, context_hash)
+        }
+        NextCommandInputs::SessionStart(inputs) => with_session_start_command_base(hint, inputs),
+        NextCommandInputs::TaskClaimAvailable(inputs) => {
+            with_task_take_command_base(hint, inputs, false)
+        }
+        NextCommandInputs::TaskAcceptAssignment(inputs) => {
+            with_task_take_command_base(hint, inputs, true)
         }
     }
 }
@@ -717,6 +876,38 @@ mod tests {
         }
     }
 
+    fn session_start_inputs(identity: &str) -> NextSessionStartInputs {
+        NextCommandBaseInputs {
+            workstream_id: Id::from(1),
+            work_id: identity.to_string(),
+            coordinator_epoch: identity.to_string(),
+            expected_project_revision: i64::MAX.to_string(),
+            expected_authority_version: i64::MAX.to_string(),
+            expected_ownership_version: i64::MAX.to_string(),
+            expected_contract_hash: "a".repeat(64),
+        }
+    }
+
+    fn task_take_inputs(
+        identity: &str,
+        assignment_request_key: Option<&str>,
+    ) -> NextTaskTakeInputs {
+        NextTaskTakeInputs {
+            command: session_start_inputs(identity),
+            session_id: identity.to_string(),
+            expected_session_version: i64::MAX.to_string(),
+            expected_responsibility_version: i64::MAX.to_string(),
+            expected_work_version: i64::MAX.to_string(),
+            assignment_request_key: assignment_request_key.map(str::to_string),
+        }
+    }
+
+    fn command_hint(code: &str, op: &str) -> Value {
+        json!({"code":code,"when":"selected","because":["current facts"],
+            "action":{"op":op,"note":"Follow the selected current action."},
+            "recheck_on":"binding changes"})
+    }
+
     fn declare_client_hint() -> Value {
         json!({"code":"declare_client",
             "when":"client capabilities have not been declared",
@@ -959,6 +1150,120 @@ mod tests {
                 assert!(!hint[key].is_null());
             }
         }
+    }
+
+    #[test]
+    fn session_start_packet_is_schema_complete_and_bounded() {
+        for identity in ["\"".repeat(128), "é".repeat(64)] {
+            let hint = with_command_base(
+                command_hint("task_intake", "session.start"),
+                NextCommandInputs::SessionStart(session_start_inputs(&identity)),
+                "unused",
+            );
+            assert!(
+                serde_json::to_vec(&hint).unwrap().len() <= EXECUTION_PREPARE_GUIDANCE_MAX_BYTES
+            );
+            let action = &hint["action"];
+            assert_eq!(
+                action["caller_slots"],
+                json!(["request_id", "args.conversation_id"])
+            );
+            let base = &action["command_base"];
+            assert_eq!(base["op"], "session.start");
+            assert_eq!(base["work_id"], identity);
+            assert_eq!(base["args"], json!({}));
+            assert!(base.get("request_id").is_none());
+            assert!(base["args"].get("conversation_id").is_none());
+            assert!(base["args"].get("client_info").is_none());
+            assert!(
+                action["note"]
+                    .as_str()
+                    .unwrap()
+                    .contains("args.client_info is optional")
+            );
+        }
+    }
+
+    #[test]
+    fn both_task_take_packets_match_their_exact_serde_shapes() {
+        for (op, inputs, expected_key) in [
+            ("task.claim_available", task_take_inputs("id", None), None),
+            (
+                "task.accept_assignment",
+                task_take_inputs("id", Some("assignment-key")),
+                Some("assignment-key"),
+            ),
+        ] {
+            let variant = if expected_key.is_some() {
+                NextCommandInputs::TaskAcceptAssignment(inputs)
+            } else {
+                NextCommandInputs::TaskClaimAvailable(inputs)
+            };
+            let hint = with_command_base(command_hint("task_intake", op), variant, "unused");
+            assert!(
+                serde_json::to_vec(&hint).unwrap().len() <= EXECUTION_PREPARE_GUIDANCE_MAX_BYTES
+            );
+            let action = &hint["action"];
+            assert_eq!(
+                action["caller_slots"],
+                json!(["request_id", "args.ttl_seconds"])
+            );
+            let base = &action["command_base"];
+            assert_eq!(base["op"], op);
+            assert_eq!(base["args"]["session_id"], "id");
+            assert_eq!(
+                base["args"]["expected_session_version"],
+                i64::MAX.to_string()
+            );
+            assert_eq!(
+                base["args"]["expected_responsibility_version"],
+                i64::MAX.to_string()
+            );
+            assert_eq!(base["args"]["expected_work_version"], i64::MAX.to_string());
+            assert_eq!(
+                base["args"]
+                    .get("assignment_request_key")
+                    .and_then(Value::as_str),
+                expected_key
+            );
+            assert!(base.get("request_id").is_none());
+            assert!(base["args"].get("ttl_seconds").is_none());
+            assert!(base["args"].get("claim_id").is_none());
+        }
+    }
+
+    #[test]
+    fn intake_packets_omit_the_entire_base_when_values_or_size_are_unsafe() {
+        let session_hint = command_hint("task_intake", "session.start");
+        let mut invalid_start = session_start_inputs("id");
+        invalid_start.expected_authority_version = "0".into();
+        assert_eq!(
+            with_session_start_command_base(session_hint.clone(), invalid_start),
+            session_hint
+        );
+
+        let accept_hint = command_hint("task_intake", "task.accept_assignment");
+        assert_eq!(
+            with_task_take_command_base(accept_hint.clone(), task_take_inputs("id", None), true),
+            accept_hint
+        );
+        let claim_hint = command_hint("task_intake", "task.claim_available");
+        assert_eq!(
+            with_task_take_command_base(
+                claim_hint.clone(),
+                task_take_inputs("id", Some("not-valid-for-pool")),
+                false
+            ),
+            claim_hint
+        );
+
+        let mut oversized = command_hint("task_intake", "session.start");
+        oversized["when"] = json!("x".repeat(EXECUTION_PREPARE_GUIDANCE_MAX_BYTES));
+        let omitted =
+            with_session_start_command_base(oversized.clone(), session_start_inputs("id"));
+        assert_eq!(omitted, oversized);
+        assert!(omitted["action"].get("command_base").is_none());
+        assert!(omitted["action"].get("caller_slots").is_none());
     }
 
     #[test]

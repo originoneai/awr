@@ -561,6 +561,8 @@ mod assignee_directory {
         let p = prepare(&store, SUPERVISOR, "a").await;
         let hint = &p["data"]["guidance"];
         assert_eq!(hint["action"]["op"], "task.assignees");
+        assert!(hint["action"].get("command_base").is_none());
+        assert!(hint["action"].get("caller_slots").is_none());
         assert_eq!(hint["action"]["query"]["work_id"], "a");
         let note = hint["action"]["note"].as_str().unwrap();
         for entry in [
@@ -843,6 +845,103 @@ async fn supervisor_reserves_without_execution_session_and_target_accepts_atomic
         snapshot(&admin).await["claims"].as_array().unwrap().len(),
         1
     );
+}
+
+#[tokio::test]
+async fn prepare_guidance_provides_exact_session_and_atomic_intake_commands() {
+    for accept_assignment in [false, true] {
+        let (_guard, admin, db, store) = setup_with_assigned_tasks().await;
+        let work = "aa-assigned";
+        enable_writes(&admin).await;
+        members(&admin, &db).await;
+        if accept_assignment {
+            store
+                .commands()
+                .execute(
+                    TENANT,
+                    PROJECT,
+                    SUPERVISOR,
+                    assign(&store, work, "guided-assignment", "alice").await,
+                )
+                .await
+                .unwrap();
+        }
+
+        let prepared = prepare(&store, A, work).await;
+        let action = &prepared["data"]["guidance"]["action"];
+        assert_eq!(action["op"], "session.start");
+        assert_eq!(
+            action["caller_slots"],
+            json!(["request_id", "args.conversation_id"])
+        );
+        let mut start = action["command_base"].clone();
+        assert_eq!(start["op"], action["op"]);
+        assert_eq!(start["args"], json!({}));
+        assert!(start.get("request_id").is_none());
+        start["request_id"] = json!(format!("guided-start-{accept_assignment}"));
+        start["args"]["conversation_id"] =
+            json!(format!("guided-conversation-{accept_assignment}"));
+        start["args"]["client_info"] = json!({"product":"Synthetic Agent"});
+        let started = store
+            .commands()
+            .execute(TENANT, PROJECT, A, serde_json::from_value(start).unwrap())
+            .await
+            .unwrap();
+        let session = started["receipt"]["data"]["session_id"].as_str().unwrap();
+
+        let mut observe = query("work.observe");
+        observe.work_id = Some(work.into());
+        observe.session_id = Some(session.into());
+        let observed = store.query(TENANT, PROJECT, A, observe).await.unwrap();
+        assert_no_prepare_base(&observed["data"]["guidance"]);
+
+        let mut q = query("work.prepare");
+        q.work_id = Some(work.into());
+        q.session_id = Some(session.into());
+        let prepared = store.query(TENANT, PROJECT, A, q).await.unwrap();
+        let action = &prepared["data"]["guidance"]["action"];
+        let expected_op = if accept_assignment {
+            "task.accept_assignment"
+        } else {
+            "task.claim_available"
+        };
+        assert_eq!(action["op"], expected_op);
+        assert_eq!(
+            action["caller_slots"],
+            json!(["request_id", "args.ttl_seconds"])
+        );
+        let mut take = action["command_base"].clone();
+        assert_eq!(take["op"], action["op"]);
+        assert_eq!(take["args"]["session_id"], session);
+        assert_eq!(
+            take["args"]["expected_session_version"],
+            started["receipt"]["data"]["session_version"]
+        );
+        assert_eq!(
+            take["args"]["expected_responsibility_version"],
+            prepared["data"]["responsibility"]["version"]
+        );
+        assert!(prepared["data"]["runtime"].is_null());
+        assert_eq!(take["args"]["expected_work_version"], "0");
+        if accept_assignment {
+            assert_eq!(
+                take["args"]["assignment_request_key"],
+                prepared["data"]["responsibility"]["pending"]["transfer_request_key"]
+            );
+        } else {
+            assert!(take["args"].get("assignment_request_key").is_none());
+        }
+        assert!(take["args"].get("ttl_seconds").is_none());
+        take["request_id"] = json!(format!("guided-take-{accept_assignment}"));
+        take["args"]["ttl_seconds"] = json!(300);
+        let taken = store
+            .commands()
+            .execute(TENANT, PROJECT, A, serde_json::from_value(take).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(taken["receipt"]["data"]["state"], "active");
+        assert_eq!(taken["execution_authorized"], false);
+    }
 }
 
 async fn entry_state(admin: &Client) -> Value {

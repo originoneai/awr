@@ -985,7 +985,7 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
             StatusCode::BAD_REQUEST,
             json!({"code":"InvalidInput",
                 "message":"args.conversation_id is required for session.start",
-                "next_step":"Retry session.start with args.conversation_id set to a stable, nonempty host conversation, thread, or session identifier of at most 128 characters."}),
+                "next_step":"Retry session.start with args.conversation_id set to a stable, nonempty host conversation, thread, or session identifier that is at most 128 UTF-8 bytes and contains no control characters."}),
         );
     }
     if error.is_handoff_unavailable() {

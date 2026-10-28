@@ -284,6 +284,15 @@ pub(super) async fn read_for_prepare(
     );
     let hint = super::guidance::authorized(auth, stream_id, work, hint);
     let expected_authority_version = auth.catalog.get(stream_id)?.authority_version.to_string();
+    let command_inputs = super::guidance::NextCommandBaseInputs {
+        workstream_id: stream_id,
+        work_id: work.to_string(),
+        coordinator_epoch: auth.epoch.clone(),
+        expected_project_revision: auth.revision.to_string(),
+        expected_authority_version: expected_authority_version.clone(),
+        expected_ownership_version: ownership.to_string(),
+        expected_contract_hash: contract.clone(),
+    };
     let inputs =
         if hint["code"] == "prepare_execution" && hint["action"]["op"] == "execution.prepare" {
             selected_session_id
@@ -336,6 +345,51 @@ pub(super) async fn read_for_prepare(
                     )
                 },
             )
+        } else if hint["action"]["op"] == "session.start" {
+            Some(super::guidance::NextCommandInputs::SessionStart(
+                command_inputs.clone(),
+            ))
+        } else if matches!(
+            hint["action"]["op"].as_str(),
+            Some("task.claim_available" | "task.accept_assignment")
+        ) {
+            let accept_assignment = hint["action"]["op"] == "task.accept_assignment";
+            // Claim admission defines an absent runtime row as version zero.
+            // Any present row must still carry its actual projected version.
+            let expected_work_version = data["runtime"]["work_version"]
+                .as_str()
+                .or_else(|| data["runtime"].is_null().then_some("0"));
+            selected_session_id
+                .zip(selected_session_version)
+                .zip(data["responsibility"]["version"].as_str())
+                .zip(expected_work_version)
+                .map(
+                    |(
+                        ((session_id, expected_session_version), expected_responsibility_version),
+                        expected_work_version,
+                    )| {
+                        let inputs = super::guidance::NextTaskTakeInputs {
+                            command: command_inputs,
+                            session_id,
+                            expected_session_version,
+                            expected_responsibility_version: expected_responsibility_version
+                                .to_string(),
+                            expected_work_version: expected_work_version.to_string(),
+                            assignment_request_key: accept_assignment
+                                .then(|| {
+                                    data["responsibility"]["pending"]["transfer_request_key"]
+                                        .as_str()
+                                        .map(str::to_string)
+                                })
+                                .flatten(),
+                        };
+                        if accept_assignment {
+                            super::guidance::NextCommandInputs::TaskAcceptAssignment(inputs)
+                        } else {
+                            super::guidance::NextCommandInputs::TaskClaimAvailable(inputs)
+                        }
+                    },
+                )
         } else {
             None
         };

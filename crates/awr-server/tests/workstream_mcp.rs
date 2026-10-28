@@ -849,7 +849,7 @@ async fn missing_session_start_conversation_id_is_actionable_and_does_not_mutate
     );
     assert_eq!(
         error["next_step"],
-        "Retry session.start with args.conversation_id set to a stable, nonempty host conversation, thread, or session identifier of at most 128 characters."
+        "Retry session.start with args.conversation_id set to a stable, nonempty host conversation, thread, or session identifier that is at most 128 UTF-8 bytes and contains no control characters."
     );
     let audit = admin
         .query_one(
