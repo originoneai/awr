@@ -1906,8 +1906,21 @@ pub(crate) async fn read(
                     .await?;
             // Checkpoints remain historical. Share the same current, scoped
             // advice as work.observe without returning duplicate report bodies.
-            json!({"items":items,"current_contract_hash":current_contract,"automatic_resume":false,
-                "checkpoint_actions_are_historical":true,"guidance":current["guidance"]})
+            let mut result = json!({"items":items,"current_contract_hash":current_contract,"automatic_resume":false,
+                "checkpoint_actions_are_historical":true,"guidance":current["guidance"]});
+            if q.op == "work.recovery" {
+                result["reconciliation_coverage"] =
+                    if current["reconciliation_coverage"].is_object() {
+                        current["reconciliation_coverage"].clone()
+                    } else {
+                        let stream_id = stream.parse().map_err(|_| PgError::Forbidden)?;
+                        crate::workstream_auth::reconciliation_coverage(
+                            tx, tenant, project, auth, stream_id,
+                        )
+                        .await?
+                    };
+            }
+            result
         }
         "source.content" => {
             let path = q.source_path.as_deref().ok_or(PgError::Forbidden)?;

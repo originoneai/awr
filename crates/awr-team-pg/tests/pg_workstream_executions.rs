@@ -1651,6 +1651,187 @@ async fn nonterminal_checkpoint_feedback_does_not_settle_running_execution() {
 }
 
 #[tokio::test]
+async fn recovery_coverage_reflects_effective_scope_and_never_exposes_identity() {
+    let (_g, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let (claim, execution) = ready_intent(&store).await;
+    store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            admission(&store, &claim, &execution, "coverage-start").await,
+        )
+        .await
+        .unwrap();
+    let no_operator = inspect(&store, &execution).await;
+    assert_eq!(no_operator["reconciliation_coverage"]["status"], "none");
+    assert!(no_operator["reconciliation_coverage"]["configuration_guidance"].is_null());
+    admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_grants SET can_manage=true WHERE client_id='cli-a'",
+        )
+        .await
+        .unwrap();
+    let admin_view = inspect(&store, &execution).await;
+    assert!(
+        admin_view["reconciliation_coverage"]["configuration_guidance"]["action"]
+            .as_str()
+            .unwrap()
+            .contains("schema owner")
+    );
+
+    let token =
+        "awr1.coverage-credential.dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    admin.batch_execute("INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status)
+        VALUES('reader-tenant','coverage-operator','human','Recovery operator','active');
+        INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role)
+        VALUES('reader-tenant','reader-project','coverage-operator','admin');
+        INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,
+            can_read,can_write,can_manage,can_reconcile_execution)
+        VALUES('reader-tenant','reader-project','coverage-operator','coverage-client','00000000000000000000000001',1,true,true,true,true)").await.unwrap();
+    admin.execute("INSERT INTO awr_team.credentials(tenant_id,id,actor_id,client_id,secret_hash,project_id)
+        VALUES($1,'coverage-credential','coverage-operator','coverage-client',$2,$3)",
+        &[&TENANT,&awr_team_pg::workstream_credential_hash(token).unwrap(),&PROJECT]).await.unwrap();
+    admin
+        .batch_execute(
+            "INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+        VALUES('reader-tenant','coverage-other','coverage-other','team','other-epoch','active')",
+        )
+        .await
+        .unwrap();
+
+    let covered = inspect(&store, &execution).await;
+    assert_eq!(covered["reconciliation_coverage"]["status"], "covered");
+    assert_eq!(
+        covered["reconciliation_coverage"]["basis"],
+        "configured_authority"
+    );
+    assert_eq!(
+        covered["reconciliation_coverage"]["live_access_not_guaranteed"],
+        true
+    );
+    let disclosed = covered["reconciliation_coverage"].to_string();
+    for forbidden in [
+        "coverage-operator",
+        "coverage-client",
+        "coverage-credential",
+        token,
+    ] {
+        assert!(!disclosed.contains(forbidden));
+    }
+    for (change, restore) in [
+        (
+            "UPDATE awr_team.actors SET kind='agent' WHERE id='coverage-operator'",
+            "UPDATE awr_team.actors SET kind='human' WHERE id='coverage-operator'",
+        ),
+        (
+            "UPDATE awr_team.actors SET status='disabled' WHERE id='coverage-operator'",
+            "UPDATE awr_team.actors SET status='active' WHERE id='coverage-operator'",
+        ),
+        (
+            "UPDATE awr_team.project_memberships SET role='developer' WHERE actor_id='coverage-operator'",
+            "UPDATE awr_team.project_memberships SET role='admin' WHERE actor_id='coverage-operator'",
+        ),
+        (
+            "UPDATE awr_team.project_memberships SET business_roles='[\"administrator\"]'::jsonb WHERE actor_id='coverage-operator'",
+            "UPDATE awr_team.project_memberships SET business_roles=NULL WHERE actor_id='coverage-operator'",
+        ),
+        (
+            "UPDATE awr_team.workstream_grants SET can_write=false WHERE actor_id='coverage-operator'",
+            "UPDATE awr_team.workstream_grants SET can_write=true WHERE actor_id='coverage-operator'",
+        ),
+        (
+            "UPDATE awr_team.workstream_grants SET can_manage=false WHERE actor_id='coverage-operator'",
+            "UPDATE awr_team.workstream_grants SET can_manage=true WHERE actor_id='coverage-operator'",
+        ),
+        (
+            "UPDATE awr_team.workstream_grants SET authority_version=2 WHERE actor_id='coverage-operator'",
+            "UPDATE awr_team.workstream_grants SET authority_version=1 WHERE actor_id='coverage-operator'",
+        ),
+        (
+            "UPDATE awr_team.workstream_grants SET workstream_id='00000000000000000000000002' WHERE actor_id='coverage-operator'",
+            "UPDATE awr_team.workstream_grants SET workstream_id='00000000000000000000000001' WHERE actor_id='coverage-operator'",
+        ),
+        (
+            "UPDATE awr_team.credentials SET client_id='other-client' WHERE id='coverage-credential'",
+            "UPDATE awr_team.credentials SET client_id='coverage-client' WHERE id='coverage-credential'",
+        ),
+        (
+            "UPDATE awr_team.credentials SET project_id='coverage-other' WHERE id='coverage-credential'",
+            "UPDATE awr_team.credentials SET project_id='reader-project' WHERE id='coverage-credential'",
+        ),
+        (
+            "UPDATE awr_team.credentials SET expires_at=clock_timestamp()-interval '1 second' WHERE id='coverage-credential'",
+            "UPDATE awr_team.credentials SET expires_at=NULL WHERE id='coverage-credential'",
+        ),
+        (
+            "UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='coverage-credential'",
+            "UPDATE awr_team.credentials SET revoked_at=NULL WHERE id='coverage-credential'",
+        ),
+    ] {
+        admin.batch_execute(change).await.unwrap();
+        assert_ne!(
+            inspect(&store, &execution).await["reconciliation_coverage"]["status"],
+            "covered",
+            "{change}"
+        );
+        admin.batch_execute(restore).await.unwrap();
+    }
+    admin.batch_execute("UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='coverage-credential'").await.unwrap();
+    assert_eq!(
+        inspect(&store, &execution).await["reconciliation_coverage"]["status"],
+        "insufficient"
+    );
+    admin
+        .batch_execute(
+            "UPDATE awr_team.credentials SET revoked_at=NULL WHERE id='coverage-credential'",
+        )
+        .await
+        .unwrap();
+    admin.batch_execute("UPDATE awr_team.workstream_grants SET can_read=false,can_write=false,can_manage=false WHERE actor_id='coverage-operator'").await.unwrap();
+    assert_eq!(
+        inspect(&store, &execution).await["reconciliation_coverage"]["status"],
+        "insufficient"
+    );
+    admin.batch_execute("UPDATE awr_team.workstream_grants SET can_read=true,can_write=true,can_manage=true WHERE actor_id='coverage-operator'").await.unwrap();
+    admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_grants SET active=false WHERE actor_id='coverage-operator'",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        inspect(&store, &execution).await["reconciliation_coverage"]["status"],
+        "none"
+    );
+    admin.batch_execute("UPDATE awr_team.workstream_grants SET active=true,can_reconcile_execution=false WHERE actor_id='coverage-operator'").await.unwrap();
+    assert_eq!(
+        inspect(&store, &execution).await["reconciliation_coverage"]["status"],
+        "none"
+    );
+    admin.batch_execute("UPDATE awr_team.workstream_grants SET can_reconcile_execution=true WHERE actor_id='coverage-operator'").await.unwrap();
+    admin.batch_execute("UPDATE awr_team.project_memberships SET business_roles='[\"administrator\",\"developer\"]'::jsonb WHERE actor_id='coverage-operator'").await.unwrap();
+    assert_eq!(
+        inspect(&store, &execution).await["reconciliation_coverage"]["status"],
+        "covered"
+    );
+    admin
+        .batch_execute("UPDATE awr_team.actors SET kind='system' WHERE id='coverage-operator'")
+        .await
+        .unwrap();
+    assert_eq!(
+        inspect(&store, &execution).await["reconciliation_coverage"]["status"],
+        "covered"
+    );
+    let mut other = query("execution.inspect");
+    other.work_id = Some("a".into());
+    other.execution_id = Some(execution["execution_id"].as_str().unwrap().into());
+    assert!(store.query(TENANT, PROJECT, NONE, other).await.is_err());
+}
+
+#[tokio::test]
 async fn observation_preserves_receipt_privacy_and_exposes_expired_claims_without_mutation() {
     let (_g, admin, _, store) = setup().await;
     enable_writes(&admin).await;

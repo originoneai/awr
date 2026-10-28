@@ -448,14 +448,23 @@ pub(super) fn select(data: &Value, context_complete: bool, owns_session: bool) -
             "receipt, grant, epoch, scope or recovery changes",
         )
     } else if execution["state"] == "unknown" {
-        let action = match execution["reconciliation_authority"].as_bool() {
-            Some(true) => {
+        let action = match (
+            execution["reconciliation_authority"].as_bool(),
+            execution["reconciliation_coverage"]["status"].as_str(),
+        ) {
+            (Some(true), _) => {
                 "Inspect the latest receipt; if your authority is still current, reconcile the reviewed outcome before further effects."
             }
-            Some(false) => {
+            (_, Some("none" | "insufficient")) => {
+                "Inspect the receipt; ask the schema owner to configure an eligible recovery operator, then recheck coverage."
+            }
+            (_, Some("covered")) => {
+                "Inspect the receipt and involve an authorized recovery operator; configured coverage does not guarantee availability."
+            }
+            (Some(false), _) => {
                 "Inspect the latest receipt and ask an authorized operator to reconcile before further effects."
             }
-            None => {
+            _ => {
                 "Inspect the latest receipt and current reconciliation authority before further effects."
             }
         };
@@ -465,16 +474,27 @@ pub(super) fn select(data: &Value, context_complete: bool, owns_session: bool) -
             "current execution or work requires recovery",
             "execution.inspect",
             action,
-            "receipt, authority or reconciliation changes",
+            "receipt, credential, membership, grant or reconciliation changes",
         )
     } else if runtime["recovery_blocked"] == true {
+        let action = match data["reconciliation_coverage"]["status"].as_str() {
+            Some("none") | Some("insufficient") => {
+                "Inspect work recovery; ask the schema owner to configure an eligible recovery operator, then recheck coverage."
+            }
+            Some("covered") => {
+                "Inspect work recovery and involve an authorized operator; configured coverage does not guarantee availability."
+            }
+            _ => {
+                "Inspect work recovery and involve the authorized operator for any remaining restore barrier before effects."
+            }
+        };
         (
             "inspect_recovery",
             "work requires recovery",
             "a work or operator recovery barrier remains",
             "work.recovery",
-            "Inspect work recovery and involve the authorized operator for any remaining restore barrier before effects.",
-            "work or operator recovery changes",
+            action,
+            "work, credential, membership, grant or recovery changes",
         )
     } else if runtime["state"] == "completed" || !runtime["selected_completion_id"].is_null() {
         (
@@ -839,6 +859,74 @@ mod tests {
                 .contains("current reconciliation authority")
         );
         assert!(unknown.to_string().len() < 900);
+    }
+
+    #[test]
+    fn unknown_execution_guidance_distinguishes_recovery_coverage() {
+        let mut data = owned();
+        data["session_execution"] =
+            json!({"state":"unknown","reconciliation_coverage":{"status":"none"}});
+        let missing = select(&data, true, true);
+        assert_eq!(missing["action"]["op"], "execution.inspect");
+        assert!(
+            missing["action"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("schema owner")
+        );
+        data["session_execution"]["reconciliation_coverage"]["status"] = json!("insufficient");
+        assert!(
+            select(&data, true, true)["action"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("schema owner")
+        );
+        data["session_execution"]["reconciliation_coverage"]["status"] = json!("covered");
+        assert!(
+            select(&data, true, true)["action"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("does not guarantee availability")
+        );
+        data["session_execution"]
+            .as_object_mut()
+            .unwrap()
+            .remove("reconciliation_coverage");
+        let legacy = select(&data, true, true);
+        assert!(
+            legacy["action"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("current reconciliation authority")
+        );
+        assert!(legacy.to_string().len() < 900);
+    }
+
+    #[test]
+    fn recovery_guidance_combines_viewer_authority_with_coverage() {
+        let mut data = owned();
+        data["session_execution"] = json!({"state":"unknown", "reconciliation_authority":false,
+            "reconciliation_coverage":{"status":"none"}});
+        assert!(
+            select(&data, true, true)["action"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("schema owner")
+        );
+        data["session_execution"]["reconciliation_coverage"]["status"] = json!("covered");
+        assert!(
+            select(&data, true, true)["action"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("does not guarantee availability")
+        );
+        data["session_execution"]["reconciliation_authority"] = json!(true);
+        assert!(
+            select(&data, true, true)["action"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("if your authority is still current")
+        );
     }
 
     #[test]

@@ -166,7 +166,7 @@ pub(super) async fn read_for_prepare(
             for key in ["execution_id", "state", "effects_settled", "contract_matches_current",
                 "epoch_matches_current", "lease_live", "owned_by_client", "cancel_requested",
                 "recovery_blocked", "previous_epoch_review_required", "controlled_confirmation_available",
-                "reconciliation_authority"] {
+                "reconciliation_authority", "reconciliation_coverage"] {
                 summary.insert(key.into(), execution[key].clone());
             }
             // Guidance only needs presence; the full declaration stays on execution.
@@ -197,6 +197,17 @@ pub(super) async fn read_for_prepare(
         if data["execution"]["receipt_details_available"] == false {
             data["missing"]["execution_receipt"] = json!("permission_restricted");
         }
+    }
+    if data["runtime"]["recovery_blocked"] == true || data["execution"]["state"] == "unknown" {
+        data["reconciliation_coverage"] = if data["execution"]["reconciliation_coverage"]
+            .is_object()
+        {
+            data["execution"]["reconciliation_coverage"].clone()
+        } else {
+            let stream_id = stream.parse().map_err(|_| PgError::Forbidden)?;
+            crate::workstream_auth::reconciliation_coverage(tx, tenant, project, auth, stream_id)
+                .await?
+        };
     }
     // Latest participation is ordered by committed session events, not by
     // lease priority. Checkpoint revision is a fallback for imported sessions.

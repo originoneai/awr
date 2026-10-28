@@ -590,6 +590,9 @@ pub(crate) async fn inspect(
         .get(&stream_id)
         .copied()
         .unwrap_or_default();
+    let reconciliation_coverage =
+        crate::workstream_auth::reconciliation_coverage(tx, tenant, project, auth, stream_id)
+            .await?;
     let receipt_visible = owned || authority.reconcile;
     let latest = recovery::latest_receipt(tx, tenant, project, id).await?;
     let controlled_confirmation_available = recovery_cause::available(
@@ -670,7 +673,8 @@ pub(crate) async fn inspect(
         "epoch_matches_current":epoch_matches,"lease_live":r.get::<_,bool>("lease_live")&&epoch_matches,
         "execution_coordinator_epoch":r.get::<_,Option<String>>("coordinator_epoch"),
         "owned_by_client":owned,"attestation_authority":authority.attest && owned && epoch_matches && recovery_cause::grant_matches(&r,auth,&stream_id),
-        "reconciliation_authority":authority.reconcile,"receipt_details_available":receipt_visible,
+        "reconciliation_authority":authority.reconcile,"reconciliation_coverage":reconciliation_coverage,
+        "receipt_details_available":receipt_visible,
         "previous_epoch_review_required":!epoch_matches,
         "previous_epoch_recovery_available":!epoch_matches && authority.reconcile && r.get::<_,Option<String>>("coordinator_epoch").is_some(),
         "latest_receipt":visible_latest,

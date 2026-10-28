@@ -54,6 +54,7 @@ function mapObservation(data) {
       reconciliation_authority: booleanOrUnknown(execution.reconciliation_authority),
       controlled_confirmation_available: booleanOrUnknown(execution.controlled_confirmation_available),
       previous_epoch_review_required: booleanOrUnknown(execution.previous_epoch_review_required),
+      reconciliation_coverage: mapReconciliationCoverage(execution.reconciliation_coverage),
       receipt_missing: data.missing?.execution_receipt || null,
       report: execution.latest_receipt ? {
         kind: execution.latest_receipt.receipt_kind,
@@ -62,6 +63,7 @@ function mapObservation(data) {
       } : null,
     } : null,
     attention, status: runtime.state ?? null,
+    reconciliation_coverage: mapReconciliationCoverage(data.reconciliation_coverage),
     // These are authorized AWR facts, independent of optional public PR reads.
     collaboration: data.collaboration || null,
     guidance: data.guidance || null,
@@ -73,6 +75,15 @@ function mapObservation(data) {
 
 function booleanOrUnknown(value) {
   return typeof value === 'boolean' ? value : null;
+}
+
+function mapReconciliationCoverage(value) {
+  if (value === undefined) return { status: 'unsupported' };
+  const supported = value && typeof value === 'object' && !Array.isArray(value)
+    && ['covered', 'insufficient', 'none'].includes(value.status)
+    && value.basis === 'configured_authority' && value.live_access_not_guaranteed === true;
+  return supported ? { status: value.status, basis: 'configured_authority', live_access_not_guaranteed: true }
+    : { status: 'unknown' };
 }
 
 function createGithubObserver(fetchImpl = fetch, now = Date.now) {
