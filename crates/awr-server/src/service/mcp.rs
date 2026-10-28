@@ -17,18 +17,39 @@ use rmcp::{
 };
 use tokio::{sync::OwnedSemaphorePermit, time::Instant};
 
+mod input_contracts;
 mod input_diagnostics;
 mod planning_schema;
 pub(super) use input_diagnostics::add_input_diagnostic;
 
 /// Publish an operation field in the flat args vocabulary.
 /// An existing shared definition stays in place: a later operation branch may be narrower.
+/// When the validation shape is identical, retain operation guidance supplied by
+/// the later publisher instead of losing it to initialization order.
 fn publish_missing_flat_arg(command: &mut Value, name: &str, schema: Value) {
-    command["properties"]["args"]["properties"]
+    let properties = command["properties"]["args"]["properties"]
+        .as_object_mut()
+        .unwrap();
+    let Some(existing) = properties.get_mut(name) else {
+        properties.insert(name.to_owned(), schema);
+        return;
+    };
+    if existing.get("description").is_some() || schema.get("description").is_none() {
+        return;
+    }
+    let mut existing_shape = existing.clone();
+    let mut published_shape = schema.clone();
+    existing_shape
         .as_object_mut()
         .unwrap()
-        .entry(name.to_owned())
-        .or_insert(schema);
+        .remove("description");
+    published_shape
+        .as_object_mut()
+        .unwrap()
+        .remove("description");
+    if existing_shape == published_shape {
+        existing["description"] = schema["description"].clone();
+    }
 }
 
 fn add_execution_prepare_input_schema(command: &mut Value) {
@@ -230,17 +251,24 @@ fn add_evidence_input_schema(command: &mut Value, query: &mut Value) {
         .into_iter()
         .map(|name| (name.to_owned(), fields[name].clone()))
         .collect();
+    let artifact_encoding = json!([{
+        "if":{"required":["artifact_text"],
+            "properties":{"artifact_text":{"type":"string"}}},
+        "then":{"properties":{"artifact_hex":{"type":"null"}}}
+    }]);
     command["allOf"].as_array_mut().unwrap().push(json!({
         "if":{"properties":{"op":{"const":"evidence.submit"}},"required":["op"]},
         "then":{"properties":{"args":{"type":"object","additionalProperties":false,
             "required":["session_id","expected_session_version","payload","dirty_tree"],
             "properties":properties,
+            "allOf":artifact_encoding.clone(),
             "description":"Submit measured artifact_text (or legacy artifact_hex); the service computes artifact_digest; do not add artifact_sha256. Generic payload remains arbitrary JSON. All simulated-member evidence requires args.execution_id, including auxiliary files. For Agent completion, use payload.passed=true and the actual execution output_digest; keep input_digest and execution_id in args. Inspection does not approve the evidence."}}}}));
     command["allOf"].as_array_mut().unwrap().push(json!({
         "if":{"properties":{"op":{"const":"delivery.evidence.submit"}},"required":["op"]},
         "then":{"properties":{"args":{"type":"object","additionalProperties":false,
             "required":["session_id","expected_session_version","delivery_payload","dirty_tree"],
             "properties":delivery_properties,
+            "allOf":artifact_encoding,
             "description":"Typed bound delivery evidence. delivery_payload is a required JSON object with delivery_candidate_digest (64 lowercase hex from the selection receipt), optional passed and output_digest; other keys are preserved. Artifact bytes, simulated-member execution_id and Agent completion bindings follow the evidence.submit rules. Submission does not assert candidate selection, currentness or acceptance."}}}}));
     for (op, selector) in [
         ("claim.inspect", "claim_id"),
@@ -496,7 +524,7 @@ fn add_handoff_input_schema(command: &mut Value) {
             "description":"Use the actual handoff.id. Execute handoff.inspect to receive the complete package and consumption receipt; a read-only query does not authorize acceptance."},
         "kind":{"enum":["execution","responsibility"],"description":"handoff.propose: execution changes the executor; responsibility changes ownership separately."},
         "to_person_id":identity,
-        "package":{"type":"object","additionalProperties":false,
+        "package":{"type":["object","null"],"additionalProperties":false,
             "description":"Optional compatibility selectors. The server derives the package from the current recorded checkpoint, artifacts and dependencies; supplied factual selectors must match. Branch/directory and checkpoint prose are reported annotations.",
             "required":["task_id","contract_version","contract_hash","current_person_id","current_execution","consumed_context_digest","checkpoint_ids","artifact_versions","dependency_ids","todos","awaiting_replies","unknown_side_effects"],
             "properties":{
@@ -515,23 +543,36 @@ fn add_handoff_input_schema(command: &mut Value) {
         "proposer_execution_id":{"type":["string","null"]},
         "proposer_fence":{"type":["string","null"],"pattern":"^(0|[1-9][0-9]*)$"},
         "expires_at_ms":{"type":["integer","null"]},
-        "now_ms":{"type":"integer","description":"Optional compatibility annotation. All handoff expiry and transitions use the database clock."},
+        "now_ms":{"type":["integer","null"],"description":"Optional compatibility annotation. All handoff expiry and transitions use the database clock."},
         "inspector_person_id":identity,"acceptor_person_id":identity,"by_person_id":identity,
         "successor_execution":execution,
         "inspection_request_id":{"type":"string","minLength":1,"maxLength":128,
             "description":"handoff.accept: the original request_id of this member/client/session's actual handoff.inspect command. Read its full package and prepared context. Reinspect after relevant changes."},
-        "prior_execution_stopped":{"type":"boolean","description":"Optional compatibility annotation; cannot authorize transfer. The server verifies actual settlement."},
-        "prior_reconciled":{"type":"boolean","description":"Optional compatibility annotation; cannot establish reconciliation."},
-        "context_reprepared":{"type":"boolean","description":"Optional compatibility annotation; cannot substitute for the bound inspection receipt."},
+        "prior_execution_stopped":{"type":["boolean","null"],"description":"Optional compatibility annotation; cannot authorize transfer. The server verifies actual settlement."},
+        "prior_reconciled":{"type":["boolean","null"],"description":"Optional compatibility annotation; cannot establish reconciliation."},
+        "context_reprepared":{"type":["boolean","null"],"description":"Optional compatibility annotation; cannot substitute for the bound inspection receipt."},
         "reason":{"type":"string","description":"Use the operation-specific reason bound; handoff.reject/cancel accept at most 2048 bytes."}
     });
     fields.extend(handoff.as_object().unwrap().clone());
+    let published = fields.clone();
     let conditions = command["allOf"].as_array_mut().unwrap();
-    for (op, extra) in [
-        ("handoff.propose", vec!["kind", "to_person_id"]),
+    for (op, extra, optional) in [
+        (
+            "handoff.propose",
+            vec!["kind", "to_person_id"],
+            vec![
+                "package",
+                "proposed_successor",
+                "proposer_execution_id",
+                "proposer_fence",
+                "expires_at_ms",
+                "now_ms",
+            ],
+        ),
         (
             "handoff.inspect",
             vec!["expected_handoff_version", "inspector_person_id"],
+            vec!["now_ms"],
         ),
         (
             "handoff.accept",
@@ -541,22 +582,41 @@ fn add_handoff_input_schema(command: &mut Value) {
                 "successor_execution",
                 "inspection_request_id",
             ],
+            vec![
+                "prior_execution_stopped",
+                "prior_reconciled",
+                "context_reprepared",
+                "expected_current_fence",
+                "now_ms",
+            ],
         ),
         (
             "handoff.reject",
             vec!["expected_handoff_version", "by_person_id", "reason"],
+            vec!["now_ms"],
         ),
         (
             "handoff.cancel",
             vec!["expected_handoff_version", "by_person_id", "reason"],
+            vec!["now_ms"],
         ),
-        ("handoff.timeout", vec!["expected_handoff_version"]),
+        (
+            "handoff.timeout",
+            vec!["expected_handoff_version"],
+            vec!["now_ms"],
+        ),
     ] {
         let mut required = vec!["session_id", "expected_session_version", "handoff_id"];
         required.extend(extra);
-        let mut args = json!({"required":required});
+        let properties: serde_json::Map<String, Value> = required
+            .iter()
+            .chain(&optional)
+            .map(|name| ((*name).to_owned(), published[*name].clone()))
+            .collect();
+        let mut args = json!({"type":"object","additionalProperties":false,
+            "required":required,"properties":properties});
         if matches!(op, "handoff.reject" | "handoff.cancel") {
-            args["properties"] = json!({"reason":{"type":"string","minLength":1,"maxLength":2048}});
+            args["properties"]["reason"] = json!({"type":"string","minLength":1,"maxLength":2048});
         }
         conditions.push(
             json!({"if":{"properties":{"op":{"const":op}},"required":["op"]},
@@ -587,7 +647,8 @@ fn add_neutral_delivery_schema(command: &mut Value) {
                             "required":["contract","url"],"properties":{"contract":{"const":"awr-git-source-v1"},
                                 "url":{"type":"string","maxLength":2048,"pattern":"^(https://|ssh://git@)"}}}}},
                     {"type":"object","additionalProperties":false,"required":["action"],
-                        "properties":{"action":{"const":"clear"}}}]}}},
+                        "properties":{"action":{"const":"clear"}}},
+                    {"type":"null"}]}}},
         "expected_selected_digest":{"anyOf":[digest,{"type":"null"}]},
         "candidate":{"type":"object","additionalProperties":false,"required":["binding","manifest"],
             "properties":{"binding":{"type":"object"},"manifest":{"type":"object"}},
@@ -609,10 +670,14 @@ fn add_neutral_delivery_schema(command: &mut Value) {
         "expected_source_fingerprint":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},
         "completion_receipt_id":{"anyOf":[identity,{"type":"null"}]},"publication_id":identity
     }).as_object().unwrap().clone());
-    for (op, fields) in [
+    fields.insert("evidence_id".into(), identity.clone());
+    fields.insert("review_round_id".into(), identity.clone());
+    let published = fields.clone();
+    for (op, fields, optional) in [
         (
             "delivery.connector.configure",
             vec!["expected_connector_version", "mapping"],
+            vec![],
         ),
         (
             "delivery.candidate.select",
@@ -623,6 +688,7 @@ fn add_neutral_delivery_schema(command: &mut Value) {
                 "lease_version",
                 "candidate",
             ],
+            vec!["expected_selected_digest"],
         ),
         (
             "delivery.inspection.reserve",
@@ -632,10 +698,12 @@ fn add_neutral_delivery_schema(command: &mut Value) {
                 "candidate_digest",
                 "lease_seconds",
             ],
+            vec![],
         ),
         (
             "delivery.facts.ingest",
             vec!["connector_id", "inspection_id", "event_id", "records"],
+            vec![],
         ),
         (
             "delivery.source.prepare",
@@ -646,14 +714,28 @@ fn add_neutral_delivery_schema(command: &mut Value) {
                 "expected_source_fingerprint",
                 "lease_seconds",
             ],
+            vec!["completion_receipt_id"],
         ),
         (
             "delivery.source.renew",
             vec!["publication_id", "fence", "lease_seconds"],
+            vec![],
         ),
-        ("delivery.source.write", vec!["publication_id", "fence"]),
-        ("delivery.source.confirm", vec!["publication_id", "fence"]),
-        ("delivery.source.abandon", vec!["publication_id", "fence"]),
+        (
+            "delivery.source.write",
+            vec!["publication_id", "fence"],
+            vec![],
+        ),
+        (
+            "delivery.source.confirm",
+            vec!["publication_id", "fence"],
+            vec![],
+        ),
+        (
+            "delivery.source.abandon",
+            vec!["publication_id", "fence"],
+            vec![],
+        ),
         (
             "delivery.integration.prepare",
             vec![
@@ -666,23 +748,299 @@ fn add_neutral_delivery_schema(command: &mut Value) {
                 "review_decision_id",
                 "operation",
             ],
+            vec![],
         ),
         (
             "delivery.integration.reject_prepared",
             vec!["integration_id", "reason"],
+            vec![],
         ),
     ] {
         let mut required = vec!["source_snapshot_id"];
         required.extend(fields);
-        let mut args = json!({"required":required});
+        let properties: serde_json::Map<String, Value> = required
+            .iter()
+            .chain(&optional)
+            .map(|name| ((*name).to_owned(), published[*name].clone()))
+            .collect();
+        let mut args = json!({"type":"object","additionalProperties":false,
+            "required":required,"properties":properties});
         if op == "delivery.integration.reject_prepared" {
-            args["properties"] = json!({"reason":{"type":"string","minLength":1,"maxLength":1024,
-                "description":"A nonblank reason of at most 1,024 UTF-8 bytes."}});
+            args["properties"]["reason"] = json!({"type":"string","minLength":1,"maxLength":1024,
+                "description":"A nonblank reason of at most 1,024 UTF-8 bytes."});
         }
         command["allOf"].as_array_mut().unwrap().push(json!({
             "if":{"properties":{"op":{"const":op}},"required":["op"]},
             "then":{"properties":{"args":args}}
         }));
+    }
+}
+
+fn add_closed_command_args_schema(
+    command: &mut Value,
+    op: &str,
+    required: &[&str],
+    optional: &[&str],
+) {
+    let fields = &command["properties"]["args"]["properties"];
+    let mut properties: serde_json::Map<String, Value> = required
+        .iter()
+        .chain(optional)
+        .map(|name| {
+            let schema = fields
+                .get(*name)
+                .unwrap_or_else(|| panic!("missing catalog schema for {op} args.{name}"));
+            ((*name).to_owned(), schema.clone())
+        })
+        .collect();
+    if op == "delivery.register_pr" {
+        properties["observed_at"]["maxLength"] = json!(64);
+        properties["observed_at"]["x-max-utf8-bytes"] = json!(64);
+        properties["observed_at"]["description"] = json!(
+            "Observed timestamp text. JSON Schema maxLength counts characters; the backend also limits this value to 64 UTF-8 bytes."
+        );
+    }
+    command["allOf"].as_array_mut().unwrap().push(json!({
+        "if":{"properties":{"op":{"const":op}},"required":["op"]},
+        "then":{"properties":{"args":{
+            "type":"object","additionalProperties":false,
+            "required":required,"properties":properties
+        }}}
+    }));
+}
+
+/// Close operations whose strict backend request type previously inherited the
+/// shared flat args vocabulary. The shared definitions keep tools/list compact;
+/// these operation branches are the authoritative allowed-field boundaries.
+fn add_remaining_closed_command_schemas(command: &mut Value) {
+    let identity_runtime = json!({"maxUtf8Bytes":128,"rejectControls":true});
+    let identity = json!({"type":"string","minLength":1,"maxLength":128,
+        "x-identity-utf8":identity_runtime.clone()});
+    let nullable_identity = json!({"type":["string","null"],"minLength":1,"maxLength":128,
+        "x-identity-utf8":identity_runtime});
+    let positive_version = json!({"type":"string","pattern":"^[1-9][0-9]*$"});
+    let version = json!({"type":"string","pattern":"^(0|[1-9][0-9]*)$"});
+    let digest = json!({"type":"string","pattern":"^[0-9a-f]{64}$"});
+    let git_sha = json!({"type":"string","pattern":"^[0-9a-f]{40}$"});
+    let nullable_git_sha = json!({"type":["string","null"],"pattern":"^[0-9a-f]{40}$"});
+    let canonical_path = json!({"type":"string","minLength":1,"maxLength":4096});
+    let recovery_facts = json!({
+        "type":"object","additionalProperties":false,
+        "required":["outcome","input_digest","environment_digest","observed_paths","note"],
+        "properties":{
+            "outcome":{"type":"string","enum":["succeeded","failed","cancelled","unknown"]},
+            "input_digest":digest.clone(),
+            "output_digest":{"type":["string","null"],"pattern":"^[0-9a-f]{64}$"},
+            "environment_digest":digest.clone(),
+            "observed_paths":{"type":"array","maxItems":128,"items":canonical_path},
+            "note":{"type":"string","minLength":1,"maxLength":4096,"x-nonblank-utf8":true},
+            "executor_stopped":{"type":["boolean","null"]}
+        },
+        "allOf":[{"if":{"required":["outcome"],
+            "properties":{"outcome":{"const":"succeeded"}}},
+            "then":{"required":["output_digest"],
+                "properties":{"output_digest":{"type":"string","pattern":"^[0-9a-f]{64}$"}}}}]
+    });
+    let previous_epoch_recovery = json!({
+        "type":["object","null"],"additionalProperties":false,
+        "required":["execution_epoch","executor_stopped","review_reference"],
+        "properties":{
+            "execution_epoch":identity.clone(),
+            "executor_stopped":{"type":"boolean"},
+            "review_reference":{"type":"string","minLength":1,"maxLength":2048,
+                "x-nonblank-utf8":true}
+        }
+    });
+    let fields = command["properties"]["args"]["properties"]
+        .as_object_mut()
+        .unwrap();
+    fields.extend(
+        json!({
+            "reviewed_receipt_id":nullable_identity.clone(),
+            "facts":recovery_facts,
+            "clear_recovery_block":{"type":"boolean"},
+            "previous_epoch_recovery":previous_epoch_recovery,
+            "repository":{"type":"string","minLength":1,"maxLength":256,
+                "x-nonblank-utf8":true},
+            "pr_number":{"type":"integer","minimum":1,"maximum":2147483647},
+            "pr_url":{"type":"string","minLength":1,"maxLength":512,
+                "x-nonblank-utf8":true},
+            "head_sha":git_sha.clone(),
+            "merge_sha":nullable_git_sha,
+            "test_evidence_id":nullable_identity.clone(),
+            "fact_source":{"type":"string","enum":[
+                "authorized_human_github_verification","operator_recorded_observation"]},
+            "observed_at":{"type":"string","minLength":1,"x-nonblank-utf8":true},
+            "author_actor_id":nullable_identity.clone(),
+            "owner_person_id":nullable_identity.clone(),
+            "executor_actor_id":nullable_identity,
+            "gh_submitted":{"type":["boolean","null"]},
+            "gh_approved":{"type":["boolean","null"]},
+            "gh_merged":{"type":["boolean","null"]},
+            "delivery_id":identity.clone(),
+            "expected_head_sha":git_sha,
+            "review_round_id":identity.clone(),
+            "consumer_work_id":identity.clone(),
+            "expected_consumer_contract_hash":digest.clone(),
+            "expected_consumer_ownership_version":positive_version,
+            "receipt_id":identity,
+            "expected_artifact_sha256":digest.clone(),
+            "export_id":{"type":"string","minLength":1,"maxLength":128},
+            "expected_export_version":positive_version,
+            "expected_disclosure_sha256":digest,
+            "expected_adoption_version":version
+        })
+        .as_object()
+        .unwrap()
+        .clone(),
+    );
+
+    for (op, required, optional) in [
+        (
+            "session.end",
+            vec!["session_id", "expected_session_version"],
+            vec![],
+        ),
+        (
+            "claim.acquire",
+            vec![
+                "session_id",
+                "expected_session_version",
+                "expected_work_version",
+                "ttl_seconds",
+            ],
+            vec![],
+        ),
+        (
+            "claim.renew",
+            vec![
+                "session_id",
+                "expected_session_version",
+                "claim_id",
+                "expected_fence",
+                "expected_lease_version",
+                "ttl_seconds",
+            ],
+            vec![],
+        ),
+        (
+            "claim.release",
+            vec![
+                "session_id",
+                "expected_session_version",
+                "claim_id",
+                "expected_fence",
+                "expected_lease_version",
+            ],
+            vec![],
+        ),
+        (
+            "execution.cancel",
+            vec![
+                "session_id",
+                "expected_session_version",
+                "execution_id",
+                "expected_execution_version",
+            ],
+            vec![],
+        ),
+        (
+            "execution.attest",
+            vec![
+                "session_id",
+                "expected_session_version",
+                "execution_id",
+                "expected_execution_version",
+                "facts",
+            ],
+            vec!["reviewed_receipt_id"],
+        ),
+        (
+            "execution.reconcile",
+            vec![
+                "session_id",
+                "expected_session_version",
+                "execution_id",
+                "expected_execution_version",
+                "expected_work_version",
+                "clear_recovery_block",
+                "facts",
+            ],
+            vec!["reviewed_receipt_id", "previous_epoch_recovery"],
+        ),
+        (
+            "delivery.register_pr",
+            vec![
+                "session_id",
+                "expected_session_version",
+                "repository",
+                "pr_number",
+                "pr_url",
+                "head_sha",
+                "fact_source",
+                "observed_at",
+            ],
+            vec![
+                "merge_sha",
+                "test_evidence_id",
+                "author_actor_id",
+                "owner_person_id",
+                "executor_actor_id",
+                "gh_submitted",
+                "gh_approved",
+                "gh_merged",
+            ],
+        ),
+        (
+            "delivery.observe_pr",
+            vec![
+                "session_id",
+                "expected_session_version",
+                "delivery_id",
+                "expected_head_sha",
+                "fact_source",
+                "observed_at",
+            ],
+            vec!["gh_approved", "gh_merged", "merge_sha"],
+        ),
+        (
+            "delivery.export.publish",
+            vec![
+                "session_id",
+                "expected_session_version",
+                "consumer_work_id",
+                "expected_consumer_contract_hash",
+                "expected_consumer_ownership_version",
+                "receipt_id",
+                "expected_artifact_sha256",
+            ],
+            vec![],
+        ),
+        (
+            "delivery.export.revoke",
+            vec![
+                "session_id",
+                "expected_session_version",
+                "export_id",
+                "expected_export_version",
+            ],
+            vec![],
+        ),
+        (
+            "delivery.adopt",
+            vec![
+                "session_id",
+                "expected_session_version",
+                "expected_responsibility_version",
+                "export_id",
+                "expected_export_version",
+                "expected_disclosure_sha256",
+                "expected_adoption_version",
+            ],
+            vec![],
+        ),
+    ] {
+        add_closed_command_args_schema(command, op, &required, &optional);
     }
 }
 
@@ -868,6 +1226,13 @@ fn catalog() -> Vec<Tool> {
     command["properties"]["args"]["description"] = json!(format!(
         "task.assign: assignee_person_id, expected_responsibility_version; no execution session required. An optional session_id must include expected_session_version. task.accept_assignment / task.claim_available: session_id, expected_session_version, expected_responsibility_version, expected_work_version, ttl_seconds; acceptance also requires assignment_request_key. Assignment may reserve blocked dependencies; taking work cannot bypass them. Ownership and the coordination lease commit atomically; execution.start remains separate. {old_description}"
     ));
+    let session_id = command["properties"]["args"]["properties"]["session_id"].clone();
+    let expected_session_version =
+        command["properties"]["args"]["properties"]["expected_session_version"].clone();
+    let mut nullable_session_id = session_id.clone();
+    nullable_session_id["type"] = json!(["string", "null"]);
+    let mut nullable_expected_session_version = expected_session_version.clone();
+    nullable_expected_session_version["type"] = json!(["string", "null"]);
     for (op, required, optional) in [
         (
             "task.assign",
@@ -898,7 +1263,7 @@ fn catalog() -> Vec<Tool> {
             vec![],
         ),
     ] {
-        let properties: serde_json::Map<String, Value> = {
+        let mut properties: serde_json::Map<String, Value> = {
             let fields = &command["properties"]["args"]["properties"];
             required
                 .iter()
@@ -906,12 +1271,21 @@ fn catalog() -> Vec<Tool> {
                 .map(|name| ((*name).to_owned(), fields[*name].clone()))
                 .collect()
         };
+        if op == "task.assign" {
+            properties.insert("session_id".into(), nullable_session_id.clone());
+            properties.insert(
+                "expected_session_version".into(),
+                nullable_expected_session_version.clone(),
+            );
+        }
         let session_pair = (op == "task.assign").then(|| {
             json!([
-                {"if":{"required":["session_id"]},
-                    "then":{"required":["expected_session_version"]}},
-                {"if":{"required":["expected_session_version"]},
-                    "then":{"required":["session_id"]}}
+                {"if":{"required":["session_id"],"properties":{"session_id":session_id}},
+                    "then":{"required":["expected_session_version"],
+                        "properties":{"expected_session_version":expected_session_version}}},
+                {"if":{"required":["expected_session_version"],
+                        "properties":{"expected_session_version":expected_session_version}},
+                    "then":{"required":["session_id"],"properties":{"session_id":session_id}}}
             ])
         });
         let mut args = json!({
@@ -927,6 +1301,10 @@ fn catalog() -> Vec<Tool> {
             "if":{"properties":{"op":{"const":op}},"required":["op"]},
             "then":{"properties":{"args":args}}}));
     }
+    add_remaining_closed_command_schemas(&mut command);
+    command["properties"]["args"]["properties"]["session_id"] = nullable_session_id;
+    command["properties"]["args"]["properties"]["expected_session_version"] =
+        nullable_expected_session_version;
     let access_plan = json!({
         "type":"object","additionalProperties":false,
         "required":["protocol_version","subject","subject_client_id","role","grants"],
@@ -1067,6 +1445,7 @@ fn catalog() -> Vec<Tool> {
         }
     });
     vec![
+        input_contracts::tool(),
         Tool::new("awr_team_query",
             "Scoped Team reads. Begin with capabilities (current identity/permissions), then work.next (own sessions and scoped task navigation). Consume work.prepare before any claim or execution. Use work.snapshot for context and observation in one read transaction, within max_context_bytes; its context_hash remains compatible with work.prepare. Supervisors use selector-free work.inbox. work.observe shares bounded neutral candidate/check/review/integration/publication facts and independently scoped role guidance with prepare/snapshot/inbox, preserving context hashes. Follow one action.op and its optional action.query; recheck_on names refresh triggers. Required context and unknown effects retain priority. max_context_bytes bounds the full observation response. Receipt access and unknown model/usage remain explicit. audit.requests and audit.development provide paged metadata/history under the same personal/project permission boundary. Ops audit: audit.history / audit.export / audit.count (TMCP-040) — members see own allowed records; project-wide requires audit.read_project. Counts/exports use the same scope. Not full chat/tool-IO/token billing; PG audit does not claim DB-owner non-repudiation. Tool discovery is navigation-only; each query rechecks authority. Re-prepare after relevant changes. No execution admission. Approved cross-stream content: delivery.exports with consumer work_id, then artifact.content or bounded artifact.segment with export_id and expected_sha256. For segments follow every next_query, concatenate contiguous ranges from zero and verify the full length/digest; the last page alone is not a complete read. Disclosure never satisfies adoption. Neutral facts: delivery.neutral.inspect. Current source synchronization: delivery.source.status. Missing neutral command response: delivery.neutral.outcome with actual work_id and original client retry ID. delivery.integration.inspect uses the generated IntegrationRequest.request_id (data.integration_id), preserving the original candidate. Neutral inspection includes scoped connector versions; review.inspect includes decision IDs. Descriptions grant no authority.",
             query.as_object().unwrap().clone())
@@ -1197,10 +1576,13 @@ impl ServerHandler for Endpoint {
         let diagnostic_input =
             matches!(request.name.as_ref(), "awr_team_query" | "awr_team_command")
                 .then(|| args.clone());
+        let input_contract = (request.name == input_contracts::TOOL_NAME).then(|| args.clone());
         let write = request.name == "awr_team_command";
         let segmented = request.name == "awr_team_query" && args["op"] == "artifact.segment";
         let result = tokio::time::timeout_at(access.deadline, super::audited(&self.state, &self.project, &access.bearer, &action, work.as_deref(), async {
             match request.name.as_ref() {
+                input_contracts::TOOL_NAME => input_contracts::describe(&args, &catalog())
+                    .map_err(|_| PgError::Protocol("invalid input contract request".into())),
                 "awr_team_query" => {
                     let q: WorkstreamQuery = serde_json::from_value(args)
                         .map_err(|_| PgError::Protocol("invalid query".into()))?;
@@ -1420,7 +1802,11 @@ impl ServerHandler for Endpoint {
                 let rejection = super::claim_rejection(&action, &error)
                     .or_else(|| super::session_end_rejection(&action, &error));
                 let error = super::legacy_claim_acquire_error(&action, error);
-                let mut value = public_error(super::legacy_session_end_error(&action, error)).1;
+                let mut value = if let Some(input) = &input_contract {
+                    input_contracts::public_error(input)
+                } else {
+                    public_error(super::legacy_session_end_error(&action, error)).1
+                };
                 if let Some(rejection) = rejection {
                     value["rejection"] = rejection;
                 }
@@ -1482,6 +1868,7 @@ mod tests {
             locator["oneOf"][1]["properties"]["action"]["const"],
             "clear"
         );
+        assert_eq!(locator["oneOf"][2]["type"], "null");
         assert!(
             tool.input_schema["properties"]["args"]["properties"]["mapping"]["required"]
                 .as_array()
@@ -1723,7 +2110,7 @@ mod tests {
             fields["package"]["properties"]["checkpoint_ids"]["minItems"],
             1
         );
-        assert_eq!(fields["now_ms"]["type"], "integer");
+        assert_eq!(fields["now_ms"]["type"], json!(["integer", "null"]));
     }
 
     #[test]
@@ -1828,15 +2215,20 @@ mod tests {
             if op == "task.assign" {
                 assert!(required.contains(&json!("assignee_person_id")));
                 assert!(!required.contains(&json!("session_id")));
-                assert_eq!(
-                    args["allOf"],
-                    json!([
-                        {"if":{"required":["session_id"]},
-                            "then":{"required":["expected_session_version"]}},
-                        {"if":{"required":["expected_session_version"]},
-                            "then":{"required":["session_id"]}}
-                    ])
-                );
+                let pair = args["allOf"].as_array().unwrap();
+                assert_eq!(pair.len(), 2);
+                for (condition, provided, counterpart) in [
+                    (&pair[0], "session_id", "expected_session_version"),
+                    (&pair[1], "expected_session_version", "session_id"),
+                ] {
+                    assert_eq!(condition["if"]["required"], json!([provided]));
+                    assert_eq!(condition["if"]["properties"][provided]["type"], "string");
+                    assert_eq!(condition["then"]["required"], json!([counterpart]));
+                    assert_eq!(
+                        condition["then"]["properties"][counterpart]["type"],
+                        "string"
+                    );
+                }
             } else {
                 for key in [
                     "session_id",
@@ -1970,9 +2362,13 @@ mod tests {
                 assert!(required.contains(&json!(key)), "{operation} requires {key}");
             }
             if operation == "handoff.accept" {
-                for key in ["successor_execution", "inspection_request_id"] {
-                    assert!(required.contains(&json!(key)));
-                }
+                assert!(required.contains(&json!("successor_execution")));
+                assert!(required.contains(&json!("inspection_request_id")));
+                assert_eq!(
+                    condition["then"]["properties"]["args"]["properties"]["inspection_request_id"]
+                        ["type"],
+                    "string"
+                );
             }
             assert!(!required.contains(&json!("now_ms")));
             if operation == "handoff.propose" {
@@ -2361,8 +2757,15 @@ mod tests {
         let args = &tool.input_schema["properties"]["args"];
         assert!(args.get("required").is_none());
         let fields = &args["properties"];
+        assert_eq!(
+            fields["expected_session_version"]["type"],
+            json!(["string", "null"])
+        );
+        assert_eq!(
+            fields["expected_session_version"]["pattern"],
+            "^[1-9][0-9]*$"
+        );
         for name in [
-            "expected_session_version",
             "expected_fence",
             "expected_lease_version",
             "expected_execution_version",
@@ -2677,6 +3080,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn review_evidence_guidance_survives_neutral_delivery_field_publication() {
+        let command = catalog()
+            .into_iter()
+            .find(|tool| tool.name == "awr_team_command")
+            .unwrap()
+            .input_schema;
+        let flat = &command["properties"]["args"]["properties"];
+        let guidance = flat["evidence_id"]["description"]
+            .as_str()
+            .expect("flat evidence_id must retain review/completion guidance");
+        for operation in [
+            "review.open",
+            "delivery.submit_and_request_review",
+            "work.complete",
+            "delivery.finalize",
+        ] {
+            assert!(guidance.contains(operation), "{operation}: {guidance}");
+            let args = command["allOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|branch| branch["if"]["properties"]["op"]["const"] == operation)
+                .map(|branch| &branch["then"]["properties"]["args"])
+                .unwrap_or_else(|| panic!("missing operation-specific schema: {operation}"));
+            assert_eq!(args["additionalProperties"], false, "{operation}");
+            assert!(
+                args["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("evidence_id")),
+                "{operation}"
+            );
+            let evidence = &args["properties"]["evidence_id"];
+            assert_eq!(evidence["type"], "string", "{operation}");
+            assert_eq!(evidence["minLength"], 1, "{operation}");
+            assert_eq!(evidence["maxLength"], 128, "{operation}");
+            assert!(args["properties"].get("event_id").is_none(), "{operation}");
+        }
+        assert_ne!(flat["evidence_id"], flat["event_id"]);
+    }
+
     #[tokio::test]
     async fn review_state_preconditions_are_bounded_transport_errors_not_invalid_input() {
         for (error, status, code) in [
@@ -2828,7 +3273,7 @@ mod tests {
             .unwrap();
         let args = &command.input_schema["properties"]["args"];
         let session_id = &args["properties"]["session_id"];
-        assert_eq!(session_id["type"], "string");
+        assert_eq!(session_id["type"], json!(["string", "null"]));
         assert_eq!(session_id["minLength"], 1);
         assert_eq!(session_id["maxLength"], 128);
         let description = session_id["description"].as_str().unwrap();
@@ -3144,7 +3589,10 @@ mod tests {
         assert!(
             diagnosed(envelope(
                 "claim.acquire",
-                json!({"expected_work_version":"0"})
+                json!({
+                    "session_id":"session","expected_session_version":"1",
+                    "expected_work_version":"0","ttl_seconds":60
+                })
             ))
             .get("invalid_field")
             .is_none()
