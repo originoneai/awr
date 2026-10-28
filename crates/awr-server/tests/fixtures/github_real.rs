@@ -172,6 +172,7 @@ pub fn candidate(source: &str, base: &str) -> DeliveryCandidate {
             contract_hash: "e".repeat(64),
             manifest_digest: manifest.digest().unwrap(),
             source_revision: Some(revision(source)),
+            source_fetch_ref: None,
             required_checks: vec![],
             target: DeliveryTarget {
                 resource: RESOURCE.into(),

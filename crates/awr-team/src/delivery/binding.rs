@@ -190,8 +190,40 @@ pub struct CandidateBinding {
     pub contract_hash: String,
     pub manifest_digest: String,
     pub source_revision: Option<RevisionRef>,
+    /// Optional ordinary Git ref advertised by the source revision's remote.
+    /// The ref is a fetch locator, not an immutable identity; consumers must
+    /// verify the fetched commit against `source_revision`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_fetch_ref: Option<String>,
     pub required_checks: Vec<String>,
     pub target: DeliveryTarget,
+}
+
+/// Conservative provider-neutral ref syntax accepted at the submission boundary.
+/// Git permits additional characters, but they are intentionally outside this
+/// contract. Clients must still pass the value as one inert process argument
+/// and must never construct a shell command from it.
+pub const SOURCE_FETCH_REF_PATTERN: &str = r"^refs/(heads|tags)/[A-Za-z0-9._/+@-]+$";
+
+/// Additional Git ref-shape exclusions applied after the portable character set.
+/// These patterns are also emitted by delivery submission discovery.
+pub const SOURCE_FETCH_REF_FORBIDDEN_PATTERNS: &[&str] =
+    &[r"\.\.", r"(^|/)\.", r"(\.lock|\.)(/|$)", r"//|/$"];
+
+fn valid_source_fetch_ref(value: &str) -> bool {
+    (value.starts_with("refs/heads/") || value.starts_with("refs/tags/"))
+        && text(value, 1024, "source fetch ref").is_ok()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._/+@-".contains(&byte))
+        && !value.contains("..")
+        && !value.contains("@{")
+        && value.split('/').all(|part| {
+            !part.is_empty()
+                && !part.starts_with('.')
+                && !part.ends_with('.')
+                && !part.ends_with(".lock")
+        })
 }
 
 impl CandidateBinding {
@@ -218,6 +250,20 @@ impl CandidateBinding {
         digest(&self.manifest_digest, "manifest digest")?;
         if let Some(revision) = &self.source_revision {
             revision.validate()?;
+        }
+        if let Some(reference) = &self.source_fetch_ref {
+            if !valid_source_fetch_ref(reference)
+                || !self.source_revision.as_ref().is_some_and(|revision| {
+                    matches!(
+                        revision.format,
+                        RevisionFormat::GitSha1 | RevisionFormat::GitSha256
+                    )
+                })
+            {
+                return Err(TeamError::InvalidInput(
+                    "invalid delivery source fetch ref".into(),
+                ));
+            }
         }
         names(&self.required_checks, "required checks")?;
         self.target.validate()

@@ -324,6 +324,7 @@ dependencies = [
  "awr-team",
  "deadpool-postgres",
  "libc",
+ "regex",
  "rustls",
  "serde",
  "serde_json",

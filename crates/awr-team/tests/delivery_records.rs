@@ -1,6 +1,25 @@
 use awr_team::delivery::*;
 use awr_team::{ActorId, ProjectId, RequestId, ScopeId, TeamError, TenantId, WorkId};
+use serde::Deserialize;
 use serde_json::{Value, json};
+use std::{fs, path::Path, process::Command};
+
+#[derive(Deserialize)]
+struct SourceFetchRefCorpus {
+    codec: String,
+    cases: Vec<SourceFetchRefCase>,
+}
+
+#[derive(Deserialize)]
+struct SourceFetchRefCase {
+    name: String,
+    value: String,
+    accepted: bool,
+}
+
+fn source_fetch_ref_corpus() -> SourceFetchRefCorpus {
+    serde_json::from_str(include_str!("fixtures/source-fetch-refs-v1.json")).unwrap()
+}
 
 fn artifact() -> ArtifactEntry {
     ArtifactEntry {
@@ -31,6 +50,7 @@ fn candidate() -> DeliveryCandidate {
                 format: RevisionFormat::GitSha256,
                 value: "c".repeat(64),
             }),
+            source_fetch_ref: None,
             required_checks: vec!["conformance".into()],
             target: DeliveryTarget {
                 resource: "repository:example".into(),
@@ -425,6 +445,206 @@ fn revision_formats_are_explicit_and_sha256_git_is_not_forced_to_sha1() {
 }
 
 #[test]
+fn absent_source_fetch_ref_preserves_the_legacy_candidate_digest() {
+    let binding = candidate().binding;
+    let serialized = serde_json::to_value(&binding).unwrap();
+    assert!(serialized.get("source_fetch_ref").is_none());
+    assert_eq!(
+        binding.digest().unwrap(),
+        "71960e483932c5b26042d28df4a773e4ded7428cfa7f713145281c64eaf16055"
+    );
+    let decoded: CandidateBinding = serde_json::from_value(serialized.clone()).unwrap();
+    assert_eq!(decoded.source_fetch_ref, None);
+    assert_eq!(decoded.digest().unwrap(), binding.digest().unwrap());
+
+    let mut explicit_null = serialized;
+    explicit_null["source_fetch_ref"] = Value::Null;
+    let decoded: CandidateBinding = serde_json::from_value(explicit_null).unwrap();
+    assert_eq!(decoded.source_fetch_ref, None);
+    assert_eq!(decoded.digest().unwrap(), binding.digest().unwrap());
+}
+
+#[test]
+fn source_fetch_ref_is_a_bound_safe_advertised_git_ref() {
+    let corpus = source_fetch_ref_corpus();
+    assert_eq!(corpus.codec, "awr-source-fetch-ref-corpus-v1");
+    for case in corpus.cases {
+        let mut binding = candidate().binding;
+        let legacy_digest = binding.digest().unwrap();
+        binding.source_fetch_ref = Some(case.value.clone());
+        assert_eq!(
+            binding.validate().is_ok(),
+            case.accepted,
+            "source fetch ref corpus mismatch for {} ({:?})",
+            case.name,
+            case.value
+        );
+        if case.accepted {
+            assert_ne!(binding.digest().unwrap(), legacy_digest);
+            let mut changed = binding.clone();
+            changed.source_fetch_ref = Some("refs/heads/another-candidate".into());
+            assert!(require_same_candidate(&binding, &changed).is_err());
+            assert_ne!(binding.digest().unwrap(), changed.digest().unwrap());
+        }
+    }
+
+    let mut without_revision = candidate().binding;
+    without_revision.source_revision = None;
+    without_revision.source_fetch_ref = Some("refs/heads/candidate".into());
+    assert!(without_revision.validate().is_err());
+
+    let mut artifact_revision = candidate().binding;
+    artifact_revision.source_revision = Some(RevisionRef {
+        resource: "artifact:release".into(),
+        format: RevisionFormat::Artifact,
+        value: "release-v1".into(),
+    });
+    artifact_revision.source_fetch_ref = Some("refs/tags/release-v1".into());
+    assert!(artifact_revision.validate().is_err());
+
+    for format in [RevisionFormat::GitSha1, RevisionFormat::GitSha256] {
+        let mut git_revision = candidate().binding;
+        let length = if format == RevisionFormat::GitSha1 {
+            40
+        } else {
+            64
+        };
+        git_revision.source_revision = Some(RevisionRef {
+            resource: "repository:example".into(),
+            format,
+            value: "a".repeat(length),
+        });
+        git_revision.source_fetch_ref = Some("refs/heads/candidate".into());
+        git_revision.validate().unwrap();
+    }
+}
+
+fn fixture_git(directory: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(["-C", directory.to_str().unwrap()])
+        .args(args)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
+        .env("GIT_AUTHOR_NAME", "Synthetic Author")
+        .env("GIT_AUTHOR_EMAIL", "author@example.invalid")
+        .env("GIT_COMMITTER_NAME", "Synthetic Author")
+        .env("GIT_COMMITTER_EMAIL", "author@example.invalid")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "Git fixture failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim_end().into()
+}
+
+#[test]
+fn advertised_candidate_ref_fetch_still_requires_exact_sha_verification() {
+    struct Scratch(std::path::PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    let scratch =
+        Scratch(std::env::temp_dir().join(format!("awr candidate fetch-{}", awr_core::Id::new())));
+    fs::create_dir(&scratch.0).unwrap();
+    let author = scratch.0.join("author");
+    let remote = scratch.0.join("remote.git");
+    let reviewer = scratch.0.join("reviewer");
+    fixture_git(
+        &scratch.0,
+        &["init", "--initial-branch=main", author.to_str().unwrap()],
+    );
+    fixture_git(
+        &scratch.0,
+        &[
+            "init",
+            "--bare",
+            "--initial-branch=main",
+            remote.to_str().unwrap(),
+        ],
+    );
+    fs::write(author.join("README.md"), b"base\n").unwrap();
+    fixture_git(&author, &["add", "--", "README.md"]);
+    fixture_git(&author, &["commit", "-m", "Synthetic base"]);
+    let base = fixture_git(&author, &["rev-parse", "HEAD"]);
+    fs::write(author.join("deliverable.txt"), b"candidate\n").unwrap();
+    fixture_git(&author, &["add", "--", "deliverable.txt"]);
+    fixture_git(&author, &["commit", "-m", "Synthetic candidate"]);
+    let exact_revision = fixture_git(&author, &["rev-parse", "HEAD"]);
+    let fetch_ref = "refs/heads/candidate";
+    fixture_git(
+        &author,
+        &[
+            "push",
+            remote.to_str().unwrap(),
+            &format!("HEAD:{fetch_ref}"),
+        ],
+    );
+
+    let mut binding = candidate().binding;
+    binding.source_revision = Some(RevisionRef {
+        resource: "fixture://remote".into(),
+        format: RevisionFormat::GitSha1,
+        value: exact_revision.clone(),
+    });
+    binding.source_fetch_ref = Some(fetch_ref.into());
+    binding.validate().unwrap();
+    let bound_digest = binding.digest().unwrap();
+
+    fs::create_dir(&reviewer).unwrap();
+    fixture_git(&reviewer, &["init", "--initial-branch=review", "."]);
+    fixture_git(
+        &reviewer,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "fetch",
+            "--no-tags",
+            remote.to_str().unwrap(),
+            fetch_ref,
+        ],
+    );
+    assert_eq!(
+        fixture_git(&reviewer, &["rev-parse", "FETCH_HEAD^{commit}"]),
+        exact_revision
+    );
+
+    fixture_git(
+        &author,
+        &[
+            "push",
+            "--force",
+            remote.to_str().unwrap(),
+            &format!("{base}:{fetch_ref}"),
+        ],
+    );
+    fixture_git(
+        &reviewer,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "fetch",
+            "--no-tags",
+            remote.to_str().unwrap(),
+            fetch_ref,
+        ],
+    );
+    assert_ne!(
+        fixture_git(&reviewer, &["rev-parse", "FETCH_HEAD^{commit}"]),
+        exact_revision,
+        "a moved advertised ref must not satisfy the candidate's exact revision"
+    );
+    assert_eq!(binding.digest().unwrap(), bound_digest);
+}
+
+#[test]
 fn every_identity_version_contract_artifact_requirement_and_target_change_requires_reevaluation() {
     let original = candidate().binding;
     let changes: Vec<(&str, Value)> = vec![
@@ -439,6 +659,7 @@ fn every_identity_version_contract_artifact_requirement_and_target_change_requir
         ("manifest_digest", json!("e".repeat(64))),
         ("required_checks", json!(["conformance", "integration"])),
         ("source_revision", Value::Null),
+        ("source_fetch_ref", json!("refs/heads/candidate")),
         (
             "target",
             json!({"resource":"repository:other","reference":"refs/heads/release","precondition":{"kind":"missing"}}),

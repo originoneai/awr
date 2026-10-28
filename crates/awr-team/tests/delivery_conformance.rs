@@ -47,6 +47,7 @@ fn candidate(case: &Case) -> DeliveryCandidate {
                 format,
                 value: case.value.clone().unwrap(),
             }),
+            source_fetch_ref: None,
             required_checks: vec!["conformance".into()],
             target: DeliveryTarget {
                 resource: "example/target".into(),

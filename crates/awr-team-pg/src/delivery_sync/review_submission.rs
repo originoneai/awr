@@ -93,11 +93,19 @@ async fn source_navigation(
     {
         return Ok(unavailable_source("source_locator_unsupported"));
     }
-    Ok(json!({"available":true,"contract":contract,"url":url,
+    let mut navigation = json!({"available":true,"contract":contract,"url":url,
         "connector_id":row.get::<_,String>(0),"connector_version":version.to_string(),
         "resource":revision.resource,"exact_revision":revision,
         "awr_checkout_verified":false,
-        "note":"This credential-free locator names the candidate's exact Git revision. AWR has not fetched or verified a checkout, complete tree, advertised ref or server support for fetching an unadvertised SHA; verify the fetched object equals exact_revision."}))
+        "note":"This credential-free locator names the candidate's exact Git revision. AWR has not fetched or verified a checkout, complete tree, advertised ref or server support for fetching an unadvertised SHA; verify the fetched object equals exact_revision."});
+    if let Some(reference) = &candidate.binding.source_fetch_ref {
+        navigation["source_fetch_ref"] = json!(reference);
+        navigation["source_fetch_ref_verified"] = json!(false);
+        navigation["note"] = json!(
+            "The candidate binds this ordinary advertised Git fetch ref and exact_revision. The ref can move or disappear and is not an immutable identity. AWR has not fetched it or verified its advertisement, checkout or complete tree. Invoke Git without a shell, pass source_fetch_ref as one argv value, fetch it exactly, then verify the fetched commit equals exact_revision; never substitute the integration target.reference."
+        );
+    }
+    Ok(navigation)
 }
 
 pub(crate) async fn configured(

@@ -2,6 +2,7 @@
 use super::*;
 use awr_team::delivery::{
     ArtifactEntry, ArtifactManifest, DeliveryCandidate, FactSource, RevisionFormat,
+    SOURCE_FETCH_REF_PATTERN,
 };
 use awr_team_pg::{
     ConfigureDeliveryConnector, DeliveryConnectorMapping, DeliveryReadSet, DeliverySourceLocator,
@@ -283,6 +284,11 @@ async fn discovered_submission_constructs_a_real_candidate_and_bound_readable_re
         schema["properties"]["candidate"]["properties"]["manifest"]["properties"]["entries"]["maxItems"],
         128
     );
+    assert_eq!(
+        schema["properties"]["candidate"]["properties"]["binding"]["properties"]["source_fetch_ref"]
+            ["anyOf"][0]["pattern"],
+        SOURCE_FETCH_REF_PATTERN
+    );
     let resource = description["connectors"][0]["resource"].clone();
     let manifest = json!({"entries":[
         {"artifact_id":"source-code","sha256":sha(CODE),"byte_length":CODE.len().to_string(),"locator":"git-blob:src/filter.js"},
@@ -292,6 +298,7 @@ async fn discovered_submission_constructs_a_real_candidate_and_bound_readable_re
     binding.as_object_mut().unwrap().extend(json!({
         "candidate_id":"described-submission","candidate_version":"1","manifest_digest":manifest_digest,
         "source_revision":{"resource":resource,"format":"git_sha256","value":"a".repeat(64)},
+        "source_fetch_ref":"refs/heads/review/described-submission",
         "target":{"resource":resource,"reference":"refs/heads/main","precondition":{"kind":"missing"}}
     }).as_object().unwrap().clone());
     let candidate: DeliveryCandidate =
@@ -333,6 +340,37 @@ async fn discovered_submission_constructs_a_real_candidate_and_bound_readable_re
         assert_eq!(rework_business_snapshot(&admin).await, before);
         assert_eq!(delivery_snapshot(&admin).await, delivery_before);
     }
+    for invalid_ref in [
+        "refs/heads/review:described",
+        "file:///private/repository",
+        "refs/heads/$(touch-pwn)",
+        "refs/heads/`touch-pwn`",
+        "refs/heads/release;touch-pwn",
+        "refs/heads/release'quote",
+    ] {
+        let mut rejected = args.clone();
+        rejected["candidate"]["binding"]["source_fetch_ref"] = json!(invalid_ref);
+        assert!(
+            reads
+                .commands()
+                .execute(
+                    TENANT,
+                    PROJECT,
+                    A,
+                    command(
+                        &p,
+                        "select-described",
+                        "delivery.candidate.select",
+                        rejected,
+                    ),
+                )
+                .await
+                .is_err(),
+            "accepted unsafe source fetch ref {invalid_ref:?}"
+        );
+        assert_eq!(rework_business_snapshot(&admin).await, before);
+        assert_eq!(delivery_snapshot(&admin).await, delivery_before);
+    }
     // A definite rejected input recorded no request; its corrected request can succeed.
     let selected = reads
         .commands()
@@ -367,6 +405,46 @@ async fn discovered_submission_constructs_a_real_candidate_and_bound_readable_re
     )
     .await;
     assert_eq!(round["state"], "open");
+    let review = inspect_round(&reads, &round).await;
+    assert_eq!(
+        review["submission"]["source_navigation"]["source_fetch_ref"],
+        "refs/heads/review/described-submission"
+    );
+    assert_eq!(
+        review["submission"]["source_navigation"]["exact_revision"]["value"],
+        "a".repeat(64)
+    );
+    assert_eq!(
+        review["submission"]["source_navigation"]["source_fetch_ref_verified"],
+        false
+    );
+    let navigation_note = review["submission"]["source_navigation"]["note"]
+        .as_str()
+        .unwrap();
+    assert!(navigation_note.contains("ref can move or disappear"));
+    assert!(navigation_note.contains("Invoke Git without a shell"));
+    assert!(navigation_note.contains("pass source_fetch_ref as one argv value"));
+    assert!(navigation_note.contains("verify the fetched commit equals exact_revision"));
+    assert!(navigation_note.contains("never substitute the integration target.reference"));
+    assert_eq!(
+        review["submission"]["repository_verification_inferred"],
+        false
+    );
+    let mut unauthorized = query("review.inspect");
+    unauthorized.work_id = Some("a".into());
+    unauthorized.review_round_id = Some(round["round_id"].as_str().unwrap().into());
+    assert!(
+        reads
+            .query(TENANT, PROJECT, B, unauthorized.clone())
+            .await
+            .is_err()
+    );
+    assert!(
+        reads
+            .query(TENANT, PROJECT, NONE, unauthorized)
+            .await
+            .is_err()
+    );
     // Discovery never admitted a command or broadened its current ownership checks.
     args["claim_id"] = json!("not-owned");
     let p = prepare(&reads, A, "a").await;
@@ -632,6 +710,11 @@ async fn review_needs_every_bound_manifest_artifact_and_returns_exact_authorized
         submission["source_revision"]
     );
     assert_eq!(submission["source_navigation"]["connector_version"], "1");
+    assert!(
+        submission["source_navigation"]
+            .get("source_fetch_ref")
+            .is_none()
+    );
     assert_eq!(
         submission["source_navigation"]["awr_checkout_verified"],
         false

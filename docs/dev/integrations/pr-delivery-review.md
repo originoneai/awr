@@ -160,7 +160,20 @@ source nor verification, approval or integration. Other content requires an
 authorized-channel check that this round's `submission.source_revision` is
 immutable and candidate-bound; a non-null or validly formatted value, including
 `artifact`, proves neither. If absent, do not guess: obtain a verifiable binding
-and check both properties. Do not follow a moving branch, raw locator or peer path.
+and check both properties. Do not treat a moving ref, raw locator or peer path as
+the candidate identity.
+An optional candidate `binding.source_fetch_ref` may name the ordinary advertised
+`refs/heads/...` or `refs/tags/...` ref used to fetch a Git candidate. The full
+ref is part of the candidate digest, but the remote ref itself remains mutable;
+it locates the object and never replaces the exact `source_revision` identity.
+It is distinct from the integration `target.reference`. Short names, `HEAD`,
+provider-private namespaces, refspecs, wildcards, path/URL strings and malformed
+Git refs are refused. This contract deliberately accepts only ASCII letters,
+digits and `.`, `_`, `/`, `-`, `+`, `@`, followed by the remaining Git component
+rules; other Git-legal names are outside the current portable boundary. Clients
+must pass the remote and ref as separate arguments to a trusted Git process.
+Shell command construction, interpolation and `eval` are forbidden; the enforced
+character subset is a boundary defense, not a reason to rely on caller discipline.
 Content reads default to 64 KiB of raw bytes. An exact selector adds
 `max_context_bytes` only when the stored artifact needs a larger budget, up to
 1 MiB; other queries retain their 256 KiB maximum. JSON escaping, base64 and
@@ -182,13 +195,18 @@ current `awr-git-source-v1` locator, `review.inspect` also returns
 `review.submission.source_navigation`. It contains the credential-free HTTPS or
 canonical `ssh://git@...` remote, connector version and the candidate's
 `exact_revision`. It deliberately contains no server checkout path, credential,
-private key, inferred tree URL or invented branch. The reader must verify that
-the fetched object equals `exact_revision`. Some Git servers refuse direct fetch
-of an unadvertised SHA; the delivery candidate currently has no candidate fetch
-ref, and its integration target reference must not be substituted. Consequently
-the locator does not promise that a fetch will succeed. `awr_checkout_verified`
-is always false: navigation is not proof that AWR fetched or verified a checkout,
-complete tree, manifest, tests or approval.
+private key, inferred tree URL or invented branch. When the bound candidate has
+`source_fetch_ref`, source navigation returns that exact field and
+`source_fetch_ref_verified: false`. Fetch only the declared full ref, then verify
+that the fetched commit equals `exact_revision`. A ref can move or disappear;
+its presence is not proof of the advertised object, immutability or successful
+fetch. Invoke Git without a shell and pass `source_fetch_ref` as one argv value;
+never concatenate the field into a command string. When the field is absent,
+some Git servers may refuse direct fetch of the unadvertised SHA; callers must
+not substitute the integration `target.reference`
+or enumerate hidden/provider-specific refs as if they were candidate facts.
+`awr_checkout_verified` is always false: navigation is not proof that AWR fetched
+or verified a checkout, complete tree, manifest, tests or approval.
 
 The same `review.inspect` permission gate protects the locator. It is not added
 to ordinary neutral-delivery description reads. Missing configuration, a stale

@@ -231,6 +231,7 @@ impl Fixture {
                     format: RevisionFormat::GitSha1,
                     value: SOURCE.into(),
                 }),
+                source_fetch_ref: None,
                 required_checks: vec!["report".into()],
                 target: DeliveryTarget {
                     resource: self.config.resource.clone(),
