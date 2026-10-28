@@ -161,6 +161,24 @@ fn shape_issue(input: &Value, schema: &Value, path: &str) -> Option<Value> {
                 return Some(issue(path, "pattern"));
             }
         }
+        // Identity strings need a separate annotation: unlike x-nonblank-utf8,
+        // the parser accepts whitespace but rejects every control character.
+        if let Some(identity) = schema.get("x-identity-utf8").and_then(Value::as_object) {
+            if identity
+                .get("maxUtf8Bytes")
+                .and_then(Value::as_u64)
+                .is_some_and(|bound| text.len() as u64 > bound)
+            {
+                let mut detail = issue(path, "x-identity-utf8.maxUtf8Bytes");
+                detail["maximum_bytes"] = identity["maxUtf8Bytes"].clone();
+                return Some(detail);
+            }
+            if identity.get("rejectControls").and_then(Value::as_bool) == Some(true)
+                && text.chars().any(char::is_control)
+            {
+                return Some(issue(path, "x-identity-utf8.rejectControls"));
+            }
+        }
         let bad_pattern = match schema["pattern"].as_str() {
             Some("^[0-9a-f]{64}$") => {
                 text.len() != 64
@@ -212,13 +230,10 @@ fn shape_issue(input: &Value, schema: &Value, path: &str) -> Option<Value> {
     None
 }
 
-/// Apply a const-conditioned constraint published on one operation's args object.
+/// Apply a const- or presence-conditioned constraint on one operation's args object.
 /// This reads the same catalog schema; it does not parse or admit the command.
 fn conditional_args_issue(args: &Value, args_schema: &Value) -> Option<Value> {
     for branch in args_schema["allOf"].as_array()? {
-        let Some(properties) = branch["if"]["properties"].as_object() else {
-            continue;
-        };
         let Some(required) = branch["if"]["required"].as_array() else {
             continue;
         };
@@ -230,10 +245,15 @@ fn conditional_args_issue(args: &Value, args_schema: &Value) -> Option<Value> {
             continue;
         }
         let matched = names.iter().all(|field| {
-            properties
-                .get(*field)
-                .and_then(|schema| schema.get("const"))
-                .is_some_and(|expected| args.get(*field) == Some(expected))
+            let Some(actual) = args.get(*field) else {
+                return false;
+            };
+            match branch["if"]["properties"].get(*field) {
+                None => true,
+                Some(schema) => schema
+                    .get("const")
+                    .is_some_and(|expected| actual == expected),
+            }
         });
         if matched {
             if let Some(detail) = shape_issue(args, &branch["then"], "/args") {
@@ -273,6 +293,12 @@ mod tests {
     fn checkpoint(args: Value) -> Value {
         let mut input = command(args);
         input["op"] = json!("session.checkpoint");
+        input
+    }
+
+    fn operation(op: &str, args: Value) -> Value {
+        let mut input = command(args);
+        input["op"] = json!(op);
         input
     }
 
@@ -387,6 +413,179 @@ mod tests {
         assert_eq!(error["expected_fields"].as_array().unwrap().len(), 8);
         assert!(!error.to_string().contains("private-"));
         assert!(error.to_string().len() < 1024);
+    }
+
+    #[test]
+    fn task_intake_and_session_unknown_args_are_diagnosed_without_echoing_them() {
+        let mut start = json!({"conversation_id":"host-conversation"});
+        start["private-field-sentinel"] = json!("private-value-sentinel");
+        let error = rejected(operation("session.start", start), true);
+        assert_eq!(error["invalid_field"], "/args");
+        assert_eq!(error["constraint"], "unexpected_field");
+        assert_eq!(
+            error["expected_fields"],
+            json!(["client_info", "conversation_id"])
+        );
+        assert!(!error.to_string().contains("private-field-sentinel"));
+        assert!(!error.to_string().contains("private-value-sentinel"));
+
+        for (op, mut args, expected_count) in [
+            (
+                "task.assign",
+                json!({
+                    "assignee_person_id":"person",
+                    "expected_responsibility_version":"0"
+                }),
+                4,
+            ),
+            (
+                "task.accept_assignment",
+                json!({
+                    "session_id":"session",
+                    "expected_session_version":"1",
+                    "expected_responsibility_version":"1",
+                    "expected_work_version":"0",
+                    "ttl_seconds":60,
+                    "assignment_request_key":"assignment"
+                }),
+                6,
+            ),
+            (
+                "task.claim_available",
+                json!({
+                    "session_id":"session",
+                    "expected_session_version":"1",
+                    "expected_responsibility_version":"0",
+                    "expected_work_version":"0",
+                    "ttl_seconds":60
+                }),
+                5,
+            ),
+        ] {
+            // This reproduces the observed stale client shape. conversation_id
+            // is valid only for session.start and must not be reflected back.
+            args["conversation_id"] = json!("private-value-sentinel");
+            let error = rejected(operation(op, args), true);
+            assert_eq!(error["invalid_field"], "/args", "{op}");
+            assert_eq!(error["constraint"], "unexpected_field", "{op}");
+            assert_eq!(
+                error["expected_fields"].as_array().unwrap().len(),
+                expected_count,
+                "{op}"
+            );
+            assert!(!error.to_string().contains("conversation_id"), "{op}");
+            assert!(
+                !error.to_string().contains("private-value-sentinel"),
+                "{op}"
+            );
+            assert!(error.to_string().len() < 1024, "{op}");
+        }
+    }
+
+    #[test]
+    fn task_assign_session_pair_diagnoses_only_the_missing_counterpart() {
+        for (provided, value, missing) in [
+            (
+                "session_id",
+                "private-session-value-sentinel",
+                "expected_session_version",
+            ),
+            ("expected_session_version", "736251", "session_id"),
+        ] {
+            let mut args = json!({
+                "assignee_person_id":"person",
+                "expected_responsibility_version":"0"
+            });
+            args[provided] = json!(value);
+            let error = rejected(operation("task.assign", args), true);
+            assert_eq!(error["invalid_field"], format!("/args/{missing}"));
+            assert_eq!(error["constraint"], "required");
+            assert!(!error.to_string().contains(provided));
+            assert!(!error.to_string().contains(value));
+        }
+
+        let base = json!({
+            "assignee_person_id":"person",
+            "expected_responsibility_version":"0"
+        });
+        assert!(
+            rejected(operation("task.assign", base.clone()), true)
+                .get("invalid_field")
+                .is_none()
+        );
+        let mut paired = base;
+        paired["session_id"] = json!("session");
+        paired["expected_session_version"] = json!("1");
+        assert!(
+            rejected(operation("task.assign", paired), true)
+                .get("invalid_field")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn session_identity_diagnostics_preserve_character_bounds_and_report_runtime_limits() {
+        for value in ["a".repeat(128), "é".repeat(64)] {
+            let input = operation("session.start", json!({"conversation_id":value}));
+            assert!(rejected(input, true).get("invalid_field").is_none());
+        }
+
+        let over_bytes = "é".repeat(65);
+        let error = rejected(
+            operation(
+                "session.start",
+                json!({"conversation_id":over_bytes.clone()}),
+            ),
+            true,
+        );
+        assert_eq!(error["invalid_field"], "/args/conversation_id");
+        assert_eq!(error["constraint"], "x-identity-utf8.maxUtf8Bytes");
+        assert_eq!(error["maximum_bytes"], 128);
+        assert!(!error.to_string().contains(&over_bytes));
+
+        let with_control = "identity\u{0007}sentinel";
+        let error = rejected(
+            operation("session.start", json!({"conversation_id":with_control})),
+            true,
+        );
+        assert_eq!(error["invalid_field"], "/args/conversation_id");
+        assert_eq!(error["constraint"], "x-identity-utf8.rejectControls");
+        assert!(!error.to_string().contains(with_control));
+    }
+
+    #[test]
+    fn command_request_id_uses_the_same_private_runtime_boundary_diagnostic() {
+        for value in ["a".repeat(128), "é".repeat(64)] {
+            let mut input = operation(
+                "session.start",
+                json!({"conversation_id":"host-conversation"}),
+            );
+            input["request_id"] = json!(value);
+            assert!(rejected(input, true).get("invalid_field").is_none());
+        }
+
+        let over_bytes = "é".repeat(65);
+        let mut input = operation(
+            "session.start",
+            json!({"conversation_id":"host-conversation"}),
+        );
+        input["request_id"] = json!(over_bytes.clone());
+        let error = rejected(input, true);
+        assert_eq!(error["invalid_field"], "/request_id");
+        assert_eq!(error["constraint"], "x-identity-utf8.maxUtf8Bytes");
+        assert_eq!(error["maximum_bytes"], 128);
+        assert!(!error.to_string().contains(&over_bytes));
+
+        let with_control = "request\u{0007}sentinel";
+        let mut input = operation(
+            "session.start",
+            json!({"conversation_id":"host-conversation"}),
+        );
+        input["request_id"] = json!(with_control);
+        let error = rejected(input, true);
+        assert_eq!(error["invalid_field"], "/request_id");
+        assert_eq!(error["constraint"], "x-identity-utf8.rejectControls");
+        assert!(!error.to_string().contains(with_control));
     }
 
     #[test]

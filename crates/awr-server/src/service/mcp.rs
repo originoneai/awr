@@ -737,12 +737,15 @@ fn catalog() -> Vec<Tool> {
                 {"required":["category"]},{"required":["include_denies"]}
             ]}}}
     ]);
+    let identity_runtime = json!({"maxUtf8Bytes":128,"rejectControls":true});
     let mut command = json!({"type":"object","additionalProperties":false,
     "required":["protocol_version","request_id","op","workstream_id","work_id","coordinator_epoch","expected_project_revision","expected_authority_version","expected_ownership_version","expected_contract_hash","args"],
     "properties":{
         "protocol_version":{"type":"integer","const":1},
         "op":{"type":"string","enum":WorkstreamCommand::OPERATIONS},
-        "request_id":{"type":"string","maxLength":128},
+        "request_id":{"type":"string","maxLength":128,
+            "x-identity-utf8":identity_runtime.clone(),
+            "description":"Caller-supplied request identifier. JSON Schema maxLength counts characters; runtime also limits this identity to 128 UTF-8 bytes and rejects control characters."},
         "workstream_id":{"type":"string"},"work_id":{"type":"string"},
         "coordinator_epoch":{"type":"string"},
         "expected_project_revision":{"type":"string","pattern":"^(0|[1-9][0-9]*)$"},
@@ -753,9 +756,11 @@ fn catalog() -> Vec<Tool> {
     }});
     command["properties"]["args"]["properties"] = json!({
         "conversation_id":{"type":"string","minLength":1,"maxLength":128,
-            "description":"Required for session.start. Stable host conversation, thread, or session identifier used to bind the durable AWR session."},
+            "x-identity-utf8":identity_runtime.clone(),
+            "description":"Required for session.start. Stable host conversation, thread, or session identifier used to bind the durable AWR session. JSON Schema maxLength counts characters; runtime also limits this identity to 128 UTF-8 bytes and rejects control characters."},
         "session_id":{"type":"string","minLength":1,"maxLength":128,
-            "description":"Required for session lifecycle, claim, execution, handoff, evidence, review, rework and delivery actions except session.start. Use the owned session_id from work.next resume or session.inspect."},
+            "x-identity-utf8":identity_runtime.clone(),
+            "description":"Required for session lifecycle, claim, execution, handoff, evidence, review, rework and delivery actions except session.start. Use the owned session_id from work.next resume or session.inspect. JSON Schema maxLength counts characters; runtime also limits this identity to 128 UTF-8 bytes and rejects control characters."},
         "dirty_tree":{"type":"boolean","description":"Required for evidence.submit and delivery.evidence.submit. Report the actual workspace state; not a completion or trust assertion."},
         "payload":{"description":"Required for evidence.submit; generic evidence accepts any JSON value. Agent completion requires an object with passed=true and output_digest (64 lowercase hex) matching the successful execution report."},
         "artifact_text":{"type":["string","null"],"maxLength":1048576,
@@ -820,17 +825,16 @@ fn catalog() -> Vec<Tool> {
         "executor_stopped":{"type":["boolean","null"],"description":"Explicit caller assertion that this execution has actually stopped; never infer from tests or disconnection."},
         "no_external_effects":{"type":["boolean","null"],"description":"Explicit caller assertion that the run has no external effects to settle; repository delivery remains a separate flow."}
     }});
-    command["allOf"] = json!([
-        {
-            "if":{
-                "properties":{"op":{"const":"session.start"}},
-                "required":["op"]
-            },
-            "then":{
-                "properties":{"args":{"required":["conversation_id"]}}
-            }
-        }
-    ]);
+    let fields = &command["properties"]["args"]["properties"];
+    let start_properties = json!({
+        "conversation_id":fields["conversation_id"].clone(),
+        "client_info":fields["client_info"].clone()
+    });
+    command["allOf"] = json!([{
+        "if":{"properties":{"op":{"const":"session.start"}},"required":["op"]},
+        "then":{"properties":{"args":{"type":"object","additionalProperties":false,
+            "required":["conversation_id"],"properties":start_properties}}}
+    }]);
     add_execution_prepare_input_schema(&mut command);
     add_execution_start_input_schema(&mut command);
     add_checkpoint_input_schema(&mut command);
@@ -841,11 +845,13 @@ fn catalog() -> Vec<Tool> {
     add_baseline_transition_schema(&mut command);
     add_execution_report_input_schema(&mut command);
     command["properties"]["args"]["properties"]["assignee_person_id"] = json!({"type":"string","minLength":1,"maxLength":128,
-        "description":"task.assign: active eligible project member. This is a target, never the acting identity."});
+        "x-identity-utf8":identity_runtime.clone(),
+        "description":"task.assign: active eligible project member. This is a target, never the acting identity. JSON Schema maxLength counts characters; runtime also limits this identity to 128 UTF-8 bytes and rejects control characters."});
     command["properties"]["args"]["properties"]["expected_responsibility_version"] = json!({"type":"string","pattern":"^(0|[1-9][0-9]*)$",
         "description":"Use work.prepare responsibility.version; distinct from source ownership and temporary lease versions."});
     command["properties"]["args"]["properties"]["assignment_request_key"] = json!({"type":"string","minLength":1,"maxLength":128,
-        "description":"task.accept_assignment: current responsibility.pending.transfer_request_key. Not a handoff ID."});
+        "x-identity-utf8":identity_runtime,
+        "description":"task.accept_assignment: current responsibility.pending.transfer_request_key. Not a handoff ID. JSON Schema maxLength counts characters; runtime also limits this identity to 128 UTF-8 bytes and rejects control characters."});
     command["properties"]["args"]["properties"]["ttl_seconds"] =
         json!({"type":"integer","minimum":1,"maximum":3600});
     let old_description = command["properties"]["args"]["description"]
@@ -855,10 +861,11 @@ fn catalog() -> Vec<Tool> {
     command["properties"]["args"]["description"] = json!(format!(
         "task.assign: assignee_person_id, expected_responsibility_version; no execution session required. An optional session_id must include expected_session_version. task.accept_assignment / task.claim_available: session_id, expected_session_version, expected_responsibility_version, expected_work_version, ttl_seconds; acceptance also requires assignment_request_key. Assignment may reserve blocked dependencies; taking work cannot bypass them. Ownership and the coordination lease commit atomically; execution.start remains separate. {old_description}"
     ));
-    for (op, required) in [
+    for (op, required, optional) in [
         (
             "task.assign",
             vec!["assignee_person_id", "expected_responsibility_version"],
+            vec!["session_id", "expected_session_version"],
         ),
         (
             "task.accept_assignment",
@@ -870,6 +877,7 @@ fn catalog() -> Vec<Tool> {
                 "ttl_seconds",
                 "assignment_request_key",
             ],
+            vec![],
         ),
         (
             "task.claim_available",
@@ -880,11 +888,37 @@ fn catalog() -> Vec<Tool> {
                 "expected_work_version",
                 "ttl_seconds",
             ],
+            vec![],
         ),
     ] {
+        let properties: serde_json::Map<String, Value> = {
+            let fields = &command["properties"]["args"]["properties"];
+            required
+                .iter()
+                .chain(&optional)
+                .map(|name| ((*name).to_owned(), fields[*name].clone()))
+                .collect()
+        };
+        let session_pair = (op == "task.assign").then(|| {
+            json!([
+                {"if":{"required":["session_id"]},
+                    "then":{"required":["expected_session_version"]}},
+                {"if":{"required":["expected_session_version"]},
+                    "then":{"required":["session_id"]}}
+            ])
+        });
+        let mut args = json!({
+            "type":"object",
+            "additionalProperties":false,
+            "required":required,
+            "properties":properties
+        });
+        if let Some(session_pair) = session_pair {
+            args["allOf"] = session_pair;
+        }
         command["allOf"].as_array_mut().unwrap().push(json!({
             "if":{"properties":{"op":{"const":op}},"required":["op"]},
-            "then":{"properties":{"args":{"required":required}}}}));
+            "then":{"properties":{"args":args}}}));
     }
     let access_plan = json!({
         "type":"object","additionalProperties":false,
@@ -1665,10 +1699,50 @@ mod tests {
             props["expected_responsibility_version"]["pattern"],
             "^(0|[1-9][0-9]*)$"
         );
-        for op in [
-            "task.assign",
-            "task.accept_assignment",
-            "task.claim_available",
+        for field in ["session_id", "assignee_person_id", "assignment_request_key"] {
+            assert_eq!(props[field]["maxLength"], 128, "{field}");
+            assert_eq!(props[field]["x-identity-utf8"]["maxUtf8Bytes"], 128);
+            assert_eq!(props[field]["x-identity-utf8"]["rejectControls"], true);
+            let description = props[field]["description"].as_str().unwrap();
+            assert!(
+                description.contains("maxLength counts characters"),
+                "{field}"
+            );
+            assert!(description.contains("128 UTF-8 bytes"), "{field}");
+            assert!(
+                description.contains("rejects control characters"),
+                "{field}"
+            );
+        }
+        for (op, required_fields, optional_fields) in [
+            (
+                "task.assign",
+                vec!["assignee_person_id", "expected_responsibility_version"],
+                vec!["session_id", "expected_session_version"],
+            ),
+            (
+                "task.accept_assignment",
+                vec![
+                    "session_id",
+                    "expected_session_version",
+                    "expected_responsibility_version",
+                    "expected_work_version",
+                    "ttl_seconds",
+                    "assignment_request_key",
+                ],
+                vec![],
+            ),
+            (
+                "task.claim_available",
+                vec![
+                    "session_id",
+                    "expected_session_version",
+                    "expected_responsibility_version",
+                    "expected_work_version",
+                    "ttl_seconds",
+                ],
+                vec![],
+            ),
         ] {
             assert!(
                 tool.description.as_deref().unwrap().contains(op),
@@ -1686,13 +1760,45 @@ mod tests {
                 .iter()
                 .find(|v| v["if"]["properties"]["op"]["const"] == op)
                 .unwrap();
-            let required = condition["then"]["properties"]["args"]["required"]
-                .as_array()
-                .unwrap();
+            let args = &condition["then"]["properties"]["args"];
+            assert_eq!(args["additionalProperties"], false, "{op}");
+            let required = args["required"].as_array().unwrap();
             assert!(required.contains(&json!("expected_responsibility_version")));
+            assert_eq!(
+                required
+                    .iter()
+                    .map(|field| field.as_str().unwrap())
+                    .collect::<std::collections::BTreeSet<_>>(),
+                required_fields.iter().copied().collect(),
+                "{op}"
+            );
+            assert_eq!(
+                args["properties"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<std::collections::BTreeSet<_>>(),
+                required_fields
+                    .iter()
+                    .chain(&optional_fields)
+                    .copied()
+                    .collect(),
+                "{op}"
+            );
+            assert!(args["properties"].get("conversation_id").is_none());
             if op == "task.assign" {
                 assert!(required.contains(&json!("assignee_person_id")));
                 assert!(!required.contains(&json!("session_id")));
+                assert_eq!(
+                    args["allOf"],
+                    json!([
+                        {"if":{"required":["session_id"]},
+                            "then":{"required":["expected_session_version"]}},
+                        {"if":{"required":["expected_session_version"]},
+                            "then":{"required":["session_id"]}}
+                    ])
+                );
             } else {
                 for key in [
                     "session_id",
@@ -1706,6 +1812,7 @@ mod tests {
                     required.contains(&json!("assignment_request_key")),
                     op == "task.accept_assignment"
                 );
+                assert!(args.get("allOf").is_none());
             }
         }
     }
@@ -2597,7 +2704,7 @@ mod tests {
             (
                 PgError::missing_session_start_conversation_id(),
                 "args.conversation_id is required for session.start",
-                "stable, nonempty host conversation, thread, or session identifier",
+                "identifier that is at most 128 UTF-8 bytes and contains no control characters",
             ),
             (
                 PgError::work_next_selectors(),
@@ -2626,6 +2733,14 @@ mod tests {
             .into_iter()
             .find(|tool| tool.name == "awr_team_command")
             .unwrap();
+        let request_id = &command.input_schema["properties"]["request_id"];
+        assert_eq!(request_id["maxLength"], 128);
+        assert_eq!(request_id["x-identity-utf8"]["maxUtf8Bytes"], 128);
+        assert_eq!(request_id["x-identity-utf8"]["rejectControls"], true);
+        let request_description = request_id["description"].as_str().unwrap();
+        assert!(request_description.contains("maxLength counts characters"));
+        assert!(request_description.contains("128 UTF-8 bytes"));
+        assert!(request_description.contains("rejects control characters"));
         let args = &command.input_schema["properties"]["args"];
         let conversation_id = &args["properties"]["conversation_id"];
         assert_eq!(conversation_id["type"], "string");
@@ -2634,6 +2749,11 @@ mod tests {
         let description = conversation_id["description"].as_str().unwrap();
         assert!(description.contains("Required for session.start"));
         assert!(description.contains("Stable host conversation, thread, or session identifier"));
+        assert!(description.contains("maxLength counts characters"));
+        assert!(description.contains("128 UTF-8 bytes"));
+        assert!(description.contains("rejects control characters"));
+        assert_eq!(conversation_id["x-identity-utf8"]["maxUtf8Bytes"], 128);
+        assert_eq!(conversation_id["x-identity-utf8"]["rejectControls"], true);
         assert!(args.get("required").is_none());
 
         let condition = command.input_schema["allOf"]
@@ -2646,6 +2766,17 @@ mod tests {
         assert_eq!(
             condition["then"]["properties"]["args"]["required"],
             json!(["conversation_id"])
+        );
+        let start_args = &condition["then"]["properties"]["args"];
+        assert_eq!(start_args["additionalProperties"], false);
+        assert_eq!(
+            start_args["properties"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<std::collections::BTreeSet<_>>(),
+            std::collections::BTreeSet::from(["client_info", "conversation_id"])
         );
     }
 
