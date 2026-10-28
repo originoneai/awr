@@ -24,12 +24,32 @@ pub(super) use input_diagnostics::add_input_diagnostic;
 
 /// Publish an operation field in the flat args vocabulary.
 /// An existing shared definition stays in place: a later operation branch may be narrower.
+/// When the validation shape is identical, retain operation guidance supplied by
+/// the later publisher instead of losing it to initialization order.
 fn publish_missing_flat_arg(command: &mut Value, name: &str, schema: Value) {
-    command["properties"]["args"]["properties"]
+    let properties = command["properties"]["args"]["properties"]
+        .as_object_mut()
+        .unwrap();
+    let Some(existing) = properties.get_mut(name) else {
+        properties.insert(name.to_owned(), schema);
+        return;
+    };
+    if existing.get("description").is_some() || schema.get("description").is_none() {
+        return;
+    }
+    let mut existing_shape = existing.clone();
+    let mut published_shape = schema.clone();
+    existing_shape
         .as_object_mut()
         .unwrap()
-        .entry(name.to_owned())
-        .or_insert(schema);
+        .remove("description");
+    published_shape
+        .as_object_mut()
+        .unwrap()
+        .remove("description");
+    if existing_shape == published_shape {
+        existing["description"] = schema["description"].clone();
+    }
 }
 
 fn add_execution_prepare_input_schema(command: &mut Value) {
@@ -3058,6 +3078,48 @@ mod tests {
             schema_bytes < 6500,
             "Operation discovery must remain bounded: {schema_bytes}"
         );
+    }
+
+    #[test]
+    fn review_evidence_guidance_survives_neutral_delivery_field_publication() {
+        let command = catalog()
+            .into_iter()
+            .find(|tool| tool.name == "awr_team_command")
+            .unwrap()
+            .input_schema;
+        let flat = &command["properties"]["args"]["properties"];
+        let guidance = flat["evidence_id"]["description"]
+            .as_str()
+            .expect("flat evidence_id must retain review/completion guidance");
+        for operation in [
+            "review.open",
+            "delivery.submit_and_request_review",
+            "work.complete",
+            "delivery.finalize",
+        ] {
+            assert!(guidance.contains(operation), "{operation}: {guidance}");
+            let args = command["allOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|branch| branch["if"]["properties"]["op"]["const"] == operation)
+                .map(|branch| &branch["then"]["properties"]["args"])
+                .unwrap_or_else(|| panic!("missing operation-specific schema: {operation}"));
+            assert_eq!(args["additionalProperties"], false, "{operation}");
+            assert!(
+                args["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("evidence_id")),
+                "{operation}"
+            );
+            let evidence = &args["properties"]["evidence_id"];
+            assert_eq!(evidence["type"], "string", "{operation}");
+            assert_eq!(evidence["minLength"], 1, "{operation}");
+            assert_eq!(evidence["maxLength"], 128, "{operation}");
+            assert!(args["properties"].get("event_id").is_none(), "{operation}");
+        }
+        assert_ne!(flat["evidence_id"], flat["event_id"]);
     }
 
     #[tokio::test]
