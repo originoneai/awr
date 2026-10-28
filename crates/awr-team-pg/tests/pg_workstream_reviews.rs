@@ -167,6 +167,15 @@ async fn insert_currently_bound_execution(
     let claim_id = format!("{id}-claim");
     admin
         .execute(
+            "INSERT INTO awr_team.work_runtime(
+                tenant_id,project_id,scope_id,work_id,state,work_version,last_fence)
+             VALUES($1,$2,'main','a','claimed',1,$3)",
+            &[&TENANT, &PROJECT, &fence],
+        )
+        .await
+        .unwrap();
+    admin
+        .execute(
             "INSERT INTO awr_team.claims(
                 tenant_id,project_id,id,scope_id,work_id,session_id,actor_id,
                 fence,expires_at,state,workstream_id,ownership_version,coordinator_epoch)
@@ -447,6 +456,53 @@ async fn execution_consistency_rejects_success_claim_for_failed_execution_before
 }
 
 #[tokio::test]
+async fn execution_consistency_rejects_opposite_terminal_claim_without_result_digests() {
+    let (_guard, admin, _, store) = setup().await;
+    seed_review_actors(&admin).await;
+    let prepared = prepare(&store, A, "a").await;
+    let contract_hash = prepared["data"]["contract_hash"].as_str().unwrap();
+    let counts = "SELECT (SELECT count(*) FROM awr_team.evidence),
+                         (SELECT count(*) FROM awr_team.artifacts)";
+    let before = admin.query_one(counts, &[]).await.unwrap();
+
+    for (index, state, claimed_success) in [
+        (0, "failed", true),
+        (1, "cancelled", true),
+        (2, "succeeded", false),
+    ] {
+        let execution_id = format!("exec-terminal-null-{index}");
+        insert_execution(&admin, &execution_id, contract_hash, 1, state).await;
+        admin
+            .execute(
+                "UPDATE awr_team.executions SET result_digest=NULL WHERE id=$1",
+                &[&execution_id],
+            )
+            .await
+            .unwrap();
+        let error = run_err(
+            &store,
+            RUNNER,
+            &format!("terminal-null-{index}"),
+            "evidence.submit",
+            json!({
+                "session_id":"session-runner",
+                "expected_session_version":"1",
+                "payload":{"passed":claimed_success},
+                "artifact_hex":hex_encode(format!("terminal-{index}").as_bytes()),
+                "input_digest":INPUT,
+                "dirty_tree":false,
+                "execution_id":execution_id,
+            }),
+        )
+        .await;
+        assert!(matches!(error, PgError::EvidenceInvalid), "{state}");
+        let after = admin.query_one(counts, &[]).await.unwrap();
+        assert_eq!(after.get::<_, i64>(0), before.get::<_, i64>(0), "{state}");
+        assert_eq!(after.get::<_, i64>(1), before.get::<_, i64>(1), "{state}");
+    }
+}
+
+#[tokio::test]
 async fn execution_consistency_keeps_nonterminal_execution_unverifiable_without_success() {
     let (_guard, admin, _, store) = setup().await;
     seed_review_actors(&admin).await;
@@ -547,7 +603,7 @@ async fn execution_consistency_inspects_legacy_contradiction_without_receipt_upg
     let evidence =
         store.query(TENANT, PROJECT, A, inspect).await.unwrap()["data"]["evidence"].clone();
     let consistency = &evidence["execution_consistency"];
-    assert_eq!(consistency["status"], "contradicted");
+    assert_eq!(consistency["status"], "contradicted", "{consistency}");
     assert_eq!(consistency["claimed_success"], true);
     assert_eq!(consistency["execution_success"], false);
     assert_eq!(consistency["recorded_state"], "failed");

@@ -321,6 +321,35 @@ fn assess_execution_consistency(
         }
         _ => return contradiction("execution_input_digest_mismatch"),
     }
+    let execution_success = match state {
+        "succeeded" => Some(true),
+        "failed" | "cancelled" => Some(false),
+        _ => None,
+    };
+    let Some(execution_success) = execution_success else {
+        // Caller-managed reports deliberately remain unknown until
+        // reconciliation and do not persist their reported result digest on
+        // the execution row. Preserve that historical submission path as
+        // unverifiable instead of treating the absent terminal fact as a
+        // contradiction.
+        return ExecutionConsistencyAssessment::unverifiable(
+            binding.claimed_success,
+            Some(state),
+            None,
+            "execution_not_terminal",
+        );
+    };
+    if binding
+        .claimed_success
+        .is_some_and(|claimed_success| claimed_success != execution_success)
+    {
+        return ExecutionConsistencyAssessment::contradicted(
+            binding.claimed_success,
+            state,
+            Some(execution_success),
+            "caller_claim_disagrees_with_execution",
+        );
+    }
     match (
         binding.execution_result_digest,
         execution.result_digest.as_deref(),
@@ -336,19 +365,6 @@ fn assess_execution_consistency(
         }
         _ => return contradiction("execution_result_digest_mismatch"),
     }
-    let execution_success = match state {
-        "succeeded" => Some(true),
-        "failed" | "cancelled" => Some(false),
-        _ => None,
-    };
-    let Some(execution_success) = execution_success else {
-        return ExecutionConsistencyAssessment::unverifiable(
-            binding.claimed_success,
-            Some(state),
-            None,
-            "execution_not_terminal",
-        );
-    };
     let Some(claimed_success) = binding.claimed_success else {
         return ExecutionConsistencyAssessment::unverifiable(
             None,
@@ -357,14 +373,6 @@ fn assess_execution_consistency(
             "caller_success_not_boolean",
         );
     };
-    if claimed_success != execution_success {
-        return ExecutionConsistencyAssessment::contradicted(
-            Some(claimed_success),
-            state,
-            Some(execution_success),
-            "caller_claim_disagrees_with_execution",
-        );
-    }
     ExecutionConsistencyAssessment {
         status: "consistent",
         claimed_success: Some(claimed_success),
@@ -477,6 +485,44 @@ mod execution_consistency_tests {
     }
 
     #[test]
+    fn known_terminal_outcome_contradicts_opposite_claim_without_result_digests() {
+        for (state, claim, execution_success) in [
+            ("failed", true, false),
+            ("cancelled", true, false),
+            ("succeeded", false, true),
+        ] {
+            let mut execution = execution(state);
+            execution.result_digest = None;
+            let mut binding = binding(Some(claim));
+            binding.execution_result_digest = None;
+            let assessment = assess_execution_consistency(&binding, Some(&execution));
+            assert_eq!(assessment.status, "contradicted", "{state}");
+            assert_eq!(assessment.claimed_success, Some(claim), "{state}");
+            assert_eq!(
+                assessment.execution_success,
+                Some(execution_success),
+                "{state}"
+            );
+            assert_eq!(
+                assessment.reason, "caller_claim_disagrees_with_execution",
+                "{state}"
+            );
+        }
+        for (state, claim) in [("failed", Some(false)), ("succeeded", None)] {
+            let mut execution = execution(state);
+            execution.result_digest = None;
+            let mut binding = binding(claim);
+            binding.execution_result_digest = None;
+            let assessment = assess_execution_consistency(&binding, Some(&execution));
+            assert_eq!(assessment.status, "unverifiable", "{state}");
+            assert_eq!(
+                assessment.reason, "execution_result_digest_not_recorded",
+                "{state}"
+            );
+        }
+    }
+
+    #[test]
     fn nonterminal_and_unbound_executions_are_unverifiable() {
         for state in ["prepared", "running", "unknown"] {
             let assessment =
@@ -485,6 +531,15 @@ mod execution_consistency_tests {
             assert_eq!(assessment.execution_success, None, "{state}");
             assert_eq!(assessment.reason, "execution_not_terminal", "{state}");
         }
+        let mut unknown_without_committed_result = execution("unknown");
+        unknown_without_committed_result.result_digest = None;
+        let assessment = assess_execution_consistency(
+            &binding(Some(true)),
+            Some(&unknown_without_committed_result),
+        );
+        assert_eq!(assessment.status, "unverifiable");
+        assert_eq!(assessment.execution_success, None);
+        assert_eq!(assessment.reason, "execution_not_terminal");
         let mut unbound = binding(Some(true));
         unbound.execution_id = None;
         let assessment = assess_execution_consistency(&unbound, Some(&execution("succeeded")));
