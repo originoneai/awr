@@ -170,6 +170,129 @@ pub(crate) struct ExecutionAccess {
     pub reconcile: bool,
 }
 
+#[derive(Clone, Copy, Default)]
+struct EffectiveGrantPolicy {
+    write: bool,
+    manage: bool,
+    execution: ExecutionAccess,
+}
+
+fn effective_grant_policy(
+    actor_kind: &str,
+    role: &str,
+    business_roles: Option<&std::collections::BTreeSet<awr_team::BusinessRole>>,
+    can_write: bool,
+    can_manage: bool,
+    can_attest_execution: bool,
+    can_reconcile_execution: bool,
+) -> EffectiveGrantPolicy {
+    let write = can_write && membership_allows_write(role);
+    let manage = can_manage
+        && membership_allows_manage(role)
+        && role_ceiling_allows(business_roles, awr_team::Action::AccessManageProject);
+    let execution = role_ceiling_allows(
+        business_roles,
+        awr_team::Action::ExecutionRequestAndReportOwn,
+    );
+    EffectiveGrantPolicy {
+        write,
+        manage,
+        execution: ExecutionAccess {
+            attest: write && execution && actor_kind == "system" && can_attest_execution,
+            reconcile: write
+                && manage
+                && execution
+                && matches!(actor_kind, "system" | "human")
+                && can_reconcile_execution,
+        },
+    }
+}
+
+/// Fixed-size, exact-stream diagnosis of configured reconciliation authority.
+/// Credential rows prove only that a usable binding is configured; they cannot
+/// prove that a bearer remains available to an operator or client.
+pub(crate) async fn reconciliation_coverage(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    auth: &ReaderAuthority,
+    stream: Id,
+) -> PgResult<serde_json::Value> {
+    let authority_version = i64::try_from(auth.catalog.get(stream)?.authority_version).ok();
+    let rows = tx
+        .query(
+            "SELECT DISTINCT m.role,m.membership_version>=1,m.business_roles,a.kind,
+                t.status='active',a.status='active',
+                COALESCE(g.authority_version=$4,FALSE),
+                g.can_read,g.can_write,g.can_manage,
+                EXISTS (SELECT 1 FROM awr_team.credentials c
+                  WHERE c.tenant_id=g.tenant_id AND c.actor_id=g.actor_id
+                    AND c.client_id=g.client_id
+                    AND (c.project_id IS NULL OR c.project_id=g.project_id)
+                    AND c.revoked_at IS NULL
+                    AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())
+                    AND length(c.id) BETWEEN 1 AND 128
+                    AND c.id ~ '^[A-Za-z0-9_-]+$'
+                    AND c.secret_hash ~ '^sha256:[0-9a-f]{64}$') AS credential_valid
+             FROM awr_team.workstream_grants g
+             JOIN awr_team.project_memberships m
+               ON m.tenant_id=g.tenant_id AND m.project_id=g.project_id
+              AND m.actor_id=g.actor_id
+             JOIN awr_team.actors a
+               ON a.tenant_id=g.tenant_id AND a.id=g.actor_id
+             JOIN awr_team.tenants t ON t.id=g.tenant_id
+             WHERE g.tenant_id=$1 AND g.project_id=$2 AND g.workstream_id=$3
+               AND g.active AND g.can_reconcile_execution",
+            &[&tenant, &project, &stream.to_string(), &authority_version],
+        )
+        .await?;
+    let candidate_present = !rows.is_empty();
+    let covered = rows.iter().any(|row| {
+        let Ok(business_roles) = decode_business_roles(row.get(2)) else {
+            return false;
+        };
+        let policy = effective_grant_policy(
+            row.get::<_, String>(3).as_str(),
+            row.get::<_, String>(0).as_str(),
+            business_roles.as_ref(),
+            row.get(8),
+            row.get(9),
+            false,
+            true,
+        );
+        row.get::<_, bool>(1)
+            && row.get::<_, bool>(4)
+            && row.get::<_, bool>(5)
+            && row.get::<_, bool>(6)
+            && row.get::<_, bool>(7)
+            && row.get::<_, bool>(10)
+            && policy.write
+            && policy.manage
+            && policy.execution.reconcile
+    });
+    let can_administer = matches!(auth.actor_kind.as_str(), "human" | "system")
+        && auth
+            .access
+            .authorize(&auth.catalog, stream, WorkstreamAction::Manage)
+            .is_ok();
+    let configuration_guidance = (!covered && can_administer).then(|| json!({
+        "action": "Ask the schema owner to use awr-server access inspect, preview/apply and outcome; issue a token only if needed.",
+        "recheck": "After credential, membership, grant or workstream authority changes, inspect coverage again."
+    }));
+    Ok(json!({
+        "status": if covered {
+            "covered"
+        } else if candidate_present {
+            "insufficient"
+        } else {
+            "none"
+        },
+        "basis": "configured_authority",
+        "live_access_not_guaranteed": true,
+        "configuration_guidance": configuration_guidance
+    }))
+}
+
 /// Resolve every security fact in the action transaction. Row locks make a
 /// concurrent disable/revocation linearize before or after the read, never in
 /// its middle. No caller-supplied actor, client or grant is accepted as proof.
@@ -327,34 +450,22 @@ async fn authenticate_reference(
             .parse()
             .map_err(|_| PgError::Forbidden)?;
         let authority: i64 = row.get(1);
-        let write = row.get::<_, bool>(3) && membership_allows_write(&role);
-        let manage = row.get::<_, bool>(4)
-            && membership_allows_manage(&role)
-            && role_ceiling_allows(
-                business_roles.as_ref(),
-                awr_team::Action::AccessManageProject,
-            );
-        let execution = role_ceiling_allows(
+        let policy = effective_grant_policy(
+            &actor_kind,
+            &role,
             business_roles.as_ref(),
-            awr_team::Action::ExecutionRequestAndReportOwn,
+            row.get(3),
+            row.get(4),
+            row.get(6),
+            row.get(7),
         );
-        execution_access.insert(
-            id,
-            ExecutionAccess {
-                attest: write && execution && actor_kind == "system" && row.get::<_, bool>(6),
-                reconcile: write
-                    && manage
-                    && execution
-                    && matches!(actor_kind.as_str(), "system" | "human")
-                    && row.get::<_, bool>(7),
-            },
-        );
+        execution_access.insert(id, policy.execution);
         grants.push(WorkstreamGrant {
             workstream_id: id,
             authority_version: authority.try_into().map_err(|_| PgError::Forbidden)?,
             read: row.get(2),
-            write,
-            manage,
+            write: policy.write,
+            manage: policy.manage,
         });
         grant_versions.insert(id, row.get(5));
     }

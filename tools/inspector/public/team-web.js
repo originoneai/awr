@@ -43,6 +43,16 @@
     }
   }
 
+  function reconciliationCoverageMessageKey(work) {
+    const execution = work?.execution;
+    if (execution?.state !== 'unknown' && execution?.recovery_blocked !== true
+      && work?.attention !== 'recovery_required') return null;
+    const coverage = execution?.reconciliation_coverage || work.reconciliation_coverage;
+    const status = ['covered', 'insufficient', 'none', 'unsupported', 'unknown'].includes(coverage?.status)
+      ? coverage.status : 'unknown';
+    return 'feedback.reconciliation_coverage_' + status;
+  }
+
   function createTeamWeb(opts) {
     const i18n = opts.i18n;
     const $ = opts.$;
@@ -988,6 +998,7 @@
       }
       if (w.execution) {
         const execution = w.execution;
+        const coverageMessage = reconciliationCoverageMessageKey(w);
         const dimension = key => t(i18n, execution[key] == null ? 'feedback.dimension_unknown'
           : 'feedback.' + key + (execution[key] ? '_yes' : '_no'));
         const known = (prefix, value) => {
@@ -1001,7 +1012,8 @@
           ['settlement_scope', known('scope_', execution.settlement_scope)],
           ['recovery', known('recovery_', execution.recovery_cause)],
           ['previous_epoch', execution.previous_epoch_review_required == null ? t(i18n, 'feedback.dimension_unknown')
-            : t(i18n, execution.previous_epoch_review_required ? 'feedback.epoch_review_required' : 'feedback.epoch_review_not_required')]]);
+            : t(i18n, execution.previous_epoch_review_required ? 'feedback.epoch_review_required' : 'feedback.epoch_review_not_required')],
+          ...(coverageMessage ? [['reconciliation_coverage', t(i18n, coverageMessage)]] : [])]);
         group.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.execution_dimensions')));
         group.appendChild(el('p', { class: 'sub' }, t(i18n, 'feedback.execution_model_unknown')));
         if (execution.state === 'unknown' && execution.controlled_confirmation_available !== true
@@ -1013,6 +1025,8 @@
                 : 'feedback.reconciliation_authority_unknown')));
         }
       }
+      if (!w.execution && reconciliationCoverageMessageKey(w))
+        section('recovery', [['reconciliation_coverage', t(i18n, reconciliationCoverageMessageKey(w))]]);
       if (w.checkpoint) {
         const history = el('details', { class: 'feedback-history' });
         history.appendChild(el('summary', null, t(i18n, 'feedback.handoff_history')));
@@ -1450,7 +1464,7 @@
     };
   }
 
-  const api = { createTeamWeb, PROGRESS_REFRESH_MS, DETAIL_TIMEOUT_MS };
+  const api = { createTeamWeb, reconciliationCoverageMessageKey, PROGRESS_REFRESH_MS, DETAIL_TIMEOUT_MS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.AWR_TEAM_WEB = api;
 })(typeof window !== 'undefined' ? window : globalThis);

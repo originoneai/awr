@@ -2525,6 +2525,120 @@ async fn baseline_transition_discovery_and_report_are_concise_and_transport_stab
     client.cancel().await.unwrap();
 }
 
+#[tokio::test]
+async fn recovery_coverage_is_scoped_and_consistent_over_http_and_mcp() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    admin.batch_execute("INSERT INTO awr_team.work_runtime(tenant_id,project_id,scope_id,work_id,state,recovery_blocked) VALUES('reader-tenant','reader-project','main','a','pending',true)").await.unwrap();
+    let recovery_query = json!({"protocol_version":1,"op":"work.recovery","work_id":"a"});
+    let recovery = call(&client, "awr_team_query", recovery_query.clone(), false).await;
+    assert_eq!(
+        recovery["data"]["reconciliation_coverage"]["status"],
+        "none"
+    );
+    assert!(
+        recovery["data"]["guidance"]["action"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("schema owner"),
+        "guidance={}",
+        recovery["data"]["guidance"]
+    );
+    let recovery_http: Value = http()
+        .post(format!("{}/one/query", server.url))
+        .bearer_auth(A)
+        .json(&recovery_query)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        recovery["data"]["reconciliation_coverage"],
+        recovery_http["data"]["reconciliation_coverage"]
+    );
+    admin
+        .batch_execute("UPDATE awr_team.work_runtime SET recovery_blocked=false WHERE work_id='a'")
+        .await
+        .unwrap();
+    let taken = call(&client,"awr_team_command",serde_json::to_value(command(&prepared(&client).await,"coverage-take","claim.acquire",
+        json!({"session_id":"session-a","expected_session_version":"1","expected_work_version":"0","ttl_seconds":60}))).unwrap(),false).await;
+    let claim = &taken["receipt"]["data"];
+    let p = prepared(&client).await;
+    let intent = call(&client,"awr_team_command",serde_json::to_value(command(&p,"coverage-intent","execution.prepare",
+        json!({"session_id":"session-a","expected_session_version":"1","claim_id":claim["claim_id"],
+        "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
+        "expected_work_version":p["data"]["runtime"]["work_version"],"input_digest":"a".repeat(64),"declared_scope":["src"]}))).unwrap(),false).await;
+    let e = &intent["receipt"]["data"];
+    let q = json!({"protocol_version":1,"op":"execution.inspect","work_id":"a","execution_id":e["execution_id"]});
+    let before = call(&client, "awr_team_query", q.clone(), false).await;
+    assert_eq!(before["data"]["reconciliation_coverage"]["status"], "none");
+    const OP: &str =
+        "awr1.coverage-credential.dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    admin.batch_execute("INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status)
+        VALUES('reader-tenant','coverage-operator','human','Recovery operator','active');
+        INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role)
+        VALUES('reader-tenant','reader-project','coverage-operator','admin');
+        INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,
+        can_read,can_write,can_manage,can_reconcile_execution)
+        VALUES('reader-tenant','reader-project','coverage-operator','coverage-client','00000000000000000000000001',1,true,true,true,true)").await.unwrap();
+    admin.execute("INSERT INTO awr_team.credentials(tenant_id,id,actor_id,client_id,secret_hash,project_id)
+        VALUES($1,'coverage-credential','coverage-operator','coverage-client',$2,$3)",
+        &[&TENANT,&awr_team_pg::workstream_credential_hash(OP).unwrap(),&PROJECT]).await.unwrap();
+    let mcp = call(&client, "awr_team_query", q.clone(), false).await;
+    let http_response: Value = http()
+        .post(format!("{}/one/query", server.url))
+        .bearer_auth(A)
+        .json(&q)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(mcp["data"]["reconciliation_coverage"]["status"], "covered");
+    assert_eq!(
+        mcp["data"]["reconciliation_coverage"],
+        http_response["data"]["reconciliation_coverage"]
+    );
+    let coverage = mcp["data"]["reconciliation_coverage"].to_string();
+    for private in [
+        "coverage-operator",
+        "coverage-client",
+        "coverage-credential",
+        OP,
+    ] {
+        assert!(!coverage.contains(private));
+    }
+    let denied = http()
+        .post(format!("{}/one/query", server.url))
+        .bearer_auth(NONE)
+        .json(&q)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), 403);
+    admin.batch_execute("UPDATE awr_team.executions SET state='succeeded',terminal_reported=true WHERE work_id='a'; UPDATE awr_team.work_runtime SET recovery_blocked=true WHERE work_id='a'").await.unwrap();
+    let terminal = call(&client, "awr_team_query", recovery_query, false).await;
+    assert_eq!(
+        terminal["data"]["reconciliation_coverage"]["status"],
+        "covered"
+    );
+    assert!(
+        terminal["data"]["guidance"]["action"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("does not guarantee availability")
+    );
+}
+
 async fn recovery_over_transports(trusted: bool, mode: &str, previous_epoch: bool) {
     let (_guard, admin, _, store) = setup().await;
     enable_writes(&admin).await;

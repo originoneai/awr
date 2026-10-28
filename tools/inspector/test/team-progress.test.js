@@ -75,6 +75,31 @@ test('current viewer reconciliation authority preserves true, false and legacy u
   }
 });
 
+test('reconciliation coverage exposes only the bounded configured-authority diagnosis', () => {
+  for (const status of ['covered', 'insufficient', 'none']) {
+    const coverage = mapObservation({ execution: { state: 'unknown', reconciliation_coverage: {
+      status, basis: 'configured_authority', live_access_not_guaranteed: true,
+      actor_id: 'private-actor', client_id: 'private-client', credential: 'secret-value',
+    } } }).execution.reconciliation_coverage;
+    assert.deepEqual(coverage, { status, basis: 'configured_authority', live_access_not_guaranteed: true });
+    assert.ok(!JSON.stringify(coverage).includes('private-'));
+    assert.ok(!JSON.stringify(coverage).includes('secret-value'));
+  }
+  assert.deepEqual(mapObservation({ execution: { state: 'unknown' } }).execution.reconciliation_coverage,
+    { status: 'unsupported' });
+  const noExecution = mapObservation({ runtime: { state: 'in_progress', recovery_blocked: true },
+    reconciliation_coverage: { status: 'none', basis: 'configured_authority', live_access_not_guaranteed: true } });
+  assert.equal(noExecution.execution, null);
+  assert.equal(noExecution.attention, 'recovery_required');
+  assert.equal(noExecution.reconciliation_coverage.status, 'none');
+  for (const malformed of [null, [], { status: 'mystery', basis: 'configured_authority', live_access_not_guaranteed: true },
+    { status: 'none', basis: 'credential_presence', live_access_not_guaranteed: true },
+    { status: 'none', basis: 'configured_authority', live_access_not_guaranteed: false }]) {
+    assert.deepEqual(mapObservation({ execution: { state: 'unknown', reconciliation_coverage: malformed },
+      error: { code: 'Forbidden' } }).execution.reconciliation_coverage, { status: 'unknown' });
+  }
+});
+
 test('elapsed claim stays separate from settled execution and current intake guidance', () => {
   for (const state of ['succeeded', 'failed', 'cancelled']) {
     const guidance = { code: 'task_intake', action: { op: 'claim.acquire', note: 'Acquire a fresh claim' } };

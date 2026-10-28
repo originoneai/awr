@@ -576,6 +576,23 @@ latest reviewed receipt. The new receipt is `reconcile`, never `trusted_executor
 the original observation and executor attribution remain in history. Claim expiry
 does not prevent settlement. Current workstream and ownership binding still apply.
 
+`execution.inspect` reports `reconciliation_coverage` for its authorized
+workstream. `covered` means at least one currently eligible actor, client,
+credential and grant is configured; `insufficient` means an explicit recovery
+grant and membership exist but no candidate currently satisfies the full authority
+checks; `none` means no such candidate is identified in the workstream. This aggregate does not identify
+members or disclose credentials. It cannot prove that the person or system still
+holds its credential or is available to respond. A missing field on an older
+service means this diagnosis is unsupported, not that the workstream lacks a
+recovery operator.
+
+If coverage is missing, a schema owner can inspect and provision the narrowly
+scoped recovery grant through the [operator access flow](team-operator-access.md).
+Ordinary project-admin HTTP/MCP access cannot grant this special authority.
+Reinspect after configuration, credential, membership, grant or workstream
+authority changes; reconciliation still requires a fresh authenticated session
+and the current execution, work and receipt preconditions.
+
 After a coordinator epoch change, ordinary attestation and reconciliation without
 an explicit review reject the old execution. A current recovery operator may add:
 

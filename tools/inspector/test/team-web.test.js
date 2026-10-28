@@ -256,6 +256,44 @@ test('unresolved execution guidance renders the current viewer authority tri-sta
   }
 });
 
+test('reconciliation coverage copy is localized and shown only for uncertain recovery', () => {
+  const { reconciliationCoverageMessageKey } = require('../public/team-web.js');
+  const en = require('../public/locales/en.js');
+  const zh = require('../public/locales/zh-CN.js');
+  for (const status of ['covered', 'insufficient', 'none', 'unsupported', 'unknown']) {
+    const key = `feedback.reconciliation_coverage_${status}`;
+    assert.equal(reconciliationCoverageMessageKey({ execution: { state: 'unknown',
+      reconciliation_coverage: { status } } }), key);
+    assert.ok(en[key]); assert.ok(zh[key]);
+    assert.ok(!/actor_id|client_id|secret/i.test(en[key] + zh[key]));
+  }
+  assert.equal(reconciliationCoverageMessageKey({ attention: 'recovery_required', execution: {
+    state: 'succeeded', recovery_blocked: true, reconciliation_coverage: { status: 'none' },
+  } }), 'feedback.reconciliation_coverage_none');
+  assert.equal(reconciliationCoverageMessageKey({ execution: { state: 'succeeded',
+    reconciliation_coverage: { status: 'none' } } }), null);
+  assert.equal(reconciliationCoverageMessageKey({ execution: { state: 'unknown',
+    reconciliation_coverage: { status: 'unexpected' } } }), 'feedback.reconciliation_coverage_unknown');
+  assert.equal(reconciliationCoverageMessageKey({ attention: 'recovery_required', execution: null,
+    reconciliation_coverage: { status: 'none' } }), 'feedback.reconciliation_coverage_none');
+  assert.ok(en['ui.network_reconciliation_coverage']);
+  assert.ok(zh['ui.network_reconciliation_coverage']);
+});
+
+test('blocked work without an execution displays recovery coverage', () => {
+  const { install } = require('./fixtures/dom-stub');
+  const { createTeamWeb } = require('../public/team-web');
+  const catalog = require('../public/locales/en');
+  const { document } = install();
+  const ui = createTeamWeb({ i18n: { t: key => catalog[key] || key }, $: id => document.getElementById(id) });
+  const work = { key: 'WORK', title: 'Work', workstream_id: 'stream', detail_loaded: true,
+    status: 'in_progress', attention: 'recovery_required', depends_on: [], acceptance: [],
+    execution: null, reconciliation_coverage: { status: 'none' } };
+  Object.assign(ui.state, { session: { session_id: 'session' }, projectKey: 'project', selected: 'WORK', works: [work] });
+  ui.render();
+  assert.ok(document.getElementById('teamDetail').textContent.includes(catalog['feedback.reconciliation_coverage_none']));
+});
+
 test('rewriteOwnedCookiePath maps upstream Path=/v1/web to /api/team', () => {
   const { rewriteOwnedCookiePath } = require('../team-bridge');
   const set = rewriteOwnedCookiePath(
