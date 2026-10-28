@@ -409,6 +409,14 @@ async fn submission_discovery_is_lazy_read_only_scoped_bounded_and_provider_neut
             .contains("never mean missing")
     );
     assert_eq!(rework_business_snapshot(&admin).await, before);
+    let mut q = query("delivery.neutral.inspect");
+    q.work_id = Some("a".into());
+    let ordinary = reads.query(TENANT, PROJECT, A, q).await.unwrap();
+    assert_eq!(ordinary["data"]["submission"]["delivery_required"], false);
+    assert_eq!(
+        ordinary["data"]["submission"]["guidance"]["action"]["op"],
+        "delivery.neutral.inspect"
+    );
     for (bearer, work) in [(B, "a"), (NONE, "a"), (A, "b-private"), (A, "missing")] {
         assert!(matches!(
             describe(&reads, bearer, work).await,
@@ -435,6 +443,10 @@ async fn submission_discovery_is_lazy_read_only_scoped_bounded_and_provider_neut
     assert_eq!(
         ordinary["data"]["submission"]["describe_query"],
         json!({"protocol_version":1,"op":"delivery.submission.describe","work_id":"a"})
+    );
+    assert_eq!(
+        ordinary["data"]["submission"]["guidance"]["action"]["op"],
+        "delivery.neutral.inspect"
     );
     let mut q = query("delivery.submission.describe");
     q.work_id = Some("a".into());
@@ -519,7 +531,12 @@ async fn configured_and_disabled_delivery_refuse_report_only_review_atomically()
     );
     assert_eq!(
         state["submission"]["guidance"]["action"]["op"],
-        "delivery.neutral.inspect"
+        "delivery.submission.describe"
+    );
+    assert_eq!(state["submission"]["guidance"]["action"]["work_id"], "a");
+    assert_eq!(
+        state["submission"]["describe_query"],
+        json!({"protocol_version":1,"op":"delivery.submission.describe","work_id":"a"})
     );
     assert_eq!(state["acceptance_ready"], false);
 }

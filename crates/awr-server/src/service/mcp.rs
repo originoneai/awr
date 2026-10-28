@@ -688,7 +688,7 @@ fn catalog() -> Vec<Tool> {
         "work_id":{"type":"string","description":"Omit for work.next and work.inbox."},
         "session_id":{"type":"string","description":"Omit for work.next and work.inbox; session.inspect requires this selector."},
         "request_id":{"type":"string","description":"For delivery.integration.inspect, use IntegrationRequest.request_id (receipt data.integration_id). For delivery.neutral.outcome, use the original client command retry ID."},"claim_id":{"type":"string","minLength":1,"maxLength":128,
-            "description":"Required for claim.inspect; use claim_id from the claim.acquire receipt. Omit for other operations. The runtime bound is 128 UTF-8 bytes; JSON Schema maxLength counts characters."},
+            "description":"Required for claim.inspect together with either work_id or session_id; use claim_id from the claim.acquire receipt. Omit for other operations. The runtime bound is 128 UTF-8 bytes; JSON Schema maxLength counts characters."},
         "execution_id":{"type":"string"},"handoff_id":{"type":"string","description":"Actual handoff.id from a proposal receipt or handoff.inspect; events.list item IDs identify events, not handoffs. Read the exact handoff before receiving it."},
         "evidence_id":{"type":"string","minLength":1,"maxLength":128,
             "description":"Required for evidence.inspect; omit for other operations."},
@@ -2077,6 +2077,8 @@ mod tests {
                 .unwrap()
                 .contains("claim.inspect")
         );
+        let claim_description = claim_id["description"].as_str().unwrap();
+        assert!(claim_description.contains("either work_id or session_id"));
         let review_round_id = &schema["properties"]["review_round_id"];
         assert_eq!(review_round_id["type"], "string");
         assert_eq!(review_round_id["minLength"], 1);
