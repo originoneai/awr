@@ -126,6 +126,7 @@ async fn setup_local(repo: &git::GitFixture) -> integration_fixture::Fixture {
                     principal_client_id: "cli-worker".into(),
                     fact_source: FactSource::AdapterObservation,
                     enabled: true,
+                    source_locator: None,
                 },
             },
         )

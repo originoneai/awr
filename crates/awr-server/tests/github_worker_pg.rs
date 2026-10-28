@@ -98,6 +98,7 @@ async fn setup_github() -> (receive::Fixture, integration_fixture::Fixture) {
                     principal_client_id: "cli-worker".into(),
                     fact_source: FactSource::AdapterObservation,
                     enabled: true,
+                    source_locator: None,
                 },
             },
         )
@@ -678,6 +679,7 @@ async fn disabled_mapping_stops_provider_reads_and_cannot_be_reopened() {
         principal_client_id: "cli-worker".into(),
         fact_source: FactSource::AdapterObservation,
         enabled: false,
+        source_locator: None,
     };
     f.store
         .configure_connector(
@@ -1037,6 +1039,7 @@ async fn signed_http_notifications_cannot_restore_revoked_credentials_or_disable
                             principal_client_id: "cli-worker".into(),
                             fact_source: FactSource::AdapterObservation,
                             enabled: false,
+                            source_locator: None,
                         },
                     },
                 )
@@ -1231,6 +1234,7 @@ async fn physical_source_sample(
                     principal_client_id: "cli-worker".into(),
                     fact_source: FactSource::AdapterObservation,
                     enabled: true,
+                    source_locator: None,
                 },
             },
         )

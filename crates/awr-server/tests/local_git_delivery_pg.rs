@@ -114,6 +114,7 @@ async fn setup_local() -> Fixture {
                     principal_client_id: "cli-local-observer".into(),
                     fact_source: FactSource::AdapterObservation,
                     enabled: true,
+                    source_locator: None,
                 },
             },
         )
@@ -248,6 +249,7 @@ async fn provenance_forgery_and_revoked_worker_cannot_create_adapter_facts() {
                     principal_client_id: "cli-a".into(),
                     fact_source: FactSource::CallerDeclared,
                     enabled: true,
+                    source_locator: None,
                 },
             },
         )
@@ -673,6 +675,7 @@ async fn replaced_connector_requires_new_bound_proof_and_disabled_mapping_stops_
                         principal_client_id: "cli-local-observer".into(),
                         fact_source: FactSource::AdapterObservation,
                         enabled,
+                        source_locator: None,
                     },
                 },
             )

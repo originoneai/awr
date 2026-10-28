@@ -4,6 +4,102 @@ use crate::workstream_auth::ReaderAuthority;
 use serde_json::json;
 use tokio_postgres::Transaction;
 
+fn unavailable_source(reason: &str) -> Value {
+    json!({"available":false,"reason":reason,"awr_checkout_verified":false,
+        "note":"No source locator is disclosed. Use the current authorized delivery configuration; do not guess a remote, server path or tree."})
+}
+
+async fn source_navigation(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    auth: &ReaderAuthority,
+    candidate: &DeliveryCandidate,
+    current: bool,
+    inspectable: bool,
+) -> PgResult<Value> {
+    if !inspectable {
+        return Ok(unavailable_source("submission_unavailable"));
+    }
+    if !current {
+        return Ok(unavailable_source("candidate_stale"));
+    }
+    let Some(revision) = candidate.binding.source_revision.as_ref() else {
+        return Ok(unavailable_source("source_revision_missing"));
+    };
+    if !matches!(
+        revision.format,
+        awr_team::delivery::RevisionFormat::GitSha1 | awr_team::delivery::RevisionFormat::GitSha256
+    ) {
+        return Ok(unavailable_source("source_revision_unsupported"));
+    }
+    let rows = tx
+        .query(
+            "SELECT id,version,enabled,coordinator_epoch,source_locator_contract,
+                source_locator_url,source_locator_connector_version
+         FROM awr_team.delivery_connectors
+         WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND workstream_id=$4
+           AND resource=$5 AND enabled AND coordinator_epoch=$6 ORDER BY id LIMIT 2",
+            &[
+                &tenant,
+                &project,
+                &candidate.binding.work_id.as_str(),
+                &candidate.binding.workstream_id,
+                &revision.resource,
+                &auth.epoch,
+            ],
+        )
+        .await?;
+    if rows.is_empty() {
+        let matching: bool = tx
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM awr_team.delivery_connectors
+                 WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND workstream_id=$4
+                   AND resource=$5)",
+                &[
+                    &tenant,
+                    &project,
+                    &candidate.binding.work_id.as_str(),
+                    &candidate.binding.workstream_id,
+                    &revision.resource,
+                ],
+            )
+            .await?
+            .get(0);
+        return Ok(unavailable_source(if matching {
+            "connector_stale"
+        } else {
+            "connector_resource_mismatch"
+        }));
+    }
+    if rows.len() != 1 {
+        return Ok(unavailable_source("connector_ambiguous"));
+    }
+    let row = &rows[0];
+    let version: i64 = row.get(1);
+    let contract: Option<String> = row.get(4);
+    let url: Option<String> = row.get(5);
+    let locator_connector_version: Option<i64> = row.get(6);
+    let (Some(contract), Some(url), Some(locator_connector_version)) =
+        (contract, url, locator_connector_version)
+    else {
+        return Ok(unavailable_source("source_locator_not_configured"));
+    };
+    if locator_connector_version != version {
+        return Ok(unavailable_source("source_locator_stale"));
+    }
+    if contract != super::connectors::GIT_SOURCE_CONTRACT
+        || !super::connectors::safe_source_url(&url)
+    {
+        return Ok(unavailable_source("source_locator_unsupported"));
+    }
+    Ok(json!({"available":true,"contract":contract,"url":url,
+        "connector_id":row.get::<_,String>(0),"connector_version":version.to_string(),
+        "resource":revision.resource,"exact_revision":revision,
+        "awr_checkout_verified":false,
+        "note":"This credential-free locator names the candidate's exact Git revision. AWR has not fetched or verified a checkout, complete tree, advertised ref or server support for fetching an unadvertised SHA; verify the fetched object equals exact_revision."}))
+}
+
 pub(crate) async fn configured(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -90,6 +186,9 @@ pub(crate) async fn inspect(
         "candidate_current":false,"candidate_digest":null,"source_revision":null,
         "artifacts":[],"reason":"candidate_missing","approval_inferred":false,
         "repository_verification_inferred":false});
+    if expected_bundle.is_some() {
+        result["source_navigation"] = unavailable_source("candidate_missing");
+    }
     let Some(row) = row else {
         result["reason"] = json!(if selected.is_some() {
             "evidence_missing"
@@ -273,6 +372,18 @@ pub(crate) async fn inspect(
         }
     }
     result["guidance"] = guidance(work, result["reason"].as_str().unwrap());
+    if expected_bundle.is_some() {
+        result["source_navigation"] = source_navigation(
+            tx,
+            tenant,
+            project,
+            auth,
+            &candidate,
+            current,
+            result["inspectable"] == true,
+        )
+        .await?;
+    }
     if result["inspectable"] == true && current {
         let first = &result["artifacts"][0];
         let query = first

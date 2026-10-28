@@ -446,6 +446,7 @@ async fn source_activation_uses_new_admission_while_retaining_original_dispatch_
                     principal_client_id: "cli-worker".into(),
                     fact_source: FactSource::AdapterObservation,
                     enabled: true,
+                    source_locator: None,
                 },
             },
         )
@@ -587,6 +588,7 @@ async fn resource_remapping_does_not_schedule_an_old_repository_effect() {
                     principal_client_id: "cli-worker".into(),
                     fact_source: FactSource::AdapterObservation,
                     enabled: true,
+                    source_locator: None,
                 },
             },
         )

@@ -4,6 +4,102 @@ use awr_team_pg::{EXPECTED_SCHEMA_VERSION, check_schema, migrate};
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn schema55_adds_nullable_version_bound_source_locator_atomically() {
+    let (_g, admin, _) = common::historical_team_schema(54).await;
+    let ddl = include_str!("../migrations/20261010000055_delivery_source_locator.sql");
+    assert!(
+        admin
+            .batch_execute(&ddl.replace(
+                "UPDATE awr_team.schema_state",
+                "SELECT 1/0; UPDATE awr_team.schema_state"
+            ))
+            .await
+            .is_err()
+    );
+    admin.batch_execute("ROLLBACK").await.unwrap();
+    let rollback = admin
+        .query_one(
+            "SELECT (SELECT version FROM awr_team.schema_state),
+         (SELECT count(*) FROM information_schema.columns WHERE table_schema='awr_team'
+          AND table_name='delivery_connectors' AND column_name LIKE 'source_locator_%')",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rollback.get::<_, i32>(0), 54);
+    assert_eq!(rollback.get::<_, i64>(1), 0);
+
+    migrate(&admin).await.unwrap();
+    migrate(&admin).await.unwrap();
+    check_schema(&admin).await.unwrap();
+    let upgraded = admin
+        .query_one(
+            "SELECT (SELECT version FROM awr_team.schema_state),
+         (SELECT count(*) FROM information_schema.columns WHERE table_schema='awr_team'
+          AND table_name='delivery_connectors' AND column_name LIKE 'source_locator_%'),
+         (SELECT count(*) FROM pg_constraint WHERE conname='delivery_source_locator_complete')",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(upgraded.get::<_, i32>(0), EXPECTED_SCHEMA_VERSION);
+    assert_eq!(upgraded.get::<_, i64>(1), 3);
+    assert_eq!(upgraded.get::<_, i64>(2), 1);
+
+    admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('locator-tenant','Locator','active');
+        INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+            VALUES('locator-tenant','locator-project','locator','team','locator-epoch','active');
+        INSERT INTO awr_team.work_items(tenant_id,project_id,id,external_key)
+            VALUES('locator-tenant','locator-project','locator-work','locator-work');
+        INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status)
+            VALUES('locator-tenant','locator-actor','system','Locator actor','active');
+        INSERT INTO awr_team.delivery_connectors(tenant_id,project_id,id,scope_id,workstream_id,work_id,
+            provider,resource,principal_actor_id,principal_client_id,fact_source,version,coordinator_epoch,enabled,configured_by_actor_id)
+            VALUES('locator-tenant','locator-project','locator-connector','main','locator-stream','locator-work',
+                'reference','fixture://locator','locator-actor','locator-client','adapter_observation',1,'locator-epoch',true,'locator-actor')").await.unwrap();
+    let contract = "awr-git-source-v1";
+    let url = "https://git.example.invalid/team/repository.git";
+    for (name, contract_value, url_value, version_value) in [
+        ("contract_only", Some(contract), None, None),
+        ("url_only", None, Some(url), None),
+        ("version_only", None, None, Some(1_i64)),
+        ("contract_and_url", Some(contract), Some(url), None),
+        ("contract_and_version", Some(contract), None, Some(1_i64)),
+        ("url_and_version", None, Some(url), Some(1_i64)),
+    ] {
+        let error = admin
+            .execute(
+                "UPDATE awr_team.delivery_connectors
+            SET source_locator_contract=$1,source_locator_url=$2,source_locator_connector_version=$3
+            WHERE id='locator-connector'",
+                &[&contract_value, &url_value, &version_value],
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.code(),
+            Some(&tokio_postgres::error::SqlState::CHECK_VIOLATION),
+            "partial locator must be rejected: {name}"
+        );
+    }
+    assert_eq!(
+        admin
+            .execute(
+                "UPDATE awr_team.delivery_connectors
+        SET source_locator_contract=$1,source_locator_url=$2,source_locator_connector_version=$3
+        WHERE id='locator-connector'",
+                &[&Some(contract), &Some(url), &Some(1_i64)]
+            )
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(admin.execute("UPDATE awr_team.delivery_connectors
+        SET source_locator_contract=NULL,source_locator_url=NULL,source_locator_connector_version=NULL
+        WHERE id='locator-connector'", &[]).await.unwrap(),1);
+}
+
+#[tokio::test]
 async fn schema54_late_policy_upgrade_is_atomic_and_preserves_v1_history() {
     let (_g, admin, _) = common::historical_team_schema(53).await;
     admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('upgrade-tenant','Upgrade','active');
@@ -493,7 +589,7 @@ async fn schema49_delivery_requests_upgrade_atomically_without_fabricating_legac
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
     migrate(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 54);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 55);
     for (table, original) in tables.into_iter().zip(originals) {
         let mut rows = admin.query_one(&format!("SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM awr_team.{table} t"), &[])
             .await.unwrap().get::<_,Value>(0);
@@ -1180,7 +1276,7 @@ async fn schema40_upgrade_preserves_legacy_provenance_and_is_atomic_and_repeatab
     assert_eq!(before, unchanged);
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 54);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 55);
     let after: Value = admin
         .query_one(
             "SELECT to_jsonb(e) FROM awr_team.executions e WHERE id='legacy-run'",

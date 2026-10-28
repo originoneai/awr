@@ -176,6 +176,28 @@ the replacement. `max_context_bytes` bounds review metadata (65,536 bytes by
 default; at most 262,144); increase it on `ResponseTooLarge` rather than treating
 an incomplete read as complete.
 
+When the current candidate uses a Git SHA-1 or SHA-256 revision and exactly one
+current connector for the same work, workstream and opaque resource has a
+current `awr-git-source-v1` locator, `review.inspect` also returns
+`review.submission.source_navigation`. It contains the credential-free HTTPS or
+canonical `ssh://git@...` remote, connector version and the candidate's
+`exact_revision`. It deliberately contains no server checkout path, credential,
+private key, inferred tree URL or invented branch. The reader must verify that
+the fetched object equals `exact_revision`. Some Git servers refuse direct fetch
+of an unadvertised SHA; the delivery candidate currently has no candidate fetch
+ref, and its integration target reference must not be substituted. Consequently
+the locator does not promise that a fetch will succeed. `awr_checkout_verified`
+is always false: navigation is not proof that AWR fetched or verified a checkout,
+complete tree, manifest, tests or approval.
+
+The same `review.inspect` permission gate protects the locator. It is not added
+to ordinary neutral-delivery description reads. Missing configuration, a stale
+candidate, stale connector/locator version, a disabled or old-epoch connector,
+resource mismatch, multiple current matches and non-Git revisions return
+`source_navigation.available: false` with a reason and no URL. Callers must fix
+the managed configuration or submission instead of guessing a remote or falling
+back to a server or peer path.
+
 Opening or approving an incomplete/stale submission returns HTTP 409/MCP
 `ReviewSubmissionIncomplete`. The response names the precise `reason` for the
 submitted evidence (for example `candidate_not_bound_in_evidence` when the

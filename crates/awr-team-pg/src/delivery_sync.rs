@@ -54,6 +54,26 @@ pub struct DeliveryConnectorMapping {
     pub principal_client_id: String,
     pub fact_source: FactSource,
     pub enabled: bool,
+    /// Omission preserves the current setting for compatibility with existing clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_locator: Option<DeliverySourceLocatorUpdate>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeliverySourceLocator {
+    /// Closed locator contract; currently only `awr-git-source-v1` is supported.
+    pub contract: String,
+    /// Credential-free HTTPS or canonical `ssh://git@host/path` Git remote.
+    /// The server returns it but never fetches it.
+    pub url: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DeliverySourceLocatorUpdate {
+    Set { locator: DeliverySourceLocator },
+    Clear,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

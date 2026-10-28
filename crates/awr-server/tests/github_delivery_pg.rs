@@ -109,6 +109,7 @@ async fn setup_github() -> Fixture {
                     principal_client_id: "cli-github-observer".into(),
                     fact_source: FactSource::AdapterObservation,
                     enabled: true,
+                    source_locator: None,
                 },
             },
         )
@@ -635,6 +636,7 @@ async fn truncated_inventory_with_absent_expected_slots_refuses_before_query() {
                     principal_client_id: "cli-github-observer".into(),
                     fact_source: FactSource::AdapterObservation,
                     enabled: true,
+                    source_locator: None,
                 },
             },
         )
