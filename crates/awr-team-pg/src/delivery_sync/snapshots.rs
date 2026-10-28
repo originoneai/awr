@@ -500,6 +500,7 @@ impl DeliverySyncStore {
             "acceptance_ready":false,"execution_authorized":false,"source_synchronized":false});
         result["submission"]["describe_query"] = json!({"protocol_version":1,
             "op":"delivery.submission.describe","work_id":work});
+        route_missing_candidate_guidance(&mut result);
         if result["submission"]["delivery_required"] == true {
             let checks: Value = tx
                 .query_one(
@@ -523,6 +524,15 @@ impl DeliverySyncStore {
             return Err(PgError::ResponseTooLarge);
         }
         Ok(result)
+    }
+}
+
+fn route_missing_candidate_guidance(result: &mut Value) {
+    if result["submission"]["delivery_required"] == true
+        && result["candidate"].is_null()
+        && result["submission"]["reason"] == "candidate_missing"
+    {
+        result["submission"]["guidance"]["action"]["op"] = json!("delivery.submission.describe");
     }
 }
 
@@ -550,4 +560,44 @@ async fn submission_connectors(
         "current_epoch":r.get::<_,String>(6)==epoch
     })).collect();
     Ok((connectors, truncated))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn inspection(delivery_required: bool, candidate: Value, reason: &str) -> Value {
+        json!({
+            "candidate":candidate,
+            "submission":{
+                "delivery_required":delivery_required,
+                "reason":reason,
+                "guidance":{"action":{"op":"delivery.neutral.inspect","work_id":"work-a"}}
+            }
+        })
+    }
+
+    #[test]
+    fn missing_required_candidate_routes_to_submission_description_for_the_same_work() {
+        let mut result = inspection(true, Value::Null, "candidate_missing");
+        route_missing_candidate_guidance(&mut result);
+        assert_eq!(
+            result["submission"]["guidance"]["action"],
+            json!({"op":"delivery.submission.describe","work_id":"work-a"})
+        );
+    }
+
+    #[test]
+    fn normal_and_existing_candidate_guidance_stays_unchanged() {
+        for mut result in [
+            inspection(false, Value::Null, "candidate_missing"),
+            inspection(true, json!({"binding":"candidate-a"}), "evidence_missing"),
+        ] {
+            route_missing_candidate_guidance(&mut result);
+            assert_eq!(
+                result["submission"]["guidance"]["action"]["op"],
+                "delivery.neutral.inspect"
+            );
+        }
+    }
 }

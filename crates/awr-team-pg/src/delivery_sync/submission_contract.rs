@@ -123,10 +123,14 @@ pub(super) fn describe(mut inspection: Value) -> PgResult<Value> {
             "target":"Use the authorized connector resource and project target reference. Observe its exact current revision, or confirmed absence; errors and inaccessible targets never mean missing. An exact precondition's revision.resource must equal target.resource."},
         "manifest_hash_codec":context["manifest_hash_codec"],
         "evidence":{"command":"delivery.evidence.submit",
+            "required_args":["session_id","expected_session_version","delivery_payload","dirty_tree"],
+            "policy_required_args":{"execution_id":"Required for every simulated-member evidence item; obtain the actual execution ID from work.observe."},
             "candidate_binding":"Set args.delivery_payload.delivery_candidate_digest to data.candidate_digest in the successful selection receipt (receipt.data.candidate_digest over MCP/HTTP). delivery_payload is a required JSON object; optional passed (boolean) and output_digest (64 lowercase hex) share the same object and other keys are preserved unchanged.",
             "artifacts":"Submit each manifest entry's exact bytes separately with artifact_text (UTF-8) or artifact_hex in delivery.evidence.submit. The server assigns stored artifact IDs and measures digests; the manifest's logical IDs do not replace them. Measured SHA-256 and length must match. A local path or report alone is insufficient.",
             "next_query":{"protocol_version":1,"op":"delivery.neutral.inspect","work_id":inspection["work_id"]},
-            "review_command":"delivery.submit_and_request_review"},
+            "review_command":"delivery.submit_and_request_review",
+            "review_required_args":["session_id","expected_session_version","evidence_id"],
+            "review_binding":"Use the primary report's submitted evidence_id; do not reuse the evidence submission payload. Refresh the session version before opening review."},
         "guidance":{"when":"Preparing a version-bound submission for neutral delivery",
             "because":"The input contract describes structure; only authorized project publication and actual bytes establish material facts",
             "action":"Publish through the shared channel and target disclosed in this project's working agreement, then select the measured candidate and submit readable bound evidence. If the channel or target is unavailable, record the missing prerequisite for the supervisor; do not guess or search server configuration, peer workspaces or implementation.",
@@ -149,4 +153,43 @@ pub(super) fn describe(mut inspection: Value) -> PgResult<Value> {
             "recheck_on":"Published commit, authorized remote, target revision or connector configuration changes"});
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn submission_description_exposes_evidence_and_review_inputs() {
+        let workstream = Id::new();
+        let inspection = json!({
+            "work_id":"work", "workstream_id":workstream.to_string(),
+            "source_snapshot_id":"snapshot", "coordinator_epoch":"epoch",
+            "project_revision":"1", "candidate":null, "connectors":[],
+            "connectors_truncated":false,
+            "submission":{"candidate_context":context("tenant", "project", workstream, "work", &"a".repeat(64), json!([]))}
+        });
+        let result = describe(inspection).unwrap();
+        assert_eq!(
+            result["evidence"]["required_args"],
+            json!([
+                "session_id",
+                "expected_session_version",
+                "delivery_payload",
+                "dirty_tree"
+            ])
+        );
+        assert!(
+            result["evidence"]["policy_required_args"]["execution_id"]
+                .as_str()
+                .unwrap()
+                .contains("simulated-member")
+        );
+        assert_eq!(
+            result["evidence"]["review_required_args"],
+            json!(["session_id", "expected_session_version", "evidence_id"])
+        );
+        assert_eq!(result["evidence"]["next_query"]["work_id"], "work");
+        assert_eq!(result["execution_authorized"], false);
+    }
 }
