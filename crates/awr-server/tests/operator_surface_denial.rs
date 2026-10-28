@@ -281,11 +281,20 @@ async fn http_and_mcp_clients_cannot_reach_operator_only_surfaces() {
     assert!(names.contains(&"awr_team_query".into()));
     assert!(names.contains(&"awr_team_command".into()));
     assert!(names.contains(&"awr_team_access_preview".into()));
+    let contract = tools
+        .iter()
+        .find(|tool| tool.name == "awr_team_input_contract")
+        .unwrap();
+    assert_eq!(
+        contract.annotations.as_ref().unwrap().read_only_hint,
+        Some(true)
+    );
     // Public planning tools are project-scoped; they are not owner operations.
     // Assert the approved surface, rather than a historical tool count.
     let approved = [
         "awr_team_query",
         "awr_team_command",
+        "awr_team_input_contract",
         "awr_team_access_inspect",
         "awr_team_access_preview",
         "awr_team_access_apply",

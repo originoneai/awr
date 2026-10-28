@@ -767,7 +767,26 @@ async fn missing_or_tampered_inspection_receipts_never_transfer_responsibility()
     let (_guard, admin, _, store) = setup().await;
     let mut t = trial(&admin, &store, false).await;
     inspect(&store, &mut t).await;
+    let mut omitted = accept(&store, &t).await;
+    omitted.request_id = "omitted-inspection-selector".into();
+    omitted
+        .args
+        .as_object_mut()
+        .unwrap()
+        .remove("inspection_request_id");
+    assert!(matches!(
+        store.commands().execute(TENANT, PROJECT, B, omitted).await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    let mut null = accept(&store, &t).await;
+    null.request_id = "null-inspection-selector".into();
+    null.args["inspection_request_id"] = Value::Null;
+    assert!(matches!(
+        store.commands().execute(TENANT, PROJECT, B, null).await,
+        Err(PgError::PreconditionsChanged)
+    ));
     let mut missing = accept(&store, &t).await;
+    missing.request_id = "uncommitted-inspection-selector".into();
     missing.args["inspection_request_id"] = json!("not-committed");
     assert!(matches!(
         store.commands().execute(TENANT, PROJECT, B, missing).await,

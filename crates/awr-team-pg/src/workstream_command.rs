@@ -301,11 +301,11 @@ impl WorkstreamCommand {
 mod tests {
     use super::*;
 
-    fn session_start(args: Value) -> WorkstreamCommand {
+    fn command(op: &str, args: Value) -> WorkstreamCommand {
         WorkstreamCommand {
             protocol_version: 1,
             request_id: "request-1".into(),
-            op: "session.start".into(),
+            op: op.into(),
             workstream_id: Id::from(1),
             work_id: "work-1".into(),
             coordinator_epoch: "epoch-1".into(),
@@ -315,6 +315,10 @@ mod tests {
             expected_contract_hash: "a".repeat(64),
             args,
         }
+    }
+
+    fn session_start(args: Value) -> WorkstreamCommand {
+        command("session.start", args)
     }
 
     #[test]
@@ -339,6 +343,163 @@ mod tests {
             session_start(json!({"conversation_id":"stable-thread-1"}))
                 .action()
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn strict_command_options_accept_explicit_null_without_relaxing_pair_conditions() {
+        let facts = json!({
+            "outcome":"failed","input_digest":"a".repeat(64),"output_digest":null,
+            "environment_digest":"b".repeat(64),"observed_paths":[],"note":"failed",
+            "executor_stopped":null
+        });
+        let candidate = json!({
+            "binding":{
+                "tenant_id":"tenant","project_id":"project","scope_id":"main",
+                "workstream_id":"00000000000000000000000001","work_id":"work-1",
+                "candidate_id":"candidate","candidate_version":"1",
+                "contract_hash":"a".repeat(64),"manifest_digest":"b".repeat(64),
+                "source_revision":null,"required_checks":[],
+                "target":{"resource":"repo","reference":null,
+                    "precondition":{"kind":"missing"}}
+            },
+            "manifest":{"entries":[{"artifact_id":"report","sha256":"c".repeat(64),
+                "byte_length":"0","locator":"artifact://report"}]}
+        });
+        let accepted = [
+            (
+                "task.assign",
+                json!({"assignee_person_id":"person","expected_responsibility_version":"0",
+                    "session_id":null,"expected_session_version":null}),
+            ),
+            (
+                "task.assign",
+                json!({"assignee_person_id":"person","expected_responsibility_version":"0",
+                    "session_id":null}),
+            ),
+            (
+                "task.assign",
+                json!({"assignee_person_id":"person","expected_responsibility_version":"0",
+                    "expected_session_version":null}),
+            ),
+            (
+                "execution.attest",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "execution_id":"execution","expected_execution_version":"1",
+                    "reviewed_receipt_id":null,"facts":facts}),
+            ),
+            (
+                "execution.reconcile",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "execution_id":"execution","expected_execution_version":"1",
+                    "expected_work_version":"1","reviewed_receipt_id":null,
+                    "clear_recovery_block":false,"previous_epoch_recovery":null,"facts":facts}),
+            ),
+            (
+                "handoff.propose",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "handoff_id":"handoff","kind":"execution","to_person_id":"person",
+                    "package":null,"proposed_successor":null,"proposer_execution_id":null,
+                    "proposer_fence":null,"expires_at_ms":null,"now_ms":null}),
+            ),
+            (
+                "handoff.inspect",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "handoff_id":"handoff","expected_handoff_version":"1",
+                    "inspector_person_id":"person","now_ms":null}),
+            ),
+            (
+                "handoff.accept",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "handoff_id":"handoff","expected_handoff_version":"1",
+                    "acceptor_person_id":"person",
+                    "successor_execution":{"kind":"person","person_id":"person"},
+                    "inspection_request_id":"inspect-request","prior_execution_stopped":null,
+                    "prior_reconciled":null,"context_reprepared":null,
+                    "expected_current_fence":null,"now_ms":null}),
+            ),
+            (
+                "handoff.reject",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "handoff_id":"handoff","expected_handoff_version":"1",
+                    "by_person_id":"person","reason":"rejected","now_ms":null}),
+            ),
+            (
+                "handoff.cancel",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "handoff_id":"handoff","expected_handoff_version":"1",
+                    "by_person_id":"person","reason":"cancelled","now_ms":null}),
+            ),
+            (
+                "handoff.timeout",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "handoff_id":"handoff","expected_handoff_version":"1","now_ms":null}),
+            ),
+            (
+                "delivery.register_pr",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "repository":"owner/repo","pr_number":1,"pr_url":"https://example.test/pr/1",
+                    "head_sha":"a".repeat(40),"fact_source":"operator_recorded_observation",
+                    "observed_at":"2026-01-01T00:00:00Z","merge_sha":null,
+                    "test_evidence_id":null,"author_actor_id":null,"owner_person_id":null,
+                    "executor_actor_id":null,"gh_submitted":null,"gh_approved":null,"gh_merged":null}),
+            ),
+            (
+                "delivery.observe_pr",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "delivery_id":"delivery","expected_head_sha":"a".repeat(40),
+                    "fact_source":"operator_recorded_observation","observed_at":"x".repeat(65),
+                    "gh_approved":null,"gh_merged":null,"merge_sha":null}),
+            ),
+            (
+                "delivery.connector.configure",
+                json!({"source_snapshot_id":"snapshot","expected_connector_version":"0",
+                    "mapping":{"connector_id":"connector","provider":"git","resource":"repo",
+                        "principal_actor_id":"actor","principal_client_id":"client",
+                        "fact_source":"caller_declared","enabled":true,"source_locator":null}}),
+            ),
+            (
+                "delivery.candidate.select",
+                json!({"source_snapshot_id":"snapshot","session_id":"session","claim_id":"claim",
+                    "fence":"1","lease_version":"1","expected_selected_digest":null,
+                    "candidate":candidate}),
+            ),
+            (
+                "delivery.source.prepare",
+                json!({"source_snapshot_id":"snapshot","candidate_digest":"a".repeat(64),
+                    "expected_selection_version":"1","expected_metadata_revision":"1",
+                    "expected_source_fingerprint":format!("sha256:{}", "b".repeat(64)),
+                    "completion_receipt_id":null,"lease_seconds":5}),
+            ),
+        ];
+        for (op, args) in accepted {
+            assert!(command(op, args).action().is_ok(), "{op}");
+        }
+
+        for args in [
+            json!({"assignee_person_id":"person","expected_responsibility_version":"0",
+                "session_id":"session","expected_session_version":null}),
+            json!({"assignee_person_id":"person","expected_responsibility_version":"0",
+                "session_id":null,"expected_session_version":"1"}),
+        ] {
+            assert!(
+                command("task.assign", args)
+                    .action()
+                    .err()
+                    .unwrap()
+                    .is_invalid_command_fields()
+            );
+        }
+        let succeeded_without_output = json!({"session_id":"session","expected_session_version":"1",
+            "execution_id":"execution","expected_execution_version":"1",
+            "facts":{"outcome":"succeeded","input_digest":"a".repeat(64),
+                "environment_digest":"b".repeat(64),"observed_paths":[],"note":"done"}});
+        assert!(
+            command("execution.attest", succeeded_without_output)
+                .action()
+                .err()
+                .unwrap()
+                .is_invalid_command_fields()
         );
     }
 }

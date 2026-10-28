@@ -30,7 +30,7 @@ pub(in crate::service) fn add_input_diagnostic(error: &mut Value, input: &Value,
             }
             if let Some(args) = input.get("args") {
                 if let Some(detail) =
-                    conditional_args_issue(args, &branch["then"]["properties"]["args"])
+                    conditional_args_issue(args, &branch["then"]["properties"]["args"], "/args")
                 {
                     attach(error, detail, write);
                     return;
@@ -138,6 +138,14 @@ pub(super) fn shape_issue(input: &Value, schema: &Value, path: &str) -> Option<V
                 return Some(issue(path, key));
             }
         }
+        if schema["x-max-utf8-bytes"]
+            .as_u64()
+            .is_some_and(|bound| text.len() as u64 > bound)
+        {
+            let mut detail = issue(path, "x-max-utf8-bytes");
+            detail["maximum_bytes"] = schema["x-max-utf8-bytes"].clone();
+            return Some(detail);
+        }
         // Parser byte, trim, and NUL rules apply only where the selected schema
         // sets x-nonblank-utf8. The numeric bounds stay character counts above.
         if schema.get("x-nonblank-utf8").and_then(Value::as_bool) == Some(true) {
@@ -227,12 +235,22 @@ pub(super) fn shape_issue(input: &Value, schema: &Value, path: &str) -> Option<V
             }
         }
     }
+    for branch in schema["allOf"].as_array().into_iter().flatten() {
+        if branch.get("if").is_none()
+            && let Some(detail) = shape_issue(input, branch, path)
+        {
+            return Some(detail);
+        }
+    }
+    if let Some(detail) = conditional_args_issue(input, schema, path) {
+        return Some(detail);
+    }
     None
 }
 
 /// Apply a const- or presence-conditioned constraint on one operation's args object.
 /// This reads the same catalog schema; it does not parse or admit the command.
-fn conditional_args_issue(args: &Value, args_schema: &Value) -> Option<Value> {
+fn conditional_args_issue(args: &Value, args_schema: &Value, path: &str) -> Option<Value> {
     for branch in args_schema["allOf"].as_array()? {
         let Some(required) = branch["if"]["required"].as_array() else {
             continue;
@@ -248,15 +266,12 @@ fn conditional_args_issue(args: &Value, args_schema: &Value) -> Option<Value> {
             let Some(actual) = args.get(*field) else {
                 return false;
             };
-            match branch["if"]["properties"].get(*field) {
-                None => true,
-                Some(schema) => schema
-                    .get("const")
-                    .is_some_and(|expected| actual == expected),
-            }
+            branch["if"]["properties"]
+                .get(*field)
+                .is_none_or(|schema| shape_issue(actual, schema, "/args").is_none())
         });
         if matched {
-            if let Some(detail) = shape_issue(args, &branch["then"], "/args") {
+            if let Some(detail) = shape_issue(args, &branch["then"], path) {
                 return Some(detail);
             }
         }
@@ -484,22 +499,47 @@ mod tests {
 
     #[test]
     fn task_assign_session_pair_diagnoses_only_the_missing_counterpart() {
-        for (provided, value, missing) in [
+        for (provided, value, missing, counterpart, constraint) in [
             (
                 "session_id",
                 "private-session-value-sentinel",
                 "expected_session_version",
+                None,
+                "required",
             ),
-            ("expected_session_version", "736251", "session_id"),
+            (
+                "expected_session_version",
+                "736251",
+                "session_id",
+                None,
+                "required",
+            ),
+            (
+                "session_id",
+                "private-session-value-sentinel",
+                "expected_session_version",
+                Some(Value::Null),
+                "type",
+            ),
+            (
+                "expected_session_version",
+                "736251",
+                "session_id",
+                Some(Value::Null),
+                "type",
+            ),
         ] {
             let mut args = json!({
                 "assignee_person_id":"person",
                 "expected_responsibility_version":"0"
             });
             args[provided] = json!(value);
+            if let Some(counterpart) = counterpart {
+                args[missing] = counterpart;
+            }
             let error = rejected(operation("task.assign", args), true);
             assert_eq!(error["invalid_field"], format!("/args/{missing}"));
-            assert_eq!(error["constraint"], "required");
+            assert_eq!(error["constraint"], constraint);
             assert!(!error.to_string().contains(provided));
             assert!(!error.to_string().contains(value));
         }
@@ -513,7 +553,7 @@ mod tests {
                 .get("invalid_field")
                 .is_none()
         );
-        let mut paired = base;
+        let mut paired = base.clone();
         paired["session_id"] = json!("session");
         paired["expected_session_version"] = json!("1");
         assert!(
@@ -521,6 +561,21 @@ mod tests {
                 .get("invalid_field")
                 .is_none()
         );
+        for nullable in [
+            json!({"session_id":null,"expected_session_version":null}),
+            json!({"session_id":null}),
+            json!({"expected_session_version":null}),
+        ] {
+            let mut args = base.clone();
+            args.as_object_mut()
+                .unwrap()
+                .extend(nullable.as_object().unwrap().clone());
+            assert!(
+                rejected(operation("task.assign", args), true)
+                    .get("invalid_field")
+                    .is_none()
+            );
+        }
     }
 
     #[test]
@@ -921,7 +976,12 @@ mod tests {
             }
         }
 
-        let mut acquire = command(json!({"expected_work_version":"0"}));
+        let mut acquire = command(json!({
+            "session_id":"session",
+            "expected_session_version":"1",
+            "expected_work_version":"0",
+            "ttl_seconds":60
+        }));
         acquire["op"] = json!("claim.acquire");
         assert!(rejected(acquire, true).get("invalid_field").is_none());
         let evidence = command(json!({
@@ -1234,7 +1294,12 @@ mod tests {
             rejected(rework, true).get("invalid_field").is_none(),
             "character maxLength on unrelated notes stays unchanged"
         );
-        let mut acquire = command(json!({"expected_work_version":"0","ttl_seconds":60}));
+        let mut acquire = command(json!({
+            "session_id":"session",
+            "expected_session_version":"1",
+            "expected_work_version":"0",
+            "ttl_seconds":60
+        }));
         acquire["op"] = json!("claim.acquire");
         assert!(rejected(acquire, true).get("invalid_field").is_none());
         let evidence = command(json!({

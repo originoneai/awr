@@ -3154,6 +3154,34 @@ async fn mcp_session_end_known_rejection_guides_release_without_private_state() 
     enable_writes(&admin).await;
     let server = start(store).await;
     let client = connect(&server, "one", A).await.unwrap();
+    let contract = call(
+        &client,
+        "awr_team_input_contract",
+        json!({"protocol_version":1,"tool":"awr_team_command","op":"session.end"}),
+        false,
+    )
+    .await;
+    let contract_args = &contract["schema"]["properties"]["args"];
+    assert_eq!(contract_args["additionalProperties"], false);
+    assert_eq!(
+        contract_args["required"],
+        json!(["session_id", "expected_session_version"])
+    );
+    assert_eq!(
+        contract_args["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>(),
+        [
+            "expected_session_version".to_owned(),
+            "session_id".to_owned()
+        ]
+        .into_iter()
+        .collect()
+    );
+    assert!(!contract_args.to_string().contains("source_locator"));
     let claimed = call(
         &client,
         "awr_team_command",

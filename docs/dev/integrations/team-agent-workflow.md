@@ -77,6 +77,8 @@ contains navigation to current values, never the values themselves. Refresh the
 named reads and use their real IDs, versions, digests and facts rather than an
 example or old receipt. Contract discovery grants no permission, execution
 admission, replay or acceptance.
+Each command contract exposes only its selected operation's closed `args`
+fields; shared catalog vocabulary from unrelated operations is not inherited.
 
 For a rejected read query, `InvalidInput.invalid_field` identifies one known
 field and `constraint` explains the violated rule. The short `action_guidance`

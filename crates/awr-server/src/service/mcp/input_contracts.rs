@@ -711,10 +711,11 @@ mod tests {
                         && args["properties"].is_object()
                 })
                 .collect::<Vec<_>>();
-            if closed.len() != 1 {
-                assert_eq!(actual, &root_args, "{op}: fail-safe root args changed");
-                continue;
-            }
+            assert_eq!(
+                closed.len(),
+                1,
+                "{op}: every advertised command must have one closed args schema"
+            );
             let mut branch = closed[0].clone();
             remove_descriptions(&mut branch);
             assert_eq!(actual["type"], branch["type"], "{op}: type changed");
@@ -960,6 +961,282 @@ mod tests {
         assert_eq!(
             candidate["schema"]["properties"]["args"]["properties"]["candidate"]["required"],
             json!(["binding", "manifest"])
+        );
+        assert!(
+            candidate["schema"]["properties"]["args"]["properties"]
+                .get("expected_selected_digest")
+                .is_some()
+        );
+
+        let session_end = contract("awr_team_command", "session.end");
+        let session_end_args = &session_end["schema"]["properties"]["args"];
+        assert_eq!(session_end_args["additionalProperties"], false);
+        assert_eq!(
+            session_end_args["required"],
+            json!(["session_id", "expected_session_version"])
+        );
+        assert_eq!(
+            session_end_args["properties"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+            [
+                "expected_session_version".to_owned(),
+                "session_id".to_owned()
+            ]
+            .into_iter()
+            .collect()
+        );
+        let session_schema = &session_end_args["properties"]["session_id"];
+        assert_eq!(
+            field_issue(&json!("雪".repeat(43)), session_schema).unwrap()["constraint"],
+            "x-identity-utf8.maxUtf8Bytes"
+        );
+        assert_eq!(
+            field_issue(&json!("session\n"), session_schema).unwrap()["constraint"],
+            "x-identity-utf8.rejectControls"
+        );
+        assert!(!session_end_args.to_string().contains("source_locator"));
+    }
+
+    #[test]
+    fn optional_nulls_and_operation_conditions_match_backend_inputs() {
+        let facts = json!({
+            "outcome":"failed","input_digest":"a".repeat(64),"output_digest":null,
+            "environment_digest":"b".repeat(64),"observed_paths":[],"note":"failed",
+            "executor_stopped":null
+        });
+        let accepted = [
+            (
+                "task.assign",
+                json!({"assignee_person_id":"person","expected_responsibility_version":"0",
+                    "session_id":null,"expected_session_version":null}),
+            ),
+            (
+                "task.assign",
+                json!({"assignee_person_id":"person","expected_responsibility_version":"0",
+                    "session_id":null}),
+            ),
+            (
+                "task.assign",
+                json!({"assignee_person_id":"person","expected_responsibility_version":"0",
+                    "expected_session_version":null}),
+            ),
+            (
+                "execution.attest",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "execution_id":"execution","expected_execution_version":"1",
+                    "reviewed_receipt_id":null,"facts":facts}),
+            ),
+            (
+                "execution.reconcile",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "execution_id":"execution","expected_execution_version":"1",
+                    "expected_work_version":"1","reviewed_receipt_id":null,
+                    "clear_recovery_block":false,"previous_epoch_recovery":null,"facts":facts}),
+            ),
+            (
+                "handoff.propose",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "handoff_id":"handoff","kind":"execution","to_person_id":"person",
+                    "package":null,"proposed_successor":null,"proposer_execution_id":null,
+                    "proposer_fence":null,"expires_at_ms":null,"now_ms":null}),
+            ),
+            (
+                "handoff.inspect",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "handoff_id":"handoff","expected_handoff_version":"1",
+                    "inspector_person_id":"person","now_ms":null}),
+            ),
+            (
+                "handoff.accept",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "handoff_id":"handoff","expected_handoff_version":"1",
+                    "acceptor_person_id":"person",
+                    "successor_execution":{"kind":"person","person_id":"person"},
+                    "inspection_request_id":"inspect-request","prior_execution_stopped":null,
+                    "prior_reconciled":null,"context_reprepared":null,
+                    "expected_current_fence":null,"now_ms":null}),
+            ),
+            (
+                "handoff.reject",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "handoff_id":"handoff","expected_handoff_version":"1",
+                    "by_person_id":"person","reason":"rejected","now_ms":null}),
+            ),
+            (
+                "handoff.cancel",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "handoff_id":"handoff","expected_handoff_version":"1",
+                    "by_person_id":"person","reason":"cancelled","now_ms":null}),
+            ),
+            (
+                "handoff.timeout",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "handoff_id":"handoff","expected_handoff_version":"1","now_ms":null}),
+            ),
+            (
+                "delivery.register_pr",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "repository":"owner/repo","pr_number":1,"pr_url":"https://example.test/pr/1",
+                    "head_sha":"a".repeat(40),"fact_source":"operator_recorded_observation",
+                    "observed_at":"2026-01-01T00:00:00Z","merge_sha":null,
+                    "test_evidence_id":null,"author_actor_id":null,"owner_person_id":null,
+                    "executor_actor_id":null,"gh_submitted":null,"gh_approved":null,"gh_merged":null}),
+            ),
+            (
+                "delivery.observe_pr",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "delivery_id":"delivery","expected_head_sha":"a".repeat(40),
+                    "fact_source":"operator_recorded_observation","observed_at":"x".repeat(65),
+                    "gh_approved":null,"gh_merged":null,"merge_sha":null}),
+            ),
+            (
+                "delivery.connector.configure",
+                json!({"source_snapshot_id":"snapshot","expected_connector_version":"0",
+                    "mapping":{"connector_id":"connector","provider":"git","resource":"repo",
+                        "principal_actor_id":"actor","principal_client_id":"client",
+                        "fact_source":"caller_declared","enabled":true,"source_locator":null}}),
+            ),
+            (
+                "delivery.candidate.select",
+                json!({"source_snapshot_id":"snapshot","session_id":"session","claim_id":"claim",
+                    "fence":"1","lease_version":"1","expected_selected_digest":null,
+                    "candidate":{"binding":{},"manifest":{}}}),
+            ),
+            (
+                "delivery.source.prepare",
+                json!({"source_snapshot_id":"snapshot","candidate_digest":"a".repeat(64),
+                    "expected_selection_version":"1","expected_metadata_revision":"1",
+                    "expected_source_fingerprint":format!("sha256:{}", "b".repeat(64)),
+                    "completion_receipt_id":null,"lease_seconds":5}),
+            ),
+            (
+                "evidence.submit",
+                json!({"session_id":"session","expected_session_version":"1","payload":{},
+                    "dirty_tree":false,"artifact_text":"report","artifact_hex":null}),
+            ),
+            (
+                "delivery.evidence.submit",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "delivery_payload":{"delivery_candidate_digest":"a".repeat(64)},
+                    "dirty_tree":false,"artifact_text":null,"artifact_hex":"00"}),
+            ),
+        ];
+        for (op, args) in accepted {
+            let contract = contract("awr_team_command", op);
+            let issue = super::super::input_diagnostics::shape_issue(
+                &args,
+                &contract["schema"]["properties"]["args"],
+                "/args",
+            );
+            assert!(issue.is_none(), "{op}: {issue:?}");
+        }
+
+        for (op, args, field, constraint) in [
+            (
+                "task.assign",
+                json!({"assignee_person_id":"person","expected_responsibility_version":"0",
+                    "session_id":"session","expected_session_version":null}),
+                "/args/expected_session_version",
+                "type",
+            ),
+            (
+                "handoff.accept",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "handoff_id":"handoff","expected_handoff_version":"1",
+                    "acceptor_person_id":"person",
+                    "successor_execution":{"kind":"person","person_id":"person"},
+                    "prior_execution_stopped":null,"prior_reconciled":null,
+                    "context_reprepared":null,"expected_current_fence":null,"now_ms":null}),
+                "/args/inspection_request_id",
+                "required",
+            ),
+            (
+                "handoff.accept",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "handoff_id":"handoff","expected_handoff_version":"1",
+                    "acceptor_person_id":"person",
+                    "successor_execution":{"kind":"person","person_id":"person"},
+                    "inspection_request_id":null,"prior_execution_stopped":null,
+                    "prior_reconciled":null,"context_reprepared":null,
+                    "expected_current_fence":null,"now_ms":null}),
+                "/args/inspection_request_id",
+                "type",
+            ),
+            (
+                "execution.attest",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "execution_id":"execution","expected_execution_version":"1",
+                    "facts":{"outcome":"succeeded","input_digest":"a".repeat(64),
+                        "environment_digest":"b".repeat(64),"observed_paths":[],"note":"done"}}),
+                "/args/facts/output_digest",
+                "required",
+            ),
+            (
+                "delivery.register_pr",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "repository":"owner/repo","pr_number":1,"pr_url":"https://example.test/pr/1",
+                    "head_sha":"a".repeat(40),"fact_source":"operator_recorded_observation",
+                    "observed_at":"x".repeat(65)}),
+                "/args/observed_at",
+                "maxLength",
+            ),
+            (
+                "evidence.submit",
+                json!({"session_id":"session","expected_session_version":"1","payload":{},
+                    "dirty_tree":false,"artifact_text":"report","artifact_hex":"00"}),
+                "/args/artifact_hex",
+                "type",
+            ),
+            (
+                "delivery.evidence.submit",
+                json!({"session_id":"session","expected_session_version":"1",
+                    "delivery_payload":{"delivery_candidate_digest":"a".repeat(64)},
+                    "dirty_tree":false,"artifact_text":"report","artifact_hex":"00"}),
+                "/args/artifact_hex",
+                "type",
+            ),
+        ] {
+            let contract = contract("awr_team_command", op);
+            let issue = super::super::input_diagnostics::shape_issue(
+                &args,
+                &contract["schema"]["properties"]["args"],
+                "/args",
+            )
+            .unwrap_or_else(|| panic!("{op}: expected {field} {constraint}"));
+            assert_eq!(issue["invalid_field"], field, "{op}");
+            assert_eq!(issue["constraint"], constraint, "{op}");
+        }
+
+        let register = contract("awr_team_command", "delivery.register_pr");
+        let observed_at = &register["schema"]["properties"]["args"]["properties"]["observed_at"];
+        let register_limit = &observed_at["allOf"][1];
+        assert_eq!(register_limit["maxLength"], 64);
+        assert_eq!(register_limit["x-max-utf8-bytes"], 64);
+        let over_bytes = "雪".repeat(22);
+        assert_eq!(over_bytes.chars().count(), 22);
+        assert_eq!(over_bytes.len(), 66);
+        let issue = super::super::input_diagnostics::shape_issue(
+            &json!({"session_id":"session","expected_session_version":"1",
+                "repository":"owner/repo","pr_number":1,
+                "pr_url":"https://example.test/pr/1","head_sha":"a".repeat(40),
+                "fact_source":"operator_recorded_observation","observed_at":over_bytes}),
+            &register["schema"]["properties"]["args"],
+            "/args",
+        )
+        .unwrap();
+        assert_eq!(issue["invalid_field"], "/args/observed_at");
+        assert_eq!(issue["constraint"], "x-max-utf8-bytes");
+        assert_eq!(issue["maximum_bytes"], 64);
+
+        let observe = contract("awr_team_command", "delivery.observe_pr");
+        assert!(
+            observe["schema"]["properties"]["args"]["properties"]["observed_at"]
+                .get("x-max-utf8-bytes")
+                .is_none()
         );
     }
 
