@@ -1,109 +1,11 @@
-//! Gather the facts the work definition checker reads from the current projections.
+//! The work definition report as the runtime serves it to its callers.
 //! Read-only: no source is touched and no event is written.
 use awr_core::*;
 use awr_store::Store;
-use std::collections::BTreeMap;
 
 /// Check one work's declared definition against the project as currently indexed.
 /// `state` is `not_declared` for work without a definition, which keeps every existing
 /// source and output unchanged.
 pub fn work_definition_report(store: &Store, project: Id, key: &str) -> Result<DefinitionReport> {
-    let works = store.work_items(project)?;
-    let me = works
-        .iter()
-        .find(|w| w.item.meta.external_key == key)
-        .ok_or_else(|| Error::NotFound(format!("WorkItem {key}")))?;
-    if me.item.definition.is_none() {
-        return Ok(check_work_definition(&DefinitionFacts {
-            work: key,
-            acceptance: &me.item.acceptance,
-            paths: &me.item.paths,
-            dependencies: &[],
-            spec_refs: &me.item.spec_refs,
-            spec_dispositions: &BTreeMap::new(),
-            goals: &BTreeMap::new(),
-            decisions: &BTreeMap::new(),
-            works: &BTreeMap::from([(
-                key.to_string(),
-                DefinitionWork {
-                    workstream: None,
-                    status: me.item.status,
-                    definition: None,
-                },
-            )]),
-        }));
-    }
-    let mut known: BTreeMap<String, DefinitionWork> = works
-        .iter()
-        .map(|w| {
-            (
-                w.item.meta.external_key.clone(),
-                DefinitionWork {
-                    workstream: None,
-                    status: w.item.status,
-                    definition: w.item.definition.clone(),
-                },
-            )
-        })
-        .collect();
-    // A workstream is only needed to compare the work with its declared parent. A work that is
-    // not bound to one is compared as unbound; any other failure is surfaced, never skipped.
-    if let Some(parent) = me.item.definition.as_ref().and_then(|d| d.parent.clone()) {
-        for target in [key.to_string(), parent] {
-            let Some(found) = works.iter().find(|w| w.item.meta.external_key == target) else {
-                continue;
-            };
-            let stream = match store.workstream_binding(project, found.item.meta.id) {
-                Ok(binding) => Some(binding.workstream_id.to_string()),
-                Err(Error::NotFound(_)) => None,
-                Err(error) => return Err(error),
-            };
-            if let Some(entry) = known.get_mut(&target) {
-                entry.workstream = stream;
-            }
-        }
-    }
-    let dependencies: Vec<String> = store
-        .work_dependency_links(project)?
-        .into_iter()
-        .filter(|edge| edge.from_key == key)
-        .map(|edge| edge.to_key)
-        .collect();
-    let goals = store
-        .goals(project)?
-        .into_iter()
-        .map(|g| (g.item.meta.external_key, g.item.success_criteria))
-        .collect::<BTreeMap<_, _>>();
-    // Only an accepted decision can be adopted intent; the store keeps one decision per key.
-    let mut decisions = BTreeMap::new();
-    let mut spec_dispositions = BTreeMap::new();
-    for decision in store.decisions(project)? {
-        if decision.item.status != DecisionStatus::Accepted {
-            continue;
-        }
-        let decision_key = decision.item.meta.external_key.clone();
-        for item in decision
-            .item
-            .specification
-            .iter()
-            .flat_map(|spec| spec.items.iter())
-        {
-            spec_dispositions.insert((decision_key.clone(), item.id.clone()), item.disposition);
-        }
-        decisions.insert(
-            decision_key,
-            decision.item.meta.source_ref.source_fingerprint,
-        );
-    }
-    Ok(check_work_definition(&DefinitionFacts {
-        work: key,
-        acceptance: &me.item.acceptance,
-        paths: &me.item.paths,
-        dependencies: &dependencies,
-        spec_refs: &me.item.spec_refs,
-        spec_dispositions: &spec_dispositions,
-        goals: &goals,
-        decisions: &decisions,
-        works: &known,
-    }))
+    store.work_definition_report(project, key)
 }

@@ -6,6 +6,8 @@ mod checkpoint;
 mod checkpoint_save;
 mod client;
 mod compaction;
+mod contract;
+mod definition;
 mod delivery_adoption;
 mod delta;
 mod events;
@@ -48,6 +50,7 @@ pub use catalog::SourceRegistration;
 pub use checkpoint_save::{
     CheckpointAttempt, CheckpointAttempts, SessionDeltaSnapshot, SourceObservation,
 };
+pub use contract::WorkContract;
 pub use delta::{
     DeltaEvents, EntityDelta, EventReference, HistoryCount, ImportantEvent, SourceDelta,
 };

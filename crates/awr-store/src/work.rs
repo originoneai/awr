@@ -310,20 +310,12 @@ impl Store {
     /// Source-declared work dependency associations, including source references for diagnosis.
     pub fn work_dependency_links(&self, project: Id) -> Result<Vec<Edge>> {
         self.project(project)?;
-        self.conn.prepare("SELECT e.id,e.from_key,e.to_key,e.required,e.revision,e.source_ref_json FROM edges e JOIN sources s ON e.source_id=s.id AND e.project_id=s.project_id WHERE e.project_id=?1 AND e.active=1 AND s.active=1 AND e.from_kind='work_item' AND e.to_kind='work_item' AND e.relation='depends_on' ORDER BY e.from_key,e.to_key,e.id").map_err(db_error)?
-            .query_map([project.to_string()], |row| {
-                let source_ref = serde_json::from_str(&row.get::<_, String>(5)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(5,rusqlite::types::Type::Text,Box::new(e)))?;
-                Ok(Edge { id:id_at(row,0)?, project_id:project, from_kind:EntityKind::WorkItem, from_key:row.get(1)?, relation:"depends_on".into(), to_kind:EntityKind::WorkItem, to_key:row.get(2)?, required:row.get(3)?, revision:revision_at(row,4)?, source_ref })
-            }).map_err(db_error)?.collect::<rusqlite::Result<Vec<_>>>().map_err(db_error)
+        dependency_links(&self.conn, project)
     }
     /// Source-declared work-to-goal associations, including source references for diagnosis.
     pub fn work_goal_links(&self, project: Id) -> Result<Vec<Edge>> {
         self.project(project)?;
-        self.conn.prepare("SELECT e.id,e.from_key,e.to_key,e.required,e.revision,e.source_ref_json FROM edges e JOIN sources s ON e.source_id=s.id AND e.project_id=s.project_id WHERE e.project_id=?1 AND e.active=1 AND s.active=1 AND e.from_kind='work_item' AND e.to_kind='goal' AND e.relation='supports' ORDER BY e.from_key,e.to_key,e.id").map_err(db_error)?
-            .query_map([project.to_string()], |row| {
-                let source_ref = serde_json::from_str(&row.get::<_, String>(5)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(5,rusqlite::types::Type::Text,Box::new(e)))?;
-                Ok(Edge { id:id_at(row,0)?, project_id:project, from_kind:EntityKind::WorkItem, from_key:row.get(1)?, relation:"supports".into(), to_kind:EntityKind::Goal, to_key:row.get(2)?, required:row.get(3)?, revision:revision_at(row,4)?, source_ref })
-            }).map_err(db_error)?.collect::<rusqlite::Result<Vec<_>>>().map_err(db_error)
+        goal_links(&self.conn, project)
     }
     /// Source state is shared across branches: archive changes require no active executor.
     pub fn ensure_work_unoccupied(&self, project: Id, work: Id) -> Result<()> {
@@ -426,4 +418,20 @@ impl Store {
             evaluated_at: at,
         })
     }
+}
+
+pub(crate) fn dependency_links(conn: &Connection, project: Id) -> Result<Vec<Edge>> {
+    conn.prepare("SELECT e.id,e.from_key,e.to_key,e.required,e.revision,e.source_ref_json FROM edges e JOIN sources s ON e.source_id=s.id AND e.project_id=s.project_id WHERE e.project_id=?1 AND e.active=1 AND s.active=1 AND e.from_kind='work_item' AND e.to_kind='work_item' AND e.relation='depends_on' ORDER BY e.from_key,e.to_key,e.id").map_err(db_error)?
+            .query_map([project.to_string()], |row| {
+                let source_ref = serde_json::from_str(&row.get::<_, String>(5)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(5,rusqlite::types::Type::Text,Box::new(e)))?;
+                Ok(Edge { id:id_at(row,0)?, project_id:project, from_kind:EntityKind::WorkItem, from_key:row.get(1)?, relation:"depends_on".into(), to_kind:EntityKind::WorkItem, to_key:row.get(2)?, required:row.get(3)?, revision:revision_at(row,4)?, source_ref })
+            }).map_err(db_error)?.collect::<rusqlite::Result<Vec<_>>>().map_err(db_error)
+}
+
+pub(crate) fn goal_links(conn: &Connection, project: Id) -> Result<Vec<Edge>> {
+    conn.prepare("SELECT e.id,e.from_key,e.to_key,e.required,e.revision,e.source_ref_json FROM edges e JOIN sources s ON e.source_id=s.id AND e.project_id=s.project_id WHERE e.project_id=?1 AND e.active=1 AND s.active=1 AND e.from_kind='work_item' AND e.to_kind='goal' AND e.relation='supports' ORDER BY e.from_key,e.to_key,e.id").map_err(db_error)?
+            .query_map([project.to_string()], |row| {
+                let source_ref = serde_json::from_str(&row.get::<_, String>(5)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(5,rusqlite::types::Type::Text,Box::new(e)))?;
+                Ok(Edge { id:id_at(row,0)?, project_id:project, from_kind:EntityKind::WorkItem, from_key:row.get(1)?, relation:"supports".into(), to_kind:EntityKind::Goal, to_key:row.get(2)?, required:row.get(3)?, revision:revision_at(row,4)?, source_ref })
+            }).map_err(db_error)?.collect::<rusqlite::Result<Vec<_>>>().map_err(db_error)
 }
