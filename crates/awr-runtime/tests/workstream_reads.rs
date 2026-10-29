@@ -447,6 +447,53 @@ fn an_unreadable_goal_key_answers_like_an_unknown_goal() {
     // The reader's own goal still resolves, and the owner still knows the project-wide goal.
     assert!(nav("api-delivery", &reader(&[API])).is_ok());
     assert!(nav("client-delivery", &MainlineNavAudience::Owner).is_ok());
+
+    // A goal that only an unreadable work is linked to is as unknown to the reader as any other,
+    // while a link from a readable work makes it known.
+    let linked = |from: &str, goal: &str, audience: &MainlineNavAudience| {
+        let link = Edge {
+            id: Id::new(),
+            project_id,
+            from_kind: EntityKind::WorkItem,
+            from_key: from.into(),
+            relation: "supports".into(),
+            to_kind: EntityKind::Goal,
+            to_key: goal.into(),
+            required: false,
+            revision: 1,
+            source_ref: SourceRef {
+                source_id: Id::new(),
+                locator: "work.yaml".into(),
+                source_revision: 1,
+                source_fingerprint: "fp".into(),
+                pointer: None,
+                start_line: None,
+                end_line: None,
+                section_fingerprint: None,
+            },
+        };
+        mainline_nav_for(
+            &store,
+            &project,
+            &MainlineNavScope {
+                goal: Some(goal.into()),
+                ..Default::default()
+            },
+            MainlineNavExtras {
+                goal_links: vec![link],
+                ..Default::default()
+            },
+            audience,
+        )
+    };
+    let hidden = linked("CLIENT-1", "client-only-goal", &reader(&[API])).unwrap_err();
+    assert!(matches!(hidden, Error::NotFound(_)), "{hidden:?}");
+    assert_eq!(
+        hidden.to_string().replace("client-only-goal", "KEY"),
+        unknown.to_string().replace("no-such-goal", "KEY")
+    );
+    assert!(linked("API-1", "api-only-goal", &reader(&[API])).is_ok());
+    assert!(linked("CLIENT-1", "client-only-goal", &MainlineNavAudience::Owner).is_ok());
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }

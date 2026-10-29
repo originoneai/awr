@@ -1751,4 +1751,28 @@ mod tests {
         assert!(nav.to_string().contains("PRIVATE_CLIENT_TASK"));
         assert!(!nav.to_string().contains("dependency_outside_scope"));
     }
+
+    #[test]
+    fn a_readers_catalog_keeps_only_readable_streams_and_a_readable_default() {
+        let readable = |facts: NavFacts, stream: Id| {
+            facts
+                .narrowed(&BTreeSet::from([stream]), &MainlineNavScope::default())
+                .unwrap()
+                .catalog
+                .unwrap()
+        };
+        // The legacy default may be a stream the reader cannot read: it is dropped with it.
+        let (_, streams, mut facts) = world();
+        facts.catalog.as_mut().unwrap().legacy_default = Some(streams[1]);
+        let catalog = readable(facts, streams[0]);
+        assert_eq!(
+            catalog.workstreams.iter().map(|s| s.id).collect::<Vec<_>>(),
+            [streams[0]]
+        );
+        assert_eq!(catalog.legacy_default, None);
+        // A readable default stays.
+        let (_, streams, mut facts) = world();
+        facts.catalog.as_mut().unwrap().legacy_default = Some(streams[0]);
+        assert_eq!(readable(facts, streams[0]).legacy_default, Some(streams[0]));
+    }
 }
