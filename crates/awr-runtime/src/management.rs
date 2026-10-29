@@ -199,6 +199,9 @@ fn assess(
     if !work.spec_refs.is_empty() {
         contract["spec_refs"] = json!(work.spec_refs);
     }
+    if let Some(definition) = &work.definition {
+        contract["definition"] = json!(definition);
+    }
     let contract_fingerprint = awr_source::fingerprint(&serde_json::to_vec(&contract)?);
     let previous = latest(store, project, work.meta.id, branch, "management.assessed")?;
     let prior_continuous = previous

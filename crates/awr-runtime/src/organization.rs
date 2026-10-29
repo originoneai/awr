@@ -896,6 +896,7 @@ mod completion_binding_guard_tests {
     fn work(meta: ProjectionMeta) -> WorkItem {
         WorkItem {
             spec_refs: vec![],
+            definition: None,
             ordinary_completion: None,
             archived: false,
             meta,

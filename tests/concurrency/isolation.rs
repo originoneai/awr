@@ -19,6 +19,7 @@ fn fixture() -> Fixture {
     fs::write(f.root.join("fixture-owner"), "awr-isolation-test").unwrap();
     let work = |key: &str| WorkItem {
         spec_refs: vec![],
+        definition: None,
         ordinary_completion: None,
         archived: false,
         meta: f.meta(key),

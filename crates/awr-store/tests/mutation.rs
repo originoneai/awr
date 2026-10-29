@@ -48,6 +48,7 @@ fn meta(
 fn work(meta: ProjectionMeta, next_action: &str) -> WorkItem {
     WorkItem {
         spec_refs: vec![],
+        definition: None,
         ordinary_completion: None,
         archived: false,
         meta,

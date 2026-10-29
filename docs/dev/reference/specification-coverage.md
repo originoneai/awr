@@ -6,6 +6,9 @@ and unresolved references. They do not read arbitrary PRD paths, scan prose for
 requirements, create tasks, change acceptance, or establish implementation or
 completion. This capability is unreleased on `main`; it is not included in 0.6.0.
 
+A work item may also carry a [definition](work-definition.md) that reuses these specification
+references as its versioned inputs and derives delivery tiers from their dispositions.
+
 ## One authoritative specification
 
 Register the **actual authoritative document**, using the existing

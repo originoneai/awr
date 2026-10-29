@@ -532,6 +532,13 @@ fn work(view: &ReadProject, args: WorkArgs) -> Result<Value> {
     if !work.work.item.spec_refs.is_empty() {
         detail["spec_refs"] = json!(work.work.item.spec_refs);
     }
+    if work.work.item.definition.is_some() {
+        detail["definition"] = json!(awr_runtime::work_definition_report(
+            &view.store,
+            view.project.id,
+            &args.work
+        )?);
+    }
     Ok(
         json!({"work":detail,"acceptance":work.work.item.acceptance,"source_ref":work.work.item.meta.source_ref,
         "progress":awr_runtime::work_progress(&view.store,view.project.id,&work.work,branch)?,

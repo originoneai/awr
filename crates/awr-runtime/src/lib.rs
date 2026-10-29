@@ -46,6 +46,7 @@ mod source_concurrency;
 mod team_handoff;
 mod work_action;
 mod work_create;
+mod work_definition;
 mod work_edit;
 pub use work_edit::edit_work;
 mod selective_invalidation;
@@ -161,6 +162,7 @@ pub use work_action::{WorkActionRequest, perform_work_action};
 pub use work_create::{
     CreateWorkInput, CreationReport, create_work, creation_status, recover_creation,
 };
+pub use work_definition::work_definition_report;
 pub use workflow::{
     PrepareCompletionRequest, PrepareWorkRequest, prepare_completion, prepare_work,
 };

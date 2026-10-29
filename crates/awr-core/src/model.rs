@@ -207,6 +207,8 @@ pub struct WorkItem {
     pub paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub spec_refs: Vec<crate::SpecificationReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<crate::WorkDefinition>,
 }
 
 fn is_false(value: &bool) -> bool {

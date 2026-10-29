@@ -481,6 +481,47 @@ fn success(result: CallToolResult) -> Value {
 }
 
 #[tokio::test]
+async fn work_get_carries_the_definition_report_only_for_work_that_declares_one() {
+    let f = Fixture::new();
+    f.reindex();
+    let client = f.client().await;
+    let plain = success(call(&client, "awr_work_get", json!({"work":"W"})).await);
+    assert!(plain["work"].get("definition").is_none(), "{plain}");
+    drop(client);
+    fs::write(
+        f.root.join("work.yaml"),
+        WORK.replace(
+            "  verification:\n",
+            "  definition: {version: 1, purpose: research}\n  verification:\n",
+        ),
+    )
+    .unwrap();
+    f.reindex();
+    let client = f.client().await;
+    let shown = success(call(&client, "awr_work_get", json!({"work":"W"})).await);
+    let report = &shown["work"]["definition"];
+    assert_eq!(report["state"], "gaps", "{report}");
+    assert_eq!(report["purpose"], "research");
+    let codes: Vec<&str> = report["gaps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["code"].as_str().unwrap())
+        .collect();
+    for code in [
+        "intent_missing",
+        "contribution_missing",
+        "deliverable_missing",
+    ] {
+        assert!(codes.contains(&code), "{code} in {codes:?}");
+    }
+    // The CLI answers from the same function, so both surfaces agree.
+    let (store, project) = f.store();
+    let expected = awr_runtime::work_definition_report(&store, project.id, "W").unwrap();
+    assert_eq!(*report, serde_json::to_value(expected).unwrap());
+}
+
+#[tokio::test]
 async fn specification_check_is_discoverable_read_only_and_conservative() {
     let f = Fixture::new();
     let metadata = json!({"id":"SPEC","status":"accepted","affected_keys":["W"],"specification":{"version":"2","items":[

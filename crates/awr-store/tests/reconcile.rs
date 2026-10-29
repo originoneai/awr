@@ -11,6 +11,7 @@ use support::Fixture;
 fn add_work(fixture: &mut Fixture, key: &str) -> Id {
     let item = WorkItem {
         spec_refs: vec![],
+        definition: None,
         ordinary_completion: None,
         archived: false,
         meta: fixture.meta(key),

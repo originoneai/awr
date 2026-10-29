@@ -97,6 +97,8 @@ A current fingerprint establishes which contract an observation describes, not
 whether the Agent's reasoning is correct. `plan_valid` remains an attributed host
 assertion; the Agent must explain its reasoning against the current goal. This
 binding check does not introduce execution permission or weaken completion checks.
+A declared [work definition](work-definition.md) also binds the fingerprint, so editing it
+requires planning again; work without one is unaffected.
 Once continuous management is recorded, later observations retain it. Actual wait,
 handoff and resume records also retain that requirement after a reply or reconnect.
 The original task ID and source remain unchanged; child tasks are assessed separately.

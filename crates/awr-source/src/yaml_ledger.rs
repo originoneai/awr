@@ -507,6 +507,30 @@ impl YamlLedgerAdapter {
                         refs
                     }
                 },
+                definition: match value.get("definition") {
+                    None => None,
+                    Some(_) if context.source.adapter == "markdown-ledger-v1" => {
+                        return Err(invalid(
+                            &format!("{pointer}/definition"), "ledger.definition",
+                            "definition is supported only in YAML ledgers",
+                            "Remove definition from the Markdown ledger; use a registered YAML ledger for work definitions.",
+                        ));
+                    }
+                    Some(value) if value.is_null() => None,
+                    Some(value) => {
+                        let definition: awr_core::WorkDefinition = serde_json::from_value(value.clone()).map_err(|_| invalid(
+                            &format!("{pointer}/definition"), "ledger.definition",
+                            "definition does not match the work definition schema",
+                            "Use version 1 with a purpose and only the documented fields; unknown fields are rejected.",
+                        ))?;
+                        definition.validate().map_err(|_| invalid(
+                            &format!("{pointer}/definition"), "ledger.definition",
+                            "definition has invalid, unbounded or sensitive content",
+                            "Keep every list at most 64 entries and text nonblank and public; user decisions and sourced facts need a decision key and a sha256 fingerprint.",
+                        ))?;
+                        Some(definition)
+                    }
+                },
                 archived: boolean(&value["archived"], false, &format!("{pointer}/archived"))?,
                 ordinary_completion: value
                     .get("ordinary_completion")
