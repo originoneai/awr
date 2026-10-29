@@ -74,8 +74,29 @@ receipt. Different content under that key is rejected.
 
 After scope changes, the old observation is not silently reused. The fingerprint
 binds the task identity, title, summary, kind, acceptance, paths, tags, goal links,
-dependencies and ordinary-completion policy. Status, next action and evidence
-additions alone do not invalidate it. A changed contract requires planning again.
+dependencies and ordinary-completion policy. It also binds the selected goals'
+identities, titles, summaries, statuses and success criteria. Keeping the same goal
+ID while changing its intended result therefore requires a new assessment. Missing
+linked goals remain explicit gaps even when unrelated goals exist.
+
+Work without explicit goal links retains the existing inherited-goal selection;
+it does not need duplicate goal documents. That selection matches context
+compilation: the owning workstream's goals, or else the goals of primary goal and
+ledger sources. Completed, done, cancelled, archived and retired goals, and goals
+from supporting sources, are never inherited. With explicit links, changes to unlinked
+goals do not invalidate the observation. Reordering goal declarations or links,
+and task status, next action or evidence additions alone, do not invalidate it.
+The fingerprint does not bind the whole source file or global project revision.
+Older receipts remain in history; a receipt with the previous binding format is
+reassessed once rather than silently treated as current. When the former task
+contract still matches, upgrading the binding alone does not permanently promote
+lightweight work to continuous management. Fresh observations are still required:
+the previous format did not establish which goal contents were assessed.
+
+A current fingerprint establishes which contract an observation describes, not
+whether the Agent's reasoning is correct. `plan_valid` remains an attributed host
+assertion; the Agent must explain its reasoning against the current goal. This
+binding check does not introduce execution permission or weaken completion checks.
 Once continuous management is recorded, later observations retain it. Actual wait,
 handoff and resume records also retain that requirement after a reply or reconnect.
 The original task ID and source remain unchanged; child tasks are assessed separately.
