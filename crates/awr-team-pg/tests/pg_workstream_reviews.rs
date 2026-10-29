@@ -694,6 +694,77 @@ async fn execution_consistency_sanitizes_legacy_execution_without_current_bindin
 }
 
 #[tokio::test]
+async fn generic_bound_evidence_preserves_auxiliary_and_multiple_artifact_outputs() {
+    let (_guard, admin, _, store) = setup().await;
+    seed_review_actors(&admin).await;
+    let prepared = prepare(&store, A, "a").await;
+    let contract_hash = prepared["data"]["contract_hash"].as_str().unwrap();
+    insert_execution(
+        &admin,
+        "exec-generic-artifacts",
+        contract_hash,
+        1,
+        "succeeded",
+    )
+    .await;
+
+    let auxiliary = run(
+        &store,
+        RUNNER,
+        "generic-auxiliary",
+        "evidence.submit",
+        json!({
+            "session_id":"session-runner",
+            "expected_session_version":"1",
+            "execution_id":"exec-generic-artifacts",
+            "dirty_tree":false,
+            "artifact_text":"auxiliary review notes",
+            "payload":{"kind":"auxiliary"}
+        }),
+    )
+    .await;
+    assert_eq!(auxiliary["execution_consistency"]["status"], "unverifiable");
+    assert_eq!(
+        auxiliary["execution_consistency"]["reason"],
+        "evidence_input_digest_not_declared"
+    );
+    assert_eq!(auxiliary["execution_success"], true);
+
+    for (request, bytes) in [
+        (
+            "generic-artifact-one",
+            b"first manifest artifact".as_slice(),
+        ),
+        (
+            "generic-artifact-two",
+            b"second manifest artifact".as_slice(),
+        ),
+    ] {
+        let artifact_digest = format!("{:x}", Sha256::digest(bytes));
+        assert_ne!(artifact_digest, RESULT);
+        let evidence = run(
+            &store,
+            RUNNER,
+            request,
+            "evidence.submit",
+            json!({
+                "session_id":"session-runner",
+                "expected_session_version":"1",
+                "execution_id":"exec-generic-artifacts",
+                "input_digest":INPUT,
+                "dirty_tree":false,
+                "artifact_hex":hex_encode(bytes),
+                "payload":{"passed":true,"output_digest":artifact_digest}
+            }),
+        )
+        .await;
+        assert_eq!(evidence["execution_consistency"]["status"], "consistent");
+        assert_eq!(evidence["claimed_success"], true);
+        assert_eq!(evidence["execution_success"], true);
+    }
+}
+
+#[tokio::test]
 async fn mainline_submit_open_accept_complete_is_team_independent() {
     let (_g, admin, _, store) = setup().await;
     seed_review_actors(&admin).await;

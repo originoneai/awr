@@ -202,7 +202,6 @@ struct EvidenceExecutionBinding<'a> {
     execution_id: Option<&'a str>,
     contract_hash: &'a str,
     input_digest: Option<&'a str>,
-    execution_result_digest: Option<&'a str>,
     claimed_success: Option<bool>,
 }
 
@@ -212,7 +211,6 @@ struct RecordedExecution {
     scope_id: String,
     contract_hash: String,
     input_digest: Option<String>,
-    result_digest: Option<String>,
     state: String,
 }
 
@@ -309,18 +307,13 @@ fn assess_execution_consistency(
     if execution.contract_hash != binding.contract_hash {
         return contradiction("execution_contract_mismatch");
     }
-    match (binding.input_digest, execution.input_digest.as_deref()) {
-        (Some(expected), Some(recorded)) if expected == recorded => {}
-        (None, None) => {
-            return ExecutionConsistencyAssessment::unverifiable(
-                binding.claimed_success,
-                Some(state),
-                None,
-                "input_digest_not_recorded",
-            );
-        }
-        _ => return contradiction("execution_input_digest_mismatch"),
-    }
+    let incomplete_input_binding = match (binding.input_digest, execution.input_digest.as_deref()) {
+        (Some(expected), Some(recorded)) if expected == recorded => None,
+        (Some(_), Some(_)) => return contradiction("execution_input_digest_mismatch"),
+        (Some(_), None) => Some("execution_input_digest_not_recorded"),
+        (None, Some(_)) => Some("evidence_input_digest_not_declared"),
+        (None, None) => Some("input_digest_not_recorded"),
+    };
     let execution_success = match state {
         "succeeded" => Some(true),
         "failed" | "cancelled" => Some(false),
@@ -350,21 +343,18 @@ fn assess_execution_consistency(
             "caller_claim_disagrees_with_execution",
         );
     }
-    match (
-        binding.execution_result_digest,
-        execution.result_digest.as_deref(),
-    ) {
-        (Some(expected), Some(recorded)) if expected == recorded => {}
-        (None, None) => {
-            return ExecutionConsistencyAssessment::unverifiable(
-                binding.claimed_success,
-                Some(state),
-                None,
-                "execution_result_digest_not_recorded",
-            );
-        }
-        _ => return contradiction("execution_result_digest_mismatch"),
+    if let Some(reason) = incomplete_input_binding {
+        return ExecutionConsistencyAssessment::unverifiable(
+            binding.claimed_success,
+            Some(state),
+            Some(execution_success),
+            reason,
+        );
     }
+    // Generic and delivery evidence can describe an auxiliary artifact whose
+    // payload.output_digest is not the bound execution's result digest. Exact
+    // result binding is enforced by the completion/integration domain once an
+    // evidence item is explicitly selected as the execution result.
     let Some(claimed_success) = binding.claimed_success else {
         return ExecutionConsistencyAssessment::unverifiable(
             None,
@@ -393,7 +383,7 @@ async fn load_recorded_execution(
     };
     Ok(tx
         .query_opt(
-            "SELECT work_id, scope_id, contract_hash, input_digest, result_digest, state
+            "SELECT work_id, scope_id, contract_hash, input_digest, state
              FROM awr_team.executions
              WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
             &[&tenant, &project, &execution_id],
@@ -404,8 +394,7 @@ async fn load_recorded_execution(
             scope_id: row.get(1),
             contract_hash: row.get(2),
             input_digest: row.get(3),
-            result_digest: row.get(4),
-            state: row.get(5),
+            state: row.get(4),
         }))
 }
 
@@ -442,7 +431,6 @@ mod execution_consistency_tests {
             execution_id: Some("execution"),
             contract_hash: "contract",
             input_digest: Some(INPUT),
-            execution_result_digest: Some(RESULT),
             claimed_success,
         }
     }
@@ -453,7 +441,6 @@ mod execution_consistency_tests {
             scope_id: "main".into(),
             contract_hash: "contract".into(),
             input_digest: Some(INPUT.into()),
-            result_digest: Some(RESULT.into()),
             state: state.into(),
         }
     }
@@ -491,11 +478,8 @@ mod execution_consistency_tests {
             ("cancelled", true, false),
             ("succeeded", false, true),
         ] {
-            let mut execution = execution(state);
-            execution.result_digest = None;
-            let mut binding = binding(Some(claim));
-            binding.execution_result_digest = None;
-            let assessment = assess_execution_consistency(&binding, Some(&execution));
+            let assessment =
+                assess_execution_consistency(&binding(Some(claim)), Some(&execution(state)));
             assert_eq!(assessment.status, "contradicted", "{state}");
             assert_eq!(assessment.claimed_success, Some(claim), "{state}");
             assert_eq!(
@@ -509,14 +493,14 @@ mod execution_consistency_tests {
             );
         }
         for (state, claim) in [("failed", Some(false)), ("succeeded", None)] {
-            let mut execution = execution(state);
-            execution.result_digest = None;
-            let mut binding = binding(claim);
-            binding.execution_result_digest = None;
-            let assessment = assess_execution_consistency(&binding, Some(&execution));
-            assert_eq!(assessment.status, "unverifiable", "{state}");
+            let assessment = assess_execution_consistency(&binding(claim), Some(&execution(state)));
             assert_eq!(
-                assessment.reason, "execution_result_digest_not_recorded",
+                assessment.status,
+                if claim.is_some() {
+                    "consistent"
+                } else {
+                    "unverifiable"
+                },
                 "{state}"
             );
         }
@@ -531,12 +515,8 @@ mod execution_consistency_tests {
             assert_eq!(assessment.execution_success, None, "{state}");
             assert_eq!(assessment.reason, "execution_not_terminal", "{state}");
         }
-        let mut unknown_without_committed_result = execution("unknown");
-        unknown_without_committed_result.result_digest = None;
-        let assessment = assess_execution_consistency(
-            &binding(Some(true)),
-            Some(&unknown_without_committed_result),
-        );
+        let assessment =
+            assess_execution_consistency(&binding(Some(true)), Some(&execution("unknown")));
         assert_eq!(assessment.status, "unverifiable");
         assert_eq!(assessment.execution_success, None);
         assert_eq!(assessment.reason, "execution_not_terminal");
@@ -550,7 +530,7 @@ mod execution_consistency_tests {
     }
 
     #[test]
-    fn exact_binding_requires_work_scope_contract_and_digests() {
+    fn exact_binding_requires_work_scope_contract_and_explicit_input() {
         let mut mismatches = Vec::new();
         let mut wrong_work = execution("succeeded");
         wrong_work.work_id = "other".into();
@@ -564,16 +544,26 @@ mod execution_consistency_tests {
         let mut wrong_input = execution("succeeded");
         wrong_input.input_digest = Some("c".repeat(64));
         mismatches.push((wrong_input, "execution_input_digest_mismatch"));
-        let mut wrong_result = execution("succeeded");
-        wrong_result.result_digest = Some("d".repeat(64));
-        mismatches.push((wrong_result, "execution_result_digest_mismatch"));
-
         for (execution, reason) in mismatches {
             let assessment = assess_execution_consistency(&binding(Some(true)), Some(&execution));
             assert_eq!(assessment.status, "contradicted", "{reason}");
             assert_eq!(assessment.execution_success, None, "{reason}");
             assert_eq!(assessment.reason, reason);
         }
+    }
+
+    #[test]
+    fn optional_evidence_binding_does_not_hide_opposite_terminal_outcome() {
+        let mut without_input = binding(Some(true));
+        without_input.input_digest = None;
+        let contradicted = assess_execution_consistency(&without_input, Some(&execution("failed")));
+        assert_eq!(contradicted.status, "contradicted");
+        assert_eq!(contradicted.reason, "caller_claim_disagrees_with_execution");
+
+        let accepted = assess_execution_consistency(&without_input, Some(&execution("succeeded")));
+        assert_eq!(accepted.status, "unverifiable");
+        assert_eq!(accepted.execution_success, Some(true));
+        assert_eq!(accepted.reason, "evidence_input_digest_not_declared");
     }
 
     #[test]
@@ -1014,7 +1004,6 @@ async fn submit(
             execution_id: a.execution_id.as_deref(),
             contract_hash: &contract_hash,
             input_digest: a.input_digest.as_deref(),
-            execution_result_digest: execution_result_digest.as_deref(),
             claimed_success: a.payload.get("passed").and_then(Value::as_bool),
         },
         execution.as_ref(),
@@ -2543,7 +2532,6 @@ pub(crate) async fn inspect_evidence(
                     execution_id: None,
                     contract_hash: &contract_hash,
                     input_digest: input_digest.as_deref(),
-                    execution_result_digest: execution_result_digest.as_deref(),
                     claimed_success: payload.get("passed").and_then(Value::as_bool),
                 },
                 None,
@@ -2571,7 +2559,6 @@ pub(crate) async fn inspect_evidence(
                             execution_id: Some(execution_id),
                             contract_hash: &contract_hash,
                             input_digest: input_digest.as_deref(),
-                            execution_result_digest: execution_result_digest.as_deref(),
                             claimed_success: payload.get("passed").and_then(Value::as_bool),
                         },
                         execution.as_ref(),
@@ -2746,7 +2733,6 @@ async fn inspect_review_evidence_provenance(
                 execution_id: None,
                 contract_hash: round_contract_hash,
                 input_digest: evidence_input_digest.as_deref(),
-                execution_result_digest: evidence_execution_result_digest.as_deref(),
                 claimed_success: evidence_payload.get("passed").and_then(Value::as_bool),
             },
             None,
@@ -2762,7 +2748,6 @@ async fn inspect_review_evidence_provenance(
                 execution_id: evidence_execution_id.as_deref(),
                 contract_hash: round_contract_hash,
                 input_digest: evidence_input_digest.as_deref(),
-                execution_result_digest: evidence_execution_result_digest.as_deref(),
                 claimed_success: evidence_payload.get("passed").and_then(Value::as_bool),
             },
             execution.as_ref(),
