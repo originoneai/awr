@@ -42,6 +42,7 @@ pub const DOMAINS: &[DomainDef] = &[
         children: &[
             "awr_work_transition",
             "awr_work_manage",
+            "awr_work_admit",
             "awr_work_graph",
             "awr_spec_check",
         ],

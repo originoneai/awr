@@ -49,7 +49,8 @@ changing it makes earlier decisions stale.
 
 ## Record a decision
 
-`awr work admit --input admission.json` records one event. The request names the work, an active session, the revision the caller read, a stable request key,
+`awr work admit --input admission.json` (or the MCP tool `awr_work_admit`, which takes the same
+fields as arguments) records one event. The request names the work, an active session, the revision the caller read, a stable request key,
 the contract fingerprint the decider reviewed (from `work prepare` or `work assess`), and the decision:
 
 | `decision` | needs | meaning |

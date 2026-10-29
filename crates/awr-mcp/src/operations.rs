@@ -294,6 +294,14 @@ pub(crate) fn call(root: &Path, name: &str, mut args: JsonObject) -> Result<Call
                 &parse_tool!(name, args),
             )?));
         }
+        "awr_work_admit" => {
+            let mut store = Store::open_existing(&database(root)?)?;
+            return Ok(CallToolResult::structured(awr_runtime::admit_work(
+                &mut store,
+                root,
+                &parse_tool!(name, args),
+            )?));
+        }
         _ => (),
     }
     if name == "awr_project_status" {
