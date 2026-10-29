@@ -479,6 +479,17 @@ fn catalog() -> Vec<Capability> {
             ],
         ),
         (
+            "work.admission",
+            true,
+            &["work admit"],
+            &[
+                "legacy_observe_default",
+                "provenance_and_currency_only",
+                "recovery_paths_never_gated",
+                "completion_policy_unchanged",
+            ],
+        ),
+        (
             "assessment.replay",
             true,
             &["assessment replay"][..],

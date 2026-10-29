@@ -539,6 +539,12 @@ fn work(view: &ReadProject, args: WorkArgs) -> Result<Value> {
             &args.work
         )?);
     }
+    let admission = view
+        .store
+        .admission_status(view.project.id, &args.work, branch)?;
+    if admission.governed {
+        detail["admission"] = json!(admission);
+    }
     Ok(
         json!({"work":detail,"acceptance":work.work.item.acceptance,"source_ref":work.work.item.meta.source_ref,
         "progress":awr_runtime::work_progress(&view.store,view.project.id,&work.work,branch)?,

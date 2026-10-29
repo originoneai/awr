@@ -207,6 +207,8 @@ impl Store {
             crate::workstream_runtime::require_same(tx,project,from.id,session.id)?;
             let claim=match (draft.claim,live_expiration) {
                 (ResumeClaim::Inherit,Some(expiration))=>{
+                    // An inherited claim is a new claim: it needs the work's admission to be current.
+                    crate::admission::require(tx,project,work_id,branch)?;
                     let claim=Claim{id:Id::new(),project_id:project,work_item_id:work_id,session_id:session.id,agent_id:session.agent_id.clone(),branch_id:branch,status:"active".into(),acquired_at:at,expires_at:expiration,released_at:None,revision:1};
                     tx.execute("INSERT INTO claims(id,project_id,work_item_id,session_id,agent_id,branch_id,status,acquired_at,expires_at,revision) VALUES(?1,?2,?3,?4,?5,?6,'active',?7,?8,1)",params![claim.id.to_string(),project.to_string(),work_id.to_string(),session.id.to_string(),session.agent_id,branch.map(|id|id.to_string()),at,expiration]).map_err(db_error)?;
                     Some(claim)

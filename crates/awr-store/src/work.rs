@@ -224,6 +224,9 @@ pub(crate) fn readiness(
             format!("source status is {}", work.item.raw_status),
         );
     }
+    for (code, detail) in crate::admission::diagnostics(conn, project, &work, branch)? {
+        add(&code, key, detail);
+    }
     if work.item.archived {
         add(
             "work_archived",

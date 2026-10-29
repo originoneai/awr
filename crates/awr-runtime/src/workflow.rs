@@ -68,15 +68,26 @@ pub fn prepare_work(store: &mut Store, root: &Path, request: &PrepareWorkRequest
         .is_some()
         .then(|| work_definition_report(store, project.id, &request.work))
         .transpose()?;
+    let admission = store.admission_status(project.id, &request.work, branch)?;
+    let admission_only = !readiness.ready
+        && !readiness.diagnostics.is_empty()
+        && readiness
+            .diagnostics
+            .iter()
+            .all(|d| d.code.starts_with("admission_"));
     let mut prepared = json!({"version":1,"stage":"prepared","work":{
         "id":work.meta.id,"external_key":work.meta.external_key,"status":work.status,
         "revision":work.meta.revision,"source_ref":work.meta.source_ref,"next_action":work.next_action},
         "ready":readiness.ready,"diagnostics":readiness.diagnostics,"active_claims":readiness.active_claims,
         "context":context,"context_consumed":false,"completion_claimed":false,"management":management,
         "continuity":{"state":if waiting {"waiting_user"}else{"available"},"waits":waits},
-        "next_action":if waiting {"resolve_persistent_wait_before_resuming"} else if !complete {"resolve_required_context_gaps"} else if !readiness.ready {"inspect_readiness_and_current_claim"} else {"consume_context_then_start_or_resume_session"}});
+        "next_action":if waiting {"resolve_persistent_wait_before_resuming"} else if !complete {"resolve_required_context_gaps"} else if admission_only {"resolve_admission_before_claiming"} else if !readiness.ready {"inspect_readiness_and_current_claim"} else {"consume_context_then_start_or_resume_session"}});
     if let Some(definition) = definition {
         prepared["definition"] = json!(definition);
+    }
+    // Work no policy governs gains no key, so existing output is unchanged.
+    if admission.governed {
+        prepared["admission"] = json!(admission);
     }
     Ok(prepared)
 }

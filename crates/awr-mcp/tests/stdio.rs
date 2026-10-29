@@ -2402,3 +2402,64 @@ async fn two_level_progressive_disclosure_shrinks_startup_and_routes_children() 
         "expected membership rejection"
     );
 }
+
+#[tokio::test]
+async fn governed_claims_over_mcp_need_a_current_decision_and_reads_report_the_state() {
+    let f = Fixture::new();
+    fs::write(
+        f.root.join(".awr/project.toml"),
+        MANIFEST.replace(
+            "adapter='yaml-ledger-v1'\n",
+            "adapter='yaml-ledger-v1'\n[sources.options.admission_policy]\nversion=1\nmode='governed_enforce'\nscope='all'\n",
+        ),
+    )
+    .unwrap();
+    f.reindex();
+    let client = f.client().await;
+    let shown = success(call(&client, "awr_work_get", json!({"work":"NEXT"})).await);
+    assert_eq!(shown["work"]["admission"]["state"], "missing", "{shown}");
+    assert_eq!(shown["work"]["admission"]["enforced"], true);
+    // Starting a session that claims governed work is refused with the admission reason.
+    let refused = error(
+        call(
+            &client,
+            "awr_session_start",
+            json!({"work":"NEXT","conversation":"conv-1","agent":"agent-n","provider":"fixture",
+                   "model":"test","expected_revision":f.rev(),"claim":true}),
+        )
+        .await,
+        "AdmissionRequired",
+    );
+    let details = refused
+        .get("details")
+        .or_else(|| refused["error"].get("details"))
+        .unwrap();
+    assert_eq!(details["reason"], "admission_missing", "{refused}");
+    // Nothing was claimed by the refused start.
+    let (store, project) = f.store();
+    assert!(
+        store
+            .work_readiness(project.id, "NEXT", None, 0)
+            .unwrap()
+            .active_claims
+            .is_empty()
+    );
+    // A session without a claim is still available for reading and recovery.
+    let (mut store, project) = f.store();
+    let started = store
+        .start_session(
+            project.id,
+            project.project_revision,
+            SessionDraft {
+                work_item_key: Some("NEXT".into()),
+                agent_id: "agent-n".into(),
+                provider: "fixture".into(),
+                model: "test".into(),
+                branch_id: None,
+                claim: false,
+                claim_ttl_ms: None,
+            },
+        )
+        .unwrap();
+    assert!(started.0.claim.is_none());
+}

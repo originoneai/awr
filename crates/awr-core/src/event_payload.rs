@@ -56,6 +56,7 @@ pub fn is_domain_event_type(kind: &str) -> bool {
                 | "work.completed"
                 | "work.draft_activated"
                 | "work.ordinary_confirmed"
+                | "work.admission"
                 | "claim.released"
                 | "claim.expired"
                 | "artifact.recorded"
@@ -156,6 +157,9 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             "client.compaction_observed" => "observation policy",
             "client.compaction_deferred" => "observation_event_id",
             "management.assessed" => "version request_key input observer assessment",
+            "work.admission" => {
+                "version request_key decision input bound judgment proposal_event proposer_session decider_agent independent_review_required reason"
+            }
             "mcp.operation_started" | "mcp.operation_finished" | "mcp.operation_recovered" => {
                 "operation"
             }
@@ -213,6 +217,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
         "client.compaction_observed" => "observation policy",
         "client.compaction_deferred" => "observation_event_id",
         "management.assessed" => "version request_key input observer assessment",
+        "work.admission" => "version request_key decision input bound",
         "mcp.operation_started" | "mcp.operation_finished" | "mcp.operation_recovered" => {
             "operation"
         }
@@ -307,7 +312,24 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
                 serde_json::from_value::<crate::CompactionPolicy>(value.clone())
                     .is_ok_and(|p| p.validate().is_ok())
             }
-            "version" if kind == "management.assessed" => value.as_u64() == Some(1),
+            "version" if kind == "management.assessed" || kind == "work.admission" => {
+                value.as_u64() == Some(1)
+            }
+            "decision" if kind == "work.admission" => {
+                matches!(value.as_str(), Some("proposed" | "approved" | "denied"))
+            }
+            "input" if kind == "work.admission" => value.is_object(),
+            "bound" if kind == "work.admission" => {
+                serde_json::from_value::<crate::AdmissionBinding>(value.clone()).is_ok()
+            }
+            "judgment" if kind == "work.admission" => {
+                serde_json::from_value::<crate::AdmissionJudgment>(value.clone())
+                    .is_ok_and(|j| j.validate().is_ok())
+            }
+            "proposal_event" | "proposer_session" if kind == "work.admission" => id(value),
+            "decider_agent" if kind == "work.admission" => value
+                .as_str()
+                .is_some_and(|s| !s.trim().is_empty() && s.len() <= 256),
             "input" if kind == "management.assessed" => {
                 value.is_object()
                     && serde_json::from_value::<crate::ManagementObservation>(
@@ -354,6 +376,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             | "source_write_confirmed"
             | "source_copied"
             | "git_write_performed"
+            | "independent_review_required"
             | "source_write_performed" => value.is_boolean(),
             "execution" | "binding" | "before" | "after" | "write_plan" | "work_action"
             | "draft" | "session_delta" | "git_binding" | "selection" | "closure" | "original"
