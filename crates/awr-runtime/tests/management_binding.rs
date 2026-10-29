@@ -18,16 +18,28 @@ impl Fixture {
     }
 
     fn with_adapter(ledger: &Value, adapter: &str) -> Self {
+        Self::build(ledger, adapter, None)
+    }
+
+    /// The primary ledger plus a supporting Markdown goal source.
+    fn with_supporting_goals(ledger: &Value, goals: &str) -> Self {
+        Self::build(ledger, "yaml-ledger-v1", Some(goals))
+    }
+
+    fn build(ledger: &Value, adapter: &str, supporting_goals: Option<&str>) -> Self {
         let root = std::env::temp_dir().join(format!("awr-management-binding-{}", Id::new()));
         fs::create_dir_all(root.join(".awr")).unwrap();
         let root = root.canonicalize().unwrap();
-        fs::write(
-            root.join(".awr/project.toml"),
-            format!(
-                "[project]\nname='Management binding fixture'\ncontext_profile='minimal'\n[[sources]]\ndomain='ledger'\nrole='primary'\npath='work.json'\nadapter='{adapter}'\n"
-            ),
-        )
-        .unwrap();
+        let mut manifest = format!(
+            "[project]\nname='Management binding fixture'\ncontext_profile='minimal'\n[[sources]]\ndomain='ledger'\nrole='primary'\npath='work.json'\nadapter='{adapter}'\n"
+        );
+        if let Some(goals) = supporting_goals {
+            manifest.push_str(
+                "[[sources]]\ndomain='goal'\nrole='supporting'\npath='GOALS.md'\nadapter='markdown-heading-v1'\n",
+            );
+            fs::write(root.join("GOALS.md"), goals).unwrap();
+        }
+        fs::write(root.join(".awr/project.toml"), manifest).unwrap();
         fs::write(
             root.join("work.json"),
             serde_json::to_vec_pretty(ledger).unwrap(),
@@ -73,6 +85,15 @@ impl Fixture {
             serde_json::to_vec_pretty(ledger).unwrap(),
         )
         .unwrap();
+        self.reindex();
+    }
+
+    fn replace_supporting_goals(&mut self, goals: &str) {
+        fs::write(self.root.join("GOALS.md"), goals).unwrap();
+        self.reindex();
+    }
+
+    fn reindex(&mut self) {
         let indexed = index_project(
             &mut self.store,
             &self.root,
@@ -391,6 +412,53 @@ fn legacy_no_link_work_binds_inherited_primary_goals() {
             .iter()
             .any(|reason| reason["code"] == "work_contract_changed")
     );
+}
+
+#[test]
+fn cancelled_goals_never_join_the_inherited_goal_binding() {
+    let mut base = json!({
+        "goals": [goal("G", "Inherited outcome"), goal("DROPPED", "Abandoned outcome")],
+        "work_items": [work(None)]
+    });
+    goal_mut(&mut base, "DROPPED")["status"] = json!("cancelled");
+    let mut fixture = Fixture::new(&base);
+    let initial = fixture.assess();
+    fixture.record("inherited-observation", fingerprint(&initial));
+
+    // Editing only the cancelled goal leaves the binding and the saved observation current.
+    let mut changed = base.clone();
+    goal_mut(&mut changed, "DROPPED")["summary"] = json!("Changed abandoned detail");
+    fixture.replace(&changed);
+    let current = fixture.assess();
+    assert_eq!(fingerprint(&current), fingerprint(&initial));
+    assert!(!current["observation"].is_null());
+
+    // Cancelled goals alone provide no inherited goal context.
+    let mut only_cancelled = json!({
+        "goals": [goal("DROPPED", "Abandoned outcome")],
+        "work_items": [work(None)]
+    });
+    goal_mut(&mut only_cancelled, "DROPPED")["status"] = json!("cancelled");
+    assert!(gaps(&Fixture::new(&only_cancelled).assess()).contains(&"goal_context_missing"));
+}
+
+#[test]
+fn inherited_goals_come_only_from_primary_goal_sources() {
+    let ledger = json!({
+        "goals": [goal("G", "Inherited outcome")],
+        "work_items": [work(None)]
+    });
+    let supporting =
+        |detail: &str| format!("# Reference outcome {{#reference status=active}}\n\n{detail}\n");
+    let mut fixture = Fixture::with_supporting_goals(&ledger, &supporting("Background material"));
+    let initial = fixture.assess();
+    fixture.record("primary-goal-observation", fingerprint(&initial));
+
+    // A goal from a supporting source changes without touching the inherited binding.
+    fixture.replace_supporting_goals(&supporting("Changed background material"));
+    let current = fixture.assess();
+    assert_eq!(fingerprint(&current), fingerprint(&initial));
+    assert!(!current["observation"].is_null());
 }
 
 #[test]
