@@ -2,12 +2,19 @@
 #[path = "../../awr-store/tests/support/workstreams.rs"]
 mod fixture;
 use awr_core::*;
-use awr_runtime::{PrepareWorkRequest, ResumeRequest, Runtime, prepare_work, resume_session};
+use awr_runtime::{
+    MainlineNavAudience, MainlineNavExtras, MainlineNavScope, PrepareWorkRequest, ResumeRequest,
+    Runtime, mainline_nav, mainline_nav_for, prepare_work, resume_session,
+};
 use awr_source::{Manifest, index_project};
 use awr_store::{Store, WorkstreamReadSelection};
 use fixture::Fixture;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf};
+
+const API: &str = "01K00000000000000000000001";
+const CLIENT: &str = "01K00000000000000000000002";
 
 fn scoped_project() -> (PathBuf, Store, Id) {
     let root = std::env::temp_dir().join(format!("awr-scoped-runtime-{}", Id::new()));
@@ -335,4 +342,111 @@ fn evidence_report_read_rejects_every_byte_change_with_actionable_guidance() {
         .read_evidence_report_in_workstream(&allowed, &selector, "E-NL2", 100)
         .unwrap();
     assert_eq!(bytes, current);
+}
+
+fn reader(streams: &[&str]) -> MainlineNavAudience {
+    MainlineNavAudience::Workstreams(streams.iter().map(|id| id.parse().unwrap()).collect())
+}
+
+fn nav_nodes(nav: &Value) -> Vec<&str> {
+    let mut keys = nav["mainline_graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["work_key"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    keys.sort();
+    keys
+}
+
+#[test]
+fn mainline_nav_narrows_a_reader_before_assembly_and_leaves_the_owner_view_whole() {
+    let (root, store, project_id) = scoped_project();
+    let project = store.project(project_id).unwrap();
+    let scope = MainlineNavScope::default();
+    let nav = |scope: &MainlineNavScope, audience: &MainlineNavAudience| {
+        mainline_nav_for(
+            &store,
+            &project,
+            scope,
+            MainlineNavExtras::default(),
+            audience,
+        )
+    };
+
+    // The owner (the CLI's entry point) sees every workstream and the cross-stream edge.
+    let owner = mainline_nav(&store, &project, &scope, MainlineNavExtras::default()).unwrap();
+    assert_eq!(nav_nodes(&owner), ["API-1", "CLIENT-1"]);
+    assert_eq!(owner["cross_dependencies"].as_array().unwrap().len(), 1);
+    assert!(owner.to_string().contains("PRIVATE_CLIENT_TASK"));
+    assert_eq!(owner, nav(&scope, &MainlineNavAudience::Owner).unwrap());
+    // A reader of every stream has nothing to hide: it is the owner's view, byte for byte.
+    assert_eq!(owner, nav(&scope, &reader(&[API, CLIENT])).unwrap());
+
+    // CLIENT-1 depends on API-1. The api-only reader loses the consumer and the edge...
+    let api = nav(&scope, &reader(&[API])).unwrap();
+    assert_eq!(nav_nodes(&api), ["API-1"]);
+    assert_eq!(api["scope"]["workstream"]["external_key"], "api");
+    assert_eq!(api["cross_dependencies"], json!([]));
+    for hidden in ["CLIENT-1", "PRIVATE_CLIENT", CLIENT] {
+        assert!(!api.to_string().contains(hidden), "{hidden}: {api}");
+    }
+    // ...and the client-only reader keeps an opaque wait for the producer it cannot read.
+    let client = nav(&scope, &reader(&[CLIENT])).unwrap();
+    assert_eq!(nav_nodes(&client), ["CLIENT-1"]);
+    let waits = client["mainline_graph"]["nodes"][0]["explainable_waits"]
+        .as_array()
+        .unwrap();
+    assert_eq!(waits.len(), 1);
+    assert_eq!(waits[0]["kind"], "dependency_outside_scope");
+    for hidden in ["API-1", "Define the interface", "Verify the interface", API] {
+        assert!(!client.to_string().contains(hidden), "{hidden}: {client}");
+    }
+
+    // Explicit work outside the grants is a denial, never a partial or empty answer.
+    for work in ["CLIENT-1", "absent"] {
+        let scope = MainlineNavScope {
+            work: vec![work.into()],
+            ..Default::default()
+        };
+        assert!(matches!(
+            nav(&scope, &reader(&[API])),
+            Err(Error::Workstream(WorkstreamError::AccessDenied))
+        ));
+    }
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn an_unreadable_goal_key_answers_like_an_unknown_goal() {
+    let (root, store, project_id) = scoped_project();
+    let project = store.project(project_id).unwrap();
+    let nav = |goal: &str, audience: &MainlineNavAudience| {
+        mainline_nav_for(
+            &store,
+            &project,
+            &MainlineNavScope {
+                goal: Some(goal.into()),
+                ..Default::default()
+            },
+            MainlineNavExtras::default(),
+            audience,
+        )
+    };
+    // `client-delivery` is the goal of the client workstream, which this reader cannot read.
+    let unreadable = nav("client-delivery", &reader(&[API])).unwrap_err();
+    let unknown = nav("no-such-goal", &reader(&[API])).unwrap_err();
+    assert!(matches!(unreadable, Error::NotFound(_)), "{unreadable:?}");
+    assert!(matches!(unknown, Error::NotFound(_)), "{unknown:?}");
+    // Apart from the key the caller supplied, the two answers are identical.
+    assert_eq!(
+        unreadable.to_string().replace("client-delivery", "KEY"),
+        unknown.to_string().replace("no-such-goal", "KEY")
+    );
+    // The reader's own goal still resolves, and the owner still knows the project-wide goal.
+    assert!(nav("api-delivery", &reader(&[API])).is_ok());
+    assert!(nav("client-delivery", &MainlineNavAudience::Owner).is_ok());
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
 }

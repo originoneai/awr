@@ -813,6 +813,27 @@ impl ProjectFixture {
         fixture.reindex();
         fixture
     }
+    /// The workstream ledger plus a private client blocker and a tag both streams carry.
+    fn navigation() -> Self {
+        let fixture = Self::workstreams();
+        let path = fixture.root.join("work.yaml");
+        let ledger = fs::read_to_string(&path).unwrap();
+        let ledger = ledger
+            .replace(
+                "    next_action: Implement the interface.\n",
+                "    next_action: Implement the interface.\n    tags: [shared-tag]\n",
+            )
+            .replace(
+                "    next_action: Implement the client.\n",
+                "    next_action: Implement the client.\n    blocker: PRIVATE_CLIENT_BLOCKER\n    tags: [shared-tag]\n",
+            );
+        assert!(
+            ledger.contains("PRIVATE_CLIENT_BLOCKER") && ledger.matches("shared-tag").count() == 2
+        );
+        fs::write(&path, ledger).unwrap();
+        fixture.reindex();
+        fixture
+    }
     fn reindex(&self) {
         let mut store = Store::open_existing(&self.root.join(".awr/state.db")).unwrap();
         let report = index_project(
@@ -2267,6 +2288,38 @@ fn scoped(action: &str, work: Option<&str>, args: Value) -> Value {
     }
     request
 }
+fn nav_call(workstream: Option<&str>, work: Option<&str>, args: Value) -> Value {
+    let mut request = scoped("nav", work, args);
+    if let Some(workstream) = workstream {
+        request["workstream"] = json!(workstream);
+    }
+    request
+}
+/// Navigation node keys, sorted because node order follows the projection.
+fn nav_nodes(nav: &Value) -> Vec<String> {
+    let mut keys = nav["mainline_graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["work_key"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    keys.sort();
+    keys
+}
+fn nav_selection(nav: &Value) -> Vec<String> {
+    nav["scope"]["selection"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|key| key.as_str().unwrap().to_owned())
+        .collect()
+}
+fn assert_hidden(response: &Value, hidden: &[&str]) {
+    let text = response.to_string();
+    for needle in hidden {
+        assert!(!text.contains(needle), "{needle} leaked: {text}");
+    }
+}
 
 #[tokio::test]
 async fn workstream_http_grants_filter_context_objects_counts_and_search() {
@@ -2747,6 +2800,254 @@ async fn workstream_http_artifacts_and_checkpoints_do_not_leak_through_objects()
             )
             .await,
         "Unsupported",
+    );
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn workstream_http_nav_without_selector_describes_only_readable_work() {
+    let a = ProjectFixture::navigation();
+    let b = ProjectFixture::new("Other project");
+    let mut server = Server::start(&scoped_registry(&a, &b)).await;
+    let before = a.revision();
+    // The api-only reader: omitting the selector must not mean "the whole project".
+    let nav = ok(server
+        .call(READER, "awr_workstream", nav_call(None, None, json!({})))
+        .await);
+    assert_eq!(nav_nodes(&nav), ["API-1", "API-2"]);
+    assert_eq!(nav_selection(&nav), ["API-1", "API-2"]);
+    assert_eq!(nav["scope"]["work_count"], 2);
+    assert_eq!(nav["scope"]["workstream"]["id"], API_SCOPE);
+    assert_eq!(nav["scope"]["workstream"]["resolved"], true);
+    // CLIENT-1 depends on API-1, but its consumer end is unreadable: the edge is omitted.
+    assert_eq!(nav["cross_dependencies"], json!([]));
+    assert_eq!(nav["mainline_graph"]["edges"], json!([]));
+    assert_eq!(nav["blockers"], json!([]));
+    assert_ne!(
+        nav["guidance"]["when"],
+        "Selected mainline has recorded blockers"
+    );
+    assert_hidden(
+        &nav,
+        &[
+            "PRIVATE_CLIENT",
+            "CLIENT-1",
+            "Implement the client",
+            CLIENT_SCOPE,
+        ],
+    );
+    assert_eq!(nav["read_only"], true);
+    assert_eq!(nav["protocol"], "awr-mainline-nav");
+    assert_eq!(nav["schema_version"], 1);
+
+    // The client-only reader: CLIENT-1 waits on API-1, which it cannot read. The wait
+    // stays, but as an opaque boundary that names neither the work nor its status.
+    let nav = ok(server
+        .call(COLLEAGUE, "awr_workstream", nav_call(None, None, json!({})))
+        .await);
+    assert_eq!(nav_nodes(&nav), ["CLIENT-1"]);
+    assert_eq!(nav["scope"]["workstream"]["id"], CLIENT_SCOPE);
+    assert_eq!(nav["cross_dependencies"], json!([]));
+    assert_hidden(
+        &nav,
+        &[
+            "API-1",
+            "API-2",
+            "Define the interface",
+            "Review the interface",
+            "Verify the interface contract",
+            "Implement the interface",
+            API_SCOPE,
+        ],
+    );
+    let kinds = nav["mainline_graph"]["nodes"][0]["explainable_waits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|wait| wait["kind"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert!(
+        kinds.contains(&"dependency_outside_scope".to_owned()),
+        "{kinds:?}"
+    );
+    assert!(
+        !kinds.contains(&"dependency_outcome".to_owned()),
+        "{kinds:?}"
+    );
+
+    // A reader of both streams keeps the whole cross-stream picture, and an explicit
+    // stream narrows only the selection: grants decide what may be named.
+    for stream in [None, Some(API_SCOPE)] {
+        let nav = ok(server
+            .call(WRITER, "awr_workstream", nav_call(stream, None, json!({})))
+            .await);
+        let expected: &[&str] = if stream.is_some() {
+            &["API-1", "API-2"]
+        } else {
+            &["API-1", "API-2", "CLIENT-1"]
+        };
+        assert_eq!(nav_nodes(&nav), expected);
+        let cross = nav["cross_dependencies"].as_array().unwrap();
+        assert_eq!(cross.len(), 1, "{nav}");
+        assert_eq!(cross[0]["from"], "API-1");
+        assert_eq!(cross[0]["to"], "CLIENT-1");
+        assert_eq!(cross[0]["from_workstream_id"], API_SCOPE);
+        assert_eq!(cross[0]["to_workstream_id"], CLIENT_SCOPE);
+    }
+    assert_eq!(a.revision(), before);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn workstream_http_nav_denies_explicit_work_outside_the_grant() {
+    let a = ProjectFixture::navigation();
+    let b = ProjectFixture::new("Other project");
+    let mut server = Server::start(&scoped_registry(&a, &b)).await;
+    // A foreign key and an absent key are the same denial, and nothing is returned for
+    // the readable keys of the same request.
+    for work in [
+        json!(["CLIENT-1"]),
+        json!(["API-1", "CLIENT-1"]),
+        json!(["nonexistent"]),
+    ] {
+        let denied = server
+            .call(
+                READER,
+                "awr_workstream",
+                nav_call(None, None, json!({ "work": work })),
+            )
+            .await;
+        assert_hidden(&denied, &["PRIVATE_CLIENT"]);
+        error(denied, "WorkstreamAccessDenied");
+    }
+    // The single-key selector, with and without a readable stream selected.
+    for stream in [None, Some(API_SCOPE)] {
+        error(
+            server
+                .call(
+                    READER,
+                    "awr_workstream",
+                    nav_call(stream, Some("CLIENT-1"), json!({})),
+                )
+                .await,
+            "WorkstreamAccessDenied",
+        );
+    }
+    // Selecting an unreadable stream was already denied; keep it so.
+    error(
+        server
+            .call(
+                READER,
+                "awr_workstream",
+                nav_call(Some(CLIENT_SCOPE), None, json!({})),
+            )
+            .await,
+        "WorkstreamAccessDenied",
+    );
+    // Readable keys still work, however they are supplied.
+    let listed = ok(server
+        .call(
+            READER,
+            "awr_workstream",
+            nav_call(None, None, json!({"work":["API-1"]})),
+        )
+        .await);
+    let single = ok(server
+        .call(
+            READER,
+            "awr_workstream",
+            nav_call(None, Some("API-1"), json!({})),
+        )
+        .await);
+    assert_eq!(nav_selection(&listed), ["API-1"]);
+    assert_eq!(nav_selection(&single), ["API-1"]);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn workstream_http_nav_selectors_cannot_widen_the_readable_scope() {
+    let a = ProjectFixture::navigation();
+    let b = ProjectFixture::new("Other project");
+    let mut server = Server::start(&scoped_registry(&a, &b)).await;
+    // API-1 and CLIENT-1 share the `delivery` milestone and the `shared-tag` tag, and
+    // CLIENT-1 depends on API-1: each selector matches the foreign work in the owner's view.
+    for (selector, expected) in [
+        (json!({"milestone":"delivery"}), vec!["API-1"]),
+        (json!({"goal":"shared-tag"}), vec!["API-1"]),
+        // A dependency link is not a goal; it must still not reveal its hidden consumer.
+        (json!({"goal":"API-1"}), vec![]),
+    ] {
+        let nav = ok(server
+            .call(
+                READER,
+                "awr_workstream",
+                nav_call(None, None, selector.clone()),
+            )
+            .await);
+        assert_eq!(nav_selection(&nav), expected, "{selector}");
+        assert_eq!(nav_nodes(&nav), expected, "{selector}");
+        assert_hidden(&nav, &["PRIVATE_CLIENT", "CLIENT-1", CLIENT_SCOPE]);
+    }
+    // Selectors still narrow within what a reader of both streams may see.
+    let nav = ok(server
+        .call(
+            WRITER,
+            "awr_workstream",
+            nav_call(None, None, json!({"goal":"shared-tag"})),
+        )
+        .await);
+    assert_eq!(nav_selection(&nav), ["API-1", "CLIENT-1"]);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn workstream_http_nav_unrelated_stale_grant_neither_fails_nor_widens_an_explicit_stream() {
+    let a = ProjectFixture::navigation();
+    let b = ProjectFixture::new("Other project");
+    let mut server = Server::start(&scoped_registry(&a, &b)).await;
+    // Bump only the client definition (the second `authority_version: 1`), so the
+    // writer's pinned client grant is stale while its api grant is current.
+    let path = a.root.join("work.yaml");
+    let ledger = fs::read_to_string(&path).unwrap();
+    let marker = "authority_version: 1";
+    let at = ledger.match_indices(marker).nth(1).unwrap().0;
+    fs::write(
+        &path,
+        format!(
+            "{}authority_version: 2{}",
+            &ledger[..at],
+            &ledger[at + marker.len()..]
+        ),
+    )
+    .unwrap();
+    a.reindex();
+    // Without a selector every grant must verify, as for `list`.
+    error(
+        server
+            .call(WRITER, "awr_workstream", nav_call(None, None, json!({})))
+            .await,
+        "WorkstreamStaleAuthority",
+    );
+    // An explicit stream is not failed by another grant, and a stale grant reads nothing.
+    let nav = ok(server
+        .call(
+            WRITER,
+            "awr_workstream",
+            nav_call(Some(API_SCOPE), None, json!({})),
+        )
+        .await);
+    assert_eq!(nav_nodes(&nav), ["API-1", "API-2"]);
+    assert_eq!(nav["cross_dependencies"], json!([]));
+    assert_hidden(&nav, &["PRIVATE_CLIENT", "CLIENT-1", CLIENT_SCOPE]);
+    error(
+        server
+            .call(
+                WRITER,
+                "awr_workstream",
+                nav_call(Some(CLIENT_SCOPE), None, json!({})),
+            )
+            .await,
+        "WorkstreamStaleAuthority",
     );
     server.stop().await;
 }

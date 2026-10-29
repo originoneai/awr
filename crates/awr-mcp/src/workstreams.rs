@@ -6,7 +6,7 @@ use crate::{
 };
 use awr_context::{ContextRequest, DeltaBaseline, compile_workstream_context};
 use awr_core::*;
-use awr_runtime::{MainlineNavExtras, MainlineNavScope, mainline_nav};
+use awr_runtime::{MainlineNavAudience, MainlineNavExtras, MainlineNavScope, mainline_nav_for};
 use awr_source::Manifest;
 use awr_store::{
     CatalogCursor, CatalogKind, CatalogScope, EventCursor, EventQuery, ScopedCursor, SearchQuery,
@@ -15,7 +15,7 @@ use awr_store::{
 use rmcp::model::{CallToolResult, JsonObject, Tool, ToolAnnotations};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::path::Path;
+use std::{collections::BTreeSet, path::Path};
 
 const ACTIONS: &[&str] = &[
     "capabilities",
@@ -138,7 +138,8 @@ fn capabilities() -> Value {
             "search":{"text":"optional string","kind":"optional kind","status":"optional state","work":"optional work key","limit":"1..100, default 10"},
             "object":{"kind":"work|session|checkpoint|artifact|evidence|event","reference":"key or ID; artifact returns metadata only"},
             "events":{"after_revision":"optional integer","limit":"1..100, default 10","cursor":"scope-bound next_cursor, optional"},
-            "recovery":{},"nav":{"workstream":"optional id/key","work":"optional work key (repeat via args.work array)","goal":"optional","milestone":"optional","accounting":"optional WS-040 WorkstreamAccounting object"}}})
+            "recovery":{},"nav":{"workstream":"optional id; must be readable, omitted means every readable stream","work":"optional work key (repeat via args.work array); a key outside the readable streams, or absent, is WorkstreamAccessDenied","goal":"optional; narrows within readable work","milestone":"optional; narrows within readable work","accounting":"optional WS-040 WorkstreamAccounting object"}},
+        "nav_scope":"nav describes only work owned by readable streams; a dependency edge is listed only when both ends are readable, and a required dependency on unreadable work appears as a dependency_outside_scope wait that withholds the target's identity and status"})
 }
 
 pub(crate) fn call(
@@ -200,13 +201,26 @@ pub(crate) fn call(
             .store
             .workstream_catalog(project)
             .map_err(boundary_error)?;
-        // Selecting a workstream still re-checks the caller's grant; nav never writes.
+        // Grants, not selectors, bound what navigation may name: it joins every work and
+        // dependency of the project, so the runtime narrows to the works owned by the
+        // streams read here before it assembles anything. Without a selector every grant
+        // must verify, as for `list`. A selected stream keeps its specific denial, and an
+        // unrelated stale grant neither fails that request nor widens it (it reads nothing).
+        let mut readable = BTreeSet::new();
+        for grant in &access.grants {
+            match access.authorize(&catalog, grant.workstream_id, WorkstreamAction::Read) {
+                Ok(()) => {
+                    readable.insert(grant.workstream_id);
+                }
+                Err(error) if request.workstream.is_none() => return Err(error.into()),
+                Err(_) => {}
+            }
+        }
         if let Some(stream_id) = request.workstream {
             access.authorize(&catalog, stream_id, WorkstreamAction::Read)?;
-        } else {
-            for grant in &access.grants {
-                access.authorize(&catalog, grant.workstream_id, WorkstreamAction::Read)?;
-            }
+        }
+        if readable.is_empty() {
+            return Err(WorkstreamError::AccessDenied.into());
         }
         let args = Value::Object(request.args.clone());
         #[derive(Deserialize, Default)]
@@ -234,8 +248,13 @@ pub(crate) fn call(
             accounting: options.accounting,
             ..Default::default()
         };
-        let mut value =
-            mainline_nav(&view.store, &view.project, &scope, extras).map_err(boundary_error)?;
+        let audience = MainlineNavAudience::Workstreams(readable);
+        let mut value = mainline_nav_for(&view.store, &view.project, &scope, extras, &audience)
+            .map_err(|error| match error {
+                // An unreadable `work` key is the caller's denial, not a broken boundary.
+                Error::Workstream(WorkstreamError::AccessDenied) => error,
+                error => boundary_error(error),
+            })?;
         value["read_only"] = json!(true);
         value["authorization_rechecked"] = json!(true);
         view.finish(root).map_err(boundary_error)?;

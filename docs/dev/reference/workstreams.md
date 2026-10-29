@@ -388,6 +388,18 @@ context incomplete. `awr_context::related_work_in_workstream` assembles these
 scoped facts without access to the underlying Store. This is not cross-stream
 versioned delivery adoption or execution admission.
 
+Mainline navigation joins every work and dependency of a project, so a reader with
+limited grants (`MainlineNavAudience::Workstreams`) is narrowed before assembly,
+not by hiding fields afterwards. Only work owned by the reader's streams exists for
+that reader; selectors only narrow, and an explicit work key outside them is
+denied whether it belongs to another stream or does not exist. A `goal` key that
+none of the readable streams declares or uses answers `NotFound`, exactly like an
+unknown goal. A dependency is
+listed only when both ends are readable. Unfinished readable work with a required
+dependency on unreadable or dangling work keeps an opaque `dependency_outside_scope`
+wait, as `unavailable_dependencies` does in scoped context; who depends on readable
+work is never disclosed. The owner view (`mainline_nav`, `awr nav`) is not narrowed.
+
 Current-context session, checkpoint, execution and runtime-evidence readers also
 check ownership history. Moving a task away and back does not make earlier
 ownership generations current again. Historical receipts remain readable in

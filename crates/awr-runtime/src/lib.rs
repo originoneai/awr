@@ -78,8 +78,8 @@ pub use workstream_eta::{
     record_acceptance_datum, record_historical_sample, reestimate_and_persist,
 };
 pub use workstream_nav::{
-    MAINLINE_NAV_PROTOCOL, MAINLINE_NAV_SCHEMA_VERSION, MainlineNavExtras, MainlineNavScope,
-    MainlineNavWorkFact, assemble_mainline_nav, mainline_nav,
+    MAINLINE_NAV_PROTOCOL, MAINLINE_NAV_SCHEMA_VERSION, MainlineNavAudience, MainlineNavExtras,
+    MainlineNavScope, MainlineNavWorkFact, assemble_mainline_nav, mainline_nav, mainline_nav_for,
 };
 pub use workstream_usage::{
     AttestedUsageProject, UsageRuntimeError, ingest_usage_receipt, query_usage_cost_totals,

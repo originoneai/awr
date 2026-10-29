@@ -272,6 +272,21 @@ access denied. Incomplete context remains a tool error with its required gaps.
 Artifact objects contain metadata only; source catalogs and content-file reads
 are unsupported.
 
+`action: "nav"` returns the read-only mainline navigation (`awr-mainline-nav`,
+schema 1) for every stream the client may read, or for the one stream it selects.
+It describes only work those streams own, whatever `work`, `goal` or `milestone`
+select; selectors only narrow. A `work` key outside the readable streams and an
+absent key are both `WorkstreamAccessDenied`, never a partial result. A `goal` key that none of the readable
+streams declares or uses answers `NotFound`, exactly like an unknown goal, so a
+reader cannot probe for goals of other streams. A dependency
+is listed only when both ends are readable. When unfinished readable work has a
+required dependency on work the client cannot read, it keeps a
+`dependency_outside_scope` wait that withholds the target's identity and status;
+who depends on readable work is not disclosed. Without a selector every grant must
+verify, as for `list`; an unrelated stale grant does not fail a request that
+selects another stream, and it reads nothing. The local `awr nav` command is the
+project owner's view and is not narrowed.
+
 Enabled projects reject legacy shared tool calls, including their hierarchical
 aliases, source reindex and all writes, before dispatch. A scoped principal also
 cannot use its project grant to fall back to a broader tool on that project.
