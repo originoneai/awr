@@ -80,7 +80,10 @@ ID while changing its intended result therefore requires a new assessment. Missi
 linked goals remain explicit gaps even when unrelated goals exist.
 
 Work without explicit goal links retains the existing inherited-goal selection;
-it does not need duplicate goal documents. With explicit links, changes to unlinked
+it does not need duplicate goal documents. That selection matches context
+compilation: the owning workstream's goals, or else the goals of primary goal and
+ledger sources. Completed, done, cancelled, archived and retired goals, and goals
+from supporting sources, are never inherited. With explicit links, changes to unlinked
 goals do not invalidate the observation. Reordering goal declarations or links,
 and task status, next action or evidence additions alone, do not invalidate it.
 The fingerprint does not bind the whole source file or global project revision.
