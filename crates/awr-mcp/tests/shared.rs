@@ -817,7 +817,8 @@ impl ProjectFixture {
     fn navigation() -> Self {
         let fixture = Self::workstreams();
         let path = fixture.root.join("work.yaml");
-        let ledger = fs::read_to_string(&path).unwrap();
+        // A checkout may use CRLF line endings; the edits below match LF text.
+        let ledger = fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
         let ledger = ledger
             .replace(
                 "    next_action: Implement the interface.\n",
