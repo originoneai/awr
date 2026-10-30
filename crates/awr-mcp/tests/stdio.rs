@@ -2775,3 +2775,78 @@ async fn a_gap_is_opened_and_closed_over_mcp_and_shown_with_what_it_puts_in_ques
     assert_eq!(closed["gaps"]["open"], json!([]));
     assert_eq!(closed["execution_started"], false);
 }
+
+#[tokio::test]
+async fn a_finding_is_recorded_over_mcp_with_a_derived_severity_and_shown_with_the_work() {
+    let f = Fixture::new();
+    fs::write(
+        f.root.join(".awr/project.toml"),
+        MANIFEST.replace(
+            "adapter='yaml-ledger-v1'\n",
+            "adapter='yaml-ledger-v1'\n[sources.options.admission_policy]\nversion=1\nmode='governed_enforce'\nscope='all'\n",
+        ),
+    )
+    .unwrap();
+    let decision = "---\n{\"id\":\"scope\",\"status\":\"accepted\",\"affected_keys\":[\"*\"]}\n---\n# Scope\n\n## Decision\nThe first release is local only.\n";
+    fs::write(f.root.join("decisions/scope.md"), decision).unwrap();
+    let pin = awr_source::fingerprint(decision.as_bytes());
+    let outcome = "Users keep their input when saving fails";
+    let ledger = json!({
+        "goals": [{"id": "G", "title": "Safe saving", "status": "active", "success_criteria": [outcome]}],
+        "work_items": [{"id": "R", "title": "Research failure modes", "status": "planned", "goal": "G",
+            "acceptance": ["The failure modes are listed"], "next_action": "Investigate",
+            "definition": {"version": 1, "purpose": "research",
+                "intent": [{"role": "user_decision", "decision": "scope", "source_fingerprint": pin}],
+                "contributes": [{"goal": "G", "outcome": outcome, "claim": "Maps the failure modes", "by": "agent-a"}],
+                "granularity": {"judgment": "independent_result", "reason": "One answer a reviewer can judge", "by": "agent-a"},
+                "deliverable": "A list of failure modes with their limits"}}]
+    });
+    fs::write(
+        f.root.join("work.yaml"),
+        serde_json::to_vec_pretty(&ledger).unwrap(),
+    )
+    .unwrap();
+    f.reindex();
+    let client = f.client().await;
+    let quiet = success(call(&client, "awr_work_get", json!({"work":"R"})).await);
+    assert!(quiet["work"].get("findings").is_none(), "{quiet}");
+    let style = json!({"work":"R","agent":"reviewer","expected_revision":f.rev(),"request_key":"style-1",
+        "finding_key":"style","action":"record","round":2,"summary":"Prefer shorter names"});
+    let first = success(call(&client, "awr_work_finding", style.clone()).await);
+    assert_eq!(first["already_recorded"], false, "{first}");
+    assert_eq!(first["findings"]["findings"][0]["severity"], "non_blocking");
+    let replay = success(call(&client, "awr_work_finding", style).await);
+    assert_eq!(replay["already_recorded"], true, "{replay}");
+    assert_eq!(replay["event"]["id"], first["event"]["id"]);
+    let bug = json!({"work":"R","agent":"reviewer","expected_revision":f.rev(),"request_key":"bug-1",
+        "finding_key":"bug","action":"record","round":1,"summary":"A failed save deletes the draft",
+        "criterion":"The failure modes are listed",
+        "counterexample":{"given":"the storage is read-only","when":"the user saves","then":"the draft is gone"}});
+    let blocking = success(call(&client, "awr_work_finding", bug).await);
+    assert_eq!(
+        blocking["findings"]["findings"][1]["severity"], "blocking",
+        "{blocking}"
+    );
+    assert_eq!(blocking["findings"]["open_blocking"], json!(["bug"]));
+    let shown = success(call(&client, "awr_work_get", json!({"work":"R"})).await);
+    assert_eq!(
+        shown["work"]["findings"]["open_blocking"],
+        json!(["bug"]),
+        "{shown}"
+    );
+    assert_eq!(shown["work"]["findings"]["open_deferred"], json!(["style"]));
+    let resolved = success(
+        call(
+            &client,
+            "awr_work_finding",
+            json!({"work":"R","agent":"reviewer","expected_revision":f.rev(),"request_key":"bug-2",
+                   "finding_key":"bug","action":"resolve","resolution":"The fallback keeps the draft"}),
+        )
+        .await,
+    );
+    assert_eq!(
+        resolved["findings"]["open_blocking"],
+        json!([]),
+        "{resolved}"
+    );
+}

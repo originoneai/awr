@@ -1,7 +1,7 @@
 use rmcp::model::{Tool, ToolAnnotations};
 use serde_json::{Value, json};
 
-pub const TOOL_NAMES: [&str; 37] = [
+pub const TOOL_NAMES: [&str; 38] = [
     "awr_project_status",
     "awr_work_ready",
     "awr_work_get",
@@ -39,6 +39,7 @@ pub const TOOL_NAMES: [&str; 37] = [
     "awr_work_contain",
     "awr_work_reassess",
     "awr_work_gap",
+    "awr_work_finding",
 ];
 
 fn compaction_tools() -> Vec<Tool> {
@@ -222,6 +223,28 @@ fn workflow_tools() -> Vec<Tool> {
                     "expected_revision",
                     "request_key",
                     "gap_key",
+                    "action",
+                ],
+            ),
+            false,
+            false,
+        ),
+        tool(
+            "awr_work_finding",
+            "Record a review finding of a work, or close one. The severity is derived, not claimed: a finding blocks only when it breaks a required criterion or a hard rule and shows it with a reproducible counterexample, or states a security or data-loss risk with its reasoning. Blocking findings hold the completion of the work; every other finding becomes a deferred record linked to the work that blocks nothing.",
+            object(
+                json!({"work":text(),"session":optional(text()),"agent":optional(text()),"expected_revision":revision(),"request_key":text(),
+                "finding_key":text(),"action":{"type":"string","enum":["record","resolve"]},
+                "round":optional(json!({"type":"integer","minimum":1})),"summary":optional(text()),
+                "criterion":optional(text()),"rule":optional(text()),
+                "counterexample":optional(object(json!({"given":text(),"when":text(),"then":text()}),&["given","when","then"])),
+                "risk":optional(object(json!({"kind":{"type":"string","enum":["security","data_loss"]},"reasoning":text()}),&["kind","reasoning"])),
+                "resolution":optional(text())}),
+                &[
+                    "work",
+                    "expected_revision",
+                    "request_key",
+                    "finding_key",
                     "action",
                 ],
             ),

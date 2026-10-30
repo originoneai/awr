@@ -476,6 +476,10 @@ pub struct DefinitionReport {
     pub gaps: Vec<DefinitionGap>,
     /// Informational diagnostics that never turn a complete definition into one with gaps.
     pub notes: Vec<DefinitionGap>,
+    /// The tier of each acceptance criterion, word for word. Not part of the report itself: the
+    /// findings of a review are measured against it.
+    #[serde(skip)]
+    pub criterion_tiers: Vec<(String, DeliveryTier)>,
     pub basis: &'static str,
 }
 
@@ -671,6 +675,7 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
             obligations: vec![],
             gaps: vec![],
             notes: vec![],
+            criterion_tiers: vec![],
             basis: BASIS,
         };
     };
@@ -1127,6 +1132,10 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
         obligations: run.obligations,
         gaps: run.gaps,
         notes,
+        criterion_tiers: tiers
+            .iter()
+            .map(|(criterion, tier)| ((*criterion).clone(), *tier))
+            .collect(),
         basis: BASIS,
     }
 }

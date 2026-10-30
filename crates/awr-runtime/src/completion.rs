@@ -135,6 +135,8 @@ pub(crate) fn verify_completion_proof(
             "work has an active blocker; resolve it before completion".into(),
         ));
     }
+    // Only a blocking finding sends the work back; deferred records never hold completion.
+    store.check_completion_findings(project, &work.meta.external_key, session.branch_id)?;
     Ok(())
 }
 

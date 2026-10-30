@@ -44,6 +44,13 @@ pub struct GapArgs {
     #[arg(long)]
     input: PathBuf,
 }
+#[derive(Debug, Args)]
+pub struct FindingArgs {
+    /// A JSON finding request: work, session or agent, expected_revision, request_key, finding_key,
+    /// action (record or resolve) and what that action needs.
+    #[arg(long)]
+    input: PathBuf,
+}
 pub fn assess(root: &Path, args: &AssessArgs) -> Result<()> {
     let query = crate::query::QueryProject::open_read(root, false)?;
     query.finish()?;
@@ -144,6 +151,22 @@ pub fn gap(root: &Path, args: &GapArgs) -> Result<()> {
         &crate::source::runtime_dir(root, false)?.join("state.db"),
     )?;
     let value = awr_runtime::gap_work(&mut store, root, &request)?;
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+pub fn finding(root: &Path, args: &FindingArgs) -> Result<()> {
+    let input = if args.input.is_absolute() {
+        args.input.clone()
+    } else {
+        root.join(&args.input)
+    };
+    let request: FindingRequest = serde_json::from_slice(&awr_source::read_capped(&input, 64 * 1024)?).map_err(|_| {
+        Error::InvalidInput("finding input requires work, session or agent, expected_revision, request_key, finding_key and action".into())
+    })?;
+    let mut store = awr_store::Store::open_existing(
+        &crate::source::runtime_dir(root, false)?.join("state.db"),
+    )?;
+    let value = awr_runtime::finding_work(&mut store, root, &request)?;
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
 }

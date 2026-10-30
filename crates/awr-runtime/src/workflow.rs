@@ -108,6 +108,9 @@ pub fn prepare_work(store: &mut Store, root: &Path, request: &PrepareWorkRequest
     if let Some(gaps) = store.gap_block(project.id, &request.work, branch)? {
         prepared["gaps"] = json!(gaps);
     }
+    if let Some(findings) = store.finding_block(project.id, &request.work, branch)? {
+        prepared["findings"] = json!(findings);
+    }
     Ok(prepared)
 }
 

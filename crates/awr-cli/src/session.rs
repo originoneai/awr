@@ -760,6 +760,7 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
         | WorkCommand::Contain(_)
         | WorkCommand::Reassess(_)
         | WorkCommand::Gap(_)
+        | WorkCommand::Finding(_)
         | WorkCommand::Prepare(_)
         | WorkCommand::PrepareCompletion(_)
         | WorkCommand::Create(_)
