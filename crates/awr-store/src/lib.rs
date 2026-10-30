@@ -29,6 +29,7 @@ mod operation_readset;
 mod preview_snapshot;
 mod projection;
 mod query;
+mod reassessment;
 mod reconcile;
 mod resume;
 mod runtime_lease;

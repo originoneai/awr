@@ -1,7 +1,7 @@
 use rmcp::model::{Tool, ToolAnnotations};
 use serde_json::{Value, json};
 
-pub const TOOL_NAMES: [&str; 35] = [
+pub const TOOL_NAMES: [&str; 36] = [
     "awr_project_status",
     "awr_work_ready",
     "awr_work_get",
@@ -37,6 +37,7 @@ pub const TOOL_NAMES: [&str; 35] = [
     "awr_compaction_defer",
     "awr_work_admit",
     "awr_work_contain",
+    "awr_work_reassess",
 ];
 
 fn compaction_tools() -> Vec<Tool> {
@@ -172,6 +173,28 @@ fn workflow_tools() -> Vec<Tool> {
                     "request_key",
                     "decision",
                     "change_set_fingerprint",
+                ],
+            ),
+            false,
+            false,
+        ),
+        tool(
+            "awr_work_reassess",
+            "Record a reassessment decision for a work whose records show a method that kept failing or an outcome nobody knows, bound to exactly those facts. A request is not a decision by itself; the program checks currency and attribution only and judges no cause. It opens no task and holds no other work.",
+            object(
+                json!({"work":text(),"session":optional(text()),"agent":optional(text()),"expected_revision":revision(),"request_key":text(),
+                "decision":{"type":"string","enum":["continue","wait","reuse","alter_method","split","replan"]},"facts_fingerprint":text(),
+                "judgment":object(json!({"reason":text(),"next_step":text(),"evidence_considered":text()}),
+                    &["reason","next_step","evidence_considered"]),
+                "root_cause":optional(object(json!({"label":text(),"references":{"type":"array","items":{"type":"string"}}}),
+                    &["label","references"]))}),
+                &[
+                    "work",
+                    "expected_revision",
+                    "request_key",
+                    "decision",
+                    "facts_fingerprint",
+                    "judgment",
                 ],
             ),
             false,

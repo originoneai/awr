@@ -32,3 +32,10 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   an approval stale by name, and a child outside the parent's paths cannot be approved. Work
   definitions gain optional `side_line` and `outline` declarations. See
   [controlled decomposition](../reference/containment.md).
+- Bounded reassessment for governed sources: the program classifies what a work's own records show
+  (failed methods, outcomes nobody knows, unanswered waits, declared blockers) and, only for the work
+  they belong to, asks for a current decision (`awr work reassess`, MCP `awr_work_reassess`) after
+  three failures of one method in a row or while an outcome is unknown. A decision binds exactly
+  those facts, goes stale when they change and opens no task; failures that alternate with
+  successes, waits and blockers are shown and hold nothing, and recovery paths are never held. See
+  [bounded reassessment](../reference/reassessment.md).

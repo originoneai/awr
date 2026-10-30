@@ -125,7 +125,7 @@ pub struct AdmissionJudgment {
     pub responsibility: String,
 }
 
-fn bounded(text: &str) -> bool {
+pub(crate) fn bounded(text: &str) -> bool {
     !text.trim().is_empty()
         && text.len() <= MAX_TEXT
         && !text
@@ -133,7 +133,7 @@ fn bounded(text: &str) -> bool {
             .any(|c| c.is_control() && !matches!(c, '\n' | '\t'))
 }
 
-fn fingerprint(value: &str) -> bool {
+pub(crate) fn fingerprint(value: &str) -> bool {
     value
         .strip_prefix("sha256:")
         .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|c| c.is_ascii_hexdigit()))

@@ -220,16 +220,21 @@ pub(crate) fn diagnostics(
         )?);
         Ok(found)
     };
-    match decisions() {
-        Ok(found) => Ok(found),
-        Err(error) => Ok(vec![(
+    let mut found = match decisions() {
+        Ok(found) => found,
+        Err(error) => vec![(
             "admission_unknown".into(),
             format!(
                 "the admission state could not be established ({}); refresh the sources and retry",
                 error.code()
             ),
-        )]),
-    }
+        )],
+    };
+    // A work whose records call for a second look owes a current decision of its own.
+    found.extend(crate::reassessment::diagnostics_for(
+        conn, project, work, branch,
+    )?);
+    Ok(found)
 }
 
 /// The error a blocked claim, registration or start returns; none when the work is free to run.
@@ -283,6 +288,9 @@ pub(crate) fn static_code(code: &str) -> &'static str {
         "containment_stale",
         "containment_unchecked",
         "containment_not_authorized",
+        "reassessment_required",
+        "reassessment_stale",
+        "reassessment_unknown",
     ]
     .into_iter()
     .find(|known| *known == code)

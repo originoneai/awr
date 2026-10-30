@@ -13,6 +13,26 @@ pub(crate) fn at(conn: &Connection, project: Id, id: Id) -> Result<Execution> {
         params![project.to_string(),id.to_string()], |r| r.get(0)).optional().map_err(db_error)?;
     decode(value.ok_or_else(|| Error::NotFound(format!("execution {id}")))?)
 }
+/// Every execution of a work (or of the project), each in its latest state.
+pub(crate) fn executions_of(
+    conn: &Connection,
+    project: Id,
+    work: Option<Id>,
+) -> Result<Vec<Execution>> {
+    let mut q = conn.prepare("SELECT json_extract(payload_json,'$.execution') FROM events WHERE project_id=?1 AND event_type='execution.registered' AND (?2 IS NULL OR work_item_id=?2) ORDER BY project_revision").map_err(db_error)?;
+    let rows = q
+        .query_map(
+            params![project.to_string(), work.map(|v| v.to_string())],
+            |r| r.get::<_, String>(0),
+        )
+        .map_err(db_error)?;
+    let mut result = Vec::new();
+    for row in rows {
+        let initial = decode(row.map_err(db_error)?)?;
+        result.push(at(conn, project, initial.id)?);
+    }
+    Ok(result)
+}
 fn key_at(conn: &Connection, project: Id, key: &str) -> Result<Option<Execution>> {
     let value: Option<String> = conn.query_row(
         "SELECT json_extract(payload_json,'$.execution') FROM events WHERE project_id=?1 AND event_type IN ('execution.registered','execution.starting','execution.running','execution.finished') AND json_extract(payload_json,'$.execution.intent.operation_key')=?2 ORDER BY project_revision DESC LIMIT 1",
@@ -81,19 +101,7 @@ impl Store {
     }
     /// Full lightweight registry for a work item. No terminal records are silently truncated.
     pub fn executions(&self, project: Id, work: Option<Id>) -> Result<Vec<Execution>> {
-        let mut q = self.conn.prepare("SELECT json_extract(payload_json,'$.execution') FROM events WHERE project_id=?1 AND event_type='execution.registered' AND (?2 IS NULL OR work_item_id=?2) ORDER BY project_revision").map_err(db_error)?;
-        let rows = q
-            .query_map(
-                params![project.to_string(), work.map(|v| v.to_string())],
-                |r| r.get::<_, String>(0),
-            )
-            .map_err(db_error)?;
-        let mut result = Vec::new();
-        for row in rows {
-            let initial = decode(row.map_err(db_error)?)?;
-            result.push(at(&self.conn, project, initial.id)?);
-        }
-        Ok(result)
+        executions_of(&self.conn, project, work)
     }
     pub fn register_execution(
         &mut self,

@@ -9,32 +9,19 @@
 //! parent's paths, names the parent, depends only on work that exists, and the decision is
 //! current and made by an authorized agent. Whether the children really are contained in the
 //! parent's intent remains an attributed judgment.
+use crate::admission::{bounded, fingerprint};
 use crate::{AdmissionDecision, Error, Id, Result, ensure_public_data};
 use serde::{Deserialize, Serialize};
 
 pub const CONTAINMENT_EVENT: &str = "work.containment";
 
 /// Whether a readiness diagnostic code belongs to plan admission, which includes the containment
-/// of a governed work's parent.
+/// of a governed work's parent and the reassessment of a governed work that deviates.
 pub fn is_admission_code(code: &str) -> bool {
-    code.starts_with("admission_") || code.starts_with("containment_")
+    code.starts_with("admission_")
+        || code.starts_with("containment_")
+        || code.starts_with("reassessment_")
 }
-const MAX_TEXT: usize = 2048;
-
-fn bounded(text: &str) -> bool {
-    !text.trim().is_empty()
-        && text.len() <= MAX_TEXT
-        && !text
-            .chars()
-            .any(|c| c.is_control() && !matches!(c, '\n' | '\t'))
-}
-
-fn fingerprint(value: &str) -> bool {
-    value
-        .strip_prefix("sha256:")
-        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|c| c.is_ascii_hexdigit()))
-}
-
 /// The attributed judgment that the children stay inside the parent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
