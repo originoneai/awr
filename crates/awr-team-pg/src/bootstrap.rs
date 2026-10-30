@@ -21,6 +21,10 @@ impl Bootstrap {
                  REVOKE UPDATE, DELETE ON awr_team.responsibility_events FROM {ident};
                  REVOKE UPDATE, DELETE ON awr_team.responsibility_receipts FROM {ident};
                  REVOKE UPDATE, DELETE ON awr_team.agent_authorization_receipts FROM {ident};
+                 -- Governance: what a snapshot declares is immutable and decisions are append-only.
+                 REVOKE UPDATE, DELETE ON awr_team.work_admissions FROM {ident};
+                 REVOKE UPDATE, DELETE ON awr_team.snapshot_governance FROM {ident};
+                 REVOKE UPDATE, DELETE ON awr_team.work_governance FROM {ident};
                  REVOKE ALL ON awr_team.access_changes FROM {ident};
                  REVOKE ALL ON awr_team.history_migrations FROM {ident};
                  REVOKE ALL ON awr_team.backup_operations FROM {ident};
