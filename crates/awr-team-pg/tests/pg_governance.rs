@@ -4,9 +4,17 @@
 mod common;
 #[path = "fixtures/workstream_access.rs"]
 mod fixture;
-use awr_core::{AdmissionPolicy, DefinitionSummary, WorkDefinition};
-use awr_team::{GOVERNANCE_FILE, GOVERNANCE_VERSION, GovernanceCandidate, WorkGovernance};
-use awr_team_pg::{PgError, SourceFile, WorkstreamCommand, WorkstreamReadStore};
+use awr_core::{
+    AdmissionPolicy, DefinitionSummary, Id, WorkDefinition, Workstream, WorkstreamCatalog,
+    WorkstreamState,
+};
+use awr_team::{
+    GOVERNANCE_FILE, GOVERNANCE_VERSION, GovernanceCandidate, SourceActivationPlan, WorkContract,
+    WorkGovernance, WorkId, WorkstreamBundle, WorkstreamContract,
+};
+use awr_team_pg::{
+    IngestRequest, PgError, SourceFile, SourceStore, WorkstreamCommand, WorkstreamReadStore,
+};
 use fixture::*;
 use serde_json::{Value, json};
 
@@ -366,4 +374,209 @@ async fn decisions_are_append_only_and_a_snapshot_never_writes_one() {
             .await
             .is_err()
     );
+}
+
+/// The same snapshot the fixture installs, published again with or without governance.
+async fn publish(db: &str, governance: Option<&GovernanceCandidate>) -> Result<(), PgError> {
+    let definitions = [(1, "alpha"), (2, "private-beta")]
+        .into_iter()
+        .map(|(i, key)| Workstream {
+            id: Id::from(i),
+            project_id: PROJECT.into(),
+            external_key: key.into(),
+            title: key.into(),
+            state: WorkstreamState::Active,
+            authority_version: 1,
+            goal_keys: vec![key.into()],
+            acceptance_contracts: vec![format!("docs/{key}.md")],
+        })
+        .collect();
+    let contracts = [
+        ("a", 1, vec![]),
+        ("b-private", 2, vec![]),
+        ("c", 1, vec!["b-private"]),
+    ]
+    .into_iter()
+    .map(|(id, stream, deps)| WorkstreamContract {
+        workstream_id: Id::from(stream),
+        contract: WorkContract {
+            dependency_acceptance: Default::default(),
+            execution_settlement: None,
+            codec: WorkContract::CODEC.into(),
+            work_id: WorkId::new(id).unwrap(),
+            external_key: id.into(),
+            goals: vec!["ship".into()],
+            hard_rules: vec!["preserve compatibility".into()],
+            scope_paths: vec!["src".into()],
+            acceptance: vec!["verified".into()],
+            required_dependencies: deps.into_iter().map(Into::into).collect(),
+            completion_policy: "review".into(),
+            verification_requirements: vec!["report".into()],
+        },
+    })
+    .collect();
+    let bundle = WorkstreamBundle {
+        codec: WorkstreamBundle::CODEC.into(),
+        catalog: WorkstreamCatalog {
+            version: 1,
+            project_id: PROJECT.into(),
+            legacy_default: None,
+            workstreams: definitions,
+        },
+        contracts,
+    };
+    let mut files = vec![
+        SourceFile {
+            path: "docs/alpha.md".into(),
+            bytes: b"Public API contract".to_vec(),
+        },
+        SourceFile {
+            path: "docs/private-beta.md".into(),
+            bytes: b"Private peer contract".to_vec(),
+        },
+        SourceFile {
+            path: "workstreams.json".into(),
+            bytes: serde_json::to_vec(&bundle).unwrap(),
+        },
+    ];
+    if let Some(governance) = governance {
+        files.push(SourceFile {
+            path: GOVERNANCE_FILE.into(),
+            bytes: serde_json::to_vec(governance).unwrap(),
+        });
+    }
+    let source = SourceStore::from_config(common::with_app_role(&common::test_config(), db));
+    let c = source
+        .ingest(IngestRequest {
+            tenant_id: TENANT.into(),
+            project_id: PROJECT.into(),
+            actor_id: "agent".into(),
+            parser_version: "workstreams/1".into(),
+            files,
+        })
+        .await?;
+    source
+        .approve(
+            TENANT,
+            PROJECT,
+            &c.proposal_id,
+            "reviewer",
+            &c.manifest_digest,
+        )
+        .await?;
+    source
+        .activate_workstreams(
+            TENANT,
+            PROJECT,
+            "agent",
+            &c.proposal_id,
+            &SourceActivationPlan {
+                candidate_digest: c.manifest_digest.clone(),
+                parser_version: c.parser_version.clone(),
+                expected_authority_epoch: c.base_epoch.clone(),
+                approved_candidate_digest: c.manifest_digest.clone(),
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_source_change_makes_the_decision_stale_and_a_package_cannot_drop_governance() {
+    let governed = candidate("governed_enforce", complete());
+    let (_guard, admin, db, store) = setup_with_specs(files(&governed)).await;
+    enable_writes(&admin).await;
+    let commands = store.commands();
+    let fingerprint = read(&store).await["binding_fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    commands
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            decision(
+                &store,
+                "decide-before-change",
+                json!({"admission_decision":"approved","binding_fingerprint":fingerprint,
+                       "admission_judgment":judgment()}),
+            )
+            .await,
+        )
+        .await
+        .unwrap();
+    assert_eq!(read(&store).await["admitted"], true);
+    // A package without governance cannot replace a governed snapshot.
+    let dropped = publish(&db, None).await.unwrap_err();
+    assert!(
+        matches!(&dropped, PgError::Protocol(message) if message.contains("governance")),
+        "{dropped:?}"
+    );
+    assert_eq!(read(&store).await["admitted"], true, "nothing changed");
+    // The definition of the work changes: the new snapshot installs and the old decision is stale.
+    let mut changed = governed.clone();
+    changed.works[0].definition = Some(
+        serde_json::from_value(json!({
+            "version": 1, "purpose": "research", "tier": "required",
+            "intent": [{"role": "user_decision", "decision": "scope", "source_fingerprint": PIN}],
+            "contributes": [{"goal": "ship", "outcome": "O", "claim": "Maps the failure modes", "by": "agent-a"}],
+            "granularity": {"judgment": "independent_result", "reason": "One answer", "by": "agent-a"},
+            "deliverable": "A different list of failure modes"
+        }))
+        .unwrap(),
+    );
+    publish(&db, Some(&changed)).await.unwrap();
+    let after = read(&store).await;
+    assert_eq!(after["state"], "stale", "{after}");
+    assert_eq!(after["admitted"], false);
+    assert!(
+        after["diagnostics"][0]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("definition"),
+        "{after}"
+    );
+    let refused = commands
+        .execute(TENANT, PROJECT, A, claim(&store, "take-after-change").await)
+        .await;
+    refused_with(&refused, "admission_stale");
+}
+
+#[tokio::test]
+async fn two_deciders_who_read_the_same_revision_get_one_decision() {
+    let (_guard, admin, _, store) =
+        setup_with_specs(files(&candidate("governed_enforce", complete()))).await;
+    enable_writes(&admin).await;
+    let commands = store.commands();
+    let fingerprint = read(&store).await["binding_fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let prepared = prepare(&store, A, "a").await;
+    let one = command(
+        &prepared,
+        "decide-one",
+        "admission.decide",
+        json!({"admission_decision":"approved","binding_fingerprint":fingerprint,
+               "admission_judgment":judgment()}),
+    );
+    let other = command(
+        &prepared,
+        "decide-other",
+        "admission.decide",
+        json!({"admission_decision":"denied","binding_fingerprint":fingerprint,
+               "admission_reason":"Another decider reads the scope differently"}),
+    );
+    commands.execute(TENANT, PROJECT, A, one).await.unwrap();
+    // The second decision was computed against a revision that no longer exists.
+    let lost = commands.execute(TENANT, PROJECT, A, other).await;
+    assert!(lost.is_err(), "{lost:?}");
+    let rows: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.work_admissions", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(rows, 1);
+    assert_eq!(read(&store).await["state"], "approved");
 }

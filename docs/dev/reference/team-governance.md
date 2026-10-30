@@ -50,7 +50,8 @@ original receipt.
 ## What is held
 
 With an enforced policy (`governed_enforce`), `claim.acquire`, `task.assign`,
-`task.accept_assignment`, `task.claim_available`, `execution.prepare` and `execution.start` answer
+`task.accept_assignment`, `task.claim_available`, `handoff.accept`, `execution.prepare` and
+`execution.start` answer
 `AdmissionRequired` with the reason (`admission_missing`, `admission_pending`, `admission_denied`,
 `admission_stale`, `admission_obligations_unmet`) until the decision is current. Claim and dispatch
 share one check, so the same decision serves both. Reading, checkpoints, ending a session, releasing a
