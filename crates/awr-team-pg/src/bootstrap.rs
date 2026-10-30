@@ -25,6 +25,7 @@ impl Bootstrap {
                  REVOKE UPDATE, DELETE ON awr_team.work_admissions FROM {ident};
                  REVOKE UPDATE, DELETE ON awr_team.snapshot_governance FROM {ident};
                  REVOKE UPDATE, DELETE ON awr_team.work_governance FROM {ident};
+                 REVOKE UPDATE, DELETE ON awr_team.review_findings FROM {ident};
                  REVOKE ALL ON awr_team.access_changes FROM {ident};
                  REVOKE ALL ON awr_team.history_migrations FROM {ident};
                  REVOKE ALL ON awr_team.backup_operations FROM {ident};

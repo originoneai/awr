@@ -1131,6 +1131,15 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
                 "next_step":"Read work.admission for the reason and the scope, then have a maintainer record admission.decide for exactly that scope. Inspection, checkpoints and recovery stay available."
             }),
         ),
+        PgError::FindingsBlock { detail } => (
+            StatusCode::CONFLICT,
+            json!({
+                "code":"FindingsBlock",
+                "message":"the findings of this work do not allow that decision",
+                "detail":detail,
+                "next_step":"Inspect review.inspect for the findings. A return needs a blocking finding (a required criterion or hard rule broken, shown with a counterexample, or a stated security or data-loss risk); other findings are deferred records. An approval must resolve every open blocking finding, and a completion needs none open."
+            }),
+        ),
         PgError::PolicyDowngrade => (
             StatusCode::CONFLICT,
             json!({
