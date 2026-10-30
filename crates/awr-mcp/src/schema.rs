@@ -181,14 +181,17 @@ fn workflow_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_work_reassess",
-            "Record a reassessment decision for a work whose records show a method that kept failing or an outcome nobody knows, bound to exactly those facts. A request is not a decision by itself; the program checks currency and attribution only and judges no cause. It opens no task and holds no other work.",
+            "Record a reassessment decision for a work whose records show a method that kept failing or an outcome nobody knows, or whose rework or effort budget is spent, bound to exactly those facts or that budget. A request is not a decision by itself; the program checks currency and attribution only and judges no cause. It opens no task and holds no other work.",
             object(
                 json!({"work":text(),"session":optional(text()),"agent":optional(text()),"expected_revision":revision(),"request_key":text(),
-                "decision":{"type":"string","enum":["continue","wait","reuse","alter_method","split","replan"]},"facts_fingerprint":text(),
+                "decision":{"type":"string","enum":["continue","wait","reuse","alter_method","split","replan","deliver_with_known_issues","reduce_scope","escalate"]},
+                "answers":optional(json!({"type":"string","enum":["facts","budget"]})),"facts_fingerprint":text(),
                 "judgment":object(json!({"reason":text(),"next_step":text(),"evidence_considered":text()}),
                     &["reason","next_step","evidence_considered"]),
                 "root_cause":optional(object(json!({"label":text(),"references":{"type":"array","items":{"type":"string"}}}),
-                    &["label","references"]))}),
+                    &["label","references"])),
+                "known_issues":optional(json!({"type":"array","items":{"type":"string"}})),
+                "reduced_scope":optional(text()),"escalated_to":optional(text())}),
                 &[
                     "work",
                     "expected_revision",

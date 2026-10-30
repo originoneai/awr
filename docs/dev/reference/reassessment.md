@@ -77,6 +77,48 @@ always be resolved. Under `legacy_observe` the state is shown and nothing is hel
 outside the policy's scope is shown the same way, never held, and no decision can be recorded for
 it; a project without a policy is untouched.
 
+## Budgets
+
+A work definition may declare a `size` (`small`, `medium` or `large`) and a `budget` that replaces
+one or both defaults of the size. A work that declares no size is medium.
+
+| Size | Rework cycles | Active effort |
+| --- | --- | --- |
+| `small` | 2 | 60 minutes |
+| `medium` | 3 | 240 minutes |
+| `large` | declared in the definition (3 until it is) | 960 minutes |
+
+Larger work has no default rework budget: a work declared `large` declares its own, and its
+definition reports the gap `large_work_budget_missing` (which [admission](admission.md) treats like
+any other unmet obligation) until it does.
+
+AWR counts from its own records before it asks the host. **Rework** is the number of times the work
+was reopened. **Effort** is the time claims on the work were held, which can only overstate the
+effort that was active. The counters a host reports through `awr work manage`
+(`completed_rework_cycles`, `active_elapsed_ms`) are used only where AWR recorded nothing of its own,
+and only while that observation is current; the block says which it used (`recorded` or
+`host_reported`).
+
+A budget is **spent** once the work needs more than it allows: a fourth rework cycle under a budget of
+three. Then the work needs a decision that deals with it, requested with `"answers": "budget"` and the
+`facts_fingerprint` of `reassessment.budget.current`:
+
+| Choice | Needs |
+| --- | --- |
+| `deliver_with_known_issues` | the `known_issues` the delivery goes out with |
+| `reduce_scope` | what the scope is `reduced_to`, as `reduced_scope` |
+| `replan` | nothing more; the plan, and with it the budget, is replaced where plans are made |
+| `escalate` | who it is `escalated_to` |
+
+`continue` is not among them: continuing does not deal with a spent budget. A decision binds the
+count it answered, so a further cycle makes it stale, and a work whose budget is raised is within it
+again whatever was decided before. Effort is bound by the allowance it went over, not by the minute.
+An escalation keeps the work held until someone else decides: the one who escalated cannot answer it,
+and when the policy lists `supervisors` only a supervisor can. The diagnostics are
+`reassessment_budget_required`, `reassessment_budget_stale`, `reassessment_budget_escalated` and
+`reassessment_not_authorized`, and they hold the work like the others. Facts and budget are decided
+separately, each with its own decision.
+
 ## Gaps
 
 A reassessment can find that something is missing or has changed in a work's intent, acceptance,

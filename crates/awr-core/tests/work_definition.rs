@@ -923,3 +923,41 @@ fn an_outline_keeps_what_is_known_and_a_trigger_and_is_never_executable() {
     blank["outline"] = json!({"constraints": [" "], "trigger": "Later"});
     assert!(parse(&blank).validate().is_err());
 }
+
+#[test]
+fn a_large_work_declares_its_own_rework_budget_and_other_sizes_owe_nothing() {
+    let report = |edit: fn(&mut Value)| {
+        let mut world = World::new();
+        world.change(edit);
+        world.report()
+    };
+    let large = report(|v| v["size"] = json!("large"));
+    assert!(
+        codes(&large).contains(&"large_work_budget_missing"),
+        "{large:?}"
+    );
+    // Declaring the effort alone is not declaring the rework budget.
+    let effort_only = report(|v| {
+        v["size"] = json!("large");
+        v["budget"] = json!({"active_effort_minutes": 2000});
+    });
+    assert!(codes(&effort_only).contains(&"large_work_budget_missing"));
+    let declared = report(|v| {
+        v["size"] = json!("large");
+        v["budget"] = json!({"rework_cycles": 4});
+    });
+    assert!(
+        !codes(&declared).contains(&"large_work_budget_missing"),
+        "{declared:?}"
+    );
+    for size in ["small", "medium"] {
+        let value = json!(size);
+        let mut world = World::new();
+        world.change(|v| v["size"] = value.clone());
+        assert!(
+            !codes(&world.report()).contains(&"large_work_budget_missing"),
+            "{size}"
+        );
+    }
+    assert!(!codes(&World::new().report()).contains(&"large_work_budget_missing"));
+}

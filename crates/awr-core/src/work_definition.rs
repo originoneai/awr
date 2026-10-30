@@ -136,6 +136,86 @@ pub struct Discrimination {
     pub note: Option<String>,
 }
 
+/// How large the work is expected to be; the budgets default from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkSize {
+    Small,
+    Medium,
+    Large,
+}
+
+pub const MAX_REWORK_BUDGET: u32 = 20;
+pub const MAX_EFFORT_BUDGET_MINUTES: u64 = 100_000;
+
+impl WorkSize {
+    /// The rework cycles and the active-effort minutes a work of this size gets when it declares
+    /// no budget of its own. Larger work declares its own rework budget: the figure given here is
+    /// the standard one, which applies only until it does, and the definition reports a gap.
+    pub fn defaults(self) -> (u32, u64) {
+        match self {
+            Self::Small => (2, 60),
+            Self::Medium => (3, 240),
+            Self::Large => (3, 960),
+        }
+    }
+}
+
+/// How many times the work may be returned and how long it may be worked on before someone has
+/// to decide again. A limit left out falls back to the default of the size.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkBudget {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rework_cycles: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_effort_minutes: Option<u64>,
+}
+
+/// The budgets in force for a work, with where each came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EffectiveBudget {
+    pub size: WorkSize,
+    /// `declared` or `default` (a work that declares no size is medium).
+    pub size_basis: &'static str,
+    pub rework_cycles: u32,
+    /// `declared` or `size_default`.
+    pub rework_basis: &'static str,
+    pub active_effort_minutes: u64,
+    pub effort_basis: &'static str,
+}
+
+/// What a work may spend before a decision is needed: its declared limits, else the defaults of
+/// its size. Work without a definition is a medium work.
+pub fn effective_budget(definition: Option<&WorkDefinition>) -> EffectiveBudget {
+    let declared_size = definition.and_then(|d| d.size);
+    let size = declared_size.unwrap_or(WorkSize::Medium);
+    let (rework_default, effort_default) = size.defaults();
+    let budget = definition.and_then(|d| d.budget.as_ref());
+    let rework = budget.and_then(|b| b.rework_cycles);
+    let effort = budget.and_then(|b| b.active_effort_minutes);
+    EffectiveBudget {
+        size,
+        size_basis: if declared_size.is_some() {
+            "declared"
+        } else {
+            "default"
+        },
+        rework_cycles: rework.unwrap_or(rework_default),
+        rework_basis: if rework.is_some() {
+            "declared"
+        } else {
+            "size_default"
+        },
+        active_effort_minutes: effort.unwrap_or(effort_default),
+        effort_basis: if effort.is_some() {
+            "declared"
+        } else {
+            "size_default"
+        },
+    }
+}
+
 /// A side line of work spawned from another: it must say when it rejoins and when it stops.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -196,6 +276,10 @@ pub struct WorkDefinition {
     pub side_line: Option<SideLine>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outline: Option<Outline>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<WorkSize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<WorkBudget>,
 }
 
 fn text(value: &str) -> bool {
@@ -318,6 +402,16 @@ impl WorkDefinition {
         {
             return Err(invalid(
                 "an outline needs bounded constraints and a bounded elaboration trigger",
+            ));
+        }
+        if let Some(budget) = &self.budget
+            && (budget.rework_cycles.is_some_and(|n| n > MAX_REWORK_BUDGET)
+                || budget
+                    .active_effort_minutes
+                    .is_some_and(|n| n == 0 || n > MAX_EFFORT_BUDGET_MINUTES))
+        {
+            return Err(invalid(
+                "a budget allows at most 20 rework cycles and between 1 and 100000 minutes of active effort",
             ));
         }
         if serde_json::to_vec(self)?.len() > MAX_BYTES {
@@ -965,6 +1059,16 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
             },
             source: None,
         });
+    }
+
+    // Larger work has no default rework budget; it declares its own.
+    if me.size == Some(WorkSize::Large)
+        && me.budget.as_ref().and_then(|b| b.rework_cycles).is_none()
+    {
+        run.gap(
+            "large_work_budget_missing",
+            "a large work declares its own rework budget; the figure of a standard work applies only until it does",
+        );
     }
 
     // Outline work keeps what is known and when to elaborate it; it is not near-term executable.
