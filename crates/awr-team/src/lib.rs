@@ -8,6 +8,7 @@ mod completion;
 mod contract;
 pub mod delivery;
 mod error;
+mod findings;
 mod governance;
 mod ids;
 mod permission;
@@ -31,6 +32,7 @@ pub use contract::{
     ExecutionSettlementMode, ExecutionSettlementPolicy, WorkContract, WorkDefinitionState,
 };
 pub use error::{TeamError, TeamResult};
+pub use findings::{JudgedFinding, ReviewFinding, ReviewScope, judge_finding};
 pub use governance::{
     GOVERNANCE_FILE, GOVERNANCE_VERSION, GovernanceCandidate, WorkGovernance, admission_status,
     binding_fingerprint,
