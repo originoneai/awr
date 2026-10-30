@@ -1,7 +1,7 @@
 use rmcp::model::{Tool, ToolAnnotations};
 use serde_json::{Value, json};
 
-pub const TOOL_NAMES: [&str; 33] = [
+pub const TOOL_NAMES: [&str; 34] = [
     "awr_project_status",
     "awr_work_ready",
     "awr_work_get",
@@ -35,6 +35,7 @@ pub const TOOL_NAMES: [&str; 33] = [
     "awr_compaction_observe",
     "awr_compaction_get",
     "awr_compaction_defer",
+    "awr_work_admit",
 ];
 
 fn compaction_tools() -> Vec<Tool> {
@@ -129,6 +130,27 @@ fn workflow_tools() -> Vec<Tool> {
                     "request_key",
                     "contract_fingerprint",
                     "observation",
+                ],
+            ),
+            false,
+            false,
+        ),
+        tool(
+            "awr_work_admit",
+            "Record a governed admission proposal or decision for the current work contract and session. A request is not a decision; the program checks provenance and currency only, grants no execution beyond the recorded decision and changes no completion policy.",
+            object(
+                json!({"work":text(),"session":optional(text()),"agent":optional(text()),"expected_revision":revision(),"request_key":text(),
+                "decision":{"type":"string","enum":["proposed","approved","denied"]},"contract_fingerprint":text(),
+                "judgment":optional(object(json!({"contribution":text(),"necessity":text(),"alternatives":text(),
+                "deliverable":text(),"exit":text(),"responsibility":text()}),
+                    &["contribution","necessity","alternatives","deliverable","exit","responsibility"])),
+                "proposal_event":optional(text()),"reason":optional(text())}),
+                &[
+                    "work",
+                    "expected_revision",
+                    "request_key",
+                    "decision",
+                    "contract_fingerprint",
                 ],
             ),
             false,

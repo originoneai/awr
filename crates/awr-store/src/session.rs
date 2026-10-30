@@ -152,6 +152,18 @@ pub(crate) fn acquire(
             "work {key} or its dependencies are not fresh"
         )));
     }
+    if !diagnostics.is_empty() && diagnostics.iter().all(|d| d.code.starts_with("admission_")) {
+        return Err(Error::Admission {
+            code: crate::admission::static_code(&diagnostics[0].code),
+            message: diagnostics[0].detail.clone(),
+            diagnostics: serde_json::json!(
+                diagnostics
+                    .iter()
+                    .map(|d| serde_json::json!({"code": d.code, "detail": d.detail}))
+                    .collect::<Vec<_>>()
+            ),
+        });
+    }
     if !diagnostics.is_empty() {
         return Err(Error::DependencyBlocked(serde_json::to_string(
             &diagnostics,

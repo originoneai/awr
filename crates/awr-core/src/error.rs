@@ -31,6 +31,14 @@ pub enum Error {
     DependencyBlocked(String),
     #[error("claim conflict: {0}")]
     ClaimConflict(String),
+    /// Governed work needs a current approved admission decision. `code` is the primary reason;
+    /// `diagnostics` lists every reason as `{code, detail}`.
+    #[error("admission required ({code}): {message}")]
+    Admission {
+        code: &'static str,
+        message: String,
+        diagnostics: serde_json::Value,
+    },
     #[error("rule violation: {0}")]
     RuleViolation(String),
     #[error("rule violation: {message}")]
@@ -173,6 +181,7 @@ impl Error {
             }
             Self::DependencyBlocked(_) => "DependencyBlocked",
             Self::ClaimConflict(_) => "ClaimConflict",
+            Self::Admission { .. } => "AdmissionRequired",
             Self::RuleViolation(_) | Self::SensitiveSource { .. } => "RuleViolation",
             Self::EvidenceMissing(_) | Self::EvidenceDiagnostic(_) => "EvidenceMissing",
             Self::MutationUnsupported(_) => "MutationUnsupported",
@@ -220,6 +229,10 @@ impl Error {
                     "intake_staged":intake_staged
                 })),
                 Self::RuleViolation(message) => crate::secrets::sensitive_rejection_details(message),
+                Self::Admission { code, diagnostics, .. } => Some(serde_json::json!({
+                    "reason": code, "diagnostics": diagnostics,
+                    "next_action": "Read work prepare for the admission state, repair the listed reasons, then request a decision with work admit; recovery operations stay available."
+                })),
                 Self::RevisionConflict { expected, actual } => {
                     Some(serde_json::json!({"expected": expected, "actual": actual}))
                 }

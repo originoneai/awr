@@ -52,6 +52,8 @@ impl Store {
             tx.execute("UPDATE claims SET status=CASE WHEN expires_at<=?1 THEN 'expired' ELSE 'released' END,released_at=CASE WHEN expires_at<=?1 THEN NULL ELSE ?1 END,revision=revision+1 WHERE project_id=?2 AND session_id=?3 AND status='active'",params![at,project.to_string(),from.to_string()]).map_err(db_error)?;
             tx.execute("UPDATE sessions SET status='incomplete',ended_at=?1,end_project_revision=?2,revision=revision+1 WHERE project_id=?3 AND id=?4",params![at,sqlite_revision(next)?,project.to_string(),from.to_string()]).map_err(db_error)?;
             let transferred_claim = if let (Some(receiver), Some(previous_expiration)) = (&receiver, live_expiration) {
+                // A transferred claim is a new claim: it needs the work's admission to be current.
+                crate::admission::require(tx, project, work, receiver.branch_id)?;
                 let claim = Claim { id:Id::new(), project_id:project, work_item_id:work, session_id:receiver.id, agent_id:receiver.agent_id.clone(), branch_id:receiver.branch_id, status:"active".into(), acquired_at:at, expires_at:override_expiration.or(previous_expiration), released_at:None, revision:1 };
                 tx.execute("INSERT INTO claims(id,project_id,work_item_id,session_id,agent_id,branch_id,status,acquired_at,expires_at,revision) VALUES(?1,?2,?3,?4,?5,?6,'active',?7,?8,1)",params![claim.id.to_string(),project.to_string(),work.to_string(),receiver.id.to_string(),receiver.agent_id,receiver.branch_id.map(|id|id.to_string()),at,claim.expires_at]).map_err(db_error)?;
                 Some(claim)

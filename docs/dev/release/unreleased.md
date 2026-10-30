@@ -12,3 +12,16 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   Run `awr source reindex` after upgrading to refresh the changed projections.
   Markdown task bindings and cross-document replacement traversal are deferred.
   See [specification references and coverage](../reference/specification-coverage.md).
+- Optional work definitions in YAML ledgers: a work item can record its purpose, adopted intent,
+  the goal outcome it advances, responsibility, examples and how its tests will show they detect a
+  wrong implementation. `awr work show` and `awr work prepare` (and the MCP work tools) report each
+  obligation of the declared purpose and every gap by code, only for work that declares one. The
+  check is deterministic and read-only, grants no permission and changes no completion rule. See
+  [work definitions](../reference/work-definition.md).
+- Opt-in governed plan admission per ledger source. Under `governed_enforce`, claiming work, a
+  handoff's claim transfer, a resume's claim inheritance and registering or starting an execution
+  need a recorded, approved decision that still describes the current contract, definition,
+  reviewed examples and policy; `awr work admit` and the MCP tool `awr_work_admit` record
+  proposals and decisions as events (no schema migration). Projects without a policy are
+  unaffected, `legacy_observe` reports without blocking, and recovery paths and completion policy
+  are unchanged. See [plan admission](../reference/admission.md).

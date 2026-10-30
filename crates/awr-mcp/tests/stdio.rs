@@ -2402,3 +2402,151 @@ async fn two_level_progressive_disclosure_shrinks_startup_and_routes_children() 
         "expected membership rejection"
     );
 }
+
+#[tokio::test]
+async fn governed_claims_over_mcp_need_a_current_decision_and_reads_report_the_state() {
+    let f = Fixture::new();
+    fs::write(
+        f.root.join(".awr/project.toml"),
+        MANIFEST.replace(
+            "adapter='yaml-ledger-v1'\n",
+            "adapter='yaml-ledger-v1'\n[sources.options.admission_policy]\nversion=1\nmode='governed_enforce'\nscope='all'\n",
+        ),
+    )
+    .unwrap();
+    f.reindex();
+    let client = f.client().await;
+    let shown = success(call(&client, "awr_work_get", json!({"work":"NEXT"})).await);
+    assert_eq!(shown["work"]["admission"]["state"], "missing", "{shown}");
+    assert_eq!(shown["work"]["admission"]["enforced"], true);
+    // Starting a session that claims governed work is refused with the admission reason.
+    let refused = error(
+        call(
+            &client,
+            "awr_session_start",
+            json!({"work":"NEXT","conversation":"conv-1","agent":"agent-n","provider":"fixture",
+                   "model":"test","expected_revision":f.rev(),"claim":true}),
+        )
+        .await,
+        "AdmissionRequired",
+    );
+    let details = refused
+        .get("details")
+        .or_else(|| refused["error"].get("details"))
+        .unwrap();
+    assert_eq!(details["reason"], "admission_missing", "{refused}");
+    // Nothing was claimed by the refused start.
+    let (store, project) = f.store();
+    assert!(
+        store
+            .work_readiness(project.id, "NEXT", None, 0)
+            .unwrap()
+            .active_claims
+            .is_empty()
+    );
+    // A session without a claim is still available for reading and recovery.
+    let (mut store, project) = f.store();
+    let started = store
+        .start_session(
+            project.id,
+            project.project_revision,
+            SessionDraft {
+                work_item_key: Some("NEXT".into()),
+                agent_id: "agent-n".into(),
+                provider: "fixture".into(),
+                model: "test".into(),
+                branch_id: None,
+                claim: false,
+                claim_ttl_ms: None,
+            },
+        )
+        .unwrap();
+    assert!(started.0.claim.is_none());
+}
+
+#[tokio::test]
+async fn admission_is_recorded_over_mcp_and_then_admits_the_claim_exactly_once() {
+    let f = Fixture::new();
+    fs::write(
+        f.root.join(".awr/project.toml"),
+        MANIFEST.replace(
+            "adapter='yaml-ledger-v1'\n",
+            "adapter='yaml-ledger-v1'\n[sources.options.admission_policy]\nversion=1\nmode='governed_enforce'\nscope='all'\n",
+        ),
+    )
+    .unwrap();
+    let decision = "---\n{\"id\":\"scope\",\"status\":\"accepted\",\"affected_keys\":[\"*\"]}\n---\n# Scope\n\n## Decision\nThe first release is local only.\n";
+    fs::write(f.root.join("decisions/scope.md"), decision).unwrap();
+    let pin = awr_source::fingerprint(decision.as_bytes());
+    let outcome = "Users keep their input when saving fails";
+    let ledger = json!({
+        "goals": [{"id": "G", "title": "Safe saving", "status": "active", "success_criteria": [outcome]}],
+        "work_items": [{"id": "R", "title": "Research failure modes", "status": "planned", "goal": "G",
+            "acceptance": ["The failure modes are listed"], "next_action": "Investigate",
+            "definition": {"version": 1, "purpose": "research",
+                "intent": [{"role": "user_decision", "decision": "scope", "source_fingerprint": pin}],
+                "contributes": [{"goal": "G", "outcome": outcome, "claim": "Maps the failure modes", "by": "agent-a"}],
+                "granularity": {"judgment": "independent_result", "reason": "One answer a reviewer can judge", "by": "agent-a"},
+                "deliverable": "A list of failure modes with their limits"}}]
+    });
+    fs::write(
+        f.root.join("work.yaml"),
+        serde_json::to_vec_pretty(&ledger).unwrap(),
+    )
+    .unwrap();
+    f.reindex();
+    let client = f.client().await;
+    let start = |conversation: &str, agent: &str, claim: bool| {
+        json!({"work":"R","conversation":conversation,"agent":agent,"provider":"fixture","model":"test",
+               "expected_revision":f.rev(),"claim":claim})
+    };
+    // Without a decision the claim is refused with its own reason.
+    let refused = error(
+        call(
+            &client,
+            "awr_session_start",
+            start("conv-w", "agent-w", true),
+        )
+        .await,
+        "AdmissionRequired",
+    );
+    let details = refused
+        .get("details")
+        .or_else(|| refused["error"].get("details"))
+        .unwrap();
+    assert_eq!(details["reason"], "admission_missing", "{refused}");
+    // A reviewer's session carries no claim, so it is available to decide.
+    let reviewer = success(
+        call(
+            &client,
+            "awr_session_start",
+            start("conv-r", "reviewer", false),
+        )
+        .await,
+    );
+    let session = reviewer["session"]["id"].as_str().unwrap().to_string();
+    let assessed = success(call(&client, "awr_work_assess", json!({"work":"R"})).await);
+    let request = json!({"work":"R","session":session,"expected_revision":f.rev(),"request_key":"approve-1",
+        "decision":"approved","contract_fingerprint":assessed["contract_fingerprint"],
+        "judgment":{"contribution":"Advances the saving outcome","necessity":"The failure modes are unknown",
+                    "alternatives":"Existing reports were checked","deliverable":"A list of failure modes",
+                    "exit":"Stop when the list is reviewed","responsibility":"research-owner"}});
+    let first = success(call(&client, "awr_work_admit", request.clone()).await);
+    assert_eq!(first["already_recorded"], false, "{first}");
+    assert_eq!(first["admission"]["state"], "approved");
+    assert_eq!(first["completion_claimed"], false);
+    // A replay of the same request returns the original receipt and records nothing new.
+    let replay = success(call(&client, "awr_work_admit", request).await);
+    assert_eq!(replay["already_recorded"], true, "{replay}");
+    assert_eq!(replay["event"]["id"], first["event"]["id"]);
+    // The decision now admits the claim.
+    let claimed = success(
+        call(
+            &client,
+            "awr_session_start",
+            start("conv-w", "agent-w", true),
+        )
+        .await,
+    );
+    assert_eq!(claimed["claim"]["status"], "active", "{claimed}");
+}

@@ -120,7 +120,8 @@ does not acquire engineering-test requirements merely because it is continuous.
 For the frozen AssessmentEnvelope, layer mapping, explain compatibility and
 read consumers, see [engineering assessment](assessment.md).
 
-Management classification is not execution admission. Missing goals, acceptance,
+Management classification is not execution admission; a source can opt in to
+[plan admission](admission.md), which is separate. Missing goals, acceptance,
 source freshness or authorization must still be repaired through the existing
 preparation/claim workflow. Completion continues to use the source's engineering
 or explicitly configured ordinary-confirmation policy. Checkpoint and wait operations

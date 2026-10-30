@@ -198,6 +198,7 @@ pub(crate) fn recover(root: &Path, args: Value, client: &str) -> Result<CallTool
         "awr_session_reply" => event.event_type == "mcp.wait_replied",
         "awr_evidence_record" => event.event_type == "evidence.recorded",
         "awr_work_manage" => event.event_type == "management.assessed",
+        "awr_work_admit" => event.event_type == "work.admission",
         "awr_compaction_observe" => event.event_type == "client.compaction_observed",
         "awr_compaction_defer" => event.event_type == "client.compaction_deferred",
         "awr_event_append" => !is_domain_event_type(&event.event_type),

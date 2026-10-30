@@ -159,6 +159,7 @@ impl Store {
                     "new execution needs an active session".into(),
                 ));
             }
+            crate::admission::require(tx, project, work, s.branch_id)?;
             if key_at(tx, project, &intent.operation_key)?.is_some() {
                 return Err(Error::SourceConflict(
                     "operation key already registered; read the existing execution".into(),
@@ -198,7 +199,7 @@ impl Store {
         if worker.pid == 0 || worker.port == 0 || worker.child_pid.is_some() {
             return Err(Error::InvalidInput("invalid supervisor identity".into()));
         }
-        self.change_execution(project, expected, id, "execution.starting", |e| {
+        self.change_execution(project, expected, id, "execution.starting", true, |e| {
             if e.intent.executor != ExecutorKind::ManagedLocal
                 || e.state != ExecutionState::Registered
             {
@@ -223,7 +224,7 @@ impl Store {
         nonce: Id,
         child: u32,
     ) -> Result<(Execution, Event)> {
-        self.change_execution(project, expected, id, "execution.running", |e| {
+        self.change_execution(project, expected, id, "execution.running", false, |e| {
             if e.state != ExecutionState::Starting
                 || e.worker.as_ref().is_none_or(|w| w.nonce != nonce)
                 || child == 0
@@ -249,6 +250,7 @@ impl Store {
             expected,
             result.execution_id,
             "execution.finished",
+            false,
             |e| {
                 if !matches!(e.state, ExecutionState::Starting | ExecutionState::Running)
                     || e.worker.as_ref().is_none_or(|w| w.nonce != result.nonce)
@@ -282,6 +284,7 @@ impl Store {
         expected: Revision,
         id: Id,
         kind: &str,
+        admitted: bool,
         change: impl FnOnce(&mut Execution) -> Result<()>,
     ) -> Result<(Execution, Event)> {
         self.runtime_transaction_with_event(
@@ -290,6 +293,9 @@ impl Store {
             EventDraft::new(kind, "Recorded managed execution observation"),
             |tx, next, event| {
                 let mut e = at(tx, project, id)?;
+                if admitted {
+                    crate::admission::require(tx, project, e.work_item_id, e.branch_id)?;
+                }
                 change(&mut e)?;
                 e.revision = next;
                 event.session_id = Some(e.session_id);

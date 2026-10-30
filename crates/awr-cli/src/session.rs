@@ -756,6 +756,7 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
         | WorkCommand::Graph { .. }
         | WorkCommand::Assess(_)
         | WorkCommand::Manage(_)
+        | WorkCommand::Admit(_)
         | WorkCommand::Prepare(_)
         | WorkCommand::PrepareCompletion(_)
         | WorkCommand::Create(_)

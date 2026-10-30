@@ -368,3 +368,35 @@ pub(crate) fn project(
     }
     Ok(())
 }
+
+/// Connection-level catalog reads for facts evaluated inside an open transaction. They apply the
+/// same freshness rule as the `Store` queries, so a stale catalog is an error, never a skip.
+pub(crate) fn enabled_at(conn: &Connection, project: Id) -> Result<bool> {
+    let key = project.to_string();
+    require_fresh_catalog(conn, &key)?;
+    recorded_catalog(conn, &key)?;
+    conn.query_row(
+        "SELECT mode='source' FROM workstream_catalogs WHERE project_id=?1",
+        [key],
+        |r| r.get(0),
+    )
+    .map_err(db_error)
+}
+
+pub(crate) fn binding_at(conn: &Connection, project: Id, work: Id) -> Result<Id> {
+    require_fresh_catalog(conn, &project.to_string())?;
+    conn.query_row(
+        "SELECT workstream_id FROM workstream_ownership WHERE project_id=?1 AND work_item_id=?2",
+        params![project.to_string(), work.to_string()],
+        |row| crate::catalog::id_at(row, 0),
+    )
+    .optional()
+    .map_err(db_error)?
+    .ok_or_else(|| Error::NotFound("workstream ownership".into()))
+}
+
+pub(crate) fn goal_keys_at(conn: &Connection, project: Id, stream: Id) -> Result<Vec<String>> {
+    require_fresh_catalog(conn, &project.to_string())?;
+    let catalog = recorded_catalog(conn, &project.to_string())?;
+    Ok(catalog.get(stream)?.goal_keys.clone())
+}

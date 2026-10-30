@@ -111,6 +111,10 @@ inherited definition is itself current.
 
 ## Relation to other checks
 
+A source that opts in to [plan admission](admission.md) reads this report for the entry obligations
+of the declared purpose: a definition with gaps blocks admission, and work that declares none is
+judged as an implementation.
+
 A declared definition is part of the management contract fingerprint (see
 [management intensity](management.md)): editing it requires a new assessment, while progress,
 next-action and evidence changes do not. Work without a definition keeps its existing

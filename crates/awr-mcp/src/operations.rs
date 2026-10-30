@@ -294,6 +294,14 @@ pub(crate) fn call(root: &Path, name: &str, mut args: JsonObject) -> Result<Call
                 &parse_tool!(name, args),
             )?));
         }
+        "awr_work_admit" => {
+            let mut store = Store::open_existing(&database(root)?)?;
+            return Ok(CallToolResult::structured(awr_runtime::admit_work(
+                &mut store,
+                root,
+                &parse_tool!(name, args),
+            )?));
+        }
         _ => (),
     }
     if name == "awr_project_status" {
@@ -538,6 +546,12 @@ fn work(view: &ReadProject, args: WorkArgs) -> Result<Value> {
             view.project.id,
             &args.work
         )?);
+    }
+    let admission = view
+        .store
+        .admission_status(view.project.id, &args.work, branch)?;
+    if admission.governed {
+        detail["admission"] = json!(admission);
     }
     Ok(
         json!({"work":detail,"acceptance":work.work.item.acceptance,"source_ref":work.work.item.meta.source_ref,
