@@ -17,6 +17,7 @@ fn git_head(repo: &Path) -> String {
 fn work(f: &Fixture, key: &str) -> WorkItem {
     WorkItem {
         spec_refs: vec![],
+        definition: None,
         ordinary_completion: None,
         archived: false,
         meta: f.meta(key),

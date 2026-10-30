@@ -7,6 +7,7 @@ use support::Fixture;
 fn work(f: &Fixture, key: &str, status: WorkStatus) -> WorkItem {
     WorkItem {
         spec_refs: vec![],
+        definition: None,
         ordinary_completion: None,
         archived: false,
         meta: f.meta(key),

@@ -1,5 +1,6 @@
 //! Small compositions of existing domain operations. Preparation never consumes context,
 //! records evidence, starts execution, or asserts that verification ran.
+use crate::work_definition_report;
 use awr_context::{ContextRequest, compile_branch_context, compile_context};
 use awr_core::*;
 use awr_store::Store;
@@ -61,13 +62,23 @@ pub fn prepare_work(store: &mut Store, root: &Path, request: &PrepareWorkRequest
             ),
         },
     )?;
-    Ok(json!({"version":1,"stage":"prepared","work":{
+    // Work without a declared definition pays nothing and gains no key.
+    let definition = work
+        .definition
+        .is_some()
+        .then(|| work_definition_report(store, project.id, &request.work))
+        .transpose()?;
+    let mut prepared = json!({"version":1,"stage":"prepared","work":{
         "id":work.meta.id,"external_key":work.meta.external_key,"status":work.status,
         "revision":work.meta.revision,"source_ref":work.meta.source_ref,"next_action":work.next_action},
         "ready":readiness.ready,"diagnostics":readiness.diagnostics,"active_claims":readiness.active_claims,
         "context":context,"context_consumed":false,"completion_claimed":false,"management":management,
         "continuity":{"state":if waiting {"waiting_user"}else{"available"},"waits":waits},
-        "next_action":if waiting {"resolve_persistent_wait_before_resuming"} else if !complete {"resolve_required_context_gaps"} else if !readiness.ready {"inspect_readiness_and_current_claim"} else {"consume_context_then_start_or_resume_session"}}))
+        "next_action":if waiting {"resolve_persistent_wait_before_resuming"} else if !complete {"resolve_required_context_gaps"} else if !readiness.ready {"inspect_readiness_and_current_claim"} else {"consume_context_then_start_or_resume_session"}});
+    if let Some(definition) = definition {
+        prepared["definition"] = json!(definition);
+    }
+    Ok(prepared)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

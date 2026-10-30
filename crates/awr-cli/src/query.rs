@@ -658,6 +658,13 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
             if !work.work.item.spec_refs.is_empty() {
                 value["work"]["spec_refs"] = json!(work.work.item.spec_refs);
             }
+            if work.work.item.definition.is_some() {
+                value["work"]["definition"] = json!(awr_runtime::work_definition_report(
+                    &query.store,
+                    query.project.id,
+                    id
+                )?);
+            }
             value["acceptance"] = json!(work.work.item.acceptance);
             value["source_ref"] = json!(work.work.item.meta.source_ref);
             value["progress"] =
