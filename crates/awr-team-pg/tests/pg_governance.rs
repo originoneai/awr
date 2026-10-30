@@ -379,7 +379,7 @@ async fn observing_reports_without_holding_and_a_snapshot_without_governance_is_
                 &plain,
                 "no-governance",
                 json!({"admission_decision":"approved","binding_fingerprint":"0".repeat(64),
-                       "admission_judgment":judgment()}),
+                       "expected_admission_version":"0","admission_judgment":judgment()}),
             )
             .await,
         )
