@@ -211,3 +211,50 @@ fn observing_reports_without_enforcing_and_work_outside_the_scope_is_not_governe
     let status = admission_status(&tagged, &governed, HASH, false, None).unwrap();
     assert!(status.governed && status.enforced);
 }
+
+#[test]
+fn the_tags_the_definition_and_the_summary_of_a_work_are_checked_one_by_one() {
+    // At most 32 tags, each a bounded name.
+    let mut tagged = work("A");
+    tagged.tags = (0..32).map(|i| format!("tag-{i}")).collect();
+    candidate(vec![tagged.clone()]).validate().unwrap();
+    tagged.tags.push("tag-32".into());
+    assert!(candidate(vec![tagged]).validate().is_err());
+    // A declared definition is judged by its own rules.
+    let mut broken = work("A");
+    broken.definition.as_mut().unwrap().version = 2;
+    assert!(candidate(vec![broken]).validate().is_err());
+    // A summary cannot describe a definition the work does not declare, in either of its claims.
+    for (declared, adopted, valid) in [
+        (false, false, true),
+        (true, false, false),
+        (false, true, false),
+        (true, true, false),
+    ] {
+        let mut bare = work("A");
+        bare.definition = None;
+        bare.summary = DefinitionSummary {
+            declared,
+            intent_adopted: adopted,
+            gaps: vec![],
+        };
+        assert_eq!(
+            candidate(vec![bare]).validate().is_ok(),
+            valid,
+            "declared {declared}, adopted {adopted}"
+        );
+    }
+}
+
+#[test]
+fn a_governed_work_is_found_by_its_key_and_finished_work_stays_a_separate_fact() {
+    let two = candidate(vec![work("A"), work("B")]);
+    assert_eq!(two.work("A").unwrap().external_key, "A");
+    assert_eq!(two.work("B").unwrap().external_key, "B");
+    assert!(two.work("C").is_none());
+    // Being finished is neither an admission nor its absence: the facts are reported apart.
+    let open = admission_status(&enforce(), &work("A"), HASH, false, None).unwrap();
+    let done = admission_status(&enforce(), &work("A"), HASH, true, None).unwrap();
+    assert!(!open.facts.completed && done.facts.completed);
+    assert!(!open.facts.admitted && !done.facts.admitted);
+}

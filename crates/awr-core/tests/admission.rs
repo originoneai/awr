@@ -530,6 +530,19 @@ fn every_store_computes_the_same_binding_and_a_change_in_any_part_shows() {
         ["definition"]
     );
     assert_eq!(bound.changed_from(&bare), ["definition", "examples"]);
+    // The reviewed examples are bound as a set of their own beside the definition that holds them.
+    let mut reviewed = definition.clone();
+    reviewed.examples.push(Example {
+        criterion: "Saving failure keeps the user's input".into(),
+        kind: ExampleKind::Positive,
+        given: "the storage is read-only".into(),
+        when: "the user saves".into(),
+        then: "the draft stays in the editor".into(),
+    });
+    assert_eq!(
+        bound.changed_from(&admission_binding(A, &policy, Some(&reviewed)).unwrap()),
+        ["definition", "examples"]
+    );
 }
 
 #[test]

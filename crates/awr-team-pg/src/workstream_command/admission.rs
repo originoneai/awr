@@ -285,6 +285,27 @@ mod tests {
     }
 
     #[test]
+    fn a_denial_reason_and_a_proposal_id_are_bounded_text_without_control_characters() {
+        let denial = |reason: &str| {
+            json!({"admission_decision":"denied","binding_fingerprint":FINGERPRINT,
+                   "expected_admission_version":"0","admission_reason":reason})
+        };
+        assert!(parse(denial(&"r".repeat(2048))).is_ok());
+        assert!(parse(denial(&"r".repeat(2049))).is_err());
+        assert!(parse(denial("two\nlines")).is_err());
+        assert!(parse(denial("bell\u{7}")).is_err());
+        let approval = |id: &str| {
+            json!({"admission_decision":"approved","binding_fingerprint":FINGERPRINT,
+                   "expected_admission_version":"0","admission_proposal_id":id})
+        };
+        assert!(parse(approval("proposal-1")).is_ok());
+        assert!(parse(approval(&"p".repeat(128))).is_ok());
+        for bad in ["", "bell\u{7}", &"p".repeat(129)] {
+            assert!(parse(approval(bad)).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
     fn the_history_read_is_a_canonical_version_and_is_never_left_out() {
         let good = json!({"admission_decision":"approved","binding_fingerprint":FINGERPRINT,
             "expected_admission_version":"3","admission_judgment":judgment()});
