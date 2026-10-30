@@ -9,8 +9,10 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   `admission.decide` records decisions attributed to the verified caller (`planning.approve`, a
   different person for independent review). Claim, dispatch and execution prepare and start answer
   `AdmissionRequired` until the decision is current; a package without governance cannot replace a
-  governed snapshot. New schema version 56 (`snapshot_governance`, `work_governance`,
-  append-only `work_admissions`). See [Team governance](../reference/team-governance.md).
+  governed snapshot. A review round records the governed scope it opened under, so a change of the
+  definition, the examples or the policy of that work needs a new review and touches no other work.
+  New schema version 57 (`snapshot_governance`, `work_governance`, append-only `work_admissions`,
+  `review_rounds.governance_binding`). See [Team governance](../reference/team-governance.md).
 - Explicit requirement items and YAML task `spec_refs`, with bounded, read-only
   `awr spec check` and MCP `awr_spec_check` views of one evaluator. Checks identify
   changed or superseded item bindings, missing task associations and contradictions
