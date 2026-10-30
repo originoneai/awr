@@ -64,6 +64,15 @@ claim, reporting or cancelling an execution and every other recovery path are ne
 Source ingest, import and restore never write a decision: an imported snapshot that declares
 governance starts with none, and logical backups carry no admission rows (see the backup limits).
 
+Callers can race, and the decision still decides: the project writer lock serializes commands, two
+deciders who read the same history get one decision, rival claims of one decision give one claim, and
+a denial that follows a claim holds `execution.prepare` and `execution.start` without taking anything
+from the session, which can still checkpoint and release the claim. A transfer needs the decision to be
+current when `handoff.accept` runs, not only when the claim was taken. Admission belongs to the work
+and its stream: reading or deciding work of another stream needs that stream's own grant and is
+refused otherwise, a decision of one work never stands for another work that requires it or is
+required by it, and an admitted work still waits for the work it requires.
+
 ## Reviews cover the scope they opened under
 
 A review round for governed work records the fingerprint of the governed scope (contract, declared
