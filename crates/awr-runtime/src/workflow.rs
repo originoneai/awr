@@ -74,7 +74,7 @@ pub fn prepare_work(store: &mut Store, root: &Path, request: &PrepareWorkRequest
         && readiness
             .diagnostics
             .iter()
-            .all(|d| d.code.starts_with("admission_"));
+            .all(|d| is_admission_code(&d.code));
     let mut prepared = json!({"version":1,"stage":"prepared","work":{
         "id":work.meta.id,"external_key":work.meta.external_key,"status":work.status,
         "revision":work.meta.revision,"source_ref":work.meta.source_ref,"next_action":work.next_action},
@@ -88,6 +88,9 @@ pub fn prepare_work(store: &mut Store, root: &Path, request: &PrepareWorkRequest
     // Work no policy governs gains no key, so existing output is unchanged.
     if admission.governed {
         prepared["admission"] = json!(admission);
+    }
+    if let Some(containment) = store.containment_block(project.id, &request.work, branch)? {
+        prepared["containment"] = json!(containment);
     }
     Ok(prepared)
 }

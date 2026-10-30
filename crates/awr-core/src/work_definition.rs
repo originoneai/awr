@@ -136,6 +136,29 @@ pub struct Discrimination {
     pub note: Option<String>,
 }
 
+/// A side line of work spawned from another: it must say when it rejoins and when it stops.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SideLine {
+    /// What has to be true for the work to hand its result back to the line it came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub return_condition: Option<String>,
+    /// When to stop: an effort or observation boundary, or a result that no longer matters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_condition: Option<String>,
+}
+
+/// Distant work kept as an outline: the constraints already known and when to elaborate it.
+/// An outline is not near-term executable, so it is never admitted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Outline {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub constraints: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkDefinition {
@@ -169,6 +192,10 @@ pub struct WorkDefinition {
     pub examples: Vec<Example>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discrimination: Option<Discrimination>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_line: Option<SideLine>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<Outline>,
 }
 
 fn text(value: &str) -> bool {
@@ -279,6 +306,20 @@ impl WorkDefinition {
                 "examples need the exact criterion plus given, when and then text",
             ));
         }
+        if let Some(side_line) = &self.side_line
+            && !(opt_text(&side_line.return_condition) && opt_text(&side_line.stop_condition))
+        {
+            return Err(invalid("side line conditions must be nonblank and bounded"));
+        }
+        if let Some(outline) = &self.outline
+            && (outline.constraints.len() > MAX_ENTRIES
+                || outline.constraints.iter().any(|c| !text(c))
+                || !opt_text(&outline.trigger))
+        {
+            return Err(invalid(
+                "an outline needs bounded constraints and a bounded elaboration trigger",
+            ));
+        }
         if serde_json::to_vec(self)?.len() > MAX_BYTES {
             return Err(invalid("must stay within 64 KiB"));
         }
@@ -365,9 +406,16 @@ fn required_for(purpose: WorkPurpose, obligation: &str) -> bool {
 struct Run {
     obligations: Vec<ObligationStatus>,
     gaps: Vec<DefinitionGap>,
+    /// Outline work owes only its purpose and the outcome it contributes to.
+    outline: bool,
 }
 
 impl Run {
+    fn owes(&self, purpose: WorkPurpose, obligation: &str) -> bool {
+        required_for(purpose, obligation)
+            && (!self.outline || matches!(obligation, "purpose" | "contribution"))
+    }
+
     fn gap(&mut self, code: &'static str, detail: impl Into<String>) {
         self.gaps.push(DefinitionGap {
             code,
@@ -385,7 +433,7 @@ impl Run {
     ) {
         let state = if ok {
             "satisfied"
-        } else if required_for(purpose, obligation) {
+        } else if self.owes(purpose, obligation) {
             "missing"
         } else if provided {
             "unknown"
@@ -536,6 +584,7 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
     let mut run = Run {
         obligations: vec![],
         gaps: vec![],
+        outline: me.outline.is_some(),
     };
     let mut notes = Vec::new();
 
@@ -572,7 +621,7 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
     } else {
         (false, None)
     };
-    if !intent_ok && own_adopted == 0 && required_for(purpose, "intent") {
+    if !intent_ok && own_adopted == 0 && run.owes(purpose, "intent") {
         run.gap(
             "intent_missing",
             "no user decision or sourced fact pins the adopted intent; assumptions and suggestions are not adopted facts",
@@ -600,7 +649,7 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
     } else {
         (false, None)
     };
-    if !contribution_ok && me.contributes.is_empty() && required_for(purpose, "contribution") {
+    if !contribution_ok && me.contributes.is_empty() && run.owes(purpose, "contribution") {
         run.gap(
             "contribution_missing",
             "the work does not say which goal outcome it advances",
@@ -615,7 +664,7 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
     );
 
     // Granularity judgment.
-    if me.granularity.is_none() && required_for(purpose, "granularity") {
+    if me.granularity.is_none() && run.owes(purpose, "granularity") {
         run.gap(
             "granularity_missing",
             "no attributed judgment says why this is one independently judgeable result",
@@ -691,7 +740,7 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
     } else {
         (false, None)
     };
-    if !responsibility_ok && required_for(purpose, "responsibility") {
+    if !responsibility_ok && run.owes(purpose, "responsibility") {
         run.gap("responsibility_missing", "no named design or delivery responsibility carries this work; a link by identifier alone does not provide one");
     }
     run.settle(
@@ -706,7 +755,7 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
     let inputs_ok = !facts.spec_refs.is_empty()
         || (own_adopted > 0 && intent_problems(me, facts).is_empty())
         || intent_inherited;
-    if !inputs_ok && required_for(purpose, "inputs") {
+    if !inputs_ok && run.owes(purpose, "inputs") {
         run.gap(
             "inputs_unversioned",
             "neither specification references nor pinned decisions fix the input versions",
@@ -714,7 +763,7 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
     }
     run.settle("inputs", purpose, inputs_ok, false, None);
     let scope_ok = !facts.paths.is_empty();
-    if !scope_ok && required_for(purpose, "scope") {
+    if !scope_ok && run.owes(purpose, "scope") {
         run.gap("scope_missing", "the work declares no allowed paths");
     }
     run.settle("scope", purpose, scope_ok, false, None);
@@ -745,7 +794,7 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
         }
     };
     let ok = me.deliverable.is_some();
-    if !ok && required_for(purpose, "deliverable") {
+    if !ok && run.owes(purpose, "deliverable") {
         run.gap(
             "deliverable_missing",
             "the expected deliverable is not stated",
@@ -754,7 +803,7 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
     run.settle("deliverable", purpose, ok, false, None);
     // The observable assertions are the work's own acceptance criteria; examples refine them.
     let ok = !facts.acceptance.is_empty();
-    if !ok && required_for(purpose, "assertions") {
+    if !ok && run.owes(purpose, "assertions") {
         run.gap(
             "acceptance_missing",
             "the work states no acceptance criterion, so nothing observable can be asserted",
@@ -768,7 +817,7 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
         ok.then(|| "acceptance".to_string()),
     );
     let (ok, source) = pick(&me.evidence_method, |d| &d.evidence_method);
-    if !ok && required_for(purpose, "evidence_method") {
+    if !ok && run.owes(purpose, "evidence_method") {
         run.gap(
             "evidence_method_missing",
             "no method says how the result will be shown",
@@ -776,7 +825,7 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
     }
     run.settle("evidence_method", purpose, ok, false, source);
     let (ok, source) = pick(&me.failure_recovery, |d| &d.failure_recovery);
-    if !ok && required_for(purpose, "failure_recovery") {
+    if !ok && run.owes(purpose, "failure_recovery") {
         run.gap(
             "failure_recovery_missing",
             "failure and recovery conditions are not stated",
@@ -828,7 +877,7 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
             );
         }
     }
-    let examples_needed = required_for(purpose, "examples") && !required_criteria.is_empty();
+    let examples_needed = run.owes(purpose, "examples") && !required_criteria.is_empty();
     let mut examples_ok = true;
     for criterion in &required_criteria {
         let of = |kind| {
@@ -882,6 +931,64 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
             .then(|| parent_def.as_ref().map(|(k, _)| format!("inherited:{k}")))
             .flatten(),
     });
+
+    // A side line says how it rejoins the line it came from and when it stops.
+    if let Some(side_line) = &me.side_line {
+        let missing = [
+            (
+                me.parent.is_none(),
+                "side_line_without_parent",
+                "a side line names the line it returns to as its parent",
+            ),
+            (
+                side_line.return_condition.is_none(),
+                "side_line_return_missing",
+                "no condition says when the result returns to the line it came from",
+            ),
+            (
+                side_line.stop_condition.is_none(),
+                "side_line_stop_missing",
+                "no condition says when to stop",
+            ),
+        ];
+        for (absent, code, detail) in missing {
+            if absent {
+                run.gap(code, detail);
+            }
+        }
+        run.obligations.push(ObligationStatus {
+            obligation: "side_line",
+            state: if missing.iter().any(|(absent, ..)| *absent) {
+                "missing"
+            } else {
+                "satisfied"
+            },
+            source: None,
+        });
+    }
+
+    // Outline work keeps what is known and when to elaborate it; it is not near-term executable.
+    if let Some(outline) = &me.outline {
+        if outline.trigger.is_none() {
+            run.gap(
+                "outline_trigger_missing",
+                "no trigger says when this outline is elaborated",
+            );
+        }
+        run.gap(
+            "outline_not_elaborated",
+            "outline work is not near-term executable; elaborate it into a full definition before admission",
+        );
+        run.obligations.push(ObligationStatus {
+            obligation: "outline",
+            state: if outline.trigger.is_some() {
+                "satisfied"
+            } else {
+                "missing"
+            },
+            source: None,
+        });
+    }
 
     // Finished children never prove the parent's own outcome.
     let children: Vec<&DefinitionWork> = facts

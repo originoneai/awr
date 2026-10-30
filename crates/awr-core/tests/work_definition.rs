@@ -800,3 +800,126 @@ fn sample_work(definition: Option<WorkDefinition>) -> WorkItem {
         definition,
     }
 }
+
+// ---------------------------------------------------------------- side lines and outlines
+
+#[test]
+fn a_side_line_names_the_line_it_returns_to_and_says_when_it_returns_and_stops() {
+    let research = json!({"version": 1, "purpose": "research"});
+    let mut world = World::new();
+    world.set("P", "api", WorkStatus::Planned, Some(research));
+    world.change(|v| {
+        v["parent"] = json!("P");
+        v["side_line"] = json!({"return_condition": "The failure modes are listed and reviewed",
+                                "stop_condition": "Two days of effort or a decision to drop the screen"});
+    });
+    let report = world.report();
+    assert_eq!(codes(&report), Vec::<&str>::new(), "{report:?}");
+    assert_eq!(state(&report, "side_line"), "satisfied");
+
+    // Each missing piece is its own explicit gap.
+    for (edit, code) in [
+        (
+            (|v: &mut Value| v["side_line"]["return_condition"] = Value::Null) as fn(&mut Value),
+            "side_line_return_missing",
+        ),
+        (
+            |v| v["side_line"]["stop_condition"] = Value::Null,
+            "side_line_stop_missing",
+        ),
+        (|v| v["side_line"] = json!({}), "side_line_return_missing"),
+    ] {
+        let mut gap = World::new();
+        gap.set(
+            "P",
+            "api",
+            WorkStatus::Planned,
+            Some(json!({"version": 1, "purpose": "research"})),
+        );
+        gap.change(|v| {
+            v["parent"] = json!("P");
+            v["side_line"] = json!({"return_condition": "Reviewed", "stop_condition": "Two days"});
+            edit(v);
+        });
+        let report = gap.report();
+        assert!(
+            codes(&report).contains(&code),
+            "{code}: {:?}",
+            codes(&report)
+        );
+        assert_eq!(state(&report, "side_line"), "missing");
+    }
+    // Without a parent there is no line to return to.
+    let mut orphan = World::new();
+    orphan.change(|v| {
+        v["side_line"] = json!({"return_condition": "Reviewed", "stop_condition": "Two days"})
+    });
+    assert!(codes(&orphan.report()).contains(&"side_line_without_parent"));
+    // Work that is not a side line carries no such row.
+    assert!(
+        World::new()
+            .report()
+            .obligations
+            .iter()
+            .all(|o| o.obligation != "side_line")
+    );
+    // Blank or oversized conditions are refused when the definition is read.
+    let mut blank = implementation();
+    blank["side_line"] = json!({"return_condition": " ", "stop_condition": "Two days"});
+    assert!(parse(&blank).validate().is_err());
+}
+
+#[test]
+fn an_outline_keeps_what_is_known_and_a_trigger_and_is_never_executable() {
+    // Distant work owes its purpose, the outcome it contributes to and a trigger, nothing else.
+    let mut sparse = World::new();
+    sparse.change(|v| {
+        *v = json!({"version": 1, "purpose": "implementation",
+                    "contributes": v["contributes"].clone(),
+                    "outline": {"constraints": ["No new storage layer"], "trigger": "When the API contract is accepted"}});
+    });
+    let report = sparse.report();
+    assert_eq!(codes(&report), ["outline_not_elaborated"], "{report:?}");
+    assert_eq!(state(&report, "outline"), "satisfied");
+    for obligation in [
+        "responsibility",
+        "examples",
+        "discrimination",
+        "evidence_method",
+        "failure_recovery",
+        "intent",
+    ] {
+        assert_ne!(
+            state(&report, obligation),
+            "missing",
+            "{obligation} is not owed by an outline"
+        );
+    }
+    // The trigger is what makes an outline elaborable; without one it is an explicit gap.
+    let mut no_trigger = World::new();
+    no_trigger.change(|v| {
+        *v = json!({"version": 1, "purpose": "implementation", "contributes": v["contributes"].clone(),
+                    "outline": {"constraints": ["No new storage layer"]}});
+    });
+    let found = codes(&no_trigger.report());
+    assert!(
+        found.contains(&"outline_trigger_missing") && found.contains(&"outline_not_elaborated"),
+        "{found:?}"
+    );
+    // An outline still says which outcome it advances.
+    let mut untraced = World::new();
+    untraced.change(|v| {
+        *v = json!({"version": 1, "purpose": "implementation", "outline": {"trigger": "When the API is accepted"}});
+    });
+    assert!(codes(&untraced.report()).contains(&"contribution_missing"));
+    // Elaborating it, that is dropping the outline, restores the full obligations of the purpose.
+    let full = World::new().report();
+    assert_eq!(codes(&full), Vec::<&str>::new());
+    // Bounds.
+    let mut too_many = implementation();
+    too_many["outline"] = json!({"constraints": (0..65).map(|i| format!("constraint {i}")).collect::<Vec<_>>(), "trigger": "Later"});
+    assert!(parse(&too_many).validate().is_err());
+    let mut blank = implementation();
+    blank["outline"] = json!({"constraints": [" "], "trigger": "Later"});
+    assert!(parse(&blank).validate().is_err());
+}

@@ -27,6 +27,8 @@ pub enum WorkCommand {
     Manage(crate::management::ManageArgs),
     /// Record a work admission proposal or decision for governed work.
     Admit(crate::management::AdmitArgs),
+    /// Record a containment proposal or decision for the children of a parent work.
+    Contain(crate::management::ContainArgs),
     /// Prepare readiness and the required context together; does not acknowledge consumption.
     Prepare(crate::work_prepare::PrepareArgs),
     /// Validate a real report and derive evidence metadata without registering or completing.
@@ -605,6 +607,7 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
         WorkCommand::Assess(args) => crate::management::assess(root, args),
         WorkCommand::Manage(args) => crate::management::manage(root, args),
         WorkCommand::Admit(args) => crate::management::admit(root, args),
+        WorkCommand::Contain(args) => crate::management::contain(root, args),
         WorkCommand::Prepare(args) => crate::work_prepare::prepare(root, args, json_output),
         WorkCommand::PrepareCompletion(args) => {
             crate::work_prepare::completion(root, args, json_output)
@@ -673,6 +676,13 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
                 .admission_status(query.project.id, id, branch_id)?;
             if admission.governed {
                 value["work"]["admission"] = json!(admission);
+            }
+            if let Some(containment) =
+                query
+                    .store
+                    .containment_block(query.project.id, id, branch_id)?
+            {
+                value["work"]["containment"] = json!(containment);
             }
             value["acceptance"] = json!(work.work.item.acceptance);
             value["source_ref"] = json!(work.work.item.meta.source_ref);

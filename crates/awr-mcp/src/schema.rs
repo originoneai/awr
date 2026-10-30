@@ -1,7 +1,7 @@
 use rmcp::model::{Tool, ToolAnnotations};
 use serde_json::{Value, json};
 
-pub const TOOL_NAMES: [&str; 34] = [
+pub const TOOL_NAMES: [&str; 35] = [
     "awr_project_status",
     "awr_work_ready",
     "awr_work_get",
@@ -36,6 +36,7 @@ pub const TOOL_NAMES: [&str; 34] = [
     "awr_compaction_get",
     "awr_compaction_defer",
     "awr_work_admit",
+    "awr_work_contain",
 ];
 
 fn compaction_tools() -> Vec<Tool> {
@@ -151,6 +152,26 @@ fn workflow_tools() -> Vec<Tool> {
                     "request_key",
                     "decision",
                     "contract_fingerprint",
+                ],
+            ),
+            false,
+            false,
+        ),
+        tool(
+            "awr_work_contain",
+            "Record a containment proposal or decision for the children of a parent work, bound to the parent's contract, the exact set of children and their dependencies. A request is not a decision; the program checks scope, currency and authorization only and judges no intent.",
+            object(
+                json!({"parent":text(),"session":optional(text()),"agent":optional(text()),"expected_revision":revision(),"request_key":text(),
+                "decision":{"type":"string","enum":["proposed","approved","denied"]},"change_set_fingerprint":text(),
+                "judgment":optional(object(json!({"contained_because":text(),"reuse_checked":text(),"out_of_scope_excluded":text()}),
+                    &["contained_because","reuse_checked","out_of_scope_excluded"])),
+                "proposal_event":optional(text()),"reason":optional(text())}),
+                &[
+                    "parent",
+                    "expected_revision",
+                    "request_key",
+                    "decision",
+                    "change_set_fingerprint",
                 ],
             ),
             false,

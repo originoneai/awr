@@ -25,3 +25,10 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   proposals and decisions as events (no schema migration). Projects without a policy are
   unaffected, `legacy_observe` reports without blocking, and recovery paths and completion policy
   are unchanged. See [plan admission](../reference/admission.md).
+- Controlled decomposition for governed sources: the children of a parent are admitted only while a
+  containment decision on exactly this set is current (`awr work contain`, MCP `awr_work_contain`).
+  The decision binds the parent's contract, each child's definition, paths and acceptance, and the
+  dependencies between them; added or removed children, widened paths and changed dependencies make
+  an approval stale by name, and a child outside the parent's paths cannot be approved. Work
+  definitions gain optional `side_line` and `outline` declarations. See
+  [controlled decomposition](../reference/containment.md).
