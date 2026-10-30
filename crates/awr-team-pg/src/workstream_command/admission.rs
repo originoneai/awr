@@ -177,3 +177,119 @@ fn decision_name(decision: AdmissionDecision) -> &'static str {
         AdmissionDecision::Denied => "denied",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FINGERPRINT: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    fn judgment() -> Value {
+        json!({"contribution":"c","necessity":"n","alternatives":"a","deliverable":"d","exit":"e","responsibility":"r"})
+    }
+
+    fn parse(args: Value) -> PgResult<Action> {
+        Action::parse("admission.decide", args)
+    }
+
+    #[test]
+    fn each_decision_has_its_own_shape() {
+        let base = |decision: &str| json!({"admission_decision": decision, "binding_fingerprint": FINGERPRINT});
+        let with = |mut value: Value, key: &str, field: Value| {
+            value[key] = field;
+            value
+        };
+        // A proposal states a judgment and answers nothing.
+        assert!(parse(with(base("proposed"), "admission_judgment", judgment())).is_ok());
+        assert!(parse(base("proposed")).is_err());
+        assert!(
+            parse(with(
+                with(base("proposed"), "admission_judgment", judgment()),
+                "admission_reason",
+                json!("no")
+            ))
+            .is_err()
+        );
+        assert!(
+            parse(with(
+                with(base("proposed"), "admission_judgment", judgment()),
+                "admission_proposal_id",
+                json!("p-1")
+            ))
+            .is_err()
+        );
+        // An approval states its judgment inline or answers a proposal, never neither.
+        assert!(parse(with(base("approved"), "admission_judgment", judgment())).is_ok());
+        assert!(
+            parse(with(
+                base("approved"),
+                "admission_proposal_id",
+                json!("p-1")
+            ))
+            .is_ok()
+        );
+        assert!(parse(base("approved")).is_err());
+        assert!(
+            parse(with(
+                with(base("approved"), "admission_judgment", judgment()),
+                "admission_reason",
+                json!("why")
+            ))
+            .is_err()
+        );
+        // A denial needs a reason and nothing else.
+        assert!(
+            parse(with(
+                base("denied"),
+                "admission_reason",
+                json!("The examples restate the acceptance")
+            ))
+            .is_ok()
+        );
+        assert!(parse(base("denied")).is_err());
+        assert!(parse(with(base("denied"), "admission_reason", json!("  "))).is_err());
+        assert!(
+            parse(with(
+                with(base("denied"), "admission_reason", json!("no")),
+                "admission_judgment",
+                judgment()
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn the_decider_is_never_named_by_the_request() {
+        let mut args = json!({"admission_decision":"approved","binding_fingerprint":FINGERPRINT,"admission_judgment":judgment()});
+        assert!(parse(args.clone()).is_ok());
+        // A label in the body is not an identity: unknown fields, whoever they claim to be, are refused.
+        for field in ["agent", "actor_id", "decider", "person_id", "session"] {
+            args[field] = json!("someone-else");
+            assert!(parse(args.clone()).is_err(), "{field}");
+            args.as_object_mut().unwrap().remove(field);
+        }
+    }
+
+    #[test]
+    fn the_scope_read_is_a_digest_and_the_judgment_is_complete() {
+        let good = json!({"admission_decision":"approved","binding_fingerprint":FINGERPRINT,"admission_judgment":judgment()});
+        assert!(parse(good.clone()).is_ok());
+        for bad in [
+            "",
+            "sha256:abc",
+            &FINGERPRINT.to_uppercase(),
+            &FINGERPRINT[1..],
+        ] {
+            let mut args = good.clone();
+            args["binding_fingerprint"] = json!(bad);
+            assert!(parse(args).is_err(), "{bad}");
+        }
+        let mut args = good.clone();
+        args["admission_judgment"]["exit"] = json!("");
+        assert!(parse(args).is_err());
+        let mut args = good;
+        args["admission_judgment"]["extra"] = json!("x");
+        assert!(parse(args).is_err());
+        assert!(Action::parse("admission.propose", json!({})).is_err());
+    }
+}
