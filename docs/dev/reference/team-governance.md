@@ -27,13 +27,16 @@ and `work_governance`.
 ## Reading and deciding
 
 `work.admission` (a read) says whether the work is governed, its state (`missing`, `pending`,
-`denied`, `approved`, `stale`), the diagnostics with the reason of each, and the `binding_fingerprint`
-of the scope a decision will be checked against.
+`denied`, `approved`, `stale`), the diagnostics with the reason of each, the `binding_fingerprint`
+of the scope a decision will be checked against and the `admission_version`, the number of decisions
+recorded so far.
 
 `admission.decide` records one decision in the append-only `work_admissions` table. It needs the
 planning approval permission (`planning.approve`), so a developer cannot admit work, and it takes
-`admission_decision` and the `binding_fingerprint` that was read; a decision on a scope that moved
-since it was read is refused as a changed precondition and records nothing.
+`admission_decision`, the `binding_fingerprint` and the `expected_admission_version` that were read.
+A decision on a scope that moved since it was read is refused as a changed precondition and records
+nothing. So is a decision made after another one was recorded: two deciders who read the same
+history get one decision, the other reads again and decides on what the first one decided.
 
 | `admission_decision` | needs | meaning |
 | --- | --- | --- |

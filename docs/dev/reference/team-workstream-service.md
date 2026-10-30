@@ -368,7 +368,7 @@ project revision, transaction and outcome protocol as session commands:
 
 | Operation | Strict `args` object |
 | --- | --- |
-| `admission.decide` | `admission_decision` (`proposed`, `approved` or `denied`), `binding_fingerprint` from `work.admission`, and `admission_judgment`, `admission_reason` or `admission_proposal_id` as the decision needs; needs the planning approval permission; see [Team governance](team-governance.md) |
+| `admission.decide` | `admission_decision` (`proposed`, `approved` or `denied`), `binding_fingerprint` and `expected_admission_version` (`admission_version`) from `work.admission`, and `admission_judgment`, `admission_reason` or `admission_proposal_id` as the decision needs; needs the planning approval permission; see [Team governance](team-governance.md) |
 | `claim.acquire` | `session_id`, `expected_session_version`, `expected_work_version`, `ttl_seconds` |
 | `claim.renew` | `session_id`, `expected_session_version`, `claim_id`, `expected_fence`, `expected_lease_version`, `ttl_seconds` |
 | `claim.release` | `session_id`, `expected_session_version`, `claim_id`, `expected_fence`, `expected_lease_version` |

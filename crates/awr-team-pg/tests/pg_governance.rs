@@ -89,7 +89,15 @@ async fn claim(store: &WorkstreamReadStore, request: &str) -> WorkstreamCommand 
     )
 }
 
-async fn decision(store: &WorkstreamReadStore, request: &str, args: Value) -> WorkstreamCommand {
+/// A decision states the history it read; unless the test says otherwise it read the current one.
+async fn decision(
+    store: &WorkstreamReadStore,
+    request: &str,
+    mut args: Value,
+) -> WorkstreamCommand {
+    if args.get("expected_admission_version").is_none() {
+        args["expected_admission_version"] = read(store).await["admission_version"].clone();
+    }
     command(
         &prepare(store, A, "a").await,
         request,
@@ -194,6 +202,12 @@ async fn dispatch_waits_for_the_same_current_decision_as_a_self_claim() {
     let (_guard, admin, _, store) =
         setup_with_specs(files(&candidate("governed_enforce", complete()))).await;
     enable_writes(&admin).await;
+    admin
+        .batch_execute(
+            "UPDATE awr_team.project_memberships SET assignment_grant=true WHERE actor_id='agent'",
+        )
+        .await
+        .unwrap();
     let commands = store.commands();
     let assign = |request: &str, prepared: &Value| {
         command(
@@ -601,34 +615,76 @@ async fn two_deciders_who_read_the_same_revision_get_one_decision() {
         setup_with_specs(files(&candidate("governed_enforce", complete()))).await;
     enable_writes(&admin).await;
     let commands = store.commands();
-    let fingerprint = read(&store).await["binding_fingerprint"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let seen = read(&store).await;
+    let fingerprint = seen["binding_fingerprint"].as_str().unwrap().to_string();
+    assert_eq!(seen["admission_version"], "0");
     let prepared = prepare(&store, A, "a").await;
     let one = command(
         &prepared,
         "decide-one",
         "admission.decide",
         json!({"admission_decision":"approved","binding_fingerprint":fingerprint,
-               "admission_judgment":judgment()}),
+               "expected_admission_version":"0","admission_judgment":judgment()}),
     );
     let other = command(
         &prepared,
         "decide-other",
         "admission.decide",
         json!({"admission_decision":"denied","binding_fingerprint":fingerprint,
+               "expected_admission_version":"0",
                "admission_reason":"Another decider reads the scope differently"}),
     );
     commands.execute(TENANT, PROJECT, A, one).await.unwrap();
-    // The second decision was computed against a revision that no longer exists.
+    // The second decider read a history that has grown since: nothing is recorded for it.
     let lost = commands.execute(TENANT, PROJECT, A, other).await;
-    assert!(lost.is_err(), "{lost:?}");
+    assert!(
+        matches!(lost, Err(PgError::PreconditionsChanged)),
+        "{lost:?}"
+    );
     let rows: i64 = admin
         .query_one("SELECT count(*) FROM awr_team.work_admissions", &[])
         .await
         .unwrap()
         .get(0);
     assert_eq!(rows, 1);
-    assert_eq!(read(&store).await["state"], "approved");
+    let after = read(&store).await;
+    assert_eq!(after["state"], "approved");
+    assert_eq!(after["admission_version"], "1");
+    // Reading again, the same decider decides on what the first one decided.
+    let again = decision(
+        &store,
+        "decide-after-reading",
+        json!({"admission_decision":"denied","binding_fingerprint":fingerprint,
+               "admission_reason":"Another decider reads the scope differently"}),
+    )
+    .await;
+    commands.execute(TENANT, PROJECT, A, again).await.unwrap();
+    let rows: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.work_admissions", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(rows, 2);
+    let last = read(&store).await;
+    assert_eq!(last["state"], "denied");
+    assert_eq!(last["admission_version"], "2");
+    // A decision cannot skip ahead of the history either.
+    let skipped = commands
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            decision(
+                &store,
+                "decide-skipping",
+                json!({"admission_decision":"approved","binding_fingerprint":fingerprint,
+                       "expected_admission_version":"3","admission_judgment":judgment()}),
+            )
+            .await,
+        )
+        .await;
+    assert!(
+        matches!(skipped, Err(PgError::PreconditionsChanged)),
+        "{skipped:?}"
+    );
 }

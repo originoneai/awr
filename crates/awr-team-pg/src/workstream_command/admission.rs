@@ -11,6 +11,9 @@ pub(super) struct Decide {
     admission_decision: AdmissionDecision,
     /// The fingerprint of the scope the decider read (`work.admission`), checked against the scope now.
     binding_fingerprint: String,
+    /// How many decisions the decider read (`work.admission`): one recorded since is one this
+    /// decider has not seen.
+    expected_admission_version: String,
     admission_judgment: Option<AdmissionJudgment>,
     admission_reason: Option<String>,
     /// The proposal an approval answers.
@@ -30,6 +33,7 @@ impl Action {
         if !digest(&a.binding_fingerprint) {
             return Err(invalid());
         }
+        version(&a.expected_admission_version)?;
         if a.admission_proposal_id
             .as_deref()
             .is_some_and(|id| !identity(id))
@@ -92,6 +96,12 @@ pub(super) async fn apply(
     // The decider read one scope; deciding on another is a stale review.
     if binding_fingerprint(&current).map_err(|_| PgError::SourceDivergence)?
         != a.binding_fingerprint
+    {
+        return Err(PgError::PreconditionsChanged);
+    }
+    // Two deciders who read the same history get one decision; the other reads again.
+    if crate::governance::admission_version(tx, tenant, project, &command.work_id).await?
+        != version(&a.expected_admission_version)?
     {
         return Err(PgError::PreconditionsChanged);
     }
@@ -194,7 +204,10 @@ mod tests {
 
     #[test]
     fn each_decision_has_its_own_shape() {
-        let base = |decision: &str| json!({"admission_decision": decision, "binding_fingerprint": FINGERPRINT});
+        let base = |decision: &str| {
+            json!({"admission_decision": decision, "binding_fingerprint": FINGERPRINT,
+                   "expected_admission_version": "0"})
+        };
         let with = |mut value: Value, key: &str, field: Value| {
             value[key] = field;
             value
@@ -260,7 +273,8 @@ mod tests {
 
     #[test]
     fn the_decider_is_never_named_by_the_request() {
-        let mut args = json!({"admission_decision":"approved","binding_fingerprint":FINGERPRINT,"admission_judgment":judgment()});
+        let mut args = json!({"admission_decision":"approved","binding_fingerprint":FINGERPRINT,
+            "expected_admission_version":"0","admission_judgment":judgment()});
         assert!(parse(args.clone()).is_ok());
         // A label in the body is not an identity: unknown fields, whoever they claim to be, are refused.
         for field in ["agent", "actor_id", "decider", "person_id", "session"] {
@@ -271,8 +285,27 @@ mod tests {
     }
 
     #[test]
+    fn the_history_read_is_a_canonical_version_and_is_never_left_out() {
+        let good = json!({"admission_decision":"approved","binding_fingerprint":FINGERPRINT,
+            "expected_admission_version":"3","admission_judgment":judgment()});
+        assert!(parse(good.clone()).is_ok());
+        for bad in ["", "03", "-1", "x", "1.5", "99999999999999999999"] {
+            let mut args = good.clone();
+            args["expected_admission_version"] = json!(bad);
+            assert!(parse(args).is_err(), "{bad}");
+        }
+        // A decision that does not say what it read cannot be checked, so it is not accepted.
+        let mut args = good;
+        args.as_object_mut()
+            .unwrap()
+            .remove("expected_admission_version");
+        assert!(parse(args).is_err());
+    }
+
+    #[test]
     fn the_scope_read_is_a_digest_and_the_judgment_is_complete() {
-        let good = json!({"admission_decision":"approved","binding_fingerprint":FINGERPRINT,"admission_judgment":judgment()});
+        let good = json!({"admission_decision":"approved","binding_fingerprint":FINGERPRINT,
+            "expected_admission_version":"0","admission_judgment":judgment()});
         assert!(parse(good.clone()).is_ok());
         for bad in [
             "",

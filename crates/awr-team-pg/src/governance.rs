@@ -158,6 +158,24 @@ async fn latest(
     }))
 }
 
+/// How many decisions are recorded for `work`: the history a decider read. A decision states it, so
+/// two deciders who read the same history get one decision and the other reads again.
+pub(crate) async fn admission_version(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    work: &str,
+) -> PgResult<i64> {
+    Ok(tx
+        .query_one(
+            "SELECT count(*) FROM awr_team.work_admissions
+            WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3",
+            &[&tenant, &project, &work],
+        )
+        .await?
+        .get(0))
+}
+
 /// The admission state of `work` in `snapshot`, with the binding a decider must have read. None
 /// when the snapshot declares no governance.
 pub(crate) async fn status(
@@ -244,11 +262,12 @@ pub(crate) async fn read(
         );
     };
     let fingerprint = binding_fingerprint(&current).map_err(|_| PgError::SourceDivergence)?;
+    let history = admission_version(tx, tenant, project, work).await?;
     Ok(serde_json::json!({
         "governed": status.governed, "enforced": status.enforced, "state": status.state, "mode": status.mode,
         "admitted": status.facts.admitted, "independent_review_required": status.independent_review_required,
         "diagnostics": status.diagnostics, "facts": status.facts, "basis": status.basis,
-        "binding": current, "binding_fingerprint": fingerprint,
+        "binding": current, "binding_fingerprint": fingerprint, "admission_version": history.to_string(),
         "governance_hash": governed.governance_hash,
         "definition_summary": governed.work.summary,
     }))
