@@ -50,8 +50,13 @@ changing it makes earlier decisions stale.
 ## Record a decision
 
 `awr work admit --input admission.json` (or the MCP tool `awr_work_admit`, which takes the same
-fields as arguments) records one event. The request names the work, an active session, the revision the caller read, a stable request key,
-the contract fingerprint the decider reviewed (from `work prepare` or `work assess`), and the decision:
+fields as arguments) records one event. The request names the work, who decides, the revision the
+caller read, a stable request key, the contract fingerprint the decider reviewed (from `work
+prepare` or `work assess`), and the decision. Who decides is exactly one of an active `session` or a
+declaring `agent`, which is attributed like a checkpoint's agent and not verified. A governed
+flow therefore costs one extra call for work that needs no independent review. Only sessions can be
+shown to differ, so work that needs independent review is proposed and approved by sessions.
+The decisions are:
 
 | `decision` | needs | meaning |
 | --- | --- | --- |

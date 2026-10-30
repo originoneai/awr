@@ -212,6 +212,25 @@ impl Project {
         self.run(&["work", "admit", "--input", path.to_str().unwrap()])
     }
 
+    /// A decision attributed to a declaring agent instead of a session.
+    fn admit_as_agent(
+        &self,
+        work: &str,
+        agent: &str,
+        key: &str,
+        decision: &str,
+        extra: Value,
+    ) -> (bool, Value) {
+        let mut request = json!({"work": work, "agent": agent, "expected_revision": self.revision().parse::<u64>().unwrap(),
+            "request_key": key, "decision": decision, "contract_fingerprint": self.fingerprint(work)});
+        for (k, v) in extra.as_object().unwrap() {
+            request[k] = v.clone();
+        }
+        let path = self.0.join(format!("admit-{key}.json"));
+        fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+        self.run(&["work", "admit", "--input", path.to_str().unwrap()])
+    }
+
     fn approve(&self, work: &str, session: &str, key: &str) -> Value {
         let (success, value) = self.admit(
             work,
@@ -447,6 +466,16 @@ fn a_request_key_replays_the_original_outcome_and_never_a_different_request() {
     );
     assert!(!other.0);
     assert_eq!(other.1["code"], "SourceConflict", "{}", other.1);
+    // Even when only the decision differs: a proposal and an inline approval carry the same judgment.
+    let proposal = p.admit(
+        "W",
+        &reviewer,
+        "once",
+        "proposed",
+        json!({"judgment": Project::judgment()}),
+    );
+    assert!(!proposal.0, "{}", proposal.1);
+    assert_eq!(proposal.1["code"], "SourceConflict", "{}", proposal.1);
     let history = p.ok(&["work", "history", "W", "--event-type", "work.admission"]);
     assert_eq!(history["events"].as_array().unwrap().len(), 1);
 }
@@ -753,4 +782,136 @@ fn changing_only_a_reviewed_example_makes_the_approval_stale_and_names_the_examp
     // A fresh judgment on the changed examples admits the work again.
     p.approve("W", &reviewer, "approve-2");
     assert!(p.claim("W", "agent-w").0);
+}
+
+#[test]
+fn a_declared_agent_can_decide_for_work_that_needs_no_independent_review() {
+    let p = Project::new(&format!("mode='governed_enforce'\n{ALL}"));
+    // No session is needed: the decision is attributed to the declared agent, like a checkpoint.
+    let (approved, value) = p.admit_as_agent(
+        "W",
+        "claude-run",
+        "agent-1",
+        "approved",
+        json!({"judgment": Project::judgment()}),
+    );
+    assert!(approved, "{value}");
+    assert_eq!(value["event"]["payload"]["decider_agent"], "claude-run");
+    assert!(value["event"]["session_id"].is_null(), "{value}");
+    assert!(p.claim("W", "agent-w").0);
+    // A replay with the same agent returns the original receipt.
+    let replay = p.admit_as_agent(
+        "W",
+        "claude-run",
+        "agent-1",
+        "approved",
+        json!({"judgment": Project::judgment()}),
+    );
+    assert_eq!(replay.1["already_recorded"], true, "{}", replay.1);
+    // Exactly one of a session or an agent names who decides.
+    let both = p.admit_as_agent(
+        "W",
+        "claude-run",
+        "both",
+        "approved",
+        json!({"judgment": Project::judgment(), "session": Id::new()}),
+    );
+    assert!(!both.0);
+    assert_eq!(both.1["code"], "InvalidInput", "{}", both.1);
+}
+
+#[test]
+fn work_that_needs_independent_review_is_never_proposed_or_approved_by_an_agent_alone() {
+    let p = Project::new(&format!("mode='governed_enforce'\n{ALL}"));
+    // Only sessions can be shown to differ, so a declared agent cannot start or finish the review.
+    refused(
+        p.admit_as_agent(
+            "S",
+            "claude-run",
+            "p-agent",
+            "proposed",
+            json!({"judgment": Project::judgment()}),
+        ),
+        "admission_review_not_independent",
+    );
+    refused(
+        p.admit_as_agent(
+            "S",
+            "claude-run",
+            "a-agent",
+            "approved",
+            json!({"judgment": Project::judgment()}),
+        ),
+        "admission_review_not_independent",
+    );
+    let author = p.reviewer("author");
+    let (proposed, value) = p.admit(
+        "S",
+        &author,
+        "propose",
+        "proposed",
+        json!({"judgment": Project::judgment()}),
+    );
+    assert!(proposed, "{value}");
+    let proposal = value["event"]["id"].as_str().unwrap().to_string();
+    refused(
+        p.admit_as_agent(
+            "S",
+            "claude-run",
+            "answer-agent",
+            "approved",
+            json!({"proposal_event": proposal}),
+        ),
+        "admission_review_not_independent",
+    );
+}
+
+#[test]
+fn an_agent_declared_decision_applies_to_the_current_branch_and_only_to_it() {
+    let p = Project::new(&format!("mode='governed_enforce'\n{ALL}"));
+    let revision = p.revision();
+    let created = p.ok(&[
+        "branch",
+        "create",
+        "feature",
+        "--actor",
+        "claude-run",
+        "--reason",
+        "Try the change",
+        "--expected-revision",
+        &revision,
+    ]);
+    let branch = created["branch"]["id"].as_str().unwrap().to_string();
+    let revision = p.revision();
+    p.ok(&[
+        "branch",
+        "switch",
+        "feature",
+        "--actor",
+        "claude-run",
+        "--reason",
+        "Work there",
+        "--expected-revision",
+        &revision,
+    ]);
+    let (approved, value) = p.admit_as_agent(
+        "W",
+        "claude-run",
+        "on-feature",
+        "approved",
+        json!({"judgment": Project::judgment()}),
+    );
+    assert!(approved, "{value}");
+    assert_eq!(value["event"]["branch_id"], json!(branch), "{value}");
+    // The decision is read on that branch; the baseline branch has none of its own.
+    let on_branch = p.ok(&["work", "show", "W", "--branch", "feature"]);
+    assert_eq!(
+        on_branch["work"]["admission"]["state"], "approved",
+        "{on_branch}"
+    );
+    let on_main = p.ok(&["work", "show", "W", "--branch", "main"]);
+    assert_eq!(
+        on_main["work"]["admission"]["state"], "missing",
+        "{on_main}"
+    );
 }

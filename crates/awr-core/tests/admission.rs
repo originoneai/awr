@@ -134,6 +134,45 @@ fn each_decision_has_its_own_request_shape() {
 }
 
 #[test]
+fn a_request_names_exactly_one_of_a_session_or_a_declaring_agent() {
+    let with = |edit: fn(&mut Value)| {
+        request("proposed", |v| {
+            v["judgment"] = judgment();
+            edit(v);
+        })
+    };
+    assert!(with(|_| {}).is_ok(), "a session names who decides");
+    assert!(
+        with(|v| {
+            v.as_object_mut().unwrap().remove("session");
+            v["agent"] = json!("claude-run");
+        })
+        .is_ok()
+    );
+    assert!(
+        with(|v| {
+            v.as_object_mut().unwrap().remove("session");
+        })
+        .is_err()
+    );
+    assert!(with(|v| v["agent"] = json!("claude-run")).is_err());
+    assert!(
+        with(|v| {
+            v.as_object_mut().unwrap().remove("session");
+            v["agent"] = json!(" ");
+        })
+        .is_err()
+    );
+    assert!(
+        with(|v| {
+            v.as_object_mut().unwrap().remove("session");
+            v["agent"] = json!("a".repeat(257));
+        })
+        .is_err()
+    );
+}
+
+#[test]
 fn request_content_is_bounded_attributed_and_public() {
     let ok = |edit: fn(&mut Value)| {
         request("proposed", |v| {

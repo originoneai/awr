@@ -156,7 +156,13 @@ impl AdmissionJudgment {
 #[serde(deny_unknown_fields)]
 pub struct AdmissionRequest {
     pub work: String,
-    pub session: Id,
+    /// An active session. It is required to propose or decide for work that needs independent
+    /// review, because only sessions can be shown to differ.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<Id>,
+    /// The declaring agent when no session is given. It is attribution, not a verified identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
     pub expected_revision: u64,
     /// Stable idempotency key: the same key with the same content returns the original receipt.
     pub request_key: String,
@@ -176,7 +182,7 @@ impl AdmissionRequest {
     /// What a request key binds: the request without its revision guard and the key itself.
     pub fn input(&self) -> serde_json::Value {
         serde_json::json!({
-            "work": self.work, "session": self.session,
+            "work": self.work, "session": self.session, "agent": self.agent,
             "contract_fingerprint": self.contract_fingerprint,
             "decision": self.decision, "judgment": self.judgment,
             "proposal_event": self.proposal_event, "reason": self.reason,
@@ -193,6 +199,19 @@ impl AdmissionRequest {
         }
         if self.work.trim().is_empty() || self.work.len() > 512 {
             return invalid("requires the work key");
+        }
+        match (&self.session, &self.agent) {
+            (Some(_), None) => {}
+            (None, Some(agent))
+                if !agent.trim().is_empty()
+                    && agent.len() <= 256
+                    && agent == agent.trim()
+                    && !agent.chars().any(char::is_control) => {}
+            _ => {
+                return invalid(
+                    "names exactly one of an active session or a bounded declaring agent",
+                );
+            }
         }
         if !fingerprint(&self.contract_fingerprint) {
             return invalid("requires the reviewed contract_fingerprint (sha256:...)");

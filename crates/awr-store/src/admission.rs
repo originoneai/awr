@@ -83,6 +83,21 @@ fn current_binding(
     })
 }
 
+/// The branch an agent-declared decision applies to: the project's current one, like a read.
+fn current_branch(conn: &Connection, project: Id) -> Result<Option<Id>> {
+    conn.query_row(
+        "SELECT current_branch_id FROM projects WHERE id=?1",
+        [project.to_string()],
+        |r| r.get::<_, Option<String>>(0),
+    )
+    .map_err(db_error)?
+    .map(|id| {
+        id.parse()
+            .map_err(|_| Error::Storage("invalid current branch identity".into()))
+    })
+    .transpose()
+}
+
 fn event_at(conn: &Connection, project: Id, id: Id) -> Result<Option<Event>> {
     conn.query_row(
         "SELECT id,project_id,work_item_id,session_id,branch_id,event_type,importance,summary,payload_json,project_revision,created_at FROM events WHERE project_id=?1 AND id=?2",
@@ -300,8 +315,19 @@ impl Store {
             request.expected_revision,
             event,
             |tx, _next, event| {
-                let session = session_at(tx, project, request.session)?;
-                require_active(&session)?;
+                let session = request
+                    .session
+                    .map(|id| session_at(tx, project, id))
+                    .transpose()?;
+                if let Some(session) = &session {
+                    require_active(session)?;
+                }
+                let decider_session = session.as_ref().map(|s| s.id);
+                let decider_agent = session
+                    .as_ref()
+                    .map(|s| s.agent_id.clone())
+                    .or_else(|| request.agent.clone())
+                    .unwrap_or_default();
                 let work: Projected<WorkItem> =
                     projection(tx, project, EntityKind::WorkItem, &request.work)?;
                 if work.source.freshness != Freshness::Fresh {
@@ -330,7 +356,10 @@ impl Store {
                         "the work is outside the scope of the admission policy",
                     ));
                 }
-                let branch = session.branch_id;
+                let branch = match &session {
+                    Some(session) => session.branch_id,
+                    None => current_branch(tx, project)?,
+                };
                 let current = current_binding(tx, project, &work, &value)?;
                 if request.contract_fingerprint != current.contract_fingerprint {
                     return Err(Error::SourceConflict(
@@ -339,6 +368,15 @@ impl Store {
                 }
                 let latest = latest_admission(tx, project, work.item.meta.id, branch)?;
                 let review_required = policy.requires_independent_review(&work.item.tags);
+                if review_required
+                    && request.decision == AdmissionDecision::Proposed
+                    && decider_session.is_none()
+                {
+                    return Err(reject(
+                        "admission_review_not_independent",
+                        "proposing work that needs independent review requires a session, so that the reviewer can be shown to differ",
+                    ));
+                }
                 // What the decision answers: an earlier proposal, or nothing for an inline decision.
                 let (judgment, proposal, proposer) = match request.proposal_event {
                     None => (request.judgment.clone(), None, None),
@@ -372,7 +410,10 @@ impl Store {
                     }
                 };
                 if request.decision == AdmissionDecision::Approved {
-                    if review_required && proposer.is_none_or(|p| p == session.id) {
+                    if review_required
+                        && (decider_session.is_none()
+                            || proposer.is_none_or(|p| Some(p) == decider_session))
+                    {
                         return Err(reject(
                             "admission_review_not_independent",
                             "this work needs a review by a session other than the one that proposed it",
@@ -392,7 +433,7 @@ impl Store {
                     }
                 }
                 event.work_item_id = Some(work.item.meta.id);
-                event.session_id = Some(session.id);
+                event.session_id = decider_session;
                 event.branch_id = branch;
                 event.payload = json!({
                     "version": 1,
@@ -403,7 +444,7 @@ impl Store {
                     "judgment": judgment,
                     "proposal_event": proposal,
                     "proposer_session": proposer,
-                    "decider_agent": session.agent_id,
+                    "decider_agent": decider_agent,
                     "independent_review_required": review_required,
                     "reason": request.reason,
                 });

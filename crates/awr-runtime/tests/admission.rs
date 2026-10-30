@@ -133,7 +133,8 @@ impl Fixture {
     fn request(&self, session: Id, key: &str) -> AdmissionRequest {
         AdmissionRequest {
             work: "W".into(),
-            session,
+            session: Some(session),
+            agent: None,
             expected_revision: self.revision(),
             request_key: key.into(),
             decision: AdmissionDecision::Approved,

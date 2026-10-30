@@ -139,7 +139,7 @@ fn workflow_tools() -> Vec<Tool> {
             "awr_work_admit",
             "Record a governed admission proposal or decision for the current work contract and session. A request is not a decision; the program checks provenance and currency only, grants no execution beyond the recorded decision and changes no completion policy.",
             object(
-                json!({"work":text(),"session":text(),"expected_revision":revision(),"request_key":text(),
+                json!({"work":text(),"session":optional(text()),"agent":optional(text()),"expected_revision":revision(),"request_key":text(),
                 "decision":{"type":"string","enum":["proposed","approved","denied"]},"contract_fingerprint":text(),
                 "judgment":optional(object(json!({"contribution":text(),"necessity":text(),"alternatives":text(),
                 "deliverable":text(),"exit":text(),"responsibility":text()}),
@@ -147,7 +147,6 @@ fn workflow_tools() -> Vec<Tool> {
                 "proposal_event":optional(text()),"reason":optional(text())}),
                 &[
                     "work",
-                    "session",
                     "expected_revision",
                     "request_key",
                     "decision",
