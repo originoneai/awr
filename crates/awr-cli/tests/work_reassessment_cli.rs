@@ -193,6 +193,70 @@ impl Project {
     }
 }
 
+impl Project {
+    /// Makes work W small with a tight rework budget: one cycle and an hour of effort are allowed.
+    fn make_small(&self) {
+        let path = self.0.join("work.yaml");
+        let mut ledger: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        ledger["work_items"][0]["definition"]["size"] = json!("small");
+        ledger["work_items"][0]["definition"]["budget"] = json!({"rework_cycles": 1});
+        fs::write(&path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
+        self.ok(&["source", "reindex"]);
+    }
+
+    /// A source action on W by the session, with the usual reason.
+    fn act(&self, action: &str, session: &str, extra: &[&str]) -> Value {
+        let revision = self.revision().to_string();
+        let mut args = vec![
+            "work",
+            action,
+            "W",
+            "--session",
+            session,
+            "--reason",
+            "Update the work after reviewing the facts",
+            "--expected-revision",
+            &revision,
+        ];
+        args.extend_from_slice(extra);
+        self.ok(&args)
+    }
+
+    fn claim_work(&self, session: &str) -> (bool, Value) {
+        let revision = self.revision().to_string();
+        self.run(&[
+            "work",
+            "claim",
+            "W",
+            "--session",
+            session,
+            "--expected-revision",
+            &revision,
+        ])
+    }
+
+    /// One cycle in which the work is sent back: it is cancelled and reopened.
+    fn send_back(&self, session: &str) {
+        self.act("cancel", session, &[]);
+        self.act("reopen", session, &["--next-action", "Replan the report"]);
+    }
+
+    fn decide_budget(&self, key: &str, decision: &str, extra: Value) -> (bool, Value) {
+        let fingerprint = self.block("W")["budget"]["current"]["facts_fingerprint"].clone();
+        let mut request = json!({"work": "W", "agent": "lead", "expected_revision": self.revision(),
+            "request_key": key, "decision": decision, "answers": "budget", "facts_fingerprint": fingerprint,
+            "judgment": {"reason": "The work was sent back more often than its size allows",
+                         "next_step": "Deliver what works and record what does not",
+                         "evidence_considered": "The reopen events of the work"}});
+        for (k, v) in extra.as_object().unwrap() {
+            request[k] = v.clone();
+        }
+        let path = self.0.join(format!("reassess-{key}.json"));
+        fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+        self.run(&["work", "reassess", "--input", path.to_str().unwrap()])
+    }
+}
+
 #[test]
 fn a_work_whose_records_show_repeated_failures_is_held_until_a_current_decision() {
     let p = Project::new("governed_enforce");
@@ -348,4 +412,74 @@ fn the_command_is_a_capability_of_admission() {
     let p = Project::new("governed_enforce");
     let capabilities = p.ok(&["capabilities"]).to_string();
     assert!(capabilities.contains("work reassess"), "{capabilities}");
+}
+
+#[test]
+fn a_work_sent_back_more_often_than_its_budget_allows_needs_a_decision_counted_from_awr_own_records()
+ {
+    let p = Project::new("governed_enforce");
+    p.make_small();
+    p.admit("W");
+    let session = p.session("agent-w", "W");
+    assert!(p.claim_work(&session).0);
+    p.act("progress", &session, &["--next-action", "Write the report"]);
+    // A first cycle is within a budget of one.
+    p.send_back(&session);
+    assert!(
+        p.ok(&["work", "show", "W"])["work"]
+            .get("reassessment")
+            .is_none(),
+        "a budget that is not spent shows nothing"
+    );
+    assert!(p.claim_work(&session).0);
+    p.act(
+        "progress",
+        &session,
+        &["--next-action", "Write the report again"],
+    );
+    // A second one is not.
+    p.send_back(&session);
+    let budget = p.block("W")["budget"].clone();
+    assert_eq!(budget["state"], "required", "{budget}");
+    assert_eq!(budget["use"]["rework"]["used"], 2);
+    assert_eq!(budget["use"]["rework"]["allowed"], 1);
+    assert_eq!(budget["use"]["rework"]["counted_from"], "recorded");
+    assert_eq!(budget["use"]["size"], "small");
+    let (claimed, refusal) = p.claim_work(&session);
+    assert!(!claimed, "{refusal}");
+    assert_eq!(refusal["code"], "AdmissionRequired", "{refusal}");
+    assert_eq!(refusal["details"]["reason"], "reassessment_budget_required");
+    let prepared = p.ok(&["work", "prepare", "W", "--budget", "12000"]);
+    assert_eq!(
+        prepared["next_action"],
+        "record_reassessment_before_claiming"
+    );
+    // Continuing does not deal with a spent budget; neither does a decision with nothing to say.
+    let (decided, value) = p.decide_budget("continue", "continue", json!({}));
+    assert!(!decided, "{value}");
+    assert_eq!(value["code"], "InvalidInput", "{value}");
+    let (decided, value) = p.decide_budget("bare", "deliver_with_known_issues", json!({}));
+    assert!(!decided, "{value}");
+    assert_eq!(value["code"], "InvalidInput", "{value}");
+    // Delivering with the known issues recorded does.
+    let (decided, receipt) = p.decide_budget(
+        "deliver",
+        "deliver_with_known_issues",
+        json!({"known_issues": ["The retry path is untested"]}),
+    );
+    assert!(decided, "{receipt}");
+    assert_eq!(receipt["reassessment"]["budget"]["state"], "current");
+    assert!(p.claim_work(&session).0);
+    // Another cycle spends it again.
+    p.act(
+        "progress",
+        &session,
+        &["--next-action", "Write the report once more"],
+    );
+    p.send_back(&session);
+    let budget = p.block("W")["budget"].clone();
+    assert_eq!(budget["state"], "stale", "{budget}");
+    let (claimed, refusal) = p.claim_work(&session);
+    assert!(!claimed, "{refusal}");
+    assert_eq!(refusal["details"]["reason"], "reassessment_budget_stale");
 }

@@ -90,12 +90,17 @@ impl Fixture {
 
     /// `scope` is the TOML line that says which work the policy governs.
     fn with_scope(mode: &str, scope: &str) -> Self {
+        Self::with_policy(mode, scope, "")
+    }
+
+    /// `extra` is added to the policy table, such as the supervisors.
+    fn with_policy(mode: &str, scope: &str, extra: &str) -> Self {
         let root = std::env::temp_dir().join(format!("awr-reassessment-runtime-{}", Id::new()));
         fs::create_dir_all(root.join(".awr")).unwrap();
         fs::create_dir_all(root.join("decisions")).unwrap();
         fs::write(
             root.join(".awr/project.toml"),
-            format!("[project]\nname = \"Reassessment runtime fixture\"\nexternal_key = \"reassessment-runtime-fixture\"\n\n[[sources]]\ndomain = \"ledger\"\nrole = \"primary\"\npath = \"work.yaml\"\nadapter = \"yaml-ledger-v1\"\n\n[sources.options.admission_policy]\nversion = 1\nmode = \"{mode}\"\n{scope}\n\n[[sources]]\ndomain = \"decisions\"\nrole = \"supporting\"\npath = \"decisions\"\nadapter = \"markdown-directory-v1\"\n"),
+            format!("[project]\nname = \"Reassessment runtime fixture\"\nexternal_key = \"reassessment-runtime-fixture\"\n\n[[sources]]\ndomain = \"ledger\"\nrole = \"primary\"\npath = \"work.yaml\"\nadapter = \"yaml-ledger-v1\"\n\n[sources.options.admission_policy]\nversion = 1\nmode = \"{mode}\"\n{scope}\n{extra}\n[[sources]]\ndomain = \"decisions\"\nrole = \"supporting\"\npath = \"decisions\"\nadapter = \"markdown-directory-v1\"\n"),
         )
         .unwrap();
         fs::write(
@@ -345,6 +350,10 @@ impl Fixture {
                 evidence_considered: "The output of the failed runs".into(),
             },
             root_cause: None,
+            answers: ReassessmentSubject::Facts,
+            known_issues: vec![],
+            reduced_scope: None,
+            escalated_to: None,
         }
     }
 
@@ -606,6 +615,10 @@ impl Fixture {
                 evidence_considered: "Nothing yet".into(),
             },
             root_cause: None,
+            answers: ReassessmentSubject::Facts,
+            known_issues: vec![],
+            reduced_scope: None,
+            escalated_to: None,
         }
     }
 }
@@ -1036,4 +1049,395 @@ fn a_method_is_a_command_in_a_directory_so_different_ones_never_add_up() {
         f.fail_in(worker, &format!("same-{n}"), "check", "dir-0");
     }
     assert_eq!(state(&f), "required");
+}
+
+fn spent(rework: u32) -> ManagementObservation {
+    ManagementObservation {
+        observed_at: now_millis().unwrap(),
+        note: "The host counted the cycles it sent the work back".into(),
+        completed_rework_cycles: Some(rework),
+        ..Default::default()
+    }
+}
+
+impl Fixture {
+    fn observe(&mut self, session: Id, key: &str, observation: ManagementObservation) {
+        let fingerprint = assess_management(
+            &self.store,
+            &self.root,
+            &AssessManagementRequest {
+                work: "W".into(),
+                branch: None,
+            },
+        )
+        .unwrap()["contract_fingerprint"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let expected_revision = self.revision();
+        manage_work(
+            &mut self.store,
+            &self.root.clone(),
+            &ManageWorkRequest {
+                work: "W".into(),
+                session,
+                expected_revision,
+                request_key: key.into(),
+                contract_fingerprint: fingerprint,
+                observation,
+            },
+        )
+        .unwrap();
+    }
+
+    fn budget(&self) -> BudgetStatus {
+        self.status("W").budget.expect("the budget is reported")
+    }
+
+    fn budget_request(
+        &self,
+        key: &str,
+        choice: ReassessmentChoice,
+        agent: &str,
+    ) -> ReassessmentRequest {
+        ReassessmentRequest {
+            agent: Some(agent.into()),
+            answers: ReassessmentSubject::Budget,
+            facts_fingerprint: self
+                .budget()
+                .current
+                .expect("a spent budget is bound")
+                .facts_fingerprint,
+            ..self.request_without_facts(key)
+        }
+        .with_choice(choice)
+    }
+
+    fn decide_budget(&mut self, request: ReassessmentRequest) -> Result<Value> {
+        reassess_work(&mut self.store, &self.root.clone(), &request)
+    }
+}
+
+trait WithChoice {
+    fn with_choice(self, choice: ReassessmentChoice) -> Self;
+}
+impl WithChoice for ReassessmentRequest {
+    /// Fills in what a choice needs, so a test says only which choice it makes.
+    fn with_choice(mut self, choice: ReassessmentChoice) -> Self {
+        self.decision = choice;
+        match choice {
+            ReassessmentChoice::DeliverWithKnownIssues => {
+                self.known_issues = vec!["The retry path is untested".into()]
+            }
+            ReassessmentChoice::ReduceScope => {
+                self.reduced_scope = Some("Only the read path ships".into())
+            }
+            ReassessmentChoice::Escalate => self.escalated_to = Some("the owner".into()),
+            _ => {}
+        }
+        self
+    }
+}
+
+/// Small work with a tight rework budget: one cycle and an hour of effort are allowed.
+fn small(f: &mut Fixture) {
+    f.edit_ledger(|ledger| {
+        ledger["work_items"][0]["definition"]["size"] = json!("small");
+        ledger["work_items"][0]["definition"]["budget"] = json!({"rework_cycles": 1});
+    });
+}
+
+#[test]
+fn a_spent_budget_holds_the_work_until_it_is_dealt_with_and_a_further_cycle_asks_again() {
+    let mut f = Fixture::new("governed_enforce");
+    small(&mut f);
+    let worker = f.session("agent-w", Some("W"));
+    let reviewer = f.session("reviewer", None);
+    f.admit("W", reviewer);
+    // Within the budget, nothing is shown and nothing is asked.
+    assert_eq!(state(&f), "clear");
+    assert!(
+        f.store
+            .reassessment_block(f.project, "W", None)
+            .unwrap()
+            .is_none()
+    );
+    f.observe(worker, "cycles-1", spent(1));
+    assert_eq!(f.budget().state, "within");
+    // A second cycle under a budget of one: AWR recorded none of its own, so the host's count is used.
+    f.observe(worker, "cycles-2", spent(2));
+    let budget = f.budget();
+    assert_eq!(budget.state, "required");
+    assert_eq!(
+        (
+            budget.usage.rework.used,
+            budget.usage.rework.allowed,
+            budget.usage.rework.counted_from
+        ),
+        (2, 1, "host_reported")
+    );
+    assert_eq!(budget.usage.rework.allowance, "declared");
+    assert_eq!(budget.usage.effort_minutes.allowance, "size_default");
+    assert_eq!(budget.usage.size, WorkSize::Small);
+    assert!(
+        f.codes("W")
+            .contains(&"reassessment_budget_required".to_string())
+    );
+    assert_eq!(
+        code(f.register(worker, "op-1", "check").unwrap_err()),
+        "reassessment_budget_required"
+    );
+    // The facts are another matter: nothing failed here.
+    assert_eq!(state(&f), "clear");
+    // Continuing is not a way out of a spent budget, and a request with nothing spent is refused.
+    let request = f.budget_request("not-continue", ReassessmentChoice::Continue, "claude-run");
+    assert!(matches!(
+        f.decide_budget(request),
+        Err(Error::InvalidInput(_))
+    ));
+    // Delivering with known issues deals with it.
+    let receipt = f
+        .decide_budget(f.budget_request(
+            "deliver",
+            ReassessmentChoice::DeliverWithKnownIssues,
+            "claude-run",
+        ))
+        .unwrap();
+    assert_eq!(
+        receipt["reassessment"]["budget"]["state"], "current",
+        "{receipt}"
+    );
+    assert_eq!(
+        receipt["event"]["payload"]["input"]["known_issues"][0],
+        "The retry path is untested"
+    );
+    assert!(!f.codes("W").iter().any(|c| c.starts_with("reassessment_")));
+    f.register(worker, "op-1", "check").unwrap();
+    // A third cycle spends it again, and the old decision names what changed.
+    f.observe(worker, "cycles-3", spent(3));
+    let budget = f.budget();
+    assert_eq!(budget.state, "stale");
+    assert!(
+        f.status("W").diagnostics[0]
+            .detail
+            .contains("fact_added:budget:rework:3>1")
+    );
+    assert_eq!(
+        code(f.register(worker, "op-2", "check").unwrap_err()),
+        "reassessment_budget_stale"
+    );
+    f.decide_budget(f.budget_request("reduce", ReassessmentChoice::ReduceScope, "claude-run"))
+        .unwrap();
+    assert_eq!(f.budget().state, "current");
+    // Replanning the budget is a decision too, and a larger budget needs none.
+    f.edit_ledger(|ledger| {
+        ledger["work_items"][0]["definition"]["budget"] = json!({"rework_cycles": 5});
+    });
+    f.observe(worker, "cycles-3-again", spent(3));
+    assert_eq!(f.budget().state, "within");
+}
+
+#[test]
+fn a_budget_decision_answers_a_spent_budget_and_never_facts() {
+    let mut f = Fixture::new("governed_enforce");
+    small(&mut f);
+    let worker = f.session("agent-w", Some("W"));
+    let reviewer = f.session("reviewer", None);
+    f.admit("W", reviewer);
+    // Nothing is spent yet.
+    let mut early = f.request_without_facts("early");
+    early.answers = ReassessmentSubject::Budget;
+    early = early.with_choice(ReassessmentChoice::ReduceScope);
+    let error = reassess_work(&mut f.store, &f.root.clone(), &early).unwrap_err();
+    assert!(matches!(error, Error::InvalidInput(_)), "{error:?}");
+    // Both a spent budget and repeated failures: each is answered by its own decision.
+    for n in 1..=3 {
+        f.attempt(worker, &format!("op-{n}"), "check", false);
+    }
+    f.observe(worker, "cycles", spent(2));
+    assert_eq!(state(&f), "required");
+    assert_eq!(f.budget().state, "required");
+    // Answering the facts leaves the budget open ...
+    f.decide("facts", ReassessmentChoice::AlterMethod).unwrap();
+    assert_eq!(state(&f), "current");
+    assert_eq!(f.budget().state, "required");
+    assert!(
+        f.codes("W")
+            .contains(&"reassessment_budget_required".to_string())
+    );
+    // ... and answering the budget leaves the facts as they were.
+    f.decide_budget(f.budget_request("budget", ReassessmentChoice::Replan, "claude-run"))
+        .unwrap();
+    assert_eq!(f.budget().state, "current");
+    assert_eq!(state(&f), "current");
+    assert!(!f.codes("W").iter().any(|c| c.starts_with("reassessment_")));
+    // A wrong fingerprint is a conflict, and a root cause belongs to failed attempts only.
+    let mut wrong = f.budget_request("wrong", ReassessmentChoice::Replan, "claude-run");
+    wrong.facts_fingerprint = format!("sha256:{}", "a".repeat(64));
+    assert!(matches!(
+        f.decide_budget(wrong),
+        Err(Error::SourceConflict(_))
+    ));
+    let mut grouped = f.budget_request("grouped", ReassessmentChoice::Replan, "claude-run");
+    // A real record of the work: the grouping is refused for what it is, not for what it names.
+    grouped.root_cause = Some(RootCause {
+        label: "The fixture is read-only".into(),
+        references: vec![f.status("W").deviations[0].reference.clone()],
+    });
+    assert!(matches!(
+        f.decide_budget(grouped),
+        Err(Error::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn an_escalated_budget_stays_held_until_someone_else_decides() {
+    let mut f = Fixture::with_policy(
+        "governed_enforce",
+        "scope = \"all\"",
+        "supervisors = [\"lead\"]\n",
+    );
+    small(&mut f);
+    let worker = f.session("agent-w", Some("W"));
+    let reviewer = f.session("reviewer", None);
+    f.admit("W", reviewer);
+    f.observe(worker, "cycles", spent(2));
+    f.decide_budget(f.budget_request("escalate", ReassessmentChoice::Escalate, "claude-run"))
+        .unwrap();
+    let budget = f.budget();
+    assert_eq!(budget.state, "escalated");
+    assert!(
+        f.codes("W")
+            .contains(&"reassessment_budget_escalated".to_string())
+    );
+    assert_eq!(
+        code(f.register(worker, "op-1", "check").unwrap_err()),
+        "reassessment_budget_escalated"
+    );
+    // The one who escalated cannot answer, and with supervisors only a supervisor can.
+    let own = f.budget_request(
+        "own",
+        ReassessmentChoice::DeliverWithKnownIssues,
+        "claude-run",
+    );
+    assert_eq!(
+        code(f.decide_budget(own).unwrap_err()),
+        "reassessment_budget_escalated"
+    );
+    let other = f.budget_request(
+        "other",
+        ReassessmentChoice::DeliverWithKnownIssues,
+        "intern",
+    );
+    assert_eq!(
+        code(f.decide_budget(other).unwrap_err()),
+        "reassessment_not_authorized"
+    );
+    f.decide_budget(f.budget_request("lead", ReassessmentChoice::DeliverWithKnownIssues, "lead"))
+        .unwrap();
+    assert_eq!(f.budget().state, "current");
+    f.register(worker, "op-1", "check").unwrap();
+}
+
+#[test]
+fn effort_is_counted_from_the_claims_on_the_work_before_the_host_is_asked() {
+    let mut f = Fixture::new("governed_enforce");
+    small(&mut f);
+    let reviewer = f.session("reviewer", None);
+    f.admit("W", reviewer);
+    let revision = f.revision();
+    let worker = f
+        .store
+        .start_session(
+            f.project,
+            revision,
+            SessionDraft {
+                work_item_key: Some("W".into()),
+                agent_id: "agent-w".into(),
+                provider: "test".into(),
+                model: "m".into(),
+                branch_id: None,
+                claim: true,
+                claim_ttl_ms: Some(86_400_000),
+            },
+        )
+        .unwrap()
+        .0
+        .session
+        .id;
+    let line = f.budget().usage.effort_minutes;
+    assert_eq!(
+        (line.counted_from, line.allowed, line.exhausted()),
+        ("recorded", 60, false)
+    );
+    // The claim has been held for two hours.
+    let db = rusqlite::Connection::open(f.root.join(".awr/state.db")).unwrap();
+    db.execute("UPDATE claims SET acquired_at=acquired_at-7200000", [])
+        .unwrap();
+    drop(db);
+    let line = f.budget().usage.effort_minutes;
+    assert!(line.used >= 119 && line.exhausted(), "{line:?}");
+    assert_eq!(line.counted_from, "recorded");
+    // Even a host that says the work took ten minutes does not outweigh what AWR recorded.
+    f.observe(
+        worker,
+        "ten-minutes",
+        ManagementObservation {
+            observed_at: now_millis().unwrap(),
+            note: "The host counted ten active minutes".into(),
+            active_elapsed_ms: Some(10 * 60_000),
+            ..Default::default()
+        },
+    );
+    let budget = f.budget();
+    assert_eq!(budget.state, "required");
+    assert!(budget.usage.effort_minutes.used >= 119);
+    assert!(
+        f.codes("W")
+            .contains(&"reassessment_budget_required".to_string())
+    );
+    // Releasing the claim stops the clock; the time already held stays spent.
+    f.decide_budget(f.budget_request(
+        "deliver",
+        ReassessmentChoice::DeliverWithKnownIssues,
+        "claude-run",
+    ))
+    .unwrap();
+    assert_eq!(f.budget().state, "current");
+}
+
+#[test]
+fn a_released_claim_stops_the_clock_and_a_host_stands_in_only_where_awr_recorded_nothing() {
+    let mut f = Fixture::new("governed_enforce");
+    small(&mut f);
+    let reviewer = f.session("reviewer", None);
+    f.admit("W", reviewer);
+    let worker = f.session("agent-w", Some("W"));
+    // Nothing recorded by AWR: the host's minutes are used, and the block says so.
+    f.observe(
+        worker,
+        "two-hours",
+        ManagementObservation {
+            observed_at: now_millis().unwrap(),
+            note: "The host counted two active hours".into(),
+            active_elapsed_ms: Some(120 * 60_000),
+            ..Default::default()
+        },
+    );
+    let line = f.budget().usage.effort_minutes;
+    assert_eq!(
+        (line.used, line.counted_from, line.exhausted()),
+        (120, "host_reported", true)
+    );
+    // A claim that was held for half an hour and released counts exactly that, however long ago it was.
+    let db = rusqlite::Connection::open(f.root.join(".awr/state.db")).unwrap();
+    db.execute(
+        "INSERT INTO claims(id,project_id,work_item_id,session_id,agent_id,branch_id,status,acquired_at,expires_at,released_at,revision) \
+         SELECT ?1, project_id, id, ?2, 'agent-c', NULL, 'released', 1000000, 99000000000, 2800000, 1 FROM work_items WHERE external_key='W'",
+        rusqlite::params![Id::new().to_string(), worker.to_string()],
+    )
+    .unwrap();
+    drop(db);
+    let line = f.budget().usage.effort_minutes;
+    assert_eq!((line.used, line.counted_from), (30, "recorded"), "{line:?}");
 }

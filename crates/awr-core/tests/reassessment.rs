@@ -237,9 +237,11 @@ fn recorded(bound: &ReassessmentBinding) -> RecordedReassessment {
     RecordedReassessment {
         event: Id::new(),
         decision: ReassessmentChoice::Continue,
+        subject: ReassessmentSubject::Facts,
         bound: bound.clone(),
         decider_agent: "claude-run".into(),
         root_cause: None,
+        escalated_to: None,
     }
 }
 
@@ -254,6 +256,8 @@ fn state(
         attempts,
         stale_observations: &[],
         latest,
+        budget: None,
+        latest_budget: None,
     })
 }
 
@@ -361,4 +365,311 @@ fn reassessment_codes_belong_to_the_admission_family_that_gates_claims() {
         assert!(is_admission_code(code), "{code}");
     }
     assert!(!is_admission_code("active_blocker"));
+}
+
+fn use_of(rework: (u64, &'static str), effort: (u64, &'static str)) -> BudgetUse {
+    BudgetUse::of(&effective_budget(None), rework, effort)
+}
+
+#[test]
+fn size_gives_the_default_budgets_and_a_declared_limit_replaces_one_of_them() {
+    let defaults = |size: Option<WorkSize>, budget: Option<WorkBudget>| {
+        let mut definition: WorkDefinition =
+            serde_json::from_value(json!({"version": 1, "purpose": "implementation"})).unwrap();
+        definition.size = size;
+        definition.budget = budget;
+        effective_budget(Some(&definition))
+    };
+    let undeclared = effective_budget(None);
+    assert_eq!(
+        (
+            undeclared.size,
+            undeclared.rework_cycles,
+            undeclared.active_effort_minutes
+        ),
+        (WorkSize::Medium, 3, 240)
+    );
+    assert_eq!(
+        (
+            undeclared.size_basis,
+            undeclared.rework_basis,
+            undeclared.effort_basis
+        ),
+        ("default", "size_default", "size_default")
+    );
+    let small = defaults(Some(WorkSize::Small), None);
+    assert_eq!(
+        (
+            small.rework_cycles,
+            small.active_effort_minutes,
+            small.size_basis
+        ),
+        (2, 60, "declared")
+    );
+    let large = defaults(Some(WorkSize::Large), None);
+    assert_eq!((large.rework_cycles, large.active_effort_minutes), (3, 960));
+    let both = defaults(
+        Some(WorkSize::Small),
+        Some(WorkBudget {
+            rework_cycles: Some(4),
+            active_effort_minutes: None,
+        }),
+    );
+    assert_eq!((both.rework_cycles, both.rework_basis), (4, "declared"));
+    assert_eq!(
+        (both.active_effort_minutes, both.effort_basis),
+        (60, "size_default")
+    );
+    let zero = defaults(
+        None,
+        Some(WorkBudget {
+            rework_cycles: Some(0),
+            active_effort_minutes: Some(30),
+        }),
+    );
+    assert_eq!((zero.rework_cycles, zero.active_effort_minutes), (0, 30));
+    // Bounds are checked when the definition is read.
+    let bounded = |budget: Value| -> bool {
+        let definition: WorkDefinition = serde_json::from_value(
+            json!({"version": 1, "purpose": "implementation", "budget": budget}),
+        )
+        .unwrap();
+        definition.validate().is_ok()
+    };
+    assert!(bounded(
+        json!({"rework_cycles": 20, "active_effort_minutes": 100000})
+    ));
+    assert!(!bounded(json!({"rework_cycles": 21})));
+    assert!(!bounded(json!({"active_effort_minutes": 0})));
+    assert!(!bounded(json!({"active_effort_minutes": 100001})));
+    assert!(
+        serde_json::from_value::<WorkDefinition>(
+            json!({"version": 1, "purpose": "implementation", "size": "huge"})
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn a_fourth_rework_cycle_under_a_budget_of_three_is_spent_and_the_third_is_not() {
+    assert!(use_of((3, "recorded"), (0, "recorded")).trigger().is_none());
+    let spent = use_of((4, "recorded"), (0, "recorded"))
+        .trigger()
+        .expect("the fourth cycle spends it");
+    assert_eq!(spent.trigger, "budget_exhausted");
+    assert_eq!(spent.references, ["budget:rework:4>3"]);
+    assert!(
+        spent
+            .detail
+            .contains("4 rework cycles against a budget of 3")
+    );
+    // Effort is spent by going over the allowance, and is bound by the allowance, not the minute.
+    assert!(
+        use_of((0, "recorded"), (240, "recorded"))
+            .trigger()
+            .is_none()
+    );
+    let at_300 = use_of((0, "recorded"), (300, "recorded"))
+        .trigger()
+        .unwrap();
+    let at_400 = use_of((0, "recorded"), (400, "recorded"))
+        .trigger()
+        .unwrap();
+    assert_eq!(at_300.references, ["budget:effort:over:240"]);
+    assert_eq!(
+        at_300.references, at_400.references,
+        "the decision does not go stale by the minute"
+    );
+    let both = use_of((5, "recorded"), (500, "recorded"))
+        .trigger()
+        .unwrap();
+    assert_eq!(
+        both.references,
+        ["budget:rework:5>3", "budget:effort:over:240"]
+    );
+}
+
+#[test]
+fn own_records_are_counted_before_the_counters_a_host_reports() {
+    assert_eq!(count_with_fallback(2, Some(5)), (2, "recorded"));
+    assert_eq!(count_with_fallback(0, Some(5)), (5, "host_reported"));
+    assert_eq!(count_with_fallback(0, None), (0, "recorded"));
+    assert_eq!(count_with_fallback(0, Some(0)), (0, "host_reported"));
+    let line = use_of((4, "host_reported"), (0, "recorded")).rework;
+    assert_eq!(
+        (line.counted_from, line.exhausted()),
+        ("host_reported", true)
+    );
+}
+
+fn budget_decision(
+    choice: ReassessmentChoice,
+    usage: &BudgetUse,
+    escalated_to: Option<&str>,
+) -> RecordedReassessment {
+    RecordedReassessment {
+        event: Id::new(),
+        decision: choice,
+        subject: ReassessmentSubject::Budget,
+        bound: ReassessmentBinding::of(&[usage.trigger().expect("a spent budget")]).unwrap(),
+        decider_agent: "claude-run".into(),
+        root_cause: None,
+        escalated_to: escalated_to.map(String::from),
+    }
+}
+
+fn budget_state(usage: &BudgetUse, latest: Option<&RecordedReassessment>) -> ReassessmentStatus {
+    evaluate_reassessment(&ReassessmentInputs {
+        work: "W",
+        deviations: &[],
+        attempts: &[],
+        stale_observations: &[],
+        latest: None,
+        budget: Some(usage),
+        latest_budget: latest,
+    })
+}
+
+#[test]
+fn a_spent_budget_needs_its_own_decision_and_a_further_cycle_makes_it_stale() {
+    let within = budget_state(&use_of((3, "recorded"), (10, "recorded")), None);
+    assert_eq!(
+        (within.state, within.budget.as_ref().unwrap().state),
+        ("clear", "within")
+    );
+    assert!(within.diagnostics.is_empty());
+    let spent = use_of((4, "recorded"), (10, "recorded"));
+    let required = budget_state(&spent, None);
+    assert_eq!(codes(&required), ["reassessment_budget_required"]);
+    assert_eq!(required.state, "clear", "the facts are another matter");
+    assert!(
+        required.diagnostics[0]
+            .detail
+            .contains("deliver with known issues")
+    );
+    // Deciding it settles it until the count moves.
+    let delivered = budget_decision(ReassessmentChoice::DeliverWithKnownIssues, &spent, None);
+    let current = budget_state(&spent, Some(&delivered));
+    assert_eq!(current.budget.as_ref().unwrap().state, "current");
+    assert!(current.diagnostics.is_empty());
+    let fifth = use_of((5, "recorded"), (10, "recorded"));
+    let stale = budget_state(&fifth, Some(&delivered));
+    assert_eq!(codes(&stale), ["reassessment_budget_stale"]);
+    assert!(
+        stale.diagnostics[0]
+            .detail
+            .contains("fact_added:budget:rework:5>3")
+    );
+    assert!(
+        stale.diagnostics[0]
+            .detail
+            .contains("fact_removed:budget:rework:4>3")
+    );
+    // A decision for one budget does not settle the other.
+    let effort = use_of((3, "recorded"), (500, "recorded"));
+    assert_eq!(
+        codes(&budget_state(&effort, Some(&delivered))),
+        ["reassessment_budget_required"]
+    );
+    // An escalated budget stays held until someone else decides.
+    let escalated = budget_decision(ReassessmentChoice::Escalate, &spent, Some("the owner"));
+    let held = budget_state(&spent, Some(&escalated));
+    assert_eq!(held.budget.as_ref().unwrap().state, "escalated");
+    assert_eq!(codes(&held), ["reassessment_budget_escalated"]);
+    assert!(held.diagnostics[0].detail.contains("the owner"));
+    // The budget is within again once the work replans it, whatever was decided before.
+    let replanned = BudgetUse::of(
+        &EffectiveBudget {
+            rework_cycles: 6,
+            rework_basis: "declared",
+            ..effective_budget(None)
+        },
+        (4, "recorded"),
+        (10, "recorded"),
+    );
+    let after = budget_state(&replanned, Some(&delivered));
+    assert_eq!(after.budget.as_ref().unwrap().state, "within");
+    assert!(after.diagnostics.is_empty());
+}
+
+fn budget_request(edit: impl FnOnce(&mut Value)) -> Result<ReassessmentRequest> {
+    request(|v| {
+        v["answers"] = json!("budget");
+        v["decision"] = json!("replan");
+        edit(v)
+    })
+}
+
+#[test]
+fn budget_choices_answer_a_budget_and_carry_what_they_need_and_nothing_else() {
+    assert!(budget_request(|_| {}).is_ok());
+    assert!(
+        budget_request(|v| {
+            v["decision"] = json!("deliver_with_known_issues");
+            v["known_issues"] = json!(["The retry path is untested", "Docs lag one release"]);
+        })
+        .is_ok()
+    );
+    assert!(
+        budget_request(|v| v["decision"] = json!("deliver_with_known_issues")).is_err(),
+        "issues are named"
+    );
+    assert!(
+        budget_request(|v| {
+            v["decision"] = json!("deliver_with_known_issues");
+            v["known_issues"] = json!([" "]);
+        })
+        .is_err()
+    );
+    assert!(
+        budget_request(|v| {
+            v["decision"] = json!("deliver_with_known_issues");
+            v["known_issues"] = json!((0..17).map(|i| format!("issue {i}")).collect::<Vec<_>>());
+        })
+        .is_err()
+    );
+    assert!(
+        budget_request(|v| {
+            v["decision"] = json!("reduce_scope");
+            v["reduced_scope"] = json!("Only the read path ships");
+        })
+        .is_ok()
+    );
+    assert!(budget_request(|v| v["decision"] = json!("reduce_scope")).is_err());
+    assert!(
+        budget_request(|v| {
+            v["decision"] = json!("escalate");
+            v["escalated_to"] = json!("the owner");
+        })
+        .is_ok()
+    );
+    assert!(budget_request(|v| v["decision"] = json!("escalate")).is_err());
+    assert!(
+        budget_request(|v| {
+            v["decision"] = json!("escalate");
+            v["escalated_to"] = json!(" the owner ");
+        })
+        .is_err()
+    );
+    // Nothing is carried that the choice does not use.
+    assert!(budget_request(|v| v["escalated_to"] = json!("the owner")).is_err());
+    // Continuing is not an answer to a spent budget, and a budget choice does not answer facts.
+    assert!(budget_request(|v| v["decision"] = json!("continue")).is_err());
+    assert!(request(|v| v["decision"] = json!("reduce_scope")).is_err());
+    assert!(
+        request(|v| {
+            v["decision"] = json!("escalate");
+            v["escalated_to"] = json!("the owner");
+        })
+        .is_err()
+    );
+    assert!(
+        request(|v| v["decision"] = json!("replan")).is_ok(),
+        "replan answers either"
+    );
+    // A request about facts keeps the content it always had.
+    let facts = request(|_| {}).unwrap();
+    assert!(facts.input().get("answers").is_none() && facts.input().get("known_issues").is_none());
+    let budget = budget_request(|_| {}).unwrap();
+    assert_eq!(budget.input()["answers"], "budget");
 }

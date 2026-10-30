@@ -26,6 +26,8 @@ struct Facts {
     deviations: Vec<Deviation>,
     attempts: Vec<MethodAttempt>,
     stale_observations: Vec<String>,
+    /// The latest host observation, when it still describes the work.
+    host: Option<ManagementObservation>,
 }
 
 fn clip(text: &str) -> String {
@@ -170,6 +172,7 @@ fn facts_at(
     // The latest host observation counts only while the contract is the one it described and
     // nothing was recorded after it; otherwise it is reported as stale and triggers nothing.
     let mut stale_observations = Vec::new();
+    let mut host = None;
     let latest = conn
         .query_row(
             "SELECT id,project_id,work_item_id,session_id,branch_id,event_type,importance,summary,payload_json,project_revision,created_at FROM events WHERE project_id=?1 AND work_item_id=?2 AND branch_id IS ?3 AND event_type='management.assessed' ORDER BY project_revision DESC,created_at DESC,id DESC LIMIT 1",
@@ -187,11 +190,11 @@ fn facts_at(
             event.payload["input"]["observation"].clone(),
         )
         .ok();
-        if let Some(observation) = observation.filter(|o| o.outcome_known == Some(false)) {
+        if let Some(observation) = observation {
             let contract = work_contract(conn, project, key)?.fingerprint;
             let current = event.payload["assessment"]["contract_fingerprint"] == json!(contract)
                 && observation.observed_at >= newest_record;
-            if current {
+            if current && observation.outcome_known == Some(false) {
                 deviations.push(Deviation {
                     kind: DeviationKind::UnknownOutcome,
                     reference: event.id.to_string(),
@@ -203,8 +206,11 @@ fn facts_at(
                         clip(&observation.note)
                     ),
                 });
-            } else {
+            } else if !current && observation.outcome_known == Some(false) {
                 stale_observations.push(event.id.to_string());
+            }
+            if current {
+                host = Some(observation);
             }
         }
     }
@@ -213,7 +219,76 @@ fn facts_at(
         deviations,
         attempts,
         stale_observations,
+        host,
     })
+}
+
+/// What the work has used of its budgets. AWR counts from its own records first: the times the
+/// work was reopened, and the time claims on it were held. The host's counters stand in only
+/// where AWR recorded nothing of its own.
+fn budget_use_at(
+    conn: &Connection,
+    project: Id,
+    work: &Projected<WorkItem>,
+    host: Option<&ManagementObservation>,
+) -> Result<BudgetUse> {
+    let reopened: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE project_id=?1 AND work_item_id=?2 AND event_type='work.reopened'",
+            params![project.to_string(), work.item.meta.id.to_string()],
+            |r| r.get(0),
+        )
+        .map_err(db_error)?;
+    let now = now_millis()?;
+    let mut claims = conn
+        .prepare("SELECT status, acquired_at, expires_at, released_at FROM claims WHERE project_id=?1 AND work_item_id=?2")
+        .map_err(db_error)?;
+    let held_ms: i64 = claims
+        .query_map(
+            params![project.to_string(), work.item.meta.id.to_string()],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                ))
+            },
+        )
+        .map_err(db_error)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db_error)?
+        .into_iter()
+        .map(|(status, acquired, expires, released)| {
+            let end = match (released, status.as_str(), expires) {
+                (Some(released), ..) => released,
+                (None, "active", Some(expires)) => expires.min(now),
+                (None, "active", None) => now,
+                (None, _, Some(expires)) => expires,
+                (None, _, None) => acquired,
+            };
+            (end - acquired).max(0)
+        })
+        .sum();
+    let own_minutes = u64::try_from(held_ms / 60_000).unwrap_or(0);
+    Ok(BudgetUse::of(
+        &effective_budget(work.item.definition.as_ref()),
+        count_with_fallback(
+            u64::try_from(reopened).unwrap_or(0),
+            host.and_then(|o| o.completed_rework_cycles).map(u64::from),
+        ),
+        count_with_fallback(
+            own_minutes,
+            host.and_then(|o| o.active_elapsed_ms).map(|ms| ms / 60_000),
+        ),
+    ))
+}
+
+fn supervisors(work: &Projected<WorkItem>) -> Vec<String> {
+    match read_policy(work) {
+        PolicyRead::Valid(policy, _) => policy.supervisors,
+        _ => vec![],
+    }
 }
 
 fn recorded(event: &Event) -> Result<RecordedReassessment> {
@@ -222,6 +297,15 @@ fn recorded(event: &Event) -> Result<RecordedReassessment> {
         event: event.id,
         decision: serde_json::from_value(event.payload["decision"].clone())
             .map_err(|_| broken())?,
+        subject: if event.payload["input"]["answers"].is_null() {
+            ReassessmentSubject::Facts
+        } else {
+            serde_json::from_value(event.payload["input"]["answers"].clone())
+                .map_err(|_| broken())?
+        },
+        escalated_to: event.payload["input"]["escalated_to"]
+            .as_str()
+            .map(String::from),
         bound: serde_json::from_value(event.payload["bound"].clone()).map_err(|_| broken())?,
         decider_agent: event.payload["decider_agent"]
             .as_str()
@@ -231,20 +315,28 @@ fn recorded(event: &Event) -> Result<RecordedReassessment> {
     })
 }
 
+/// The latest decision about facts, or about the budget. A decision recorded before budgets
+/// existed says nothing about what it answers and answers facts.
 fn latest_reassessment(
     conn: &Connection,
     project: Id,
     work: Id,
     branch: Option<Id>,
+    subject: ReassessmentSubject,
 ) -> Result<Option<RecordedReassessment>> {
+    let subject = match subject {
+        ReassessmentSubject::Facts => "facts",
+        ReassessmentSubject::Budget => "budget",
+    };
     let event = conn
         .query_row(
-            "SELECT id,project_id,work_item_id,session_id,branch_id,event_type,importance,summary,payload_json,project_revision,created_at FROM events WHERE project_id=?1 AND work_item_id=?2 AND branch_id IS ?3 AND event_type=?4 ORDER BY project_revision DESC,created_at DESC,id DESC LIMIT 1",
+            "SELECT id,project_id,work_item_id,session_id,branch_id,event_type,importance,summary,payload_json,project_revision,created_at FROM events WHERE project_id=?1 AND work_item_id=?2 AND branch_id IS ?3 AND event_type=?4 AND COALESCE(json_extract(payload_json,'$.input.answers'),'facts')=?5 ORDER BY project_revision DESC,created_at DESC,id DESC LIMIT 1",
             params![
                 project.to_string(),
                 work.to_string(),
                 branch.map(|id| id.to_string()),
-                REASSESSMENT_EVENT
+                REASSESSMENT_EVENT,
+                subject
             ],
             event_row,
         )
@@ -261,13 +353,29 @@ pub(crate) fn status_at(
     branch: Option<Id>,
 ) -> Result<ReassessmentStatus> {
     let facts = facts_at(conn, project, work, branch)?;
-    let latest = latest_reassessment(conn, project, work.item.meta.id, branch)?;
+    let latest = latest_reassessment(
+        conn,
+        project,
+        work.item.meta.id,
+        branch,
+        ReassessmentSubject::Facts,
+    )?;
+    let latest_budget = latest_reassessment(
+        conn,
+        project,
+        work.item.meta.id,
+        branch,
+        ReassessmentSubject::Budget,
+    )?;
+    let usage = budget_use_at(conn, project, work, facts.host.as_ref())?;
     Ok(evaluate_reassessment(&ReassessmentInputs {
         work: &work.item.meta.external_key,
         deviations: &facts.deviations,
         attempts: &facts.attempts,
         stale_observations: &facts.stale_observations,
         latest: latest.as_ref(),
+        budget: Some(&usage),
+        latest_budget: latest_budget.as_ref(),
     }))
 }
 
@@ -327,7 +435,11 @@ impl Store {
         let silent = status.state == "clear"
             && status.deviations.is_empty()
             && status.stale_observations.is_empty()
-            && status.decision_event.is_none();
+            && status.decision_event.is_none()
+            && status
+                .budget
+                .as_ref()
+                .is_none_or(|b| b.state == "within" && b.decision_event.is_none());
         Ok((!silent).then_some(status))
     }
 
@@ -397,11 +509,60 @@ impl Store {
                     None => current_branch(tx, project)?,
                 };
                 let facts = facts_at(tx, project, &work, branch)?;
-                let found = triggers(&facts.deviations, &facts.attempts);
-                let Some(current) = ReassessmentBinding::of(&found) else {
-                    return Err(Error::InvalidInput(
-                        "nothing in the records of this work calls for a reassessment".into(),
-                    ));
+                let budget = request.answers == ReassessmentSubject::Budget;
+                let current = if budget {
+                    // A spent budget is answered by a choice that deals with it, and a decision
+                    // that escalated it is answered by someone else.
+                    let usage = budget_use_at(tx, project, &work, facts.host.as_ref())?;
+                    let Some(trigger) = usage.trigger() else {
+                        return Err(Error::InvalidInput(
+                            "the budget of this work is not spent, so there is nothing to decide"
+                                .into(),
+                        ));
+                    };
+                    let binding = ReassessmentBinding::of(std::slice::from_ref(&trigger))
+                        .expect("a spent budget names what is spent");
+                    let earlier = latest_reassessment(
+                        tx,
+                        project,
+                        work.item.meta.id,
+                        branch,
+                        ReassessmentSubject::Budget,
+                    )?;
+                    if let Some(escalation) = earlier.filter(|e| {
+                        e.decision == ReassessmentChoice::Escalate
+                            && e.bound.facts_fingerprint == binding.facts_fingerprint
+                    }) {
+                        if escalation.decider_agent == decider_agent {
+                            return Err(reject(
+                                "reassessment_budget_escalated",
+                                "the budget was escalated to someone else; the one who escalated cannot answer it",
+                            ));
+                        }
+                        let supervisors = supervisors(&work);
+                        if !supervisors.is_empty() && !supervisors.contains(&decider_agent) {
+                            return Err(reject(
+                                "reassessment_not_authorized",
+                                format!(
+                                    "{decider_agent} is not among the supervisors the policy authorizes to answer an escalated budget"
+                                ),
+                            ));
+                        }
+                    }
+                    if request.root_cause.is_some() {
+                        return Err(Error::InvalidInput(
+                            "a root cause groups failed attempts; a budget decision has none".into(),
+                        ));
+                    }
+                    binding
+                } else {
+                    let found = triggers(&facts.deviations, &facts.attempts);
+                    let Some(current) = ReassessmentBinding::of(&found) else {
+                        return Err(Error::InvalidInput(
+                            "nothing in the records of this work calls for a reassessment".into(),
+                        ));
+                    };
+                    current
                 };
                 if request.facts_fingerprint != current.facts_fingerprint {
                     return Err(Error::SourceConflict(

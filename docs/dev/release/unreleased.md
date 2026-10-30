@@ -39,6 +39,13 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   those facts, goes stale when they change and opens no task; failures that alternate with
   successes, waits and blockers are shown and hold nothing, and recovery paths are never held. See
   [bounded reassessment](../reference/reassessment.md).
+- Rework and active-effort budgets for governed work: a definition may declare a `size` (small,
+  medium or large) and a `budget`; the defaults of the size apply otherwise. AWR counts rework from
+  its own reopen records and effort from the claims held on the work before it uses the counters a
+  host reports, and a spent budget (a fourth rework cycle under a budget of three) holds that work
+  until a recorded decision deals with it: deliver with known issues, reduce scope, replan or
+  escalate. An escalation is answered by someone else. See
+  [bounded reassessment](../reference/reassessment.md#budgets).
 - Gaps for governed sources (`awr work gap`, MCP `awr_work_gap`): something missing or changed in a
   work's intent, acceptance, design, plan or definition is recorded against that layer and closed
   the way its kind requires, by a fact lookup with its sources, a feasibility experiment that

@@ -312,6 +312,10 @@ pub(crate) fn static_code(code: &str) -> &'static str {
         "reassessment_required",
         "reassessment_stale",
         "reassessment_unknown",
+        "reassessment_budget_required",
+        "reassessment_budget_stale",
+        "reassessment_budget_escalated",
+        "reassessment_not_authorized",
         "admission_suspended",
         "containment_suspended",
     ]

@@ -58,6 +58,10 @@ work_items:
       outline:                        # optional: distant work; never admitted until elaborated
         constraints: [No new storage layer]
         trigger: When the API contract is accepted
+      size: medium                    # optional: small, medium (the default) or large
+      budget:                         # optional: replaces the defaults of the size
+        rework_cycles: 3
+        active_effort_minutes: 240
 ```
 
 Only YAML ledgers support the field; a Markdown ledger rejects it with rule `ledger.definition`.
@@ -97,6 +101,7 @@ create` and `batch change` do not write it.
 | `tier_conflicts_with_specification` | the work is marked required while every specification item it references is declared future |
 | `inherits_not_found` | the inherited work declares no definition |
 | `side_line_without_parent`, `side_line_return_missing`, `side_line_stop_missing` | a side line does not name the line it returns to, when its result returns, or when it stops |
+| `large_work_budget_missing` | a work declared `large` has no rework budget of its own: larger work declares it, and until it does the figure of a standard work applies |
 | `outline_trigger_missing`, `outline_not_elaborated` | an outline has no elaboration trigger; an outline is not near-term executable, so [admission](admission.md) refuses it until it is elaborated |
 
 Two obligations take their answer from existing sources instead of the definition: the observable
@@ -113,6 +118,9 @@ outcome it contributes to, plus a trigger that says when to elaborate it, and it
 as stated. Elaborating it means replacing the outline with a full definition, which then owes
 everything its purpose owes. A side line owes a contribution like any work, and additionally a parent to
 return to and the two conditions; none of them is a new task type or state.
+
+`size` and `budget` do not add an obligation: they say how many times a work may be sent back and how
+long it may be worked on before a decision is needed, see [bounded reassessment](reassessment.md#budgets).
 
 The note `parent_outcome_unproven` appears on a parent whose children are all completed while the
 parent is not: finished children never prove the parent's own outcome, which still needs its own
