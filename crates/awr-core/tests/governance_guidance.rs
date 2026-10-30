@@ -239,3 +239,35 @@ fn forming_a_definition_and_repairing_one_are_told_apart_and_neither_needs_cerem
     }
     assert_ne!(forming.when, repairing.when);
 }
+
+#[test]
+fn every_gap_outranks_every_gap_after_it_in_the_order() {
+    for (i, earlier) in CODES.iter().enumerate() {
+        for later in &CODES[i + 1..] {
+            // The order of the diagnostics given must not matter.
+            for pair in [
+                [(*later, "d"), (*earlier, "d")],
+                [(*earlier, "d"), (*later, "d")],
+            ] {
+                let guidance = view(&pair, &[]).unwrap();
+                assert!(
+                    guidance.basis.starts_with(earlier),
+                    "{earlier} comes before {later}: {}",
+                    guidance.basis
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_detail_within_the_limit_is_shown_whole_and_a_longer_one_is_cut() {
+    let exact = "y".repeat(200);
+    let whole = view(&[("admission_denied", &exact)], &[]).unwrap();
+    assert!(whole.basis.ends_with(&exact), "{}", whole.basis);
+    assert!(!whole.basis.contains("..."), "{}", whole.basis);
+    let over = "y".repeat(201);
+    let cut = view(&[("admission_denied", &over)], &[]).unwrap();
+    assert!(cut.basis.ends_with("..."), "{}", cut.basis);
+    assert!(!cut.basis.contains(&over), "{}", cut.basis);
+}

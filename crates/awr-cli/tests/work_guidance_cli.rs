@@ -408,3 +408,63 @@ fn a_judgment_made_for_one_session_is_current_for_the_next_and_nothing_is_asked_
     let history = p.ok(&["work", "history", "W", "--event-type", "work.admission"]);
     assert_eq!(history["events"].as_array().unwrap().len(), 1, "{history}");
 }
+
+#[test]
+fn incomplete_required_context_and_an_inactive_session_come_before_any_governance_gap() {
+    let p = Project::new("governed_enforce");
+    let prepared = p.ok(&["work", "prepare", "W", "--budget", "12000"]);
+    assert!(
+        prepared["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "admission_missing"),
+        "{prepared}"
+    );
+    let store = awr_store::Store::open_readonly(&p.0.join(".awr/state.db")).unwrap();
+    // Alone, the gap is the instruction.
+    let guided = awr_runtime::guide_prepared_work(&store, &p.0, prepared.clone(), None).unwrap();
+    assert_eq!(
+        guided["guidance"]["when"], "Governed work has no admission decision",
+        "{guided}"
+    );
+    // Required context that is incomplete comes first: a decision would rest on a partial picture.
+    let mut incomplete = prepared;
+    incomplete["context"]["completeness"]["complete"] = json!(false);
+    let guided = awr_runtime::guide_prepared_work(&store, &p.0, incomplete, None).unwrap();
+    assert!(
+        guided["guidance"]["next_action"]
+            .as_str()
+            .unwrap()
+            .contains("Resolve the listed required gaps"),
+        "{guided}"
+    );
+    // A session that is no longer active has to be recovered before anything else.
+    let session = p.session("agent-w", "W");
+    let revision = p.revision().to_string();
+    p.ok(&[
+        "session",
+        "end",
+        "--session",
+        &session,
+        "--outcome",
+        "incomplete",
+        "--expected-revision",
+        &revision,
+    ]);
+    let ended = p.ok(&[
+        "work",
+        "prepare",
+        "W",
+        "--budget",
+        "12000",
+        "--response-view",
+        "action",
+        "--session",
+        &session,
+    ]);
+    assert_eq!(
+        ended["guidance"]["when"], "Selected session is no longer active",
+        "{ended}"
+    );
+}
