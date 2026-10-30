@@ -125,6 +125,9 @@ importing proposals or editing the source status to `ready` or `in_progress` cha
 decision is the only thing that admits. A host that cannot present the decision cannot be
 downgraded to ungoverned dispatch.
 
+When several gaps hold a work, `work prepare` in its action view tells the earliest one as a single
+bounded instruction, see [guidance and overhead](guidance.md).
+
 The same check also holds governed work whose own records show a method failing again and again or
 an outcome nobody knows, until a current decision answers those facts; see
 [bounded reassessment](reassessment.md).
