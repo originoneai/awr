@@ -266,7 +266,7 @@ impl Case {
             policy: self.policy.as_ref(),
             current: &self.current,
             latest: self.latest.as_ref(),
-            definition: &self.definition,
+            definition: &DefinitionSummary::from(&self.definition),
         })
     }
 }
@@ -475,4 +475,82 @@ fn independent_review_is_required_only_for_tagged_governed_work() {
         !case.status().independent_review_required,
         "no policy, no review rule"
     );
+}
+
+fn declared_definition() -> WorkDefinition {
+    serde_json::from_value(json!({
+        "version": 1, "purpose": "research", "tier": "required",
+        "intent": [{"role": "user_decision", "decision": "scope", "source_fingerprint": A}],
+        "contributes": [{"goal": "G", "outcome": "O", "claim": "Maps the failure modes", "by": "agent-a"}],
+        "granularity": {"judgment": "independent_result", "reason": "One answer", "by": "agent-a"},
+        "deliverable": "A list of failure modes"
+    }))
+    .unwrap()
+}
+
+#[test]
+fn every_store_computes_the_same_binding_and_a_change_in_any_part_shows() {
+    let policy = json!({"version": 1, "mode": "governed_enforce", "scope": "all"});
+    let definition = declared_definition();
+    let bound = admission_binding(A, &policy, Some(&definition)).unwrap();
+    assert_eq!(bound.contract_fingerprint, A);
+    assert_eq!(bound.purpose, Some(WorkPurpose::Research));
+    assert_eq!(bound.tier, Some(DeliveryTier::Required));
+    assert!(bound.definition_fingerprint.is_some() && bound.examples_fingerprint.is_some());
+    // Without a declared definition nothing of it is bound.
+    let bare = admission_binding(A, &policy, None).unwrap();
+    assert_eq!(
+        (
+            &bare.definition_fingerprint,
+            &bare.examples_fingerprint,
+            bare.purpose,
+            bare.tier
+        ),
+        (&None, &None, None, None)
+    );
+    // The same inputs always give the same binding.
+    assert_eq!(
+        bound,
+        admission_binding(A, &policy, Some(&definition)).unwrap()
+    );
+    // Each part shows under its own name when it changes.
+    let other_policy = json!({"version": 1, "mode": "legacy_observe", "scope": "all"});
+    assert_eq!(
+        bound.changed_from(&admission_binding(A, &other_policy, Some(&definition)).unwrap()),
+        ["policy"]
+    );
+    assert_eq!(
+        bound.changed_from(&admission_binding("sha256:other", &policy, Some(&definition)).unwrap()),
+        ["contract"]
+    );
+    let mut edited = definition.clone();
+    edited.deliverable = Some("A different deliverable".into());
+    assert_eq!(
+        bound.changed_from(&admission_binding(A, &policy, Some(&edited)).unwrap()),
+        ["definition"]
+    );
+    assert_eq!(bound.changed_from(&bare), ["definition", "examples"]);
+}
+
+#[test]
+fn a_definition_summary_keeps_what_admission_reads_and_survives_storage() {
+    let summary =
+        DefinitionSummary::from(&report("gaps", &["examples_missing", "tier_missing"], true));
+    assert_eq!(
+        summary,
+        DefinitionSummary {
+            declared: true,
+            intent_adopted: true,
+            gaps: vec!["examples_missing".into(), "tier_missing".into()],
+        }
+    );
+    assert!(!DefinitionSummary::from(&report("not_declared", &[], false)).declared);
+    assert!(!DefinitionSummary::from(&report("complete", &[], false)).intent_adopted);
+    let stored = serde_json::to_string(&summary).unwrap();
+    assert_eq!(
+        serde_json::from_str::<DefinitionSummary>(&stored).unwrap(),
+        summary
+    );
+    // A stored summary of another shape is refused rather than guessed at.
+    assert!(serde_json::from_str::<DefinitionSummary>(r#"{"declared":true}"#).is_err());
 }

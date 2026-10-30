@@ -70,17 +70,7 @@ fn current_binding(
     policy: &Value,
 ) -> Result<AdmissionBinding> {
     let contract = work_contract(conn, project, &work.item.meta.external_key)?;
-    let definition = work.item.definition.as_ref();
-    Ok(AdmissionBinding {
-        contract_fingerprint: contract.fingerprint,
-        definition_fingerprint: definition.map(|d| digest(&json!(d))).transpose()?,
-        examples_fingerprint: definition
-            .map(|d| digest(&json!({"examples": d.examples, "discrimination": d.discrimination})))
-            .transpose()?,
-        policy_fingerprint: digest(policy)?,
-        purpose: definition.map(|d| d.purpose),
-        tier: definition.and_then(|d| d.tier),
-    })
+    admission_binding(&contract.fingerprint, policy, work.item.definition.as_ref())
 }
 
 /// The branch an agent-declared decision applies to: the project's current one, like a read.
@@ -174,7 +164,7 @@ pub(crate) fn status_at(
         policy: Some(&policy),
         current: &current,
         latest: latest.as_ref().map(|(_, record)| record),
-        definition: &definition,
+        definition: &DefinitionSummary::from(&definition),
     }))
 }
 
