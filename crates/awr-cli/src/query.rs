@@ -33,6 +33,8 @@ pub enum WorkCommand {
     Reassess(crate::management::ReassessArgs),
     /// Open, resolve or withdraw a gap in the intent, acceptance, design, plan or definition of a work.
     Gap(crate::management::GapArgs),
+    /// Record a review finding of a work, or close one; blocking findings return the work, the rest are deferred.
+    Finding(crate::management::FindingArgs),
     /// Prepare readiness and the required context together; does not acknowledge consumption.
     Prepare(crate::work_prepare::PrepareArgs),
     /// Validate a real report and derive evidence metadata without registering or completing.
@@ -614,6 +616,7 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
         WorkCommand::Contain(args) => crate::management::contain(root, args),
         WorkCommand::Reassess(args) => crate::management::reassess(root, args),
         WorkCommand::Gap(args) => crate::management::gap(root, args),
+        WorkCommand::Finding(args) => crate::management::finding(root, args),
         WorkCommand::Prepare(args) => crate::work_prepare::prepare(root, args, json_output),
         WorkCommand::PrepareCompletion(args) => {
             crate::work_prepare::completion(root, args, json_output)
@@ -699,6 +702,9 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
             }
             if let Some(gaps) = query.store.gap_block(query.project.id, id, branch_id)? {
                 value["work"]["gaps"] = json!(gaps);
+            }
+            if let Some(findings) = query.store.finding_block(query.project.id, id, branch_id)? {
+                value["work"]["findings"] = json!(findings);
             }
             value["acceptance"] = json!(work.work.item.acceptance);
             value["source_ref"] = json!(work.work.item.meta.source_ref);

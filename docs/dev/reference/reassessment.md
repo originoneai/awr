@@ -93,7 +93,8 @@ definition reports the gap `large_work_budget_missing` (which [admission](admiss
 any other unmet obligation) until it does.
 
 AWR counts from its own records before it asks the host. **Rework** is the number of times the work
-was reopened. **Effort** is the time claims on the work were held, which can only overstate the
+was sent back: reopened, or found by a review round to have [blocking findings](findings.md) while it
+was not completed. **Effort** is the time claims on the work were held, which can only overstate the
 effort that was active. The counters a host reports through `awr work manage`
 (`completed_rework_cycles`, `active_elapsed_ms`) are used only where AWR recorded nothing of its own,
 and only while that observation is current; the block says which it used (`recorded` or

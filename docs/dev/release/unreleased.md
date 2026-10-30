@@ -46,6 +46,13 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   until a recorded decision deals with it: deliver with known issues, reduce scope, replan or
   escalate. An escalation is answered by someone else. See
   [bounded reassessment](../reference/reassessment.md#budgets).
+- Findings for governed sources (`awr work finding`, MCP `awr_work_finding`): the severity of a
+  review finding is derived from the acceptance tiers adopted for the work, the hard rules of the
+  project and what the finding shows, not claimed. Only a finding that breaks a required criterion
+  or a hard rule with a reproducible counterexample, or states a security or data-loss risk with its
+  reasoning, blocks: it holds the completion of that work and counts as a rework cycle. Every other
+  finding is a deferred record linked to the work that blocks nothing. See
+  [findings](../reference/findings.md).
 - Gaps for governed sources (`awr work gap`, MCP `awr_work_gap`): something missing or changed in a
   work's intent, acceptance, design, plan or definition is recorded against that layer and closed
   the way its kind requires, by a fact lookup with its sources, a feasibility experiment that

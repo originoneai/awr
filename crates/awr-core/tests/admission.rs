@@ -222,6 +222,7 @@ fn report(state: &'static str, gaps: &[&'static str], intent_ok: bool) -> Defini
             })
             .collect(),
         notes: vec![],
+        criterion_tiers: vec![],
         basis: "test",
     }
 }

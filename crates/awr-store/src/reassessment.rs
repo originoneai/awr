@@ -232,13 +232,11 @@ fn budget_use_at(
     work: &Projected<WorkItem>,
     host: Option<&ManagementObservation>,
 ) -> Result<BudgetUse> {
-    let reopened: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM events WHERE project_id=?1 AND work_item_id=?2 AND event_type='work.reopened'",
-            params![project.to_string(), work.item.meta.id.to_string()],
-            |r| r.get(0),
-        )
-        .map_err(db_error)?;
+    let returned = rework_cycles(&crate::finding::rework_records(
+        conn,
+        project,
+        work.item.meta.id,
+    )?);
     let now = now_millis()?;
     let mut claims = conn
         .prepare("SELECT status, acquired_at, expires_at, released_at FROM claims WHERE project_id=?1 AND work_item_id=?2")
@@ -274,7 +272,7 @@ fn budget_use_at(
     Ok(BudgetUse::of(
         &effective_budget(work.item.definition.as_ref()),
         count_with_fallback(
-            u64::try_from(reopened).unwrap_or(0),
+            returned,
             host.and_then(|o| o.completed_rework_cycles).map(u64::from),
         ),
         count_with_fallback(

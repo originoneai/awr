@@ -481,7 +481,13 @@ fn catalog() -> Vec<Capability> {
         (
             "work.admission",
             true,
-            &["work admit", "work contain", "work reassess", "work gap"],
+            &[
+                "work admit",
+                "work contain",
+                "work reassess",
+                "work gap",
+                "work finding",
+            ],
             &[
                 "legacy_observe_default",
                 "provenance_and_currency_only",

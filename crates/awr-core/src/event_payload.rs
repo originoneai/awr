@@ -60,6 +60,7 @@ pub fn is_domain_event_type(kind: &str) -> bool {
                 | "work.containment"
                 | "work.reassessment"
                 | "work.gap"
+                | "work.finding"
                 | "claim.released"
                 | "claim.expired"
                 | "artifact.recorded"
@@ -170,6 +171,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
                 "version request_key decision input bound judgment root_cause decider_agent"
             }
             "work.gap" => "version request_key action input decider_agent",
+            "work.finding" => "version request_key action input assessment decider_agent",
             "mcp.operation_started" | "mcp.operation_finished" | "mcp.operation_recovered" => {
                 "operation"
             }
@@ -231,6 +233,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             "version request_key decision input bound"
         }
         "work.gap" => "version request_key action input decider_agent",
+        "work.finding" => "version request_key action input decider_agent",
         "mcp.operation_started" | "mcp.operation_finished" | "mcp.operation_recovered" => {
             "operation"
         }
@@ -330,9 +333,20 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
                     || kind == "work.admission"
                     || kind == "work.containment"
                     || kind == "work.reassessment"
-                    || kind == "work.gap" =>
+                    || kind == "work.gap"
+                    || kind == "work.finding" =>
             {
                 value.as_u64() == Some(1)
+            }
+            "action" if kind == "work.finding" => {
+                serde_json::from_value::<crate::FindingAction>(value.clone()).is_ok()
+            }
+            "input" if kind == "work.finding" => {
+                serde_json::from_value::<crate::FindingInput>(value.clone()).is_ok()
+            }
+            "assessment" if kind == "work.finding" => {
+                value.is_null()
+                    || serde_json::from_value::<crate::FindingAssessment>(value.clone()).is_ok()
             }
             "action" if kind == "work.gap" => {
                 serde_json::from_value::<crate::GapAction>(value.clone()).is_ok()
@@ -340,7 +354,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             "input" if kind == "work.gap" => {
                 serde_json::from_value::<crate::GapInput>(value.clone()).is_ok()
             }
-            "decider_agent" if kind == "work.gap" => value
+            "decider_agent" if kind == "work.finding" || kind == "work.gap" => value
                 .as_str()
                 .is_some_and(|s| !s.trim().is_empty() && s.len() <= 256),
             "decision" if kind == "work.reassessment" => {

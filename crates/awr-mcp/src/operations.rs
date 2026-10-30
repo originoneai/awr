@@ -302,6 +302,14 @@ pub(crate) fn call(root: &Path, name: &str, mut args: JsonObject) -> Result<Call
                 &parse_tool!(name, args),
             )?));
         }
+        "awr_work_finding" => {
+            let mut store = Store::open_existing(&database(root)?)?;
+            return Ok(CallToolResult::structured(awr_runtime::finding_work(
+                &mut store,
+                root,
+                &parse_tool!(name, args),
+            )?));
+        }
         "awr_work_gap" => {
             let mut store = Store::open_existing(&database(root)?)?;
             return Ok(CallToolResult::structured(awr_runtime::gap_work(
@@ -591,6 +599,12 @@ fn work(view: &ReadProject, args: WorkArgs) -> Result<Value> {
     }
     if let Some(gaps) = view.store.gap_block(view.project.id, &args.work, branch)? {
         detail["gaps"] = json!(gaps);
+    }
+    if let Some(findings) = view
+        .store
+        .finding_block(view.project.id, &args.work, branch)?
+    {
+        detail["findings"] = json!(findings);
     }
     Ok(
         json!({"work":detail,"acceptance":work.work.item.acceptance,"source_ref":work.work.item.meta.source_ref,
