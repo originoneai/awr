@@ -903,6 +903,22 @@ async fn schema46_member_origins_upgrade_is_atomic_and_never_backfills_legacy_re
             row.as_object_mut().unwrap().remove(column),
             Some(Value::Null)
         );
+        // A column a later migration adds stays empty on a legacy record: it is no part of it.
+        let known = original.as_object().unwrap();
+        let later: Vec<String> = row
+            .as_object()
+            .unwrap()
+            .keys()
+            .filter(|key| !known.contains_key(*key))
+            .cloned()
+            .collect();
+        for key in later {
+            assert_eq!(
+                row.as_object_mut().unwrap().remove(&key),
+                Some(Value::Null),
+                "{table}.{key}"
+            );
+        }
         assert_eq!(row, original);
         assert!(
             admin
