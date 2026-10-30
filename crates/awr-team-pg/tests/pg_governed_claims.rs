@@ -211,3 +211,58 @@ async fn a_claim_racing_a_denial_never_runs_under_the_denial() {
         other => panic!("expected the claim or the denial to win cleanly, got {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn a_denial_between_preparing_and_starting_a_run_holds_the_start() {
+    let governed = candidate("governed_enforce", complete());
+    let (_guard, admin, _db, store) = setup_with_specs(files(&governed)).await;
+    enable_writes(&admin).await;
+    approve_work(&store, A, "a", "approve").await.unwrap();
+    let session = session_on(&store, A, "a", "runner").await;
+    let claimed = store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            claim_by(&store, A, "a", &session, "take").await,
+        )
+        .await
+        .unwrap();
+    let claim = claimed["receipt"]["data"].clone();
+    // The run is prepared under the current decision.
+    let prepared = prepare_run(&store, &session, &claim, "prepare-ok")
+        .await
+        .unwrap();
+    let execution = prepared["receipt"]["data"]["execution_id"].clone();
+    // The decision is withdrawn before the run starts: the start is held, the run stays prepared.
+    deny_work(
+        &store,
+        A,
+        "a",
+        "withdraw",
+        "The examples restate the acceptance",
+    )
+    .await
+    .unwrap();
+    let p = prepare_in(&store, A, "a", &session).await;
+    let held = store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            command(
+                &p,
+                "start-denied",
+                "execution.start",
+                json!({"session_id":session,"expected_session_version":"1","execution_id":execution,
+                       "expected_execution_version":"1","claim_id":claim["claim_id"],
+                       "expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
+                       "expected_work_version":p["data"]["runtime"]["work_version"],
+                       "execution_mode":"caller_managed"}),
+            ),
+        )
+        .await;
+    refused_with(&held, "admission_denied");
+}
