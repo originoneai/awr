@@ -75,13 +75,18 @@ pub fn prepare_work(store: &mut Store, root: &Path, request: &PrepareWorkRequest
             .diagnostics
             .iter()
             .all(|d| is_admission_code(&d.code));
+    let reassessment_only = admission_only
+        && readiness
+            .diagnostics
+            .iter()
+            .all(|d| d.code.starts_with("reassessment_"));
     let mut prepared = json!({"version":1,"stage":"prepared","work":{
         "id":work.meta.id,"external_key":work.meta.external_key,"status":work.status,
         "revision":work.meta.revision,"source_ref":work.meta.source_ref,"next_action":work.next_action},
         "ready":readiness.ready,"diagnostics":readiness.diagnostics,"active_claims":readiness.active_claims,
         "context":context,"context_consumed":false,"completion_claimed":false,"management":management,
         "continuity":{"state":if waiting {"waiting_user"}else{"available"},"waits":waits},
-        "next_action":if waiting {"resolve_persistent_wait_before_resuming"} else if !complete {"resolve_required_context_gaps"} else if admission_only {"resolve_admission_before_claiming"} else if !readiness.ready {"inspect_readiness_and_current_claim"} else {"consume_context_then_start_or_resume_session"}});
+        "next_action":if waiting {"resolve_persistent_wait_before_resuming"} else if !complete {"resolve_required_context_gaps"} else if reassessment_only {"record_reassessment_before_claiming"} else if admission_only {"resolve_admission_before_claiming"} else if !readiness.ready {"inspect_readiness_and_current_claim"} else {"consume_context_then_start_or_resume_session"}});
     if let Some(definition) = definition {
         prepared["definition"] = json!(definition);
     }
@@ -91,6 +96,9 @@ pub fn prepare_work(store: &mut Store, root: &Path, request: &PrepareWorkRequest
     }
     if let Some(containment) = store.containment_block(project.id, &request.work, branch)? {
         prepared["containment"] = json!(containment);
+    }
+    if let Some(reassessment) = store.reassessment_block(project.id, &request.work, branch)? {
+        prepared["reassessment"] = json!(reassessment);
     }
     Ok(prepared)
 }

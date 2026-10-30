@@ -58,6 +58,7 @@ pub fn is_domain_event_type(kind: &str) -> bool {
                 | "work.ordinary_confirmed"
                 | "work.admission"
                 | "work.containment"
+                | "work.reassessment"
                 | "claim.released"
                 | "claim.expired"
                 | "artifact.recorded"
@@ -164,6 +165,9 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             "work.containment" => {
                 "version request_key decision input bound judgment proposal_event decider_agent reason"
             }
+            "work.reassessment" => {
+                "version request_key decision input bound judgment root_cause decider_agent"
+            }
             "mcp.operation_started" | "mcp.operation_finished" | "mcp.operation_recovered" => {
                 "operation"
             }
@@ -221,7 +225,9 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
         "client.compaction_observed" => "observation policy",
         "client.compaction_deferred" => "observation_event_id",
         "management.assessed" => "version request_key input observer assessment",
-        "work.admission" | "work.containment" => "version request_key decision input bound",
+        "work.admission" | "work.containment" | "work.reassessment" => {
+            "version request_key decision input bound"
+        }
         "mcp.operation_started" | "mcp.operation_finished" | "mcp.operation_recovered" => {
             "operation"
         }
@@ -319,10 +325,30 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             "version"
                 if kind == "management.assessed"
                     || kind == "work.admission"
-                    || kind == "work.containment" =>
+                    || kind == "work.containment"
+                    || kind == "work.reassessment" =>
             {
                 value.as_u64() == Some(1)
             }
+            "decision" if kind == "work.reassessment" => {
+                serde_json::from_value::<crate::ReassessmentChoice>(value.clone()).is_ok()
+            }
+            "input" if kind == "work.reassessment" => value.is_object(),
+            "bound" if kind == "work.reassessment" => {
+                serde_json::from_value::<crate::ReassessmentBinding>(value.clone()).is_ok()
+            }
+            "judgment" if kind == "work.reassessment" => {
+                serde_json::from_value::<crate::ReassessmentJudgment>(value.clone())
+                    .is_ok_and(|j| j.validate().is_ok())
+            }
+            "root_cause" if kind == "work.reassessment" => {
+                value.is_null()
+                    || serde_json::from_value::<crate::RootCause>(value.clone())
+                        .is_ok_and(|c| c.validate().is_ok())
+            }
+            "decider_agent" if kind == "work.reassessment" => value
+                .as_str()
+                .is_some_and(|s| !s.trim().is_empty() && s.len() <= 256),
             "decision" if kind == "work.admission" || kind == "work.containment" => {
                 matches!(value.as_str(), Some("proposed" | "approved" | "denied"))
             }

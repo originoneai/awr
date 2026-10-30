@@ -2627,3 +2627,93 @@ async fn containment_is_recorded_over_mcp_and_then_admits_the_child_exactly_once
     );
     assert_eq!(claimed["claim"]["status"], "active", "{claimed}");
 }
+
+#[tokio::test]
+async fn reassessment_is_recorded_over_mcp_for_an_outcome_the_host_cannot_tell() {
+    let f = Fixture::new();
+    fs::write(
+        f.root.join(".awr/project.toml"),
+        MANIFEST.replace(
+            "adapter='yaml-ledger-v1'\n",
+            "adapter='yaml-ledger-v1'\n[sources.options.admission_policy]\nversion=1\nmode='governed_enforce'\nscope='all'\n",
+        ),
+    )
+    .unwrap();
+    let decision = "---\n{\"id\":\"scope\",\"status\":\"accepted\",\"affected_keys\":[\"*\"]}\n---\n# Scope\n\n## Decision\nThe first release is local only.\n";
+    fs::write(f.root.join("decisions/scope.md"), decision).unwrap();
+    let pin = awr_source::fingerprint(decision.as_bytes());
+    let outcome = "Users keep their input when saving fails";
+    let ledger = json!({
+        "goals": [{"id": "G", "title": "Safe saving", "status": "active", "success_criteria": [outcome]}],
+        "work_items": [{"id": "R", "title": "Research failure modes", "status": "planned", "goal": "G",
+            "acceptance": ["The failure modes are listed"], "next_action": "Investigate",
+            "definition": {"version": 1, "purpose": "research",
+                "intent": [{"role": "user_decision", "decision": "scope", "source_fingerprint": pin}],
+                "contributes": [{"goal": "G", "outcome": outcome, "claim": "Maps the failure modes", "by": "agent-a"}],
+                "granularity": {"judgment": "independent_result", "reason": "One answer a reviewer can judge", "by": "agent-a"},
+                "deliverable": "A list of failure modes with their limits"}}]
+    });
+    fs::write(
+        f.root.join("work.yaml"),
+        serde_json::to_vec_pretty(&ledger).unwrap(),
+    )
+    .unwrap();
+    f.reindex();
+    let client = f.client().await;
+    let (mut store, project) = f.store();
+    let session = store
+        .start_session(
+            project.id,
+            project.project_revision,
+            SessionDraft {
+                work_item_key: Some("R".into()),
+                agent_id: "agent-r".into(),
+                provider: "fixture".into(),
+                model: "test".into(),
+                branch_id: None,
+                claim: false,
+                claim_ttl_ms: None,
+            },
+        )
+        .unwrap()
+        .0
+        .session;
+    drop(store);
+    let quiet = success(call(&client, "awr_work_get", json!({"work":"R"})).await);
+    assert!(quiet["work"].get("reassessment").is_none(), "{quiet}");
+    // The host says it cannot tell how its last action ended.
+    let assessed = success(call(&client, "awr_work_assess", json!({"work":"R"})).await);
+    success(
+        call(
+            &client,
+            "awr_work_manage",
+            json!({"work":"R","session":session.id,"expected_revision":f.rev(),"request_key":"unknown-1",
+                   "contract_fingerprint":assessed["contract_fingerprint"],
+                   "observation":{"observed_at":now_millis().unwrap(),"note":"The connection dropped while the check ran","outcome_known":false}}),
+        )
+        .await,
+    );
+    let shown = success(call(&client, "awr_work_get", json!({"work":"R"})).await);
+    assert_eq!(
+        shown["work"]["reassessment"]["state"], "required",
+        "{shown}"
+    );
+    assert_eq!(
+        shown["work"]["reassessment"]["deviations"][0]["basis"],
+        "host_reported"
+    );
+    let facts = shown["work"]["reassessment"]["current"]["facts_fingerprint"].clone();
+    let request = json!({"work":"R","agent":"lead","expected_revision":f.rev(),"request_key":"wait-1",
+        "decision":"wait","facts_fingerprint":facts,
+        "judgment":{"reason":"The host will query the outcome before anything is retried",
+                    "next_step":"Wait for the host to report the outcome",
+                    "evidence_considered":"The host note about the dropped connection"}});
+    let first = success(call(&client, "awr_work_reassess", request.clone()).await);
+    assert_eq!(first["already_recorded"], false, "{first}");
+    assert_eq!(first["reassessment"]["state"], "current");
+    let replay = success(call(&client, "awr_work_reassess", request).await);
+    assert_eq!(replay["already_recorded"], true, "{replay}");
+    assert_eq!(replay["event"]["id"], first["event"]["id"]);
+    let shown = success(call(&client, "awr_work_get", json!({"work":"R"})).await);
+    assert_eq!(shown["work"]["reassessment"]["state"], "current", "{shown}");
+}

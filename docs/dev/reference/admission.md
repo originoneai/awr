@@ -124,3 +124,7 @@ All claim paths share one readiness check, so the CLI, MCP and direct runtime us
 importing proposals or editing the source status to `ready` or `in_progress` changes nothing: the
 decision is the only thing that admits. A host that cannot present the decision cannot be
 downgraded to ungoverned dispatch.
+
+The same check also holds governed work whose own records show a method failing again and again or
+an outcome nobody knows, until a current decision answers those facts; see
+[bounded reassessment](reassessment.md).
