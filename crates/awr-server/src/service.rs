@@ -1121,6 +1121,16 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
                 "next_step":"Inspect work.prepare, evidence.inspect and review.inspect. Resolve failed or missing verification and acceptance gates, then submit matching evidence and review before retrying completion. Do not treat this rejection as an unknown outcome or downgrade the contract."
             }),
         ),
+        PgError::AdmissionRequired { code, detail } => (
+            StatusCode::CONFLICT,
+            json!({
+                "code":"AdmissionRequired",
+                "reason":code,
+                "message":"governed work needs a current approved admission decision",
+                "detail":detail,
+                "next_step":"Read work.admission for the reason and the scope, then have a maintainer record admission.decide for exactly that scope. Inspection, checkpoints and recovery stay available."
+            }),
+        ),
         PgError::PolicyDowngrade => (
             StatusCode::CONFLICT,
             json!({

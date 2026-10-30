@@ -322,6 +322,9 @@ pub(crate) async fn require_admissible(
     if waiting {
         return Err(PgError::WaitOpen);
     }
+    // Dispatch and self-claim share this check, so both need the same current decision.
+    crate::governance::require_current(tx, tenant, project, &auth.snapshot, &command.work_id)
+        .await?;
     if !dependencies_ready(
         tx,
         tenant,

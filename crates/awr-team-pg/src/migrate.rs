@@ -1,7 +1,7 @@
 use crate::error::{PgError, PgResult};
 use tokio_postgres::Client;
 
-pub const EXPECTED_SCHEMA_VERSION: i32 = 55;
+pub const EXPECTED_SCHEMA_VERSION: i32 = 56;
 const MIGRATIONS: &[(&str, i32)] = &[
     (include_str!("../migrations/20260917000001_init.sql"), 1),
     (
@@ -219,6 +219,10 @@ const MIGRATIONS: &[(&str, i32)] = &[
     (
         include_str!("../migrations/20261010000055_delivery_source_locator.sql"),
         55,
+    ),
+    (
+        include_str!("../migrations/20261030000056_work_governance.sql"),
+        56,
     ),
 ];
 

@@ -120,6 +120,13 @@ impl WorkGovernance {
     }
 }
 
+/// The fingerprint of the scope a decision covers: what a decider reads and a decision is checked
+/// against, so a decision on a scope that moved since it was read is refused.
+pub fn binding_fingerprint(binding: &AdmissionBinding) -> TeamResult<String> {
+    let value = serde_json::to_value(binding).map_err(|e| invalid(e.to_string()))?;
+    Ok(format!("{:x}", Sha256::digest(canonical_json(&value)?)))
+}
+
 /// Whether the latest recorded decision still admits the work as the snapshot now describes it.
 /// `completed` marks work that is already finished, which owes nothing further.
 pub fn admission_status(

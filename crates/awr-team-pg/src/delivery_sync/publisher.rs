@@ -137,6 +137,8 @@ impl BoundSource {
             &PublishPrepOptions {
                 baseline: Some(baseline.clone()),
                 completion_policy: None,
+                // A delivery note never changes governance; only contract digests are compared here.
+                governance: None,
             },
         )
         .map_err(|_| PgError::SourceDivergence)?;

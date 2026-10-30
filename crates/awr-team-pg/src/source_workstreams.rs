@@ -2,7 +2,7 @@
 use super::{PgError, PgResult, parse_contract};
 use crate::graph::{DependencyEdge, validate_required_graph};
 use awr_core::WorkstreamCatalog;
-use awr_team::{WorkContract, WorkstreamBundle};
+use awr_team::{GOVERNANCE_FILE, GovernanceCandidate, WorkContract, WorkstreamBundle};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use tokio_postgres::Transaction;
@@ -30,6 +30,8 @@ pub(super) struct SourceProjection {
     pub hash: String,
     pub hashes: BTreeMap<String, String>,
     edges: Vec<DependencyEdge>,
+    /// What the snapshot declares about governance. It describes governance and never decides it.
+    pub governance: Option<GovernanceCandidate>,
 }
 
 impl SourceProjection {
@@ -104,13 +106,48 @@ impl SourceProjection {
             }
             validate_required_graph(&hashes.keys().cloned().collect::<Vec<_>>(), &edges)?;
         }
+        let governance = Self::parse_governance(files, bundle.is_some(), &contracts)?;
         Ok(Self {
             contracts,
             bundle,
             hash,
             hashes,
             edges,
+            governance,
         })
+    }
+
+    /// `governance.json` is optional, canonical and names only works of this snapshot.
+    fn parse_governance(
+        files: &[(String, Vec<u8>)],
+        explicit_bundle: bool,
+        contracts: &[WorkContract],
+    ) -> PgResult<Option<GovernanceCandidate>> {
+        let Some((_, bytes)) = files.iter().find(|(p, _)| p == GOVERNANCE_FILE) else {
+            return Ok(None);
+        };
+        if !explicit_bundle {
+            return Err(PgError::Protocol(
+                "governance requires a workstreams bundle".into(),
+            ));
+        }
+        let candidate: GovernanceCandidate = serde_json::from_slice(bytes)
+            .map_err(|e| PgError::Protocol(format!("invalid governance.json: {e}")))?;
+        candidate
+            .validate()
+            .map_err(|e| PgError::Protocol(e.to_string()))?;
+        let known: BTreeSet<&str> = contracts.iter().map(|c| c.external_key.as_str()).collect();
+        if let Some(work) = candidate
+            .works
+            .iter()
+            .find(|work| !known.contains(work.external_key.as_str()))
+        {
+            return Err(PgError::Protocol(format!(
+                "governance names work {} which the snapshot does not have",
+                work.external_key
+            )));
+        }
+        Ok(Some(candidate))
     }
 
     async fn validate_structure(
@@ -120,6 +157,22 @@ impl SourceProjection {
         project: &str,
         previous_snapshot: Option<&str>,
     ) -> PgResult<()> {
+        if self.governance.is_none() {
+            let governed: bool = tx
+                .query_one(
+                    "SELECT EXISTS(SELECT 1 FROM awr_team.snapshot_governance
+                WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3)",
+                    &[&tenant, &project, &previous_snapshot],
+                )
+                .await?
+                .get(0);
+            if governed {
+                // Publishing without the file would drop admission for every work at once.
+                return Err(PgError::Protocol(
+                    "governance cannot be dropped by a package without governance.json".into(),
+                ));
+            }
+        }
         if let Some(bundle) = &self.bundle {
             let previous = tx
                 .query_opt(
@@ -319,6 +372,10 @@ impl SourceProjection {
                 ],
             )
             .await?;
+        }
+        if let Some(candidate) = &self.governance {
+            crate::governance::install(tx, tenant, project, snapshot, candidate, &self.contracts)
+                .await?;
         }
         if let Some(bundle) = &self.bundle {
             for entry in &bundle.contracts {

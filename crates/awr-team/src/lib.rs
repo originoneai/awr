@@ -33,6 +33,7 @@ pub use contract::{
 pub use error::{TeamError, TeamResult};
 pub use governance::{
     GOVERNANCE_FILE, GOVERNANCE_VERSION, GovernanceCandidate, WorkGovernance, admission_status,
+    binding_fingerprint,
 };
 pub use ids::{ActorId, ProjectId, RequestId, ScopeId, SessionId, TenantId, WorkId};
 pub use permission::{

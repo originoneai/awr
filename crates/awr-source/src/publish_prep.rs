@@ -972,6 +972,7 @@ mod tests {
             &PublishPrepOptions {
                 baseline: Some(baseline),
                 completion_policy: None,
+                governance: None,
             },
         )
         .unwrap();
@@ -1045,6 +1046,7 @@ mod tests {
                 &PublishPrepOptions {
                     baseline: before,
                     completion_policy: None,
+                    governance: None,
                 },
             )
         };
@@ -1124,6 +1126,7 @@ mod tests {
                 &PublishPrepOptions {
                     baseline: before,
                     completion_policy: None,
+                    governance: None,
                 },
             )
         };
@@ -1204,6 +1207,7 @@ mod tests {
                 &PublishPrepOptions {
                     baseline: before,
                     completion_policy: None,
+                    governance: None,
                 },
             )
         };
@@ -1296,6 +1300,7 @@ mod tests {
                 &PublishPrepOptions {
                     baseline: before,
                     completion_policy: None,
+                    governance: None,
                 },
             )
         };
@@ -1397,6 +1402,7 @@ mod tests {
                 &PublishPrepOptions {
                     baseline: before,
                     completion_policy: None,
+                    governance: None,
                 },
             )
         };
@@ -1616,6 +1622,7 @@ mod tests {
                 completion_policy: Some(
                     awr_team::ExecutionSettlementPolicy::COMPLETION_POLICY.into(),
                 ),
+                governance: None,
             };
             assert!(
                 prepare_publish_from_ledger_bytes(
