@@ -190,6 +190,58 @@ async fn a_governed_work_is_held_until_a_decider_decides_for_the_scope_it_read()
 }
 
 #[tokio::test]
+async fn dispatch_waits_for_the_same_current_decision_as_a_self_claim() {
+    let (_guard, admin, _, store) =
+        setup_with_specs(files(&candidate("governed_enforce", complete()))).await;
+    enable_writes(&admin).await;
+    let commands = store.commands();
+    let assign = |request: &str, prepared: &Value| {
+        command(
+            prepared,
+            request,
+            "task.assign",
+            json!({"assignee_person_id":"nobody",
+                   "expected_responsibility_version":
+                       prepared["data"]["responsibility"]["version"].as_str().unwrap_or("0")}),
+        )
+    };
+    // Without a decision the work is not dispatched, whoever it is dispatched to.
+    let prepared = prepare(&store, A, "a").await;
+    let refused = commands
+        .execute(TENANT, PROJECT, A, assign("assign-1", &prepared))
+        .await;
+    refused_with(&refused, "admission_missing");
+    // With a current decision the gate lets go and the ordinary checks of dispatch answer instead.
+    let fingerprint = read(&store).await["binding_fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    commands
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            decision(
+                &store,
+                "decide-dispatch",
+                json!({"admission_decision":"approved","binding_fingerprint":fingerprint,
+                       "admission_judgment":judgment()}),
+            )
+            .await,
+        )
+        .await
+        .unwrap();
+    let prepared = prepare(&store, A, "a").await;
+    let result = commands
+        .execute(TENANT, PROJECT, A, assign("assign-2", &prepared))
+        .await;
+    assert!(
+        !matches!(result, Err(PgError::AdmissionRequired { .. })),
+        "{result:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_denial_holds_the_work_and_names_its_reason() {
     let (_guard, admin, _, store) =
         setup_with_specs(files(&candidate("governed_enforce", complete()))).await;

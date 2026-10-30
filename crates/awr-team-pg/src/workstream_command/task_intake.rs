@@ -414,6 +414,15 @@ pub(super) async fn apply(
             }
             require_enabled(tx, tenant, project, auth, &command.work_id).await?;
             claims::require_resolved_effects(tx, tenant, project, &command.work_id).await?;
+            // Dispatch needs the same current decision as a self-claim.
+            crate::governance::require_current(
+                tx,
+                tenant,
+                project,
+                &auth.snapshot,
+                &command.work_id,
+            )
+            .await?;
             let held: bool = tx.query_one("SELECT EXISTS(SELECT 1 FROM awr_team.claims WHERE tenant_id=$1
                 AND project_id=$2 AND work_id=$3 AND state='active' AND expires_at>clock_timestamp())",
                 &[&tenant,&project,&command.work_id]).await?.get(0);
