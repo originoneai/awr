@@ -53,6 +53,14 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   reasoning, blocks: it holds the completion of that work and counts as a rework cycle. Every other
   finding is a deferred record linked to the work that blocks nothing. See
   [findings](../reference/findings.md).
+- One bounded instruction for governed work: `work prepare` in its action view (and `awr_work_prepare`)
+  tells the earliest material gap (a definition that is missing or incomplete, an admission that is
+  missing, pending, denied or stale, a containment, a gap, a reassessment, a spent budget, a blocking
+  finding) with its condition, basis, action and recheck, and tells an unknown state, a denial and a
+  stale judgment apart. A measurement test takes a clear small task through the binary with and
+  without governance and reports calls and returned bytes against the adopted targets (one extra
+  call, 2 KiB of guidance, a median extra-call ratio of 0.2). See
+  [guidance and overhead](../reference/guidance.md).
 - Gaps for governed sources (`awr work gap`, MCP `awr_work_gap`): something missing or changed in a
   work's intent, acceptance, design, plan or definition is recorded against that layer and closed
   the way its kind requires, by a fact lookup with its sources, a feasibility experiment that

@@ -104,6 +104,32 @@ pub fn guide_prepared_work(
     } else {
         None
     };
+    // The earliest material gap of governed work, when it has one.
+    let diagnostics: Vec<(String, String)> = value["diagnostics"]
+        .as_array()
+        .map(|ds| {
+            ds.iter()
+                .filter_map(|d| {
+                    Some((
+                        d["code"].as_str()?.to_string(),
+                        d["detail"].as_str()?.to_string(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let blocking: Vec<String> = value["findings"]["open_blocking"]
+        .as_array()
+        .map(|keys| {
+            keys.iter()
+                .filter_map(|k| k.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let governance = governance_guidance(&GovernanceView {
+        diagnostics: &diagnostics,
+        open_blocking_findings: &blocking,
+    });
     let guidance = if let Some(guard) = guard {
         guard
     } else if value["context"]["completeness"]["complete"] != true {
@@ -113,6 +139,8 @@ pub fn guide_prepared_work(
             "Resolve the listed required gaps for this work, then prepare again",
             "Required sources, rules or work contract change",
         )
+    } else if let Some(governance) = governance {
+        governance
     } else if value["ready"] != true && !continuation_only {
         ActionGuidance::new(
             "Work has readiness blockers",
