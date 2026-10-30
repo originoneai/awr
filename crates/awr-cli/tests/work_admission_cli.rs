@@ -94,6 +94,11 @@ impl Project {
                 work("R", json!([]), Some(self.research())),
                 work("S", json!(["security"]), Some(self.implementation(criterion))),
                 work("N", json!([]), None),
+                {"id": "O", "title": "Outline work O", "status": "planned", "goal": "G",
+                 "acceptance": ["The later work is done"], "paths": [], "tags": [], "next_action": "Wait for the trigger",
+                 "definition": {"version": 1, "purpose": "implementation",
+                     "contributes": [{"goal": "G", "outcome": OUTCOME, "claim": "The later outcome", "by": "agent-a"}],
+                     "outline": {"constraints": ["No new storage layer"], "trigger": "When W is completed"}}},
                 {"id": "X", "title": "Finished work X", "status": "completed", "goal": "G",
                  "acceptance": ["It is done"], "paths": [], "tags": [], "next_action": "Nothing"},
                 {"id": "T", "title": "Draft work T", "status": "draft", "goal": "G",
@@ -242,6 +247,15 @@ impl Project {
         assert!(success, "{value}");
         value
     }
+}
+
+fn gap_codes(report: &Value) -> Vec<String> {
+    report["gaps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["code"].as_str().unwrap().to_string())
+        .collect()
 }
 
 fn reasons(error: &Value) -> Vec<String> {
@@ -914,4 +928,32 @@ fn an_agent_declared_decision_applies_to_the_current_branch_and_only_to_it() {
         on_main["work"]["admission"]["state"], "missing",
         "{on_main}"
     );
+}
+
+#[test]
+fn outline_work_is_kept_with_its_trigger_but_never_admitted_until_it_is_elaborated() {
+    let p = Project::new(&format!("mode='governed_enforce'\n{ALL}"));
+    let shown = p.ok(&["work", "show", "O"]);
+    let codes = gap_codes(&shown["work"]["definition"]);
+    assert_eq!(codes, ["outline_not_elaborated"], "{shown}");
+    // The outline cannot be approved, whoever asks, and says why.
+    let (approved, value) = p.admit_as_agent(
+        "O",
+        "claude-run",
+        "outline",
+        "approved",
+        json!({"judgment": Project::judgment()}),
+    );
+    assert!(!approved);
+    assert_eq!(
+        value["details"]["reason"], "admission_obligations_unmet",
+        "{value}"
+    );
+    assert!(
+        value["details"]["diagnostics"][0]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("outline_not_elaborated")
+    );
+    refused(p.claim("O", "agent-o"), "admission_missing");
 }

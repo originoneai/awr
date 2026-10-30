@@ -52,6 +52,12 @@ work_items:
         - {criterion: "Saving failure keeps the user's input", kind: negative,
            given: the storage is read-only, when: the user saves, then: success is never reported}
       discrimination: {method: fail_before_pass_after}   # or diff_mutation, justified_alternative
+      side_line:                      # optional: work spawned from another line (needs a parent)
+        return_condition: The failure modes are listed and reviewed
+        stop_condition: Two days of effort, or a decision to drop the screen
+      outline:                        # optional: distant work; never admitted until elaborated
+        constraints: [No new storage layer]
+        trigger: When the API contract is accepted
 ```
 
 Only YAML ledgers support the field; a Markdown ledger rejects it with rule `ledger.definition`.
@@ -90,6 +96,8 @@ create` and `batch change` do not write it.
 | `discrimination_missing` | no method says how the tests will show they detect a wrong implementation |
 | `tier_conflicts_with_specification` | the work is marked required while every specification item it references is declared future |
 | `inherits_not_found` | the inherited work declares no definition |
+| `side_line_without_parent`, `side_line_return_missing`, `side_line_stop_missing` | a side line does not name the line it returns to, when its result returns, or when it stops |
+| `outline_trigger_missing`, `outline_not_elaborated` | an outline has no elaboration trigger; an outline is not near-term executable, so [admission](admission.md) refuses it until it is elaborated |
 
 Two obligations take their answer from existing sources instead of the definition: the observable
 assertions are the work's acceptance criteria (the examples refine them), and the prerequisites are
@@ -99,6 +107,12 @@ is never a gap, and unfinished prerequisites stay the business of the readiness 
 The report reads project-wide facts, so shared workstream grants never receive it: for a project
 that uses workstreams, the shared service refuses `awr_work_get` and `awr_work_prepare` and points
 to `awr_workstream`, which carries no definition.
+
+An outline keeps distant work visible without pretending it is ready: it owes only its purpose and the
+outcome it contributes to, plus a trigger that says when to elaborate it, and its constraints are kept
+as stated. Elaborating it means replacing the outline with a full definition, which then owes
+everything its purpose owes. A side line owes a contribution like any work, and additionally a parent to
+return to and the two conditions; none of them is a new task type or state.
 
 The note `parent_outcome_unproven` appears on a parent whose children are all completed while the
 parent is not: finished children never prove the parent's own outcome, which still needs its own
