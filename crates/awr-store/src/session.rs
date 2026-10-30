@@ -152,7 +152,7 @@ pub(crate) fn acquire(
             "work {key} or its dependencies are not fresh"
         )));
     }
-    if !diagnostics.is_empty() && diagnostics.iter().all(|d| d.code.starts_with("admission_")) {
+    if !diagnostics.is_empty() && diagnostics.iter().all(|d| is_admission_code(&d.code)) {
         return Err(Error::Admission {
             code: crate::admission::static_code(&diagnostics[0].code),
             message: diagnostics[0].detail.clone(),

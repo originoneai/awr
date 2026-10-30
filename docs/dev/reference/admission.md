@@ -30,6 +30,7 @@ version = 1
 mode = "governed_enforce"          # or "legacy_observe" (the default when no policy is declared)
 scope = "all"                      # required for governed_enforce; or { tags = ["core"] }
 independent_review_tags = ["security", "permission"]
+supervisors = ["lead"]             # optional: agents allowed to approve a containment decision
 ```
 
 - `legacy_observe` reports the admission state of work in scope and never blocks.
@@ -38,6 +39,8 @@ independent_review_tags = ["security", "permission"]
   only work carrying one of those tags. A missing scope governs nothing.
 - Work carrying one of `independent_review_tags` needs its approval from another session than the one
   that proposed it. The program proves only that the sessions differ, not that the reasoning is independent.
+- `supervisors` limits who may approve the containment of a parent's children, see
+  [controlled decomposition](containment.md); without it any attributed agent may.
 - An unknown version, an unknown field or a scope-less `governed_enforce` is refused when the
   source is configured. If a stored policy later becomes unusable, work of that source fails closed
   with `admission_policy_invalid` instead of silently becoming ungoverned.

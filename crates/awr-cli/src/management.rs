@@ -23,6 +23,13 @@ pub struct AdmitArgs {
     #[arg(long)]
     input: PathBuf,
 }
+#[derive(Debug, Args)]
+pub struct ContainArgs {
+    /// A JSON containment request: parent, session or agent, expected_revision, request_key,
+    /// decision, change_set_fingerprint and the judgment, proposal_event or reason it needs.
+    #[arg(long)]
+    input: PathBuf,
+}
 pub fn assess(root: &Path, args: &AssessArgs) -> Result<()> {
     let query = crate::query::QueryProject::open_read(root, false)?;
     query.finish()?;
@@ -75,6 +82,22 @@ pub fn admit(root: &Path, args: &AdmitArgs) -> Result<()> {
         &crate::source::runtime_dir(root, false)?.join("state.db"),
     )?;
     let value = awr_runtime::admit_work(&mut store, root, &request)?;
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+pub fn contain(root: &Path, args: &ContainArgs) -> Result<()> {
+    let input = if args.input.is_absolute() {
+        args.input.clone()
+    } else {
+        root.join(&args.input)
+    };
+    let request: ContainmentRequest = serde_json::from_slice(&awr_source::read_capped(&input, 64 * 1024)?).map_err(|_| {
+        Error::InvalidInput("containment input requires parent, session or agent, expected_revision, request_key, decision and change_set_fingerprint".into())
+    })?;
+    let mut store = awr_store::Store::open_existing(
+        &crate::source::runtime_dir(root, false)?.join("state.db"),
+    )?;
+    let value = awr_runtime::contain_work(&mut store, root, &request)?;
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
 }

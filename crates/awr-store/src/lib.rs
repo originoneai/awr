@@ -7,6 +7,7 @@ mod checkpoint;
 mod checkpoint_save;
 mod client;
 mod compaction;
+mod containment;
 mod contract;
 mod definition;
 mod delivery_adoption;

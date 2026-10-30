@@ -19,14 +19,14 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-fn digest(value: &Value) -> Result<String> {
+pub(crate) fn digest(value: &Value) -> Result<String> {
     Ok(format!(
         "sha256:{:x}",
         Sha256::digest(serde_json::to_vec(value)?)
     ))
 }
 
-fn reject(code: &'static str, detail: impl Into<String>) -> Error {
+pub(crate) fn reject(code: &'static str, detail: impl Into<String>) -> Error {
     let detail = detail.into();
     Error::Admission {
         code,
@@ -35,13 +35,13 @@ fn reject(code: &'static str, detail: impl Into<String>) -> Error {
     }
 }
 
-enum PolicyRead {
+pub(crate) enum PolicyRead {
     Absent,
     Valid(AdmissionPolicy, Value),
     Invalid,
 }
 
-fn read_policy(work: &Projected<WorkItem>) -> PolicyRead {
+pub(crate) fn read_policy(work: &Projected<WorkItem>) -> PolicyRead {
     match work
         .source
         .config
@@ -84,7 +84,7 @@ fn current_binding(
 }
 
 /// The branch an agent-declared decision applies to: the project's current one, like a read.
-fn current_branch(conn: &Connection, project: Id) -> Result<Option<Id>> {
+pub(crate) fn current_branch(conn: &Connection, project: Id) -> Result<Option<Id>> {
     conn.query_row(
         "SELECT current_branch_id FROM projects WHERE id=?1",
         [project.to_string()],
@@ -98,7 +98,7 @@ fn current_branch(conn: &Connection, project: Id) -> Result<Option<Id>> {
     .transpose()
 }
 
-fn event_at(conn: &Connection, project: Id, id: Id) -> Result<Option<Event>> {
+pub(crate) fn event_at(conn: &Connection, project: Id, id: Id) -> Result<Option<Event>> {
     conn.query_row(
         "SELECT id,project_id,work_item_id,session_id,branch_id,event_type,importance,summary,payload_json,project_revision,created_at FROM events WHERE project_id=?1 AND id=?2",
         params![project.to_string(), id.to_string()],
@@ -209,12 +209,19 @@ pub(crate) fn diagnostics(
     ) {
         return Ok(vec![]);
     }
-    match status_at(conn, project, work, branch) {
-        Ok(status) => Ok(status
+    let decisions = || -> Result<Vec<(String, String)>> {
+        let mut found: Vec<(String, String)> = status_at(conn, project, work, branch)?
             .diagnostics
             .into_iter()
             .map(|d| (d.code.to_string(), d.detail))
-            .collect()),
+            .collect();
+        found.extend(crate::containment::diagnostics_for_child(
+            conn, project, work, branch,
+        )?);
+        Ok(found)
+    };
+    match decisions() {
+        Ok(found) => Ok(found),
         Err(error) => Ok(vec![(
             "admission_unknown".into(),
             format!(
@@ -270,6 +277,12 @@ pub(crate) fn static_code(code: &str) -> &'static str {
         "admission_stale",
         "admission_obligations_unmet",
         "admission_unknown",
+        "containment_missing",
+        "containment_pending",
+        "containment_denied",
+        "containment_stale",
+        "containment_unchecked",
+        "containment_not_authorized",
     ]
     .into_iter()
     .find(|known| *known == code)

@@ -45,6 +45,9 @@ pub struct AdmissionPolicy {
     /// Work carrying one of these tags needs a decision from another session than the proposer.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub independent_review_tags: Vec<String>,
+    /// Agents allowed to approve a containment decision; empty means any attributed agent may.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supervisors: Vec<String>,
 }
 
 fn tag_ok(tag: &str) -> bool {
@@ -74,6 +77,12 @@ impl AdmissionPolicy {
             if tags.len() > MAX_TAGS || tags.iter().any(|tag| !tag_ok(tag)) {
                 return Err(invalid("tags must be nonblank, bounded and at most 32"));
             }
+        }
+        if self.supervisors.len() > MAX_TAGS || self.supervisors.iter().any(|agent| !tag_ok(agent))
+        {
+            return Err(invalid(
+                "supervisors must be nonblank, bounded agent names and at most 32",
+            ));
         }
         Ok(())
     }

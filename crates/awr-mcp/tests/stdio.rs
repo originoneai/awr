@@ -2550,3 +2550,80 @@ async fn admission_is_recorded_over_mcp_and_then_admits_the_claim_exactly_once()
     );
     assert_eq!(claimed["claim"]["status"], "active", "{claimed}");
 }
+
+#[tokio::test]
+async fn containment_is_recorded_over_mcp_and_then_admits_the_child_exactly_once() {
+    let f = Fixture::new();
+    fs::write(
+        f.root.join(".awr/project.toml"),
+        MANIFEST.replace(
+            "adapter='yaml-ledger-v1'\n",
+            "adapter='yaml-ledger-v1'\n[sources.options.admission_policy]\nversion=1\nmode='governed_enforce'\nscope='all'\n",
+        ),
+    )
+    .unwrap();
+    let decision = "---\n{\"id\":\"scope\",\"status\":\"accepted\",\"affected_keys\":[\"*\"]}\n---\n# Scope\n\n## Decision\nThe first release is local only.\n";
+    fs::write(f.root.join("decisions/scope.md"), decision).unwrap();
+    let pin = awr_source::fingerprint(decision.as_bytes());
+    let outcome = "Users keep their input when saving fails";
+    let ledger = json!({
+        "goals": [{"id": "G", "title": "Safe saving", "status": "active", "success_criteria": [outcome]}],
+        "work_items": [
+            {"id": "P", "title": "Keep user input", "status": "planned", "goal": "G",
+             "acceptance": ["Every save keeps the input"], "paths": ["crates/storage"], "next_action": "Split it"},
+            {"id": "C1", "title": "Research failure modes", "status": "planned", "goal": "G",
+             "acceptance": ["The failure modes are listed"], "paths": ["crates/storage/src"], "next_action": "Investigate",
+             "definition": {"version": 1, "purpose": "research", "parent": "P",
+                "intent": [{"role": "user_decision", "decision": "scope", "source_fingerprint": pin}],
+                "contributes": [{"goal": "G", "outcome": outcome, "claim": "Maps the failure modes", "by": "agent-a"}],
+                "granularity": {"judgment": "step_of_parent", "reason": "One step of the parent", "by": "agent-a"},
+                "deliverable": "A list of failure modes with their limits"}}
+        ]
+    });
+    fs::write(
+        f.root.join("work.yaml"),
+        serde_json::to_vec_pretty(&ledger).unwrap(),
+    )
+    .unwrap();
+    f.reindex();
+    let client = f.client().await;
+    let shown = success(call(&client, "awr_work_get", json!({"work":"P"})).await);
+    assert_eq!(shown["work"]["containment"]["state"], "missing", "{shown}");
+    assert_eq!(shown["work"]["containment"]["children"], json!(["C1"]));
+    let change_set = shown["work"]["containment"]["current"]["change_set"].clone();
+    let request = json!({"parent":"P","agent":"lead","expected_revision":f.rev(),"request_key":"approve-1",
+        "decision":"approved","change_set_fingerprint":change_set,
+        "judgment":{"contained_because":"The child only maps the failure modes of the saving path",
+                    "reuse_checked":"No existing report covers them","out_of_scope_excluded":"Fixes are left to later work"}});
+    let first = success(call(&client, "awr_work_contain", request.clone()).await);
+    assert_eq!(first["already_recorded"], false, "{first}");
+    assert_eq!(first["containment"]["state"], "approved");
+    let replay = success(call(&client, "awr_work_contain", request).await);
+    assert_eq!(replay["already_recorded"], true, "{replay}");
+    assert_eq!(replay["event"]["id"], first["event"]["id"]);
+    // The child still needs its own admission, then its claim goes through.
+    let assessed = success(call(&client, "awr_work_assess", json!({"work":"C1"})).await);
+    let admitted = success(
+        call(
+            &client,
+            "awr_work_admit",
+            json!({"work":"C1","agent":"lead","expected_revision":f.rev(),"request_key":"admit-c1","decision":"approved",
+                   "contract_fingerprint":assessed["contract_fingerprint"],
+                   "judgment":{"contribution":"Advances the saving outcome","necessity":"The failure modes are unknown",
+                               "alternatives":"Existing reports were checked","deliverable":"A list of failure modes",
+                               "exit":"Stop when the list is reviewed","responsibility":"research-owner"}}),
+        )
+        .await,
+    );
+    assert_eq!(admitted["admission"]["state"], "approved", "{admitted}");
+    let claimed = success(
+        call(
+            &client,
+            "awr_session_start",
+            json!({"work":"C1","conversation":"conv-w","agent":"agent-w","provider":"fixture","model":"test",
+                   "expected_revision":f.rev(),"claim":true}),
+        )
+        .await,
+    );
+    assert_eq!(claimed["claim"]["status"], "active", "{claimed}");
+}
