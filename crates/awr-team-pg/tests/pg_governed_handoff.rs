@@ -21,7 +21,9 @@ async fn members(admin: &Client) {
           VALUES('reader-tenant','reader-project','receiver','worker');
         INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status,member_identity) VALUES
           ('reader-tenant','reader-project','agent','Predecessor','active','{"kind":"simulated_member","controller_ref":"shared-controller"}'::jsonb),
-          ('reader-tenant','reader-project','receiver','Successor','active','{"kind":"simulated_member","controller_ref":"shared-controller"}'::jsonb);
+          ('reader-tenant','reader-project','receiver','Successor','active','{"kind":"simulated_member","controller_ref":"shared-controller"}'::jsonb)
+        ON CONFLICT (tenant_id,project_id,id) DO UPDATE SET display_name=EXCLUDED.display_name,
+          status=EXCLUDED.status, member_identity=EXCLUDED.member_identity;
         UPDATE awr_team.credentials SET actor_id='receiver' WHERE id='reader-b';
         INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,can_write)
           VALUES('reader-tenant','reader-project','receiver','cli-b','00000000000000000000000001',1,true,true);"#).await.unwrap();
