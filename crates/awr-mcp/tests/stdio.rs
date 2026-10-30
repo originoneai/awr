@@ -2850,3 +2850,83 @@ async fn a_finding_is_recorded_over_mcp_with_a_derived_severity_and_shown_with_t
         "{resolved}"
     );
 }
+
+#[tokio::test]
+async fn the_governance_instruction_is_the_action_view_of_work_prepare_over_mcp() {
+    let f = Fixture::new();
+    fs::write(
+        f.root.join(".awr/project.toml"),
+        MANIFEST.replace(
+            "adapter='yaml-ledger-v1'\n",
+            "adapter='yaml-ledger-v1'\n[sources.options.admission_policy]\nversion=1\nmode='governed_enforce'\nscope='all'\n",
+        ),
+    )
+    .unwrap();
+    let decision = "---\n{\"id\":\"scope\",\"status\":\"accepted\",\"affected_keys\":[\"*\"]}\n---\n# Scope\n\n## Decision\nThe first release is local only.\n";
+    fs::write(f.root.join("decisions/scope.md"), decision).unwrap();
+    let pin = awr_source::fingerprint(decision.as_bytes());
+    let outcome = "Users keep their input when saving fails";
+    let ledger = json!({
+        "goals": [{"id": "G", "title": "Safe saving", "status": "active", "success_criteria": [outcome]}],
+        "work_items": [{"id": "R", "title": "Research failure modes", "status": "planned", "goal": "G",
+            "acceptance": ["The failure modes are listed"], "next_action": "Investigate",
+            "definition": {"version": 1, "purpose": "research",
+                "intent": [{"role": "user_decision", "decision": "scope", "source_fingerprint": pin}],
+                "contributes": [{"goal": "G", "outcome": outcome, "claim": "Maps the failure modes", "by": "agent-a"}],
+                "granularity": {"judgment": "independent_result", "reason": "One answer a reviewer can judge", "by": "agent-a"},
+                "deliverable": "A list of failure modes with their limits"}}]
+    });
+    fs::write(
+        f.root.join("work.yaml"),
+        serde_json::to_vec_pretty(&ledger).unwrap(),
+    )
+    .unwrap();
+    f.reindex();
+    let client = f.client().await;
+    let prepare = json!({"work":"R","budget":12000,"response_view":"action"});
+    // Without a decision the one instruction is to admit, in one call, and it is bounded.
+    let prepared = success(call(&client, "awr_work_prepare", prepare.clone()).await);
+    assert_eq!(
+        prepared["guidance"]["when"], "Governed work has no admission decision",
+        "{prepared}"
+    );
+    assert!(
+        prepared["guidance"]["next_action"]
+            .as_str()
+            .unwrap()
+            .contains("work admit")
+    );
+    assert!(serde_json::to_vec(&prepared["guidance"]).unwrap().len() <= 1024);
+    // After the decision whatever instruction remains is no longer about admission.
+    let reviewer = success(
+        call(
+            &client,
+            "awr_session_start",
+            json!({"work":"R","conversation":"conv-r","agent":"reviewer","provider":"fixture","model":"test",
+                   "expected_revision":f.rev(),"claim":false}),
+        )
+        .await,
+    );
+    let session = reviewer["session"]["id"].as_str().unwrap().to_string();
+    let assessed = success(call(&client, "awr_work_assess", json!({"work":"R"})).await);
+    success(
+        call(
+            &client,
+            "awr_work_admit",
+            json!({"work":"R","session":session,"expected_revision":f.rev(),"request_key":"approve-1",
+                   "decision":"approved","contract_fingerprint":assessed["contract_fingerprint"],
+                   "judgment":{"contribution":"Advances the saving outcome","necessity":"The failure modes are unknown",
+                               "alternatives":"Existing reports were checked","deliverable":"A list of failure modes",
+                               "exit":"Stop when the list is reviewed","responsibility":"research-owner"}}),
+        )
+        .await,
+    );
+    let after = success(call(&client, "awr_work_prepare", prepare.clone()).await);
+    assert!(
+        !after["guidance"]["basis"]
+            .as_str()
+            .unwrap()
+            .starts_with("admission_"),
+        "{after}"
+    );
+}

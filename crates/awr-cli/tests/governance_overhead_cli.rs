@@ -435,10 +435,18 @@ fn a_task_that_needs_two_extra_calls_for_definition_review_and_admission_fails_a
     // One flow over the median ratio is not enough to fail it: the median is the target.
     assert!(
         over_target(&[
-            fake("a", 5, 1, 900),
+            fake("a", 2, 1, 900),
             fake("b", 8, 1, 900),
             fake("c", 8, 1, 900)
         ])
         .is_empty()
     );
+    // Two flows over it are: now the median itself is over.
+    let over = over_target(&[
+        fake("a", 2, 1, 900),
+        fake("b", 3, 1, 900),
+        fake("c", 8, 1, 900),
+    ]);
+    assert_eq!(over.len(), 1, "{over:?}");
+    assert!(over[0].contains("median extra-call ratio"), "{over:?}");
 }
