@@ -20,6 +20,10 @@ async fn work_that_requires_work_in_another_stream_is_admitted_on_its_own() {
         work.external_key = key.into();
         governed.works.push(work);
     }
+    // The declaration has one canonical order: its works are sorted by key.
+    governed
+        .works
+        .sort_by(|a, b| a.external_key.cmp(&b.external_key));
     let (_guard, admin, _db, store) = setup_with_specs(files(&governed)).await;
     enable_writes(&admin).await;
     admin
