@@ -8,6 +8,7 @@ mod completion;
 mod contract;
 pub mod delivery;
 mod error;
+mod governance;
 mod ids;
 mod permission;
 mod planning;
@@ -30,6 +31,9 @@ pub use contract::{
     ExecutionSettlementMode, ExecutionSettlementPolicy, WorkContract, WorkDefinitionState,
 };
 pub use error::{TeamError, TeamResult};
+pub use governance::{
+    GOVERNANCE_FILE, GOVERNANCE_VERSION, GovernanceCandidate, WorkGovernance, admission_status,
+};
 pub use ids::{ActorId, ProjectId, RequestId, ScopeId, SessionId, TenantId, WorkId};
 pub use permission::{
     Action, AuthorityScope, BusinessRole, LegacyGrant, LegacyRole, MigrationPreview,
