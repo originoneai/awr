@@ -84,9 +84,34 @@ and `work.complete` on an approval given before the change answer `ReviewRequire
 its own work's scope, and nothing is deleted: sessions, checkpoints, evidence and earlier rounds
 stay readable, so a session can still recover and continue.
 
+## Findings of a review
+
+`review.accept`, `review.return` and `review.decide` take optional `findings` and `resolutions`. A
+finding names itself (`finding_key`), says what it found (`summary`) and what it is measured against:
+an acceptance `criterion` or a hard `rule` of the contract (word for word), a reproducible
+`counterexample` (given, when, then) or a stated `risk` (`security` or `data_loss`, with its
+reasoning). **It never states a severity**: the severity is derived from the record, with the rule of
+[findings](findings.md). A stated risk blocks; a finding that breaks a required criterion (the tier
+adopted in the work's definition, `required` unless the definition says `later`) or a hard rule and
+shows it with a counterexample blocks; everything else is a deferred record that blocks nothing.
+Findings and resolutions are appended to `review_findings` under the verified reviewer, and
+`review.inspect` shows them.
+
+For governed work:
+
+* a return needs a blocking finding (a decision without one, or with only deferred ones, answers
+  `FindingsBlock` and records nothing), so a style comment never sends work back;
+* an approval resolves every blocking finding that was open, one `resolutions` entry each, and is
+  refused while any remains; `work.complete` is refused while a blocking finding is open;
+* `review.open` of a later round says what the re-review covers (`re_review`): the unresolved
+  blocking findings and whether the bundle changed since the previous round. From the second round on
+  a finding that would block must name its `scope` (`delta`, or an `unresolved` finding of an earlier
+  round); otherwise it is recorded as deferred, so a new non-blocking finding in round two does not
+  reopen the round. A stated security or data-loss risk is never out of scope.
+
+Other work keeps its review semantics and may record findings too.
+
 ## Not in this change
 
-Structured review findings with their severity and criterion, re-review limited to unresolved
-blocking findings and the delta, and the deferral of a new non-blocking finding in a second round are
-the last part of the shared-governance work. Containment, reassessment and gaps remain Core
-features.
+Containment, reassessment and gaps remain Core features, and the Team does not recompute the
+definition summary a publisher declares.

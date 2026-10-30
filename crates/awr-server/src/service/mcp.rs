@@ -322,7 +322,32 @@ fn add_review_input_schema(command: &mut Value) {
         "session_id":identity,"expected_session_version":{"type":"string","pattern":"^[1-9][0-9]*$"},
         "evidence_id":identity,"round_id":identity,"note":text,"reason":text,
         "decision":{"type":"string","enum":["approve","reject"]},
-        "context_complete":{"type":"boolean"},"requested_policy":{"type":["string","null"]}
+        "context_complete":{"type":"boolean"},"requested_policy":{"type":["string","null"]},
+        "findings":{"type":"array","maxItems":32,"items":{
+            "type":"object","additionalProperties":false,"required":["finding_key","summary"],
+            "properties":{
+                "finding_key":identity,
+                "summary":{"type":"string","minLength":1,"maxLength":2048},
+                "criterion":{"type":"string","minLength":1,"maxLength":2048},
+                "rule":{"type":"string","minLength":1,"maxLength":2048},
+                "counterexample":{"type":"object","additionalProperties":false,"required":["given","when","then"],
+                    "properties":{
+                        "given":{"type":"string","minLength":1,"maxLength":2048},
+                        "when":{"type":"string","minLength":1,"maxLength":2048},
+                        "then":{"type":"string","minLength":1,"maxLength":2048}}},
+                "risk":{"type":"object","additionalProperties":false,"required":["kind","reasoning"],
+                    "properties":{
+                        "kind":{"enum":["security","data_loss"]},
+                        "reasoning":{"type":"string","minLength":1,"maxLength":2048}}},
+                "scope":{"oneOf":[
+                    {"type":"object","additionalProperties":false,"required":["kind"],
+                        "properties":{"kind":{"const":"delta"}}},
+                    {"type":"object","additionalProperties":false,"required":["kind","finding_key"],
+                        "properties":{"kind":{"const":"unresolved"},"finding_key":identity}}]}}}},
+        "resolutions":{"type":"array","maxItems":32,"items":{
+            "type":"object","additionalProperties":false,"required":["finding_key","resolution"],
+            "properties":{"finding_key":identity,
+                "resolution":{"type":"string","minLength":1,"maxLength":2048}}}}
     });
     // Publish the review/completion selectors in the flat args vocabulary so
     // clients discover them directly. event_id stays a delivery.facts.ingest
@@ -338,6 +363,14 @@ fn add_review_input_schema(command: &mut Value) {
             "review.accept / review.return / review.decide / work.rework: round_id from the review receipt; inspect it as review_round_id.",
         ),
         ("decision", "review.decide only: approve or reject."),
+        (
+            "findings",
+            "review.accept / review.return / review.decide: findings of this decision. Never state a severity: it is derived from what the finding is measured against (a required criterion or a hard rule of the contract, shown with a counterexample, or a stated security or data-loss risk blocks; everything else is a deferred record). From the second round on a blocking finding must name its scope: the delta since the reviewed bundle or an unresolved finding of an earlier round, or it is deferred.",
+        ),
+        (
+            "resolutions",
+            "review.accept / review.decide with approve: how the approval deals with each blocking finding that was open. For governed work an approval must resolve all of them.",
+        ),
         (
             "context_complete",
             "work.complete / delivery.finalize: caller assertion that the required context was consumed completely.",
@@ -358,12 +391,20 @@ fn add_review_input_schema(command: &mut Value) {
             vec!["evidence_id"],
             vec![],
         ),
-        ("review.accept", vec!["round_id", "reason"], vec![]),
-        ("review.return", vec!["round_id", "reason"], vec![]),
+        (
+            "review.accept",
+            vec!["round_id", "reason"],
+            vec!["findings", "resolutions"],
+        ),
+        (
+            "review.return",
+            vec!["round_id", "reason"],
+            vec!["findings"],
+        ),
         (
             "review.decide",
             vec!["round_id", "decision", "reason"],
-            vec![],
+            vec!["findings", "resolutions"],
         ),
         ("work.rework", vec!["round_id", "note"], vec![]),
         (
@@ -3042,12 +3083,20 @@ mod tests {
                 vec!["evidence_id"],
                 vec![],
             ),
-            ("review.accept", vec!["round_id", "reason"], vec![]),
-            ("review.return", vec!["round_id", "reason"], vec![]),
+            (
+                "review.accept",
+                vec!["round_id", "reason"],
+                vec!["findings", "resolutions"],
+            ),
+            (
+                "review.return",
+                vec!["round_id", "reason"],
+                vec!["findings"],
+            ),
             (
                 "review.decide",
                 vec!["round_id", "decision", "reason"],
-                vec![],
+                vec!["findings", "resolutions"],
             ),
             ("work.rework", vec!["round_id", "note"], vec![]),
             (
@@ -3113,8 +3162,9 @@ mod tests {
                 );
             }
         }
+        // The findings of a decision publish the closed shape of a finding in three operations.
         assert!(
-            schema_bytes < 6500,
+            schema_bytes < 12288,
             "Operation discovery must remain bounded: {schema_bytes}"
         );
     }

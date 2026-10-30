@@ -28,6 +28,7 @@ mod pool;
 mod read;
 mod responsibility;
 mod review;
+mod review_findings;
 mod runner;
 mod scoped_runner;
 mod selective_invalidation;
@@ -150,6 +151,6 @@ mod tests {
     #[test]
     fn schema_contract_is_stable() {
         assert_eq!(SCHEMA, "awr_team");
-        assert_eq!(EXPECTED_SCHEMA_VERSION, 57);
+        assert_eq!(EXPECTED_SCHEMA_VERSION, 58);
     }
 }

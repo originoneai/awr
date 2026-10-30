@@ -99,6 +99,10 @@ pub enum PgError {
     /// codes of the Core evaluator and `detail` is the reason it gives.
     #[error("admission required ({code}): {detail}")]
     AdmissionRequired { code: &'static str, detail: String },
+    /// A review decision or a completion contradicts the findings of the work: a return without a
+    /// blocking finding, an approval while blocking findings are open, or a completion with any.
+    #[error("review findings block this: {detail}")]
+    FindingsBlock { detail: String },
     #[error("context incomplete")]
     ContextIncomplete,
     #[error("serialized response exceeds service limit")]
