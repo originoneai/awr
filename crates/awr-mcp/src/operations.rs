@@ -302,6 +302,14 @@ pub(crate) fn call(root: &Path, name: &str, mut args: JsonObject) -> Result<Call
                 &parse_tool!(name, args),
             )?));
         }
+        "awr_work_gap" => {
+            let mut store = Store::open_existing(&database(root)?)?;
+            return Ok(CallToolResult::structured(awr_runtime::gap_work(
+                &mut store,
+                root,
+                &parse_tool!(name, args),
+            )?));
+        }
         "awr_work_reassess" => {
             let mut store = Store::open_existing(&database(root)?)?;
             return Ok(CallToolResult::structured(awr_runtime::reassess_work(
@@ -580,6 +588,9 @@ fn work(view: &ReadProject, args: WorkArgs) -> Result<Value> {
             .reassessment_block(view.project.id, &args.work, branch)?
     {
         detail["reassessment"] = json!(reassessment);
+    }
+    if let Some(gaps) = view.store.gap_block(view.project.id, &args.work, branch)? {
+        detail["gaps"] = json!(gaps);
     }
     Ok(
         json!({"work":detail,"acceptance":work.work.item.acceptance,"source_ref":work.work.item.meta.source_ref,

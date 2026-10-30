@@ -193,11 +193,16 @@ pub(crate) fn diagnostics_for_child(
             Err(Error::NotFound(_)) => return Ok(vec![]),
             Err(error) => return Err(error),
         };
-    Ok(status_at(conn, project, &parent, branch)?
+    let mut found: Vec<(String, String)> = status_at(conn, project, &parent, branch)?
         .diagnostics
         .into_iter()
         .map(|d| (d.code.to_string(), d.detail))
-        .collect())
+        .collect();
+    // The parent's own open gaps can put the judgment about its children in question.
+    found.extend(crate::gap::containment_suspension(
+        conn, project, &parent, branch,
+    )?);
+    Ok(found)
 }
 
 impl Store {

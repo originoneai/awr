@@ -33,7 +33,7 @@ pub(crate) fn executions_of(
     }
     Ok(result)
 }
-fn key_at(conn: &Connection, project: Id, key: &str) -> Result<Option<Execution>> {
+pub(crate) fn key_at(conn: &Connection, project: Id, key: &str) -> Result<Option<Execution>> {
     let value: Option<String> = conn.query_row(
         "SELECT json_extract(payload_json,'$.execution') FROM events WHERE project_id=?1 AND event_type IN ('execution.registered','execution.starting','execution.running','execution.finished') AND json_extract(payload_json,'$.execution.intent.operation_key')=?2 ORDER BY project_revision DESC LIMIT 1",
         params![project.to_string(),key], |r| r.get(0)).optional().map_err(db_error)?;
@@ -167,7 +167,13 @@ impl Store {
                     "new execution needs an active session".into(),
                 ));
             }
-            crate::admission::require(tx, project, work, s.branch_id)?;
+            crate::admission::require_with(
+                tx,
+                project,
+                work,
+                s.branch_id,
+                Some(&intent.operation_key),
+            )?;
             if key_at(tx, project, &intent.operation_key)?.is_some() {
                 return Err(Error::SourceConflict(
                     "operation key already registered; read the existing execution".into(),
@@ -302,7 +308,13 @@ impl Store {
             |tx, next, event| {
                 let mut e = at(tx, project, id)?;
                 if admitted {
-                    crate::admission::require(tx, project, e.work_item_id, e.branch_id)?;
+                    crate::admission::require_with(
+                        tx,
+                        project,
+                        e.work_item_id,
+                        e.branch_id,
+                        Some(&e.intent.operation_key),
+                    )?;
                 }
                 change(&mut e)?;
                 e.revision = next;

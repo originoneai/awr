@@ -39,3 +39,10 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   those facts, goes stale when they change and opens no task; failures that alternate with
   successes, waits and blockers are shown and hold nothing, and recovery paths are never held. See
   [bounded reassessment](../reference/reassessment.md).
+- Gaps for governed sources (`awr work gap`, MCP `awr_work_gap`): something missing or changed in a
+  work's intent, acceptance, design, plan or definition is recorded against that layer and closed
+  the way its kind requires, by a fact lookup with its sources, a feasibility experiment that
+  really ran (repairing the plan never closes it, a failed run counts), a choice by an authorized
+  agent or an observed environment change. An open gap puts in question only the admission or
+  containment judgments that read its layer, on that work; it keeps every failure on record, opens
+  no task and holds no unrelated work. See [gaps](../reference/gaps.md).
