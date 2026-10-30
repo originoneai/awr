@@ -149,6 +149,9 @@ pub(super) async fn start(
     {
         return Err(PgError::PreconditionsChanged);
     }
+    // A decision that went stale between preparing and starting holds the start too.
+    crate::governance::require_current(tx, tenant, project, &auth.snapshot, &command.work_id)
+        .await?;
     // The bundled adapter may attest only when the operator delegated that
     // authority before admission. A mode name cannot grant executor trust.
     if a.execution_mode == "reference_write_v1"

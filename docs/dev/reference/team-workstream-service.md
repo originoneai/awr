@@ -120,6 +120,7 @@ Unsupported operations or protocol versions fail explicitly.
 | `work.list` | Selected workstream's work summaries and count; `limit`, `cursor` |
 | `work.search` | Same visibility boundary; required literal substring `search` |
 | `work.prepare` | Required `work_id` or `session_id`; optional `max_context_bytes`; returns published contract, required_specs and authorized_readable_refs (TMCP-023) |
+| `work.admission` | Required `work_id`; whether the work is governed, its admission state and diagnostics, the scope a decision will be checked against and its `binding_fingerprint`; see [Team governance](team-governance.md) |
 | `work.observe` | Required `work_id` or `session_id`; returns bounded session/checkpoint, claim lease, execution and PR delivery observations under current WorkRead authority |
 | `events.list` | Selected workstream, optionally narrowed by work/session; metadata only |
 | `session.inspect` | Required `session_id`; its current-ownership checkpoint |
@@ -367,6 +368,7 @@ project revision, transaction and outcome protocol as session commands:
 
 | Operation | Strict `args` object |
 | --- | --- |
+| `admission.decide` | `admission_decision` (`proposed`, `approved` or `denied`), `binding_fingerprint` from `work.admission`, and `admission_judgment`, `admission_reason` or `admission_proposal_id` as the decision needs; needs the planning approval permission; see [Team governance](team-governance.md) |
 | `claim.acquire` | `session_id`, `expected_session_version`, `expected_work_version`, `ttl_seconds` |
 | `claim.renew` | `session_id`, `expected_session_version`, `claim_id`, `expected_fence`, `expected_lease_version`, `ttl_seconds` |
 | `claim.release` | `session_id`, `expected_session_version`, `claim_id`, `expected_fence`, `expected_lease_version` |
