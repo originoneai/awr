@@ -202,6 +202,20 @@ fn findings_are_bounded_and_the_wire_format_is_closed() {
         then: "t".into(),
     });
     assert!(f.validate().is_err());
+    // A key is a name: no control character in it, and a scope names a finding that is a name too.
+    let mut f = finding("F11");
+    f.finding_key = "bell\u{7}".into();
+    assert!(f.validate().is_err());
+    let mut f = finding("F11");
+    f.scope = Some(ReviewScope::Unresolved {
+        finding_key: " ".into(),
+    });
+    assert!(f.validate().is_err());
+    let mut f = finding("F11");
+    f.scope = Some(ReviewScope::Unresolved {
+        finding_key: "F10".into(),
+    });
+    assert!(f.validate().is_ok());
     let wire = serde_json::json!({"finding_key": "F1", "summary": "s", "severity": "blocking"});
     assert!(
         serde_json::from_value::<ReviewFinding>(wire).is_err(),
