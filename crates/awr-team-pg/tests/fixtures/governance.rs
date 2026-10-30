@@ -11,7 +11,9 @@ use awr_team::{
     GOVERNANCE_FILE, GOVERNANCE_VERSION, GovernanceCandidate, SourceActivationPlan, WorkContract,
     WorkGovernance, WorkId, WorkstreamBundle, WorkstreamContract,
 };
-use awr_team_pg::{IngestRequest, PgError, SourceFile, SourceStore};
+use awr_team_pg::{
+    IngestRequest, PgError, SourceFile, SourceStore, WorkstreamCommand, WorkstreamReadStore,
+};
 use serde_json::{Value, json};
 
 pub const PIN: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -72,6 +74,129 @@ pub fn judgment() -> Value {
     json!({"contribution": "Advances the outcome", "necessity": "The failure modes are unknown",
            "alternatives": "Existing reports were checked", "deliverable": "A list of failure modes",
            "exit": "Stop when the list is reviewed", "responsibility": "research-owner"})
+}
+
+pub fn refused_with(result: &Result<Value, PgError>, expected: &str) {
+    match result {
+        Err(PgError::AdmissionRequired { code, .. }) => assert_eq!(*code, expected),
+        other => panic!("expected AdmissionRequired({expected}), got {other:?}"),
+    }
+}
+
+/// What a decider reads of `work` before deciding: its scope and the history that scope covers.
+pub async fn admission_read(
+    store: &WorkstreamReadStore,
+    token: &str,
+    work: &str,
+) -> Result<Value, PgError> {
+    let mut q = query("work.admission");
+    q.work_id = Some(work.into());
+    Ok(store.query(TENANT, PROJECT, token, q).await?["data"].clone())
+}
+
+/// One decision on `work` by the holder of `token`, stating what it has just read.
+pub async fn decide_work(
+    store: &WorkstreamReadStore,
+    token: &str,
+    work: &str,
+    request: &str,
+    mut args: Value,
+) -> Result<Value, PgError> {
+    let read = admission_read(store, token, work).await?;
+    args["binding_fingerprint"] = read["binding_fingerprint"].clone();
+    args["expected_admission_version"] = read["admission_version"].clone();
+    let prepared = prepare(store, token, work).await;
+    store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            token,
+            command(&prepared, request, "admission.decide", args),
+        )
+        .await
+}
+
+pub async fn approve_work(
+    store: &WorkstreamReadStore,
+    token: &str,
+    work: &str,
+    request: &str,
+) -> Result<Value, PgError> {
+    let args = json!({"admission_decision":"approved","admission_judgment":judgment()});
+    decide_work(store, token, work, request, args).await
+}
+
+pub async fn deny_work(
+    store: &WorkstreamReadStore,
+    token: &str,
+    work: &str,
+    request: &str,
+    reason: &str,
+) -> Result<Value, PgError> {
+    let args = json!({"admission_decision":"denied","admission_reason":reason});
+    decide_work(store, token, work, request, args).await
+}
+
+/// `work.prepare` of `work` inside `session`: the context a checkpoint or a run is built from.
+pub async fn prepare_in(
+    store: &WorkstreamReadStore,
+    token: &str,
+    work: &str,
+    session: &str,
+) -> Value {
+    let mut q = query("work.prepare");
+    q.work_id = Some(work.into());
+    q.session_id = Some(session.into());
+    q.max_context_bytes = Some(262144);
+    store.query(TENANT, PROJECT, token, q).await.unwrap()
+}
+
+/// A session of the holder of `token` on `work`.
+pub async fn session_on(
+    store: &WorkstreamReadStore,
+    token: &str,
+    work: &str,
+    name: &str,
+) -> String {
+    let prepared = prepare(store, token, work).await;
+    store
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            token,
+            command(
+                &prepared,
+                name,
+                "session.start",
+                json!({"conversation_id":name}),
+            ),
+        )
+        .await
+        .unwrap()["receipt"]["data"]["session_id"]
+        .as_str()
+        .unwrap()
+        .into()
+}
+
+/// `claim.acquire` of `work` for the fresh `session`, built from the context as it is now.
+pub async fn claim_by(
+    store: &WorkstreamReadStore,
+    token: &str,
+    work: &str,
+    session: &str,
+    request: &str,
+) -> WorkstreamCommand {
+    let prepared = prepare(store, token, work).await;
+    command(
+        &prepared,
+        request,
+        "claim.acquire",
+        json!({"session_id":session,"expected_session_version":"1",
+               "expected_work_version":prepared["data"]["runtime"]["work_version"].as_str().unwrap_or("0"),
+               "ttl_seconds":600}),
+    )
 }
 
 /// The same snapshot the fixture installs, published again with or without governance.
