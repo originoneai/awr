@@ -1,7 +1,7 @@
 use rmcp::model::{Tool, ToolAnnotations};
 use serde_json::{Value, json};
 
-pub const TOOL_NAMES: [&str; 36] = [
+pub const TOOL_NAMES: [&str; 37] = [
     "awr_project_status",
     "awr_work_ready",
     "awr_work_get",
@@ -38,6 +38,7 @@ pub const TOOL_NAMES: [&str; 36] = [
     "awr_work_admit",
     "awr_work_contain",
     "awr_work_reassess",
+    "awr_work_gap",
 ];
 
 fn compaction_tools() -> Vec<Tool> {
@@ -195,6 +196,30 @@ fn workflow_tools() -> Vec<Tool> {
                     "decision",
                     "facts_fingerprint",
                     "judgment",
+                ],
+            ),
+            false,
+            false,
+        ),
+        tool(
+            "awr_work_gap",
+            "Open, resolve or withdraw a gap of a work: something missing or changed in its intent, acceptance, design, plan or definition, closed by a fact lookup, a feasibility experiment that really ran, an authorized choice or an observed environment change. An open gap puts in question only the judgments that read its layer, on that work; it opens no task and holds no other work.",
+            object(
+                json!({"work":text(),"session":optional(text()),"agent":optional(text()),"expected_revision":revision(),"request_key":text(),
+                "gap_key":text(),"action":{"type":"string","enum":["open","resolve","withdraw"]},
+                "route":optional(json!({"type":"string","enum":["intent","acceptance","design","plan","work_definition"]})),
+                "resolution":optional(json!({"type":"string","enum":["fact_lookup","feasibility_experiment","authorized_choice","environment_wait"]})),
+                "subject":optional(text()),"experiment":optional(text()),
+                "authority":optional(json!({"type":"array","items":{"type":"string"}})),
+                "waiting_for":optional(text()),"outcome":optional(text()),
+                "sources":optional(json!({"type":"array","items":{"type":"string"}})),
+                "observed":optional(text()),"reason":optional(text())}),
+                &[
+                    "work",
+                    "expected_revision",
+                    "request_key",
+                    "gap_key",
+                    "action",
                 ],
             ),
             false,

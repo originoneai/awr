@@ -59,6 +59,7 @@ pub fn is_domain_event_type(kind: &str) -> bool {
                 | "work.admission"
                 | "work.containment"
                 | "work.reassessment"
+                | "work.gap"
                 | "claim.released"
                 | "claim.expired"
                 | "artifact.recorded"
@@ -168,6 +169,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             "work.reassessment" => {
                 "version request_key decision input bound judgment root_cause decider_agent"
             }
+            "work.gap" => "version request_key action input decider_agent",
             "mcp.operation_started" | "mcp.operation_finished" | "mcp.operation_recovered" => {
                 "operation"
             }
@@ -228,6 +230,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
         "work.admission" | "work.containment" | "work.reassessment" => {
             "version request_key decision input bound"
         }
+        "work.gap" => "version request_key action input decider_agent",
         "mcp.operation_started" | "mcp.operation_finished" | "mcp.operation_recovered" => {
             "operation"
         }
@@ -326,10 +329,20 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
                 if kind == "management.assessed"
                     || kind == "work.admission"
                     || kind == "work.containment"
-                    || kind == "work.reassessment" =>
+                    || kind == "work.reassessment"
+                    || kind == "work.gap" =>
             {
                 value.as_u64() == Some(1)
             }
+            "action" if kind == "work.gap" => {
+                serde_json::from_value::<crate::GapAction>(value.clone()).is_ok()
+            }
+            "input" if kind == "work.gap" => {
+                serde_json::from_value::<crate::GapInput>(value.clone()).is_ok()
+            }
+            "decider_agent" if kind == "work.gap" => value
+                .as_str()
+                .is_some_and(|s| !s.trim().is_empty() && s.len() <= 256),
             "decision" if kind == "work.reassessment" => {
                 serde_json::from_value::<crate::ReassessmentChoice>(value.clone()).is_ok()
             }

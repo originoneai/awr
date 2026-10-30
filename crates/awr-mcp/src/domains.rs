@@ -45,6 +45,7 @@ pub const DOMAINS: &[DomainDef] = &[
             "awr_work_admit",
             "awr_work_contain",
             "awr_work_reassess",
+            "awr_work_gap",
             "awr_work_graph",
             "awr_spec_check",
         ],

@@ -77,6 +77,12 @@ always be resolved. Under `legacy_observe` the state is shown and nothing is hel
 outside the policy's scope is shown the same way, never held, and no decision can be recorded for
 it; a project without a policy is untouched.
 
+## Gaps
+
+A reassessment can find that something is missing or has changed in a work's intent, acceptance,
+design, plan or definition. That is recorded as a [gap](gaps.md), against the layer it affects,
+and closed the way its kind requires.
+
 ## What the program does not decide
 
 It checks that the facts are the work's own, that a decision exists, is attributed and describes

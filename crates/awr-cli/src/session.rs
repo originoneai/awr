@@ -759,6 +759,7 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
         | WorkCommand::Admit(_)
         | WorkCommand::Contain(_)
         | WorkCommand::Reassess(_)
+        | WorkCommand::Gap(_)
         | WorkCommand::Prepare(_)
         | WorkCommand::PrepareCompletion(_)
         | WorkCommand::Create(_)

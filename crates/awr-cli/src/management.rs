@@ -37,6 +37,13 @@ pub struct ReassessArgs {
     #[arg(long)]
     input: PathBuf,
 }
+#[derive(Debug, Args)]
+pub struct GapArgs {
+    /// A JSON gap request: work, session or agent, expected_revision, request_key, gap_key, action
+    /// (open, resolve or withdraw) and what that action needs.
+    #[arg(long)]
+    input: PathBuf,
+}
 pub fn assess(root: &Path, args: &AssessArgs) -> Result<()> {
     let query = crate::query::QueryProject::open_read(root, false)?;
     query.finish()?;
@@ -121,6 +128,22 @@ pub fn reassess(root: &Path, args: &ReassessArgs) -> Result<()> {
         &crate::source::runtime_dir(root, false)?.join("state.db"),
     )?;
     let value = awr_runtime::reassess_work(&mut store, root, &request)?;
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+pub fn gap(root: &Path, args: &GapArgs) -> Result<()> {
+    let input = if args.input.is_absolute() {
+        args.input.clone()
+    } else {
+        root.join(&args.input)
+    };
+    let request: GapRequest = serde_json::from_slice(&awr_source::read_capped(&input, 64 * 1024)?).map_err(|_| {
+        Error::InvalidInput("gap input requires work, session or agent, expected_revision, request_key, gap_key and action".into())
+    })?;
+    let mut store = awr_store::Store::open_existing(
+        &crate::source::runtime_dir(root, false)?.join("state.db"),
+    )?;
+    let value = awr_runtime::gap_work(&mut store, root, &request)?;
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
 }

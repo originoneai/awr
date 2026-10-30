@@ -15,6 +15,7 @@ mod delta;
 mod events;
 mod evidence;
 mod execution;
+mod gap;
 mod handoff;
 mod management;
 mod mcp;

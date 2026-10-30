@@ -218,6 +218,10 @@ pub(crate) fn diagnostics(
         found.extend(crate::containment::diagnostics_for_child(
             conn, project, work, branch,
         )?);
+        // The gaps of the work itself put its own admission in question.
+        found.extend(crate::gap::admission_suspension(
+            conn, project, work, branch,
+        )?);
         Ok(found)
     };
     let mut found = match decisions() {
@@ -244,6 +248,18 @@ pub(crate) fn require(
     work_id: Id,
     branch: Option<Id>,
 ) -> Result<()> {
+    require_with(conn, project, work_id, branch, None)
+}
+
+/// Like [`require`] for an execution under `operation_key`: the experiment of an open gap is how
+/// that gap gets closed, so the gap never holds it back.
+pub(crate) fn require_with(
+    conn: &Connection,
+    project: Id,
+    work_id: Id,
+    branch: Option<Id>,
+    operation_key: Option<&str>,
+) -> Result<()> {
     let key: Option<String> = conn
         .query_row(
             "SELECT external_key FROM work_items WHERE project_id=?1 AND id=?2 AND active=1",
@@ -256,7 +272,12 @@ pub(crate) fn require(
         return Ok(());
     };
     let work: Projected<WorkItem> = projection(conn, project, EntityKind::WorkItem, &key)?;
-    let diagnostics = diagnostics(conn, project, &work, branch)?;
+    let mut diagnostics = diagnostics(conn, project, &work, branch)?;
+    if let Some(key) = operation_key
+        && crate::gap::is_open_experiment(conn, project, work_id, branch, key)?
+    {
+        diagnostics.retain(|(code, _)| code != "admission_suspended");
+    }
     if let Some((code, detail)) = diagnostics.first() {
         return Err(Error::Admission {
             code: static_code(code),
@@ -291,6 +312,8 @@ pub(crate) fn static_code(code: &str) -> &'static str {
         "reassessment_required",
         "reassessment_stale",
         "reassessment_unknown",
+        "admission_suspended",
+        "containment_suspended",
     ]
     .into_iter()
     .find(|known| *known == code)
