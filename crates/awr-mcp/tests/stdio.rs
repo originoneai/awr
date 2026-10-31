@@ -2930,3 +2930,73 @@ async fn the_governance_instruction_is_the_action_view_of_work_prepare_over_mcp(
         "{after}"
     );
 }
+
+fn record_report(f: &Fixture, work: &str, criterion: &str, key: &str) -> Value {
+    let report = json!({"version":1,"work_item":work,"source_sha":SHA,"command":"review the delivery","scope":[work],"verified_at":now_millis().unwrap(),"checks":[{"name":"review and delivery","passed":true,"details":"Reviewed the fixture delivery and receipt","criteria":[criterion]}]});
+    let bytes = serde_json::to_vec(&report).unwrap();
+    let locator = format!("{key}.json");
+    fs::write(f.root.join(&locator), &bytes).unwrap();
+    json!({"expected_revision":f.rev(),"external_key":key,"work":work,"evidence_type":"completion_report","level":"locally_verified","summary":"Reviewed the fixture delivery","locator":locator,"sha256":awr_source::fingerprint(&bytes).trim_start_matches("sha256:"),"source_sha":SHA,"command":"review the delivery","scope":[work],"verified_at":report["verified_at"]})
+}
+
+#[tokio::test]
+async fn a_completion_tells_how_to_close_the_session_and_can_end_it_in_the_same_request() {
+    let f = Fixture::new();
+    let first = f.session("W", true, None).session.id;
+    let second = f.session("NEXT", true, None).session.id;
+    let client = f.client().await;
+    // The server states the closing convention in one short sentence.
+    let instructions = client.peer_info().unwrap().instructions.clone().unwrap();
+    assert!(instructions.contains("checkpoint and end the session"));
+    assert!(instructions.contains("never complete work by editing status fields"));
+    for (work, session, criterion, key) in [
+        ("W", first, CRITERION, "E-W"),
+        ("NEXT", second, "Follow-up is available", "E-NEXT"),
+    ] {
+        let mut progress = action(&f, session, "progress");
+        progress["work"] = json!(work);
+        progress["next_action"] = json!("Review the delivery");
+        success(call(&client, "awr_work_transition", progress).await);
+        let draft = record_report(&f, work, criterion, key);
+        success(call(&client, "awr_evidence_record", draft).await);
+    }
+    // Without the argument the call is the old one: the work is completed and the instruction says what to do next.
+    let mut plain = action(&f, first, "complete");
+    plain["completion"] = json!({"version":1,"source_sha":SHA,"acceptance":[{"criterion":CRITERION,"evidence":["E-W"]}]});
+    let done = success(call(&client, "awr_work_transition", plain).await);
+    assert_eq!(done["event"]["event_type"], "work.completed");
+    assert!(
+        done["close_out"]["next"]
+            .as_str()
+            .unwrap()
+            .contains("session end")
+    );
+    assert!(awr_context::token_count(&done["close_out"].to_string()) <= 60);
+    assert!(done.get("session_end").is_none());
+    // Only a completion can end the session with it.
+    let mut wrong = action(&f, second, "progress");
+    wrong["work"] = json!("NEXT");
+    wrong["next_action"] = json!("Still reviewing");
+    wrong["end_session"] = json!(true);
+    error(
+        call(&client, "awr_work_transition", wrong).await,
+        "InvalidInput",
+    );
+    // With it, the completion and the end of the session are one request.
+    let mut ending = action(&f, second, "complete");
+    ending["work"] = json!("NEXT");
+    ending["end_session"] = json!(true);
+    ending["completion"] = json!({"version":1,"source_sha":SHA,"acceptance":[{"criterion":"Follow-up is available","evidence":["E-NEXT"]}]});
+    let done = success(call(&client, "awr_work_transition", ending).await);
+    assert_eq!(done["event"]["event_type"], "work.completed");
+    assert_eq!(done["session_end"]["status"], "ended");
+    assert_eq!(
+        done["session_end"]["completion_event_id"],
+        done["event"]["id"]
+    );
+    assert!(done.get("close_out").is_none());
+    let (store, project) = f.store();
+    assert_eq!(store.session(project.id, second).unwrap().status, "ended");
+    assert_eq!(store.session(project.id, first).unwrap().status, "active");
+    client.cancel().await.unwrap();
+}
