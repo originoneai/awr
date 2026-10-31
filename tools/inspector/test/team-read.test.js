@@ -135,9 +135,15 @@ test('read adapter forwards every registered read op with its exact selectors, u
     request.on('end', () => {
       const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       calls.push({ path: request.url, query: parsed });
+      // Single-object ops echo the requested identity, as the service does.
+      const echo = parsed.work_id ? { work_id: parsed.work_id } : {};
+      if (parsed.op === 'review.inspect') {
+        echo.review = { work_id: parsed.work_id, round_id: parsed.review_round_id };
+      }
+      if (parsed.op === 'delivery.integration.inspect') echo.integration_id = parsed.request_id;
       response.end(JSON.stringify(parsed.op === 'capabilities'
         ? { protocol: 'awr-team-workstream', protocol_version: 1, queries: [], commands: [] }
-        : { ...ENVELOPE, data: { items: [], next_cursor: null } }));
+        : { ...ENVELOPE, data: { items: [], next_cursor: null, ...echo } }));
     });
   });
   const bridge = await startLiveBridge(upstream.base);
@@ -407,8 +413,9 @@ test('read adapter keeps the 128-byte selector bound exactly', async () => {
     const chunks = [];
     request.on('data', (c) => chunks.push(c));
     request.on('end', () => {
-      seen.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-      response.end(JSON.stringify({ ...ENVELOPE, data: { items: [], next_cursor: null } }));
+      const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      seen.push(parsed);
+      response.end(JSON.stringify({ ...ENVELOPE, data: { items: [], next_cursor: null, work_id: parsed.work_id } }));
     });
   });
   const bridge = await startLiveBridge(upstream.base);

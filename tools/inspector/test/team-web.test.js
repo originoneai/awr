@@ -899,7 +899,15 @@ test('coordination proxies a single scoped page and preserves empty-page cursors
   const bridge = await startLiveBridge(upstream.base);
   try {
     const first = await req(bridge.base, 'GET', '/api/team/inbox?project=demo', { cookie: 'awr_web_session=member-session' });
-    assert.deepEqual(first.json, { ok: true, result: coordinationPage([], 'opaque-next') });
+    assert.equal(first.json.ok, true);
+    assert.deepEqual(first.json.result, coordinationPage([], 'opaque-next'));
+    // OBS-002 freshness envelope: the coordination page is measured by the
+    // service (authoritative) and by this bridge (page_read); no caller
+    // report plane exists on this read.
+    assert.equal(first.json.freshness.authoritative.status, 'measured');
+    assert.equal(first.json.freshness.authoritative.project_revision, '20');
+    assert.deepEqual(first.json.freshness.report_received, { status: 'not_measured' });
+    assert.equal(first.json.freshness.page_read.status, 'measured');
     assert.equal(calls.length, 1, 'The bridge must not drain all pages or query providers');
     const next = await req(bridge.base, 'GET', '/api/team/inbox?project=demo&cursor=opaque-next', { cookie: 'awr_web_session=member-session' });
     assert.deepEqual(next.json.result.data.items, [item]);
@@ -917,8 +925,11 @@ for (const code of ['Forbidden', 'Unauthenticated', 'CursorExpired', 'SourceChan
     const bridge = await startLiveBridge(upstream.base);
     try {
       const result = await req(bridge.base, 'GET', '/api/team/inbox?project=demo&cursor=old');
-      assert.deepEqual(result.json, { ok: false, error: { code, message: 'Current read refused' } });
+      assert.equal(result.json.ok, false);
+      assert.deepEqual(result.json.error, { code, message: 'Current read refused' });
       assert.equal(result.json.result, undefined);
+      // The failed read keeps its clocks: the planes say failed with the code.
+      assert.deepEqual(result.json.freshness.authoritative, { status: 'failed', error_code: code });
     } finally { await bridge.close(); await upstream.close(); }
   });
 }
@@ -967,8 +978,11 @@ for (const op of ['work.prepare', 'work.observe', 'work.recovery', 'review.inspe
   'delivery.neutral.inspect', 'delivery.integration.inspect', 'delivery.source.status']) {
   test(`coordination detail forwards the exact ${op} selector as an authorized read`, async () => {
     const calls = [], query = coordinationItem(op).next_query;
+    // Single-object responses echo the requested identity, as the service does.
     const result = { protocol_version: 1, scope_id: 'main', project_revision: '20', source_snapshot_id: 'source',
-      coordinator_epoch: 'epoch', workstream_id: 'stream', data: { work_id: 'WORK', execution_authorized: false } };
+      coordinator_epoch: 'epoch', workstream_id: 'stream', data: { work_id: 'WORK', execution_authorized: false,
+        ...(op === 'review.inspect' ? { review: { work_id: 'WORK', round_id: query.review_round_id } } : {}),
+        ...(op === 'delivery.integration.inspect' ? { integration_id: query.request_id } : {}) } };
     const upstream = await startMockUpstream((request, response) => {
       const chunks = []; request.on('data', c => chunks.push(c)); request.on('end', () => {
         calls.push({ path: request.url, query: JSON.parse(Buffer.concat(chunks).toString()) }); response.end(JSON.stringify(result));
@@ -977,7 +991,11 @@ for (const op of ['work.prepare', 'work.observe', 'work.recovery', 'review.inspe
     const bridge = await startLiveBridge(upstream.base);
     try {
       const read = await req(bridge.base, 'POST', '/api/team/inbox-detail', { body: { project: 'demo', query } });
-      assert.deepEqual(read.json, { ok: true, query, result });
+      assert.equal(read.json.ok, true);
+      assert.deepEqual(read.json.query, query);
+      assert.deepEqual(read.json.result, result);
+      assert.equal(read.json.freshness.authoritative.status, 'measured');
+      assert.equal(read.json.freshness.page_read.status, 'measured');
       assert.deepEqual(calls, [{ path: '/v1/web/projects/demo/query', query }]);
     } finally { await bridge.close(); await upstream.close(); }
   });
@@ -1045,7 +1063,10 @@ test('coordination detail rejects a different review round or integration reques
       if (op === 'review.inspect') result.data.review.round_id = query.review_round_id;
       else result.data.integration_id = query.request_id;
       const accepted = await req(bridge.base, 'POST', '/api/team/inbox-detail', { body: { project: 'demo', query } });
-      assert.deepEqual(accepted.json, { ok: true, query, result });
+      assert.equal(accepted.json.ok, true);
+      assert.deepEqual(accepted.json.query, query);
+      assert.deepEqual(accepted.json.result, result);
+      assert.equal(accepted.json.freshness.authoritative.status, 'measured');
     }
   } finally { await bridge.close(); await upstream.close(); }
 });
