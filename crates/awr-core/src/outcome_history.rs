@@ -640,10 +640,10 @@ pub fn aggregate_outcome_history(
         if state.cancelled.is_some() {
             signals.cancelled += 1;
         }
-        if !state.has_outcome() && !state.conflicting {
+        if !state.has_outcome() {
             signals.open += 1;
         }
-        if state.has_outcome() || state.conflicting {
+        if state.has_outcome() {
             with_outcome += 1;
         }
         if !runs.is_empty() {
