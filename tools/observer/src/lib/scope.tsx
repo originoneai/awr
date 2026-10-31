@@ -1,7 +1,7 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, type ReactNode } from 'react';
+import { matchPath, useLocation, useNavigate, useSearchParams } from 'react-router';
 
 interface ScopeValue {
-  /** Selected project key, or null when the org-level placeholder is active. */
   projectKey: string | null;
   setProjectKey: (key: string | null) => void;
 }
@@ -9,8 +9,28 @@ interface ScopeValue {
 const ScopeContext = createContext<ScopeValue>({ projectKey: null, setProjectKey: () => {} });
 
 export function ScopeProvider({ children }: { children: ReactNode }) {
-  const [projectKey, setProjectKey] = useState<string | null>(null);
-  const value = useMemo(() => ({ projectKey, setProjectKey }), [projectKey]);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const projectMatch = matchPath({ path: '/projects/:project', end: true }, location.pathname);
+  const routeProject = projectMatch?.params.project ?? null;
+  const projectKey = routeProject ?? searchParams.get('scope');
+
+  const setProjectKey = useCallback((key: string | null) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (key) nextParams.set('scope', key);
+    else nextParams.delete('scope');
+    if (projectMatch) {
+      navigate({
+        pathname: key ? `/projects/${encodeURIComponent(key)}` : '/projects',
+        search: nextParams.toString(),
+      });
+    } else {
+      setSearchParams(nextParams);
+    }
+  }, [navigate, projectMatch, searchParams, setSearchParams]);
+
+  const value = useMemo(() => ({ projectKey, setProjectKey }), [projectKey, setProjectKey]);
   return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>;
 }
 

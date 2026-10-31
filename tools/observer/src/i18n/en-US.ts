@@ -17,15 +17,17 @@ const enUS: Messages = {
     settings: 'Administration',
     account: 'Account & Connection',
     advanced: 'Advanced tools',
+    agentConnect: 'Connect my agent',
     groupMain: 'Observe',
     groupAdmin: 'Admin',
   },
   shell: {
-    scope: 'Example org',
-    searchPlaceholder: 'Search projects, work items…',
+    scope: 'All authorised scopes',
+    searchPlaceholder: 'Search current scope',
     notifications: 'Notifications',
     language: 'Language',
-    role: 'Observer',
+    identity: 'Scope identity',
+    later: 'This control ships in a later slice',
   },
   project: {
     settings: 'Project settings',
@@ -71,6 +73,10 @@ const enUS: Messages = {
       description: 'The content below was confirmed before the read failed; failure: {{code}}.',
       confirmedAt: 'Confirmed at {{time}}',
     },
+    listPending: {
+      title: 'The work item list ships in a later slice',
+      description: 'The overview returned work items; only its actual coverage counts are shown, not a claim that the pending list is empty.',
+    },
     placeholder: {
       title: 'Placeholder page',
       description: 'This observation view ships in a later slice; no business data is shown here.',
@@ -79,6 +85,10 @@ const enUS: Messages = {
   coverage: {
     summary: 'scope {{scope}} · succeeded {{succeeded}} · failed {{failed}} · works {{enumerated}}/{{total}}',
     totalUnknown: 'unknown',
+    scope: {
+      succeeded: 'succeeded',
+      failed: 'failed',
+    },
   },
   account: {
     title: 'Account & Connection',
@@ -88,7 +98,7 @@ const enUS: Messages = {
     logout: 'Sign out',
     logoutSubmit: 'Sign out',
     connect: 'Connect my agent',
-    connectSubmit: 'Connect',
+    connectSubmit: 'Connect my agent',
     revoke: 'Revoke connection',
     revokeSubmit: 'Revoke all connections',
     done: 'Done',

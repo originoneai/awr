@@ -27,29 +27,30 @@ describe('AppShell navigation', () => {
     }
   });
 
-  it('renders the wordmark and scope dropdown placeholder', () => {
+  it('renders the placeholder logo and neutral scope wording', () => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
     renderApp('/workbench');
-    expect(screen.getByText('AWR')).toBeTruthy();
-    expect(screen.getByText('示例组织')).toBeTruthy();
+    expect(screen.getByAltText('AWR')).toBeTruthy();
+    expect(screen.getByText('全部授权范围')).toBeTruthy();
+    expect(screen.queryByText('示例组织')).toBeNull();
   });
 
-  it('navigates when a menu item is clicked', async () => {
+  it('navigates through a real menu link', async () => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
     const user = userEvent.setup();
     const { router } = renderApp('/workbench');
-    await user.click(screen.getByRole('menuitem', { name: /项目/ }));
+    await user.click(screen.getByRole('link', { name: '项目' }));
     expect(router.state.location.pathname).toBe('/projects');
     await waitFor(() => expect(screen.getByTestId('page-projects')).toBeTruthy());
   });
 
-  it('top-bar notification and identity entries are focusable buttons', () => {
+  it('keeps inert notification and identity entries disabled', () => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
     renderApp('/workbench');
-    for (const name of ['通知', '观察者']) {
+    for (const name of ['通知', '范围身份']) {
       const button = screen.getByRole('button', { name });
       expect(button.tagName).toBe('BUTTON');
-      expect(button.tabIndex).toBe(0);
+      expect(button).toHaveProperty('disabled', true);
     }
   });
 

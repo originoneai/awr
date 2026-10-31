@@ -37,6 +37,8 @@ jobs:
         run: npx vite build
       - name: Server syntax check
         run: node --check server.js
+      - name: Server tests
+        run: node --test test/*.test.js
       - name: No external asset loads
         run: |
           # This local tool must not load external resources: the CSP allows

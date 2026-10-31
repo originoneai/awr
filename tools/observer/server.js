@@ -117,22 +117,9 @@ function guardRequest(req) {
   return null;
 }
 
-// Static files with per-response CSP nonce.
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-  '.png': 'image/png',
-  '.webp': 'image/webp',
-  '.map': 'application/json; charset=utf-8',
-  '.txt': 'text/plain; charset=utf-8',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-};
+// sirv owns asset lookup, MIME handling and traversal containment. The only
+// custom serving path is the SPA index, whose nonce must change per response.
+const sirv = require('sirv');
 
 /** The built index.html carries these tokens; each response gets a fresh nonce. */
 const NONCE_ATTR_TOKEN = '__CSP_NONCE_ATTR__';
@@ -187,37 +174,39 @@ function serveIndex(res) {
       .split(NONCE_VALUE_TOKEN)
       .join(nonce);
     res.writeHead(200, {
-      'content-type': MIME['.html'],
+      'content-type': 'text/html; charset=utf-8',
       ...securityHeaders(nonce),
     });
     res.end(html);
   });
 }
 
+const serveAsset = sirv(DIST_DIR, {
+  etag: true,
+  extensions: [],
+  onNoMatch(_req, res) {
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('404');
+  },
+  setHeaders(res) {
+    const nonce = crypto.randomBytes(16).toString('base64');
+    for (const [name, value] of Object.entries(securityHeaders(nonce))) {
+      res.setHeader(name, value);
+    }
+  },
+});
+
 function serveStatic(req, res, pathname) {
-  const rel = pathname.replace(/^\/+/, '');
-  const file = path.join(DIST_DIR, rel);
-  // Prevent traversal: the resolved path must stay inside dist.
-  if (!file.startsWith(DIST_DIR + path.sep)) {
-    res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
-    res.end('forbidden');
+  let decoded;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch (_) {
+    res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('bad path');
     return;
   }
-  fs.readFile(file, (err, buf) => {
-    if (err) {
-      // SPA fallback: client-side routes have no asset extension.
-      if (!path.extname(rel)) return serveIndex(res);
-      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end('404');
-      return;
-    }
-    const nonce = crypto.randomBytes(16).toString('base64');
-    res.writeHead(200, {
-      'content-type': MIME[path.extname(file)] || 'application/octet-stream',
-      ...securityHeaders(nonce),
-    });
-    res.end(buf);
-  });
+  if (pathname === '/index.html' || !path.extname(decoded)) return serveIndex(res);
+  serveAsset(req, res);
 }
 
 /** Collect request bodies as Buffers and reject overflow (64 KiB). */

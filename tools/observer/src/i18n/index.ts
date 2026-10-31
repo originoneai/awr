@@ -1,4 +1,5 @@
 import i18n from 'i18next';
+import LanguageDetector from 'i18next-browser-languagedetector';
 import { initReactI18next } from 'react-i18next';
 import enUS from './en-US';
 import zhCN from './zh-CN';
@@ -11,10 +12,11 @@ export const resources = {
   'en-US': { translation: enUS },
 } as const;
 
-void i18n.use(initReactI18next).init({
+void i18n.use(LanguageDetector).use(initReactI18next).init({
   resources,
-  lng: 'zh-CN',
-  fallbackLng: 'en-US',
+  fallbackLng: 'zh-CN',
+  supportedLngs: SUPPORTED_LANGUAGES,
+  detection: { order: ['localStorage'], caches: ['localStorage'] },
   interpolation: { escapeValue: false },
   returnNull: false,
 });

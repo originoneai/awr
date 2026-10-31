@@ -13,15 +13,17 @@ const zhCN = {
     settings: '管理设置',
     account: '账户与连接',
     advanced: '高级工具',
+    agentConnect: '连接我的 Agent',
     groupMain: '观测',
     groupAdmin: '管理',
   },
   shell: {
-    scope: '示例组织',
-    searchPlaceholder: '搜索项目、工作项…',
+    scope: '全部授权范围',
+    searchPlaceholder: '搜索当前范围',
     notifications: '通知',
     language: '语言',
-    role: '观察者',
+    identity: '范围身份',
+    later: '此功能将在后续切片交付',
   },
   project: {
     settings: '项目设置',
@@ -67,6 +69,10 @@ const zhCN = {
       description: '以下内容来自读取失败前已确认的部分；失败原因：{{code}}。',
       confirmedAt: '确认于 {{time}}',
     },
+    listPending: {
+      title: '工作项列表将在后续切片交付',
+      description: '概览已返回工作项；当前仅展示实际覆盖计数，不将待交付列表宣称为空。',
+    },
     placeholder: {
       title: '该页面为占位',
       description: '此观测视图将在后续切片交付；当前不展示任何业务数据。',
@@ -75,6 +81,10 @@ const zhCN = {
   coverage: {
     summary: '范围 {{scope}} · 成功 {{succeeded}} · 失败 {{failed}} · 工作项 {{enumerated}}/{{total}}',
     totalUnknown: '未知',
+    scope: {
+      succeeded: '读取成功',
+      failed: '读取失败',
+    },
   },
   account: {
     title: '账户与连接',
@@ -84,7 +94,7 @@ const zhCN = {
     logout: '退出',
     logoutSubmit: '退出登录',
     connect: '连接我的 Agent',
-    connectSubmit: '发起连接',
+    connectSubmit: '连接我的 Agent',
     revoke: '撤销连接',
     revokeSubmit: '撤销全部连接',
     done: '操作完成',

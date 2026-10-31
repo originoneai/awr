@@ -5,10 +5,11 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Outlet, ScrollRestoration } from 'react-router';
 import { AppShell } from './components/AppShell';
+import { RevocationProvider } from './lib/revocation';
 import { ScopeProvider } from './lib/scope';
 import { themeConfig } from './theme';
 
-function antdLocale(language: string) {
+export function antdLocale(language: string) {
   return language === 'zh-CN' ? zhCN : enUS;
 }
 
@@ -31,12 +32,14 @@ export function RootLayout() {
       csp={{ nonce: typeof window !== 'undefined' ? window.__CSP_NONCE__ : undefined }}
     >
       <AntdApp>
-        <ScopeProvider>
-          <AppShell>
-            <Outlet />
-          </AppShell>
-          <ScrollRestoration />
-        </ScopeProvider>
+        <RevocationProvider>
+          <ScopeProvider>
+            <AppShell>
+              <Outlet />
+            </AppShell>
+            <ScrollRestoration />
+          </ScopeProvider>
+        </RevocationProvider>
       </AntdApp>
     </ConfigProvider>
   );

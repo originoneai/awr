@@ -1,8 +1,8 @@
 /**
  * Thin fetch wrapper for the /api/team/* bridge routes. The bridge answers
- * failures with HTTP 200 and an { ok:false, error:{code} } envelope; HTTP
- * 401/403 (or the auth envelope codes) mean identity or permission revocation
- * and must clear restricted content — see queries.ts.
+ * failures with HTTP 200 and an { ok:false, error:{code} } envelope. The
+ * envelope code is authoritative: local guard 403s are not session revocation;
+ * only the bridge auth codes (or an envelope-free 401/403) clear restricted data.
  */
 
 /** Envelope codes that revoke identity or permission (bridge vocabulary). */
@@ -38,18 +38,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   } catch (cause) {
     throw new ApiError('NetworkError', String(cause instanceof Error ? cause.message : cause));
   }
-  if (res.status === 401) throw new ApiError('Unauthenticated', 'Authentication required', 401);
-  if (res.status === 403) throw new ApiError('Forbidden', 'Access denied', 403);
-  if (!res.ok) {
-    throw new ApiError('HttpError', `HTTP ${res.status}`, res.status);
-  }
-  const payload = (await res.json()) as
+  const payload = (await res.json().catch(() => null)) as
     | ({ ok: true } & T)
-    | { ok: false; error?: { code?: string; message?: string } };
+    | { ok: false; error?: { code?: string; message?: string } }
+    | null;
   if (payload && typeof payload === 'object' && payload.ok === false) {
     const error = payload.error ?? {};
-    throw new ApiError(error.code || 'UnknownError', error.message || error.code || 'request failed');
+    throw new ApiError(
+      error.code || 'UnknownError',
+      error.message || error.code || 'request failed',
+      res.status,
+    );
   }
+  if (res.status === 401) throw new ApiError('Unauthenticated', 'Authentication required', 401);
+  if (res.status === 403) throw new ApiError('Forbidden', 'Access denied', 403);
+  if (!res.ok) throw new ApiError('HttpError', `HTTP ${res.status}`, res.status);
+  if (!payload) throw new ApiError('InvalidResponse', 'The bridge returned no JSON envelope', res.status);
   return payload as T;
 }
 

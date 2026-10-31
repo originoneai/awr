@@ -22,6 +22,7 @@ export const routes: RouteObject[] = [
       { path: 'activity', element: <PlaceholderPage pageKey="activity" /> },
       { path: 'settings', element: <PlaceholderPage pageKey="settings" /> },
       { path: 'account', element: <AccountPage /> },
+      { path: 'agent-connect', element: <PlaceholderPage pageKey="agentConnect" /> },
       { path: 'advanced', element: <PlaceholderPage pageKey="advanced" /> },
       { path: '*', element: <Navigate to="/workbench" replace /> },
     ],

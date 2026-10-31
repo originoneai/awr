@@ -1,33 +1,50 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { App, Button, Card, Input, Space, Typography } from 'antd';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { apiPost, ApiError } from '../lib/api';
-import { useScope } from '../lib/scope';
+import { useRevocation } from '../lib/revocation';
 
-/**
- * Account / connection entries — deliberately separate from every business
- * page. Entries only: sign in, sign out, connect my agent, revoke connection.
- */
+/** Account and connection entries stay separate from business observation pages. */
 export function AccountPage() {
   const { t } = useTranslation();
   const { message } = App.useApp();
-  const { projectKey } = useScope();
+  const queryClient = useQueryClient();
+  const { revoke, resume } = useRevocation();
   const [bearer, setBearer] = useState('');
-  const [pending, setPending] = useState<string | null>(null);
 
-  async function run(action: string, fn: () => Promise<unknown>) {
-    setPending(action);
-    try {
-      await fn();
-      message.success(t('account.done'));
-    } catch (error) {
-      message.error(
-        `${t('account.failed')}: ${error instanceof ApiError ? `${error.code} — ${error.message}` : String(error)}`,
-      );
-    } finally {
-      setPending(null);
-    }
+  function showError(error: unknown) {
+    message.error(
+      `${t('account.failed')}: ${error instanceof ApiError ? `${error.code} — ${error.message}` : String(error)}`,
+    );
   }
+
+  const login = useMutation({
+    mutationFn: () => apiPost('/api/team/login', { bearer }),
+    onSuccess: async () => {
+      setBearer('');
+      resume();
+      await queryClient.invalidateQueries();
+      message.success(t('account.done'));
+    },
+    onError: showError,
+  });
+  const logout = useMutation({
+    mutationFn: () => apiPost('/api/team/logout', {}),
+    onSuccess: () => {
+      revoke();
+      message.success(t('account.done'));
+    },
+    onError: showError,
+  });
+  const revokeConnections = useMutation({
+    mutationFn: () => apiPost('/api/team/session/revoke', {}),
+    onSuccess: () => {
+      revoke();
+      message.success(t('account.done'));
+    },
+    onError: showError,
+  });
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }} data-testid="page-account">
@@ -44,42 +61,28 @@ export function AccountPage() {
           />
           <Button
             type="primary"
-            loading={pending === 'login'}
-            onClick={() => run('login', () => apiPost('/api/team/login', { bearer }))}
+            loading={login.isPending}
+            onClick={() => login.mutate()}
           >
             {t('account.loginSubmit')}
           </Button>
         </Space.Compact>
       </Card>
       <Card title={t('account.logout')}>
-        <Button
-          loading={pending === 'logout'}
-          onClick={() => run('logout', () => apiPost('/api/team/logout', {}))}
-        >
+        <Button loading={logout.isPending} onClick={() => logout.mutate()}>
           {t('account.logoutSubmit')}
         </Button>
       </Card>
       <Card title={t('account.connect')}>
-        <Button
-          loading={pending === 'connect'}
-          onClick={() =>
-            run('connect', () =>
-              apiPost('/api/team/access', {
-                project: projectKey ?? 'demo',
-                operation: 'inspect',
-                payload: {},
-              }),
-            )
-          }
-        >
+        <Button type="primary" href="/agent-connect">
           {t('account.connectSubmit')}
         </Button>
       </Card>
       <Card title={t('account.revoke')}>
         <Button
           danger
-          loading={pending === 'revoke'}
-          onClick={() => run('revoke', () => apiPost('/api/team/session/revoke', {}))}
+          loading={revokeConnections.isPending}
+          onClick={() => revokeConnections.mutate()}
         >
           {t('account.revokeSubmit')}
         </Button>

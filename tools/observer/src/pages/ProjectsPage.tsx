@@ -2,14 +2,19 @@ import { useQuery } from '@tanstack/react-query';
 import { Card, List, Space, Tag, Typography } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
-import { ObservationEmpty } from '../components/states';
+import { ObservationEmpty, ObservationForbidden } from '../components/states';
+import { isAuthError } from '../lib/api';
 import { projectsQueryOptions } from '../lib/queries';
+import { useRevocation } from '../lib/revocation';
 
 /** Project list placeholder: the only real data so far is the projects read. */
 export function ProjectsPage() {
   const { t } = useTranslation();
-  const projects = useQuery(projectsQueryOptions());
+  const { revoked } = useRevocation();
+  const projects = useQuery(projectsQueryOptions(revoked));
   const items = projects.data?.projects ?? [];
+
+  if (revoked || isAuthError(projects.error)) return <ObservationForbidden />;
 
   return (
     <Card data-testid="page-projects">
