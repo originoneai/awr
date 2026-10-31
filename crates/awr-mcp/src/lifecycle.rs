@@ -33,6 +33,8 @@ struct Start {
     #[serde(default)]
     claim: bool,
     ttl_ms: Option<u64>,
+    #[serde(default)]
+    no_expiry: bool,
     branch: Option<String>,
 }
 #[derive(Deserialize)]
@@ -75,6 +77,8 @@ struct Claim {
     action: String,
     claim: Option<Id>,
     ttl_ms: Option<u64>,
+    #[serde(default)]
+    no_expiry: bool,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -88,12 +92,34 @@ struct Resume {
     #[serde(default)]
     claim: ResumeClaim,
     ttl_ms: Option<u64>,
+    #[serde(default)]
+    no_expiry: bool,
     budget: Option<usize>,
     source_sha: Option<String>,
     paths: Option<Vec<String>>,
     tags: Option<Vec<String>>,
     #[serde(default)]
     goals: Vec<String>,
+}
+
+/// The lifetime a request that may acquire a claim gets: its own, none when asked for, or the project's
+/// default. A request that acquires nothing keeps what it gave, so the operation judges it as it always did.
+fn requested_ttl(
+    root: &Path,
+    acquires: bool,
+    ttl_ms: Option<u64>,
+    no_expiry: bool,
+) -> Result<Option<u64>> {
+    if acquires {
+        awr_runtime::resolve_claim_ttl(
+            root,
+            awr_runtime::ClaimTtl::from_request(ttl_ms, no_expiry)?,
+        )
+    } else if no_expiry {
+        Err(Error::InvalidInput("no_expiry requires a claim".into()))
+    } else {
+        Ok(ttl_ms)
+    }
 }
 
 pub(crate) fn authorize(
@@ -246,6 +272,7 @@ pub(crate) fn call(root: &Path, name: &str, args: Value, client: &str) -> Result
             }
             drop(store);
             let (mut store, project) = write_project(root, args.expected_revision)?;
+            let claim_ttl_ms = requested_ttl(root, args.claim, args.ttl_ms, args.no_expiry)?;
             let branch = match args.branch {
                 Some(branch) => store.resolve_branch(project.id, &branch)?,
                 None => project.current_branch_id,
@@ -260,7 +287,7 @@ pub(crate) fn call(root: &Path, name: &str, args: Value, client: &str) -> Result
                     model: args.model,
                     branch_id: branch,
                     claim: args.claim,
-                    claim_ttl_ms: args.ttl_ms,
+                    claim_ttl_ms,
                 },
                 binding.clone(),
             )?;
@@ -311,16 +338,17 @@ pub(crate) fn call(root: &Path, name: &str, args: Value, client: &str) -> Result
             let (claim, event) =
                 match args.action.as_str() {
                     "acquire" if args.claim.is_none() => {
-                        runtime.acquire_claim(args.expected_revision, args.session, args.ttl_ms)?
+                        let ttl_ms = requested_ttl(root, true, args.ttl_ms, args.no_expiry)?;
+                        runtime.acquire_claim(args.expected_revision, args.session, ttl_ms)?
                     }
-                    "release" if args.ttl_ms.is_none() => runtime.release_claim(
+                    "release" if args.ttl_ms.is_none() && !args.no_expiry => runtime.release_claim(
                         args.expected_revision,
                         args.session,
                         args.claim
                             .ok_or_else(|| Error::InvalidInput("release requires claim".into()))?,
                     )?,
                     _ => return Err(Error::InvalidInput(
-                        "claim action requires acquire with optional ttl_ms, or release with claim"
+                        "claim action requires acquire with optional ttl_ms or no_expiry, or release with claim"
                             .into(),
                     )),
                 };
@@ -329,6 +357,12 @@ pub(crate) fn call(root: &Path, name: &str, args: Value, client: &str) -> Result
         "awr_session_resume" => {
             let args: Resume = parse_tool!(name, args);
             let (mut store, _) = write_project(root, args.expected_revision)?;
+            let claim_ttl_ms = requested_ttl(
+                root,
+                args.claim == ResumeClaim::Acquire,
+                args.ttl_ms,
+                args.no_expiry,
+            )?;
             let report = awr_runtime::resume_bound_session(
                 &mut store,
                 root,
@@ -339,7 +373,7 @@ pub(crate) fn call(root: &Path, name: &str, args: Value, client: &str) -> Result
                     provider: args.provider,
                     model: args.model,
                     claim: args.claim,
-                    claim_ttl_ms: args.ttl_ms,
+                    claim_ttl_ms,
                     expected_revision: args.expected_revision,
                     token_budget: args.budget.unwrap_or(5000),
                     paths: args.paths,

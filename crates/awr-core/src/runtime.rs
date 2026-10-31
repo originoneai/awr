@@ -99,6 +99,13 @@ pub struct SessionDraft {
     pub claim_ttl_ms: Option<u64>,
 }
 
+/// A project policy's request that recorded work extends the live claims of the session that did it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClaimRenewal {
+    /// A live claim runs to at least this long from the moment of the work; it is never shortened.
+    pub ttl_ms: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionStarted {
     pub session: Session,

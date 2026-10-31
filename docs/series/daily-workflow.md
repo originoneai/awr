@@ -67,6 +67,8 @@ AWR_SESSION=$(jq -er '.session.id' "$AWR_NOTES/start.json")
 ```
 
 The claim is runtime ownership; it does not rewrite the source work status.
+
+A project can declare a default claim lifetime and renewal in `.awr/policy.toml`; with it `--ttl-ms` can be left out, and `--no-expiry` asks for a claim without an expiry. See [claim policy](../dev/reference/claim-policy.md).
 If a session already exists for the work, inspect it with `session show` and
 confirm ownership — a different agent or model continues through
 `session resume` into its own session.

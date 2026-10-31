@@ -38,3 +38,5 @@ MCP 的 `tools/list` 使用同一字段定义生成 JSON Schema。JSON Schema �
 未知字段或错误值的诊断不会回显字段名称或内容。默认搜索和 Context 不读取事件正文；显式读取仍可取得原始正文。历史事件保持不可变，这项变更不修改既有记录。
 
 所有允许字段也受[秘密策略](secret-boundaries.md)约束。CLI/MCP 在解析结构前拒绝可识别的敏感输入，返回固定 `RuleViolation`；普通字段和类型错误返回不回显内容的 `InvalidInput`。组件合同统一验证字段、大小及秘密数据边界；这些检查不代表真实客户端验收或发布。
+
+项目策略要求续约时，`checkpoint.created` 与 `work.progressed`、`work.blocked`、`work.unblocked` 回执带有可选字段 `claim_renewal`（`ttl_ms`、`renewed`、`expired_claim_ids`），记录同一事务里延长或确认已过期的 claim；没有变化时不出现。字段含义见 [claim policy](claim-policy.md)。

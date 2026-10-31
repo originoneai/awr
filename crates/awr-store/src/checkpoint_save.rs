@@ -249,6 +249,18 @@ impl Store {
         expected: Revision,
         attempt: Id,
     ) -> Result<(Checkpoint, Event)> {
+        self.finish_checkpoint_save_renewing(project, expected, attempt, None)
+    }
+
+    /// As `finish_checkpoint_save`; when a policy asks for it, the live claims of the session are extended in the
+    /// same transaction and the receipt says so.
+    pub fn finish_checkpoint_save_renewing(
+        &mut self,
+        project: Id,
+        expected: Revision,
+        attempt: Id,
+        renewal: Option<ClaimRenewal>,
+    ) -> Result<(Checkpoint, Event)> {
         self.runtime_transaction_with_event(project,expected,EventDraft::new("checkpoint.created","Saved session checkpoint and observed delta"),|tx,_,event| {
             let started=tx.query_row("SELECT id,project_id,work_item_id,session_id,branch_id,event_type,importance,summary,payload_json,project_revision,created_at
                 FROM events WHERE project_id=?1 AND id=?2 AND event_type='checkpoint.started'",params![project.to_string(),attempt.to_string()],event_row).optional().map_err(db_error)?
@@ -272,6 +284,9 @@ impl Store {
             event.payload["actor"]=started.payload.get("actor").cloned().unwrap_or_else(||serde_json::json!({"agent_id":null,"origin":"not_recorded","identity_verified":false}));
             event.payload["attempt_id"]=serde_json::json!(attempt);
             event.payload["session_delta"]=serde_json::to_value(delta)?;
+            if let Some(renewal)=renewal {
+                crate::claim_renewal::renew_session_claims(tx,project,session,renewal,&mut event.payload)?;
+            }
             Ok(checkpoint)
         })
     }

@@ -1,10 +1,15 @@
 use crate::query::{QueryProject, WorkCommand, short};
 use awr_core::*;
-use awr_runtime::{BranchFilter, EventCursor, EventQuery, Runtime};
+use awr_runtime::{BranchFilter, ClaimTtl, EventCursor, EventQuery, Runtime, resolve_claim_ttl};
 use awr_store::Store;
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Value, json};
 use std::path::Path;
+
+/// The lifetime a claim request gets: its own, none when asked for, or the project's default.
+pub(crate) fn claim_ttl(root: &Path, ttl_ms: Option<u64>, no_expiry: bool) -> Result<Option<u64>> {
+    resolve_claim_ttl(root, ClaimTtl::from_request(ttl_ms, no_expiry)?)
+}
 
 #[derive(Debug, Args)]
 pub struct Selection {
@@ -60,8 +65,13 @@ pub enum SessionCommand {
         model: String,
         #[arg(long)]
         claim: bool,
+        /// Without it the claim lives for the project's default lifetime, when `.awr/policy.toml`
+        /// (or AWR_DEFAULT_CLAIM_TTL) declares one, and otherwise has no expiry.
         #[arg(long, requires = "claim")]
         ttl_ms: Option<u64>,
+        /// The claim has no expiry, whatever the project's default lifetime is.
+        #[arg(long, requires = "claim", conflicts_with = "ttl_ms")]
+        no_expiry: bool,
         /// Caller-supplied MCP namespace for `--conversation`: use `stdio` for local `awr-mcp`, or the registry client ID for shared HTTP. This does not authenticate the caller and is distinct from `client bind --client` hook dialects.
         #[arg(long, requires = "conversation")]
         client: Option<String>,
@@ -127,8 +137,13 @@ pub struct ClaimArgs {
     work: String,
     #[command(flatten)]
     selection: Selection,
+    /// Without it the claim lives for the project's default lifetime, when `.awr/policy.toml`
+    /// (or AWR_DEFAULT_CLAIM_TTL) declares one, and otherwise has no expiry.
     #[arg(long)]
     ttl_ms: Option<u64>,
+    /// The claim has no expiry, whatever the project's default lifetime is.
+    #[arg(long, conflicts_with = "ttl_ms")]
+    no_expiry: bool,
     #[arg(long)]
     expected_revision: Revision,
 }
@@ -303,10 +318,16 @@ pub fn run(root: &Path, command: &SessionCommand, json_output: bool) -> Result<(
             model,
             claim,
             ttl_ms,
+            no_expiry,
             client,
             conversation,
             expected_revision,
         } => {
+            let ttl_ms = if *claim {
+                claim_ttl(&db.project.root, *ttl_ms, *no_expiry)?
+            } else {
+                None
+            };
             let binding = match (client, conversation) {
                 (Some(client), Some(conversation)) => {
                     let binding = McpSessionBinding {
@@ -325,7 +346,7 @@ pub fn run(root: &Path, command: &SessionCommand, json_output: bool) -> Result<(
                 model: model.clone(),
                 branch_id: db.project.current_branch_id,
                 claim: *claim,
-                claim_ttl_ms: *ttl_ms,
+                claim_ttl_ms: ttl_ms,
             };
             // With a binding, reuse an existing conversation session exactly
             // like the MCP channel does, so both surfaces resolve the same
@@ -376,7 +397,7 @@ pub fn run(root: &Path, command: &SessionCommand, json_output: bool) -> Result<(
                     // unmet requested condition or steals a claim.
                     let (claim, revision) = if *claim {
                         let (claim, event) = Runtime::attach(&mut db.store, project)?
-                            .acquire_claim(*expected_revision, session.id, *ttl_ms)?;
+                            .acquire_claim(*expected_revision, session.id, ttl_ms)?;
                         (Some(claim), event.project_revision)
                     } else {
                         (None, db.project.project_revision)
@@ -630,10 +651,11 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
     match command {
         WorkCommand::Claim(args) => {
             let session = db.selected(&args.selection, Some(&args.work))?;
+            let ttl_ms = claim_ttl(&db.project.root, args.ttl_ms, args.no_expiry)?;
             let (claim, event) = Runtime::attach(&mut db.store, project)?.acquire_claim(
                 args.expected_revision,
                 session.id,
-                args.ttl_ms,
+                ttl_ms,
             )?;
             let mut value = db.metadata(event.project_revision);
             value["claim"] = json!(claim);

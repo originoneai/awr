@@ -2931,6 +2931,246 @@ async fn the_governance_instruction_is_the_action_view_of_work_prepare_over_mcp(
     );
 }
 
+const CLAIM_POLICY: &str =
+    "version = 1\n\n[claims]\ndefault_ttl = \"4h\"\nrenew_on_activity = true\n";
+
+/// `at` is about `from_now` milliseconds from now (the server took some time to answer).
+fn about(at: Option<i64>, from_now: i64) -> bool {
+    at.is_some_and(|at| (at - now_millis().unwrap() - from_now).abs() < 120_000)
+}
+
+fn claim_expiry(f: &Fixture, claim: &str) -> Option<i64> {
+    rusqlite::Connection::open(f.db())
+        .unwrap()
+        .query_row(
+            "SELECT expires_at FROM claims WHERE id=?1",
+            [claim],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_claim_started_over_mcp_gets_the_project_default_unless_it_names_a_lifetime_or_none() {
+    const HOUR: i64 = 3_600_000;
+    for (extra, expected) in [
+        (json!({}), Some(4 * HOUR)),
+        (json!({"ttl_ms":600_000}), Some(600_000)),
+        (json!({"no_expiry":true}), None),
+    ] {
+        let f = Fixture::new();
+        fs::write(f.root.join(".awr/policy.toml"), CLAIM_POLICY).unwrap();
+        let client = f.client().await;
+        let mut args = json!({"work":"W","conversation":"policy","agent":"worker","provider":"fixture","model":"test","expected_revision":f.rev(),"claim":true});
+        for (name, value) in extra.as_object().unwrap() {
+            args[name] = value.clone();
+        }
+        let started = success(call(&client, "awr_session_start", args).await);
+        let at = started["claim"]["expires_at"].as_i64();
+        match expected {
+            Some(from_now) => assert!(about(at, from_now), "{extra}: {started}"),
+            None => assert!(at.is_none(), "{extra}: {started}"),
+        }
+        client.cancel().await.unwrap();
+    }
+    // A lifetime and none at once is refused, and so is none without a claim.
+    let f = Fixture::new();
+    let client = f.client().await;
+    for extra in [
+        json!({"claim":true,"ttl_ms":600_000,"no_expiry":true}),
+        json!({"claim":false,"no_expiry":true}),
+    ] {
+        let mut args = json!({"work":"W","conversation":"policy","agent":"worker","provider":"fixture","model":"test","expected_revision":f.rev()});
+        for (name, value) in extra.as_object().unwrap() {
+            args[name] = value.clone();
+        }
+        error(
+            call(&client, "awr_session_start", args).await,
+            "InvalidInput",
+        );
+    }
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_claim_acquired_over_mcp_gets_the_default_and_none_when_asked_for() {
+    const HOUR: i64 = 3_600_000;
+    let f = Fixture::new();
+    fs::write(f.root.join(".awr/policy.toml"), CLAIM_POLICY).unwrap();
+    let client = f.client().await;
+    let started = success(
+        call(
+            &client,
+            "awr_session_start",
+            json!({"work":"W","conversation":"policy","agent":"worker","provider":"fixture","model":"test","expected_revision":f.rev()}),
+        )
+        .await,
+    );
+    let sid = started["session"]["id"].as_str().unwrap().to_string();
+    let acquired = success(
+        call(
+            &client,
+            "awr_session_claim",
+            json!({"session":sid,"expected_revision":f.rev(),"action":"acquire"}),
+        )
+        .await,
+    );
+    assert!(
+        about(acquired["claim"]["expires_at"].as_i64(), 4 * HOUR),
+        "{acquired}"
+    );
+    let claim = acquired["claim"]["id"].as_str().unwrap().to_string();
+    success(
+        call(
+            &client,
+            "awr_session_claim",
+            json!({"session":sid,"expected_revision":f.rev(),"action":"release","claim":claim}),
+        )
+        .await,
+    );
+    let unlimited = success(
+        call(
+            &client,
+            "awr_session_claim",
+            json!({"session":sid,"expected_revision":f.rev(),"action":"acquire","no_expiry":true}),
+        )
+        .await,
+    );
+    assert!(unlimited["claim"]["expires_at"].is_null(), "{unlimited}");
+    // Releasing with a lifetime named is not a request that means anything.
+    error(
+        call(
+            &client,
+            "awr_session_claim",
+            json!({"session":sid,"expected_revision":f.rev(),"action":"release","claim":unlimited["claim"]["id"],"no_expiry":true}),
+        )
+        .await,
+        "InvalidInput",
+    );
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_checkpoint_and_a_transition_over_mcp_extend_the_claim_in_their_own_revision() {
+    const HOUR: i64 = 3_600_000;
+    let f = Fixture::new();
+    fs::write(f.root.join(".awr/policy.toml"), CLAIM_POLICY).unwrap();
+    let started = f.session("W", true, None);
+    let sid = started.session.id;
+    let claim = started.claim.unwrap().id.to_string();
+    let client = f.client().await;
+    assert!(claim_expiry(&f, &claim).unwrap() < now_millis().unwrap() + HOUR);
+    let saved = success(
+        call(
+            &client,
+            "awr_session_checkpoint",
+            json!({"session":sid,"expected_revision":f.rev(),"agent":null,"context_hash":"a".repeat(64),"digest":"Progress so far","next_action":"Go on"}),
+        )
+        .await,
+    );
+    assert!(about(claim_expiry(&f, &claim), 4 * HOUR));
+    assert_eq!(saved["project_revision"], json!(f.rev()));
+    // Back to ten minutes; the transition extends it again, and its reply revision is the live one.
+    rusqlite::Connection::open(f.db())
+        .unwrap()
+        .execute(
+            "UPDATE claims SET expires_at=?1 WHERE id=?2",
+            rusqlite::params![now_millis().unwrap() + 600_000, claim],
+        )
+        .unwrap();
+    let mut transition = action(&f, sid, "progress");
+    transition["next_action"] = json!("Review the draft analysis");
+    transition["request_id"] = json!("policy-progress");
+    let changed = success(call(&client, "awr_work_transition", transition).await);
+    assert!(about(claim_expiry(&f, &claim), 4 * HOUR), "{changed}");
+    assert_eq!(changed["project_revision"], json!(f.rev()), "{changed}");
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_claim_acquired_by_resume_over_mcp_gets_the_default_and_an_inherited_one_keeps_its_expiry()
+ {
+    const HOUR: i64 = 3_600_000;
+    let f = Fixture::new();
+    fs::write(f.root.join(".awr/policy.toml"), CLAIM_POLICY).unwrap();
+    let client = f.client().await;
+    let identity = |session: &Value, conversation: &str, extra: Value| {
+        let mut args = json!({"session":session,"conversation":conversation,"agent":"worker","provider":"fixture","model":"test","expected_revision":f.rev()});
+        for (name, value) in extra.as_object().unwrap() {
+            args[name] = value.clone();
+        }
+        args
+    };
+    let started = success(
+        call(
+            &client,
+            "awr_session_start",
+            json!({"work":"W","conversation":"first","agent":"worker","provider":"fixture","model":"test","expected_revision":f.rev(),"claim":true,"ttl_ms":600_000}),
+        )
+        .await,
+    );
+    // Acquiring through resume is a new request for a claim: it gets the default lifetime.
+    let acquired = success(
+        call(
+            &client,
+            "awr_session_resume",
+            identity(
+                &started["session"]["id"],
+                "second",
+                json!({"claim":"acquire"}),
+            ),
+        )
+        .await,
+    );
+    assert!(
+        about(
+            acquired["resumed"]["claim"]["expires_at"].as_i64(),
+            4 * HOUR
+        ),
+        "{acquired}"
+    );
+    // ... or none when it asks for none.
+    let unlimited = success(
+        call(
+            &client,
+            "awr_session_resume",
+            identity(
+                &acquired["resumed"]["session"]["id"],
+                "third",
+                json!({"claim":"acquire","no_expiry":true}),
+            ),
+        )
+        .await,
+    );
+    assert!(
+        unlimited["resumed"]["claim"]["expires_at"].is_null(),
+        "{unlimited}"
+    );
+    // Inheriting keeps the expiry the claim has; the default is neither applied nor renewed on the way.
+    let held = now_millis().unwrap() + HOUR;
+    rusqlite::Connection::open(f.db())
+        .unwrap()
+        .execute(
+            "UPDATE claims SET expires_at=?1 WHERE id=?2",
+            rusqlite::params![held, unlimited["resumed"]["claim"]["id"].as_str().unwrap()],
+        )
+        .unwrap();
+    let inherited = success(
+        call(
+            &client,
+            "awr_session_resume",
+            identity(&unlimited["resumed"]["session"]["id"], "fourth", json!({})),
+        )
+        .await,
+    );
+    assert_eq!(
+        inherited["resumed"]["claim"]["expires_at"],
+        json!(held),
+        "{inherited}"
+    );
+    client.cancel().await.unwrap();
+}
+
 fn record_report(f: &Fixture, work: &str, criterion: &str, key: &str) -> Value {
     let report = json!({"version":1,"work_item":work,"source_sha":SHA,"command":"review the delivery","scope":[work],"verified_at":now_millis().unwrap(),"checks":[{"name":"review and delivery","passed":true,"details":"Reviewed the fixture delivery and receipt","criteria":[criterion]}]});
     let bytes = serde_json::to_vec(&report).unwrap();

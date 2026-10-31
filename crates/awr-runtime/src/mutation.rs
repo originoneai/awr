@@ -147,6 +147,17 @@ pub fn review_proposal(
     root: &Path,
     request: &ReviewProposalRequest,
 ) -> Result<ProposalReport> {
+    review_proposal_renewing(store, root, request, None)
+}
+
+/// As `review_proposal`; when a policy asks for it, applying a progress, block or unblock action extends the live
+/// claims of the session that made it in the revision of the action itself.
+pub fn review_proposal_renewing(
+    store: &mut Store,
+    root: &Path,
+    request: &ReviewProposalRequest,
+    renewal: Option<ClaimRenewal>,
+) -> Result<ProposalReport> {
     let root = root.canonicalize()?;
     let project = store.project_by_root(&root)?.id;
     require_revision(store, project, request.expected_revision)?;
@@ -159,6 +170,7 @@ pub fn review_proposal(
             &root,
             request,
             matches!(request.action, ReviewProposalAction::Recover),
+            renewal,
         );
     }
     let proposal = store.proposal(project, request.proposal_id)?;
