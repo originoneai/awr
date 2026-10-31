@@ -5,19 +5,29 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
 ## Added
 
 - One observation freshness and coverage contract for the Inspector Team reads (AWR-OBS-002): every
-  successful read (`POST /api/team/read`, `/api/team/inbox-detail`, `GET /api/team/inbox`,
-  `GET /api/team/work`) carries a `freshness` envelope that presents the report-received clock, the
-  authoritative measurement (project revision, source snapshot, coordinator epoch, query time) and
-  the page-read clock side by side, and an unmeasured or partial plane says so instead of borrowing
-  another clock's value. The generic read route and the coordination detail route now share one
-  attribution semantics: the response must belong to the requested work, workstream and scope, and a
-  read response that claims `execution_authorized` is refused. `GET /api/team/overview` composes
-  with a declared `coverage` (authorized scope enumeration, per-stream succeeded/failed, enumerated
-  versus server-reported totals, truncation with a resume cursor, per-part as-of): a capped
-  enumeration is declared truncated instead of counted as all, a non-auth part failure retains the
-  confirmed parts with their as-of, an auth/permission revocation clears the whole response, a
-  mixed-revision composition claims no common version, and a stalled scoped list is bounded and
-  reported as `ReadTimeout` rather than as empty data.
+  read (`POST /api/team/read`, `/api/team/inbox-detail`, `GET /api/team/inbox`, `GET /api/team/work`)
+  carries a `freshness` envelope that presents the report-received clock, the authoritative
+  measurement (project revision, source snapshot, coordinator epoch, query time) and the page-read
+  clock side by side. Each plane is exactly `measured`, `stale`, `failed` or `not_measured`, and one
+  state never substitutes for another: an unmeasured plane says so instead of borrowing another
+  clock's value, a stale plane is decided by the service's own declaration (`progress.stale` against
+  the declared `stale_after_ms`) or by a bound the bridge always reports next to the measurement
+  (`stale_after_ms` and `age_ms`), and a failed read keeps its clocks with the planes marked
+  `failed`. The pure ordering rule lives in `tools/inspector/observation-contract.js` (importable by
+  the bridge and the browser): an incoming authoritative measurement replaces the held one only for
+  the same source snapshot and coordinator epoch with a numerically higher or equal revision; a
+  lower revision never replaces; anything else is incomparable and says so. The generic read route
+  and the coordination detail route share one attribution semantics: the response must belong to
+  the requested work, workstream and scope, a read response that claims `execution_authorized` is
+  refused, and a single-object read whose query names an identity must echo it (`READ_ECHOES`) — a
+  response that omits the echo is refused rather than unattributable. `GET /api/team/overview`
+  composes with a declared `coverage` (authorized scope enumeration, per-stream succeeded/failed,
+  enumerated versus server-reported totals, truncation with a resume cursor, per-part as-of and the
+  bridge's own `read_at_unix_ms`): a capped enumeration is declared truncated instead of counted as
+  all, a non-auth part failure retains the confirmed pages with their as-of and resume cursor, an
+  auth/permission revocation clears the whole response, a mixed-revision composition claims no
+  common version, and the whole composition answers within one deadline with whatever is left
+  unread declared failed as `ReadTimeout` rather than as empty data.
 - Team evidence keeps the caller's claim and the recorded outcome of an execution apart. `evidence.submit` compares a
   claim bound to an execution with the Team's record of it (same work, scope, contract and input digest; a claim of
   success against a recorded failure or cancellation, or the reverse) and refuses a provable contradiction as

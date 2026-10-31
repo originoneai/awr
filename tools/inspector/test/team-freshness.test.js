@@ -15,7 +15,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 const path = require('path');
-const { createTeamBridge } = require('../team-bridge');
+const { createTeamBridge, readFreshness, readAttributionError } = require('../team-bridge');
+const { OBSERVATION_STALE_AFTER_MS } = require('../observation-contract');
 
 const FIXTURE_DIR = path.resolve(__dirname, 'fixtures');
 
@@ -48,8 +49,8 @@ function startMockUpstream(handler) {
   });
 }
 
-function startLiveBridge(teamUrl) {
-  const bridge = createTeamBridge({ teamUrl, teamFixtureDir: FIXTURE_DIR, port: 0 });
+function startLiveBridge(teamUrl, opts = {}) {
+  const bridge = createTeamBridge({ teamUrl, teamFixtureDir: FIXTURE_DIR, port: 0, ...opts });
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     const handler = bridge.routes[`${req.method} ${url.pathname}`];
@@ -97,7 +98,7 @@ test('read responses carry three distinct clocks and never substitute one for an
       ...ENVELOPE, workstream_id: 'stream',
       data: {
         work_id: 'WORK',
-        snapshot: { version: 1, project_revision: '20', source_snapshot_id: 'snap-1', coordinator_epoch: 'epoch-1', queried_at_unix_ms: 1234 },
+        snapshot: { version: 1, project_revision: '20', source_snapshot_id: 'snap-1', coordinator_epoch: 'epoch-1', queried_at_unix_ms: Date.now() },
         ...(report ? { observation: { progress: report } } : {}),
       },
     }));
@@ -111,7 +112,9 @@ test('read responses carry three distinct clocks and never substitute one for an
     const freshness = read.json.freshness;
     assert.deepEqual(freshness.report_received, { status: 'measured', at_unix_ms: 1000, project_revision: '19' });
     assert.equal(freshness.authoritative.status, 'measured');
-    assert.equal(freshness.authoritative.at_unix_ms, 1234);
+    assert.ok(freshness.authoritative.at_unix_ms >= started && freshness.authoritative.at_unix_ms <= Date.now());
+    // The bridge declares the staleness bound it applied next to the measurement.
+    assert.equal(freshness.authoritative.stale_after_ms, OBSERVATION_STALE_AFTER_MS);
     assert.equal(freshness.authoritative.project_revision, '20');
     assert.equal(freshness.authoritative.source_snapshot_id, 'snap-1');
     assert.equal(freshness.authoritative.coordinator_epoch, 'epoch-1');
@@ -227,7 +230,10 @@ test('overview declares authorized scope, per-part coverage and never counts a c
     const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
     assert.equal(overview.json.ok, true, JSON.stringify(overview.json));
     const coverage = overview.json.coverage;
-    assert.deepEqual(coverage.scope, { enumerated: 2, truncated: false, next_cursor: null });
+    assert.equal(coverage.scope.status, 'succeeded');
+    assert.equal(coverage.scope.enumerated, 2);
+    assert.equal(coverage.scope.truncated, false);
+    assert.equal(coverage.scope.next_cursor, null);
     assert.equal(coverage.succeeded, 2);
     assert.equal(coverage.failed, 0);
     assert.equal(coverage.truncated, false);
@@ -238,6 +244,9 @@ test('overview declares authorized scope, per-part coverage and never counts a c
     assert.equal(backend.works_enumerated, 2);
     assert.equal(backend.works_total, 5);
     assert.deepEqual(backend.as_of, { project_revision: '20', source_snapshot_id: 'snap-1', coordinator_epoch: 'epoch-1' });
+    // Every part carries the bridge's own read time next to its as-of.
+    assert.ok(Number.isFinite(backend.read_at_unix_ms));
+    assert.ok(Number.isFinite(coverage.scope.read_at_unix_ms));
     // Every part shares one revision here, so the composition may say so.
     assert.equal(overview.json.freshness.authoritative.status, 'measured');
     assert.equal(overview.json.freshness.authoritative.project_revision, '20');
@@ -368,8 +377,8 @@ test('a truncated authorized-scope enumeration is declared instead of silently n
       const page = q.cursor ? Number(q.cursor.slice(1)) : 0;
       r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: `stream-${page}` }], next_cursor: `c${page + 1}` } }));
     },
-    // Every enumerated stream reads as an empty list.
-    'work.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [], next_cursor: null } })),
+    // Every enumerated stream reads as an empty list with a reported total.
+    'work.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [], total: 0, next_cursor: null } })),
     'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
   });
   const bridge = await startLiveBridge(upstream.base);
@@ -380,6 +389,8 @@ test('a truncated authorized-scope enumeration is declared instead of silently n
     assert.equal(typeof overview.json.coverage.scope.next_cursor, 'string');
     assert.equal(overview.json.coverage.scope.enumerated, 100);
     assert.equal(overview.json.coverage.truncated, true);
+    // A truncated scope has no total even when every enumerated part reported one.
+    assert.equal(overview.json.coverage.works_total, null);
   } finally {
     await bridge.close();
     await upstream.close();
@@ -408,6 +419,7 @@ test('a stalled scoped list read is bounded and reported as a timeout, not as em
 
 test('work detail presents report, authoritative and page-read clocks side by side', async () => {
   const runtime = { state: 'in_progress', work_version: '7', last_fence: '3', recovery_blocked: false, selected_completion_id: null };
+  const observedAt = Date.now();
   let progress = { phase: 'delivered', summary: 'Implementation submitted', reported_at_unix_ms: 1000,
     reported_contract_hash: 'current', recorded_project_revision: '19', client_observed_at_unix_ms: null, provenance: 'caller_declared' };
   const upstream = await startMockUpstream((_request, response) => {
@@ -416,8 +428,8 @@ test('work detail presents report, authoritative and page-read clocks side by si
       work_id: 'WORK', contract_hash: 'current', runtime: { ...runtime }, context_complete: true,
       visible_contract: { acceptance: ['Check the result'], required_dependencies: [] },
       snapshot: { version: 1, consistency: 'repeatable_read', project_revision: '20', source_snapshot_id: 'snap-1',
-        coordinator_epoch: 'epoch-1', queried_at_unix_ms: 1234 },
-      observation: { work_id: 'WORK', contract_hash: 'current', observed_at_unix_ms: 1234, runtime: { ...runtime },
+        coordinator_epoch: 'epoch-1', queried_at_unix_ms: observedAt },
+      observation: { work_id: 'WORK', contract_hash: 'current', observed_at_unix_ms: observedAt, runtime: { ...runtime },
         session: { id: 'session', actor_name: 'Member', client_id: 'client' },
         ...(progress ? { progress } : {}),
         guidance: { code: 'inspect_delivery', action: { note: 'Inspect the current candidate' } }, pr_deliveries: [] },
@@ -431,7 +443,7 @@ test('work detail presents report, authoritative and page-read clocks side by si
     const freshness = detail.json.freshness;
     assert.deepEqual(freshness.report_received, { status: 'measured', at_unix_ms: 1000, project_revision: '19' });
     assert.equal(freshness.authoritative.status, 'measured');
-    assert.equal(freshness.authoritative.at_unix_ms, 1234);
+    assert.equal(freshness.authoritative.at_unix_ms, observedAt);
     assert.equal(freshness.authoritative.project_revision, '20');
     assert.ok(freshness.page_read.at_unix_ms >= started && freshness.page_read.at_unix_ms <= Date.now());
     progress = null;
@@ -439,6 +451,552 @@ test('work detail presents report, authoritative and page-read clocks side by si
     assert.equal(unmeasured.json.ok, true, JSON.stringify(unmeasured.json));
     assert.deepEqual(unmeasured.json.freshness.report_received, { status: 'not_measured' });
     assert.equal(unmeasured.json.freshness.authoritative.status, 'measured');
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+// --- Plane vocabulary: measured | stale | failed | not_measured, never substituted ---
+
+test('a report revision without a receipt time is measured but never backdated to the page clock', () => {
+  const freshness = readFreshness({
+    ...ENVELOPE,
+    data: { work_id: 'WORK', observation: { progress: { recorded_project_revision: '19' } } },
+  }, 5000);
+  assert.deepEqual(freshness.report_received, { status: 'measured', project_revision: '19' });
+  assert.deepEqual(freshness.page_read, { status: 'measured', at_unix_ms: 5000 });
+});
+
+test('a report receipt time without a revision is measured', () => {
+  const freshness = readFreshness({
+    ...ENVELOPE,
+    data: { work_id: 'WORK', observation: { progress: { reported_at_unix_ms: 1000 } } },
+  }, 5000);
+  assert.deepEqual(freshness.report_received, { status: 'measured', at_unix_ms: 1000 });
+});
+
+test('an empty progress record is not a measurement', () => {
+  const freshness = readFreshness({
+    ...ENVELOPE,
+    data: { work_id: 'WORK', observation: { progress: {} } },
+  }, 5000);
+  assert.deepEqual(freshness.report_received, { status: 'not_measured' });
+});
+
+test('a top-level progress record is measured the same as a nested one', () => {
+  const freshness = readFreshness({
+    ...ENVELOPE,
+    data: { work_id: 'WORK', progress: { reported_at_unix_ms: 1000, recorded_project_revision: '19' } },
+  }, 5000);
+  assert.deepEqual(freshness.report_received, { status: 'measured', at_unix_ms: 1000, project_revision: '19' });
+});
+
+test('an authoritative measurement without a query time never borrows the page clock', () => {
+  const freshness = readFreshness({ ...ENVELOPE, data: { work_id: 'WORK' } }, 5000);
+  assert.deepEqual(freshness.authoritative, {
+    status: 'measured',
+    project_revision: '20',
+    source_snapshot_id: 'snap-1',
+    coordinator_epoch: 'epoch-1',
+    stale_after_ms: OBSERVATION_STALE_AFTER_MS,
+  });
+});
+
+test('the authoritative query time falls back to the observation time, never to the page clock', () => {
+  const topLevel = readFreshness({ ...ENVELOPE, data: { work_id: 'WORK', observed_at_unix_ms: 1234 } }, 5000);
+  assert.equal(topLevel.authoritative.at_unix_ms, 1234);
+  assert.equal(topLevel.authoritative.age_ms, 3766);
+  const nested = readFreshness({
+    ...ENVELOPE,
+    data: { work_id: 'WORK', observation: { observed_at_unix_ms: 1234 } },
+  }, 5000);
+  assert.equal(nested.authoritative.at_unix_ms, 1234);
+});
+
+test('a non-numeric envelope revision is not a measurement', () => {
+  const freshness = readFreshness({ ...ENVELOPE, project_revision: 'rev-20', data: { work_id: 'WORK' } }, 5000);
+  assert.deepEqual(freshness.authoritative, { status: 'not_measured' });
+});
+
+test('an incomplete envelope is not_measured, never a partial measurement', () => {
+  const noEpoch = { ...ENVELOPE, data: { work_id: 'WORK' } };
+  delete noEpoch.coordinator_epoch;
+  assert.deepEqual(readFreshness(noEpoch, 5000).authoritative, { status: 'not_measured' });
+  const noSource = { ...ENVELOPE, data: { work_id: 'WORK' } };
+  delete noSource.source_snapshot_id;
+  assert.deepEqual(readFreshness(noSource, 5000).authoritative, { status: 'not_measured' });
+});
+
+test('a service-declared stale report reads stale and surfaces its ordering basis and bound', () => {
+  const freshness = readFreshness({
+    ...ENVELOPE,
+    data: {
+      work_id: 'WORK',
+      reporting: { stale_after_ms: 900000 },
+      observation: {
+        progress: {
+          reported_at_unix_ms: 1000, recorded_project_revision: '19',
+          stale: true, report_order_basis: 'recorded_project_revision',
+        },
+      },
+    },
+  }, 5000);
+  assert.deepEqual(freshness.report_received, {
+    status: 'stale',
+    at_unix_ms: 1000,
+    project_revision: '19',
+    report_order_basis: 'recorded_project_revision',
+    stale_after_ms: 900000,
+    age_ms: 4000,
+  });
+});
+
+test('a report older than the service-declared bound reads stale with the bound and age reported', () => {
+  const freshness = readFreshness({
+    ...ENVELOPE,
+    data: {
+      work_id: 'WORK',
+      reporting: { stale_after_ms: 100 },
+      observation: { progress: { reported_at_unix_ms: 1000, recorded_project_revision: '19' } },
+    },
+  }, 5000);
+  assert.equal(freshness.report_received.status, 'stale');
+  assert.equal(freshness.report_received.stale_after_ms, 100);
+  assert.equal(freshness.report_received.age_ms, 4000);
+});
+
+test('an authoritative measurement older than its bound reads stale; a fresh one stays measured', () => {
+  const declared = readFreshness({
+    ...ENVELOPE,
+    data: {
+      work_id: 'WORK',
+      reporting: { stale_after_ms: 100 },
+      snapshot: { version: 1, queried_at_unix_ms: 1000 },
+    },
+  }, 5000);
+  assert.equal(declared.authoritative.status, 'stale');
+  assert.equal(declared.authoritative.stale_after_ms, 100);
+  assert.equal(declared.authoritative.age_ms, 4000);
+  // With no service declaration the bridge applies and reports its own bound.
+  const fallbackStale = readFreshness({
+    ...ENVELOPE,
+    data: { work_id: 'WORK', snapshot: { version: 1, queried_at_unix_ms: 5000 - OBSERVATION_STALE_AFTER_MS - 1 } },
+  }, 5000);
+  assert.equal(fallbackStale.authoritative.status, 'stale');
+  assert.equal(fallbackStale.authoritative.stale_after_ms, OBSERVATION_STALE_AFTER_MS);
+  const fallbackFresh = readFreshness({
+    ...ENVELOPE,
+    data: { work_id: 'WORK', snapshot: { version: 1, queried_at_unix_ms: 4999 } },
+  }, 5000);
+  assert.equal(fallbackFresh.authoritative.status, 'measured');
+  assert.equal(fallbackFresh.authoritative.age_ms, 1);
+});
+
+// --- Failed reads keep the clocks instead of dropping them ---
+
+test('a failed read reports its planes as failed with the error code and keeps the page clock', async () => {
+  const upstream = await startMockUpstream((_request, response) => {
+    response.writeHead(500);
+    response.end(JSON.stringify({ code: 'DatabaseUnavailable', message: 'synthetic storage failure' }));
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const started = Date.now();
+    const read = await req(bridge.base, 'POST', '/api/team/read', {
+      body: { project: 'demo', query: { protocol_version: 1, op: 'work.snapshot', work_id: 'WORK', workstream_id: 'stream' } },
+    });
+    assert.equal(read.json.ok, false);
+    assert.equal(read.json.error.code, 'DatabaseUnavailable');
+    assert.deepEqual(read.json.freshness.report_received, { status: 'failed', error_code: 'DatabaseUnavailable' });
+    assert.deepEqual(read.json.freshness.authoritative, { status: 'failed', error_code: 'DatabaseUnavailable' });
+    assert.equal(read.json.freshness.page_read.status, 'measured');
+    assert.ok(read.json.freshness.page_read.at_unix_ms >= started && read.json.freshness.page_read.at_unix_ms <= Date.now());
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('a failed work detail read reports its planes as failed instead of dropping the clocks', async () => {
+  const upstream = await startMockUpstream((_request, response) => {
+    response.writeHead(500);
+    response.end(JSON.stringify({ code: 'DatabaseUnavailable', message: 'synthetic storage failure' }));
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const detail = await req(bridge.base, 'GET', '/api/team/work?project=demo&work=WORK&workstream=stream');
+    assert.equal(detail.json.ok, false);
+    assert.equal(detail.json.error.code, 'DatabaseUnavailable');
+    assert.deepEqual(detail.json.freshness.report_received, { status: 'failed', error_code: 'DatabaseUnavailable' });
+    assert.deepEqual(detail.json.freshness.authoritative, { status: 'failed', error_code: 'DatabaseUnavailable' });
+    assert.equal(detail.json.freshness.page_read.status, 'measured');
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+// --- Attribution: single-object reads must echo the requested identity ---
+
+test('the echo registry refuses an omitted identity per single-object op class', () => {
+  for (const op of ['work.prepare', 'work.snapshot', 'work.observe', 'delivery.inspect',
+    'delivery.neutral.inspect', 'delivery.submission.describe', 'delivery.neutral.outcome',
+    'delivery.source.status']) {
+    const query = { protocol_version: 1, op, work_id: 'WORK' };
+    assert.equal(readAttributionError(query, { ...ENVELOPE, data: {} }).code, 'BadGateway', `${op} omitted`);
+    assert.equal(readAttributionError(query, { ...ENVELOPE, data: { work_id: 'WORK' } }), null, `${op} echoed`);
+    assert.equal(readAttributionError(query, { ...ENVELOPE, data: { work_id: 'OTHER' } }).code, 'BadGateway', `${op} mismatched`);
+  }
+  // review.inspect echoes the work and the round inside the review object.
+  const reviewQuery = { protocol_version: 1, op: 'review.inspect', work_id: 'WORK', review_round_id: 'round-1' };
+  assert.equal(readAttributionError(reviewQuery, { ...ENVELOPE, data: { work_id: 'WORK', review: { round_id: 'round-1' } } }).code, 'BadGateway', 'review work omitted');
+  assert.equal(readAttributionError(reviewQuery, { ...ENVELOPE, data: { work_id: 'WORK', review: { work_id: 'WORK' } } }).code, 'BadGateway', 'review round omitted');
+  assert.equal(readAttributionError(reviewQuery, { ...ENVELOPE, data: { review: { work_id: 'WORK', round_id: 'round-1' } } }), null, 'review echoed');
+  // delivery.integration.inspect echoes the request as integration_id.
+  const integrationQuery = { protocol_version: 1, op: 'delivery.integration.inspect', work_id: 'WORK', request_id: 'request-1' };
+  assert.equal(readAttributionError(integrationQuery, { ...ENVELOPE, data: { work_id: 'WORK' } }).code, 'BadGateway', 'integration omitted');
+  assert.equal(readAttributionError(integrationQuery, { ...ENVELOPE, data: { work_id: 'WORK', integration_id: 'request-1' } }), null, 'integration echoed');
+  // A list read names no object: omission is acceptable.
+  assert.equal(readAttributionError(
+    { protocol_version: 1, op: 'work.list', workstream_id: 'stream' },
+    { ...ENVELOPE, workstream_id: 'stream', data: { items: [] } }
+  ), null, 'list read');
+  // work.admission and work.recovery carry no upstream object echo today and
+  // stay attributable only by their request binding (registry-exempt).
+  assert.equal(readAttributionError(
+    { protocol_version: 1, op: 'work.recovery', work_id: 'WORK' },
+    { ...ENVELOPE, data: { items: [] } }
+  ), null, 'echo-exempt op');
+});
+
+test('the generic read refuses single-object responses that omit the requested identity', async () => {
+  let result;
+  const upstream = await startMockUpstream((_request, response) => response.end(JSON.stringify(result)));
+  const bridge = await startLiveBridge(upstream.base);
+  const query = { protocol_version: 1, op: 'work.snapshot', work_id: 'WORK', workstream_id: 'stream' };
+  try {
+    result = { ...ENVELOPE, workstream_id: 'stream', data: {} };
+    const omitted = await req(bridge.base, 'POST', '/api/team/read', { body: { project: 'demo', query } });
+    assert.equal(omitted.json.error.code, 'BadGateway');
+    result = { ...ENVELOPE, workstream_id: 'stream', data: { work_id: 'WORK' } };
+    const echoed = await req(bridge.base, 'POST', '/api/team/read', { body: { project: 'demo', query } });
+    assert.equal(echoed.json.ok, true, JSON.stringify(echoed.json));
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('the coordination detail pins its workstream even when the response omits it', async () => {
+  let result;
+  const upstream = await startMockUpstream((_request, response) => response.end(JSON.stringify(result)));
+  const bridge = await startLiveBridge(upstream.base);
+  const query = { protocol_version: 1, op: 'work.prepare', work_id: 'WORK', workstream_id: 'stream' };
+  try {
+    // The generic read accepts an unattributed-workstream response (nothing to
+    // compare); the coordination detail always selects one and must refuse it.
+    result = { ...ENVELOPE, data: { work_id: 'WORK' } };
+    const viaRead = await req(bridge.base, 'POST', '/api/team/read', { body: { project: 'demo', query } });
+    assert.equal(viaRead.json.ok, true, JSON.stringify(viaRead.json));
+    const viaDetail = await req(bridge.base, 'POST', '/api/team/inbox-detail', { body: { project: 'demo', query } });
+    assert.equal(viaDetail.json.error.code, 'BadGateway');
+    result = { ...ENVELOPE, workstream_id: 'other-stream', data: { work_id: 'WORK' } };
+    const mismatched = await req(bridge.base, 'POST', '/api/team/inbox-detail', { body: { project: 'demo', query } });
+    assert.equal(mismatched.json.error.code, 'BadGateway');
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('a non-numeric envelope revision is refused before attribution', async () => {
+  const result = { ...ENVELOPE, project_revision: 'rev-20', workstream_id: 'stream', data: { work_id: 'WORK' } };
+  const upstream = await startMockUpstream((_request, response) => response.end(JSON.stringify(result)));
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const read = await req(bridge.base, 'POST', '/api/team/read', {
+      body: { project: 'demo', query: { protocol_version: 1, op: 'work.snapshot', work_id: 'WORK', workstream_id: 'stream' } },
+    });
+    assert.equal(read.json.error.code, 'BadGateway');
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+// --- Auth revocation clears, for every auth failure code ---
+
+test('an Unauthenticated reply mid-composition clears everything', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }, { id: 'frontend' }], next_cursor: null } })),
+    'work.list:backend': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'api-1' }], total: 3, next_cursor: null } })),
+    'work.list:frontend': (_q, r) => { r.writeHead(401); r.end(JSON.stringify({})); },
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    assert.equal(overview.json.ok, false);
+    assert.equal(overview.json.error.code, 'Unauthenticated');
+    assert.equal(overview.json.works, undefined);
+    assert.equal(overview.json.coverage, undefined);
+    assert.deepEqual(overview.json.freshness.authoritative, { status: 'failed', error_code: 'Unauthenticated' });
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('a SessionExpired reply mid-composition clears everything', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }, { id: 'frontend' }], next_cursor: null } })),
+    'work.list:backend': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'api-1' }], total: 3, next_cursor: null } })),
+    'work.list:frontend': (_q, r) => { r.writeHead(401); r.end(JSON.stringify({ code: 'SessionExpired' })); },
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    assert.equal(overview.json.ok, false);
+    assert.equal(overview.json.error.code, 'SessionExpired');
+    assert.equal(overview.json.works, undefined);
+    assert.equal(overview.json.coverage, undefined);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+// --- Paging as-of and totals ---
+
+test('pages of one stream that mix revisions claim no as-of but keep their works', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }], next_cursor: null } })),
+    'work.list:backend': (q, r) => r.end(JSON.stringify(q.cursor
+      ? { ...ENVELOPE, project_revision: '21', data: { items: [{ work_id: 'api-2' }], total: 2, next_cursor: null } }
+      : { ...ENVELOPE, data: { items: [{ work_id: 'api-1' }], total: 2, next_cursor: 'b2' } })),
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    assert.equal(overview.json.ok, true, JSON.stringify(overview.json));
+    const backend = overview.json.coverage.streams.find((s) => s.workstream_id === 'backend');
+    assert.equal(backend.status, 'succeeded');
+    assert.equal(backend.works_enumerated, 2);
+    assert.equal(backend.as_of, null);
+    // The composition cannot claim one revision from mixed pages.
+    assert.equal(overview.json.freshness.authoritative.status, 'not_measured');
+    assert.deepEqual(overview.json.works.map((w) => w.key), ['api-1', 'api-2']);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('a page with an incomplete envelope triple claims no as-of', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }], next_cursor: null } })),
+    'work.list:backend': (q, r) => {
+      if (!q.cursor) {
+        r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'api-1' }], next_cursor: 'b2' } }));
+        return;
+      }
+      const incomplete = { ...ENVELOPE, data: { items: [{ work_id: 'api-2' }], next_cursor: null } };
+      delete incomplete.coordinator_epoch;
+      r.end(JSON.stringify(incomplete));
+    },
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    assert.equal(overview.json.ok, true, JSON.stringify(overview.json));
+    const backend = overview.json.coverage.streams.find((s) => s.workstream_id === 'backend');
+    assert.equal(backend.status, 'succeeded');
+    assert.equal(backend.as_of, null);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('a truncated stream with mixed page revisions declares truncation and no as-of', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }], next_cursor: null } })),
+    'work.list:backend': (q, r) => {
+      const page = q.cursor ? Number(q.cursor.slice(1)) : 0;
+      r.end(JSON.stringify({
+        ...ENVELOPE, project_revision: page % 2 ? '21' : '20',
+        data: { items: [{ work_id: `api-${page}` }], total: 150, next_cursor: `c${page + 1}` },
+      }));
+    },
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    assert.equal(overview.json.ok, true, JSON.stringify(overview.json));
+    const backend = overview.json.coverage.streams.find((s) => s.workstream_id === 'backend');
+    assert.equal(backend.truncated, true);
+    assert.equal(backend.works_enumerated, 100);
+    assert.equal(backend.as_of, null);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('a negative page total is not a total', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }, { id: 'frontend' }], next_cursor: null } })),
+    'work.list:backend': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'api-1' }], total: -3, next_cursor: null } })),
+    'work.list:frontend': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'ui-1' }], next_cursor: null } })),
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    assert.equal(overview.json.ok, true, JSON.stringify(overview.json));
+    const backend = overview.json.coverage.streams.find((s) => s.workstream_id === 'backend');
+    assert.equal(backend.works_total, null);
+    // One part without a total (and one with an invalid one) means no composition total.
+    assert.equal(overview.json.coverage.works_total, null);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('a composition with a part that reported no total has no total', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }, { id: 'frontend' }], next_cursor: null } })),
+    'work.list:backend': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'api-1' }], total: 5, next_cursor: null } })),
+    'work.list:frontend': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'ui-1' }], next_cursor: null } })),
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    assert.equal(overview.json.ok, true, JSON.stringify(overview.json));
+    assert.equal(overview.json.coverage.works_total, null);
+    assert.equal(overview.json.coverage.works_enumerated, 2);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+// --- Partial failure keeps the confirmed pages (AWR-OBS-002 acceptance 3) ---
+
+test('a mid-stream page failure retains the confirmed pages with their as-of, resume cursor and read time', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }, { id: 'frontend' }], next_cursor: null } })),
+    'work.list:backend': (q, r) => {
+      if (!q.cursor) {
+        r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'api-1' }], total: 3, next_cursor: 'b2' } }));
+        return;
+      }
+      r.writeHead(500);
+      r.end(JSON.stringify({ code: 'DatabaseUnavailable', message: 'synthetic storage failure' }));
+    },
+    'work.list:frontend': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'ui-1' }], total: 1, next_cursor: null } })),
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    assert.equal(overview.json.ok, true, JSON.stringify(overview.json));
+    // The confirmed first page is retained, not dropped with the failed part.
+    assert.deepEqual(overview.json.works.map((w) => w.key), ['api-1', 'ui-1']);
+    const backend = overview.json.coverage.streams.find((s) => s.workstream_id === 'backend');
+    assert.equal(backend.status, 'failed');
+    assert.equal(backend.error_code, 'DatabaseUnavailable');
+    assert.equal(backend.works_enumerated, 1);
+    assert.equal(backend.works_total, 3);
+    assert.deepEqual(backend.as_of, { project_revision: '20', source_snapshot_id: 'snap-1', coordinator_epoch: 'epoch-1' });
+    assert.equal(backend.next_cursor, 'b2');
+    assert.ok(Number.isFinite(backend.read_at_unix_ms));
+    assert.equal(overview.json.coverage.failed, 1);
+    assert.equal(overview.json.coverage.works_total, null);
+    assert.equal(overview.json.coverage.works_enumerated, 2);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('an auth failure on a later page clears everything instead of retaining the confirmed pages', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }], next_cursor: null } })),
+    'work.list:backend': (q, r) => {
+      if (!q.cursor) {
+        r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'api-1' }], next_cursor: 'b2' } }));
+        return;
+      }
+      r.writeHead(403);
+      r.end(JSON.stringify({ code: 'Forbidden', message: 'grant revoked' }));
+    },
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    assert.equal(overview.json.ok, false);
+    assert.equal(overview.json.error.code, 'Forbidden');
+    assert.equal(overview.json.works, undefined);
+    assert.equal(overview.json.coverage, undefined);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+// --- One deadline bounds the whole composition ---
+
+test('two stalled streams are bounded by one composition deadline, not by two page timeouts', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'stalled-a' }, { id: 'stalled-b' }], next_cursor: null } })),
+    'work.list:stalled-a': () => {}, // never answers
+    'work.list:stalled-b': () => {}, // never answers
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base, { readTimeoutMs: 800, overviewDeadlineMs: 1000 });
+  try {
+    const started = Date.now();
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 1600, `elapsed ${elapsed}ms must stay under two page timeouts`);
+    assert.equal(overview.json.ok, false);
+    assert.equal(overview.json.error.code, 'ReadTimeout');
+    assert.equal(overview.json.works, undefined);
+    assert.deepEqual(overview.json.freshness.authoritative, { status: 'failed', error_code: 'ReadTimeout' });
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('a stalled stream is declared failed while healthy streams are still read within the deadline', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'stalled' }, { id: 'healthy' }], next_cursor: null } })),
+    'work.list:stalled': () => {}, // never answers
+    'work.list:healthy': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'ui-1' }], total: 1, next_cursor: null } })),
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base, { readTimeoutMs: 800, overviewDeadlineMs: 5000 });
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    assert.equal(overview.json.ok, true, JSON.stringify(overview.json));
+    const stalled = overview.json.coverage.streams.find((s) => s.workstream_id === 'stalled');
+    assert.equal(stalled.status, 'failed');
+    assert.equal(stalled.error_code, 'ReadTimeout');
+    assert.equal(stalled.works_enumerated, 0);
+    assert.ok(Number.isFinite(stalled.read_at_unix_ms));
+    const healthy = overview.json.coverage.streams.find((s) => s.workstream_id === 'healthy');
+    assert.equal(healthy.status, 'succeeded');
+    assert.deepEqual(overview.json.works.map((w) => w.key), ['ui-1']);
   } finally {
     await bridge.close();
     await upstream.close();

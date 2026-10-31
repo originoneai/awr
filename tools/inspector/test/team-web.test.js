@@ -925,8 +925,11 @@ for (const code of ['Forbidden', 'Unauthenticated', 'CursorExpired', 'SourceChan
     const bridge = await startLiveBridge(upstream.base);
     try {
       const result = await req(bridge.base, 'GET', '/api/team/inbox?project=demo&cursor=old');
-      assert.deepEqual(result.json, { ok: false, error: { code, message: 'Current read refused' } });
+      assert.equal(result.json.ok, false);
+      assert.deepEqual(result.json.error, { code, message: 'Current read refused' });
       assert.equal(result.json.result, undefined);
+      // The failed read keeps its clocks: the planes say failed with the code.
+      assert.deepEqual(result.json.freshness.authoritative, { status: 'failed', error_code: code });
     } finally { await bridge.close(); await upstream.close(); }
   });
 }
@@ -975,8 +978,11 @@ for (const op of ['work.prepare', 'work.observe', 'work.recovery', 'review.inspe
   'delivery.neutral.inspect', 'delivery.integration.inspect', 'delivery.source.status']) {
   test(`coordination detail forwards the exact ${op} selector as an authorized read`, async () => {
     const calls = [], query = coordinationItem(op).next_query;
+    // Single-object responses echo the requested identity, as the service does.
     const result = { protocol_version: 1, scope_id: 'main', project_revision: '20', source_snapshot_id: 'source',
-      coordinator_epoch: 'epoch', workstream_id: 'stream', data: { work_id: 'WORK', execution_authorized: false } };
+      coordinator_epoch: 'epoch', workstream_id: 'stream', data: { work_id: 'WORK', execution_authorized: false,
+        ...(op === 'review.inspect' ? { review: { work_id: 'WORK', round_id: query.review_round_id } } : {}),
+        ...(op === 'delivery.integration.inspect' ? { integration_id: query.request_id } : {}) } };
     const upstream = await startMockUpstream((request, response) => {
       const chunks = []; request.on('data', c => chunks.push(c)); request.on('end', () => {
         calls.push({ path: request.url, query: JSON.parse(Buffer.concat(chunks).toString()) }); response.end(JSON.stringify(result));
