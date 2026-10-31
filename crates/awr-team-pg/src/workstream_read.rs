@@ -20,7 +20,7 @@ mod inbox;
 mod navigation;
 mod observation;
 
-const QUERIES: &[&str] = &[
+pub(crate) const QUERIES: &[&str] = &[
     "capabilities",
     "workstreams.list",
     "work.list",
@@ -1244,6 +1244,7 @@ pub(crate) async fn read(
                 "non_repudiation": "not_claimed_against_db_owner"
             }
         });
+        caps["semantic_layers"] = crate::semantic_layers::report();
         caps["work_inbox"] = json!({"version":1,"query":"work.inbox","basis":"current_persistent_facts",
             "deduplication":"semantic_item_key","handled_items":"disappear_on_refresh",
             "pagination":"last_evaluated_visible_work","max_basis_items":3,

@@ -100,3 +100,7 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   agent or an observed environment change. An open gap puts in question only the admission or
   containment judgments that read its layer, on that work; it keeps every failure on record, opens
   no task and holds no unrelated work. See [gaps](../reference/gaps.md).
+- The capabilities of the Team workstream protocol say, for each of the five result layers (work readiness,
+  execution admission, context completeness, delivery observation, completion validity), which Team operations carry
+  it and which entries of the personal CLI and MCP server have no Team operation, with the reason; the report is checked
+  against the protocol's own operation lists. Asking for such an entry is still refused as `Unsupported`.
