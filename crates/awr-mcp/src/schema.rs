@@ -585,12 +585,13 @@ fn lifecycle_tools() -> Vec<Tool> {
         value
     };
     let ttl = optional(json!({"type":"integer","minimum":1}));
+    let no_expiry = json!({"type":"boolean","default":false});
     vec![
         tool(
             "awr_session_start",
-            "Atomically bind this client's conversation to work; optionally claim. Identical bindings reuse the session. Inspect current claims/status.",
+            "Atomically bind this client's conversation to work; optionally claim (without ttl_ms the project's default lifetime applies, or none; no_expiry asks for none). Identical bindings reuse the session. Inspect current claims/status.",
             object(
-                json!({"work":text(),"conversation":text(),"agent":text(),"provider":text(),"model":text(),"expected_revision":revision(),"claim":{"type":"boolean","default":false},"ttl_ms":ttl,"branch":branch()}),
+                json!({"work":text(),"conversation":text(),"agent":text(),"provider":text(),"model":text(),"expected_revision":revision(),"claim":{"type":"boolean","default":false},"ttl_ms":ttl,"no_expiry":no_expiry,"branch":branch()}),
                 &[
                     "work",
                     "conversation",
@@ -644,7 +645,7 @@ fn lifecycle_tools() -> Vec<Tool> {
             "awr_session_resume",
             "Resume a predecessor into a bound conversation: refresh context, inherit checkpoint and transfer/acquire claims through resume gates.",
             object(
-                json!({"session":text(),"conversation":text(),"agent":text(),"provider":text(),"model":text(),"expected_revision":revision(),"claim":{"type":"string","enum":["inherit","acquire","none"],"default":"inherit"},"ttl_ms":ttl,"budget":{"type":["integer","null"],"minimum":1,"maximum":100000},"paths":optional(strings()),"tags":optional(strings()),"goals":strings(),"source_sha":optional(text())}),
+                json!({"session":text(),"conversation":text(),"agent":text(),"provider":text(),"model":text(),"expected_revision":revision(),"claim":{"type":"string","enum":["inherit","acquire","none"],"default":"inherit"},"ttl_ms":ttl,"no_expiry":no_expiry,"budget":{"type":["integer","null"],"minimum":1,"maximum":100000},"paths":optional(strings()),"tags":optional(strings()),"goals":strings(),"source_sha":optional(text())}),
                 &[
                     "session",
                     "conversation",
@@ -659,9 +660,9 @@ fn lifecycle_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_session_claim",
-            "Acquire a work claim with optional TTL, or release an explicitly identified claim owned by the session.",
+            "Acquire a work claim (without ttl_ms the project's default lifetime applies, or none; no_expiry asks for none), or release an explicitly identified claim owned by the session.",
             selector(
-                json!({"action":{"type":"string","enum":["acquire","release"]},"expected_revision":revision(),"claim":optional(text()),"ttl_ms":ttl}),
+                json!({"action":{"type":"string","enum":["acquire","release"]},"expected_revision":revision(),"claim":optional(text()),"ttl_ms":ttl,"no_expiry":no_expiry}),
                 &["action", "expected_revision"],
             ),
             false,
