@@ -1,0 +1,144 @@
+{
+ "case": "H01",
+ "slug": "signals-counted-apart",
+ "description": "Completion with caller-supplied evidence, a human confirmation and a supervised command that succeeded are three separate counts; a work with none of them is open, not failed.",
+ "input": {
+  "project_id": "01JP0000000000000000000001",
+  "works": [
+   {
+    "work_item_id": "01JW0000000000000000000001",
+    "work_key": "alpha",
+    "acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   },
+   {
+    "work_item_id": "01JW0000000000000000000002",
+    "work_key": "beta",
+    "acceptance_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+   },
+   {
+    "work_item_id": "01JW0000000000000000000003",
+    "work_key": "gamma",
+    "acceptance_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+   },
+   {
+    "work_item_id": "01JW0000000000000000000004",
+    "work_key": "delta",
+    "acceptance_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+   }
+  ],
+  "receipts": [
+   {
+    "event_id": "01JE0000000000000000000001",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000001",
+    "kind": "completed",
+    "at_ms": 1000,
+    "project_revision": 10,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000001",
+    "evidence_level": "locally_verified",
+    "acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "actor_origin": null
+   },
+   {
+    "event_id": "01JE0000000000000000000002",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000001",
+    "kind": "ordinary_confirmed",
+    "at_ms": 1100,
+    "project_revision": 11,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000001",
+    "evidence_level": null,
+    "acceptance_digest": null,
+    "actor_origin": "human"
+   },
+   {
+    "event_id": "01JE0000000000000000000003",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000002",
+    "kind": "completed",
+    "at_ms": 1200,
+    "project_revision": 12,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000001",
+    "evidence_level": "real_environment_validated",
+    "acceptance_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "actor_origin": null
+   }
+  ],
+  "executions": [
+   {
+    "execution_id": "01JX0000000000000000000001",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000003",
+    "session_id": "01JS0000000000000000000001",
+    "state": "succeeded",
+    "registered_at_ms": 50,
+    "started_at_ms": 100,
+    "finished_at_ms": 400
+   }
+  ],
+  "sessions": [
+   {
+    "session_id": "01JS0000000000000000000001",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-large",
+    "agent": "agent-a"
+   },
+   {
+    "session_id": "01JS0000000000000000000002",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-small",
+    "agent": "agent-b"
+   },
+   {
+    "session_id": "01JS0000000000000000000003",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "other",
+    "model": "o-1",
+    "agent": "agent-c"
+   }
+  ],
+  "usage": []
+ },
+ "request": {
+  "as_of_ms": 5000,
+  "cohort_by": "none",
+  "work_keys": null
+ },
+ "expect": {
+  "/sample/works_in_scope": 4,
+  "/cohorts/0/works": 4,
+  "/cohorts/0/signals/completion_reported": 2,
+  "/cohorts/0/signals/completion_by_evidence_level/locally_verified": 1,
+  "/cohorts/0/signals/completion_by_evidence_level/real_environment_validated": 1,
+  "/cohorts/0/signals/accepted_by_human": 1,
+  "/cohorts/0/signals/accepted_by_ai": 0,
+  "/cohorts/0/signals/accepted_by_delegate": 0,
+  "/cohorts/0/signals/cancelled": 0,
+  "/cohorts/0/signals/open": 2,
+  "/cohorts/0/executions/succeeded": 1,
+  "/cohorts/0/executions/failed": 0,
+  "/cohorts/0/executions/observed_execution_ms": 300,
+  "/cohorts/0/cost/works_without_usage": 4,
+  "/coverage/works_with_outcome": [
+   2,
+   4
+  ],
+  "/coverage/works_with_execution": [
+   1,
+   4
+  ],
+  "/coverage/works_with_usage": [
+   0,
+   4
+  ],
+  "/coverage/executions_with_duration": [
+   1,
+   1
+  ]
+ }
+}

@@ -1,0 +1,101 @@
+{
+ "case": "H09b",
+ "slug": "filter-and-unknown-keys",
+ "description": "A filter limits the works; a key no work has is named, not ignored; the model of another session gets no cohort.",
+ "input": {
+  "project_id": "01JP0000000000000000000001",
+  "works": [
+   {
+    "work_item_id": "01JW0000000000000000000001",
+    "work_key": "alpha",
+    "acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   },
+   {
+    "work_item_id": "01JW0000000000000000000002",
+    "work_key": "beta",
+    "acceptance_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+   },
+   {
+    "work_item_id": "01JW0000000000000000000003",
+    "work_key": "gamma",
+    "acceptance_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+   },
+   {
+    "work_item_id": "01JW0000000000000000000004",
+    "work_key": "delta",
+    "acceptance_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+   }
+  ],
+  "receipts": [
+   {
+    "event_id": "01JE000000000000000000000K",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000001",
+    "kind": "completed",
+    "at_ms": 1000,
+    "project_revision": 10,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000001",
+    "evidence_level": "locally_verified",
+    "acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "actor_origin": null
+   },
+   {
+    "event_id": "01JE000000000000000000000M",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000002",
+    "kind": "completed",
+    "at_ms": 1100,
+    "project_revision": 11,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000002",
+    "evidence_level": "locally_verified",
+    "acceptance_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "actor_origin": null
+   }
+  ],
+  "executions": [],
+  "sessions": [
+   {
+    "session_id": "01JS0000000000000000000001",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-large",
+    "agent": "agent-a"
+   },
+   {
+    "session_id": "01JS0000000000000000000002",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-small",
+    "agent": "agent-b"
+   },
+   {
+    "session_id": "01JS0000000000000000000003",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "other",
+    "model": "o-1",
+    "agent": "agent-c"
+   }
+  ],
+  "usage": []
+ },
+ "request": {
+  "as_of_ms": 5000,
+  "cohort_by": "provider_model",
+  "work_keys": [
+   "alpha",
+   "nope"
+  ]
+ },
+ "expect": {
+  "/cohorts#len": 1,
+  "/sample/works_in_scope": 1,
+  "/scope/unknown_work_keys": [
+   "nope"
+  ],
+  "/sample/receipts/outside_filter": 1,
+  "/cohorts/0/key/model": "m-large",
+  "/cohorts/0/works": 1
+ }
+}

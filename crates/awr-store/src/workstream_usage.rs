@@ -728,6 +728,17 @@ impl Store {
         workstream_usage::usage_occurrence_bindings(&project_s, &receipts).map_err(map_usage)
     }
 
+    /// The receipts of a project with its append-only corrections applied; every receipt stays readable as stored.
+    pub fn usage_receipts_corrected(&self, project: Id) -> Result<Vec<UsageReceipt>> {
+        let project_s = project.to_string();
+        let receipts = list_receipts(&self.conn, &project_s)?;
+        let corrections = list_corrections(&self.conn, &project_s)?;
+        let (corrected, _) =
+            workstream_usage::apply_usage_corrections(&project_s, &receipts, &corrections)
+                .map_err(map_usage)?;
+        Ok(corrected)
+    }
+
     pub fn usage_cost_totals(
         &self,
         project: Id,

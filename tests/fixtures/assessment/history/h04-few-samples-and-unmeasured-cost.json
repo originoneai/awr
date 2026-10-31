@@ -1,0 +1,82 @@
+{
+ "case": "H04",
+ "slug": "few-samples-and-unmeasured-cost",
+ "description": "Two works, one cancelled, no cost measured: the report gives the counts and says the cost was not observed; it derives no rate and no saving.",
+ "input": {
+  "project_id": "01JP0000000000000000000001",
+  "works": [
+   {
+    "work_item_id": "01JW0000000000000000000001",
+    "work_key": "alpha",
+    "acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   },
+   {
+    "work_item_id": "01JW0000000000000000000002",
+    "work_key": "beta",
+    "acceptance_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+   }
+  ],
+  "receipts": [
+   {
+    "event_id": "01JE000000000000000000000B",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000001",
+    "kind": "cancelled",
+    "at_ms": 1000,
+    "project_revision": 10,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000001",
+    "evidence_level": null,
+    "acceptance_digest": null,
+    "actor_origin": null
+   }
+  ],
+  "executions": [],
+  "sessions": [
+   {
+    "session_id": "01JS0000000000000000000001",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-large",
+    "agent": "agent-a"
+   },
+   {
+    "session_id": "01JS0000000000000000000002",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-small",
+    "agent": "agent-b"
+   },
+   {
+    "session_id": "01JS0000000000000000000003",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "other",
+    "model": "o-1",
+    "agent": "agent-c"
+   }
+  ],
+  "usage": []
+ },
+ "request": {
+  "as_of_ms": 5000,
+  "cohort_by": "none",
+  "work_keys": null
+ },
+ "expect": {
+  "/sample/works_in_scope": 2,
+  "/cohorts/0/signals/cancelled": 1,
+  "/cohorts/0/signals/open": 1,
+  "/cohorts/0/cost/works_without_usage": 2,
+  "/cohorts/0/cost/works_with_usage": 0,
+  "/cohorts/0/cost/actual_micros": {},
+  "/coverage/works_with_usage": [
+   0,
+   2
+  ],
+  "/not_derived": [
+   "model_success_rate",
+   "dollar_savings",
+   "semantic_understanding"
+  ]
+ }
+}

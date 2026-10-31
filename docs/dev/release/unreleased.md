@@ -33,6 +33,12 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   Run `awr source reindex` after upgrading to refresh the changed projections.
   Markdown task bindings and cross-document replacement traversal are deferred.
   See [specification references and coverage](../reference/specification-coverage.md).
+- An outcome history over what AWR already recorded about work (`awr_runtime::outcome_history`, read-only, no
+  command yet): completions, human or delegated confirmations, cancellations, reopenings, supervised executions and
+  usage are counted each on its own by cohort, as of an instant the caller gives. A reopening withdraws what a
+  completion said, a completion under acceptance that has since changed is not counted as a pass, a missing cost or
+  duration stays missing, and the report holds no rate, score or counterfactual: it lists what it does not derive.
+  One project per report; the same question gives the same hash. See [outcome history](../reference/outcome-history.md).
 - Optional work definitions in YAML ledgers: a work item can record its purpose, adopted intent,
   the goal outcome it advances, responsibility, examples and how its tests will show they detect a
   wrong implementation. `awr work show` and `awr work prepare` (and the MCP work tools) report each
