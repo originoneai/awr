@@ -116,6 +116,9 @@ awr assessment policy preview --input candidate.toml [--as-of N]
 awr assessment policy apply --input candidate.toml --expected-current FP|absent --expected-candidate FP [--as-of N]
 ```
 
+A script can check that the installed `awr` has these commands with `awr capabilities --require assessment.policy`; it exits
+with a failing status when the capability is missing.
+
 - `show` prints the policy in force, the versions the file holds and the fingerprint of the file. `--as-of` defaults to the
   project revision, read from the last recorded snapshot without refreshing anything.
 - `preview` writes nothing. The candidate is the whole file as it should be. It prints the fingerprint of the file now
