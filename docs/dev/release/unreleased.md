@@ -4,6 +4,14 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
+- Closing a session after finished work: the response of `awr work complete` and `awr work cancel`
+  carries one bounded `close_out` instruction (condition, basis, next step, when to look again, under
+  60 tokens) while the session holds no other active claim, and `awr work complete --end-session`
+  (MCP `end_session` of `awr_work_transition`) ends the session in the same request once the
+  completion is durable. The `session.ended` event records `completion_event_id`. The call without
+  the flag is unchanged, and the session flow, Codex and MCP documents put the End step in the main
+  flow and say what editing a status field directly costs. See
+  [session workflow](../integrations/session-workflow.md#finish-the-work-and-end-the-session).
 - Explicit requirement items and YAML task `spec_refs`, with bounded, read-only
   `awr spec check` and MCP `awr_spec_check` views of one evaluator. Checks identify
   changed or superseded item bindings, missing task associations and contradictions
