@@ -249,6 +249,94 @@ fn source_reindex_session_start_and_work_claim_reconcile_too() {
     assert_eq!(claimed["ok"], true);
 }
 
+/// W is claimed and the source calls it completed; `stale` is the revision read before the refresh.
+fn finished_under_a_claim() -> (Fixture, String, String, String) {
+    let f = Fixture::new();
+    let (session, claim) = f.start("W", "worker-a");
+    f.say("W", "completed");
+    let stale = f.revision();
+    (f, session, claim, stale)
+}
+
+#[test]
+fn event_append_reconciles_before_the_moved_revision_refuses_it() {
+    let (f, session, claim, stale) = finished_under_a_claim();
+    let append = |revision: &str| {
+        f.run(&[
+            "event",
+            "append",
+            "--type",
+            "review.observed",
+            "--summary",
+            "Read the delivered report",
+            "--work",
+            "W",
+            "--expected-revision",
+            revision,
+        ])
+    };
+    let refused = append(&stale);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("RevisionConflict"));
+    assert_eq!(f.claim_status(&claim), "released");
+    assert_eq!(f.session_status(&session), "interrupted");
+    let again = append(&f.revision());
+    assert!(
+        again.status.success(),
+        "{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+}
+
+#[test]
+fn evidence_add_reconciles_before_the_moved_revision_refuses_it() {
+    let (f, session, claim, stale) = finished_under_a_claim();
+    // The revision is judged before the input is read, so the input does not need to be complete.
+    fs::write(f.root.join("evidence.json"), "{}").unwrap();
+    let refused = f.run(&[
+        "evidence",
+        "add",
+        "--input",
+        "evidence.json",
+        "--expected-revision",
+        &stale,
+    ]);
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("RevisionConflict"));
+    assert_eq!(f.claim_status(&claim), "released");
+    assert_eq!(f.session_status(&session), "interrupted");
+}
+
+#[test]
+fn a_work_whose_source_is_not_fresh_keeps_its_claim_until_the_source_is() {
+    // The status the projection holds is not something to release a claim on while the source it came
+    // from is unconfirmed; the store decides that, whichever command did the refreshing.
+    let f = Fixture::new();
+    let (_, claim) = f.start("W", "worker-a");
+    let root = f.root.canonicalize().unwrap();
+    let mut store = awr_store::Store::open(&root.join(".awr/state.db")).unwrap();
+    let project = store.project_by_root(&root).unwrap().id;
+    let watched = store.works_with_open_claims(project).unwrap();
+    assert_eq!(watched.len(), 1);
+    f.say("W", "completed");
+    let manifest = awr_source::Manifest::load(&root).unwrap();
+    assert!(
+        awr_source::index_project(&mut store, &root, &manifest, false)
+            .unwrap()
+            .ok
+    );
+    for freshness in ["stale", "unavailable"] {
+        f.sql("UPDATE sources SET freshness=?1", [freshness]);
+        let report = store.reconcile_finished_work(project, &watched).unwrap();
+        assert!(report.is_empty(), "{freshness}: {report:?}");
+        assert_eq!(f.claim_status(&claim), "active", "{freshness}");
+    }
+    f.sql("UPDATE sources SET freshness='fresh'", []);
+    let report = store.reconcile_finished_work(project, &watched).unwrap();
+    assert_eq!(report.released_claim_ids.len(), 1, "{report:?}");
+    assert_eq!(f.claim_status(&claim), "released");
+}
+
 #[test]
 fn a_session_that_still_holds_a_claim_on_other_work_goes_on() {
     let f = Fixture::new();
