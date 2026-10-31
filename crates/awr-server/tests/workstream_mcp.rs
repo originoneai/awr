@@ -20,6 +20,53 @@ use std::time::Duration;
 type Client = RunningService<RoleClient, ()>;
 
 #[tokio::test]
+async fn a_compact_catalog_client_lists_a_slim_command_tool_and_reads_every_contract_from_the_full_catalog()
+ {
+    let (_guard, _admin, _, store) = setup().await;
+    let server = start(store).await;
+    let full = connect(&server, "one", A).await.unwrap();
+    let compact = connect_with_query(&server, "one", A, "catalog=compact")
+        .await
+        .unwrap();
+    let full_tools = full.list_tools(Default::default()).await.unwrap().tools;
+    let compact_tools = compact.list_tools(Default::default()).await.unwrap().tools;
+    let command = |tools: &[rmcp::model::Tool]| {
+        tools
+            .iter()
+            .find(|tool| tool.name == "awr_team_command")
+            .unwrap()
+            .clone()
+    };
+    assert!(command(&full_tools).input_schema.get("allOf").is_some());
+    assert!(command(&compact_tools).input_schema.get("allOf").is_none());
+    assert_eq!(
+        full_tools.iter().map(|tool| &tool.name).collect::<Vec<_>>(),
+        compact_tools
+            .iter()
+            .map(|tool| &tool.name)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        serde_json::to_vec(&*command(&compact_tools).input_schema)
+            .unwrap()
+            .len()
+            < 64 * 1024
+    );
+    // The exact operation input is read from the full catalog whichever view the client lists.
+    for op in ["session.checkpoint", "evidence.submit", "task.assign"] {
+        let args = json!({"protocol_version":1,"tool":"awr_team_command","op":op});
+        let from_compact = call(&compact, "awr_team_input_contract", args.clone(), false).await;
+        let from_full = call(&full, "awr_team_input_contract", args, false).await;
+        assert_eq!(from_compact, from_full, "{op}");
+    }
+    // A profile that does not exist is refused when listing; it is never guessed.
+    let odd = connect_with_query(&server, "one", A, "catalog=odd")
+        .await
+        .unwrap();
+    assert!(odd.list_tools(Default::default()).await.is_err());
+}
+
+#[tokio::test]
 async fn operation_input_contracts_project_the_live_catalog_without_dynamic_values() {
     let (_guard, _admin, _, store) = setup().await;
     let server = start(store).await;
@@ -472,6 +519,25 @@ async fn connect(server: &Server, alias: &str, token: &str) -> Result<Client, St
         http(),
         StreamableHttpClientTransportConfig::with_uri(format!("{}/{alias}/mcp", server.url))
             .auth_header(token),
+    );
+    tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
+        .await
+        .map_err(|_| "timeout".to_owned())?
+        .map_err(|e| e.to_string())
+}
+async fn connect_with_query(
+    server: &Server,
+    alias: &str,
+    token: &str,
+    query: &str,
+) -> Result<Client, String> {
+    let transport = StreamableHttpClientTransport::with_client(
+        http(),
+        StreamableHttpClientTransportConfig::with_uri(format!(
+            "{}/{alias}/mcp?{query}",
+            server.url
+        ))
+        .auth_header(token),
     );
     tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
         .await
