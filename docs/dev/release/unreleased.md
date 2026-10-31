@@ -85,6 +85,11 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   reasoning, blocks: it holds the completion of that work and counts as a rework cycle. Every other
   finding is a deferred record linked to the work that blocks nothing. See
   [findings](../reference/findings.md).
+- One shape for a work and its readiness in the CLI and the MCP server (`awr_core::work_brief`, `ready_brief`), in place of
+  two identical copies, and parity tests that hold the five result layers apart across both entries: a complete context
+  with a work that is not ready, a ready work with an incomplete context, an unknown value that is neither, a claim as its
+  own answer, and a `ready` answer that authorizes nothing because claims and transitions are judged on the facts of the
+  moment they are submitted. `docs/dev/reference/diagnostics.md` explains which layer each readiness code answers.
 - One bounded instruction for governed work: `work prepare` in its action view (and `awr_work_prepare`)
   tells the earliest material gap (a definition that is missing or incomplete, an admission that is
   missing, pending, denied or stale, a containment, a gap, a reassessment, a spent budget, a blocking
