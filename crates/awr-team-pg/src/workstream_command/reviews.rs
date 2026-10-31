@@ -71,6 +71,12 @@ pub(super) struct Decide {
     expected_session_version: String,
     round_id: String,
     reason: String,
+    /// Findings of this decision; the severity of each is derived, never stated.
+    #[serde(default)]
+    findings: Vec<awr_team::ReviewFinding>,
+    /// How an approval deals with the blocking findings that were open.
+    #[serde(default)]
+    resolutions: Vec<crate::review_findings::Resolution>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -97,6 +103,10 @@ pub(super) struct DecideUnified {
     round_id: String,
     decision: String,
     reason: String,
+    #[serde(default)]
+    findings: Vec<awr_team::ReviewFinding>,
+    #[serde(default)]
+    resolutions: Vec<crate::review_findings::Resolution>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -453,6 +463,7 @@ pub(super) async fn apply(
                 auth,
                 command,
                 &contract_hash,
+                contract,
                 a,
                 "approve",
             )
@@ -466,6 +477,7 @@ pub(super) async fn apply(
                 auth,
                 command,
                 &contract_hash,
+                contract,
                 a,
                 "reject",
             )
@@ -481,6 +493,8 @@ pub(super) async fn apply(
                 expected_session_version: a.expected_session_version,
                 round_id: a.round_id,
                 reason: a.reason,
+                findings: a.findings,
+                resolutions: a.resolutions,
             };
             decide(
                 tx,
@@ -489,6 +503,7 @@ pub(super) async fn apply(
                 auth,
                 command,
                 &contract_hash,
+                contract,
                 mapped,
                 &decision,
             )
@@ -813,13 +828,21 @@ async fn open(
         ],
     )
     .await?;
+    let re_review = crate::review_findings::re_review(
+        tx,
+        tenant,
+        project,
+        &command.work_id,
+        round_index,
+        &digest_v,
+    )
+    .await?;
     let mut applied = Applied {
         data: json!({
             "round_id": id,
             "round_index": round_index,
             "bundle_hash": digest_v,
             "contract_hash": contract_hash,
-            "governance_binding": governance,
             "evidence_id": a.evidence_id,
             "execution_id": execution_id,
             "author_person_id": author_person,
@@ -840,6 +863,13 @@ async fn open(
     if let Some(origins) = &member_origins {
         simulated_member::add_summary(&mut applied.data, Some(&origins.opener));
         simulated_member::add_summary(&mut applied.preceding_events[0].1, Some(&origins.opener));
+    }
+    // Only governed work and later rounds carry these, so other receipts keep their shape.
+    if let Some(binding) = &governance {
+        applied.data["governance_binding"] = json!(binding);
+    }
+    if let Some(scope) = re_review {
+        applied.data["re_review"] = scope;
     }
     Ok(applied)
 }
@@ -873,6 +903,7 @@ async fn decide(
     auth: &ReaderAuthority,
     command: &WorkstreamCommand,
     contract_hash: &str,
+    contract: &awr_team::WorkContract,
     a: Decide,
     decision: &str,
 ) -> PgResult<Applied> {
@@ -1017,6 +1048,22 @@ async fn decide(
     } else {
         "rejected"
     };
+    let findings = crate::review_findings::record(
+        tx,
+        tenant,
+        project,
+        &auth.snapshot,
+        &work_id,
+        &a.round_id,
+        round_index,
+        contract,
+        decision,
+        &auth.actor_id,
+        &reviewer_person,
+        &a.findings,
+        &a.resolutions,
+    )
+    .await?;
     let decision_id = crate::tx::new_id();
     tx.execute(
         "INSERT INTO awr_team.review_decisions(
@@ -1091,6 +1138,9 @@ async fn decide(
         let summary = simulated_member::basis_summary(basis);
         applied.data["member_review_basis"] = summary.clone();
         applied.preceding_events[0].1["member_review_basis"] = summary;
+    }
+    if !findings.recorded.is_empty() || !findings.resolved.is_empty() {
+        applied.data["findings"] = findings.summary();
     }
     Ok(applied)
 }
@@ -1404,6 +1454,14 @@ async fn complete(
             return Err(PgError::ReviewRequired);
         }
         require_governance_current(tx, tenant, project, auth, command, pinned.get(9)).await?;
+        crate::review_findings::require_none_open(
+            tx,
+            tenant,
+            project,
+            &auth.snapshot,
+            &command.work_id,
+        )
+        .await?;
         let d = tx
             .query_opt(
                 "SELECT decision, reviewer_actor_id, reviewer_person_id, independence_kind, reviewer_client_id, approval_basis, id
@@ -2341,6 +2399,9 @@ pub(crate) async fn inspect_review(
         Some(row.get::<_, String>(3).as_str()),
     )
     .await?;
+    if let Some(findings) = crate::review_findings::block(tx, tenant, project, &work).await? {
+        data["review"]["findings"] = findings;
+    }
     Ok(data)
 }
 

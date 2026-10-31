@@ -1742,12 +1742,20 @@ async fn review_completion_fields_are_flat_discoverable_and_event_id_is_not_an_a
             vec!["evidence_id"],
             vec![],
         ),
-        ("review.accept", vec!["round_id", "reason"], vec![]),
-        ("review.return", vec!["round_id", "reason"], vec![]),
+        (
+            "review.accept",
+            vec!["round_id", "reason"],
+            vec!["findings", "resolutions"],
+        ),
+        (
+            "review.return",
+            vec!["round_id", "reason"],
+            vec!["findings"],
+        ),
         (
             "review.decide",
             vec!["round_id", "decision", "reason"],
-            vec![],
+            vec!["findings", "resolutions"],
         ),
         ("work.rework", vec!["round_id", "note"], vec![]),
         (
