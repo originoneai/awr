@@ -1577,6 +1577,32 @@ fn catalog() -> Vec<Tool> {
     ]
 }
 
+/// Which view of the tool catalog a `tools/list` request receives.
+///
+/// Some model providers refuse a tool whose parameter schema is large: Moonshot's API answered
+/// `schema exceeds maximum allowed size` for `awr_team_command` at 130,098 bytes and accepted the same
+/// catalog at 43,241 bytes (Kimi Code CLI 2.4.1, 2026-10-31). The full catalog stays the default and the
+/// source of every check; a client that cannot take it opts in with `?catalog=compact` on the MCP URL
+/// (the transport is stateless, so there is no handshake that could carry the choice).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CatalogProfile {
+    Full,
+    Compact,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct UnsupportedCatalogProfile;
+
+impl CatalogProfile {
+    fn from_query(_query: Option<&str>) -> Result<Self, UnsupportedCatalogProfile> {
+        Ok(Self::Full)
+    }
+}
+
+fn catalog_for(_profile: CatalogProfile) -> Vec<Tool> {
+    catalog()
+}
+
 impl ServerHandler for Endpoint {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
@@ -1591,7 +1617,7 @@ impl ServerHandler for Endpoint {
     async fn list_tools(
         &self,
         request: Option<PaginatedRequestParams>,
-        _: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         if request.is_some_and(|r| r.cursor.is_some()) {
             return Err(ErrorData::invalid_params(
@@ -1599,8 +1625,18 @@ impl ServerHandler for Endpoint {
                 None,
             ));
         }
+        let query = context
+            .extensions
+            .get::<axum::http::request::Parts>()
+            .and_then(|parts| parts.uri.query());
+        let profile = CatalogProfile::from_query(query).map_err(|_| {
+            ErrorData::invalid_params(
+                "unsupported catalog profile: use catalog=full or catalog=compact",
+                None,
+            )
+        })?;
         let mut result = ListToolsResult::default();
-        result.tools = catalog();
+        result.tools = catalog_for(profile);
         Ok(result)
     }
 
@@ -3857,6 +3893,114 @@ mod tests {
                 .keys()
                 .collect::<BTreeSet<_>>(),
             "MCP discovery and the backend query contract must expose the same fields"
+        );
+    }
+
+    #[test]
+    fn the_catalog_profile_comes_from_the_catalog_query_parameter_alone() {
+        assert_eq!(CatalogProfile::from_query(None), Ok(CatalogProfile::Full));
+        assert_eq!(CatalogProfile::from_query(Some("")), Ok(CatalogProfile::Full));
+        assert_eq!(
+            CatalogProfile::from_query(Some("catalog=full")),
+            Ok(CatalogProfile::Full)
+        );
+        assert_eq!(
+            CatalogProfile::from_query(Some("catalog=compact")),
+            Ok(CatalogProfile::Compact)
+        );
+        assert_eq!(
+            CatalogProfile::from_query(Some("x=1&catalog=compact&y=2")),
+            Ok(CatalogProfile::Compact)
+        );
+        // Names that merely contain the word are not ours, and a profile is never guessed.
+        assert_eq!(
+            CatalogProfile::from_query(Some("catalogue=compact&xcatalog=compact")),
+            Ok(CatalogProfile::Full)
+        );
+        for refused in [
+            "catalog=other",
+            "catalog=",
+            "catalog=Compact",
+            "catalog=compact&catalog=full",
+            "catalog=compact&catalog=compact",
+        ] {
+            assert_eq!(
+                CatalogProfile::from_query(Some(refused)),
+                Err(UnsupportedCatalogProfile),
+                "{refused}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_compact_catalog_is_the_full_one_without_the_per_operation_branches() {
+        let full = catalog_for(CatalogProfile::Full);
+        let compact = catalog_for(CatalogProfile::Compact);
+        assert_eq!(
+            full.iter().map(|tool| tool.name.clone()).collect::<Vec<_>>(),
+            compact.iter().map(|tool| tool.name.clone()).collect::<Vec<_>>(),
+            "the compact catalog lists the same tools in the same order"
+        );
+        let find = |tools: &[Tool]| {
+            tools
+                .iter()
+                .find(|tool| tool.name == "awr_team_command")
+                .unwrap()
+                .clone()
+        };
+        let full_command = find(&full);
+        let command = find(&compact);
+        assert!(
+            full_command.input_schema["allOf"].as_array().unwrap().len() >= 40,
+            "the full command schema carries one closed branch per operation"
+        );
+        assert!(command.input_schema.get("allOf").is_none());
+        for (before, after) in full.iter().zip(&compact) {
+            let mut expected = (*before.input_schema).clone();
+            expected.remove("allOf");
+            assert_eq!(*after.input_schema, expected, "{}", before.name);
+            assert_eq!(before.annotations, after.annotations, "{}", before.name);
+        }
+        assert_eq!(
+            command.input_schema["properties"]["op"]["enum"],
+            full_command.input_schema["properties"]["op"]["enum"],
+            "every operation stays addressable"
+        );
+        assert_eq!(
+            command.input_schema["required"],
+            full_command.input_schema["required"]
+        );
+        let description = command.description.as_deref().unwrap_or_default();
+        assert!(
+            description.contains("awr_team_input_contract"),
+            "the compact description points at the on-demand operation contract"
+        );
+        assert!(
+            !full_command
+                .description
+                .as_deref()
+                .unwrap_or_default()
+                .contains("omitted for this client"),
+            "the full description is untouched"
+        );
+    }
+
+    #[test]
+    fn the_compact_catalog_stays_inside_the_provider_schema_budget() {
+        // Moonshot's API refused awr_team_command at 130,098 bytes of schema and accepted 43,241 bytes
+        // (Kimi Code CLI 2.4.1, 2026-10-31). The budget leaves headroom above the accepted size.
+        const BUDGET: usize = 64 * 1024;
+        for tool in catalog_for(CatalogProfile::Compact) {
+            let bytes = serde_json::to_vec(&*tool.input_schema).unwrap().len();
+            assert!(bytes <= BUDGET, "{} publishes {bytes} bytes", tool.name);
+        }
+    }
+
+    #[test]
+    fn the_full_profile_is_the_catalog_itself() {
+        assert_eq!(
+            serde_json::to_value(catalog_for(CatalogProfile::Full)).unwrap(),
+            serde_json::to_value(catalog()).unwrap()
         );
     }
 }
