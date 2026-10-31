@@ -14,6 +14,30 @@ help exposes `--continue` and `--session`, and links to the `kimi-code`
 documentation. Older `kimi-cli` releases use different configuration paths and
 flags; check `kimi --version` and `kimi --help` before applying an older recipe.
 
+## Team MCP over HTTP
+
+A Team project's MCP endpoint (`.../v1/projects/<project>/mcp`, bearer credential) publishes an
+`awr_team_command` input schema of about 130 KB. Moonshot's API refuses a tool schema that large
+(`400 ... schema exceeds maximum allowed size`, every Kimi model, Kimi Code CLI 2.4.1), so a turn
+cannot even start. Ask for the compact catalog in the project's `.kimi-code/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "awr_support": {
+      "url": "http://127.0.0.1:<port>/v1/projects/<project>/mcp?catalog=compact",
+      "headers": { "Authorization": "Bearer <member credential>" },
+      "enabled": true
+    }
+  }
+}
+```
+
+The compact catalog lists the same tools without the per-operation `allOf` branches (about 43 KB
+for the command tool, accepted by the provider); every operation stays in `properties.op.enum`, the
+exact input of one operation is read with `awr_team_input_contract`, and every call is still
+checked against the full schema. Other clients keep the default full catalog.
+
 ## Optional MCP connection
 
 Build `awr` and `awr-mcp` with the [repository instructions](../../../README.md),

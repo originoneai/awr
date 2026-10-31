@@ -4,6 +4,15 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
+- A compact Team MCP tool catalog for clients whose model provider caps the size of a tool schema
+  (AWR-TF-014AN). Moonshot's API refuses `awr_team_command` because its full input schema is about
+  130 KB (`schema exceeds maximum allowed size`), which stopped every Kimi Code turn against a Team
+  MCP project. An MCP URL with `?catalog=compact` lists the same tools in the same order without the
+  per-operation `allOf` branches of their input schemas (about 43 KB for the command tool) and says
+  so in the tool description. `properties.op.enum` still names every operation,
+  `awr_team_input_contract` still reads the exact input of one operation from the full catalog, and
+  every call is still checked against the full schema. The default and `?catalog=full` are
+  unchanged; any other value, or the parameter given twice, is refused when listing.
 - One observation freshness and coverage contract for the Inspector Team reads (AWR-OBS-002): every
   read (`POST /api/team/read`, `/api/team/inbox-detail`, `GET /api/team/inbox`, `GET /api/team/work`)
   carries a `freshness` envelope that presents the report-received clock, the authoritative
