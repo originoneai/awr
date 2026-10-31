@@ -554,6 +554,34 @@ fn a_claim_that_ran_out_is_not_revived_by_work_and_the_work_that_needs_it_is_ref
 }
 
 #[test]
+fn work_can_be_claimed_again_after_a_claim_ran_out_and_the_old_session_cannot_extend_the_new_claim()
+{
+    let f = Fixture::new(Some(POLICY));
+    let old = f.start("W", "worker-a", &["--ttl-ms", "600000"]);
+    let old_session = old["session"]["id"].as_str().unwrap();
+    let old_claim = old["claim"]["id"].as_str().unwrap();
+    f.sql(
+        "UPDATE claims SET expires_at=?1 WHERE id=?2",
+        rusqlite::params![now_millis().unwrap() - 1, old_claim],
+    );
+    // The work is free again, and the new claim takes the project's default lifetime.
+    let new = f.start("W", "worker-b", &[]);
+    let new_claim = new["claim"]["id"].as_str().unwrap();
+    assert!(
+        about(new["claim"]["expires_at"].as_i64(), 4 * HOUR),
+        "{new}"
+    );
+    assert_eq!(f.claim(old_claim).0, "expired");
+    // What the old session does afterwards neither revives its claim nor touches the one that replaced it.
+    f.runs_out_in(new_claim, 10 * MINUTE);
+    let held = f.expiry(new_claim);
+    f.checkpoint(old_session);
+    assert_eq!(f.claim(old_claim).0, "expired");
+    assert_eq!(f.expiry(new_claim), held);
+    assert_eq!(f.claim(new_claim).0, "active");
+}
+
+#[test]
 fn a_policy_that_cannot_be_read_does_not_fail_the_work_it_would_have_renewed() {
     let f = Fixture::new(None);
     let started = f.start("W", "worker-a", &["--ttl-ms", "600000"]);

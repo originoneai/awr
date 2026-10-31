@@ -279,3 +279,85 @@ fn a_save_that_cannot_complete_renews_nothing() {
     assert_eq!(claims(&f, session.id)[0].expires_at, claim.expires_at);
     assert_eq!(claims(&f, session.id)[0].revision, claim.revision);
 }
+
+#[test]
+fn concurrent_renewals_leave_one_unbroken_chain_of_receipts() {
+    // Two writers of one session save checkpoints at once; each save is a write under the project revision, so
+    // the renewals are serialized, and what they leave is one chain: each receipt starts where the one before it ended.
+    let mut f = fixture(&["W"]);
+    let (session, claim) = held(&mut f, "W", "executor", Some(600_000));
+    let path = f.root.join("state.db");
+    let (project, sid) = (f.project.id, session.id);
+    let writers: Vec<_> = (0..2)
+        .map(|_| {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                let mut store = awr_store::Store::open(&path).unwrap();
+                for _ in 0..6 {
+                    loop {
+                        let expected = store.project(project).unwrap().project_revision;
+                        let Ok(started) = store.begin_checkpoint_save(
+                            project,
+                            expected,
+                            sid,
+                            CheckpointDraft {
+                                context_hash: "b".repeat(64),
+                                digest: "Saved progress".into(),
+                                next_action: "Go on".into(),
+                                open_loops: vec![],
+                                changed_entities: vec![],
+                            },
+                        ) else {
+                            continue;
+                        };
+                        // An intervening write invalidates the attempt; the writer starts a fresh save.
+                        if store
+                            .finish_checkpoint_save_renewing(
+                                project,
+                                started.project_revision,
+                                started.id,
+                                Some(ClaimRenewal { ttl_ms: HOUR }),
+                            )
+                            .is_ok()
+                        {
+                            break;
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+    for writer in writers {
+        writer.join().unwrap();
+    }
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let saved: Vec<String> = conn
+        .prepare(
+            "SELECT payload_json FROM events WHERE event_type='checkpoint.created' ORDER BY project_revision",
+        )
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<std::result::Result<_, _>>()
+        .unwrap();
+    assert_eq!(saved.len(), 12);
+    let mut ends = claim.expires_at.unwrap();
+    let mut receipts = 0;
+    for payload in saved {
+        let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        // Two saves in the same millisecond extend nothing the second time, and say nothing.
+        let Some(renewed) = payload["claim_renewal"]["renewed"].get(0) else {
+            continue;
+        };
+        assert_eq!(renewed["previous_expires_at"], ends, "{payload}");
+        let now_ends = renewed["expires_at"].as_i64().unwrap();
+        assert!(now_ends > ends, "{payload}");
+        ends = now_ends;
+        receipts += 1;
+    }
+    assert!(receipts >= 2, "{receipts}");
+    let held = &claims(&f, sid)[0];
+    assert_eq!(held.expires_at, Some(ends));
+    assert_eq!(held.revision, claim.revision + receipts);
+    assert_eq!(held.status, "active");
+}
