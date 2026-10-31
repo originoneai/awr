@@ -56,7 +56,7 @@ describe.each([
     vi.useFakeTimers();
     const calls = { count: 0 };
     const revoked = { value: false };
-    revocationFetch(calls, revoked);
+    const fetchMock = revocationFetch(calls, revoked);
     const { queryClient } = renderApp(path);
 
     await advance(0);
@@ -75,6 +75,10 @@ describe.each([
     const callsAfterForbidden = calls.count;
     await advance(10_000);
     expect(calls.count).toBe(callsAfterForbidden);
+    const laterUrls = fetchMock.mock.calls.slice(callsAfterForbidden).map(([input]) => String(input));
+    expect(laterUrls.filter((url) => url.includes('/api/team/overview')
+      || url.includes('/api/team/activity')
+      || url.includes('/api/team/read'))).toEqual([]);
     expect(screen.getByTestId('state-forbidden')).toBeTruthy();
   }, 20_000);
 });

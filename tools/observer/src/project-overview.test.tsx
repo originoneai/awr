@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { formatUnixMs } from './lib/format';
 import { queryKeys } from './lib/queries';
+import type { TeamWork } from './lib/types';
 import {
   DEMO_ACTIVITY,
   DEMO_PROJECT_OVERVIEW,
@@ -33,7 +34,17 @@ function makeProjectWorks(count: number) {
   }));
 }
 
-function makeProjectOverview(works = DEMO_PROJECT_WORKS) {
+function makeTwoStreamWorks(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    ...DEMO_PROJECT_WORKS[0],
+    key: `W${index + 1}`,
+    title: `Observed project task ${index + 1}`,
+    workstream_id: index % 2 === 0 ? 'WS1' : 'WS2',
+    contract_hash: `contract-${index + 1}`,
+  }));
+}
+
+function makeProjectOverview(works: TeamWork[] = DEMO_PROJECT_WORKS) {
   return {
     ...DEMO_PROJECT_OVERVIEW,
     works,
@@ -95,9 +106,94 @@ describe('project workstream progress', () => {
     expect(screen.getByTestId('workstream-group-WS2').textContent).toContain('Frontend workstream');
     expect(screen.getByTestId('project-status-W1').textContent).toBe('未测量');
     expect(screen.getByTestId('project-owner-W1').textContent).toBe('未测量');
-    expect(screen.getByTestId('project-next-W1').textContent).toBe('Record the verified outcome.');
+    expect(screen.getByTestId('project-next-W1').textContent).toBe('session.checkpoint');
     expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
     expect(screen.getByTestId('last-report-W1').textContent).not.toBe(formatUnixMs(1761839900000, 'zh-CN'));
+  });
+
+  it.each([59, 60])('renders every work on page one across two workstreams: %i', async (count) => {
+    setupOverview({ overview: makeProjectOverview(makeTwoStreamWorks(count)) });
+    await waitFor(() => expect(screen.getAllByRole('link', { name: /Observed project task/ })).toHaveLength(count));
+    expect(screen.getByRole('link', { name: `Observed project task ${count}` })).toBeTruthy();
+  }, 20_000);
+
+  it('renders the correct sixty works on page two across two workstreams', async () => {
+    setupOverview({
+      path: '/projects/demo?tab=overview&page=2',
+      overview: makeProjectOverview(makeTwoStreamWorks(140)),
+    });
+    await waitFor(() => expect(screen.getAllByRole('link', { name: /Observed project task/ })).toHaveLength(60));
+    expect(screen.getByRole('link', { name: 'Observed project task 121' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Observed project task 139' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Observed project task 2' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Observed project task 100' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Observed project task 120' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Observed project task 102' })).toBeNull();
+  }, 20_000);
+
+  it('shows a compact guidance op and keeps the long note out of the cell text', async () => {
+    const longNote = 'Batch progress with next_action/open_loops. Stop and report workspace execution before repository push or publication. '.repeat(4);
+    setupOverview({
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId);
+        response.result.data.guidance.action.note = longNote;
+        return response;
+      },
+    });
+    const cell = await screen.findByTestId('project-next-W1');
+    await waitFor(() => expect(cell.textContent).toBe('session.checkpoint'));
+    expect(cell.textContent.length).toBeLessThan(80);
+    expect(cell.textContent).not.toContain('Batch progress');
+  });
+
+  it('uses not measured for missing or failed report times, never the current clock', async () => {
+    const currentTime = formatUnixMs(Date.now(), 'zh-CN');
+    setupOverview({
+      snapshot: (workId) => {
+        if (workId === 'W2') return { ok: false, error: { code: 'ReadTimeout', message: 'slow' } };
+        const response = demoWorkSnapshot(workId) as {
+          result: { data: { observation: { reporting: { client_reported_at_unix_ms?: number } } } };
+        };
+        delete response.result.data.observation.reporting.client_reported_at_unix_ms;
+        return response;
+      },
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    });
+    expect(screen.getByTestId('last-report-W1').textContent).toBe('未测量');
+    expect(screen.getByTestId('last-report-W2').textContent).toBe('未测量');
+    expect(screen.getByTestId('last-report-W1').textContent).not.toBe(currentTime);
+    expect(screen.getByTestId('last-report-W2').textContent).not.toBe(currentTime);
+  });
+
+  it('falls back to the overview next step or not measured when snapshots fail', async () => {
+    const works = [
+      { ...DEMO_PROJECT_WORKS[0], next_step: 'Review the contract' },
+      { ...DEMO_PROJECT_WORKS[1], next_step: null },
+    ];
+    setupOverview({
+      overview: makeProjectOverview(works),
+      snapshot: () => ({ ok: false, error: { code: 'ReadTimeout', message: 'slow' } }),
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    });
+    expect(screen.getByTestId('project-next-W1').textContent).toBe('Review the contract');
+    expect(screen.getByTestId('project-next-W2').textContent).toBe('未测量');
+  });
+
+  it('groups shared workstreams once and uses an unlisted workstream id as its header', async () => {
+    const works = [
+      { ...DEMO_PROJECT_WORKS[0], key: 'SHARED1', title: 'Shared work one' },
+      { ...DEMO_PROJECT_WORKS[0], key: 'SHARED2', title: 'Shared work two' },
+      { ...DEMO_PROJECT_WORKS[0], key: 'OTHER', title: 'Other stream work', workstream_id: 'WS9' },
+    ];
+    setupOverview({ overview: makeProjectOverview(works) });
+    await screen.findByRole('link', { name: 'Shared work two' });
+    expect(screen.getAllByTestId('workstream-group-WS1')).toHaveLength(1);
+    expect(screen.getByTestId('workstream-group-WS9').textContent).toBe('WS9');
+    expect(document.querySelectorAll('[data-testid^="workstream-group-"]')).toHaveLength(2);
   });
 
   it('encodes same-task links for project and work IDs', async () => {
@@ -194,6 +290,28 @@ describe('project coverage and freshness', () => {
     expect(within(coverage).getByTestId('coverage-works-total').textContent).not.toBe('0');
     expect(within(coverage).getByTestId('coverage-enumerated').textContent).toBe('2');
     expect(within(coverage).getByTestId('freshness-badge')).toBeTruthy();
+  });
+
+  it.each(['failed', 'succeeded'])('does not call zero enumerated empty with failed streams: %s scope', async (status) => {
+    setupOverview({
+      overview: {
+        ...DEMO_PROJECT_OVERVIEW,
+        works: [],
+        coverage: {
+          ...DEMO_PROJECT_OVERVIEW.coverage,
+          failed: 1,
+          scope: { ...DEMO_PROJECT_OVERVIEW.coverage.scope, status, enumerated: 0 },
+          streams: [{
+            workstream_id: 'WS1',
+            status: 'failed',
+            error_code: 'ReadTimeout',
+            read_at_unix_ms: 1761831234000,
+          }],
+        },
+      },
+    });
+    expect(await screen.findByTestId('state-partial')).toBeTruthy();
+    expect(screen.queryByTestId('state-empty')).toBeNull();
   });
 
   it('retains a failed stream with its read time and confirmed rows', async () => {

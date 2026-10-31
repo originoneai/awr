@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ApiError } from './lib/api';
-import { createAppQueryClient, overviewQueryOptions, POLL_INTERVAL_MS, queryKeys, readQueryDefaults, workNextQueryOptions } from './lib/queries';
+import { activityQueryOptions, createAppQueryClient, overviewQueryOptions, POLL_INTERVAL_MS, queryKeys, readQueryDefaults, workNextQueryOptions } from './lib/queries';
 
 describe('observation query behavior', () => {
   it('uses a five-second polling interval rather than the per-read timeout', () => {
@@ -53,6 +53,10 @@ describe('observation query behavior', () => {
     expect(queryKeys.overview('demo')).not.toEqual(queryKeys.overview('docs'));
     expect(queryKeys.workNext('demo')).not.toEqual(queryKeys.workNext('docs'));
     expect(queryKeys.workSnapshot('demo', 'W1', 'WS1')).not.toEqual(queryKeys.workSnapshot('demo', 'W2', 'WS1'));
+  });
+
+  it('disables activity reads when observation is revoked', () => {
+    expect(activityQueryOptions('demo', true).enabled).toBe(false);
   });
 
   it('uses the generic read route and five-second defaults for work.next', async () => {

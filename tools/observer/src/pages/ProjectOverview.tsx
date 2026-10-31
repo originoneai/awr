@@ -7,6 +7,7 @@ import {
   Empty,
   Flex,
   List,
+  Pagination,
   Row,
   Space,
   Spin,
@@ -75,13 +76,22 @@ function groupedWorks(works: TeamWork[], workstreams: TeamOverviewResponse['work
 function NextStep({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
   const { t } = useTranslation();
   const data = query?.data?.result.data;
-  const snapshotNext = data?.next_step ?? data?.guidance?.action?.note ?? data?.guidance?.action?.op;
+  const snapshotNext = data?.next_step ?? data?.guidance?.action?.op;
+  const fullNote = data?.guidance?.action?.note;
   let text = t('common.loading');
   if (query?.isError) text = rawText(work.next_step) ?? t('freshness.state.not_measured');
   else if (query && !query.isPending) {
     text = rawText(snapshotNext ?? work.next_step) ?? t('freshness.state.not_measured');
   }
-  return <span data-testid={`project-next-${work.key}`}>{text}</span>;
+  return (
+    <Typography.Text
+      data-testid={`project-next-${work.key}`}
+      ellipsis={{ tooltip: fullNote ?? text }}
+      style={{ display: 'block' }}
+    >
+      {text}
+    </Typography.Text>
+  );
 }
 
 function LastReport({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
@@ -366,21 +376,25 @@ export function ProjectOverview({ project }: { project: string }) {
   ];
 
   const table = (
-    <Table<DisplayRow>
-      data-testid="project-progress-table"
-      rowKey="key"
-      columns={columns}
-      dataSource={displayRows}
-      tableLayout="fixed"
-      scroll={{ x: 960 }}
-      pagination={{
-        current: page,
-        pageSize: PAGE_SIZE,
-        total: grouped.works.length,
-        showSizeChanger: false,
-        onChange: selectPage,
-      }}
-    />
+    <Flex vertical gap={16}>
+      <Table<DisplayRow>
+        data-testid="project-progress-table"
+        rowKey="key"
+        columns={columns}
+        dataSource={displayRows}
+        tableLayout="fixed"
+        scroll={{ x: 960 }}
+        pagination={false}
+      />
+      <Pagination
+        current={page}
+        pageSize={PAGE_SIZE}
+        total={grouped.works.length}
+        showSizeChanger={false}
+        onChange={selectPage}
+        style={{ display: 'flex', justifyContent: 'flex-end' }}
+      />
+    </Flex>
   );
 
   let progress: ReactNode = <Spin />;
