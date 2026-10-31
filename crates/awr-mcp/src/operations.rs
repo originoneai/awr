@@ -35,22 +35,7 @@ fn branch(store: &Store, project: &Project, reference: Option<&str>) -> Result<O
     }
 }
 fn short(text: &str) -> String {
-    awr_core::public_summary(text, 240)
-        .unwrap_or_else(|_| awr_core::SENSITIVE_CONTENT_WITHHELD.into())
-}
-fn brief(work: &Projected<WorkItem>) -> Value {
-    json!({"id":work.item.meta.id,"external_key":work.item.meta.external_key,"title":work.item.title,"source_ref":work.item.meta.source_ref,
-        "archived":work.item.archived,"ordinary_completion":work.item.ordinary_completion,"ordinary_work_policy":work.source.config["adapter_options"]["ordinary_work_policy"],
-        "status":work.item.status,"raw_status":work.item.raw_status,"summary":short(if work.item.summary.is_empty(){&work.item.title}else{&work.item.summary}),
-        "priority":work.item.priority,"milestone":work.item.milestone,"owner":work.item.owner,"next_action":work.item.next_action,
-        "blocker":work.item.blocker,"revision":work.item.meta.revision,"source_revision":work.item.meta.source_ref.source_revision,"freshness":work.source.freshness})
-}
-fn ready_brief(work: &WorkReadiness) -> Value {
-    let mut value = brief(&work.work);
-    value["ready"] = json!(work.ready);
-    value["diagnostics"] = json!(work.diagnostics);
-    value["active_claims"] = json!(work.active_claims.iter().map(|c| json!({"id":c.id,"agent_id":c.agent_id,"session_id":c.session_id,"expires_at":c.expires_at})).collect::<Vec<_>>());
-    value
+    awr_core::short_text(text)
 }
 
 pub(crate) fn is_read_only(name: &str) -> bool {
@@ -516,9 +501,9 @@ fn status(view: &ReadProject, args: StatusArgs) -> Result<Value> {
     };
     Ok(
         json!({"project":view.project.name,"project_id":view.project.id,"branch_id":branch,
-        "counts":counts,"total":works.len(),"current":current.iter().take(5).map(|w| brief(w)).collect::<Vec<_>>(),
+        "counts":counts,"total":works.len(),"current":current.iter().take(5).map(|w| work_brief(w)).collect::<Vec<_>>(),
         "current_total":current.len(),"ready_count":ready.ready.len(),"blocked_count":ready.blocked.len(),
-        "next_action":next,"suggested_work":focus.map(brief),"organization":organization}),
+        "next_action":next,"suggested_work":focus.map(work_brief),"organization":organization}),
     )
 }
 fn ready(view: &ReadProject, args: ReadyArgs) -> Result<Value> {

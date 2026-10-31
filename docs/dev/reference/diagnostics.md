@@ -58,3 +58,38 @@ their own source SHA, digest, scope, branch, evidence level, currency and missin
 bindings. Human output prints these groups. A source reference and a verified
 report at the same path remain distinct; grouping never transfers verification,
 resolves path aliases or changes completion checks.
+
+## Readiness diagnostics: which layer answers
+
+`work show`, `ready`, `status` and `work prepare` of the CLI, and `awr_work_get`, `awr_work_ready`,
+`awr_project_status` and `awr_work_prepare` of the MCP server, report whether a work can be selected as `ready` and,
+when it cannot, a list of diagnostics `{code, work_item_key, detail}`. Both entries read the same evaluation and shape
+a work with the same functions (`awr_core::work_brief`, `awr_core::ready_brief`), so the same facts give the same code,
+key and detail whichever entry asks. Claiming, transitions and completion evaluate the same readiness again when they
+are submitted (a refusal carries the same diagnostics in `DependencyBlocked`).
+
+The codes answer different questions and are never folded into one another:
+
+| Code | Question it answers |
+| --- | --- |
+| `unknown_status`, `status_not_selectable`, `work_archived`, `active_blocker` | Work readiness: does the work itself allow selection |
+| `missing_dependency`, `dependency_cycle`, `dependency_not_completed`, `source_not_fresh` | Work readiness: do its required dependencies and sources allow it |
+| `active_claim` | Execution admission: another session holds an unexpired claim |
+| `admission_*`, `containment_*`, `reassessment_*` | Execution admission of a governed work: see [admission](admission.md), [containment](containment.md) and [reassessment](reassessment.md) |
+
+An unknown value is never read as success: `unknown_status` makes a work not ready, and an unknown dependency status
+does too.
+
+Context completeness is a separate answer. `context.completeness.complete` and its `issues` describe whether the facts
+the context needs are present, not whether a dependency is done. A dependency that is not done but has a fresh, known
+status and a next action leaves the context complete and the work not ready; a dependency that is absent, in a cycle or
+without a known status makes the context incomplete, and `work prepare` then answers `ContextIncomplete` with the same
+body and diagnostics from both entries.
+
+A `ready` answer authorizes nothing. Reading does not claim, and it does not make the MCP server write; a claim, a
+transition or a completion is judged on the facts of the moment it is submitted, so a dependency that became unfinished
+behind an earlier answer is refused with `DependencyBlocked`, and a claim whose lease ended with `ClaimConflict`.
+
+Two differences are about the envelope and not about the verdict. A failed `work prepare` carries its `error` inside
+the result over MCP and on standard error over the CLI, and `response_view=action` names the call for the full result as
+a command line (CLI) or a tool call (MCP).
