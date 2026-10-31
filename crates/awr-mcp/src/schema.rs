@@ -466,6 +466,7 @@ pub fn tools() -> Vec<Tool> {
                 json!({
                     "work":text(),"action":{"type":"string","enum":["progress","block","unblock","cancel","reopen","complete"]},"session":text(),"expected_revision":revision(),"reason":text(),
                     "next_action":optional(text()),"summary":optional(text()),"blocker":optional(text()),"completion":optional(completion),
+                    "end_session":optional(json!({"type":"boolean","description":"complete only: end the session in the same request; refused while it holds claims on other work."})),
                 }),
                 &["work", "action", "session", "expected_revision", "reason"],
             ),

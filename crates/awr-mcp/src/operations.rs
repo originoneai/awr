@@ -681,12 +681,18 @@ fn transition(root: &Path, args: TransitionArgs) -> Result<CallToolResult> {
                 expected_revision: args.expected_revision,
                 reason: args.reason,
                 input,
+                end_session: args.end_session.unwrap_or(false),
             },
         )?
     } else {
         if args.completion.is_some() {
             return Err(Error::InvalidInput(
                 "only complete accepts completion bindings".into(),
+            ));
+        }
+        if args.end_session == Some(true) {
+            return Err(Error::InvalidInput(
+                "only complete can end the session with it".into(),
             ));
         }
         awr_runtime::perform_work_action(

@@ -4,11 +4,14 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
-- One shape for a work and its readiness in the CLI and the MCP server (`awr_core::work_brief`, `ready_brief`), in place of
-  two identical copies, and parity tests that hold the five result layers apart across both entries: a complete context
-  with a work that is not ready, a ready work with an incomplete context, an unknown value that is neither, a claim as its
-  own answer, and a `ready` answer that authorizes nothing because claims and transitions are judged on the facts of the
-  moment they are submitted. `docs/dev/reference/diagnostics.md` explains which layer each readiness code answers.
+- Closing a session after finished work: the response of `awr work complete` and `awr work cancel`
+  carries one bounded `close_out` instruction (condition, basis, next step, when to look again, under
+  60 tokens) while the session holds no other active claim, and `awr work complete --end-session`
+  (MCP `end_session` of `awr_work_transition`) ends the session in the same request once the
+  completion is durable. The `session.ended` event records `completion_event_id`. The call without
+  the flag is unchanged, and the session flow, Codex and MCP documents put the End step in the main
+  flow and say what editing a status field directly costs. See
+  [session workflow](../integrations/session-workflow.md#finish-the-work-and-end-the-session).
 - Governed work in a Team: a snapshot may declare governance (`governance.json`, written by
   `PublishPrepOptions::governance`), the Team reuses the Core admission rules on its own facts, and
   `admission.decide` records decisions attributed to the verified caller (`planning.approve`, a
@@ -67,6 +70,11 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   reasoning, blocks: it holds the completion of that work and counts as a rework cycle. Every other
   finding is a deferred record linked to the work that blocks nothing. See
   [findings](../reference/findings.md).
+- One shape for a work and its readiness in the CLI and the MCP server (`awr_core::work_brief`, `ready_brief`), in place of
+  two identical copies, and parity tests that hold the five result layers apart across both entries: a complete context
+  with a work that is not ready, a ready work with an incomplete context, an unknown value that is neither, a claim as its
+  own answer, and a `ready` answer that authorizes nothing because claims and transitions are judged on the facts of the
+  moment they are submitted. `docs/dev/reference/diagnostics.md` explains which layer each readiness code answers.
 - One bounded instruction for governed work: `work prepare` in its action view (and `awr_work_prepare`)
   tells the earliest material gap (a definition that is missing or incomplete, an admission that is
   missing, pending, denied or stale, a containment, a gap, a reassessment, a spent budget, a blocking
