@@ -4,6 +4,20 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
+- One observation freshness and coverage contract for the Inspector Team reads (AWR-OBS-002): every
+  successful read (`POST /api/team/read`, `/api/team/inbox-detail`, `GET /api/team/inbox`,
+  `GET /api/team/work`) carries a `freshness` envelope that presents the report-received clock, the
+  authoritative measurement (project revision, source snapshot, coordinator epoch, query time) and
+  the page-read clock side by side, and an unmeasured or partial plane says so instead of borrowing
+  another clock's value. The generic read route and the coordination detail route now share one
+  attribution semantics: the response must belong to the requested work, workstream and scope, and a
+  read response that claims `execution_authorized` is refused. `GET /api/team/overview` composes
+  with a declared `coverage` (authorized scope enumeration, per-stream succeeded/failed, enumerated
+  versus server-reported totals, truncation with a resume cursor, per-part as-of): a capped
+  enumeration is declared truncated instead of counted as all, a non-auth part failure retains the
+  confirmed parts with their as-of, an auth/permission revocation clears the whole response, a
+  mixed-revision composition claims no common version, and a stalled scoped list is bounded and
+  reported as `ReadTimeout` rather than as empty data.
 - Team evidence keeps the caller's claim and the recorded outcome of an execution apart. `evidence.submit` compares a
   claim bound to an execution with the Team's record of it (same work, scope, contract and input digest; a claim of
   success against a recorded failure or cancellation, or the reverse) and refuses a provable contradiction as

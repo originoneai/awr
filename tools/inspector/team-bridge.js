@@ -183,6 +183,101 @@ function validReadResponse(reply, op) {
   return true;
 }
 
+/**
+ * AWR-OBS-002 shared read attribution: one semantics for the generic read
+ * route and the coordination detail route. The response must carry the
+ * standard envelope, belong to the requested work/workstream/scope, and must
+ * never grant execution. strictWorkstream additionally pins the response
+ * workstream (coordination detail always selects one).
+ */
+function readAttributionError(query, result, { strictWorkstream } = {}) {
+  if (!result || result.protocol_version !== 1 || result.scope_id !== 'main'
+    || !['source_snapshot_id', 'project_revision', 'coordinator_epoch']
+      .every((k) => typeof result[k] === 'string' && result[k])
+    || !/^\d+$/.test(result.project_revision)) {
+    return { code: 'BadGateway', message: 'Invalid Team read response' };
+  }
+  const data = result.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return { code: 'BadGateway', message: 'Invalid Team read response' };
+  }
+  if (data.execution_authorized === true) {
+    return { code: 'BadGateway', message: 'A Team read response never authorizes execution' };
+  }
+  if (strictWorkstream && result.workstream_id !== query.workstream_id) {
+    return { code: 'BadGateway', message: 'Invalid coordination detail response' };
+  }
+  if (!strictWorkstream && result.workstream_id != null && query.workstream_id != null
+    && result.workstream_id !== query.workstream_id) {
+    return { code: 'BadGateway', message: 'Team read response is not for the requested workstream' };
+  }
+  if (query.work_id != null
+    && [data.work_id, data.review && data.review.work_id].some((id) => id != null && id !== query.work_id)) {
+    return { code: 'BadGateway', message: 'Team read response is not for the requested work' };
+  }
+  if (query.op === 'review.inspect' && data.review && data.review.round_id != null
+    && data.review.round_id !== query.review_round_id) {
+    return { code: 'BadGateway', message: 'Team read response is not the requested review round' };
+  }
+  if (query.op === 'delivery.integration.inspect' && data.integration_id != null
+    && data.integration_id !== query.request_id) {
+    return { code: 'BadGateway', message: 'Team read response is not the requested integration request' };
+  }
+  return null;
+}
+
+/**
+ * AWR-OBS-002 unified freshness envelope. Three clocks are presented
+ * separately and never substitute for each other: when a plane was not
+ * measured its status says so instead of borrowing another clock's value.
+ * - report_received: when the caller's report was received (progress fields).
+ * - authoritative: the service's own measurement (envelope revision, source
+ *   snapshot, coordinator epoch, and the query/observation time when known).
+ * - page_read: when this bridge read the page (always measured here).
+ */
+function readFreshness(result, readAtMs) {
+  const data = result && result.data && typeof result.data === 'object' && !Array.isArray(result.data)
+    ? result.data : null;
+  const progress = (data && ((data.observation && data.observation.progress) || data.progress)) || null;
+  const report_received = progress
+    && (Number.isFinite(progress.reported_at_unix_ms) || typeof progress.recorded_project_revision === 'string')
+    ? {
+      status: 'measured',
+      ...(Number.isFinite(progress.reported_at_unix_ms) ? { at_unix_ms: progress.reported_at_unix_ms } : {}),
+      ...(typeof progress.recorded_project_revision === 'string'
+        ? { project_revision: progress.recorded_project_revision } : {}),
+    }
+    : { status: 'not_measured' };
+  const revision = result && typeof result.project_revision === 'string' && /^\d+$/.test(result.project_revision)
+    ? result.project_revision : null;
+  const source = result && typeof result.source_snapshot_id === 'string' && result.source_snapshot_id
+    ? result.source_snapshot_id : null;
+  const epoch = result && typeof result.coordinator_epoch === 'string' && result.coordinator_epoch
+    ? result.coordinator_epoch : null;
+  const queried = Number.isFinite(data && data.snapshot && data.snapshot.queried_at_unix_ms)
+    ? data.snapshot.queried_at_unix_ms
+    : Number.isFinite(data && data.observed_at_unix_ms) ? data.observed_at_unix_ms
+      : Number.isFinite(data && data.observation && data.observation.observed_at_unix_ms)
+        ? data.observation.observed_at_unix_ms : null;
+  const authoritative = revision && source && epoch
+    ? {
+      status: 'measured', project_revision: revision, source_snapshot_id: source, coordinator_epoch: epoch,
+      ...(queried != null ? { at_unix_ms: queried } : {}),
+    }
+    : revision || source || epoch
+      ? {
+        status: 'partial',
+        ...(revision ? { project_revision: revision } : {}),
+        ...(source ? { source_snapshot_id: source } : {}),
+        ...(epoch ? { coordinator_epoch: epoch } : {}),
+      }
+      : { status: 'not_measured' };
+  return { report_received, authoritative, page_read: { status: 'measured', at_unix_ms: readAtMs } };
+}
+
+/** Auth/permission failures clear restricted content; they never retain it. */
+const READ_AUTH_FAILURES = new Set(['Unauthenticated', 'SessionExpired', 'Forbidden']);
+
 function inboxSelector(query) {
   if (!query || Array.isArray(query) || query.protocol_version !== 1 || !INBOX_READ_OPS.has(query.op)) return false;
   const extra = query.op === 'review.inspect' ? 'review_round_id'
@@ -388,16 +483,40 @@ function createTeamBridge(opts) {
     });
   }
 
+  /**
+   * Follow one scoped list query to the end of its pages, bounded per page.
+   * The result declares its own coverage: the server-reported total when one
+   * exists, a truncation marker with the resume cursor when the page cap is
+   * hit (never silently counted as all), and the pages' shared as-of triple —
+   * null when the pages carry no envelope or mix revisions, so a mixed or
+   * unmeasured composition can never claim one authoritative version.
+   */
   async function queryAllPages(project, query, req, res) {
     const items = [];
     const seen = new Set();
     let cursor;
+    let total = null;
+    let asOf;
+    let mixed = false;
     for (let page = 0; page < 100; page += 1) {
-      const upstream = await proxyTeam(
-        `/v1/web/projects/${encodeURIComponent(project)}/query`, req,
-        { protocol_version: 1, ...query, limit: 100, ...(cursor ? { cursor } : {}) },
-        'POST'
-      );
+      const signal = AbortSignal.timeout(4000);
+      let upstream;
+      try {
+        upstream = await proxyTeam(
+          `/v1/web/projects/${encodeURIComponent(project)}/query`, req,
+          { protocol_version: 1, ...query, limit: 100, ...(cursor ? { cursor } : {}) },
+          'POST', signal
+        );
+      } catch (error) {
+        return {
+          error: {
+            code: signal.aborted ? 'ReadTimeout' : 'BadGateway',
+            message: signal.aborted
+              ? 'Scoped list read timed out; retry this read'
+              : 'Scoped list service is unreachable',
+          },
+        };
+      }
       if (!upstream) return { error: { code: 'BadGateway', message: 'live proxy unavailable' } };
       applyProxiedCookies(res, upstream.setCookie);
       if (upstream.status >= 400) return liveError(upstream);
@@ -405,16 +524,29 @@ function createTeamBridge(opts) {
       if (!data || !Array.isArray(data.items)) {
         return { error: { code: 'BadGateway', message: 'invalid Team query page' } };
       }
+      const triple = ['project_revision', 'source_snapshot_id', 'coordinator_epoch']
+        .every((k) => upstream.json && typeof upstream.json[k] === 'string' && upstream.json[k])
+        ? {
+          project_revision: upstream.json.project_revision,
+          source_snapshot_id: upstream.json.source_snapshot_id,
+          coordinator_epoch: upstream.json.coordinator_epoch,
+        }
+        : null;
+      if (page === 0) asOf = triple;
+      else if (JSON.stringify(triple) !== JSON.stringify(asOf)) mixed = true;
+      if (Number.isInteger(data.total) && data.total >= 0) total = data.total;
       items.push(...data.items);
       const next = data.next_cursor;
-      if (next == null) return { items };
+      if (next == null) {
+        return { items, total, truncated: false, next_cursor: null, as_of: mixed ? null : asOf };
+      }
       if (typeof next !== 'string' || !next || seen.has(next)) {
         return { error: { code: 'BadGateway', message: 'invalid Team query cursor' } };
       }
       seen.add(next);
       cursor = next;
     }
-    return { error: { code: 'OverviewLimitExceeded', message: 'Team overview exceeded the page limit' } };
+    return { items, total, truncated: true, next_cursor: cursor, as_of: mixed ? null : asOf };
   }
 
   async function inboxRead(project, query, req, res, maxBytes) {
@@ -475,6 +607,7 @@ function createTeamBridge(opts) {
         const streams = await queryAllPages(project, { op: 'workstreams.list' }, req, res);
         if (streams.error) return { ok: false, error: streams.error };
         const works = [];
+        const parts = [];
         for (const stream of streams.items) {
           if (!stream || typeof stream.id !== 'string' || !stream.id) {
             return { ok: false, error: { code: 'BadGateway', message: 'invalid Team workstream' } };
@@ -482,15 +615,49 @@ function createTeamBridge(opts) {
           const page = await queryAllPages(
             project, { op: 'work.list', workstream_id: stream.id }, req, res
           );
-          if (page.error) return { ok: false, error: page.error };
+          if (page.error) {
+            // Identity or permission revocation clears restricted content at
+            // once; nothing already read is retained or returned.
+            if (READ_AUTH_FAILURES.has(page.error.code)) return { ok: false, error: page.error };
+            // A non-auth partial failure is declared; the confirmed parts
+            // keep their own as-of below.
+            parts.push({
+              workstream_id: stream.id, status: 'failed', error_code: page.error.code,
+              works_enumerated: 0, works_total: null, truncated: false, next_cursor: null, as_of: null,
+            });
+            continue;
+          }
+          parts.push({
+            workstream_id: stream.id, status: 'succeeded',
+            works_enumerated: page.items.length, works_total: page.total,
+            truncated: page.truncated, next_cursor: page.next_cursor, as_of: page.as_of,
+          });
           works.push(...mapWorksFromQuery(page).map((work) => ({
             ...work, workstream_id: stream.id,
           })));
+        }
+        if (parts.length > 0 && parts.every((part) => part.status === 'failed')) {
+          // Nothing confirmed to retain: fail closed with the part's reason.
+          return { ok: false, error: { code: parts[0].error_code, message: 'No authorized workstream could be read' } };
         }
         const capabilities = await proxyTeam(`/v1/web/projects/${encodeURIComponent(project)}/query`, req,
           { protocol_version: 1, op: 'capabilities' }, 'POST');
         if (!capabilities || capabilities.status >= 400) return liveError(capabilities);
         const identity = capabilities.json && (capabilities.json.data || capabilities.json).identity;
+        const succeeded = parts.filter((part) => part.status === 'succeeded');
+        const failed = parts.filter((part) => part.status === 'failed');
+        // A total exists only when every enumerated part reported one and the
+        // authorized scope itself was fully enumerated.
+        const worksTotal = failed.length === 0 && !streams.truncated
+          && succeeded.every((part) => Number.isInteger(part.works_total))
+          ? succeeded.reduce((sum, part) => sum + part.works_total, 0)
+          : null;
+        // One common revision only when every measured part agrees on it.
+        const triples = [streams.as_of, ...succeeded.map((part) => part.as_of)];
+        const common = triples.length > 0 && triples.every((triple) => triple)
+          && new Set(triples.map((triple) => JSON.stringify(triple))).size === 1
+          ? triples[0]
+          : null;
         return {
           ok: true,
           identity: identity || null,
@@ -500,6 +667,26 @@ function createTeamBridge(opts) {
           members: [],
           handoffs: [],
           reviews: [],
+          coverage: {
+            scope: {
+              enumerated: streams.items.length,
+              truncated: streams.truncated,
+              next_cursor: streams.truncated ? streams.next_cursor : null,
+            },
+            streams: parts,
+            works_enumerated: works.length,
+            works_total: worksTotal,
+            succeeded: succeeded.length,
+            failed: failed.length,
+            truncated: streams.truncated || succeeded.some((part) => part.truncated),
+          },
+          freshness: {
+            report_received: { status: 'not_measured' },
+            authoritative: common
+              ? { status: 'measured', ...common }
+              : { status: 'not_measured' },
+            page_read: { status: 'measured', at_unix_ms: Date.now() },
+          },
           schema: 'awr-team-web-loop-live/v1',
           interaction_mode: 'mcp',
           mcp_url: publicUrl + '/v1/projects/' + encodeURIComponent(project) + '/mcp',
@@ -515,14 +702,34 @@ function createTeamBridge(opts) {
       }
       const view = url.searchParams.get('view') === 'personal' ? 'personal-view.json' : 'team-view.json';
       const data = readFixture(view);
+      const fixtureStreams = data.workstreams || [];
       return {
         ok: true,
         project: url.searchParams.get('project') || (data.projects[0] && data.projects[0].key),
         works: data.works,
-        workstreams: data.workstreams || [],
+        workstreams: fixtureStreams,
         members: data.members,
         handoffs: data.handoffs || [],
         reviews: data.reviews || [],
+        coverage: {
+          scope: { enumerated: fixtureStreams.length, truncated: false, next_cursor: null },
+          streams: fixtureStreams.map((stream) => ({
+            workstream_id: stream.id, status: 'succeeded',
+            works_enumerated: data.works.filter((work) => work.workstream_id === stream.id).length,
+            works_total: data.works.filter((work) => work.workstream_id === stream.id).length,
+            truncated: false, next_cursor: null, as_of: null,
+          })),
+          works_enumerated: data.works.length,
+          works_total: data.works.length,
+          succeeded: fixtureStreams.length,
+          failed: 0,
+          truncated: false,
+        },
+        freshness: {
+          report_received: { status: 'not_measured' },
+          authoritative: { status: 'not_measured' },
+          page_read: { status: 'measured', at_unix_ms: Date.now() },
+        },
         schema: data.schema,
       };
     },
@@ -537,6 +744,7 @@ function createTeamBridge(opts) {
         ...(cursor == null ? {} : { cursor }) }, req, res, 65536);
       if (reply.ok && !validInboxPage(reply.result, cursor))
         return { ok: false, error: { code: 'BadGateway', message: 'Invalid current coordination page' } };
+      if (reply.ok) return { ...reply, freshness: readFreshness(reply.result, Date.now()) };
       return reply;
     },
 
@@ -549,19 +757,11 @@ function createTeamBridge(opts) {
       // The upstream reauthorizes this read. No command, acknowledgement or provider lookup is issued.
       const reply = await inboxRead(input.project, input.query, req, res, 262144);
       if (reply.ok) {
-        const result = reply.result;
-        if (result.protocol_version !== 1 || result.scope_id !== 'main' || result.workstream_id !== input.query.workstream_id
-          || !['source_snapshot_id', 'project_revision', 'coordinator_epoch'].every(k => typeof result[k] === 'string' && result[k])
-          || !/^\d+$/.test(result.project_revision)
-          || !result.data || typeof result.data !== 'object' || Array.isArray(result.data)
-          || result.data.execution_authorized === true
-          || [result.data.work_id, result.data.review?.work_id].some(id => id != null && id !== input.query.work_id)
-          || (input.query.op === 'review.inspect' && result.data.review?.round_id != null
-            && result.data.review.round_id !== input.query.review_round_id)
-          || (input.query.op === 'delivery.integration.inspect' && result.data.integration_id != null
-            && result.data.integration_id !== input.query.request_id))
-          return { ok: false, error: { code: 'BadGateway', message: 'Invalid coordination detail response' } };
-        return { ...reply, query: input.query };
+        // One shared attribution semantics with the generic read route
+        // (AWR-OBS-002); the coordination detail always pins its workstream.
+        const attribution = readAttributionError(input.query, reply.result, { strictWorkstream: true });
+        if (attribution) return { ok: false, error: attribution };
+        return { ...reply, query: input.query, freshness: readFreshness(reply.result, Date.now()) };
       }
       return reply;
     },
@@ -580,7 +780,15 @@ function createTeamBridge(opts) {
       const reply = await inboxRead(input.project, input.query, req, res, maxBytes);
       if (reply.ok && !validReadResponse(reply.result, input.query.op))
         return { ok: false, error: { code: 'BadGateway', message: 'Invalid Team read response' } };
-      if (reply.ok) return { ...reply, query: input.query };
+      // One shared attribution semantics with the coordination detail route
+      // (AWR-OBS-002): the response must belong to the requested
+      // work/workstream/scope and must never grant execution. capabilities is
+      // the one flat discovery response and carries no attributable object.
+      if (reply.ok && input.query.op !== 'capabilities') {
+        const attribution = readAttributionError(input.query, reply.result, { strictWorkstream: false });
+        if (attribution) return { ok: false, error: attribution };
+      }
+      if (reply.ok) return { ...reply, query: input.query, freshness: readFreshness(reply.result, Date.now()) };
       return reply;
     },
 
@@ -666,7 +874,12 @@ function createTeamBridge(opts) {
           : { code: 'restore_context', action: { op: 'work.prepare', note: data.next_step || null } };
         progress.next_step = progress.guidance.action?.note || null;
       }
-      return { ok: true, work: {
+      // Three clocks side by side (AWR-OBS-002): the caller's report receipt,
+      // the service's own measurement and this page read — never substituted.
+      const freshness = readFreshness(
+        legacy ? (observed.json && observed.json.data ? observed.json : upstream.json) : upstream.json,
+        Date.now());
+      return { ok: true, freshness, work: {
         key: work, workstream_id: stream, contract_hash: data.contract_hash,
         detail_loaded: true, status: data.runtime ? data.runtime.state : null,
         runtime_available: Boolean(data.runtime),
