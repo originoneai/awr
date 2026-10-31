@@ -240,11 +240,14 @@ fn hard_guards_keep_their_slots_and_the_soft_codes_are_a_full_permutation() {
     short.pop();
     let mut twice = soft_codes();
     twice[1] = twice[0].clone();
+    // Every code present and one of them again: the same set, one too long.
+    let mut repeated = soft_codes();
+    repeated.push(repeated[0].clone());
     let mut with_hard = soft_codes();
     with_hard[0] = "claim_conflict".into();
     let mut unknown = soft_codes();
     unknown[0] = "made_up_code".into();
-    for bad in [short, twice, with_hard, unknown] {
+    for bad in [short, twice, repeated, with_hard, unknown] {
         let document = doc(json!([{"version": 1, "order": {"soft_reason_codes": bad}}]));
         assert_eq!(
             codes(&document),

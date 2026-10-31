@@ -244,22 +244,27 @@ fn an_explanation_carries_the_policy_that_shaped_it_and_the_advice_it_withheld()
         explain(Some(&p))["envelope"]["assessment_hash"],
         view["envelope"]["assessment_hash"]
     );
-    // A policy handed in already resolved wins and says nothing of the file.
+    // A policy handed in already resolved wins over the file, and the explanation says nothing of the file.
+    let mut custom = AssessmentPolicy::default();
+    custom.policy_id = "handed-in".into();
+    custom.policy_version = 3;
+    custom.disabled_advice = vec!["collect_user_reply".into()];
     let handed = attach_assessment_explanation(
         sample_prepare(),
         &AttachExplanationOptions {
             enabled: true,
             policy_root: Some(p.0.clone()),
-            policy: Some(AssessmentPolicy::default()),
+            policy: Some(custom),
             ..Default::default()
         },
     )
     .unwrap();
-    assert!(handed[ASSESSMENT_EXPLAIN_FIELD].get("policy").is_none());
-    assert_eq!(
-        codes(&handed[ASSESSMENT_EXPLAIN_FIELD]),
-        vec!["continue_prepare_current_work"]
-    );
+    let handed = &handed[ASSESSMENT_EXPLAIN_FIELD];
+    assert!(handed.get("policy").is_none());
+    assert_eq!(handed["envelope"]["identity"]["policy_id"], "handed-in");
+    assert_eq!(handed["envelope"]["identity"]["policy_version"], 3);
+    // Not the file's advice (the file withholds this one), and not the built-in policy's identity.
+    assert_eq!(codes(handed), vec!["continue_prepare_current_work"]);
 }
 
 #[test]
