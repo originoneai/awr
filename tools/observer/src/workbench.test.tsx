@@ -80,6 +80,12 @@ function snapshotCalls(fetchMock: ReturnType<typeof vi.fn>) {
   });
 }
 
+function readOperations(fetchMock: ReturnType<typeof vi.fn>) {
+  return fetchMock.mock.calls
+    .filter(([input]) => String(input).includes('/api/team/read'))
+    .map(([, init]) => (JSON.parse(String(init?.body)) as { query: { op: string } }).query.op);
+}
+
 afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -160,16 +166,88 @@ describe('My work sourced rows and navigation', () => {
   });
 });
 
+describe('My work URL, source selection, and keyboard behavior', () => {
+  it('falls back to in progress for an unknown tab', async () => {
+    setupWorkbench({ path: '/workbench?scope=demo&tab=bogus' });
+    await screen.findAllByText('Build the filter API');
+    expect(screen.getByRole('tab', { name: '进行中' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.queryByTestId('workbench-tab-placeholder')).toBeNull();
+  });
+
+  it('requests exactly the sources used by each sourced tab', async () => {
+    const user = userEvent.setup();
+    const { fetchMock } = setupWorkbench();
+    await screen.findAllByText('Build the filter API');
+    await waitFor(() => expect(snapshotCalls(fetchMock)).toHaveLength(2));
+    expect([...new Set(readOperations(fetchMock))].sort()).toEqual(['work.next', 'work.snapshot']);
+    expect(readOperations(fetchMock)).not.toContain('work.inbox');
+
+    await user.click(screen.getByRole('tab', { name: '需要我处理' }));
+    await screen.findAllByText('Review the API handoff');
+    await waitFor(() => expect(snapshotCalls(fetchMock)).toHaveLength(3));
+    expect([...new Set(readOperations(fetchMock))].sort()).toEqual([
+      'work.inbox',
+      'work.next',
+      'work.snapshot',
+    ]);
+  });
+
+  it('selects rows with Enter and Space', async () => {
+    const user = userEvent.setup();
+    const { router } = setupWorkbench();
+    await screen.findAllByText('Build the filter API');
+
+    const firstRow = screen.getByRole('link', { name: 'Build the filter API' }).closest('tr');
+    expect(firstRow).not.toBeNull();
+    firstRow!.focus();
+    expect(document.activeElement).toBe(firstRow);
+    await user.keyboard('{Enter}');
+    expect(router.state.location.search).toContain('work=W1');
+
+    const secondRow = screen.getByRole('link', { name: 'Prepare the support page' }).closest('tr');
+    expect(secondRow).not.toBeNull();
+    secondRow!.focus();
+    await user.keyboard(' ');
+    expect(router.state.location.search).toContain('work=W2');
+  });
+
+  it('shows unclaimed in the selected detail pane', async () => {
+    setupWorkbench({ path: '/workbench?scope=demo&work=W2' });
+    const detail = await screen.findByTestId('workbench-detail');
+    await waitFor(() => expect(detail.textContent).toContain('Keep support filters useful'));
+    expect(within(detail).getByText('未认领')).toBeTruthy();
+  });
+
+  it('restores page two from the URL', async () => {
+    setupWorkbench({
+      path: '/workbench?scope=demo&page=2',
+      next: makeNext(makeItems(61)),
+    });
+    await screen.findAllByText('Observed task 61');
+    expect(screen.queryByText('Observed task 1')).toBeNull();
+  });
+
+  it.each(['bogus', '-1'])('falls back to page one for page=%s', async (page) => {
+    setupWorkbench({
+      path: `/workbench?scope=demo&page=${page}`,
+      next: makeNext(makeItems(61)),
+    });
+    await screen.findAllByText('Observed task 1');
+    expect(screen.queryByText('Observed task 61')).toBeNull();
+  });
+});
+
 describe('visible-row snapshot hydration', () => {
   it('hydrates at most the current 60-row page and then the next visible page', async () => {
     const user = userEvent.setup();
-    const { fetchMock } = setupWorkbench({ next: makeNext(makeItems(61)) });
+    const { fetchMock, router } = setupWorkbench({ next: makeNext(makeItems(61)) });
     await screen.findAllByText('Observed task 1');
 
     await waitFor(() => expect(snapshotCalls(fetchMock)).toHaveLength(60));
     expect(snapshotCalls(fetchMock).some(([, init]) => String(init?.body).includes('W61'))).toBe(false);
 
     await user.click(screen.getByRole('listitem', { name: '下一页' }));
+    expect(router.state.location.search).toContain('page=2');
     await screen.findAllByText('Observed task 61');
     await waitFor(() => expect(snapshotCalls(fetchMock)).toHaveLength(61));
     expect(snapshotCalls(fetchMock).filter(([, init]) => String(init?.body).includes('W61'))).toHaveLength(1);
@@ -211,16 +289,17 @@ describe('visible-row snapshot hydration', () => {
     expect(maximumActive).toBeLessThanOrEqual(4);
   });
 
-  it('uses only last activity, and falls back to not measured for missing or failed snapshots', async () => {
+  it('uses not measured for a missing client report or failed snapshot, never last activity', async () => {
     const listRead = formatUnixMs(1761840000000, 'zh-CN');
     const observedAt = formatUnixMs(1761839999000, 'zh-CN');
+    const lastActivity = formatUnixMs(1761839900000, 'zh-CN');
     const { fetchMock } = setupWorkbench({
       snapshot: (workId) => {
         if (workId === 'W2') return { ok: false, error: { code: 'ReadTimeout', message: 'slow' } };
         const response = demoWorkSnapshot(workId) as {
-          result: { data: { observation: Record<string, unknown> } };
+          result: { data: { observation: { reporting: { client_reported_at_unix_ms?: number } } } };
         };
-        delete response.result.data.observation.last_activity_at_unix_ms;
+        delete response.result.data.observation.reporting.client_reported_at_unix_ms;
         return response;
       },
     });
@@ -235,14 +314,16 @@ describe('visible-row snapshot hydration', () => {
     });
     expect(first.textContent).not.toContain(listRead);
     expect(first.textContent).not.toContain(observedAt);
+    expect(first.textContent).not.toContain(lastActivity);
     expect(screen.getByText('Prepare the support page')).toBeTruthy();
     expect(screen.queryByTestId('state-partial')).toBeNull();
   });
 
-  it('formats a real last-activity timestamp rather than the list page_read clock', async () => {
+  it('formats the client report time, not last activity or either other clock', async () => {
     setupWorkbench();
     const cell = await screen.findByTestId('last-report-W1');
-    await waitFor(() => expect(cell.textContent).toBe(formatUnixMs(1761839900000, 'zh-CN')));
+    await waitFor(() => expect(cell.textContent).toBe(formatUnixMs(1761839800000, 'zh-CN')));
+    expect(cell.textContent).not.toBe(formatUnixMs(1761839900000, 'zh-CN'));
     expect(cell.textContent).not.toBe(formatUnixMs(1761840000000, 'zh-CN'));
     expect(cell.textContent).not.toBe(formatUnixMs(1761839999000, 'zh-CN'));
   });

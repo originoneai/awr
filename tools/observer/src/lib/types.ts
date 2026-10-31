@@ -156,10 +156,9 @@ export interface WorkSnapshotData {
   work_id?: string;
   observation?: {
     last_activity_at_unix_ms?: number | null;
-    reported_at?: number | null;
     observed_at_unix_ms?: number | null;
     progress?: Record<string, unknown> | null;
-    reporting?: Record<string, unknown>;
+    reporting?: { client_reported_at_unix_ms?: number | null } & Record<string, unknown>;
     runtime?: { state?: string; work_version?: string };
     responsibility?: Record<string, unknown>;
     session?: Record<string, unknown> | null;

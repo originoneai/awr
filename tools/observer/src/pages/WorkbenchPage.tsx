@@ -16,7 +16,7 @@ import {
 } from 'antd';
 import type { TFunction } from 'i18next';
 import { Link as LinkIcon } from 'lucide-react';
-import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { FreshnessBadge } from '../components/FreshnessBadge';
@@ -70,6 +70,12 @@ function validTab(value: string | null): TabKey {
   return (TAB_KEYS as readonly string[]).includes(value ?? '') ? value as TabKey : 'in-progress';
 }
 
+function validPage(value: string | null) {
+  if (!value || !/^[1-9]\d*$/.test(value)) return 1;
+  const page = Number(value);
+  return Number.isSafeInteger(page) ? page : 1;
+}
+
 function taskPath(project: string, workId: string) {
   return `/projects/${encodeURIComponent(project)}?tab=plan&work=${encodeURIComponent(workId)}`;
 }
@@ -90,13 +96,13 @@ function nextActionText(query: WorkQuery, t: TFunction) {
 function LastReport({ workId, query }: { workId: string; query?: SnapshotQuery }) {
   const { t, i18n } = useTranslation();
   const observation = query?.data?.result.data.observation;
-  const lastActivity = observation?.last_activity_at_unix_ms ?? observation?.reported_at;
+  const clientReportedAt = observation?.reporting?.client_reported_at_unix_ms;
   let text = t('common.loading');
   if (query?.isError) text = t('freshness.state.not_measured');
   else if (query && !query.isPending) {
-    text = lastActivity == null
+    text = clientReportedAt == null
       ? t('freshness.state.not_measured')
-      : formatUnixMs(lastActivity, i18n.language);
+      : formatUnixMs(clientReportedAt, i18n.language);
   }
   return <span data-testid={`last-report-${workId}`}>{text}</span>;
 }
@@ -237,13 +243,11 @@ export function WorkbenchPage() {
   const { revoked } = useRevocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = validTab(searchParams.get('tab'));
-  const [page, setPage] = useState(1);
+  const page = validPage(searchParams.get('page'));
   const projects = useQuery(projectsQueryOptions(revoked));
   const effectiveProject = projectKey ?? projects.data?.projects?.[0]?.key ?? null;
   const workNext = useQuery(workNextQueryOptions(effectiveProject, revoked));
   const workInbox = useQuery(workInboxQueryOptions(effectiveProject, activeTab === 'needs-me', revoked));
-
-  useEffect(() => setPage(1), [activeTab, effectiveProject]);
 
   const nextData = workNext.data?.result.data;
   const inboxData = workInbox.data?.result.data;
@@ -285,6 +289,15 @@ export function WorkbenchPage() {
     const next = new URLSearchParams(searchParams);
     next.set('tab', tab);
     next.delete('work');
+    next.delete('page');
+    setSearchParams(next);
+  }
+
+  function selectPage(nextPage: number) {
+    const next = new URLSearchParams(searchParams);
+    if (nextPage === 1) next.delete('page');
+    else next.set('page', String(nextPage));
+    next.delete('work');
     setSearchParams(next);
   }
 
@@ -292,6 +305,7 @@ export function WorkbenchPage() {
     {
       title: t('workbench.columns.task'),
       key: 'task',
+      width: 200,
       render: (_, row) => (
         <Flex vertical gap={4}>
           {effectiveProject ? (
@@ -306,6 +320,7 @@ export function WorkbenchPage() {
     {
       title: t('workbench.columns.progress'),
       key: 'progress',
+      width: 150,
       render: (_, row) => (
         <Space wrap>
           {row.state !== undefined
@@ -320,11 +335,13 @@ export function WorkbenchPage() {
     {
       title: t('workbench.columns.next'),
       key: 'next',
+      width: 130,
       render: (_, row) => <Typography.Text>{nextActionText(row.next_query, t)}</Typography.Text>,
     },
     {
       title: t('workbench.columns.lastReport'),
       key: 'lastReport',
+      width: 160,
       render: (_, row, index) => <LastReport workId={row.work_id} query={snapshots[index]} />,
     },
   ];
@@ -335,13 +352,14 @@ export function WorkbenchPage() {
       rowKey="key"
       columns={columns}
       dataSource={visibleRows}
-      scroll={{ x: 760 }}
+      tableLayout="fixed"
+      scroll={{ x: 640 }}
       pagination={{
         current: page,
         pageSize: PAGE_SIZE,
         total: rows.length,
         showSizeChanger: false,
-        onChange: setPage,
+        onChange: selectPage,
       }}
       onRow={(row) => ({
         tabIndex: 0,
