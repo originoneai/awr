@@ -74,6 +74,8 @@ pub(crate) struct TransitionArgs {
     pub summary: Option<String>,
     pub blocker: Option<String>,
     pub completion: Option<CompletionInput>,
+    /// Only for `complete`: end the session in the same request.
+    pub end_session: Option<bool>,
 }
 
 #[derive(Deserialize)]

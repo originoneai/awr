@@ -16,7 +16,7 @@ CLI 示例统一以 `awr --project /absolute/project --json` 为前缀。表中�
 | `awr_context_compile`，无 `branch` | `context compile --work WORK [--session SESSION] [--detached]` | L1、完整性、缺口、来源、预算和 Context hash |
 | `awr_context_compile`，显式 `branch` | `branch context NAME_OR_ID --work WORK [--session SESSION] [--detached]` | 同一命名分支自 fork 起的增量；不切换默认分支 |
 | `awr_work_transition` | `work progress/block/unblock/cancel/reopen WORK --session SESSION --reason TEXT --expected-revision R` | `action` 选择动作，`next_action` / `summary` / `blocker` 对应同名连字符参数；返回提案、源写入结果和事件回执 |
-| `awr_work_transition`，`action=complete` | `work complete WORK --session SESSION --reason TEXT --input /absolute/completion.json --expected-revision R` | MCP `completion` 是文件里的 JSON 对象；逐条绑定验收与证据，成功后释放本会话的认领 |
+| `awr_work_transition`，`action=complete` | `work complete WORK --session SESSION --reason TEXT --input /absolute/completion.json --expected-revision R [--end-session]` | MCP `completion` 是文件里的 JSON 对象；逐条绑定验收与证据，成功后释放本会话的认领。`--end-session` 对应 MCP `end_session`：同一请求内在完成落盘后结束会话（`session_end`），会话仍有其他活动认领时拒绝且不写入；`work complete` 与 `work cancel` 的响应在会话已无其他活动认领时带一条 `close_out` 指引（条件、依据、下一步、重评触发，不超过 60 token） |
 | `awr_event_append` | `event append --type TYPE --summary TEXT --expected-revision R` | `event_type` 对应 `--type`；可带 `--work`、`--session`、`--branch`、`--importance`、`--payload FILE`；返回完整 Event |
 | `awr_evidence_record` | `evidence add --input FILE --expected-revision R` | 输入字段映射见下节；返回完整 Evidence 与 `event_id` |
 | `awr_search` | `search [TEXT] [--type KIND] [--status STATUS] [--work WORK] [--limit N]` | `text` 对应位置参数，`kind` 对应 `--type`，其余同名；`work` 是 `work_item` 的别名 |

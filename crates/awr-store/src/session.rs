@@ -408,12 +408,26 @@ impl Store {
         session: Id,
         outcome: SessionOutcome,
     ) -> Result<(Session, Event)> {
+        self.end_session_after(project, expected, session, outcome, None)
+    }
+
+    /// Ends the session; `completion_event` names the `work.completed` event of the same request
+    /// when the session ends because its work was completed with `--end-session`.
+    pub fn end_session_after(
+        &mut self,
+        project: Id,
+        expected: Revision,
+        session: Id,
+        outcome: SessionOutcome,
+        completion_event: Option<Id>,
+    ) -> Result<(Session, Event)> {
         self.runtime_transaction_with_event(project,expected,EventDraft::new("session.ended","Ended agent work session"),|tx,next,event| {
             let current=session_at(tx,project,session)?;require_active(&current)?;let at=now_millis()?;
             let claims=tx.prepare("SELECT id FROM claims WHERE project_id=?1 AND session_id=?2 AND status='active' ORDER BY id").map_err(db_error)?.query_map(params![project.to_string(),session.to_string()],|r|id_at(r,0)).map_err(db_error)?.collect::<rusqlite::Result<Vec<_>>>().map_err(db_error)?;
             tx.execute("UPDATE claims SET status=CASE WHEN expires_at<=?1 THEN 'expired' ELSE 'released' END,released_at=CASE WHEN expires_at<=?1 THEN NULL ELSE ?1 END,revision=revision+1 WHERE project_id=?2 AND session_id=?3 AND status='active'",params![at,project.to_string(),session.to_string()]).map_err(db_error)?;
             tx.execute("UPDATE sessions SET status=?1,ended_at=?2,end_project_revision=?3,revision=revision+1 WHERE project_id=?4 AND id=?5",params![outcome.as_str(),at,sqlite_revision(next)?,project.to_string(),session.to_string()]).map_err(db_error)?;
             event.work_item_id=current.work_item_id;event.session_id=Some(session);event.branch_id=current.branch_id;event.payload=serde_json::json!({"status":outcome,"closed_claim_ids":claims,"last_checkpoint_id":current.last_checkpoint_id});
+            if let Some(completion) = completion_event { event.payload["completion_event_id"]=serde_json::json!(completion); }
             session_at(tx,project,session)
         })
     }
