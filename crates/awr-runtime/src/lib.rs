@@ -425,6 +425,8 @@ mod status_summary;
 pub use status_summary::{StatusScope, summarize_status};
 mod status_action;
 pub use status_action::{action_status, action_status_page};
+mod outcome_history;
+pub use outcome_history::outcome_history;
 mod work_progress;
 pub use work_progress::work_progress;
 

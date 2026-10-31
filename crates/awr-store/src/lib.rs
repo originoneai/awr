@@ -29,6 +29,7 @@ mod mutation;
 mod mutation_apply;
 mod object_catalog;
 mod operation_readset;
+mod outcome_history;
 mod preview_snapshot;
 mod projection;
 mod query;

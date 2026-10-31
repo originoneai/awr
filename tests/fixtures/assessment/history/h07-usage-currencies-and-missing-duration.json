@@ -1,0 +1,192 @@
+{
+ "case": "H07",
+ "slug": "usage-currencies-and-missing-duration",
+ "description": "Actual and API-equivalent cost and each currency are separate columns; an unknown cost is counted, not added; a run without a start has no duration, not zero.",
+ "input": {
+  "project_id": "01JP0000000000000000000001",
+  "works": [
+   {
+    "work_item_id": "01JW0000000000000000000001",
+    "work_key": "alpha",
+    "acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "confirmed_acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   }
+  ],
+  "receipts": [],
+  "executions": [
+   {
+    "execution_id": "01JX0000000000000000000002",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000001",
+    "session_id": "01JS0000000000000000000001",
+    "state": "succeeded",
+    "registered_at_ms": 10,
+    "started_at_ms": 100,
+    "finished_at_ms": 700
+   },
+   {
+    "execution_id": "01JX0000000000000000000003",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000001",
+    "session_id": "01JS0000000000000000000001",
+    "state": "failed",
+    "registered_at_ms": 20,
+    "started_at_ms": null,
+    "finished_at_ms": 900
+   },
+   {
+    "execution_id": "01JX0000000000000000000004",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000001",
+    "session_id": "01JS0000000000000000000001",
+    "state": "running",
+    "registered_at_ms": 30,
+    "started_at_ms": 300,
+    "finished_at_ms": null
+   }
+  ],
+  "sessions": [
+   {
+    "session_id": "01JS0000000000000000000001",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-large",
+    "agent": "agent-a"
+   },
+   {
+    "session_id": "01JS0000000000000000000002",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-small",
+    "agent": "agent-b"
+   },
+   {
+    "session_id": "01JS0000000000000000000003",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "other",
+    "model": "o-1",
+    "agent": "agent-c"
+   }
+  ],
+  "usage": [
+   {
+    "receipt_id": "r-2",
+    "project_id": "01JP0000000000000000000001",
+    "provider_namespace": "ns",
+    "provider": "anthropic",
+    "call_id": "call-2",
+    "model": "m-large",
+    "session_id": "01JS0000000000000000000001",
+    "occurred_at_ms": 900,
+    "channel": "model",
+    "attribution": {
+     "work_id": "alpha",
+     "execution_id": "exec-2",
+     "workstream_id": null
+    },
+    "tokens": null,
+    "cost": {
+     "actual": {
+      "currency": "USD",
+      "micros": 1500000
+     }
+    }
+   },
+   {
+    "receipt_id": "r-3",
+    "project_id": "01JP0000000000000000000001",
+    "provider_namespace": "ns",
+    "provider": "anthropic",
+    "call_id": "call-3",
+    "model": "m-large",
+    "session_id": "01JS0000000000000000000001",
+    "occurred_at_ms": 910,
+    "channel": "model",
+    "attribution": {
+     "work_id": "alpha",
+     "execution_id": "exec-3",
+     "workstream_id": null
+    },
+    "tokens": null,
+    "cost": {
+     "actual": {
+      "currency": "EUR",
+      "micros": 2000000
+     }
+    }
+   },
+   {
+    "receipt_id": "r-4",
+    "project_id": "01JP0000000000000000000001",
+    "provider_namespace": "ns",
+    "provider": "anthropic",
+    "call_id": "call-4",
+    "model": "m-large",
+    "session_id": "01JS0000000000000000000001",
+    "occurred_at_ms": 920,
+    "channel": "model",
+    "attribution": {
+     "work_id": "01JW0000000000000000000001",
+     "execution_id": "exec-4",
+     "workstream_id": null
+    },
+    "tokens": null,
+    "cost": {
+     "api_equivalent_estimate": {
+      "amount": {
+       "currency": "USD",
+       "micros": 700000
+      },
+      "pricing_version": "p1"
+     }
+    }
+   },
+   {
+    "receipt_id": "r-5",
+    "project_id": "01JP0000000000000000000001",
+    "provider_namespace": "ns",
+    "provider": "anthropic",
+    "call_id": "call-5",
+    "model": "m-large",
+    "session_id": "01JS0000000000000000000001",
+    "occurred_at_ms": 930,
+    "channel": "model",
+    "attribution": {
+     "work_id": "alpha",
+     "execution_id": "exec-5",
+     "workstream_id": null
+    },
+    "tokens": null,
+    "cost": "unknown"
+   }
+  ]
+ },
+ "request": {
+  "as_of_ms": 5000,
+  "cohort_by": "none",
+  "work_keys": null
+ },
+ "expect": {
+  "/cohorts/0/cost/actual_micros": {
+   "EUR": 2000000,
+   "USD": 1500000
+  },
+  "/cohorts/0/cost/api_equivalent_micros": {
+   "USD": 700000
+  },
+  "/cohorts/0/cost/unknown_cost_calls": 1,
+  "/cohorts/0/cost/unique_calls": 4,
+  "/cohorts/0/cost/works_with_usage": 1,
+  "/cohorts/0/cost/works_without_usage": 0,
+  "/sample/usage/used": 4,
+  "/cohorts/0/executions/succeeded": 1,
+  "/cohorts/0/executions/failed": 1,
+  "/cohorts/0/executions/unfinished": 1,
+  "/cohorts/0/executions/observed_execution_ms": 600,
+  "/cohorts/0/executions/without_duration": 1,
+  "/coverage/executions_with_duration": [
+   1,
+   2
+  ]
+ }
+}

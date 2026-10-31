@@ -1,0 +1,86 @@
+{
+ "case": "H09c",
+ "slug": "cohort-by-agent",
+ "description": "The agent of the session labels the cohort.",
+ "input": {
+  "project_id": "01JP0000000000000000000001",
+  "works": [
+   {
+    "work_item_id": "01JW0000000000000000000001",
+    "work_key": "alpha",
+    "acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "confirmed_acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   },
+   {
+    "work_item_id": "01JW0000000000000000000002",
+    "work_key": "beta",
+    "acceptance_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "confirmed_acceptance_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+   }
+  ],
+  "receipts": [
+   {
+    "event_id": "01JE000000000000000000000N",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000001",
+    "kind": "completed",
+    "at_ms": 1000,
+    "project_revision": 10,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000001",
+    "evidence_level": "locally_verified",
+    "acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "actor_origin": null
+   },
+   {
+    "event_id": "01JE000000000000000000000P",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000002",
+    "kind": "completed",
+    "at_ms": 1100,
+    "project_revision": 11,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000002",
+    "evidence_level": "locally_verified",
+    "acceptance_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "actor_origin": null
+   }
+  ],
+  "executions": [],
+  "sessions": [
+   {
+    "session_id": "01JS0000000000000000000001",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-large",
+    "agent": "agent-a"
+   },
+   {
+    "session_id": "01JS0000000000000000000002",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-small",
+    "agent": "agent-b"
+   },
+   {
+    "session_id": "01JS0000000000000000000003",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "other",
+    "model": "o-1",
+    "agent": "agent-c"
+   }
+  ],
+  "usage": []
+ },
+ "request": {
+  "as_of_ms": 5000,
+  "cohort_by": "agent",
+  "work_keys": null
+ },
+ "expect": {
+  "/cohorts#len": 2,
+  "/cohorts/0/key/agent": "agent-a",
+  "/cohorts/1/key/agent": "agent-b",
+  "/cohorts/0/key/provider": null
+ }
+}

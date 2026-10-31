@@ -1,0 +1,105 @@
+{
+ "case": "H15",
+ "slug": "confirmations-by-origin",
+ "description": "Who confirmed is kept apart: a human, an AI-accepted edit and a delegated agent are three counts.",
+ "input": {
+  "project_id": "01JP0000000000000000000001",
+  "works": [
+   {
+    "work_item_id": "01JW0000000000000000000001",
+    "work_key": "alpha",
+    "acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "confirmed_acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   },
+   {
+    "work_item_id": "01JW0000000000000000000002",
+    "work_key": "beta",
+    "acceptance_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "confirmed_acceptance_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+   },
+   {
+    "work_item_id": "01JW0000000000000000000003",
+    "work_key": "gamma",
+    "acceptance_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "confirmed_acceptance_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+   }
+  ],
+  "receipts": [
+   {
+    "event_id": "01JE000000000000000000000Z",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000001",
+    "kind": "ordinary_confirmed",
+    "at_ms": 1000,
+    "project_revision": 10,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000001",
+    "evidence_level": null,
+    "acceptance_digest": null,
+    "actor_origin": "human"
+   },
+   {
+    "event_id": "01JE0000000000000000000010",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000002",
+    "kind": "ordinary_confirmed",
+    "at_ms": 1100,
+    "project_revision": 11,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000001",
+    "evidence_level": null,
+    "acceptance_digest": null,
+    "actor_origin": "ai_accepted"
+   },
+   {
+    "event_id": "01JE0000000000000000000011",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000003",
+    "kind": "ordinary_confirmed",
+    "at_ms": 1200,
+    "project_revision": 12,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000001",
+    "evidence_level": null,
+    "acceptance_digest": null,
+    "actor_origin": "delegated_agent"
+   }
+  ],
+  "executions": [],
+  "sessions": [
+   {
+    "session_id": "01JS0000000000000000000001",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-large",
+    "agent": "agent-a"
+   },
+   {
+    "session_id": "01JS0000000000000000000002",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-small",
+    "agent": "agent-b"
+   },
+   {
+    "session_id": "01JS0000000000000000000003",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "other",
+    "model": "o-1",
+    "agent": "agent-c"
+   }
+  ],
+  "usage": []
+ },
+ "request": {
+  "as_of_ms": 5000,
+  "cohort_by": "none",
+  "work_keys": null
+ },
+ "expect": {
+  "/cohorts/0/signals/accepted_by_human": 1,
+  "/cohorts/0/signals/accepted_by_ai": 1,
+  "/cohorts/0/signals/accepted_by_delegate": 1,
+  "/cohorts/0/signals/completion_reported": 0
+ }
+}

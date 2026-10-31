@@ -79,6 +79,8 @@ mod assessment_envelope;
 pub use assessment_envelope::*;
 mod ordinary;
 pub use ordinary::*;
+mod outcome_history;
+pub use outcome_history::*;
 mod responsibility;
 pub use responsibility::*;
 mod agent_authorization;
