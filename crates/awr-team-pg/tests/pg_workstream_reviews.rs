@@ -694,6 +694,123 @@ async fn execution_consistency_sanitizes_legacy_execution_without_current_bindin
 }
 
 #[tokio::test]
+async fn evidence_naming_an_execution_that_does_not_exist_is_refused_before_storage() {
+    let (_guard, admin, _, store) = setup().await;
+    seed_review_actors(&admin).await;
+    let counts = "SELECT (SELECT count(*) FROM awr_team.evidence),
+                         (SELECT count(*) FROM awr_team.artifacts)";
+    let before = admin.query_one(counts, &[]).await.unwrap();
+
+    let error = run_err(
+        &store,
+        RUNNER,
+        "no-such-execution",
+        "evidence.submit",
+        submit_args(
+            "session-runner",
+            "exec-that-was-never-recorded",
+            &hex_encode(b"must-not-persist"),
+        ),
+    )
+    .await;
+    assert!(matches!(error, PgError::EvidenceInvalid));
+
+    let after = admin.query_one(counts, &[]).await.unwrap();
+    assert_eq!(after.get::<_, i64>(0), before.get::<_, i64>(0));
+    assert_eq!(after.get::<_, i64>(1), before.get::<_, i64>(1));
+}
+
+#[tokio::test]
+async fn an_execution_of_another_project_is_never_the_bound_execution() {
+    let (_guard, admin, _, store) = setup().await;
+    seed_review_actors(&admin).await;
+    let prepared = prepare(&store, A, "a").await;
+    let contract_hash = prepared["data"]["contract_hash"].as_str().unwrap();
+    // An execution that would pass every comparison (same work, scope, contract and input, succeeded) but belongs to
+    // another project of the same tenant: it must not be found, so the evidence that names it is refused. Two layers
+    // keep it out of sight: the project predicate of the lookup and row-level security on `executions`. Either one
+    // alone is enough, so this pins the combination: the evidence is stored only if both are lost.
+    admin
+        .batch_execute(
+            "INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+                VALUES('reader-tenant','project-elsewhere','e','team','epoch-e','active');
+             INSERT INTO awr_team.work_scopes(tenant_id,project_id,id,name,status)
+                VALUES('reader-tenant','project-elsewhere','main','Main','active');
+             INSERT INTO awr_team.work_items(tenant_id,project_id,id,external_key)
+                VALUES('reader-tenant','project-elsewhere','a','a');",
+        )
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "INSERT INTO awr_team.executions(
+                tenant_id,project_id,id,work_id,fence,contract_hash,input_digest,
+                executor_actor_id,state,result_digest,scope_id)
+             VALUES($1,'project-elsewhere','exec-in-another-project','a',1,$2,$3,'runner','succeeded',$4,'main')",
+            &[&TENANT, &contract_hash, &INPUT, &RESULT],
+        )
+        .await
+        .unwrap();
+
+    let error = run_err(
+        &store,
+        RUNNER,
+        "other-project-execution",
+        "evidence.submit",
+        submit_args(
+            "session-runner",
+            "exec-in-another-project",
+            &hex_encode(b"must-not-persist"),
+        ),
+    )
+    .await;
+    assert!(matches!(error, PgError::EvidenceInvalid));
+}
+
+#[tokio::test]
+async fn evidence_of_another_work_cannot_be_inspected_through_the_binding_of_this_one() {
+    let (_guard, admin, _, store) = setup().await;
+    seed_review_actors(&admin).await;
+    let prepared = prepare(&store, A, "a").await;
+    let contract_hash = prepared["data"]["contract_hash"].as_str().unwrap();
+    let payload = json!({"passed":true,"output_digest":RESULT});
+    let digest = stored_evidence_digest(
+        "b-private",
+        contract_hash,
+        Some(INPUT),
+        None,
+        Some(RESULT),
+        &payload,
+    );
+    admin
+        .execute(
+            "INSERT INTO awr_team.evidence(
+                tenant_id,project_id,id,work_id,execution_id,contract_hash,
+                input_digest,execution_result_digest,evidence_kind,trust_basis,
+                digest,payload_json,created_by)
+             VALUES($1,$2,'evidence-of-another-work','b-private',NULL,$3,
+                $4,$5,'report','caller_asserted',$6,$7,'agent')",
+            &[
+                &TENANT,
+                &PROJECT,
+                &contract_hash,
+                &INPUT,
+                &RESULT,
+                &digest,
+                &payload,
+            ],
+        )
+        .await
+        .unwrap();
+
+    let mut inspect = query("evidence.inspect");
+    inspect.work_id = Some("a".into());
+    inspect.evidence_id = Some("evidence-of-another-work".into());
+    let error = store.query(TENANT, PROJECT, A, inspect).await.unwrap_err();
+    assert!(matches!(error, PgError::Forbidden), "{error:?}");
+}
+
+#[tokio::test]
 async fn generic_bound_evidence_preserves_auxiliary_and_multiple_artifact_outputs() {
     let (_guard, admin, _, store) = setup().await;
     seed_review_actors(&admin).await;
