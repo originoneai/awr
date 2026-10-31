@@ -80,7 +80,7 @@ impl Fixture {
             .unwrap()
             .into()
     }
-    fn evidence(&self, key: &str, work: &str, criterion: &str) {
+    fn evidence(&self, key: &str, work: &str, criterion: &str, level: EvidenceLevel) {
         let report = json!({"version":1,"work_item":work,"source_sha":SHA,"command":"verify","scope":[work],"verified_at":now_millis().unwrap(),"checks":[{"name":"delivery","passed":true,"details":"Checked the delivery","criteria":[criterion]}]});
         let bytes = serde_json::to_vec_pretty(&report).unwrap();
         let locator = format!("report-{key}.json");
@@ -89,7 +89,7 @@ impl Fixture {
             external_key: key.into(),
             work_item_key: Some(work.into()),
             evidence_type: "completion_report".into(),
-            level: EvidenceLevel::LocallyVerified,
+            level,
             summary: "Checked the delivery".into(),
             locator,
             sha256: Some(
@@ -107,8 +107,8 @@ impl Fixture {
         let revision = store.project(project).unwrap().project_revision;
         store.record_evidence(project, revision, draft).unwrap();
     }
-    fn complete(&self, work: &str, session: &str, criterion: &str, evidence: &str) {
-        let input = json!({"version":1,"source_sha":SHA,"acceptance":[{"criterion":criterion,"evidence":[evidence]}]});
+    fn complete(&self, work: &str, session: &str, criterion: &str, evidence: &[&str]) {
+        let input = json!({"version":1,"source_sha":SHA,"acceptance":[{"criterion":criterion,"evidence":evidence}]});
         let path = self.root.join(format!("completion-{work}.json"));
         fs::write(&path, serde_json::to_vec(&input).unwrap()).unwrap();
         self.ok(&[
@@ -247,10 +247,11 @@ fn the_history_of_real_receipts_counts_each_signal_on_its_own() {
         f.start("W6", "m-c"),
     );
     // W1 and W2 are completed; W2's acceptance is then revised, so its completion is of an earlier standard.
-    f.evidence("E1", "W1", "A1");
-    f.complete("W1", &s1, "A1", "E1");
-    f.evidence("E2", "W2", "A2");
-    f.complete("W2", &s2, "A2", "E2");
+    f.evidence("E1", "W1", "A1", EvidenceLevel::LocallyVerified);
+    f.evidence("E1b", "W1", "A1", EvidenceLevel::RealEnvironmentValidated);
+    f.complete("W1", &s1, "A1", &["E1", "E1b"]);
+    f.evidence("E2", "W2", "A2", EvidenceLevel::LocallyVerified);
+    f.complete("W2", &s2, "A2", &["E2"]);
     let text = fs::read_to_string(f.root.join("work.yaml")).unwrap();
     fs::write(
         f.root.join("work.yaml"),
@@ -270,8 +271,8 @@ fn the_history_of_real_receipts_counts_each_signal_on_its_own() {
         "--expected-revision",
         &f.revision(),
     ]);
-    f.evidence("E4", "W4", "A4");
-    f.complete("W4", &s4, "A4", "E4");
+    f.evidence("E4", "W4", "A4", EvidenceLevel::LocallyVerified);
+    f.complete("W4", &s4, "A4", &["E4"]);
     f.ok(&[
         "work",
         "reopen",
@@ -312,9 +313,14 @@ fn the_history_of_real_receipts_counts_each_signal_on_its_own() {
     assert_eq!(a.works, 2);
     assert_eq!(a.signals.completion_reported, 1, "{value:#}");
     assert_eq!(a.signals.completion_under_earlier_standard, 1, "{value:#}");
+    // The highest level a completion bound, per completion: W1 bound two records, W2 one.
+    assert_eq!(
+        a.signals.completion_by_evidence_level["real_environment_validated"],
+        1
+    );
     assert_eq!(
         a.signals.completion_by_evidence_level["locally_verified"],
-        2
+        1
     );
     assert_eq!(a.executions.succeeded, 1);
     let b = model("m-b");
