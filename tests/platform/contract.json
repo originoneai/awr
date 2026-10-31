@@ -15,6 +15,7 @@
   "workspace_members": [
     "awr-cli",
     "awr-context",
+    "awr-context-kernel",
     "awr-core",
     "awr-mcp",
     "awr-runtime",

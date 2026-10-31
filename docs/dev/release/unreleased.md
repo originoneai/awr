@@ -137,6 +137,12 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   completion, and cannot exceed what the host allows. A change is a previewed and confirmed write of exactly the bytes read,
   appends versions and never edits one in use; a file the program cannot use is never applied in part. Nothing changes for a
   project without the file. See [assessment policy](../reference/assessment-policy.md).
+- The contract of a context packing kernel with no store (`awr-context-kernel`, a library crate, not in the binaries): a request of fixed
+  text chunks with stable names, entities and revisions, required and ranked optional chunks, atomic groups and a token or byte budget;
+  a result that is a consistent partition of it; `validate_request` and `check_result` that say why a request or a result is refused, with
+  a corpus of 69 offline cases. Mandatory content is never dropped to fit, unsupported input fails by name, and nothing a result carries
+  says anything of authority, readiness or acceptance. The packing itself moves out of `awr-context` in a later step. See
+  [context packing kernel](../reference/context-component.md).
 - The capabilities of the Team workstream protocol say, for each of the five result layers (work readiness,
   execution admission, context completeness, delivery observation, completion validity), which Team operations carry
   it and which entries of the personal CLI and MCP server have no Team operation, with the reason; the report is checked

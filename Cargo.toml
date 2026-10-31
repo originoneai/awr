@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/awr-core", "crates/awr-workspace", "crates/awr-store", "crates/awr-source", "crates/awr-context", "crates/awr-runtime", "crates/awr-cli", "crates/awr-mcp", "crates/awr-team", "crates/awr-team-pg", "crates/awr-server"]
+members = ["crates/awr-core", "crates/awr-workspace", "crates/awr-store", "crates/awr-source", "crates/awr-context", "crates/awr-context-kernel", "crates/awr-runtime", "crates/awr-cli", "crates/awr-mcp", "crates/awr-team", "crates/awr-team-pg", "crates/awr-server"]
 resolver = "3"
 default-members = ["crates/awr-cli"]
 

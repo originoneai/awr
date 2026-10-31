@@ -186,6 +186,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "awr-context-kernel"
+version = "0.6.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "awr-core"
 version = "0.6.0"
 dependencies = [
