@@ -52,6 +52,8 @@ Evidence 输入和 Event payload 的相对路径以 `--project` 根目录为基�
 
 在同一项目、同一分支选择、同一已索引来源和相同参数下，两个入口返回相同的领域状态、标识、版本、验收、依赖、诊断及缺口。查询中的 `active_claims` 都包含 `id`、`agent_id`、`session_id`、`expires_at`。`revision` 是对象版本，`source_revision` 是来源版本，`project_revision` 是项目状态版本，三者不可互换。
 
+认领的生命周期在两个入口一致：请求未给 `--ttl-ms` / `ttl_ms` 时采用项目策略的默认值（`.awr/policy.toml` 或 `AWR_DEFAULT_CLAIM_TTL`，见 [claim policy](claim-policy.md)），`--no-expiry` / `no_expiry` 明确要求无到期，二者同时给出是用法错误。检查点保存与 `work progress|block|unblock`（MCP `awr_work_transition`）按同一策略续约仍有效的 claim。
+
 读取策略有意保留以下差异：
 
 | 字段 / 行为 | CLI status / ready / work show / search / L1 | MCP 的 5 个读工具 |

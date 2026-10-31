@@ -4,6 +4,17 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
+- A project can declare how long a claim lives when nobody says, and that recorded work keeps it alive,
+  in an optional `.awr/policy.toml` (`version`, `claims.default_ttl` from one minute to seven days or
+  `none`, `claims.renew_on_activity`) or with `AWR_DEFAULT_CLAIM_TTL`. A request for a claim that names
+  no lifetime (`session start --claim`, `work claim`, `session resume --claim` and the matching MCP
+  tools) gets the default; `--ttl-ms` is unchanged and `--no-expiry` / `no_expiry` asks for none. A
+  saved checkpoint and a recorded progress, block or unblock extend the live claims of their session
+  in their own revision and say so in a `claim_renewal` receipt; a claim that ran out is never revived.
+  `doctor` advises of a claim held a day without an expiry (without failing) and reports a policy it
+  cannot read, and `capabilities` exposes `operating_baseline`. Nothing changes for a project that
+  declares nothing, no runtime schema changes, and a published `awr` that has never heard of the file
+  ignores it. See [claim policy](../reference/claim-policy.md).
 - Governed work in a Team: a snapshot may declare governance (`governance.json`, written by
   `PublishPrepOptions::governance`), the Team reuses the Core admission rules on its own facts, and
   `admission.decide` records decisions attributed to the verified caller (`planning.approve`, a
