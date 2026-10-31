@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
 import { isAuthError } from '../lib/api';
+import { ProjectOverview } from './ProjectOverview';
 import { projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 
@@ -14,7 +15,7 @@ function asTab(value: string | null): ProjectTab {
   return (TAB_KEYS as readonly string[]).includes(value ?? '') ? (value as ProjectTab) : 'overview';
 }
 
-/** Project tab and scope state remain in the URL; tab bodies ship in later slices. */
+/** Project tab and scope state remain in the URL; unsourced tab bodies stay pending. */
 export function ProjectShell() {
   const { t } = useTranslation();
   const { project = '' } = useParams();
@@ -55,12 +56,14 @@ export function ProjectShell() {
           onChange={(key) => {
             const next = new URLSearchParams(searchParams);
             next.set('tab', key);
+            next.delete('page');
+            next.delete('work');
             setSearchParams(next);
           }}
           items={TAB_KEYS.map((key) => ({
             key,
             label: t(`project.tabs.${key}`),
-            children: <ObservationEmpty />,
+            children: key === 'overview' ? <ProjectOverview project={project} /> : <ObservationEmpty />,
           }))}
         />
       </Card>

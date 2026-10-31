@@ -33,6 +33,7 @@ export interface CoveragePart {
   workstream_id?: string;
   status: 'succeeded' | 'failed';
   error_code?: string;
+  enumerated?: number;
   works_enumerated?: number;
   works_total?: number | null;
   truncated?: boolean;
@@ -40,10 +41,22 @@ export interface CoveragePart {
   read_at_unix_ms?: number;
 }
 
+export interface TeamWork {
+  key: string;
+  title: string;
+  status: string | null;
+  owner_person: unknown;
+  agent: unknown;
+  next_step: string | null;
+  detail_loaded: boolean;
+  workstream_id: string;
+  contract_hash: string;
+}
+
 export interface TeamOverviewResponse {
   ok: boolean;
   project: string;
-  works: Array<Record<string, unknown>>;
+  works: TeamWork[];
   workstreams: Array<{ id: string; external_key?: string; title?: string }>;
   members?: Array<Record<string, unknown>>;
   coverage: {
@@ -58,6 +71,31 @@ export interface TeamOverviewResponse {
   freshness: TeamFreshness;
   schema?: string;
   error?: { code: string; message: string };
+}
+
+export interface TeamActivityItem {
+  action: string;
+  actor_id: string;
+  client_id: string;
+  created_at_unix_ms: number;
+  credential_id: string;
+  id: string;
+  result: unknown;
+  work_id: string | null;
+}
+
+export interface TeamActivityResponse {
+  ok: true;
+  data: {
+    items: TeamActivityItem[];
+    next_cursor: unknown;
+    development_source: unknown;
+    chat_text_collected: false;
+    tool_io_collected: false;
+    request_retention: unknown;
+    scope: unknown;
+    unknown_means: unknown;
+  };
 }
 
 export interface TeamReadResponse<T> {

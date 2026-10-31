@@ -2,6 +2,7 @@ import { QueryCache, QueryClient, type UseQueryOptions } from '@tanstack/react-q
 import pLimit from 'p-limit';
 import { apiGet, apiPost, isAuthError } from './api';
 import type {
+  TeamActivityResponse,
   TeamOverviewResponse,
   TeamProjectsResponse,
   TeamReadResponse,
@@ -30,6 +31,7 @@ export const readQueryDefaults = {
 export const queryKeys = {
   projects: ['team', 'projects'] as const,
   overview: (project: string | null) => ['team', 'overview', project] as const,
+  activity: (project: string | null) => ['team', 'activity', 'development', project] as const,
   inbox: (project: string | null) => ['team', 'inbox', project] as const,
   workNext: (project: string | null) => ['team', 'work.next', project] as const,
   workInbox: (project: string | null) => ['team', 'work.inbox', project] as const,
@@ -54,6 +56,17 @@ export function overviewQueryOptions(project: string | null, revoked = false) {
     enabled: Boolean(project) && !revoked,
     ...readQueryDefaults,
   } satisfies UseQueryOptions<TeamOverviewResponse>;
+}
+
+export function activityQueryOptions(project: string | null, revoked = false) {
+  return {
+    queryKey: queryKeys.activity(project),
+    queryFn: () => apiGet<TeamActivityResponse>(
+      `/api/team/activity?project=${encodeURIComponent(project ?? '')}&kind=development`,
+    ),
+    enabled: Boolean(project) && !revoked,
+    ...readQueryDefaults,
+  } satisfies UseQueryOptions<TeamActivityResponse>;
 }
 
 interface TeamReadQuery {
