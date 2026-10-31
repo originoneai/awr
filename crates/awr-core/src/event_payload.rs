@@ -141,7 +141,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             | "work.draft_activated"
             | "work.ordinary_confirmed"
     ) {
-        "proposal_id source_id attempt_event_id write_plan_id before_fingerprint after_fingerprint target_after_hash source_revision target_revision actor reason work_action host_edit action_reason creating_session_id released_claim_ids"
+        "proposal_id source_id attempt_event_id write_plan_id before_fingerprint after_fingerprint target_after_hash source_revision target_revision actor reason work_action host_edit action_reason creating_session_id released_claim_ids claim_renewal"
     } else if matches!(kind, "proposal.apply_conflict" | "proposal.apply_failed") {
         "proposal_id source_id attempt_event_id write_plan_id actor reason"
     } else if matches!(
@@ -204,7 +204,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             }
             "checkpoint.started" => "save_schema base_project_revision draft actor",
             "checkpoint.created" => {
-                "checkpoint_id context_hash checkpoint_project_revision changed_entities next_action attempt_id session_delta workstream_binding actor"
+                "checkpoint_id context_hash checkpoint_project_revision changed_entities next_action attempt_id session_delta workstream_binding actor claim_renewal"
             }
             "checkpoint.abandoned" => "attempt_id reason",
             "artifact.recorded" => "artifact_id source_event_id sha256 size locator",
@@ -438,6 +438,20 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
                         && (kind != "work.ordinary_confirmed"
                             || h.action == crate::HostEditAction::ConfirmOrdinary)
                 }),
+            "claim_renewal" => {
+                value["ttl_ms"].as_u64().is_some()
+                    && value["renewed"].as_array().is_some_and(|claims| {
+                        claims.iter().all(|c| {
+                            id(&c["claim_id"])
+                                && id(&c["work_item_id"])
+                                && c["previous_expires_at"].as_i64().is_some()
+                                && c["expires_at"].as_i64().is_some()
+                        })
+                    })
+                    && value["expired_claim_ids"]
+                        .as_array()
+                        .is_some_and(|ids| ids.iter().all(id))
+            }
             "agent_id" => value.is_string(),
             key if key.ends_with("_id") => id(value),
             key if key.ends_with("_ids") => value.as_array().is_some_and(|v| v.iter().all(id)),

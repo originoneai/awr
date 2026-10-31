@@ -145,6 +145,20 @@ impl Store {
         actor: &str,
         reason: &str,
     ) -> Result<(MutationProposal, Event)> {
+        self.finish_proposal_apply_renewing(project, expected, id, attempt_id, actor, reason, None)
+    }
+    /// As `finish_proposal_apply`; when a policy asks for it, a progress, block or unblock action extends the live
+    /// claims of the session that made it in the same transaction, and the receipt says so.
+    pub fn finish_proposal_apply_renewing(
+        &mut self,
+        project: Id,
+        expected: Revision,
+        id: Id,
+        attempt_id: Id,
+        actor: &str,
+        reason: &str,
+        renewal: Option<ClaimRenewal>,
+    ) -> Result<(MutationProposal, Event)> {
         actor_reason(actor, reason)?;
         self.runtime_transaction_with_event(project,expected,EventDraft::new("proposal.applied","Verified source mutation and projection"),|tx,_,event|{
             let (mut proposal,attempt)=open_attempt(tx,project,id,attempt_id)?;
@@ -187,6 +201,11 @@ impl Store {
                 event.payload["action_reason"]=json!(patch.intent);
                 event.payload["creating_session_id"]=json!(proposal.created_by_session);
                 event.payload["released_claim_ids"]=json!(crate::work_action::release_terminal_claims(tx,project,&proposal)?);
+                if let (Some(renewal),Some(session))=(renewal,proposal.created_by_session) {
+                    if matches!(binding.action,WorkAction::Progress|WorkAction::Block|WorkAction::Unblock) {
+                        crate::claim_renewal::renew_session_claims(tx,project,session,renewal,&mut event.payload)?;
+                    }
+                }
             }
             Ok(proposal)
         })
