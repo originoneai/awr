@@ -11,7 +11,8 @@ use awr_core::{
     Error, Id, Result, WORKSTREAM_CATALOG_VERSION, Workstream, WorkstreamCatalog, WorkstreamState,
 };
 use awr_team::{
-    DependencyAcceptanceMode, WorkContract, WorkId, WorkstreamBundle, WorkstreamContract,
+    DependencyAcceptanceMode, GOVERNANCE_FILE, GovernanceCandidate, WorkContract, WorkId,
+    WorkstreamBundle, WorkstreamContract,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -179,6 +180,9 @@ pub struct TeamPublishPackage {
     pub referenced_specs: Vec<ReferencedSpec>,
     pub files: Vec<PublishPackageFile>,
     pub parser_version: String,
+    /// The hash of the governance candidate the package carries, when it carries one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub governance_digest: Option<String>,
 }
 
 impl TeamPublishPackage {
@@ -203,6 +207,9 @@ pub struct PublishPrepOptions {
     pub baseline: Option<WorkstreamBundle>,
     /// Override mapping-default completion policy. Empty rejects.
     pub completion_policy: Option<String>,
+    /// The governance of this source, computed where the whole project is at hand. It becomes the
+    /// package file `governance.json`; it describes governance and never grants any.
+    pub governance: Option<GovernanceCandidate>,
 }
 
 /// Prepare a Team publish candidate from a bound server directory.
@@ -314,6 +321,11 @@ pub fn prepare_publish_from_ledger_bytes(
     let provenance_bytes =
         serde_json::to_vec_pretty(&provenance).map_err(|e| Error::InvalidInput(e.to_string()))?;
 
+    let governance_digest = options
+        .governance
+        .as_ref()
+        .map(|candidate| governance_digest(candidate, &bundle))
+        .transpose()?;
     let mut files = vec![
         PublishPackageFile {
             path: WORKSTREAMS_FILE.into(),
@@ -340,6 +352,13 @@ pub fn prepare_publish_from_ledger_bytes(
             bytes: spec.content.clone(),
         });
     }
+    if let Some(candidate) = &options.governance {
+        files.push(PublishPackageFile {
+            path: GOVERNANCE_FILE.into(),
+            bytes: serde_json::to_vec_pretty(candidate)
+                .map_err(|e| Error::InvalidInput(e.to_string()))?,
+        });
+    }
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
     Ok(TeamPublishPackage {
@@ -355,6 +374,7 @@ pub fn prepare_publish_from_ledger_bytes(
         source_status_notes: status_notes,
         referenced_specs: referenced,
         files,
+        governance_digest,
         parser_version: match bundle.codec.as_str() {
             WorkstreamBundle::CODEC_V6 => PARSER_VERSION_V6,
             WorkstreamBundle::CODEC_V5 => PARSER_VERSION_V5,
@@ -365,6 +385,31 @@ pub fn prepare_publish_from_ledger_bytes(
         }
         .into(),
     })
+}
+
+/// Governance may only describe work this source has, and only in its canonical form.
+fn governance_digest(candidate: &GovernanceCandidate, bundle: &WorkstreamBundle) -> Result<String> {
+    candidate
+        .validate()
+        .map_err(|e| Error::InvalidInput(e.to_string()))?;
+    let known: BTreeSet<&str> = bundle
+        .contracts
+        .iter()
+        .map(|entry| entry.contract.external_key.as_str())
+        .collect();
+    if let Some(work) = candidate
+        .works
+        .iter()
+        .find(|work| !known.contains(work.external_key.as_str()))
+    {
+        return Err(Error::InvalidInput(format!(
+            "governance names work {} which the ledger does not have",
+            work.external_key
+        )));
+    }
+    candidate
+        .hash()
+        .map_err(|e| Error::InvalidInput(e.to_string()))
 }
 
 fn validate_relative_path(path: &str, label: &str) -> Result<()> {
@@ -927,6 +972,7 @@ mod tests {
             &PublishPrepOptions {
                 baseline: Some(baseline),
                 completion_policy: None,
+                governance: None,
             },
         )
         .unwrap();
@@ -1000,6 +1046,7 @@ mod tests {
                 &PublishPrepOptions {
                     baseline: before,
                     completion_policy: None,
+                    governance: None,
                 },
             )
         };
@@ -1079,6 +1126,7 @@ mod tests {
                 &PublishPrepOptions {
                     baseline: before,
                     completion_policy: None,
+                    governance: None,
                 },
             )
         };
@@ -1159,6 +1207,7 @@ mod tests {
                 &PublishPrepOptions {
                     baseline: before,
                     completion_policy: None,
+                    governance: None,
                 },
             )
         };
@@ -1251,6 +1300,7 @@ mod tests {
                 &PublishPrepOptions {
                     baseline: before,
                     completion_policy: None,
+                    governance: None,
                 },
             )
         };
@@ -1352,6 +1402,7 @@ mod tests {
                 &PublishPrepOptions {
                     baseline: before,
                     completion_policy: None,
+                    governance: None,
                 },
             )
         };
@@ -1571,6 +1622,7 @@ mod tests {
                 completion_policy: Some(
                     awr_team::ExecutionSettlementPolicy::COMPLETION_POLICY.into(),
                 ),
+                governance: None,
             };
             assert!(
                 prepare_publish_from_ledger_bytes(

@@ -454,6 +454,15 @@ pub(super) async fn apply(
                 return Err(PgError::missing_handoff_fence());
             }
             crate::source::require_work_settled(tx, tenant, project, &command.work_id).await?;
+            // A transfer hands the claim to another actor; it needs the decision to be current.
+            crate::governance::require_current(
+                tx,
+                tenant,
+                project,
+                &auth.snapshot,
+                &command.work_id,
+            )
+            .await?;
             let successor = super::task_intake::actor_instance(tx, tenant, project, auth).await?;
             if successor != a.successor_execution {
                 return Err(PgError::Forbidden);

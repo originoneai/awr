@@ -4,6 +4,13 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
+- Governed work in a Team: a snapshot may declare governance (`governance.json`, written by
+  `PublishPrepOptions::governance`), the Team reuses the Core admission rules on its own facts, and
+  `admission.decide` records decisions attributed to the verified caller (`planning.approve`, a
+  different person for independent review). Claim, dispatch and execution prepare and start answer
+  `AdmissionRequired` until the decision is current; a package without governance cannot replace a
+  governed snapshot. New schema version 56 (`snapshot_governance`, `work_governance`,
+  append-only `work_admissions`). See [Team governance](../reference/team-governance.md).
 - Explicit requirement items and YAML task `spec_refs`, with bounded, read-only
   `awr spec check` and MCP `awr_spec_check` views of one evaluator. Checks identify
   changed or superseded item bindings, missing task associations and contradictions

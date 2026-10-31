@@ -95,6 +95,10 @@ pub enum PgError {
     CompletionRejected,
     #[error("policy downgrade")]
     PolicyDowngrade,
+    /// Governed work needs a current admission decision. `code` is one of the closed `admission_*`
+    /// codes of the Core evaluator and `detail` is the reason it gives.
+    #[error("admission required ({code}): {detail}")]
+    AdmissionRequired { code: &'static str, detail: String },
     #[error("context incomplete")]
     ContextIncomplete,
     #[error("serialized response exceeds service limit")]
