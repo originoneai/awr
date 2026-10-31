@@ -13,6 +13,7 @@ import {
   Spin,
   Table,
   Tag,
+  Tooltip,
   Typography,
   type TableProps,
 } from 'antd';
@@ -83,14 +84,14 @@ function NextStep({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
   else if (query && !query.isPending) {
     text = rawText(snapshotNext ?? work.next_step) ?? t('freshness.state.not_measured');
   }
+  // The compact op never truncates, so ellipsis.tooltip would never fire:
+  // the full agent-facing note gets an always-on Tooltip instead.
   return (
-    <Typography.Text
-      data-testid={`project-next-${work.key}`}
-      ellipsis={{ tooltip: fullNote ?? text }}
-      style={{ display: 'block' }}
-    >
-      {text}
-    </Typography.Text>
+    <Tooltip title={fullNote ?? undefined}>
+      <Typography.Text data-testid={`project-next-${work.key}`} style={{ display: 'block' }}>
+        {text}
+      </Typography.Text>
+    </Tooltip>
   );
 }
 

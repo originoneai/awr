@@ -144,6 +144,11 @@ describe('project workstream progress', () => {
     await waitFor(() => expect(cell.textContent).toBe('session.checkpoint'));
     expect(cell.textContent.length).toBeLessThan(80);
     expect(cell.textContent).not.toContain('Batch progress');
+    // The full agent-facing note stays available behind an always-on
+    // tooltip (ellipsis.tooltip would never fire on the short op).
+    const user = userEvent.setup();
+    await user.hover(cell);
+    expect(await screen.findByText(/Batch progress with next_action/)).toBeTruthy();
   });
 
   it('uses not measured for missing or failed report times, never the current clock', async () => {
