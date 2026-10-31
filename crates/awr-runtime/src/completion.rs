@@ -17,6 +17,9 @@ pub struct CompleteWorkRequest {
     pub expected_revision: Revision,
     pub reason: String,
     pub input: CompletionInput,
+    /// End the session in the same request once the work is completed; refused while the
+    /// session holds claims on other work.
+    pub end_session: bool,
 }
 
 /// Verify the exact stored proof and actual report bytes, including on journal recovery.
@@ -158,6 +161,9 @@ pub fn complete_work(
     let target = store.mutation_target(project.id, EntityKind::WorkItem, &request.target)?;
     let work: WorkItem = serde_json::from_value(target.item)?;
     let session = store.session(project.id, request.session_id)?;
+    if request.end_session {
+        crate::close_out::require_no_other_claims(store, project.id, session.id, work.meta.id)?;
+    }
     let mut patch = MutationPatch {
         version: 1,
         target: MutationTarget {
@@ -230,12 +236,37 @@ pub fn complete_work(
             created_by_session: Some(session.id),
         },
     )?;
-    apply_work_proposal(
+    let mut report = apply_work_proposal(
         store,
         &root,
         proposal,
         event,
         session.agent_id,
         request.reason.clone(),
-    )
+    )?;
+    if report.failure.is_none() {
+        if request.end_session {
+            let receipt = crate::close_out::end_after_completion(
+                store,
+                project.id,
+                session.id,
+                report.event.id,
+            );
+            if receipt.status != "ended" {
+                // The completion is durable; the request as a whole is a partial failure.
+                let error = Error::InvalidTransition(
+                    "the work is completed but its session could not be ended".into(),
+                );
+                report.ok = false;
+                report.code = error.code();
+                report.error = Some(error.report());
+                report.failure = Some(error);
+            }
+            report.session_end = Some(receipt);
+        } else {
+            report.close_out =
+                crate::close_out::close_out(store, project.id, session.id, WorkAction::Complete);
+        }
+    }
+    Ok(report)
 }

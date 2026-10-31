@@ -54,6 +54,13 @@ pub struct ProposalReport {
     pub recovery_directory: Option<String>,
     pub source_check: Option<MutationSourceCheck>,
     pub error: Option<ErrorReport>,
+    /// What to do with the session once the work is finished; only for a completion or a
+    /// cancellation after which the session holds no other active claim.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub close_out: Option<crate::CloseOut>,
+    /// What ending the session did, when the completion asked for it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_end: Option<crate::SessionEndReceipt>,
     /// The CLI returns a nonzero exit status after printing the durable transition receipt.
     #[serde(skip)]
     pub failure: Option<Error>,
@@ -81,6 +88,8 @@ pub(crate) fn report(
         recovery_directory: None,
         source_check,
         error: failure.as_ref().map(Error::report),
+        close_out: None,
+        session_end: None,
         failure,
     }
 }
