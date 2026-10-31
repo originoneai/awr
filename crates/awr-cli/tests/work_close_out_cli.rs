@@ -136,7 +136,8 @@ impl Fixture {
     }
     fn allow_session_end(&self) {
         let db = rusqlite::Connection::open(self.root.join(".awr/state.db")).unwrap();
-        db.execute_batch("DROP TRIGGER blocked_session_end;").unwrap();
+        db.execute_batch("DROP TRIGGER blocked_session_end;")
+            .unwrap();
     }
     fn record_evidence(&self) {
         let report = json!({"version":1,"work_item":"W","source_sha":SHA,"command":"verify report and delivery","scope":["W"],"verified_at":now_millis().unwrap(),"checks":[{"name":"content and delivery","passed":true,"details":"Checked the analysis and delivery receipt","criteria":[C1,C2]}]});
@@ -323,7 +324,10 @@ fn a_session_that_cannot_be_ended_leaves_the_completion_standing_and_says_what_t
     assert_eq!(report["ok"], false);
     assert_eq!(report["event"]["event_type"], "work.completed");
     assert_eq!(report["session_end"]["status"], "failed");
-    assert_eq!(report["session_end"]["completion_event_id"], report["event"]["id"]);
+    assert_eq!(
+        report["session_end"]["completion_event_id"],
+        report["event"]["id"]
+    );
     assert!(
         report["session_end"]["next"]
             .as_str()
