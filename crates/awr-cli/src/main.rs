@@ -295,7 +295,7 @@ fn run(cli: &Cli) -> Result<()> {
             branch,
             cached,
         }) => query::ready(&cli.project, *limit, branch.as_deref(), cli.json, *cached),
-        Some(Command::Assessment { command }) => assessment::run(command, cli.json),
+        Some(Command::Assessment { command }) => assessment::run(&cli.project, command, cli.json),
         Some(Command::Work { command }) => query::work(&cli.project, command, cli.json),
         Some(Command::Session { command }) => session::run(&cli.project, command, cli.json),
         Some(Command::Evidence { command }) => records::evidence(&cli.project, command, cli.json),

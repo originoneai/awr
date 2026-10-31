@@ -517,9 +517,23 @@ assessment stack**.
 Corpus marker: `tests/fixtures/assessment/counterexamples/manifest.json` sets
 `dec_060_started: true`. `evo_000_started` / `dec_040_started` remain false.
 
-## 19. Related pages
+## 19. DEC-040 bounded local policy
+
+A project may keep `.awr/assessment-policy.toml`: a versioned file that selects among the rules above (which optional advice
+an explanation shows, the four envelope caps, the order of the soft reason codes) and nothing else. No script, no
+expression, no way to touch a hard guard, protected advice or admission, claim, completion and freshness; a version is chosen
+by the `as_of` of the evaluation; a project value cannot exceed what the host allows; an old replay snapshot keeps the policy
+it embeds. The file changes only through `awr assessment policy preview` and `apply`, which compare the exact bytes read and
+confirmed; nothing recorded at run time writes it. Without the file every output is what it was. Capability:
+`assessment.policy`. Details: [assessment policy](assessment-policy.md).
+
+Machine tests: `crates/awr-core/tests/assessment_policy.rs`, `crates/awr-source/tests/assessment_policy_file.rs`,
+`crates/awr-runtime/tests/assessment_policy.rs`, `crates/awr-cli/tests/assessment_policy_cli.rs`.
+
+## 20. Related pages
 
 - [Management intensity](management.md) — classification rules hosts still follow
+- [Assessment policy](assessment-policy.md) — the project's bounded local policy file (DEC-040)
 - [Workflow prepare](workflow.md) — prepare / completion preflight
 - [Daily work](daily-work.md) — status action queues
 - Fixtures: `tests/fixtures/assessment/contracts/`, `signals/`, `envelope/`, `mvp-acceptance/`

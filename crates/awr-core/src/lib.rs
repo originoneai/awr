@@ -75,6 +75,8 @@ mod fact_snapshot;
 pub use fact_snapshot::*;
 mod assessment_envelope;
 pub use assessment_envelope::*;
+mod assessment_policy;
+pub use assessment_policy::*;
 mod ordinary;
 pub use ordinary::*;
 mod responsibility;

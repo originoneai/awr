@@ -100,3 +100,10 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   agent or an observed environment change. An open gap puts in question only the admission or
   containment judgments that read its layer, on that work; it keeps every failure on record, opens
   no task and holds no unrelated work. See [gaps](../reference/gaps.md).
+- A bounded local policy for assessment advice (`.awr/assessment-policy.toml`, `awr assessment policy show|preview|apply`,
+  capability `assessment.policy`): a versioned file that switches optional advice off, lowers the four envelope caps and orders
+  the soft reason codes, by version and by the `as_of` of the evaluation, with explicit inheritance between versions. It names
+  rules from a closed set, holds no script or expression, cannot touch a hard guard, protected advice, admission, claims or
+  completion, and cannot exceed what the host allows. A change is a previewed and confirmed write of exactly the bytes read,
+  appends versions and never edits one in use; a file the program cannot use is never applied in part. Nothing changes for a
+  project without the file. See [assessment policy](../reference/assessment-policy.md).

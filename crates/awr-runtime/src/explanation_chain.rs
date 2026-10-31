@@ -1116,6 +1116,7 @@ pub fn explanation_chain_from_prepare_json(
     current_authority: ExplanationAuthority,
     prior_identity: Option<AssessmentIdentity>,
     action_rationale: Option<ActionGuidance>,
+    policy: AssessmentPolicy,
 ) -> Result<ExplanationChainResult> {
     let prepared =
         crate::fact_snapshot::prepared_view_from_prepare_json(prepare, project_id, as_of, None)?;
@@ -1133,7 +1134,7 @@ pub fn explanation_chain_from_prepare_json(
         completion,
         current_authority,
         prior_identity,
-        policy: AssessmentPolicy::default(),
+        policy,
         as_of,
     })
 }

@@ -391,6 +391,42 @@ impl LockedSourceFile {
         Ok(bytes)
     }
 
+    /// Creates the file when, and only when, it does not exist: the bytes are written and synced under a
+    /// temporary name and linked into place, so a file that appeared in between is never replaced.
+    pub fn create_new(&self, after: &[u8]) -> Result<()> {
+        if after.len() as u64 > YAML_READ_CAP {
+            return Err(invalid());
+        }
+        self.check_identity()?;
+        let temporary = format!("{}.tmp-{}", self.lock_name, Id::new());
+        let mut options = OpenOptions::new();
+        options
+            .write(true)
+            .create_new(true)
+            .follow(FollowSymlinks::No);
+        let mut file = self.parent.open_with(&temporary, &options)?;
+        let result = (|| -> Result<()> {
+            file.write_all(after)?;
+            file.sync_all()?;
+            drop(file);
+            self.parent
+                .hard_link(&temporary, &self.parent, &self.leaf)
+                .map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::AlreadyExists {
+                        Error::SourceConflict("source file appeared before it was created".into())
+                    } else {
+                        error.into()
+                    }
+                })?;
+            #[cfg(unix)]
+            self.parent.open(".")?.sync_all()?;
+            self.check_identity()?;
+            Ok(())
+        })();
+        let _ = self.parent.remove_file(&temporary);
+        result
+    }
+
     /// Exact-byte CAS, file sync and confined atomic replacement. Unix also
     /// syncs the parent; Windows retains its file-sync/rename durability limit.
     pub fn replace(&self, expected_fingerprint: &str, after: &[u8]) -> Result<()> {

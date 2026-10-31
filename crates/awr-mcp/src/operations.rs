@@ -165,6 +165,7 @@ pub(crate) fn call_as(
                         value.clone(),
                         &awr_runtime::AttachExplanationOptions {
                             enabled: true,
+                            policy_root: Some(root.to_path_buf()),
                             ..Default::default()
                         },
                     ) {
