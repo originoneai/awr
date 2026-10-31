@@ -114,6 +114,13 @@ The response advertises the following queries and twelve session/claim/execution
 The operation list describes implemented protocol, not a grant to invoke it.
 Unsupported operations or protocol versions fail explicitly.
 
+The response also carries `semantic_layers`. For each of the five result layers of AWR (`work_readiness`,
+`execution_admission`, `context_completeness`, `delivery_observation`, `completion_validity`) it lists the Team queries
+and commands that carry the layer and, in `without_team_operation`, the entries of the personal CLI and MCP server that
+have no Team operation, each with its reason (for example `context compile`: no standalone context pack, `work.prepare`
+returns the completeness and the context hash). A host that works in both modes can learn the gaps before asking;
+asking anyway is refused as `Unsupported`. The lists name operations of this protocol and are checked against it.
+
 | Operation | Selectors and result |
 | --- | --- |
 | `workstreams.list` | Authorized workstreams only; `limit`, `cursor` |

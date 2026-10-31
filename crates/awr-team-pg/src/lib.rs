@@ -31,6 +31,7 @@ mod review;
 mod runner;
 mod scoped_runner;
 mod selective_invalidation;
+mod semantic_layers;
 mod source;
 mod team_handoff;
 mod tx;

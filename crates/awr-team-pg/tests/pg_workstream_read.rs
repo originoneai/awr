@@ -51,6 +51,29 @@ async fn work_snapshot_preserves_context_hash_scope_and_total_byte_budget() {
             .contains(&serde_json::json!("work.snapshot"))
     );
     assert_eq!(caps["session_feedback"]["snapshot_read"], "work.snapshot");
+    // What the Team entry does not provide of the personal entries is named, per layer, before anyone asks.
+    let layers = caps["semantic_layers"]["layers"].as_object().unwrap();
+    assert_eq!(
+        layers.keys().map(String::as_str).collect::<Vec<_>>(),
+        [
+            "completion_validity",
+            "context_completeness",
+            "delivery_observation",
+            "execution_admission",
+            "work_readiness"
+        ]
+    );
+    assert_eq!(
+        caps["semantic_layers"]["unsupported_operation"],
+        "Unsupported"
+    );
+    assert!(
+        layers["context_completeness"]["without_team_operation"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|gap| gap["entry"] == "context compile")
+    );
 
     // The opt-in operation cannot silently drop feedback to meet a context budget.
     q.max_context_bytes = Some(serde_json::to_vec(&prepared["data"]).unwrap().len());

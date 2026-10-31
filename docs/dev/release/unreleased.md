@@ -4,6 +4,10 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
+- The capabilities of the Team workstream protocol say, for each of the five result layers (work readiness,
+  execution admission, context completeness, delivery observation, completion validity), which Team operations carry
+  it and which entries of the personal CLI and MCP server have no Team operation, with the reason; the report is checked
+  against the protocol's own operation lists. Asking for such an entry is still refused as `Unsupported`.
 - Governed work in a Team: a snapshot may declare governance (`governance.json`, written by
   `PublishPrepOptions::governance`), the Team reuses the Core admission rules on its own facts, and
   `admission.decide` records decisions attributed to the verified caller (`planning.approve`, a
