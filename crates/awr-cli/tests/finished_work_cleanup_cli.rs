@@ -294,6 +294,53 @@ fn what_may_still_be_at_work_is_listed_and_left_alone() {
 }
 
 #[test]
+fn a_session_on_another_branch_is_listed_and_left_alone() {
+    let f = Fixture::new();
+    let (on_w, claim) = f.start("W", "worker-a", true);
+    let claim = claim.unwrap();
+    // A session started while another branch is selected keeps that branch when main is selected again.
+    let select = |branch: &str| {
+        f.ok(&[
+            "branch",
+            "switch",
+            branch,
+            "--actor",
+            "fixture",
+            "--reason",
+            "Change the default branch",
+            "--expected-revision",
+            &f.revision(),
+        ])
+    };
+    f.ok(&[
+        "branch",
+        "create",
+        "review",
+        "--actor",
+        "fixture",
+        "--reason",
+        "Review the report",
+        "--expected-revision",
+        &f.revision(),
+    ]);
+    select("review");
+    let (on_done, _) = f.start("DONE", "worker-b", false);
+    select("main");
+    f.finish("W", "completed");
+    f.finish("DONE", "cancelled");
+    let plan = f.plan();
+    let skipped = plan["plan"]["skipped"].as_array().unwrap();
+    assert_eq!(skipped.len(), 1, "{plan}");
+    assert_eq!(skipped[0]["reason"], "session_on_another_branch");
+    assert_eq!(skipped[0]["object_id"], json!(on_done));
+    assert_eq!(plan["plan"]["sessions"].as_array().unwrap().len(), 1);
+    f.accept(&plan, "Clean up what is safe");
+    assert_eq!(f.session_status(&on_done), "active");
+    assert_eq!(f.session_status(&on_w), "interrupted");
+    assert_eq!(f.claim_status(&claim), "released");
+}
+
+#[test]
 fn a_plan_that_changed_a_revision_that_moved_and_a_missing_reason_are_refused() {
     let (f, [on_w, _, _], claim) = backlog();
     let plan = f.plan();
