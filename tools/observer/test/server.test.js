@@ -106,3 +106,18 @@ test('request bodies over 64 KiB return 413', async () => {
   assert.equal(response.status, 413);
   assert.equal((await response.json()).error.code, 'BodyTooLarge');
 });
+
+test('index, a static asset and an API reply are all cache-control: no-store', async () => {
+  const index = await fetch(`${base}/`);
+  assert.equal(index.status, 200);
+  assert.equal(index.headers.get('cache-control'), 'no-store');
+  const html = await index.text();
+  const assetPath = html.match(/src="(\/assets\/[^"]+\.js)"/)?.[1];
+  assert.ok(assetPath, 'the index references a built asset');
+  const asset = await fetch(`${base}${assetPath}`);
+  assert.equal(asset.status, 200);
+  assert.equal(asset.headers.get('cache-control'), 'no-store');
+  const api = await fetch(`${base}/api/team/projects`);
+  assert.equal(api.status, 200);
+  assert.equal(api.headers.get('cache-control'), 'no-store');
+});
