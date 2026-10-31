@@ -1,0 +1,128 @@
+{
+ "case": "H02",
+ "slug": "reopen-withdraws",
+ "description": "A reopened work no longer counts as completed or confirmed; the receipts stay counted as read, and the withdrawal is its own count.",
+ "input": {
+  "project_id": "01JP0000000000000000000001",
+  "works": [
+   {
+    "work_item_id": "01JW0000000000000000000001",
+    "work_key": "alpha",
+    "acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "confirmed_acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   },
+   {
+    "work_item_id": "01JW0000000000000000000002",
+    "work_key": "beta",
+    "acceptance_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "confirmed_acceptance_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+   },
+   {
+    "work_item_id": "01JW0000000000000000000003",
+    "work_key": "gamma",
+    "acceptance_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "confirmed_acceptance_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+   },
+   {
+    "work_item_id": "01JW0000000000000000000004",
+    "work_key": "delta",
+    "acceptance_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "confirmed_acceptance_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+   }
+  ],
+  "receipts": [
+   {
+    "event_id": "01JE0000000000000000000004",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000001",
+    "kind": "completed",
+    "at_ms": 1000,
+    "project_revision": 10,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000001",
+    "evidence_level": "locally_verified",
+    "acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "actor_origin": null
+   },
+   {
+    "event_id": "01JE0000000000000000000005",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000001",
+    "kind": "ordinary_confirmed",
+    "at_ms": 1100,
+    "project_revision": 11,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000001",
+    "evidence_level": null,
+    "acceptance_digest": null,
+    "actor_origin": "human"
+   },
+   {
+    "event_id": "01JE0000000000000000000006",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000001",
+    "kind": "reopened",
+    "at_ms": 1200,
+    "project_revision": 12,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000001",
+    "evidence_level": null,
+    "acceptance_digest": null,
+    "actor_origin": null
+   },
+   {
+    "event_id": "01JE0000000000000000000007",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000002",
+    "kind": "completed",
+    "at_ms": 1300,
+    "project_revision": 13,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000001",
+    "evidence_level": "locally_verified",
+    "acceptance_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "actor_origin": null
+   }
+  ],
+  "executions": [],
+  "sessions": [
+   {
+    "session_id": "01JS0000000000000000000001",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-large",
+    "agent": "agent-a"
+   },
+   {
+    "session_id": "01JS0000000000000000000002",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-small",
+    "agent": "agent-b"
+   },
+   {
+    "session_id": "01JS0000000000000000000003",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "other",
+    "model": "o-1",
+    "agent": "agent-c"
+   }
+  ],
+  "usage": []
+ },
+ "request": {
+  "as_of_ms": 5000,
+  "cohort_by": "none",
+  "work_keys": null
+ },
+ "expect": {
+  "/sample/receipts/read": 4,
+  "/sample/receipts/used": 4,
+  "/cohorts/0/signals/completion_reported": 1,
+  "/cohorts/0/signals/accepted_by_human": 0,
+  "/cohorts/0/signals/reopened_works": 1,
+  "/cohorts/0/signals/withdrawn_completions": 1,
+  "/cohorts/0/signals/withdrawn_acceptances": 1,
+  "/cohorts/0/signals/open": 3
+ }
+}

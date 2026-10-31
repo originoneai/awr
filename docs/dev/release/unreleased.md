@@ -33,6 +33,12 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   Run `awr source reindex` after upgrading to refresh the changed projections.
   Markdown task bindings and cross-document replacement traversal are deferred.
   See [specification references and coverage](../reference/specification-coverage.md).
+- An outcome history over what AWR already recorded about work (`awr_runtime::outcome_history`, read-only, no
+  command yet): completions, human or delegated confirmations, cancellations, reopenings, supervised executions and
+  usage are counted each on its own by cohort, as of an instant the caller gives. A reopening withdraws what a
+  completion said, a completion under acceptance that has since changed is not counted as a pass, a missing cost or
+  duration stays missing, and the report holds no rate, score or counterfactual: it lists what it does not derive.
+  One project per report; the same question gives the same hash. See [outcome history](../reference/outcome-history.md).
 - Optional work definitions in YAML ledgers: a work item can record its purpose, adopted intent,
   the goal outcome it advances, responsibility, examples and how its tests will show they detect a
   wrong implementation. `awr work show` and `awr work prepare` (and the MCP work tools) report each
@@ -71,6 +77,12 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   those facts, goes stale when they change and opens no task; failures that alternate with
   successes, waits and blockers are shown and hold nothing, and recovery paths are never held. See
   [bounded reassessment](../reference/reassessment.md).
+- A claim on work the source now calls completed or cancelled is released when a command refreshes the sources
+  (`source reindex`, the reads that refresh, `session start`, `work claim`), and the session it leaves without a claim
+  is closed as `interrupted` with `reason: source_terminal` and the source revision and fingerprint it saw. A checkpoint
+  save in flight, a change waiting to be applied, an execution that has not ended and a claim on another branch are left
+  alone and reported; the reply carries `reconciliation` only when something happened. See
+  [database health](../reference/database-recovery.md#claims-and-sessions-of-work-the-source-calls-finished).
 - Rework and active-effort budgets for governed work: a definition may declare a `size` (small,
   medium or large) and a `budget`; the defaults of the size apply otherwise. AWR counts rework from
   its own reopen records and effort from the claims held on the work before it uses the counters a
@@ -105,6 +117,13 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   agent or an observed environment change. An open gap puts in question only the admission or
   containment judgments that read its layer, on that work; it keeps every failure on record, opens
   no task and holds no unrelated work. See [gaps](../reference/gaps.md).
+- A bounded local policy for assessment advice (`.awr/assessment-policy.toml`, `awr assessment policy show|preview|apply`,
+  capability `assessment.policy`): a versioned file that switches optional advice off, lowers the four envelope caps and orders
+  the soft reason codes, by version and by the `as_of` of the evaluation, with explicit inheritance between versions. It names
+  rules from a closed set, holds no script or expression, cannot touch a hard guard, protected advice, admission, claims or
+  completion, and cannot exceed what the host allows. A change is a previewed and confirmed write of exactly the bytes read,
+  appends versions and never edits one in use; a file the program cannot use is never applied in part. Nothing changes for a
+  project without the file. See [assessment policy](../reference/assessment-policy.md).
 - The contract of a context packing kernel with no store (`awr-context-kernel`, a library crate, not in the binaries): a request of fixed
   text chunks with stable names, entities and revisions, required and ranked optional chunks, atomic groups and a token or byte budget;
   a result that is a consistent partition of it; `validate_request` and `check_result` that say why a request or a result is refused, with

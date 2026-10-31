@@ -1586,18 +1586,16 @@ pub(crate) async fn read(
         }
         "evidence.inspect" => {
             let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
-            let _ = work_binding(tx, tenant, project, auth, work).await?;
             let evidence_id = q.evidence_id.as_deref().ok_or(PgError::Forbidden)?;
             let value = crate::workstream_command::reviews::inspect_evidence(
                 tx,
                 tenant,
                 project,
+                auth,
+                work,
                 evidence_id,
             )
             .await?;
-            if value["evidence"]["work_id"] != work {
-                return Err(PgError::Forbidden);
-            }
             value
         }
         "review.inspect" => {

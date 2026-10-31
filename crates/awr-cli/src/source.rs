@@ -692,6 +692,13 @@ pub fn run(root: &Path, command: &SourceCommand, json_output: bool) -> Result<()
         }
         SourceCommand::Scan | SourceCommand::Reindex { .. } => {
             let mut store = Store::open(&runtime.join("state.db"))?;
+            let watch = match command {
+                SourceCommand::Reindex { .. } => store
+                    .project_by_root(&root)
+                    .map(|project| crate::finished_work::Watch::take(&store, project.id))
+                    .unwrap_or_else(|_| crate::finished_work::Watch::none()),
+                _ => crate::finished_work::Watch::none(),
+            };
             let report = match command {
                 SourceCommand::Scan => scan_project(&mut store, &root, &manifest)?,
                 SourceCommand::Reindex { force } => {
@@ -699,10 +706,22 @@ pub fn run(root: &Path, command: &SourceCommand, json_output: bool) -> Result<()
                 }
                 _ => unreachable!(),
             };
+            let reconciliation = if report.ok {
+                watch.reconcile(&mut store)
+            } else {
+                None
+            };
             if json_output {
-                println!("{}", serde_json::to_string_pretty(&report)?);
+                let mut value = serde_json::to_value(&report)?;
+                if let Some(note) = &reconciliation {
+                    value["reconciliation"] = note.clone();
+                }
+                println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
                 print_report(&report);
+                if let Some(note) = &reconciliation {
+                    println!("Reconciliation: {note}");
+                }
             }
             if !report.ok {
                 return Err(Error::SourceStale(

@@ -1,0 +1,72 @@
+{
+ "case": "H06b",
+ "slug": "cross-project-usage",
+ "description": "A usage receipt of another project is refused whole.",
+ "input": {
+  "project_id": "01JP0000000000000000000001",
+  "works": [
+   {
+    "work_item_id": "01JW0000000000000000000001",
+    "work_key": "alpha",
+    "acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "confirmed_acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   }
+  ],
+  "receipts": [],
+  "executions": [],
+  "sessions": [
+   {
+    "session_id": "01JS0000000000000000000001",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-large",
+    "agent": "agent-a"
+   },
+   {
+    "session_id": "01JS0000000000000000000002",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-small",
+    "agent": "agent-b"
+   },
+   {
+    "session_id": "01JS0000000000000000000003",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "other",
+    "model": "o-1",
+    "agent": "agent-c"
+   }
+  ],
+  "usage": [
+   {
+    "receipt_id": "r-1",
+    "project_id": "01JP0000000000000000000002",
+    "provider_namespace": "ns",
+    "provider": "anthropic",
+    "call_id": "call-1",
+    "model": "m-large",
+    "session_id": "01JS0000000000000000000001",
+    "occurred_at_ms": 900,
+    "channel": "model",
+    "attribution": {
+     "work_id": "alpha",
+     "execution_id": "exec-1",
+     "workstream_id": null
+    },
+    "tokens": null,
+    "cost": {
+     "actual": {
+      "currency": "USD",
+      "micros": 5
+     }
+    }
+   }
+  ]
+ },
+ "request": {
+  "as_of_ms": 5000,
+  "cohort_by": "none",
+  "work_keys": null
+ },
+ "error": "CrossProject"
+}

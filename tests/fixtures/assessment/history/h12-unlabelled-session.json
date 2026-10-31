@@ -1,0 +1,67 @@
+{
+ "case": "H12",
+ "slug": "unlabelled-session",
+ "description": "A session without a label leaves the work unattributed instead of guessed.",
+ "input": {
+  "project_id": "01JP0000000000000000000001",
+  "works": [
+   {
+    "work_item_id": "01JW0000000000000000000001",
+    "work_key": "alpha",
+    "acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "confirmed_acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   }
+  ],
+  "receipts": [
+   {
+    "event_id": "01JE000000000000000000000T",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000001",
+    "kind": "completed",
+    "at_ms": 1000,
+    "project_revision": 10,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000004",
+    "evidence_level": "locally_verified",
+    "acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "actor_origin": null
+   }
+  ],
+  "executions": [],
+  "sessions": [
+   {
+    "session_id": "01JS0000000000000000000001",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-large",
+    "agent": "agent-a"
+   },
+   {
+    "session_id": "01JS0000000000000000000002",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-small",
+    "agent": "agent-b"
+   },
+   {
+    "session_id": "01JS0000000000000000000003",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "other",
+    "model": "o-1",
+    "agent": "agent-c"
+   }
+  ],
+  "usage": []
+ },
+ "request": {
+  "as_of_ms": 5000,
+  "cohort_by": "provider_model",
+  "work_keys": null
+ },
+ "expect": {
+  "/cohorts#len": 1,
+  "/cohorts/0/unattributed": true,
+  "/sample/sessions_unlabelled": 1,
+  "/cohorts/0/signals/completion_reported": 1
+ }
+}

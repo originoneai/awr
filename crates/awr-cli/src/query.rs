@@ -85,6 +85,8 @@ pub(crate) struct QueryProject {
     pub refresh: IndexReport,
     snapshot: Option<Value>,
     cached: bool,
+    /// What the refresh released because the source calls the work finished; absent when nothing happened.
+    pub reconciliation: Option<Value>,
 }
 impl QueryProject {
     /// Refresh the rebuildable projection cache only; authoritative files are never modified.
@@ -99,7 +101,16 @@ impl QueryProject {
         }
         let manifest = Manifest::load(&root)?;
         let mut store = Store::open(&database)?;
+        let watch = store
+            .project_by_root(&root)
+            .map(|project| crate::finished_work::Watch::take(&store, project.id))
+            .unwrap_or_else(|_| crate::finished_work::Watch::none());
         let refresh = index_project(&mut store, &root, &manifest, false)?;
+        let reconciliation = if refresh.ok {
+            watch.reconcile(&mut store)
+        } else {
+            None
+        };
         let project = store.project(refresh.project_id)?;
         Ok(Self {
             store,
@@ -107,6 +118,7 @@ impl QueryProject {
             refresh,
             snapshot: None,
             cached: false,
+            reconciliation,
         })
     }
     pub(crate) fn open_read(root: &Path, cached: bool) -> Result<Self> {
@@ -115,11 +127,24 @@ impl QueryProject {
         if !database.is_file() {
             return Err(Error::NotFound("AWR database; initialize first".into()));
         }
+        let mut reconciliation = None;
         let snapshot = if cached {
             awr_source::recorded_snapshot(&root)?
         } else {
             let mut origin = Store::open(&database)?;
-            awr_source::refresh_snapshot(&mut origin, &root)?
+            let watch = origin
+                .project_by_root(&root)
+                .map(|project| crate::finished_work::Watch::take(&origin, project.id))
+                .unwrap_or_else(|_| crate::finished_work::Watch::none());
+            let mut snapshot = awr_source::refresh_snapshot(&mut origin, &root)?;
+            if snapshot.refresh.ok {
+                reconciliation = watch.reconcile(&mut origin);
+                // The reply is read from a private copy: take it again so that it shows what was released.
+                if reconciliation.is_some() {
+                    snapshot = awr_source::refresh_snapshot(&mut origin, &root)?;
+                }
+            }
+            snapshot
         };
         let project = snapshot.store.project(snapshot.refresh.project_id)?;
         let metadata = json!({"version":1,"storage":"private_memory","coherent":true,
@@ -132,6 +157,7 @@ impl QueryProject {
             refresh: snapshot.refresh,
             snapshot: Some(metadata),
             cached,
+            reconciliation,
         })
     }
     pub(crate) fn metadata(&self) -> Value {
@@ -140,6 +166,9 @@ impl QueryProject {
             "source_warnings":self.refresh.sources.iter().map(|s|s.warnings.len()).sum::<usize>()});
         if let Some(snapshot) = &self.snapshot {
             value["snapshot"] = snapshot.clone();
+        }
+        if let Some(note) = &self.reconciliation {
+            value["reconciliation"] = note.clone();
         }
         value
     }

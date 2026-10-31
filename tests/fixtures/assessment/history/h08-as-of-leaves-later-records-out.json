@@ -1,0 +1,126 @@
+{
+ "case": "H08",
+ "slug": "as-of-leaves-later-records-out",
+ "description": "Records after the instant of the question are left out and counted; an execution that ends after it has not ended.",
+ "input": {
+  "project_id": "01JP0000000000000000000001",
+  "works": [
+   {
+    "work_item_id": "01JW0000000000000000000001",
+    "work_key": "alpha",
+    "acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "confirmed_acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   },
+   {
+    "work_item_id": "01JW0000000000000000000002",
+    "work_key": "beta",
+    "acceptance_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "confirmed_acceptance_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+   }
+  ],
+  "receipts": [
+   {
+    "event_id": "01JE000000000000000000000E",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000001",
+    "kind": "completed",
+    "at_ms": 1000,
+    "project_revision": 10,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000001",
+    "evidence_level": "locally_verified",
+    "acceptance_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "actor_origin": null
+   },
+   {
+    "event_id": "01JE000000000000000000000F",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000002",
+    "kind": "completed",
+    "at_ms": 9000,
+    "project_revision": 20,
+    "work_revision": 3,
+    "session_id": "01JS0000000000000000000001",
+    "evidence_level": "locally_verified",
+    "acceptance_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "actor_origin": null
+   }
+  ],
+  "executions": [
+   {
+    "execution_id": "01JX0000000000000000000005",
+    "project_id": "01JP0000000000000000000001",
+    "work_item_id": "01JW0000000000000000000001",
+    "session_id": "01JS0000000000000000000001",
+    "state": "succeeded",
+    "registered_at_ms": 100,
+    "started_at_ms": 200,
+    "finished_at_ms": 8000
+   }
+  ],
+  "sessions": [
+   {
+    "session_id": "01JS0000000000000000000001",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-large",
+    "agent": "agent-a"
+   },
+   {
+    "session_id": "01JS0000000000000000000002",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "anthropic",
+    "model": "m-small",
+    "agent": "agent-b"
+   },
+   {
+    "session_id": "01JS0000000000000000000003",
+    "project_id": "01JP0000000000000000000001",
+    "provider": "other",
+    "model": "o-1",
+    "agent": "agent-c"
+   }
+  ],
+  "usage": [
+   {
+    "receipt_id": "r-6",
+    "project_id": "01JP0000000000000000000001",
+    "provider_namespace": "ns",
+    "provider": "anthropic",
+    "call_id": "call-6",
+    "model": "m-large",
+    "session_id": "01JS0000000000000000000001",
+    "occurred_at_ms": 7000,
+    "channel": "model",
+    "attribution": {
+     "work_id": "alpha",
+     "execution_id": "exec-6",
+     "workstream_id": null
+    },
+    "tokens": null,
+    "cost": {
+     "actual": {
+      "currency": "USD",
+      "micros": 5
+     }
+    }
+   }
+  ]
+ },
+ "request": {
+  "as_of_ms": 5000,
+  "cohort_by": "none",
+  "work_keys": null
+ },
+ "expect": {
+  "/sample/receipts/after_as_of": 1,
+  "/sample/receipts/used": 1,
+  "/cohorts/0/signals/completion_reported": 1,
+  "/cohorts/0/signals/open": 1,
+  "/cohorts/0/executions/succeeded": 0,
+  "/cohorts/0/executions/unfinished": 1,
+  "/sample/usage/after_as_of": 1,
+  "/sample/usage/used": 0,
+  "/cohorts/0/cost/works_without_usage": 2
+ }
+}

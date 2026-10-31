@@ -26,6 +26,7 @@ pub use host_save::{
 };
 mod agent_authorization;
 mod assessment_explain;
+mod assessment_policy;
 mod assessment_replay;
 mod assessment_shadow;
 mod claim_policy;
@@ -108,6 +109,10 @@ pub use assessment_explain::{
     AttachExplanationOptions, ExplanationSideEffects, ExplanationWireMetrics,
     attach_assessment_explanation, has_assessment_explanation, normalize_receipt_for_explanation,
     wire_bytes,
+};
+pub use assessment_policy::{
+    PolicyApplied, PolicyInForce, PolicyNotice, PolicyPreview, PolicyShown, VersionSummary,
+    apply_policy_change, policy_in_force, preview_policy_change, show_policy,
 };
 pub use assessment_replay::{
     ASSESSMENT_REPLAY_CAPABILITY, REPLAY_SNAPSHOT_SCHEMA_ID, REPLAY_SNAPSHOT_SCHEMA_VERSION,
@@ -425,6 +430,8 @@ mod status_summary;
 pub use status_summary::{StatusScope, summarize_status};
 mod status_action;
 pub use status_action::{action_status, action_status_page};
+mod outcome_history;
+pub use outcome_history::outcome_history;
 mod work_progress;
 pub use work_progress::work_progress;
 

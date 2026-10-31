@@ -206,6 +206,422 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+#[derive(Debug)]
+struct EvidenceExecutionBinding<'a> {
+    work_id: &'a str,
+    execution_id: Option<&'a str>,
+    contract_hash: &'a str,
+    input_digest: Option<&'a str>,
+    claimed_success: Option<bool>,
+}
+
+#[derive(Debug)]
+struct RecordedExecution {
+    work_id: String,
+    scope_id: String,
+    contract_hash: String,
+    input_digest: Option<String>,
+    state: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ExecutionConsistencyAssessment {
+    status: &'static str,
+    claimed_success: Option<bool>,
+    execution_success: Option<bool>,
+    recorded_state: Option<String>,
+    reason: &'static str,
+}
+
+impl ExecutionConsistencyAssessment {
+    fn not_inspectable(reason: &'static str) -> Self {
+        Self::unverifiable(None, None, None, reason)
+    }
+
+    fn unverifiable(
+        claimed_success: Option<bool>,
+        recorded_state: Option<&str>,
+        execution_success: Option<bool>,
+        reason: &'static str,
+    ) -> Self {
+        Self {
+            status: "unverifiable",
+            claimed_success,
+            execution_success,
+            recorded_state: recorded_state.map(str::to_owned),
+            reason,
+        }
+    }
+
+    fn contradicted(
+        claimed_success: Option<bool>,
+        recorded_state: &str,
+        execution_success: Option<bool>,
+        reason: &'static str,
+    ) -> Self {
+        Self {
+            status: "contradicted",
+            claimed_success,
+            execution_success,
+            recorded_state: Some(recorded_state.to_owned()),
+            reason,
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        json!({
+            "status": self.status,
+            "claimed_success": self.claimed_success,
+            "execution_success": self.execution_success,
+            "recorded_state": self.recorded_state,
+            "fact_source": self.recorded_state.as_ref().map(|_| "team_execution_record"),
+            // An execution record can itself originate from the caller. Receipt
+            // kind therefore never upgrades this comparison into independent
+            // verification.
+            "independent_verification": false,
+            "reason": self.reason,
+        })
+    }
+}
+
+fn assess_execution_consistency(
+    binding: &EvidenceExecutionBinding<'_>,
+    execution: Option<&RecordedExecution>,
+) -> ExecutionConsistencyAssessment {
+    let Some(_) = binding.execution_id else {
+        return ExecutionConsistencyAssessment::unverifiable(
+            binding.claimed_success,
+            None,
+            None,
+            "no_bound_execution",
+        );
+    };
+    let Some(execution) = execution else {
+        return ExecutionConsistencyAssessment::unverifiable(
+            binding.claimed_success,
+            None,
+            None,
+            "execution_record_not_found",
+        );
+    };
+    let state = execution.state.as_str();
+    let contradiction = |reason| {
+        ExecutionConsistencyAssessment::contradicted(binding.claimed_success, state, None, reason)
+    };
+    if execution.work_id != binding.work_id {
+        return contradiction("execution_work_mismatch");
+    }
+    if execution.scope_id != "main" {
+        return contradiction("execution_scope_mismatch");
+    }
+    if execution.contract_hash != binding.contract_hash {
+        return contradiction("execution_contract_mismatch");
+    }
+    let incomplete_input_binding = match (binding.input_digest, execution.input_digest.as_deref()) {
+        (Some(expected), Some(recorded)) if expected == recorded => None,
+        (Some(_), Some(_)) => return contradiction("execution_input_digest_mismatch"),
+        (Some(_), None) => Some("execution_input_digest_not_recorded"),
+        (None, Some(_)) => Some("evidence_input_digest_not_declared"),
+        (None, None) => Some("input_digest_not_recorded"),
+    };
+    let execution_success = match state {
+        "succeeded" => Some(true),
+        "failed" | "cancelled" => Some(false),
+        _ => None,
+    };
+    let Some(execution_success) = execution_success else {
+        // Caller-managed reports deliberately remain unknown until
+        // reconciliation and do not persist their reported result digest on
+        // the execution row. Preserve that historical submission path as
+        // unverifiable instead of treating the absent terminal fact as a
+        // contradiction.
+        return ExecutionConsistencyAssessment::unverifiable(
+            binding.claimed_success,
+            Some(state),
+            None,
+            "execution_not_terminal",
+        );
+    };
+    if binding
+        .claimed_success
+        .is_some_and(|claimed_success| claimed_success != execution_success)
+    {
+        return ExecutionConsistencyAssessment::contradicted(
+            binding.claimed_success,
+            state,
+            Some(execution_success),
+            "caller_claim_disagrees_with_execution",
+        );
+    }
+    if let Some(reason) = incomplete_input_binding {
+        return ExecutionConsistencyAssessment::unverifiable(
+            binding.claimed_success,
+            Some(state),
+            Some(execution_success),
+            reason,
+        );
+    }
+    // Generic and delivery evidence can describe an auxiliary artifact whose
+    // payload.output_digest is not the bound execution's result digest. Exact
+    // result binding is enforced by the completion/integration domain once an
+    // evidence item is explicitly selected as the execution result.
+    let Some(claimed_success) = binding.claimed_success else {
+        return ExecutionConsistencyAssessment::unverifiable(
+            None,
+            Some(state),
+            Some(execution_success),
+            "caller_success_not_boolean",
+        );
+    };
+    ExecutionConsistencyAssessment {
+        status: "consistent",
+        claimed_success: Some(claimed_success),
+        execution_success: Some(execution_success),
+        recorded_state: Some(state.to_owned()),
+        reason: "caller_claim_matches_execution",
+    }
+}
+
+async fn load_recorded_execution(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    execution_id: Option<&str>,
+) -> PgResult<Option<RecordedExecution>> {
+    let Some(execution_id) = execution_id else {
+        return Ok(None);
+    };
+    Ok(tx
+        .query_opt(
+            "SELECT work_id, scope_id, contract_hash, input_digest, state
+             FROM awr_team.executions
+             WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+            &[&tenant, &project, &execution_id],
+        )
+        .await?
+        .map(|row| RecordedExecution {
+            work_id: row.get(0),
+            scope_id: row.get(1),
+            contract_hash: row.get(2),
+            input_digest: row.get(3),
+            state: row.get(4),
+        }))
+}
+
+fn evidence_integrity_matches(
+    stored_digest: &str,
+    work_id: &str,
+    contract_hash: &str,
+    input_digest: Option<&str>,
+    output_digest: Option<&str>,
+    execution_result_digest: Option<&str>,
+    payload: &Value,
+) -> bool {
+    evidence_digest(
+        work_id,
+        contract_hash,
+        input_digest,
+        output_digest,
+        execution_result_digest,
+        payload,
+    )
+    .is_ok_and(|recomputed| recomputed == stored_digest)
+}
+
+#[cfg(test)]
+mod execution_consistency_tests {
+    use super::*;
+
+    const INPUT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const RESULT: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    fn binding(claimed_success: Option<bool>) -> EvidenceExecutionBinding<'static> {
+        EvidenceExecutionBinding {
+            work_id: "work",
+            execution_id: Some("execution"),
+            contract_hash: "contract",
+            input_digest: Some(INPUT),
+            claimed_success,
+        }
+    }
+
+    fn execution(state: &str) -> RecordedExecution {
+        RecordedExecution {
+            work_id: "work".into(),
+            scope_id: "main".into(),
+            contract_hash: "contract".into(),
+            input_digest: Some(INPUT.into()),
+            state: state.into(),
+        }
+    }
+
+    #[test]
+    fn exact_terminal_claims_are_consistent_with_recorded_outcomes() {
+        for (state, claim, success) in [
+            ("succeeded", true, true),
+            ("failed", false, false),
+            ("cancelled", false, false),
+        ] {
+            let assessment =
+                assess_execution_consistency(&binding(Some(claim)), Some(&execution(state)));
+            assert_eq!(assessment.status, "consistent", "{state}");
+            assert_eq!(assessment.claimed_success, Some(claim), "{state}");
+            assert_eq!(assessment.execution_success, Some(success), "{state}");
+            assert_eq!(assessment.recorded_state.as_deref(), Some(state), "{state}");
+        }
+    }
+
+    #[test]
+    fn successful_claim_is_contradicted_by_failed_execution() {
+        let assessment =
+            assess_execution_consistency(&binding(Some(true)), Some(&execution("failed")));
+        assert_eq!(assessment.status, "contradicted");
+        assert_eq!(assessment.claimed_success, Some(true));
+        assert_eq!(assessment.execution_success, Some(false));
+        assert_eq!(assessment.reason, "caller_claim_disagrees_with_execution");
+    }
+
+    #[test]
+    fn known_terminal_outcome_contradicts_opposite_claim_without_result_digests() {
+        for (state, claim, execution_success) in [
+            ("failed", true, false),
+            ("cancelled", true, false),
+            ("succeeded", false, true),
+        ] {
+            let assessment =
+                assess_execution_consistency(&binding(Some(claim)), Some(&execution(state)));
+            assert_eq!(assessment.status, "contradicted", "{state}");
+            assert_eq!(assessment.claimed_success, Some(claim), "{state}");
+            assert_eq!(
+                assessment.execution_success,
+                Some(execution_success),
+                "{state}"
+            );
+            assert_eq!(
+                assessment.reason, "caller_claim_disagrees_with_execution",
+                "{state}"
+            );
+        }
+        for (state, claim) in [("failed", Some(false)), ("succeeded", None)] {
+            let assessment = assess_execution_consistency(&binding(claim), Some(&execution(state)));
+            assert_eq!(
+                assessment.status,
+                if claim.is_some() {
+                    "consistent"
+                } else {
+                    "unverifiable"
+                },
+                "{state}"
+            );
+        }
+    }
+
+    #[test]
+    fn nonterminal_and_unbound_executions_are_unverifiable() {
+        for state in ["prepared", "running", "unknown"] {
+            let assessment =
+                assess_execution_consistency(&binding(Some(true)), Some(&execution(state)));
+            assert_eq!(assessment.status, "unverifiable", "{state}");
+            assert_eq!(assessment.execution_success, None, "{state}");
+            assert_eq!(assessment.reason, "execution_not_terminal", "{state}");
+        }
+        let assessment =
+            assess_execution_consistency(&binding(Some(true)), Some(&execution("unknown")));
+        assert_eq!(assessment.status, "unverifiable");
+        assert_eq!(assessment.execution_success, None);
+        assert_eq!(assessment.reason, "execution_not_terminal");
+        let mut unbound = binding(Some(true));
+        unbound.execution_id = None;
+        let assessment = assess_execution_consistency(&unbound, Some(&execution("succeeded")));
+        assert_eq!(assessment.status, "unverifiable");
+        assert_eq!(assessment.execution_success, None);
+        assert_eq!(assessment.reason, "no_bound_execution");
+        assert!(assessment.to_json()["fact_source"].is_null());
+    }
+
+    #[test]
+    fn exact_binding_requires_work_scope_contract_and_explicit_input() {
+        let mut mismatches = Vec::new();
+        let mut wrong_work = execution("succeeded");
+        wrong_work.work_id = "other".into();
+        mismatches.push((wrong_work, "execution_work_mismatch"));
+        let mut wrong_scope = execution("succeeded");
+        wrong_scope.scope_id = "other".into();
+        mismatches.push((wrong_scope, "execution_scope_mismatch"));
+        let mut wrong_contract = execution("succeeded");
+        wrong_contract.contract_hash = "other".into();
+        mismatches.push((wrong_contract, "execution_contract_mismatch"));
+        let mut wrong_input = execution("succeeded");
+        wrong_input.input_digest = Some("c".repeat(64));
+        mismatches.push((wrong_input, "execution_input_digest_mismatch"));
+        for (execution, reason) in mismatches {
+            let assessment = assess_execution_consistency(&binding(Some(true)), Some(&execution));
+            assert_eq!(assessment.status, "contradicted", "{reason}");
+            assert_eq!(assessment.execution_success, None, "{reason}");
+            assert_eq!(assessment.reason, reason);
+        }
+    }
+
+    #[test]
+    fn optional_evidence_binding_does_not_hide_opposite_terminal_outcome() {
+        let mut without_input = binding(Some(true));
+        without_input.input_digest = None;
+        let contradicted = assess_execution_consistency(&without_input, Some(&execution("failed")));
+        assert_eq!(contradicted.status, "contradicted");
+        assert_eq!(contradicted.reason, "caller_claim_disagrees_with_execution");
+
+        let accepted = assess_execution_consistency(&without_input, Some(&execution("succeeded")));
+        assert_eq!(accepted.status, "unverifiable");
+        assert_eq!(accepted.execution_success, Some(true));
+        assert_eq!(accepted.reason, "evidence_input_digest_not_declared");
+    }
+
+    #[test]
+    fn absent_or_non_boolean_caller_claim_does_not_invent_verification() {
+        let assessment =
+            assess_execution_consistency(&binding(None), Some(&execution("succeeded")));
+        assert_eq!(assessment.status, "unverifiable");
+        assert_eq!(assessment.claimed_success, None);
+        assert_eq!(assessment.execution_success, Some(true));
+        assert_eq!(assessment.reason, "caller_success_not_boolean");
+        assert_eq!(assessment.to_json()["independent_verification"], false);
+        assert_eq!(assessment.to_json()["fact_source"], "team_execution_record");
+    }
+
+    #[test]
+    fn caller_claim_is_read_only_after_complete_evidence_digest_replay() {
+        let original = json!({"passed":true,"output_digest":RESULT});
+        let stored = evidence_digest(
+            "work",
+            "contract",
+            Some(INPUT),
+            Some("artifact"),
+            Some(RESULT),
+            &original,
+        )
+        .unwrap();
+        assert!(evidence_integrity_matches(
+            &stored,
+            "work",
+            "contract",
+            Some(INPUT),
+            Some("artifact"),
+            Some(RESULT),
+            &original,
+        ));
+        let tampered = json!({"passed":false,"output_digest":RESULT});
+        assert!(!evidence_integrity_matches(
+            &stored,
+            "work",
+            "contract",
+            Some(INPUT),
+            Some("artifact"),
+            Some(RESULT),
+            &tampered,
+        ));
+    }
+}
+
 /// Parse the typed delivery evidence entry during command parsing, before any
 /// database transaction. A malformed delivery_payload is a definite dedicated
 /// input rejection; other session/authority/business failures keep their own
@@ -583,28 +999,34 @@ async fn submit(
             return Err(invalid());
         }
     }
-    if let Some(id) = &a.execution_id {
-        if !identity(id) {
-            return Err(invalid());
-        }
-        let ok = tx
-            .query_opt(
-                "SELECT 1 FROM awr_team.executions
-                 WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND work_id=$4",
-                &[&tenant, &project, id, &command.work_id],
-            )
-            .await?
-            .is_some();
-        if !ok {
-            return Err(PgError::EvidenceInvalid);
-        }
-    }
-    let output_digest = artifact_bytes.as_deref().map(sha256_hex);
     let execution_result_digest = a
         .payload
         .get("output_digest")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    if let Some(id) = &a.execution_id {
+        if !identity(id) {
+            return Err(invalid());
+        }
+    }
+    let execution = load_recorded_execution(tx, tenant, project, a.execution_id.as_deref()).await?;
+    if a.execution_id.is_some() && execution.is_none() {
+        return Err(PgError::EvidenceInvalid);
+    }
+    let consistency = assess_execution_consistency(
+        &EvidenceExecutionBinding {
+            work_id: &command.work_id,
+            execution_id: a.execution_id.as_deref(),
+            contract_hash: &contract_hash,
+            input_digest: a.input_digest.as_deref(),
+            claimed_success: a.payload.get("passed").and_then(Value::as_bool),
+        },
+        execution.as_ref(),
+    );
+    if consistency.status == "contradicted" {
+        return Err(PgError::EvidenceInvalid);
+    }
+    let output_digest = artifact_bytes.as_deref().map(sha256_hex);
     let digest_v = evidence_digest(
         &command.work_id,
         &contract_hash,
@@ -669,7 +1091,9 @@ async fn submit(
             "artifact_digest": output_digest,
             "trust_basis": trust_basis,
             "contract_hash": contract_hash,
-            "execution_success": a.payload.get("passed").and_then(Value::as_bool),
+            "claimed_success": consistency.claimed_success,
+            "execution_success": consistency.execution_success,
+            "execution_consistency": consistency.to_json(),
             "author_self_report": trust_basis == "caller_asserted",
             "human_approval": false,
             "task_complete": false,
@@ -2149,29 +2573,101 @@ pub(crate) async fn inspect_evidence(
     tx: &Transaction<'_>,
     tenant: &str,
     project: &str,
+    auth: &ReaderAuthority,
+    expected_work: &str,
     evidence_id: &str,
 ) -> PgResult<Value> {
+    let (work_binding, ownership_version) =
+        crate::workstream_read::work_binding(tx, tenant, project, auth, expected_work).await?;
+    let workstream_id = work_binding.workstream_id.to_string();
     let row = tx
         .query_opt(
             "SELECT id, work_id, contract_hash, digest, trust_basis, execution_id,
-                    output_digest, execution_result_digest, created_by, artifact_id
+                    output_digest, execution_result_digest, created_by, artifact_id,
+                    input_digest, payload_json
              FROM awr_team.evidence
              WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
             &[&tenant, &project, &evidence_id],
         )
         .await?
         .ok_or_else(|| PgError::Protocol("evidence not found".into()))?;
+    let work_id: String = row.get(1);
+    if work_id != expected_work {
+        return Err(PgError::Forbidden);
+    }
+    let contract_hash: String = row.get(2);
+    let execution_id: Option<String> = row.get(5);
+    let output_digest: Option<String> = row.get(6);
+    let execution_result_digest: Option<String> = row.get(7);
+    let input_digest: Option<String> = row.get(10);
+    let payload: Value = row.get(11);
+    let stored_digest: String = row.get(3);
+    let integrity_valid = evidence_integrity_matches(
+        &stored_digest,
+        &work_id,
+        &contract_hash,
+        input_digest.as_deref(),
+        output_digest.as_deref(),
+        execution_result_digest.as_deref(),
+        &payload,
+    );
+    let consistency = if !integrity_valid {
+        ExecutionConsistencyAssessment::not_inspectable("evidence_digest_mismatch")
+    } else {
+        match execution_id.as_deref() {
+            None => assess_execution_consistency(
+                &EvidenceExecutionBinding {
+                    work_id: &work_id,
+                    execution_id: None,
+                    contract_hash: &contract_hash,
+                    input_digest: input_digest.as_deref(),
+                    claimed_success: payload.get("passed").and_then(Value::as_bool),
+                },
+                None,
+            ),
+            Some(execution_id) => {
+                let execution_inspectable =
+                    crate::workstream_command::executions::matches_inspect_binding(
+                        tx,
+                        tenant,
+                        project,
+                        &work_id,
+                        &workstream_id,
+                        ownership_version,
+                        execution_id,
+                    )
+                    .await?;
+                if !execution_inspectable {
+                    ExecutionConsistencyAssessment::not_inspectable("execution_not_inspectable")
+                } else {
+                    let execution =
+                        load_recorded_execution(tx, tenant, project, Some(execution_id)).await?;
+                    assess_execution_consistency(
+                        &EvidenceExecutionBinding {
+                            work_id: &work_id,
+                            execution_id: Some(execution_id),
+                            contract_hash: &contract_hash,
+                            input_digest: input_digest.as_deref(),
+                            claimed_success: payload.get("passed").and_then(Value::as_bool),
+                        },
+                        execution.as_ref(),
+                    )
+                }
+            }
+        }
+    };
     Ok(json!({"evidence":{
         "evidence_id": row.get::<_,String>(0),
-        "work_id": row.get::<_,String>(1),
-        "contract_hash": row.get::<_,String>(2),
-        "digest": row.get::<_,String>(3),
+        "work_id": work_id,
+        "contract_hash": contract_hash,
+        "digest": stored_digest,
         "trust_basis": row.get::<_,String>(4),
-        "execution_id": row.get::<_,Option<String>>(5),
-        "artifact_digest": row.get::<_,Option<String>>(6),
-        "execution_result_digest": row.get::<_,Option<String>>(7),
+        "execution_id": execution_id,
+        "artifact_digest": output_digest,
+        "execution_result_digest": execution_result_digest,
         "created_by": row.get::<_,String>(8),
         "artifact_id": row.get::<_,Option<String>>(9),
+        "execution_consistency": consistency.to_json(),
     }}))
 }
 
@@ -2222,7 +2718,7 @@ async fn inspect_review_evidence_provenance(
     let evidence = tx
         .query_opt(
             "SELECT contract_hash, digest, trust_basis, execution_id,
-                    output_digest, execution_result_digest
+                    output_digest, execution_result_digest, input_digest, payload_json
              FROM awr_team.evidence
              WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND work_id=$4",
             &[&tenant, &project, &evidence_id, &work_id],
@@ -2268,7 +2764,23 @@ async fn inspect_review_evidence_provenance(
         }));
     }
     let trust_basis: String = evidence.get(2);
-    let execution_inspection = if let Some(execution_id) = execution_id {
+    let evidence_output_digest: Option<String> = evidence.get(4);
+    let evidence_input_digest: Option<String> = evidence.get(6);
+    let evidence_payload: Value = evidence.get(7);
+    let evidence_integrity_valid = evidence_integrity_matches(
+        evidence.get::<_, String>(1).as_str(),
+        work_id,
+        round_contract_hash,
+        evidence_input_digest.as_deref(),
+        evidence_output_digest.as_deref(),
+        evidence_execution_result_digest.as_deref(),
+        &evidence_payload,
+    );
+    let (execution_inspection, execution_inspectable) = if !evidence_integrity_valid {
+        (unavailable("evidence_integrity_invalid"), false)
+    } else if !contract_matches_current {
+        (unavailable("stale_review_contract"), false)
+    } else if let Some(execution_id) = execution_id {
         let inspectable = crate::workstream_command::executions::matches_inspect_binding(
             tx,
             tenant,
@@ -2280,18 +2792,55 @@ async fn inspect_review_evidence_provenance(
         )
         .await?;
         if inspectable {
-            json!({"available":true,"reason":Value::Null,"query":{
-                "protocol_version":1,
-                "op":"execution.inspect",
-                "workstream_id":workstream_id,
-                "work_id":work_id,
-                "execution_id":execution_id,
-            }})
+            (
+                json!({"available":true,"reason":Value::Null,"query":{
+                    "protocol_version":1,
+                    "op":"execution.inspect",
+                    "workstream_id":workstream_id,
+                    "work_id":work_id,
+                    "execution_id":execution_id,
+                }}),
+                true,
+            )
         } else {
-            unavailable("not_inspectable_in_current_work_binding")
+            (
+                unavailable("not_inspectable_in_current_work_binding"),
+                false,
+            )
         }
     } else {
-        unavailable("no_bound_execution")
+        (unavailable("no_bound_execution"), false)
+    };
+    let execution_consistency = if !evidence_integrity_valid {
+        ExecutionConsistencyAssessment::not_inspectable("evidence_digest_mismatch")
+    } else if !contract_matches_current {
+        ExecutionConsistencyAssessment::not_inspectable("stale_review_contract")
+    } else if evidence_execution_id.is_none() {
+        assess_execution_consistency(
+            &EvidenceExecutionBinding {
+                work_id,
+                execution_id: None,
+                contract_hash: round_contract_hash,
+                input_digest: evidence_input_digest.as_deref(),
+                claimed_success: evidence_payload.get("passed").and_then(Value::as_bool),
+            },
+            None,
+        )
+    } else if !execution_inspectable {
+        ExecutionConsistencyAssessment::not_inspectable("execution_not_inspectable")
+    } else {
+        let execution =
+            load_recorded_execution(tx, tenant, project, evidence_execution_id.as_deref()).await?;
+        assess_execution_consistency(
+            &EvidenceExecutionBinding {
+                work_id,
+                execution_id: evidence_execution_id.as_deref(),
+                contract_hash: round_contract_hash,
+                input_digest: evidence_input_digest.as_deref(),
+                claimed_success: evidence_payload.get("passed").and_then(Value::as_bool),
+            },
+            execution.as_ref(),
+        )
     };
     Ok(json!({
         "binding_status":"exact",
@@ -2301,6 +2850,7 @@ async fn inspect_review_evidence_provenance(
         "currentness":if contract_matches_current {"current_contract"} else {"stale_contract"},
         "evidence_inspection":{"available":true,"reason":Value::Null,"query":evidence_query},
         "execution_inspection":execution_inspection,
+        "execution_consistency":execution_consistency.to_json(),
         "boundary":boundary,
     }))
 }
