@@ -124,6 +124,20 @@ impl Fixture {
         )
         .unwrap();
     }
+    /// A session that cannot be ended, as when a writer or the disk fails between the completion
+    /// and the end; `allow_session_end` takes the obstacle away again.
+    fn block_session_end(&self) {
+        let db = rusqlite::Connection::open(self.root.join(".awr/state.db")).unwrap();
+        db.execute_batch(
+            "CREATE TRIGGER blocked_session_end BEFORE UPDATE OF status ON sessions WHEN NEW.status='ended' \
+             BEGIN SELECT RAISE(ABORT,'session end blocked by the test'); END;",
+        )
+        .unwrap();
+    }
+    fn allow_session_end(&self) {
+        let db = rusqlite::Connection::open(self.root.join(".awr/state.db")).unwrap();
+        db.execute_batch("DROP TRIGGER blocked_session_end;").unwrap();
+    }
     fn record_evidence(&self) {
         let report = json!({"version":1,"work_item":"W","source_sha":SHA,"command":"verify report and delivery","scope":["W"],"verified_at":now_millis().unwrap(),"checks":[{"name":"content and delivery","passed":true,"details":"Checked the analysis and delivery receipt","criteria":[C1,C2]}]});
         let bytes = serde_json::to_vec_pretty(&report).unwrap();
@@ -295,4 +309,45 @@ fn another_claim_of_the_session_refuses_the_end_and_changes_nothing() {
     // Completed without the flag, no instruction is told while the other claim is held.
     let done = Fixture::success(&f.complete(&[]));
     assert!(done.get("close_out").is_none());
+}
+
+#[test]
+fn a_session_that_cannot_be_ended_leaves_the_completion_standing_and_says_what_to_do() {
+    let f = Fixture::new();
+    f.record_evidence();
+    f.block_session_end();
+    let failed = f.complete(&["--end-session"]);
+    // The request as a whole is a partial failure, and it says which part is durable.
+    Fixture::error(&failed, "InvalidTransition");
+    let report: Value = serde_json::from_slice(&failed.stdout).unwrap();
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["event"]["event_type"], "work.completed");
+    assert_eq!(report["session_end"]["status"], "failed");
+    assert_eq!(report["session_end"]["completion_event_id"], report["event"]["id"]);
+    assert!(
+        report["session_end"]["next"]
+            .as_str()
+            .unwrap()
+            .contains("session end"),
+        "{report}"
+    );
+    assert_eq!(f.work_status("W"), "completed");
+    assert_eq!(f.session_status(), "active");
+    assert!(f.events("session.ended").is_empty());
+    // Asking again does not complete a second time, and ending the session by itself recovers.
+    Fixture::error(&f.complete(&["--end-session"]), "InvalidTransition");
+    assert_eq!(f.events("work.completed").len(), 1);
+    f.allow_session_end();
+    f.ok(&[
+        "session",
+        "end",
+        "--session",
+        &f.session,
+        "--outcome",
+        "ended",
+        "--expected-revision",
+        &f.revision(),
+    ]);
+    assert_eq!(f.session_status(), "ended");
+    assert_eq!(f.events("session.ended").len(), 1);
 }
