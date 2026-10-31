@@ -272,3 +272,23 @@ pub(crate) async fn read(
         "definition_summary": governed.work.summary,
     }))
 }
+
+/// The fingerprint of the governed scope a review of `work` covers, or none when the work is not
+/// governed. A review that opened under one fingerprint no longer covers a work whose scope moved.
+pub(crate) async fn current_binding(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    snapshot: &str,
+    work: &str,
+) -> PgResult<Option<String>> {
+    let Some((status, current, _)) = status(tx, tenant, project, snapshot, work).await? else {
+        return Ok(None);
+    };
+    if !status.governed {
+        return Ok(None);
+    }
+    Ok(Some(
+        binding_fingerprint(&current).map_err(|_| PgError::SourceDivergence)?,
+    ))
+}

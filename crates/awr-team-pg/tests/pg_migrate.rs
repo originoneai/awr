@@ -589,7 +589,7 @@ async fn schema49_delivery_requests_upgrade_atomically_without_fabricating_legac
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
     migrate(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 56);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 57);
     for (table, original) in tables.into_iter().zip(originals) {
         let mut rows = admin.query_one(&format!("SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM awr_team.{table} t"), &[])
             .await.unwrap().get::<_,Value>(0);
@@ -903,6 +903,22 @@ async fn schema46_member_origins_upgrade_is_atomic_and_never_backfills_legacy_re
             row.as_object_mut().unwrap().remove(column),
             Some(Value::Null)
         );
+        // A column a later migration adds stays empty on a legacy record: it is no part of it.
+        let known = original.as_object().unwrap();
+        let later: Vec<String> = row
+            .as_object()
+            .unwrap()
+            .keys()
+            .filter(|key| !known.contains_key(*key))
+            .cloned()
+            .collect();
+        for key in later {
+            assert_eq!(
+                row.as_object_mut().unwrap().remove(&key),
+                Some(Value::Null),
+                "{table}.{key}"
+            );
+        }
         assert_eq!(row, original);
         assert!(
             admin
@@ -1276,7 +1292,7 @@ async fn schema40_upgrade_preserves_legacy_provenance_and_is_atomic_and_repeatab
     assert_eq!(before, unchanged);
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 56);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 57);
     let after: Value = admin
         .query_one(
             "SELECT to_jsonb(e) FROM awr_team.executions e WHERE id='legacy-run'",

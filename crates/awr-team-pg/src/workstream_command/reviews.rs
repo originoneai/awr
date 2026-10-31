@@ -783,12 +783,16 @@ async fn open(
         .await?
         .get(0);
     let id = crate::tx::new_id();
+    let governance =
+        crate::governance::current_binding(tx, tenant, project, &auth.snapshot, &command.work_id)
+            .await?;
     tx.execute(
         "INSERT INTO awr_team.review_rounds(
             tenant_id, project_id, id, work_id, round_index, bundle_hash,
             contract_hash, author_actor_id, state, author_person_id, evidence_id,
-            execution_id, artifact_digest, execution_result_digest, author_client_id, member_origins_json)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'open',$9,$10,$11,$12,$13,$14,$15)",
+            execution_id, artifact_digest, execution_result_digest, author_client_id, member_origins_json,
+            governance_binding)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'open',$9,$10,$11,$12,$13,$14,$15,$16)",
         &[
             &tenant,
             &project,
@@ -805,6 +809,7 @@ async fn open(
             &execution_result_digest,
             &auth.client_id,
             &member_origins_json,
+            &governance,
         ],
     )
     .await?;
@@ -814,6 +819,7 @@ async fn open(
             "round_index": round_index,
             "bundle_hash": digest_v,
             "contract_hash": contract_hash,
+            "governance_binding": governance,
             "evidence_id": a.evidence_id,
             "execution_id": execution_id,
             "author_person_id": author_person,
@@ -838,6 +844,28 @@ async fn open(
     Ok(applied)
 }
 
+/// A review covers the governed scope it opened under. When the definition, the examples or the
+/// policy of this work moved since, it needs a new review; other work is not touched.
+async fn require_governance_current(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    auth: &ReaderAuthority,
+    command: &WorkstreamCommand,
+    round_binding: Option<String>,
+) -> PgResult<()> {
+    if round_binding.is_none() {
+        return Ok(());
+    }
+    let now =
+        crate::governance::current_binding(tx, tenant, project, &auth.snapshot, &command.work_id)
+            .await?;
+    if now != round_binding {
+        return Err(PgError::ReviewRequired);
+    }
+    Ok(())
+}
+
 async fn decide(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -854,7 +882,8 @@ async fn decide(
     let row = tx
         .query_opt(
             "SELECT work_id, author_actor_id, bundle_hash, state, round_index, contract_hash,
-                    author_person_id, evidence_id, author_client_id, member_origins_json
+                    author_person_id, evidence_id, author_client_id, member_origins_json,
+                    governance_binding
              FROM awr_team.review_rounds
              WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR UPDATE",
             &[&tenant, &project, &a.round_id],
@@ -879,6 +908,7 @@ async fn decide(
     if round_contract != contract_hash {
         return Err(PgError::ReviewRequired);
     }
+    require_governance_current(tx, tenant, project, auth, command, row.get(10)).await?;
     let reviewer_kind: String = tx
         .query_opt(
             "SELECT kind FROM awr_team.actors WHERE tenant_id=$1 AND id=$2",
@@ -1359,7 +1389,7 @@ async fn complete(
         let pinned = tx
             .query_opt(
                 "SELECT id, contract_hash, state, evidence_id, execution_id, artifact_digest,
-                        execution_result_digest, author_actor_id, author_client_id
+                        execution_result_digest, author_actor_id, author_client_id, governance_binding
                  FROM awr_team.review_rounds
                  WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND bundle_hash=$4
                  ORDER BY round_index DESC LIMIT 1",
@@ -1373,6 +1403,7 @@ async fn complete(
         if round_contract != ev_contract || round_state != "approved" {
             return Err(PgError::ReviewRequired);
         }
+        require_governance_current(tx, tenant, project, auth, command, pinned.get(9)).await?;
         let d = tx
             .query_opt(
                 "SELECT decision, reviewer_actor_id, reviewer_person_id, independence_kind, reviewer_client_id, approval_basis, id

@@ -64,8 +64,29 @@ claim, reporting or cancelling an execution and every other recovery path are ne
 Source ingest, import and restore never write a decision: an imported snapshot that declares
 governance starts with none, and logical backups carry no admission rows (see the backup limits).
 
+Callers can race, and the decision still decides: the project writer lock serializes commands, two
+deciders who read the same history get one decision, rival claims of one decision give one claim, and
+a denial that follows a claim holds `execution.prepare` and `execution.start` without taking anything
+from the session, which can still checkpoint and release the claim. A transfer needs the decision to be
+current when `handoff.accept` runs, not only when the claim was taken. Admission belongs to the work
+and its stream: reading or deciding work of another stream needs that stream's own grant and is
+refused otherwise, a decision of one work never stands for another work that requires it or is
+required by it, and an admitted work still waits for the work it requires.
+
+## Reviews cover the scope they opened under
+
+A review round for governed work records the fingerprint of the governed scope (contract, declared
+definition, examples and policy) when it opens (`governance_binding`, also in the `review.open`
+receipt). If the definition, the examples or the policy of **that work** change in a later snapshot,
+the round no longer covers it: `review.accept`, `review.return` and `review.decide` on the old round
+and `work.complete` on an approval given before the change answer `ReviewRequired`, and a new
+`review.open` starts a round under the new scope. Other work is untouched, because a round binds only
+its own work's scope, and nothing is deleted: sessions, checkpoints, evidence and earlier rounds
+stay readable, so a session can still recover and continue.
+
 ## Not in this change
 
-Binding review to the affected readsets and invalidating only related work, conflicting approvals
-across concurrent claims and transfers, and structured review findings with their severity are the
-later parts of the shared-governance work. Containment, reassessment and gaps remain Core features.
+Structured review findings with their severity and criterion, re-review limited to unresolved
+blocking findings and the delta, and the deferral of a new non-blocking finding in a second round are
+the last part of the shared-governance work. Containment, reassessment and gaps remain Core
+features.
