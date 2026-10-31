@@ -362,7 +362,7 @@ fn a_request_that_is_refused_is_refused_by_name_and_a_good_one_is_not_changed() 
 #[test]
 fn an_issue_names_a_chunk_by_a_short_plain_identifier_and_never_by_its_text() {
     let mut parsed: PackRequest = serde_json::from_value(request()).unwrap();
-    let long_key = format!("{}\u{7}tail", "k".repeat(200));
+    let long_key = format!("{}\u{7}{}", "k".repeat(10), "k".repeat(200));
     parsed.required.push(Chunk {
         key: "a".into(),
         section: "s".into(),
