@@ -243,7 +243,7 @@ export function WorkbenchPage() {
   const { revoked } = useRevocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = validTab(searchParams.get('tab'));
-  const page = validPage(searchParams.get('page'));
+  const requestedPage = validPage(searchParams.get('page'));
   const projects = useQuery(projectsQueryOptions(revoked));
   const effectiveProject = projectKey ?? projects.data?.projects?.[0]?.key ?? null;
   const workNext = useQuery(workNextQueryOptions(effectiveProject, revoked));
@@ -263,6 +263,7 @@ export function WorkbenchPage() {
         next_query: item.next_query,
       }))
     : (nextData?.items ?? []).map((item) => ({ ...item, key: item.work_id }));
+  const page = Math.min(requestedPage, Math.max(1, Math.ceil(rows.length / PAGE_SIZE)));
   const visibleRows = sourcedTab ? rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) : [];
   const snapshots = useQueries({
     queries: visibleRows.map((row) =>

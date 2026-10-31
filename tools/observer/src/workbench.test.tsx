@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { formatUnixMs } from './lib/format';
+import { queryKeys } from './lib/queries';
 import {
   DEMO_PROJECTS,
   DEMO_WORK_INBOX,
@@ -227,13 +228,71 @@ describe('My work URL, source selection, and keyboard behavior', () => {
     expect(screen.queryByText('Observed task 1')).toBeNull();
   });
 
-  it.each(['bogus', '-1'])('falls back to page one for page=%s', async (page) => {
+  it('clamps an out-of-range URL page to the last available page', async () => {
+    setupWorkbench({ path: '/workbench?scope=demo&page=5' });
+    expect(await screen.findByTestId('workbench-table')).toBeTruthy();
+    expect(screen.getAllByText('Build the filter API')).not.toHaveLength(0);
+    expect(screen.getByText('Prepare the support page')).toBeTruthy();
+    expect(document.querySelector('.ant-pagination')).not.toBeNull();
+    expect(document.querySelector('.ant-pagination-item-active')?.textContent).toBe('1');
+  });
+
+  it('clamps again when the row count shrinks below the current page', async () => {
+    const { queryClient } = setupWorkbench({
+      path: '/workbench?scope=demo&page=2',
+      next: makeNext(makeItems(61)),
+    });
+    await screen.findAllByText('Observed task 61');
+
+    act(() => {
+      queryClient.setQueryData(queryKeys.workNext('demo'), makeNext(makeItems(60)));
+    });
+
+    await screen.findAllByText('Observed task 1');
+    expect(screen.queryByText('Observed task 61')).toBeNull();
+    expect(document.querySelector('.ant-pagination')).not.toBeNull();
+    expect(document.querySelector('.ant-pagination-item-active')?.textContent).toBe('1');
+  });
+
+  it.each(['bogus', '0', '-1', '1.5', '2e1'])('falls back to page one for page=%s', async (page) => {
     setupWorkbench({
       path: `/workbench?scope=demo&page=${page}`,
       next: makeNext(makeItems(61)),
     });
     await screen.findAllByText('Observed task 1');
     expect(screen.queryByText('Observed task 61')).toBeNull();
+  });
+
+  it('drops both page and selected work when switching tabs', async () => {
+    const user = userEvent.setup();
+    const { router } = setupWorkbench({
+      path: '/workbench?scope=demo&tab=in-progress&page=2&work=W61',
+      next: makeNext(makeItems(61)),
+    });
+    await screen.findAllByText('Observed task 61');
+    await user.click(screen.getByRole('tab', { name: '需要我处理' }));
+    const params = new URLSearchParams(router.state.location.search);
+    expect(params.get('page')).toBeNull();
+    expect(params.get('work')).toBeNull();
+  });
+
+  it('drops selected work when changing page and omits page one from the URL', async () => {
+    const user = userEvent.setup();
+    const { router } = setupWorkbench({
+      path: '/workbench?scope=demo&work=W1',
+      next: makeNext(makeItems(61)),
+    });
+    await screen.findAllByText('Observed task 1');
+    await user.click(screen.getByRole('listitem', { name: '下一页' }));
+    await screen.findAllByText('Observed task 61');
+    let params = new URLSearchParams(router.state.location.search);
+    expect(params.get('work')).toBeNull();
+    expect(params.get('page')).toBe('2');
+
+    await user.click(screen.getByRole('listitem', { name: '上一页' }));
+    await screen.findAllByText('Observed task 1');
+    params = new URLSearchParams(router.state.location.search);
+    expect(params.get('page')).toBeNull();
   });
 });
 
