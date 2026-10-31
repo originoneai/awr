@@ -195,7 +195,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             "work.handoff" => {
                 "from_session_id to_session_id checkpoint_id closed_claim_ids transferred_claim_id next_action open_loops context_requires_refresh"
             }
-            "session.ended" => "status closed_claim_ids last_checkpoint_id",
+            "session.ended" => "status closed_claim_ids last_checkpoint_id completion_event_id",
             "session.interrupted" => {
                 "session_id status released_claim_ids expired_claim_ids last_checkpoint_id reconciled_at reason"
             }

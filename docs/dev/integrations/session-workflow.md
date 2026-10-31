@@ -248,6 +248,31 @@ without a completion receipt is not a recovery checkpoint.
 When the same AWR session is still active after host compaction, compile again.
 Use `session resume` only for a real session handoff.
 
+## Finish the work and end the session
+
+Finishing is part of the flow, not an afterthought. A completed or cancelled work item
+releases the claim it held, and the response of `work complete` and `work cancel` carries
+one `close_out` instruction while the session holds no other active claim: save a
+checkpoint, then end the session with `--outcome ended`. The instruction is short on
+purpose (under 60 tokens) and appears only when it applies.
+
+```sh
+awrj work complete "$AWR_WORK" --session "$AWR_SESSION" --reason "Evidence reviewed" \
+  --input "$AWR_NOTES/completion.json" --expected-revision "$AWR_REV" --end-session
+```
+
+`--end-session` (MCP `end_session` on `awr_work_transition` with `action=complete`) ends the
+session in the same request, after the completion is durable. The receipt names both events
+(`session_end.completion_event_id` and the `completion_event_id` of the `session.ended` event). It
+is refused, and nothing is written, while the session holds an active claim on other work, or is not
+active. If the completion succeeded but the end did not, the response reports `session_end.status`
+`failed` with a nonzero exit; the completion stands, and `session end --outcome ended` finishes the
+job. Without the flag the call behaves as before.
+
+Completing work by editing its status in the source directly has consequences: no completion
+receipt and no evidence binding are recorded, and no claim is released, so the session and its claim
+stay open until they are closed by hand.
+
 ## Bind a native conversation
 
 This section uses local client continuity. Its `--client generic` is a hook
@@ -312,6 +337,9 @@ operations. MCP's ability to reuse a conversation for a successor does not move
 the old local continuity binding.
 
 ## End
+
+When the work is not finished, end the session by itself. For finished work see
+[Finish the work and end the session](#finish-the-work-and-end-the-session).
 
 ```sh
 AWR_REV=$(awrj status | jq -er '.project_revision')

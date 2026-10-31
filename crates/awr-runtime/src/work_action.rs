@@ -148,14 +148,23 @@ pub fn perform_work_action(
             created_by_session: Some(request.session_id),
         },
     )?;
-    apply_work_proposal(
+    let mut report = apply_work_proposal(
         store,
         &root,
         proposal,
         event,
         actor,
         request.input.reason.clone(),
-    )
+    )?;
+    if report.failure.is_none() {
+        report.close_out = crate::close_out::close_out(
+            store,
+            project.id,
+            request.session_id,
+            request.input.action,
+        );
+    }
+    Ok(report)
 }
 
 pub(crate) fn apply_work_proposal(

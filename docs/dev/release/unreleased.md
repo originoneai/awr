@@ -4,17 +4,14 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
-- A project can declare how long a claim lives when nobody says, and that recorded work keeps it alive,
-  in an optional `.awr/policy.toml` (`version`, `claims.default_ttl` from one minute to seven days or
-  `none`, `claims.renew_on_activity`) or with `AWR_DEFAULT_CLAIM_TTL`. A request for a claim that names
-  no lifetime (`session start --claim`, `work claim`, `session resume --claim` and the matching MCP
-  tools) gets the default; `--ttl-ms` is unchanged and `--no-expiry` / `no_expiry` asks for none. A
-  saved checkpoint and a recorded progress, block or unblock extend the live claims of their session
-  in their own revision and say so in a `claim_renewal` receipt; a claim that ran out is never revived.
-  `doctor` advises of a claim held a day without an expiry (without failing) and reports a policy it
-  cannot read, and `capabilities` exposes `operating_baseline`. Nothing changes for a project that
-  declares nothing, no runtime schema changes, and a published `awr` that has never heard of the file
-  ignores it. See [claim policy](../reference/claim-policy.md).
+- Closing a session after finished work: the response of `awr work complete` and `awr work cancel`
+  carries one bounded `close_out` instruction (condition, basis, next step, when to look again, under
+  60 tokens) while the session holds no other active claim, and `awr work complete --end-session`
+  (MCP `end_session` of `awr_work_transition`) ends the session in the same request once the
+  completion is durable. The `session.ended` event records `completion_event_id`. The call without
+  the flag is unchanged, and the session flow, Codex and MCP documents put the End step in the main
+  flow and say what editing a status field directly costs. See
+  [session workflow](../integrations/session-workflow.md#finish-the-work-and-end-the-session).
 - Governed work in a Team: a snapshot may declare governance (`governance.json`, written by
   `PublishPrepOptions::governance`), the Team reuses the Core admission rules on its own facts, and
   `admission.decide` records decisions attributed to the verified caller (`planning.approve`, a
@@ -45,6 +42,17 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   proposals and decisions as events (no schema migration). Projects without a policy are
   unaffected, `legacy_observe` reports without blocking, and recovery paths and completion policy
   are unchanged. See [plan admission](../reference/admission.md).
+- A project can declare how long a claim lives when nobody says, and that recorded work keeps it alive,
+  in an optional `.awr/policy.toml` (`version`, `claims.default_ttl` from one minute to seven days or
+  `none`, `claims.renew_on_activity`) or with `AWR_DEFAULT_CLAIM_TTL`. A request for a claim that names
+  no lifetime (`session start --claim`, `work claim`, `session resume --claim` and the matching MCP
+  tools) gets the default; `--ttl-ms` is unchanged and `--no-expiry` / `no_expiry` asks for none. A
+  saved checkpoint and a recorded progress, block or unblock extend the live claims of their session
+  in their own revision and say so in a `claim_renewal` receipt; a claim that ran out is never revived.
+  `doctor` advises of a claim held a day without an expiry (without failing) and reports a policy it
+  cannot read, and `capabilities` exposes `operating_baseline`. Nothing changes for a project that
+  declares nothing, no runtime schema changes, and a published `awr` that has never heard of the file
+  ignores it. See [claim policy](../reference/claim-policy.md).
 - Controlled decomposition for governed sources: the children of a parent are admitted only while a
   containment decision on exactly this set is current (`awr work contain`, MCP `awr_work_contain`).
   The decision binds the parent's contract, each child's definition, paths and acceptance, and the
