@@ -48,6 +48,11 @@ impl Store {
                 work_key: work.item.meta.external_key.clone(),
                 acceptance_digest: (!work.item.acceptance.is_empty())
                     .then(|| acceptance_digest(&work.item.acceptance)),
+                confirmed_acceptance_digest: work
+                    .item
+                    .ordinary_completion
+                    .as_ref()
+                    .map(|confirmed| acceptance_digest(&confirmed.acceptance)),
             })
             .collect();
         let limit = (MAX_HISTORY_RECORDS + 1) as i64;

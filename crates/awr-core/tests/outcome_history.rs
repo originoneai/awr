@@ -146,18 +146,21 @@ fn a_count_never_exceeds_the_works_it_counts() {
         assert_eq!(works, history.sample.works_in_scope, "{name}");
         for cohort in &history.cohorts {
             let s = &cohort.signals;
-            assert!(
-                s.completion_reported
-                    + s.completion_under_earlier_standard
-                    + s.completion_standard_unknown
-                    + s.conflicting
-                    + s.cancelled
-                    + s.open
-                    >= cohort.works.saturating_sub(
-                        s.accepted_by_human + s.accepted_by_ai + s.accepted_by_delegate
-                    ),
-                "{name}"
-            );
+            // A work is at most one of: a completion, conflicting, cancelled, open; one with a confirmation only
+            // is none of them.
+            let classes = s.completion_reported
+                + s.completion_under_earlier_standard
+                + s.completion_standard_unknown
+                + s.conflicting
+                + s.cancelled
+                + s.open;
+            let confirmations = s.accepted_by_human
+                + s.accepted_by_ai
+                + s.accepted_by_delegate
+                + s.acceptance_under_earlier_standard
+                + s.acceptance_standard_unknown;
+            assert!(classes <= cohort.works, "{name}");
+            assert!(classes + confirmations >= cohort.works, "{name}");
             assert_eq!(
                 cohort.cost.works_with_usage + cohort.cost.works_without_usage,
                 cohort.works,

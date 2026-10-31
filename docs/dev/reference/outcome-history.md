@@ -35,7 +35,8 @@ yet; the first consumer is the evidence-based reassessment hint (AWR-DEC-042).
 | `completion_standard_unknown` | A completion that cannot be compared with the current acceptance. | |
 | `executions.succeeded` / `failed` | The exit status of a supervised command recorded by the program. | That the command was a test: AWR does not know what a command is for. |
 | `executions.unfinished` | Registered, starting or running at `as_of_ms`. | A failure. |
-| `accepted_by_human` / `accepted_by_ai` / `accepted_by_delegate` | A `work.ordinary_confirmed` receipt in force, by the origin of its actor. | Engineering verification. |
+| `accepted_by_human` / `accepted_by_ai` / `accepted_by_delegate` | A `work.ordinary_confirmed` receipt in force whose confirmed acceptance is the work's current acceptance, by the origin of its actor. | Engineering verification. |
+| `acceptance_under_earlier_standard` / `acceptance_standard_unknown` | A confirmation in force of other acceptance than the work has now, or one the work's record does not let us compare. | Neither is a pass under the current standard. |
 | `cancelled` | A `work.cancelled` receipt in force. | |
 | `conflicting` | Two completions in force at once (for example at two versions of the work): neither is chosen. | |
 | `open` | No completion, confirmation or cancellation in force. | A failure: it is not yet known. |

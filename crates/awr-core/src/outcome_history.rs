@@ -51,6 +51,9 @@ pub struct HistoryWork {
     pub work_key: String,
     /// Digest of the acceptance criteria the work has now (`acceptance_digest`); none when not recorded.
     pub acceptance_digest: Option<String>,
+    /// Digest of the acceptance criteria the work's recorded ordinary confirmation confirmed; none when the work
+    /// records no confirmation.
+    pub confirmed_acceptance_digest: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -188,9 +191,14 @@ pub struct SignalCounts {
     pub completion_standard_unknown: usize,
     /// The highest evidence level the completions in force bound, `not_recorded` when the receipt does not say.
     pub completion_by_evidence_level: BTreeMap<String, usize>,
+    /// A confirmation in force of the work's current acceptance, by who made it.
     pub accepted_by_human: usize,
     pub accepted_by_ai: usize,
     pub accepted_by_delegate: usize,
+    /// A confirmation in force of other acceptance than the work has now: not a pass under the new standard.
+    pub acceptance_under_earlier_standard: usize,
+    /// A confirmation in force that the work's record does not let us compare with its current acceptance.
+    pub acceptance_standard_unknown: usize,
     pub cancelled: usize,
     /// Two completions in force at once: neither is chosen.
     pub conflicting: usize,
@@ -616,11 +624,17 @@ pub fn aggregate_outcome_history(
             }
         }
         if let Some(acceptance) = &state.acceptance {
-            match acceptance.origin {
-                Some(HostEditOrigin::Human) => signals.accepted_by_human += 1,
-                Some(HostEditOrigin::AiAccepted) => signals.accepted_by_ai += 1,
-                Some(HostEditOrigin::DelegatedAgent) => signals.accepted_by_delegate += 1,
-                None => {}
+            match (&work.confirmed_acceptance_digest, &work.acceptance_digest) {
+                (Some(confirmed), Some(current)) if confirmed == current => {
+                    match acceptance.origin {
+                        Some(HostEditOrigin::Human) => signals.accepted_by_human += 1,
+                        Some(HostEditOrigin::AiAccepted) => signals.accepted_by_ai += 1,
+                        Some(HostEditOrigin::DelegatedAgent) => signals.accepted_by_delegate += 1,
+                        None => signals.acceptance_standard_unknown += 1,
+                    }
+                }
+                (Some(_), Some(_)) => signals.acceptance_under_earlier_standard += 1,
+                _ => signals.acceptance_standard_unknown += 1,
             }
         }
         if state.cancelled.is_some() {
