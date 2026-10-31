@@ -428,6 +428,9 @@ function createTeamBridge(opts) {
     ? opts.readTimeoutMs : READ_TIMEOUT_MS;
   const overviewDeadlineMs = Number.isInteger(opts.overviewDeadlineMs) && opts.overviewDeadlineMs > 0
     ? opts.overviewDeadlineMs : OVERVIEW_DEADLINE_MS;
+  // Internal clock for deadline arithmetic only (tests inject a fake one so a
+  // timer that fires a millisecond early cannot race the deadline check).
+  const now = typeof opts.now === 'function' ? opts.now : Date.now;
   let publicUrl = null;
   if (live) {
     const url = new URL(opts.teamPublicUrl || opts.teamUrl);
@@ -592,7 +595,7 @@ function createTeamBridge(opts) {
       as_of: mixed ? null : asOf || null,
     });
     for (let page = 0; page < 100; page += 1) {
-      const remaining = deadlineAt == null ? pageTimeoutMs : Math.min(pageTimeoutMs, deadlineAt - Date.now());
+      const remaining = deadlineAt == null ? pageTimeoutMs : Math.min(pageTimeoutMs, deadlineAt - now());
       if (remaining <= 0) {
         return failed('ReadTimeout', 'Scoped list read exceeded the composition deadline; retry this read');
       }
@@ -706,7 +709,7 @@ function createTeamBridge(opts) {
         // Discover only authorized streams and retain that scope on every page.
         // One deadline bounds the whole composition: whatever is left unread
         // when it expires is declared failed, never silently dropped.
-        const deadlineAt = Date.now() + overviewDeadlineMs;
+        const deadlineAt = now() + overviewDeadlineMs;
         const streams = await queryAllPages(project, { op: 'workstreams.list' }, req, res,
           { pageTimeoutMs: readTimeoutMs, deadlineAt });
         const scopeReadAt = Date.now();
@@ -777,7 +780,7 @@ function createTeamBridge(opts) {
         try {
           capabilities = await proxyTeam(`/v1/web/projects/${encodeURIComponent(project)}/query`, req,
             { protocol_version: 1, op: 'capabilities' }, 'POST',
-            AbortSignal.timeout(Math.max(1, Math.min(readTimeoutMs, deadlineAt - Date.now()))));
+            AbortSignal.timeout(Math.max(1, Math.min(readTimeoutMs, deadlineAt - now()))));
         } catch (error) {
           return { ok: false, error: { code: 'ReadTimeout', message: 'Capabilities read exceeded the composition deadline' },
             freshness: compositionFailedFreshness('ReadTimeout', Date.now()) };

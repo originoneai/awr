@@ -78,7 +78,7 @@ function startLiveBridge(teamUrl, opts = {}) {
   });
 }
 
-function req(base, method, path, { body } = {}) {
+function req(base, method, path, { body, timeoutMs } = {}) {
   return new Promise((resolve, reject) => {
     const request = http.request(base + path, { method, headers: { 'content-type': 'application/json' } }, (res) => {
       const chunks = [];
@@ -86,6 +86,9 @@ function req(base, method, path, { body } = {}) {
       res.on('end', () => resolve({ status: res.statusCode, json: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
     });
     request.on('error', reject);
+    // A deadline fault that hangs the composition must fail the test in
+    // seconds, not stall the runner until the job times out.
+    if (timeoutMs) request.setTimeout(timeoutMs, () => request.destroy(new Error(`client test timeout after ${timeoutMs}ms`)));
     if (body !== undefined) request.write(JSON.stringify(body));
     request.end();
   });
@@ -406,7 +409,7 @@ test('a stalled scoped list read is bounded and reported as a timeout, not as em
   const bridge = await startLiveBridge(upstream.base);
   try {
     const started = Date.now();
-    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { timeoutMs: 8000 });
     assert.ok(Date.now() - started < 9000);
     assert.equal(overview.json.ok, false);
     assert.equal(overview.json.error.code, 'ReadTimeout');
@@ -1007,7 +1010,7 @@ test('two stalled streams are bounded by one composition deadline, not by two pa
   const bridge = await startLiveBridge(upstream.base, { readTimeoutMs: 800, overviewDeadlineMs: 1000 });
   try {
     const started = Date.now();
-    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { timeoutMs: 5000 });
     const elapsed = Date.now() - started;
     assert.ok(elapsed < 1600, `elapsed ${elapsed}ms must stay under two page timeouts`);
     assert.equal(overview.json.ok, false);
@@ -1029,7 +1032,7 @@ test('a stalled stream is declared failed while healthy streams are still read w
   });
   const bridge = await startLiveBridge(upstream.base, { readTimeoutMs: 800, overviewDeadlineMs: 5000 });
   try {
-    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { timeoutMs: 5000 });
     assert.equal(overview.json.ok, true, JSON.stringify(overview.json));
     const stalled = overview.json.coverage.streams.find((s) => s.workstream_id === 'stalled');
     assert.equal(stalled.status, 'failed');
@@ -1136,16 +1139,23 @@ test('a scope read that confirms nothing fails closed', async () => {
 
 test('a stream whose first page starts after the deadline fails without a request', async () => {
   const requested = [];
+  // A fake clock decides the deadline; the page timeout still finishes the
+  // stalled page on a real short timer. Whether that real timer fires a
+  // millisecond early or late cannot change the verdict: once the stalled
+  // page starts, the fake clock is already far past the deadline.
+  let fakeNow = Date.now();
   const upstream = await overviewUpstream({
     'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'stalled' }, { id: 'late' }], next_cursor: null } })),
-    'work.list:stalled': () => { requested.push('stalled'); }, // never answers
+    'work.list:stalled': () => { requested.push('stalled'); fakeNow += 10000; }, // never answers
     'work.list:late': (_q, r) => { requested.push('late'); r.end(JSON.stringify({ ...ENVELOPE, data: { items: [], next_cursor: null } })); },
     'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
   });
-  const bridge = await startLiveBridge(upstream.base, { readTimeoutMs: 800, overviewDeadlineMs: 400 });
+  const bridge = await startLiveBridge(upstream.base, {
+    readTimeoutMs: 800, overviewDeadlineMs: 400, now: () => fakeNow,
+  });
   try {
     const started = Date.now();
-    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { timeoutMs: 5000 });
     assert.ok(Date.now() - started < 1600);
     assert.equal(overview.json.ok, false);
     assert.equal(overview.json.error.code, 'ReadTimeout');
@@ -1162,13 +1172,18 @@ test('the capabilities read is bounded by what is left of the deadline', async (
   const upstream = await overviewUpstream({
     'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }], next_cursor: null } })),
     'work.list:backend': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'api-1' }], total: 1, next_cursor: null } })),
-    'capabilities': (_q, r) => setTimeout(() => r.end(JSON.stringify({ identity: { actor_id: 'member' } })), 1200),
+    'capabilities': (_q, r) => setTimeout(() => r.end(JSON.stringify({ identity: { actor_id: 'member' } })), 1500),
   });
-  const bridge = await startLiveBridge(upstream.base, { readTimeoutMs: 800, overviewDeadlineMs: 12000 });
+  // The composition deadline (500ms) is the smaller bound, not the page
+  // timeout (default 4s): the lists answer at once, so ~500ms are left when
+  // the capabilities read starts; its answer would come at 1500ms. A version
+  // bounded only by readTimeoutMs would wait for it and succeed.
+  const bridge = await startLiveBridge(upstream.base, { overviewDeadlineMs: 500 });
   try {
     const started = Date.now();
-    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
-    assert.ok(Date.now() - started < 1600);
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { timeoutMs: 5000 });
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 1200, `elapsed ${elapsed}ms must stay near the 500ms deadline, not wait for the 1500ms answer`);
     assert.equal(overview.json.ok, false);
     assert.equal(overview.json.error.code, 'ReadTimeout');
     assert.equal(overview.json.works, undefined);
@@ -1187,7 +1202,7 @@ test('a stalled page honors the configured page timeout', async () => {
   const bridge = await startLiveBridge(upstream.base, { readTimeoutMs: 500 });
   try {
     const started = Date.now();
-    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { timeoutMs: 5000 });
     const elapsed = Date.now() - started;
     assert.ok(elapsed < 1500, `elapsed ${elapsed}ms must honor the 500ms page timeout`);
     assert.equal(overview.json.ok, false);
