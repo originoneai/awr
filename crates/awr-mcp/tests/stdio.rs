@@ -2949,6 +2949,15 @@ async fn a_completion_tells_how_to_close_the_session_and_can_end_it_in_the_same_
     let instructions = client.peer_info().unwrap().instructions.clone().unwrap();
     assert!(instructions.contains("checkpoint and end the session"));
     assert!(instructions.contains("never complete work by editing status fields"));
+    let sentence = instructions
+        .split(". ")
+        .find(|part| part.contains("checkpoint and end the session"))
+        .unwrap();
+    assert!(
+        sentence.len() <= 200,
+        "{} bytes: {sentence}",
+        sentence.len()
+    );
     for (work, session, criterion, key) in [
         ("W", first, CRITERION, "E-W"),
         ("NEXT", second, "Follow-up is available", "E-NEXT"),

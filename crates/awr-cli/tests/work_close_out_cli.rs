@@ -116,13 +116,19 @@ impl Fixture {
     }
     /// A claim of this session on other work, as a handoff or a resume can leave it.
     fn hold_other_claim(&self) {
+        self.hold_other_claim_until(None);
+    }
+    /// The same claim with an end time; returns its id.
+    fn hold_other_claim_until(&self, expires_at: Option<i64>) -> String {
         let db = rusqlite::Connection::open(self.root.join(".awr/state.db")).unwrap();
+        let id = Id::new().to_string();
         db.execute(
             "INSERT INTO claims(id,project_id,work_item_id,session_id,agent_id,branch_id,status,acquired_at,expires_at,released_at,revision) \
-             SELECT ?1, project_id, id, ?2, 'worker-a', NULL, 'active', ?3, NULL, NULL, 1 FROM work_items WHERE external_key='OTHER'",
-            rusqlite::params![Id::new().to_string(), self.session, now_millis().unwrap()],
+             SELECT ?1, project_id, id, ?2, 'worker-a', NULL, 'active', ?3, ?4, NULL, 1 FROM work_items WHERE external_key='OTHER'",
+            rusqlite::params![id, self.session, now_millis().unwrap() - 120_000, expires_at],
         )
         .unwrap();
+        id
     }
     /// A session that cannot be ended, as when a writer or the disk fails between the completion
     /// and the end; `allow_session_end` takes the obstacle away again.
@@ -199,7 +205,11 @@ fn a_completion_tells_what_to_do_with_the_session_in_under_sixty_tokens() {
     for field in ["condition", "basis", "next", "recheck"] {
         assert!(close_out[field].as_str().is_some_and(|t| !t.is_empty()));
     }
-    assert!(close_out["next"].as_str().unwrap().contains("session end"));
+    let next = close_out["next"].as_str().unwrap();
+    assert!(
+        next.contains("checkpoint") && next.contains("session end"),
+        "{next}"
+    );
     assert!(awr_context::token_count(&close_out.to_string()) <= 60);
     // Nothing else was done for the caller: the session is still active and not ended.
     assert_eq!(f.session_status(), "active");
@@ -354,4 +364,37 @@ fn a_session_that_cannot_be_ended_leaves_the_completion_standing_and_says_what_t
     ]);
     assert_eq!(f.session_status(), "ended");
     assert_eq!(f.events("session.ended").len(), 1);
+}
+
+#[test]
+fn only_a_completion_or_a_cancellation_gets_the_instruction() {
+    let f = Fixture::new();
+    let progress = f.ok(&[
+        "work",
+        "progress",
+        "W",
+        "--session",
+        &f.session,
+        "--reason",
+        "Reviewing the delivery",
+        "--next-action",
+        "Finish the review",
+        "--expected-revision",
+        &f.revision(),
+    ]);
+    assert_eq!(progress["event"]["event_type"], "work.progressed");
+    assert!(progress.get("close_out").is_none(), "{progress}");
+    assert!(progress.get("session_end").is_none());
+}
+
+#[test]
+fn a_claim_on_other_work_that_has_expired_does_not_hold_the_end() {
+    let f = Fixture::new();
+    f.record_evidence();
+    let expired = f.hold_other_claim_until(Some(now_millis().unwrap() - 60_000));
+    let done = Fixture::success(&f.complete(&["--end-session"]));
+    assert_eq!(f.work_status("W"), "completed");
+    assert_eq!(f.session_status(), "ended");
+    // The end closes what the session still listed, and says so.
+    assert_eq!(done["session_end"]["closed_claim_ids"], json!([expired]));
 }
