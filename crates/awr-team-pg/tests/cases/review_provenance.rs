@@ -37,6 +37,16 @@ async fn inspect_provenance(
         .map(|value| value["data"]["review"]["evidence_provenance"].clone())
 }
 
+fn assert_unverifiable_without_execution_facts(provenance: &Value, reason: &str) {
+    let consistency = &provenance["execution_consistency"];
+    assert_eq!(consistency["status"], "unverifiable");
+    assert_eq!(consistency["reason"], reason);
+    assert!(consistency["execution_success"].is_null());
+    assert!(consistency["recorded_state"].is_null());
+    assert!(consistency["fact_source"].is_null());
+    assert_eq!(consistency["independent_verification"], false);
+}
+
 #[tokio::test]
 async fn review_inspect_exposes_exact_caller_provenance_and_accessible_scoped_queries() {
     let (_guard, admin, db, store) = setup().await;
@@ -52,6 +62,16 @@ async fn review_inspect_exposes_exact_caller_provenance_and_accessible_scoped_qu
     assert_eq!(provenance["currentness"], "current_contract");
     assert_eq!(provenance["evidence_inspection"]["available"], true);
     assert_eq!(provenance["execution_inspection"]["available"], true);
+    assert_eq!(provenance["execution_consistency"]["status"], "consistent");
+    assert_eq!(provenance["execution_consistency"]["claimed_success"], true);
+    assert_eq!(
+        provenance["execution_consistency"]["execution_success"],
+        true
+    );
+    assert_eq!(
+        provenance["execution_consistency"]["independent_verification"],
+        false
+    );
     let boundary = provenance["boundary"].as_str().unwrap();
     assert!(boundary.contains("caller_asserted is not independent verification"));
     assert!(boundary.contains("does not execute or verify commands"));
@@ -65,6 +85,10 @@ async fn review_inspect_exposes_exact_caller_provenance_and_accessible_scoped_qu
         .await
         .unwrap();
     assert_eq!(evidence["data"]["evidence"]["trust_basis"], "caller_asserted");
+    assert_eq!(
+        evidence["data"]["evidence"]["execution_consistency"],
+        provenance["execution_consistency"]
+    );
     let execution_query = serde_json::from_value(
         provenance["execution_inspection"]["query"].clone(),
     )
@@ -177,14 +201,6 @@ async fn review_inspect_marks_stale_contract_and_withholds_stale_execution_query
     let mut contract = current_contract(&admin).await;
     contract.acceptance.push("new current acceptance".into());
     put_contract(&admin, &contract).await;
-    admin
-        .batch_execute(
-            "UPDATE awr_team.workstream_ownership SET ownership_version=2 WHERE work_id='a';
-             UPDATE awr_team.workstream_snapshot_ownership
-             SET ownership_version=2 WHERE work_id='a'",
-        )
-        .await
-        .unwrap();
     let provenance = inspect_provenance(&store, REVIEWER_TOKEN, &round)
         .await
         .unwrap();
@@ -194,16 +210,196 @@ async fn review_inspect_marks_stale_contract_and_withholds_stale_execution_query
     assert_eq!(provenance["currentness"], "stale_contract");
     assert_eq!(
         provenance["execution_inspection"]["reason"],
-        "not_inspectable_in_current_work_binding"
+        "stale_review_contract"
     );
     assert!(provenance["execution_inspection"]["query"].is_null());
+    assert_unverifiable_without_execution_facts(&provenance, "stale_review_contract");
     let mut execution_query = query("execution.inspect");
     execution_query.work_id = Some("a".into());
     execution_query.execution_id = Some(chain["execution_id"].as_str().unwrap().into());
-    assert!(matches!(
-        store
-            .query(TENANT, PROJECT, REVIEWER_TOKEN, execution_query)
-            .await,
-        Err(PgError::Forbidden)
-    ));
+    let direct = store
+        .query(TENANT, PROJECT, REVIEWER_TOKEN, execution_query)
+        .await
+        .unwrap();
+    assert_eq!(direct["data"]["contract_matches_current"], false);
+}
+
+#[tokio::test]
+async fn review_inspect_withholds_execution_facts_after_ownership_changes() {
+    let (_guard, admin, db, store) = setup().await;
+    let chain = caller_chain(&admin, &db, &store).await;
+    let round = json!({"round_id":chain["round_id"]});
+    admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_ownership SET ownership_version=2 WHERE work_id='a';
+             UPDATE awr_team.workstream_snapshot_ownership
+             SET ownership_version=2 WHERE work_id='a'",
+        )
+        .await
+        .unwrap();
+
+    let provenance = inspect_provenance(&store, REVIEWER_TOKEN, &round)
+        .await
+        .unwrap();
+    assert_eq!(provenance["binding_status"], "exact");
+    assert_eq!(provenance["currentness"], "current_contract");
+    assert_eq!(
+        provenance["execution_inspection"]["reason"],
+        "not_inspectable_in_current_work_binding"
+    );
+    assert!(provenance["execution_inspection"]["query"].is_null());
+    assert_unverifiable_without_execution_facts(&provenance, "execution_not_inspectable");
+
+    let mut evidence_query = query("evidence.inspect");
+    evidence_query.work_id = Some("a".into());
+    evidence_query.evidence_id = Some(chain["evidence_id"].as_str().unwrap().into());
+    let evidence = store
+        .query(TENANT, PROJECT, REVIEWER_TOKEN, evidence_query)
+        .await
+        .unwrap();
+    let consistency = &evidence["data"]["evidence"]["execution_consistency"];
+    assert_eq!(consistency["status"], "unverifiable");
+    assert_eq!(consistency["reason"], "execution_not_inspectable");
+    assert!(consistency["execution_success"].is_null());
+    assert!(consistency["recorded_state"].is_null());
+    assert!(consistency["fact_source"].is_null());
+}
+
+#[tokio::test]
+async fn review_inspect_does_not_trust_tampered_caller_payload() {
+    let (_guard, admin, db, store) = setup().await;
+    let chain = caller_chain(&admin, &db, &store).await;
+    admin
+        .execute(
+            "UPDATE awr_team.evidence SET payload_json=$1 WHERE id=$2",
+            &[
+                &json!({"passed":false,"output_digest":RESULT}),
+                &chain["evidence_id"].as_str().unwrap(),
+            ],
+        )
+        .await
+        .unwrap();
+    let round = json!({"round_id":chain["round_id"]});
+
+    let provenance = inspect_provenance(&store, REVIEWER_TOKEN, &round)
+        .await
+        .unwrap();
+    assert_eq!(provenance["binding_status"], "exact");
+    assert_eq!(provenance["currentness"], "current_contract");
+    assert_eq!(
+        provenance["execution_inspection"]["reason"],
+        "evidence_integrity_invalid"
+    );
+    assert!(provenance["execution_inspection"]["query"].is_null());
+    assert_unverifiable_without_execution_facts(&provenance, "evidence_digest_mismatch");
+    assert!(provenance["execution_consistency"]["claimed_success"].is_null());
+}
+
+#[tokio::test]
+async fn review_inspect_does_not_leak_cross_work_or_cross_scope_execution_facts() {
+    let (_guard, admin, db, store) = setup().await;
+    let chain = caller_chain(&admin, &db, &store).await;
+    let source_execution = chain["execution_id"].as_str().unwrap();
+    admin
+        .execute(
+            "INSERT INTO awr_team.executions(
+                tenant_id,project_id,id,work_id,session_id,claim_id,fence,
+                contract_hash,input_digest,executor_actor_id,state,result_digest,
+                scope_id,workstream_id,ownership_version,executor_client_id,
+                coordinator_epoch)
+             SELECT tenant_id,project_id,'cross-work-execution','b-private',
+                session_id,claim_id,fence,contract_hash,input_digest,
+                executor_actor_id,state,result_digest,'main',workstream_id,
+                ownership_version,executor_client_id,coordinator_epoch
+             FROM awr_team.executions WHERE id=$1",
+            &[&source_execution],
+        )
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "INSERT INTO awr_team.executions(
+                tenant_id,project_id,id,work_id,session_id,claim_id,fence,
+                contract_hash,input_digest,executor_actor_id,state,result_digest,
+                scope_id,workstream_id,ownership_version,executor_client_id,
+                coordinator_epoch)
+             SELECT tenant_id,project_id,'cross-scope-execution','a',
+                session_id,claim_id,fence,contract_hash,input_digest,
+                executor_actor_id,state,result_digest,'private',workstream_id,
+                ownership_version,executor_client_id,coordinator_epoch
+             FROM awr_team.executions WHERE id=$1",
+            &[&source_execution],
+        )
+        .await
+        .unwrap();
+    admin
+        .execute(
+            "INSERT INTO awr_team.executions(
+                tenant_id,project_id,id,work_id,session_id,claim_id,fence,
+                contract_hash,input_digest,executor_actor_id,state,result_digest,
+                scope_id,workstream_id,ownership_version,executor_client_id,
+                coordinator_epoch)
+             SELECT tenant_id,project_id,'external-binding-execution','a',
+                'session-runner',claim_id,fence,contract_hash,input_digest,
+                executor_actor_id,state,result_digest,'main','external-workstream',
+                ownership_version,executor_client_id,coordinator_epoch
+             FROM awr_team.executions WHERE id=$1",
+            &[&source_execution],
+        )
+        .await
+        .unwrap();
+
+    for execution_id in [
+        "cross-work-execution",
+        "cross-scope-execution",
+        "external-binding-execution",
+    ] {
+        admin
+            .execute(
+                "UPDATE awr_team.evidence SET execution_id=$1 WHERE id=$2",
+                &[&execution_id, &chain["evidence_id"].as_str().unwrap()],
+            )
+            .await
+            .unwrap();
+        admin
+            .execute(
+                "UPDATE awr_team.review_rounds SET execution_id=$1 WHERE id=$2",
+                &[&execution_id, &chain["round_id"].as_str().unwrap()],
+            )
+            .await
+            .unwrap();
+        let round = json!({"round_id":chain["round_id"]});
+        let provenance = inspect_provenance(&store, REVIEWER_TOKEN, &round)
+            .await
+            .unwrap();
+        assert_eq!(provenance["binding_status"], "exact", "{execution_id}");
+        assert_eq!(
+            provenance["execution_inspection"]["reason"],
+            "not_inspectable_in_current_work_binding",
+            "{execution_id}"
+        );
+        assert_unverifiable_without_execution_facts(&provenance, "execution_not_inspectable");
+        assert!(
+            !provenance["execution_consistency"]
+                .to_string()
+                .contains("succeeded"),
+            "{execution_id}"
+        );
+        let mut evidence_query = query("evidence.inspect");
+        evidence_query.work_id = Some("a".into());
+        evidence_query.evidence_id = Some(chain["evidence_id"].as_str().unwrap().into());
+        let evidence = store
+            .query(TENANT, PROJECT, REVIEWER_TOKEN, evidence_query)
+            .await
+            .unwrap();
+        let consistency = &evidence["data"]["evidence"]["execution_consistency"];
+        assert_eq!(consistency["status"], "unverifiable", "{execution_id}");
+        assert_eq!(
+            consistency["reason"], "execution_not_inspectable",
+            "{execution_id}"
+        );
+        assert!(consistency["execution_success"].is_null(), "{execution_id}");
+        assert!(consistency["recorded_state"].is_null(), "{execution_id}");
+        assert!(consistency["fact_source"].is_null(), "{execution_id}");
+    }
 }
