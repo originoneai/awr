@@ -8,8 +8,12 @@
 //! still describes the current scope, that obligations of the declared purpose are present, and
 //! that an independent review came from another session. It never judges whether the reasoning
 //! behind a decision is sound.
-use crate::{DefinitionReport, DeliveryTier, Error, Id, Result, WorkPurpose, ensure_public_data};
+use crate::{
+    DefinitionReport, DeliveryTier, Error, Id, Result, WorkDefinition, WorkPurpose,
+    ensure_public_data,
+};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub const ADMISSION_POLICY_VERSION: u32 = 1;
 pub const ADMISSION_EVENT: &str = "work.admission";
@@ -279,6 +283,41 @@ pub struct AdmissionBinding {
     pub tier: Option<DeliveryTier>,
 }
 
+/// The fingerprint a binding keeps of a JSON value.
+pub fn binding_digest(value: &serde_json::Value) -> Result<String> {
+    Ok(format!(
+        "sha256:{:x}",
+        Sha256::digest(serde_json::to_vec(value)?)
+    ))
+}
+
+/// The scope a decision covers: the fingerprint of the work contract, the effective policy of
+/// the owning source and the declared definition. Every store computes it the same way, so a
+/// decision means the same thing wherever it is kept.
+pub fn admission_binding(
+    contract_fingerprint: &str,
+    policy: &serde_json::Value,
+    definition: Option<&WorkDefinition>,
+) -> Result<AdmissionBinding> {
+    Ok(AdmissionBinding {
+        contract_fingerprint: contract_fingerprint.into(),
+        definition_fingerprint: definition
+            .map(|d| binding_digest(&serde_json::json!(d)))
+            .transpose()?,
+        examples_fingerprint: definition
+            .map(|d| {
+                binding_digest(&serde_json::json!({
+                    "examples": d.examples,
+                    "discrimination": d.discrimination,
+                }))
+            })
+            .transpose()?,
+        policy_fingerprint: binding_digest(policy)?,
+        purpose: definition.map(|d| d.purpose),
+        tier: definition.and_then(|d| d.tier),
+    })
+}
+
 impl AdmissionBinding {
     /// The names of the bindings that differ from `current`.
     pub fn changed_from(&self, current: &Self) -> Vec<&'static str> {
@@ -396,6 +435,29 @@ impl AdmissionStatus {
 
 const BASIS: &str = "Provenance and currency only: a decision exists, is approved and still describes the current scope, the obligations of the declared purpose are present, and a required review came from another session. Whether the reasoning is sound remains an attributed judgment.";
 
+/// What admission reads of a definition report: whether a definition is declared, whether its
+/// intent is adopted and the codes of its gaps. It is owned and serializable so that a store other
+/// than the local one can keep it beside the work it was computed for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DefinitionSummary {
+    pub declared: bool,
+    pub intent_adopted: bool,
+    pub gaps: Vec<String>,
+}
+
+impl From<&DefinitionReport> for DefinitionSummary {
+    fn from(report: &DefinitionReport) -> Self {
+        Self {
+            declared: report.state != "not_declared",
+            intent_adopted: report
+                .obligations
+                .iter()
+                .any(|o| o.obligation == "intent" && o.state == "satisfied"),
+            gaps: report.gaps.iter().map(|g| g.code.to_string()).collect(),
+        }
+    }
+}
+
 /// Everything the evaluator may read; the store fills it from the current projections.
 pub struct AdmissionInputs<'a> {
     pub work: &'a str,
@@ -405,17 +467,13 @@ pub struct AdmissionInputs<'a> {
     pub policy: Option<&'a AdmissionPolicy>,
     pub current: &'a AdmissionBinding,
     pub latest: Option<&'a RecordedAdmission>,
-    pub definition: &'a DefinitionReport,
+    pub definition: &'a DefinitionSummary,
 }
 
 pub fn evaluate_admission(inputs: &AdmissionInputs<'_>) -> AdmissionStatus {
     let facts = |admitted: bool| AdmissionFacts {
-        recorded: inputs.latest.is_some() || inputs.definition.state != "not_declared",
-        adopted: inputs
-            .definition
-            .obligations
-            .iter()
-            .any(|o| o.obligation == "intent" && o.state == "satisfied"),
+        recorded: inputs.latest.is_some() || inputs.definition.declared,
+        adopted: inputs.definition.intent_adopted,
         admitted,
         completed: inputs.completed,
     };
@@ -494,10 +552,10 @@ pub fn evaluate_admission(inputs: &AdmissionInputs<'_>) -> AdmissionStatus {
         },
     };
     // Entry obligations follow the declared purpose; undeclared work is judged as implementation.
-    let gaps: Vec<&str> = if inputs.definition.state == "not_declared" {
+    let gaps: Vec<&str> = if !inputs.definition.declared {
         vec!["definition_not_declared"]
     } else {
-        inputs.definition.gaps.iter().map(|gap| gap.code).collect()
+        inputs.definition.gaps.iter().map(String::as_str).collect()
     };
     if !gaps.is_empty() {
         diagnostics.push(AdmissionDiagnostic {

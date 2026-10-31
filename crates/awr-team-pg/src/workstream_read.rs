@@ -29,6 +29,7 @@ const QUERIES: &[&str] = &[
     "work.inbox",
     "task.assignees",
     "work.prepare",
+    "work.admission",
     "work.snapshot",
     "work.observe",
     "events.list",
@@ -119,6 +120,7 @@ impl WorkstreamQuery {
     /// scope. Shared by validation and MCP discovery so the sets cannot drift.
     pub const WORK_SELECTION_OPERATIONS: &'static [&'static str] = &[
         "work.prepare",
+        "work.admission",
         "work.snapshot",
         "work.observe",
         "work.recovery",
@@ -1519,6 +1521,11 @@ pub(crate) async fn read(
                 return Err(PgError::ResponseTooLarge);
             }
             value
+        }
+        "work.admission" => {
+            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+            work_binding(tx, tenant, project, auth, work).await?;
+            crate::governance::read(tx, tenant, project, &auth.snapshot, work).await?
         }
         "work.observe" => {
             let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;

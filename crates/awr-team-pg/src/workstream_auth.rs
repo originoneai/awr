@@ -569,7 +569,7 @@ pub fn command_business_action(op: &str) -> Option<awr_team::Action> {
         | "delivery.export.revoke" => DeliveryFinalize,
         "planning.propose" => PlanningPropose,
         "planning.edit_draft" => PlanningEditDraft,
-        "planning.approve" => PlanningApprove,
+        "planning.approve" | "admission.decide" => PlanningApprove,
         "planning.publish" => PlanningPublish,
         "access.manage_project"
         | "delivery.connector.configure"
@@ -597,6 +597,7 @@ pub fn query_business_action(op: &str) -> Option<awr_team::Action> {
         "work.observe",
         "work.next",
         "work.inbox",
+        "work.admission",
         "task.assignees",
         "audit.requests",
         "audit.development",
@@ -753,6 +754,7 @@ pub(crate) fn command_authority(op: &str) -> Option<DomainAuthority> {
         | "execution.report" | "handoff.reject" | "handoff.cancel" | "handoff.timeout"
         | "handoff.inspect" | "review.return" | "work.rework" => DomainAuthority::WritePreserve,
         "session.start"
+        | "admission.decide"
         | "task.assign"
         | "task.accept_assignment"
         | "task.claim_available"

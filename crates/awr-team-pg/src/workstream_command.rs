@@ -4,6 +4,7 @@
 //! cursor and is not treated as business CAS, so unrelated advances do not force
 //! a semantic refresh. Writers still serialize on the project admission lock.
 pub(crate) mod action_auth;
+mod admission;
 pub(crate) mod claims;
 mod delivery;
 pub(crate) mod executions;
@@ -23,6 +24,7 @@ use std::sync::Arc;
 use tokio_postgres::Transaction;
 
 pub(crate) const COMMANDS: &[&str] = &[
+    "admission.decide",
     "task.assign",
     "task.accept_assignment",
     "task.claim_available",
@@ -114,6 +116,7 @@ struct End {
     expected_session_version: String,
 }
 enum Action {
+    Admission(admission::Action),
     Start(Start),
     Checkpoint(Checkpoint),
     End(End),
@@ -199,6 +202,10 @@ impl WorkstreamCommand {
             ));
         }
         match self.op.as_str() {
+            "admission.decide" => Ok(Action::Admission(admission::Action::parse(
+                &self.op,
+                self.args.clone(),
+            )?)),
             "task.assign" | "task.accept_assignment" | "task.claim_available" => Ok(
                 Action::Intake(task_intake::Action::parse(&self.op, self.args.clone())?),
             ),
@@ -700,6 +707,9 @@ impl WorkstreamCommandStore {
             Action::Intake(a) => {
                 task_intake::apply(&tx, tenant, project, &auth, &command, ownership, a).await?
             }
+            Action::Admission(a) => {
+                admission::apply(&tx, tenant, project, &auth, &command, a).await?
+            }
             Action::Execution(a) => {
                 if command.op == "execution.prepare"
                     && contract.dependency_acceptance.values().any(|mode| {
@@ -922,6 +932,7 @@ async fn apply(
         | Action::Handoff(_)
         | Action::Review(_)
         | Action::Intake(_)
+        | Action::Admission(_)
         | Action::Delivery(_)
         | Action::Export(_)
         | Action::Adopt(_) => Err(invalid()), // Specialized dispatch only.

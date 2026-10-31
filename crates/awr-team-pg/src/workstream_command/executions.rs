@@ -274,6 +274,8 @@ async fn prepare(
     a: Prepare,
 ) -> PgResult<Value> {
     require_enabled(tx, tenant, project, auth, command).await?;
+    crate::governance::require_current(tx, tenant, project, &auth.snapshot, &command.work_id)
+        .await?;
     let fence = claims::require_live(
         tx,
         tenant,
