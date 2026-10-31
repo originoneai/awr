@@ -14,6 +14,7 @@ mod markdown;
 mod markdown_ledger;
 mod mutation;
 mod planning_writeback;
+mod policy;
 mod publish_prep;
 mod query_snapshot;
 mod source_concurrency;
@@ -48,6 +49,10 @@ pub use indexer::{
 pub use ledger_mapping::LedgerMapping;
 pub use limits::{MARKDOWN_READ_CAP, YAML_READ_CAP, source_read_cap};
 pub use locator::{Locator, SourceSnapshot, fingerprint, read_capped, read_source_capped};
+pub use policy::{
+    ClaimPolicy, DEFAULT_CLAIM_TTL_ENV, DefaultTtl, MAX_CLAIM_TTL_MS, MIN_CLAIM_TTL_MS,
+    POLICY_FILE, POLICY_VERSION, parse_default_ttl,
+};
 pub use publish_prep::{
     DEFAULT_COMPLETION_POLICY, FieldDiff, PARSER_VERSION, PublishPackageFile, PublishPrepOptions,
     PublishPreview, ReferencedSpec, SOURCE_BINDING_FILE, SOURCE_PROVENANCE_FILE,
