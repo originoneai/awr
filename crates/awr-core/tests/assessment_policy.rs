@@ -447,26 +447,29 @@ fn a_rule_deprecated_in_a_version_cannot_be_set_from_then_on_but_older_versions_
     let document = doc(json!([
         {"version": 1},
         {"version": 2, "advice": {"refresh_sources": false}},
-        {"version": 3, "extends": 2},
-        {"version": 4, "extends": 2, "advice": {"refresh_sources": true}}
+        {"version": 3, "extends": 2, "advice": {"refresh_sources": true}},
+        {"version": 4, "extends": 2, "advice": {"refresh_sources": false}}
     ]));
     let issues: Vec<(&str, Option<u32>)> = validate_document(&document, &aged, &ceiling())
         .into_iter()
         .map(|i| (i.code.as_str(), i.version))
         .collect();
-    assert_eq!(issues, vec![("deprecated_rule", Some(4))]);
-    // Without the offending version the older setting is still honoured in version 3.
+    // From its deprecation on (version 3 itself and after), whatever the value.
+    assert_eq!(
+        issues,
+        vec![("deprecated_rule", Some(3)), ("deprecated_rule", Some(4))]
+    );
+    // Before it, the rule is set as always; a later version that only extends keeps the setting it inherits.
     let mut fine = document.clone();
-    fine.versions.pop();
+    fine.versions.truncate(2);
+    fine.versions
+        .push(serde_json::from_value(json!({"version": 3, "extends": 2})).unwrap());
+    assert!(validate_document(&fine, &aged, &ceiling()).is_empty());
     let resolved = resolve_policy(Some(&fine), &aged, &ceiling(), 10).unwrap();
     assert_eq!(resolved.version, Some(3));
     assert_eq!(resolved.disabled_advice, vec!["refresh_sources"]);
-    assert_eq!(
-        resolve_policy(Some(&fine), &aged, &ceiling(), 0)
-            .unwrap()
-            .version,
-        Some(3)
-    );
+    let older = resolve_policy(Some(&fine), &aged, &ceiling(), 0).unwrap();
+    assert_eq!(older.version, Some(3));
 }
 
 #[test]
@@ -546,6 +549,25 @@ fn a_change_is_described_field_by_field() {
         .unwrap();
     assert_eq!((limit.before.as_str(), limit.after.as_str()), ("32", "4"));
     assert!(describe_change(&after, &after).is_empty());
+    // A new order is a change of its own, and the other fields do not move with it.
+    let mut reversed = soft_codes();
+    reversed.reverse();
+    let reordered = resolve(
+        &doc(json!([{"version": 1, "order": {"soft_reason_codes": reversed}}])),
+        1,
+    );
+    let order_only = describe_change(&after, &reordered);
+    let order_fields: Vec<&str> = order_only.iter().map(|c| c.field.as_str()).collect();
+    assert!(
+        order_fields.contains(&"order.reason_codes"),
+        "{order_fields:?}"
+    );
+    assert!(!order_fields.contains(&"limits.max_return_bytes"));
+    let order = order_only
+        .iter()
+        .find(|c| c.field == "order.reason_codes")
+        .unwrap();
+    assert_ne!(order.before, order.after);
 }
 
 #[test]

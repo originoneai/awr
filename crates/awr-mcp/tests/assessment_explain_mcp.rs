@@ -280,3 +280,77 @@ async fn explain_errors_surface_without_breaking_legacy_prepare() {
     }
     client.cancel().await.unwrap();
 }
+
+#[tokio::test]
+async fn mcp_explain_reads_the_project_policy_like_the_cli() {
+    let f = Fixture::new();
+    let client = f.client().await;
+    let plain = success(
+        call(
+            &client,
+            "awr_work_prepare",
+            json!({"work":"W","explain":true}),
+        )
+        .await,
+    );
+    let view = &plain[awr_runtime::ASSESSMENT_EXPLAIN_FIELD];
+    assert!(
+        view.get("policy").is_none(),
+        "no file, nothing to say about a policy"
+    );
+    let optional = [
+        "continue_prepare_current_work",
+        "collect_user_reply",
+        "refresh_sources",
+        "repair_required_materials",
+        "inspect_claim_conflict",
+        "record_management_observations",
+    ];
+    let advice: Vec<String> = view["envelope"]["advisory_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["code"].as_str().unwrap().to_string())
+        .collect();
+    let withheld = advice
+        .iter()
+        .find(|code| optional.contains(&code.as_str()))
+        .expect("the fixture is offered some optional advice")
+        .clone();
+    fs::write(
+        f.root.join(".awr/assessment-policy.toml"),
+        format!("format = 1\npolicy_id = \"mcp-quiet\"\n\n[[version]]\nversion = 1\n\n[version.advice]\n{withheld} = false\n"),
+    )
+    .unwrap();
+    let mcp = success(
+        call(
+            &client,
+            "awr_work_prepare",
+            json!({"work":"W","explain":true}),
+        )
+        .await,
+    );
+    let view = &mcp[awr_runtime::ASSESSMENT_EXPLAIN_FIELD];
+    assert_eq!(view["policy"]["source"], "project");
+    assert_eq!(view["policy"]["policy_id"], "mcp-quiet");
+    let now: Vec<&str> = view["envelope"]["advisory_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["code"].as_str().unwrap())
+        .collect();
+    assert!(
+        !now.contains(&withheld.as_str()),
+        "{withheld} should be withheld: {now:?}"
+    );
+    // The CLI over the same project says the same, byte for byte.
+    let cli = f.cli(&["work", "prepare", "W", "--explain"]);
+    assert_eq!(
+        cli[awr_runtime::ASSESSMENT_EXPLAIN_FIELD]["envelope"]["assessment_hash"],
+        view["envelope"]["assessment_hash"]
+    );
+    assert_eq!(
+        cli[awr_runtime::ASSESSMENT_EXPLAIN_FIELD]["policy"],
+        view["policy"]
+    );
+}

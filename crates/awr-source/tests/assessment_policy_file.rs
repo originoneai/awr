@@ -216,8 +216,14 @@ fn a_candidate_that_is_not_a_policy_writes_nothing() {
         );
         assert_eq!(fs::read_to_string(p.path()).unwrap(), FILE);
     }
-    let oversize = vec![b'#'; ASSESSMENT_POLICY_READ_CAP as usize + 1];
-    assert!(apply_assessment_policy(&p.0, Some(&seen), &oversize).is_err());
+    // Valid but for its size: only the cap refuses it.
+    let mut oversize = b"format = 1\npolicy_id = \"p\"\n# ".to_vec();
+    oversize.resize(ASSESSMENT_POLICY_READ_CAP as usize + 1, b'x');
+    assert!(parse_assessment_policy(std::str::from_utf8(&oversize).unwrap()).is_ok());
+    assert!(matches!(
+        apply_assessment_policy(&p.0, Some(&seen), &oversize).unwrap_err(),
+        Error::InvalidInput(_)
+    ));
     assert_eq!(fs::read_to_string(p.path()).unwrap(), FILE);
 }
 

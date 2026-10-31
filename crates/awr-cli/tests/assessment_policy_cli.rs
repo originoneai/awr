@@ -183,6 +183,14 @@ fn a_previewed_change_confirmed_with_its_fingerprints_changes_what_an_explanatio
     );
     // What the policy is not allowed to touch is exactly as it was.
     assert_eq!(after_facts, facts);
+    // `work assess` reads the same policy.
+    let assessed = f.ok(&["work", "assess", "W", "--explain"]);
+    let view = &assessed[awr_runtime::ASSESSMENT_EXPLAIN_FIELD];
+    assert_eq!(view["policy"]["policy_id"], "quiet-advice");
+    assert_eq!(
+        view["envelope"]["advisory_actions"][0]["code"],
+        "no_advisory"
+    );
     let shown = f.ok(&["assessment", "policy", "show"]);
     assert_eq!(shown["policy"]["in_force"]["version"], 1);
     assert_eq!(
