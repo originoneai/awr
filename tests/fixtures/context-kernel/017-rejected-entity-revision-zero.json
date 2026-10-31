@@ -1,0 +1,76 @@
+{
+  "name": "rejected-entity-revision-zero",
+  "why": "A revision starts at 1.",
+  "kind": "request",
+  "request": {
+    "protocol_version": 1,
+    "policy": "awr.whole_chunks.v1",
+    "identity": "host:work/W7@r3",
+    "pinned_entities": [
+      {
+        "kind": "work_item",
+        "id": "W7",
+        "revision": 3
+      }
+    ],
+    "request_binding": {
+      "branch": "main",
+      "profile": "minimal"
+    },
+    "budget": {
+      "unit": "bounded_bytes",
+      "limit": 400,
+      "exactness": "exact",
+      "scope": "UTF-8 bytes of the rendered text, headings included"
+    },
+    "required": [
+      {
+        "key": "acceptance",
+        "section": "acceptance",
+        "section_rank": 2,
+        "text": "Deliver the reviewed analysis.",
+        "entities": [
+          {
+            "kind": "work_item",
+            "id": "W7",
+            "revision": 0
+          }
+        ]
+      }
+    ],
+    "optional": [
+      {
+        "priority": 1,
+        "recency": 9,
+        "chunk": {
+          "key": "dep-D",
+          "section": "dependencies",
+          "section_rank": 4,
+          "text": "D is completed.",
+          "entities": [
+            {
+              "kind": "work_item",
+              "id": "D",
+              "revision": 5
+            }
+          ]
+        }
+      },
+      {
+        "priority": 2,
+        "recency": 8,
+        "chunk": {
+          "key": "note",
+          "section": "decisions",
+          "section_rank": 5,
+          "text": "Use the reviewed dataset.",
+          "entities": []
+        }
+      }
+    ],
+    "groups": []
+  },
+  "expect": [
+    "invalid_entity"
+  ]
+}

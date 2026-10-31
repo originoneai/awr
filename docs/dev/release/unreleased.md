@@ -100,3 +100,9 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   agent or an observed environment change. An open gap puts in question only the admission or
   containment judgments that read its layer, on that work; it keeps every failure on record, opens
   no task and holds no unrelated work. See [gaps](../reference/gaps.md).
+- The contract of a context packing kernel with no store (`awr-context-kernel`, a library crate, not in the binaries): a request of fixed
+  text chunks with stable names, entities and revisions, required and ranked optional chunks, atomic groups and a token or byte budget;
+  a result that is a consistent partition of it; `validate_request` and `check_result` that say why a request or a result is refused, with
+  a corpus of 62 offline cases. Mandatory content is never dropped to fit, unsupported input fails by name, and nothing a result carries
+  says anything of authority, readiness or acceptance. The packing itself moves out of `awr-context` in a later step. See
+  [context packing kernel](../reference/context-component.md).

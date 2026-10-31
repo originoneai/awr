@@ -1,0 +1,13 @@
+[package]
+name = "awr-context-kernel"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The pure contract of AWR's context packing kernel: fixed segments in, a checked selection out, no store, file, network or model."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
