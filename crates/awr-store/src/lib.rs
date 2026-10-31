@@ -71,7 +71,10 @@ pub use scoped_read::{ScopedCursor, WorkstreamRead, WorkstreamReadSelection};
 pub use search::{SearchHit, SearchQuery, SearchReport};
 use serde::Serialize;
 pub use source_changes::{ProjectionChange, SourceState};
-pub use source_terminal::{FinishedWorkReconcile, ReconcileSkip, SOURCE_TERMINAL};
+pub use source_terminal::{
+    FinishedWorkPlan, FinishedWorkReconcile, PlannedClaim, PlannedSession, ReconcileSkip,
+    SOURCE_TERMINAL,
+};
 use std::{path::Path, time::Duration};
 pub use work::{ScopedDependencyGraph, UnavailableDependency};
 pub use workstream_eta::EtaIngestReceipt;

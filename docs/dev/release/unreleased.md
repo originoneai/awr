@@ -83,6 +83,9 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   save in flight, a change waiting to be applied, an execution that has not ended and a claim on another branch are left
   alone and reported; the reply carries `reconciliation` only when something happened. See
   [database health](../reference/database-recovery.md#claims-and-sessions-of-work-the-source-calls-finished).
+- `awr doctor repair finished-work` clears the backlog that finished work left behind (sessions still active on a completed
+  or cancelled work, claims still held on one): it shows the plan with a fingerprint and changes nothing, and accepting
+  needs that fingerprint, the live revision and a reason that is recorded on every receipt.
 - Rework and active-effort budgets for governed work: a definition may declare a `size` (small,
   medium or large) and a `budget`; the defaults of the size apply otherwise. AWR counts rework from
   its own reopen records and effort from the claims held on the work before it uses the counters a

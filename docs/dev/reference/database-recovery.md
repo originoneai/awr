@@ -64,6 +64,22 @@ checkpoint save in flight (`checkpoint_save_in_flight`), a change waiting to be 
 supervised execution that has not ended (`execution_not_ended`) and a claim on a branch other than the current one
 (`claim_on_another_branch`); a busy database or a changed runtime is also reported and never fails the command.
 
+The reconciliation does not sweep up what finished work had already left behind before a refresh, such as sessions that
+stayed active after their work was completed. For that backlog there is an explicit clean-up that shows its plan first:
+
+```sh
+awr --json doctor repair finished-work                       # the plan and its fingerprint; nothing changes
+awr --json doctor repair finished-work --accept --expected-preview sha256:… \
+  --expected-revision N --reason "Clean up the backlog of finished work"
+```
+
+The plan lists the active sessions bound to a completed or cancelled work, with or without a claim, and the claims still
+held on one (judged on the recorded projection, when its source is fresh), each with the source revision and fingerprint it
+rests on, and what it leaves alone with the same reasons as above (`session_on_another_branch` also applies). Accepting
+needs the fingerprint of the plan that was read, the live project revision and a reason, which becomes the `note` of every
+receipt; a plan that has changed is refused. A session is closed as `interrupted` only when it holds no claim on other
+work; otherwise only its claim on the finished work is released. No work status, source file or evidence is touched.
+
 ## Backup and recovery
 
 The native [`runtime` snapshot commands](runtime-snapshots.md) provide coherent
