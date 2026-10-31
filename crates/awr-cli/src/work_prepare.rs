@@ -122,6 +122,7 @@ pub fn prepare(root: &Path, args: &PrepareArgs, json_output: bool) -> Result<()>
         value,
         &AttachExplanationOptions {
             enabled: args.explain,
+            policy_root: Some(root.to_path_buf()),
             ..Default::default()
         },
     )?;

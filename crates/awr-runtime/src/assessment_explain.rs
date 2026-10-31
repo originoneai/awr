@@ -30,6 +30,9 @@ pub struct AssessmentExplanationView {
     pub prior_explanation_valid: Option<bool>,
     pub unchecked_by_layer: std::collections::BTreeMap<String, Vec<String>>,
     pub query_original_only: bool,
+    /// The project policy that shaped this explanation, when one did or when the file could not be used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<crate::assessment_policy::PolicyNotice>,
     /// Wire / render accounting without re-embedding prepare context body.
     pub metrics: ExplanationWireMetrics,
     /// Explicit non-side-effect guarantees for consumers and tests.
@@ -77,6 +80,11 @@ pub struct AttachExplanationOptions {
     pub completion: Option<CompletionExplanationInput>,
     pub current_authority: Option<ExplanationAuthority>,
     pub prior_identity: Option<AssessmentIdentity>,
+    /// A project whose assessment policy file is read for this explanation (DEC-040). Without it, and without
+    /// `policy`, the built-in policy applies and the explanation is what it always was.
+    pub policy_root: Option<std::path::PathBuf>,
+    /// A policy handed in already resolved; it wins over `policy_root`.
+    pub policy: Option<AssessmentPolicy>,
 }
 
 /// Whether a JSON object already carries the negotiated explain field.
@@ -257,6 +265,7 @@ fn rendered_context_bytes(value: &Value) -> usize {
 fn build_view(
     chain: ExplanationChainResult,
     rendered_ctx_bytes: usize,
+    policy: Option<crate::assessment_policy::PolicyNotice>,
 ) -> Result<AssessmentExplanationView> {
     let envelope_bytes = serde_json::to_vec(&chain.envelope)?.len();
     let envelope_text = serde_json::to_string(&chain.envelope)?;
@@ -269,6 +278,7 @@ fn build_view(
         prior_explanation_valid: chain.prior_explanation_valid,
         unchecked_by_layer: chain.unchecked_by_layer,
         query_original_only: chain.query_original_only,
+        policy,
         metrics: ExplanationWireMetrics {
             envelope_bytes,
             rendered_context_bytes: rendered_ctx_bytes,
@@ -325,6 +335,19 @@ pub fn attach_assessment_explanation(
             .map(str::to_string)
     });
 
+    let in_force = options
+        .policy_root
+        .as_ref()
+        .map(|root| crate::policy_in_force(root, as_of, &PolicyCeiling::builtin()));
+    let policy = match (&options.policy, &in_force) {
+        (Some(policy), _) => policy.clone(),
+        (None, Some(in_force)) => in_force.resolved.assessment.clone(),
+        (None, None) => AssessmentPolicy::default(),
+    };
+    let notice = match (&options.policy, &in_force) {
+        (None, Some(in_force)) => in_force.notice(),
+        _ => None,
+    };
     let chain = explanation_chain_from_prepare_json(
         &normalized,
         project_id,
@@ -334,8 +357,9 @@ pub fn attach_assessment_explanation(
         authority,
         options.prior_identity.clone(),
         action_rationale,
+        policy,
     )?;
-    let view = build_view(chain, rendered_ctx_bytes)?;
+    let view = build_view(chain, rendered_ctx_bytes, notice)?;
     // Hard boundary: explanation must not claim it duplicated prepare context.
     if view.metrics.prepare_context_duplicated {
         return Err(Error::InvalidInput(

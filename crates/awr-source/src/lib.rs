@@ -1,5 +1,6 @@
 //! Authoritative project source configuration and adapter contracts.
 mod adapter;
+mod assessment_policy_file;
 mod delivery_writeback;
 mod directory;
 mod document;
@@ -28,6 +29,10 @@ mod yaml_ledger;
 mod yaml_mutation;
 
 pub use adapter::{ParseContext, ProjectionBatch, SourceAdapter};
+pub use assessment_policy_file::{
+    ASSESSMENT_POLICY_FILE, ASSESSMENT_POLICY_READ_CAP, AssessmentPolicyFile,
+    apply_assessment_policy, parse_assessment_policy, read_assessment_policy, read_candidate,
+};
 pub use awr_core::{Error, Result};
 pub use delivery_writeback::{
     DeliveryCompletionReference, DeliverySourceNote, LockedSourceFile, SourceFileIdentity,
