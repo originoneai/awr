@@ -43,6 +43,16 @@ describe('AppShell navigation', () => {
     await waitFor(() => expect(screen.getByTestId('page-projects')).toBeTruthy());
   });
 
+  it('top-bar notification and identity entries are focusable buttons', () => {
+    stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
+    renderApp('/workbench');
+    for (const name of ['通知', '观察者']) {
+      const button = screen.getByRole('button', { name });
+      expect(button.tagName).toBe('BUTTON');
+      expect(button.tabIndex).toBe(0);
+    }
+  });
+
   it('marks the active menu item from the route', () => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
     renderApp('/inbox');

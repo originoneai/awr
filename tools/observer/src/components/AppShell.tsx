@@ -86,10 +86,10 @@ export function AppShell({ children }: { children: ReactNode }) {
           borderBottom: '1px solid #f0f0f0',
         }}
       >
-        <Typography.Text strong style={{ fontSize: 18, letterSpacing: 1 }}>
+        <Typography.Text strong style={{ fontSize: 18, letterSpacing: 1, whiteSpace: 'nowrap', flexShrink: 0 }}>
           {t('app.wordmark')}
         </Typography.Text>
-        <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+        <Typography.Text type="secondary" className="shell-subtitle" style={{ fontSize: 13, whiteSpace: 'nowrap' }}>
           {t('app.title')}
         </Typography.Text>
         <Dropdown menu={scopeMenu} trigger={['click']}>
@@ -124,10 +124,17 @@ export function AppShell({ children }: { children: ReactNode }) {
           </Button>
         </Dropdown>
         <Badge dot>
-          <BellOutlined aria-label={t('shell.notifications')} style={{ fontSize: 16 }} />
+          <Button
+            type="text"
+            size="small"
+            aria-label={t('shell.notifications')}
+            icon={<BellOutlined style={{ fontSize: 16 }} />}
+          />
         </Badge>
         <Space size={8}>
-          <Avatar size="small">{t('shell.role').slice(0, 1)}</Avatar>
+          <Button type="text" size="small" aria-label={t('shell.role')} style={{ height: 'auto', padding: 2 }}>
+            <Avatar size="small">{t('shell.role').slice(0, 1)}</Avatar>
+          </Button>
           <Typography.Text type="secondary" className="shell-role" style={{ fontSize: 13 }}>
             {t('shell.role')}
           </Typography.Text>

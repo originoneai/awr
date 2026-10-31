@@ -13,3 +13,10 @@ body,
     display: none;
   }
 }
+
+/* Very narrow (~375px): the subtitle goes too, the wordmark never wraps. */
+@media (max-width: 430px) {
+  .shell-subtitle {
+    display: none;
+  }
+}
