@@ -569,6 +569,25 @@ fn catalog() -> Vec<Capability> {
                 "separate_from_engineering_verification",
             ],
         ),
+        (
+            "operating_baseline",
+            true,
+            &[
+                "session start --claim",
+                "work claim",
+                "session resume --claim",
+                "session checkpoint",
+                "work progress",
+                "doctor",
+            ][..],
+            &[
+                "policy_file_v1",
+                "default_claim_ttl",
+                "renew_on_activity",
+                "explicit_no_expiry",
+                "project_file_only_no_runtime_schema_change",
+            ][..],
+        ),
     ]
     .into_iter()
     .map(|(id, available, commands, limitations)| Capability {

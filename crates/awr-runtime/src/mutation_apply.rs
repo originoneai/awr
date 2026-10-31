@@ -446,8 +446,9 @@ pub(crate) fn apply(
     root: &Path,
     request: &ReviewProposalRequest,
     recover: bool,
+    renewal: Option<ClaimRenewal>,
 ) -> Result<ProposalReport> {
-    apply_observed(store, root, request, recover, |_| Ok(()))
+    apply_observed(store, root, request, recover, renewal, |_| Ok(()))
 }
 
 // The production entrypoint supplies only a no-op. Private tests can observe exact
@@ -457,6 +458,7 @@ fn apply_observed(
     root: &Path,
     request: &ReviewProposalRequest,
     recover: bool,
+    renewal: Option<ClaimRenewal>,
     mut observe: impl FnMut(&'static str) -> Result<()>,
 ) -> Result<ProposalReport> {
     if request.actor.trim().is_empty()
@@ -642,13 +644,14 @@ fn apply_observed(
             proposal.created_by_session,
         )?;
         let revision = store.project(project)?.project_revision;
-        store.finish_proposal_apply(
+        store.finish_proposal_apply_renewing(
             project,
             revision,
             proposal.id,
             attempt.event_id,
             &request.actor,
             &request.reason,
+            renewal,
         )
     })();
     if result.is_ok() {

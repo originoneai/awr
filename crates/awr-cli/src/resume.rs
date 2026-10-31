@@ -21,8 +21,13 @@ pub struct ResumeArgs {
     /// Release predecessor claims without inheriting one; default preserves a still-live claim.
     #[arg(long)]
     no_claim: bool,
+    /// Without it the new claim lives for the project's default lifetime, when `.awr/policy.toml`
+    /// (or AWR_DEFAULT_CLAIM_TTL) declares one, and otherwise has no expiry.
     #[arg(long, requires = "claim")]
     ttl_ms: Option<u64>,
+    /// The new claim has no expiry, whatever the project's default lifetime is.
+    #[arg(long, requires = "claim", conflicts_with = "ttl_ms")]
+    no_expiry: bool,
     #[arg(long)]
     expected_revision: Revision,
     #[arg(long, default_value_t = 5000)]
@@ -55,7 +60,11 @@ pub fn run(root: &Path, args: &ResumeArgs, json_output: bool) -> Result<()> {
             } else {
                 ResumeClaim::Inherit
             },
-            claim_ttl_ms: args.ttl_ms,
+            claim_ttl_ms: if args.claim {
+                crate::session::claim_ttl(root, args.ttl_ms, args.no_expiry)?
+            } else {
+                None
+            },
             expected_revision: args.expected_revision,
             token_budget: args.budget,
             paths: args.path.clone(),

@@ -45,6 +45,9 @@ fn finding(
     }
 }
 
+/// Findings that advise and never fail `doctor`: a project that was healthy for the exit code stays so.
+const ADVISORY_FINDINGS: &[&str] = &["claim_without_expiry"];
+
 /// Inspect current files without calling the source indexer or changing retained freshness.
 pub fn diagnose_project(
     root: &Path,
@@ -117,6 +120,15 @@ pub fn diagnose_project(
             None
         }
     };
+    if let Err(error) = awr_source::ClaimPolicy::load(&root) {
+        report.findings.push(finding(
+            "claim_policy_unreadable",
+            "error",
+            "policy",
+            awr_source::POLICY_FILE,
+            error,
+        ));
+    }
     if let Some(manifest) = &manifest {
         inspect_sources(&store, project.id, &root, manifest, &mut report)?;
     }
@@ -148,8 +160,11 @@ pub fn diagnose_project(
         }
         report.limitations.push("Foreign-key problems remain visible through read-only runtime diagnostics. Explicit runtime repairs require database integrity first; no automatic reference reconstruction is offered.".into());
     }
-    report.database.ok =
-        report.database_ok && !report.findings.iter().any(|f| f.severity != "info");
+    report.database.ok = report.database_ok
+        && !report
+            .findings
+            .iter()
+            .any(|f| f.severity != "info" && !ADVISORY_FINDINGS.contains(&f.code.as_str()));
     Ok(report)
 }
 

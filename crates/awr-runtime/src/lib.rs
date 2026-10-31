@@ -27,6 +27,7 @@ mod agent_authorization;
 mod assessment_explain;
 mod assessment_replay;
 mod assessment_shadow;
+mod claim_policy;
 mod execution;
 mod explanation_chain;
 mod fact_snapshot;
@@ -141,6 +142,7 @@ pub use fact_snapshot::{
     PreparedFactView, fact_snapshot_from_prepared_view, prepared_view_from_prepare_json,
 };
 pub mod host_adapter;
+pub use claim_policy::{ClaimTtl, resolve_claim_ttl};
 pub use host_adapter::{
     AdapterActionOutcome, AdapterForensics, AdapterRegistry, AdapterStatus, ClaudeCodeAdapter,
     CodexCliAdapter, ExecutionHostAdapter, L0ManualAdapter, NativeExecutionHandle,
@@ -151,7 +153,7 @@ pub use host_adapter::{
 pub use management::{AssessManagementRequest, ManageWorkRequest, assess_management, manage_work};
 pub use mutation::{
     CreateProposalRequest, ProposalReport, ReviewProposalAction, ReviewProposalRequest,
-    create_proposal, review_proposal,
+    create_proposal, review_proposal, review_proposal_renewing,
 };
 pub use operation_readset::{append_work_observation, classify_operation_replay_result};
 pub use organization::{OrganizationReport, OrganizationState, inspect_organization};
@@ -305,8 +307,14 @@ impl<'a> Runtime<'a> {
         let started =
             self.store
                 .begin_checkpoint_save_as(self.project, expected, session, draft, agent)?;
+        let renewal = crate::claim_policy::renewal_for(&self.store.project(self.project)?.root);
         self.store
-            .finish_checkpoint_save(self.project, started.project_revision, started.id)
+            .finish_checkpoint_save_renewing(
+                self.project,
+                started.project_revision,
+                started.id,
+                renewal,
+            )
             .map_err(|error| Error::CheckpointIncomplete {
                 attempt_id: started.id,
                 reason: error.to_string(),

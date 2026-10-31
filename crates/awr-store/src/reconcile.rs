@@ -8,6 +8,9 @@ use awr_core::{Artifact, Error, Event, EventDraft, Id, Result, Revision, now_mil
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+/// How long a claim may be held without an expiry before `doctor` says so.
+pub const CLAIM_WITHOUT_EXPIRY_WARN_AFTER_MS: i64 = 24 * 60 * 60 * 1000;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeFinding {
     pub code: String,
@@ -223,7 +226,7 @@ fn inspect_claims(
         .prepare(
             "SELECT c.id,c.work_item_id,c.session_id,c.agent_id,c.branch_id,c.status,c.expires_at,c.released_at,
                     s.id,s.work_item_id,s.agent_id,s.branch_id,s.status,
-                    w.id,w.active,w.status,b.id,b.status
+                    w.id,w.active,w.status,b.id,b.status,c.acquired_at
              FROM claims c
              LEFT JOIN sessions s ON s.project_id=c.project_id AND s.id=c.session_id
              LEFT JOIN work_items w ON w.project_id=c.project_id AND w.id=c.work_item_id
@@ -251,6 +254,7 @@ fn inspect_claims(
                 row.get::<_, Option<String>>(15)?,
                 optional_id(row, 16)?,
                 row.get::<_, Option<String>>(17)?,
+                row.get::<_, i64>(18)?,
             ))
         })
         .map_err(db_error)?
@@ -275,6 +279,7 @@ fn inspect_claims(
         work_status,
         joined_branch_id,
         branch_status,
+        acquired_at,
     ) in rows
     {
         let truly_expired = status == "active"
@@ -336,6 +341,24 @@ fn inspect_claims(
         }
         if status == "active" && released_at.is_some() {
             problems.push("active claim has a release timestamp".to_string());
+        }
+        if problems.is_empty()
+            && status == "active"
+            && released_at.is_none()
+            && expires_at.is_none()
+            && acquired_at.saturating_add(CLAIM_WITHOUT_EXPIRY_WARN_AFTER_MS) <= checked_at
+        {
+            findings.push(finding(
+                "claim_without_expiry",
+                "warning",
+                "claim",
+                claim_id,
+                format!(
+                    "Active claim has had no expiry since {acquired_at}; a session that stopped without ending leaves it held for good. \
+                     Give claims a lifetime with --ttl-ms, or declare a default in .awr/policy.toml (claims.default_ttl) or AWR_DEFAULT_CLAIM_TTL"
+                ),
+                None,
+            ));
         }
         if !problems.is_empty() {
             findings.push(finding(

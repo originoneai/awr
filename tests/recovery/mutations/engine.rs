@@ -93,6 +93,7 @@ impl Fixture {
                 },
             ),
             recover,
+            None,
             hook,
         )
     }
@@ -358,7 +359,7 @@ fn fixture_worker() {
                 actual,
             })
         } else {
-            apply_observed(&mut store,root,&request(id,revision,ReviewProposalAction::Apply),false,|reached|if reached==phase{pause(reached)}else{Ok(())}).map(|r|json!({"ok":r.ok,"code":r.code,"revision":r.project_revision,"proposal_status":r.proposal.status,"write_outcome":r.write_outcome}))
+            apply_observed(&mut store,root,&request(id,revision,ReviewProposalAction::Apply),false,None,|reached|if reached==phase{pause(reached)}else{Ok(())}).map(|r|json!({"ok":r.ok,"code":r.code,"revision":r.project_revision,"proposal_status":r.proposal.status,"write_outcome":r.write_outcome}))
         }
     };
     let result = match result {

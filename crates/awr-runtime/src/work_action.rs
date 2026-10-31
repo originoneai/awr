@@ -167,13 +167,14 @@ pub(crate) fn apply_work_proposal(
     reason: String,
 ) -> Result<ProposalReport> {
     let id = proposal.id;
+    let renewal = crate::claim_policy::renewal_for(root);
     let mut result = crate::mutation::report(proposal, event, false, None, None);
     for (stage, action) in [
         ("submit", ReviewProposalAction::Submit),
         ("approve", ReviewProposalAction::Approve),
         ("apply", ReviewProposalAction::Apply),
     ] {
-        result = crate::review_proposal(
+        result = crate::review_proposal_renewing(
             store,
             &root,
             &ReviewProposalRequest {
@@ -183,6 +184,7 @@ pub(crate) fn apply_work_proposal(
                 actor: actor.clone(),
                 reason: reason.clone(),
             },
+            renewal,
         )
         .map_err(|error| Error::WorkActionIncomplete {
             proposal_id: id,
