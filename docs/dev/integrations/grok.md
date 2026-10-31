@@ -7,13 +7,40 @@
 
 Use the local **Grok Build** client's terminal tool to call AWR, or connect its
 stdio MCP client to the same initialized project. This guide was checked against
-`grok 1.0.13 (5e9a58528b76)` on **2026-09-08**. Grok's web connectors are a separate
+`grok 1.0.13 (5e9a58528b76)` on **2026-09-08**. That check is kept as historical
+evidence. This is not a Grok Build recheck. Grok's web connectors are a separate
 transport boundary described below.
+
+This note describes published **AWR 0.6.0** and the current source tree. Both
+expose grouped `awr_query`. The **0.4.0** package does not. **0.5.1** already
+grouped the catalog; install 0.6.0 for schema 14 and
+`session start --client/--conversation`. Grok owns its model, native
+conversation IDs and compaction. AWR owns project facts, claims and checkpoints.
 
 ## Optional project MCP configuration
 
-Build `awr` and `awr-mcp` using [the repository instructions](../../../README.md).
-From the intended initialized project's directory:
+Install published AWR 0.6.0, which includes the grouped MCP catalog, or build
+`awr` and `awr-mcp` from this repository using
+[the repository instructions](../../../README.md):
+
+```sh
+npm install -g @originoneai/agent-work-runtime@0.6.0
+# or: python -m pip install agent-work-runtime==0.6.0
+# or from this tree:
+cargo build --locked -p awr-cli -p awr-mcp
+# binaries: target/debug/awr and target/debug/awr-mcp
+```
+
+0.5.1 projects use SQLite schema 7. 0.6.0 migrates **7 → 14** on the first
+explicit database write, normally `awr source reindex`. Back up `.awr/state.db`
+first. Older binaries refuse schema 14. See
+[AWR 0.6.0](../release/0.6.0.md) and
+[Upgrading from 0.5.x](../release/DISTRIBUTIONS.md#upgrading-from-05x-schema-7--14).
+0.6.0 packages compile Team code but leave it off unless enabled; this Grok
+note stays on personal CLI/MCP.
+
+From the intended initialized project's directory, point `command` at that
+binary (absolute path):
 
 ```sh
 cd /absolute/path/to/initialized/project
@@ -35,8 +62,22 @@ args = ["--project", "/absolute/path/to/initialized/project"]
 The server's absolute project argument determines the AWR runtime. `grok mcp
 list --json` shows configuration; `grok mcp doctor awr --json` checks that named
 server. The local CLI has no `grok mcp get` subcommand. Use `/mcps` in Grok Build
-to inspect/refresh connections, then call `awr_project_status` and verify the
-project identity. [Official MCP guide](https://docs.x.ai/build/features/mcp-servers)
+to inspect/refresh connections. A configured server is not proof of an active
+connection.
+
+Then follow L0 MCP discovery: default `tools/list` returns eight domain tools
+(`awr_query`, `awr_context`, `awr_work`, `awr_evidence`, `awr_session`,
+`awr_continuity`, `awr_change`, `awr_compaction`). Probe status through
+`awr_query`:
+
+```json
+{"child_tool": "awr_project_status", "arguments": {}}
+```
+
+Flat names remain callable but are not in the default catalog. Set
+`AWR_MCP_TOOL_EXPOSURE_MODE=flat` only if this Grok Build cannot route through
+domains. Confirm project identity before any mutation.
+[Official MCP guide](https://docs.x.ai/build/features/mcp-servers)
 
 Project trust is a separate prerequisite. During this delivery, the local Grok
 CLI wrote the intended table in an isolated fixture and its named diagnostic
@@ -109,12 +150,12 @@ and explicitly choose a larger budget or clearer scope without truncating hard
 facts. Pass concrete paths/tags when needed. The context's evidence gaps do not
 become passing tests simply because its completeness flag is true.
 
-With connected MCP, use `awr_context_compile` with
-`{"session":"<awr-session-id>","budget":5000}`. Its source check is read-only;
-on `SourceStale`, inspect the source change and explicitly reindex through the
-CLI. See [the eight-tool reference](../../../crates/awr-mcp/README.md). Every
-mutation uses an observed revision; a lost response requires receipt inspection
-before retrying.
+With connected MCP, call `awr_context` with
+`{"child_tool":"awr_context_compile","arguments":{"session":"<awr-session-id>","budget":5000}}`.
+Its source check is read-only; on `SourceStale`, inspect the source change and
+explicitly reindex through the CLI. See
+[the MCP reference](../../../crates/awr-mcp/README.md). Every mutation uses an
+observed revision; a lost response requires receipt inspection before retrying.
 
 ## Manual checkpoint and later continuation
 
@@ -182,15 +223,19 @@ or delivery is unverified, use the manual checkpoint process above.
 [Official hook guide](https://docs.x.ai/build/features/hooks)
 
 Grok web's custom connectors require a reachable MCP URL; a local executable path
-cannot be entered as that URL. AWR 0.3.3 offers a
-[shared Streamable HTTP service](../reference/mcp-service.md). Deploying it and
-meeting a connector's authentication requirements remains
-separate from configuring Grok Build; this guide does not verify that connector.
+cannot be entered as that URL. AWR 0.6.0 still offers a
+[shared Streamable HTTP service](../reference/mcp-service.md)
+(first shipped in 0.3.3). Deploying it and meeting a connector's authentication
+requirements remains separate from configuring Grok Build; this guide does not
+verify that connector.
 [Official web connector guide](https://docs.x.ai/grok/connectors)
 
 Local command/version checks, project-scoped configuration parsing and the
 documented untrusted-folder diagnostic are recorded separately from AWR's CLI
-fixture, which exercises the same work across provider/model metadata. This
-delivery claims no Grok model turn, successful native Grok MCP tool invocation,
-automatic hook, web connector, E4 business scenario or release. For the shared
-terminal lifecycle example, see [examples/codex](../../../examples/codex/README.md).
+fixture, which exercises the same work across provider/model metadata. The
+2026-09-08 check predates the 0.6.0 package and is not evidence for a live
+Grok catalog replay. 0.6.0 still defaults to the same eight domain tools and
+grouped `awr_query`, so the documented route applies. This delivery claims no
+Grok model turn, successful native Grok MCP tool invocation, automatic hook,
+web connector, E4 business scenario or release. For the shared terminal
+lifecycle example, see [examples/codex](../../../examples/codex/README.md).
