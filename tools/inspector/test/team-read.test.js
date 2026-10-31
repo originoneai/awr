@@ -9,10 +9,12 @@
  */
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
+const path = require('path');
 const http = require('http');
-const { createTeamBridge } = require('../team-bridge');
+const { createTeamBridge, READ_OPS, READ_DEFERRED_OPS } = require('../team-bridge');
 
-const FIXTURE_DIR = require('path').resolve(__dirname, 'fixtures');
+const FIXTURE_DIR = path.resolve(__dirname, 'fixtures');
 
 function startMockUpstream(handler) {
   const server = http.createServer((req, res) => handler(req, res));
@@ -337,5 +339,136 @@ test('read adapter never fabricates demo reads', async () => {
     assert.equal(read.json.error.code, 'Unsupported');
   } finally {
     await new Promise((r) => server.close(r));
+  }
+});
+
+test('read adapter registry stays in sync with the service query list (drift guard)', () => {
+  // The selector registry is a hand mirror of WorkstreamQuery. This guard turns
+  // a new service query into a red test until the adapter decides whether to
+  // expose or explicitly defer it.
+  const source = fs.readFileSync(
+    path.resolve(__dirname, '../../../crates/awr-team-pg/src/workstream_read.rs'), 'utf8');
+  const match = source.match(/pub\(crate\) const QUERIES: &\[&str\] = &\[([\s\S]*?)\];/);
+  assert.ok(match, 'QUERIES list not found in workstream_read.rs');
+  const serviceOps = [...match[1].matchAll(/"([a-z_.]+)"/g)].map((m) => m[1]);
+  assert.ok(serviceOps.length > 30, `expected the full service query list, got ${serviceOps.length}`);
+  assert.deepEqual([...READ_DEFERRED_OPS].sort(), ['audit.count', 'audit.export', 'audit.history']);
+  for (const op of serviceOps) {
+    assert.ok(READ_OPS.has(op) || READ_DEFERRED_OPS.has(op),
+      `service query ${op} is neither exposed by the read adapter nor explicitly deferred`);
+  }
+  for (const op of READ_OPS) {
+    assert.ok(serviceOps.includes(op), `adapter op ${op} is not an implemented service query`);
+  }
+});
+
+test('read adapter caps an artifact.segment page at its own bound', async () => {
+  let padded = null;
+  const upstream = await startMockUpstream((_request, response) => {
+    response.end(JSON.stringify({ ...ENVELOPE, data: { text: padded, next_cursor: null } }));
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  const query = { protocol_version: 1, op: 'artifact.segment', work_id: 'WORK',
+    artifact_id: 'artifact-1', expected_sha256: 'a'.repeat(64) };
+  try {
+    padded = 'x'.repeat(60 * 1024);
+    let read = await req(bridge.base, 'POST', '/api/team/read', { body: { project: 'demo', query } });
+    assert.equal(read.json.ok, true);
+    padded = 'x'.repeat(70 * 1024);
+    read = await req(bridge.base, 'POST', '/api/team/read', { body: { project: 'demo', query } });
+    assert.equal(read.json.error.code, 'ResponseTooLarge');
+    assert.equal(read.json.result, undefined);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('read adapter rejects path escapes and separators in source_path', async () => {
+  let calls = 0;
+  const upstream = await startMockUpstream((_request, response) => { calls++; response.end('{}'); });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    for (const source_path of ['docs\\secret', 'docs\\..\\secret', 'a:b', 'docs/\x07secret']) {
+      const read = await req(bridge.base, 'POST', '/api/team/read',
+        { body: { project: 'demo', query: { protocol_version: 1, op: 'source.content', source_path } } });
+      assert.equal(read.json.error.code, 'InvalidInput', JSON.stringify(source_path));
+    }
+    assert.equal(calls, 0);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('read adapter keeps the 128-byte selector bound exactly', async () => {
+  const seen = [];
+  const upstream = await startMockUpstream((request, response) => {
+    const chunks = [];
+    request.on('data', (c) => chunks.push(c));
+    request.on('end', () => {
+      seen.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      response.end(JSON.stringify({ ...ENVELOPE, data: { items: [], next_cursor: null } }));
+    });
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const accepted = await req(bridge.base, 'POST', '/api/team/read',
+      { body: { project: 'demo', query: { protocol_version: 1, op: 'work.snapshot', work_id: 'w'.repeat(128) } } });
+    assert.equal(accepted.json.ok, true);
+    assert.equal(seen.length, 1);
+    const rejected = await req(bridge.base, 'POST', '/api/team/read',
+      { body: { project: 'demo', query: { protocol_version: 1, op: 'work.snapshot', work_id: 'w'.repeat(129) } } });
+    assert.equal(rejected.json.error.code, 'InvalidInput');
+    assert.equal(seen.length, 1);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('read adapter rejects control characters inside selector identities', async () => {
+  let calls = 0;
+  const upstream = await startMockUpstream((_request, response) => { calls++; response.end('{}'); });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    for (const work_id of ['work\x00id', 'work\x1fid', 'work\x7fid', 'work\nid']) {
+      const read = await req(bridge.base, 'POST', '/api/team/read',
+        { body: { project: 'demo', query: { protocol_version: 1, op: 'work.snapshot', work_id } } });
+      assert.equal(read.json.error.code, 'InvalidInput', JSON.stringify(work_id));
+    }
+    assert.equal(calls, 0);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('read adapter errors never echo selector values on any rejection path', async () => {
+  let calls = 0;
+  const upstream = await startMockUpstream((_request, response) => { calls++; response.end('{}'); });
+  const bridge = await startLiveBridge(upstream.base);
+  const sentinel = 'synthetic-private-selector-value';
+  try {
+    const cases = [
+      { protocol_version: 1, op: 'work.search', search: sentinel.repeat(32) },
+      { protocol_version: 1, op: 'work.search', search: 'x', cursor: sentinel.repeat(200) },
+      { protocol_version: 1, op: 'work.snapshot', work_id: sentinel.repeat(5) },
+      { protocol_version: 1, op: 'source.content', source_path: `../${sentinel}` },
+      { protocol_version: 1, op: 'artifact.segment', work_id: 'WORK', export_id: 'e', expected_sha256: sentinel },
+      { protocol_version: 1, op: 'work.snapshot', work_id: 'WORK', actor_id: sentinel },
+      { protocol_version: 1, op: sentinel },
+      { protocol_version: 1, op: 'capabilities', role: sentinel },
+    ];
+    for (const query of cases) {
+      const read = await req(bridge.base, 'POST', '/api/team/read', { body: { project: 'demo', query } });
+      assert.equal(read.json.ok, false, JSON.stringify(query));
+      assert.ok(!JSON.stringify(read.json).includes(sentinel),
+        `error for ${query.op} echoed the selector value: ${JSON.stringify(read.json)}`);
+    }
+    assert.equal(calls, 0);
+  } finally {
+    await bridge.close();
+    await upstream.close();
   }
 });

@@ -26,6 +26,9 @@ const INBOX_READ_OPS = new Set(['work.prepare', 'work.observe', 'work.recovery',
  * error; the upstream service reauthorizes the caller's own cookie session on
  * every forwarded read. Selector values are never echoed in errors.
  */
+// Deferred full ops audit (W13): the only upstream queries this adapter must
+// never expose. The drift guard test pins READ_OPS against the service list.
+const READ_DEFERRED_OPS = new Set(['audit.history', 'audit.export', 'audit.count']);
 const READ_PROJECT_WIDE = new Set(['capabilities', 'workstreams.list', 'work.inbox']);
 const READ_WORK_LIST = new Set(['work.list', 'work.search', 'planning.outcome']);
 const READ_AUDIT = new Set(['audit.requests', 'audit.development']);
@@ -898,4 +901,4 @@ function createTeamBridge(opts) {
   };
 }
 
-module.exports = { createTeamBridge, rewriteOwnedCookiePath };
+module.exports = { createTeamBridge, rewriteOwnedCookiePath, READ_OPS, READ_DEFERRED_OPS };

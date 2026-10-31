@@ -1985,7 +1985,8 @@ mod tests {
             description.contains("never substitute"),
             "the policy substitution warning is a real semantic constraint and stays"
         );
-        // Discovery and delivery schemas accept both adoption version policies.
+        // The query schema keeps the export_id selector the export/adoption flow
+        // needs, typed as a string.
         let query = catalog()
             .into_iter()
             .find(|tool| tool.name == "awr_team_query")
