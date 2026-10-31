@@ -202,7 +202,7 @@ impl Store {
                 event.payload["creating_session_id"]=json!(proposal.created_by_session);
                 event.payload["released_claim_ids"]=json!(crate::work_action::release_terminal_claims(tx,project,&proposal)?);
                 if let (Some(renewal),Some(session))=(renewal,proposal.created_by_session) {
-                    if matches!(binding.action,WorkAction::Progress|WorkAction::Block|WorkAction::Unblock) {
+                    if binding.action.is_activity() {
                         crate::claim_renewal::renew_session_claims(tx,project,session,renewal,&mut event.payload)?;
                     }
                 }

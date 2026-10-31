@@ -510,6 +510,32 @@ fn progress_block_and_unblock_extend_the_claim_and_the_reply_revision_stays_live
 }
 
 #[test]
+fn only_progress_block_and_unblock_are_activity_that_renews() {
+    let f = Fixture::new(Some(POLICY));
+    let started = f.start("W", "worker-a", &["--ttl-ms", "600000"]);
+    let sid = started["session"]["id"].as_str().unwrap();
+    // As a handoff or a resume can leave it, the session also holds a claim on other work.
+    let other = Id::new().to_string();
+    let held = now_millis().unwrap() + 10 * MINUTE;
+    f.sql(
+        "INSERT INTO claims(id,project_id,work_item_id,session_id,agent_id,branch_id,status,acquired_at,expires_at,released_at,revision) \
+         SELECT ?1, project_id, id, ?2, 'worker-a', NULL, 'active', ?3, ?4, NULL, 1 FROM work_items WHERE external_key='OTHER'",
+        rusqlite::params![other, sid, now_millis().unwrap(), held],
+    );
+    // Cancelling and reopening are acts on the work, not work done under a claim: nothing is extended.
+    for (action, event) in [("cancel", "work.cancelled"), ("reopen", "work.reopened")] {
+        let reply = f.acted(action, sid, &["--next-action", "Replan it"]);
+        assert_eq!(f.expiry(&other), Some(held), "{action}: {reply}");
+        assert!(
+            f.events(event).last().unwrap()["payload"]
+                .get("claim_renewal")
+                .is_none(),
+            "{action}"
+        );
+    }
+}
+
+#[test]
 fn renewal_can_be_switched_off_and_a_project_without_a_policy_renews_nothing() {
     let off = "version = 1\n[claims]\ndefault_ttl = \"4h\"\nrenew_on_activity = false\n";
     for policy in [Some(off), None] {

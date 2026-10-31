@@ -54,6 +54,10 @@ impl WorkAction {
     pub fn needs_claim(self) -> bool {
         matches!(self, Self::Progress | Self::Block | Self::Complete)
     }
+    /// Work done under a claim, as against an act on the work: what a policy that renews on activity renews on.
+    pub fn is_activity(self) -> bool {
+        matches!(self, Self::Progress | Self::Block | Self::Unblock)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
