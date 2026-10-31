@@ -197,10 +197,10 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             }
             "session.ended" => "status closed_claim_ids last_checkpoint_id",
             "session.interrupted" => {
-                "session_id status released_claim_ids expired_claim_ids last_checkpoint_id reconciled_at reason"
+                "session_id status released_claim_ids expired_claim_ids last_checkpoint_id reconciled_at reason source_revision source_fingerprint"
             }
             "claim.released" | "claim.expired" => {
-                "claim_id agent_id session_id expired_at reconciled_at reason"
+                "claim_id agent_id session_id expired_at reconciled_at reason source_revision source_fingerprint"
             }
             "checkpoint.started" => "save_schema base_project_revision draft actor",
             "checkpoint.created" => {
@@ -270,7 +270,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
         }
         "session.ended" => "status closed_claim_ids",
         "session.interrupted" => {
-            "session_id status released_claim_ids expired_claim_ids reconciled_at reason"
+            "session_id status released_claim_ids expired_claim_ids reconciled_at reason source_revision source_fingerprint"
         }
         "claim.released" | "claim.expired" => "claim_id",
         "checkpoint.started" => "save_schema base_project_revision draft",

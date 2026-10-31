@@ -1,3 +1,4 @@
+mod finished_work;
 mod organization;
 mod runtime_snapshot;
 use awr_core::{Error, Result};

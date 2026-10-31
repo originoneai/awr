@@ -176,6 +176,8 @@ pub(crate) struct RuntimeProject {
     pub store: Store,
     pub project: Project,
     refreshed: bool,
+    /// What the refresh released because the source calls the work finished; absent when nothing happened.
+    reconciliation: Option<Value>,
 }
 impl RuntimeProject {
     /// Check the caller's revision both before and after source refresh, as MCP writes do.
@@ -190,6 +192,7 @@ impl RuntimeProject {
                 actual: project.project_revision,
             });
         }
+        let watch = crate::finished_work::Watch::take(&store, project.id);
         let refresh = awr_source::index_project(
             &mut store,
             &root,
@@ -201,6 +204,9 @@ impl RuntimeProject {
                 "source refresh is incomplete; inspect awr source reindex".into(),
             ));
         }
+        // A refresh that brought a change moves the revision, so this write is refused below and the
+        // caller reads again; what the source finished is released first, and stays on record.
+        watch.reconcile(&mut store);
         project = store.project(project.id)?;
         if project.project_revision != expected {
             return Err(Error::RevisionConflict {
@@ -212,6 +218,7 @@ impl RuntimeProject {
             store,
             project,
             refreshed: true,
+            reconciliation: None,
         })
     }
 
@@ -223,6 +230,7 @@ impl RuntimeProject {
                 store: query.store,
                 project: query.project,
                 refreshed: true,
+                reconciliation: query.reconciliation,
             });
         }
         let root = root.canonicalize()?;
@@ -238,10 +246,15 @@ impl RuntimeProject {
             store,
             project,
             refreshed: false,
+            reconciliation: None,
         })
     }
     pub fn metadata(&self, revision: Revision) -> Value {
-        json!({"ok":true,"project_revision":revision,"source_refresh_performed":self.refreshed,"freshness_basis":if self.refreshed {"source_refresh"} else {"runtime_database"}})
+        let mut value = json!({"ok":true,"project_revision":revision,"source_refresh_performed":self.refreshed,"freshness_basis":if self.refreshed {"source_refresh"} else {"runtime_database"}});
+        if let Some(note) = &self.reconciliation {
+            value["reconciliation"] = note.clone();
+        }
+        value
     }
     pub fn check_revision(&self) -> Result<()> {
         let actual = self.store.project(self.project.id)?.project_revision;

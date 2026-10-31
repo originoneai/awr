@@ -4,6 +4,12 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
+- A claim on work the source now calls completed or cancelled is released when a command refreshes the sources
+  (`source reindex`, the reads that refresh, `session start`, `work claim`), and the session it leaves without a claim
+  is closed as `interrupted` with `reason: source_terminal` and the source revision and fingerprint it saw. A checkpoint
+  save in flight, a change waiting to be applied, an execution that has not ended and a claim on another branch are left
+  alone and reported; the reply carries `reconciliation` only when something happened. See
+  [database health](../reference/database-recovery.md#claims-and-sessions-of-work-the-source-calls-finished).
 - Governed work in a Team: a snapshot may declare governance (`governance.json`, written by
   `PublishPrepOptions::governance`), the Team reuses the Core admission rules on its own facts, and
   `admission.decide` records decisions attributed to the verified caller (`planning.approve`, a

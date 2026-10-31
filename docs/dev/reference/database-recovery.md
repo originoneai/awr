@@ -4,7 +4,7 @@ Source files are authoritative for project facts. SQLite also holds state that
 those files do not contain: sessions, claims, checkpoints, runtime events,
 artifact registrations and mutation attempts. Reindexing source files refreshes
 their projections and derived search; it preserves retained runtime ownership and
-old receipts. Initializing a new database from the same source files cannot
+old receipts, apart from the claims on finished work described below. Initializing a new database from the same source files cannot
 reconstruct missing runtime history.
 
 ## Inspecting a database
@@ -39,6 +39,30 @@ rechecks it under the writer lock, and verifies the result before committing the
 upgrade. A rejected catalog or migration SQL failure cannot leave new tables,
 catalog rows or a new schema version committed. SQLite connection/WAL setup is
 distinct from the migration transaction. Doctor never invokes that upgrade path.
+
+## Claims and sessions of work the source calls finished
+
+A claim is runtime state and the status of a work is a source fact. When a command that refreshes the sources shows that
+a work with an active claim is now `completed` or `cancelled` (its file was edited directly, or it was finished elsewhere),
+the claim is released, and the session that is left without a claim is closed as `interrupted` when it was bound to that
+work. `source reindex`, the reads that refresh the sources (`status`, `ready`, `work show`, `context compile` and the
+like), `session start` and `work claim` do this after the projection is committed, in a runtime transaction of its own
+under the live project revision. MCP read tools never do it. A write whose caller revision the refresh has moved is refused
+as before, after the release, and the caller reads again.
+
+The reply of a read or of `source reindex` carries `reconciliation` with the `released_claim_ids`, the
+`interrupted_session_ids` and what was `skipped` with its reason; nothing is said when there was nothing to do, so a
+second call changes nothing and reports nothing. Each release has a receipt: `session.interrupted` (or `claim.released` /
+`claim.expired` when the session goes on holding a claim on other work) with `reason: source_terminal` and the
+`source_revision` and `source_fingerprint` that were seen. Nothing here writes the source, evidence or the status of a
+work, and a session closed this way is `interrupted`, never `ended`: completion belongs to the work, with its evidence. When
+the work is reopened in the source it can be claimed again.
+
+It acts only on works that were open when the refresh began, so a claim that already stood on a finished work stays for the
+explicit clean-up and the doctor, and only when the new projection is fresh. It leaves alone, and says why, a session with a
+checkpoint save in flight (`checkpoint_save_in_flight`), a change waiting to be applied (`change_waiting_to_be_applied`), a
+supervised execution that has not ended (`execution_not_ended`) and a claim on a branch other than the current one
+(`claim_on_another_branch`); a busy database or a changed runtime is also reported and never fails the command.
 
 ## Backup and recovery
 
