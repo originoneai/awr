@@ -33,7 +33,8 @@
 - `node --test test/*.test.js`（在 `tools/inspector` 目录下跑，与 CI 的 `bridge tests` 一致；不要在仓库根目录跑 `node --test`）：桥接合同测试必须保持全绿。
 - `python3 scripts/check_public_tree.py`（仓库根目录）：公开树检查必须通过；`.local/`、`.awr/`、`ledger/` 不入 Git。
 - `cargo fmt --all --check`（改了 Rust 时必须；本目录原则上不改 Rust）。
-- 前端自身的构建/单元测试/浏览器截图对比随首个代码 PR 加入本清单；浏览器截图须与原型图逐页对比并写进 PR。
+- 本目录（CI 为 `.github/workflows/observer.yml`，Node 24）：`npm ci`、`npx tsc --noEmit`、`npx vitest run`、`npx vite build`、dist 无外部资源检查；本地冒烟 `node server.js --demo --port 0`。
+- 浏览器截图验收：本地 Playwright 与原型图逐页对比，对比图与结论放 AWR 证据目录（不入 Git），差异写进 PR。
 
 ## PR 规则
 
