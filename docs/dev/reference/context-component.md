@@ -87,9 +87,9 @@ accepted: no field of either says so, and a test holds the serialized result to 
 
 ## Corpus
 
-`tests/fixtures/context-kernel/` holds 62 synthetic cases, one file each, with the codes it must give: 12 accepted requests
+`tests/fixtures/context-kernel/` holds 63 synthetic cases, one file each, with the codes it must give: 12 accepted requests
 (external ids, groups of required and of optional chunks, a token budget with its tokenizer, an estimate, Markdown, a
-required chunk exactly the budget), 34 refused requests (duplicate ids, entity revision conflicts with chunks and with the
+required chunk exactly the budget), 35 refused requests (duplicate ids, entity revision conflicts with chunks and with the
 identity, mandatory overflow by bytes, by declared cost and by sum, unsupported encoding, medium, policy and protocol, every
 bound, every group fault) and 16 results (two consistent, one of them with an atomic group omitted whole, and fourteen that
 break one rule each). A test requires every code to be given by some case.

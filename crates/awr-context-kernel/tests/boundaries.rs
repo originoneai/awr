@@ -358,3 +358,46 @@ fn a_request_that_is_refused_is_refused_by_name_and_a_good_one_is_not_changed() 
         .collect::<String>();
     assert!(!shown.contains("xxxx"), "{shown}");
 }
+
+#[test]
+fn an_issue_names_a_chunk_by_a_short_plain_identifier_and_never_by_its_text() {
+    let mut parsed: PackRequest = serde_json::from_value(request()).unwrap();
+    let long_key = format!("{}\u{7}tail", "k".repeat(200));
+    parsed.required.push(Chunk {
+        key: "a".into(),
+        section: "s".into(),
+        section_rank: 0,
+        encoding: "utf-8".into(),
+        media: "text/plain".into(),
+        text: "secret body text".into(),
+        entities: vec![],
+        cost: None,
+    });
+    parsed.required.push(Chunk {
+        key: long_key.clone(),
+        section: "s".into(),
+        text: "other".into(),
+        ..parsed.required[0].clone()
+    });
+    parsed.required.push(Chunk {
+        key: long_key,
+        section: "s".into(),
+        text: "again".into(),
+        ..parsed.required[0].clone()
+    });
+    let issues = validate_request(
+        &parsed,
+        &Limits {
+            max_name_bytes: 400,
+            ..Limits::default()
+        },
+    );
+    let named: Vec<&PackIssue> = issues.iter().filter(|i| i.key.is_some()).collect();
+    assert!(!named.is_empty(), "{issues:?}");
+    for issue in named {
+        let key = issue.key.as_deref().unwrap();
+        assert!(key.len() <= 80, "{key}");
+        assert!(!key.chars().any(char::is_control), "{key:?}");
+        assert!(!issue.to_string().contains("secret body text"));
+    }
+}
