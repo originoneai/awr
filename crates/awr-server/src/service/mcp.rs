@@ -1594,13 +1594,51 @@ enum CatalogProfile {
 struct UnsupportedCatalogProfile;
 
 impl CatalogProfile {
-    fn from_query(_query: Option<&str>) -> Result<Self, UnsupportedCatalogProfile> {
-        Ok(Self::Full)
+    /// `catalog=full` (or no parameter) keeps the full catalog, `catalog=compact` selects the compact
+    /// one; any other value, or the parameter given twice, is refused rather than guessed.
+    fn from_query(query: Option<&str>) -> Result<Self, UnsupportedCatalogProfile> {
+        let mut found: Option<&str> = None;
+        for pair in query.unwrap_or_default().split('&') {
+            let Some(value) = pair.strip_prefix("catalog=") else {
+                continue;
+            };
+            if found.replace(value).is_some() {
+                return Err(UnsupportedCatalogProfile);
+            }
+        }
+        match found {
+            None | Some("full") => Ok(Self::Full),
+            Some("compact") => Ok(Self::Compact),
+            Some(_) => Err(UnsupportedCatalogProfile),
+        }
     }
 }
 
-fn catalog_for(_profile: CatalogProfile) -> Vec<Tool> {
-    catalog()
+/// One tool of the compact view: the closed per-operation branches (`allOf`) of its input schema
+/// are not published. Everything else stays, so every operation is still addressable by
+/// `properties.op.enum`; the exact input of one operation is read on demand with
+/// `awr_team_input_contract`; that tool and every call check keep using the full catalog.
+fn compact_tool(tool: &mut Tool) {
+    let mut schema = (*tool.input_schema).clone();
+    if schema.remove("allOf").is_none() {
+        return;
+    }
+    tool.input_schema = Arc::new(schema);
+    let description = tool.description.as_deref().unwrap_or_default();
+    tool.description = Some(
+        format!(
+            "{description} The per-operation branches of this input schema are omitted for this client because its model provider caps tool schemas: read awr_team_input_contract {{protocol_version, tool, op}} for the exact input of one operation. Every call is still checked against the full schema."
+        )
+        .into(),
+    );
+}
+
+fn catalog_for(profile: CatalogProfile) -> Vec<Tool> {
+    let mut tools = catalog();
+    if profile == CatalogProfile::Compact {
+        tools.iter_mut().for_each(compact_tool);
+    }
+    tools
 }
 
 impl ServerHandler for Endpoint {
@@ -3899,7 +3937,10 @@ mod tests {
     #[test]
     fn the_catalog_profile_comes_from_the_catalog_query_parameter_alone() {
         assert_eq!(CatalogProfile::from_query(None), Ok(CatalogProfile::Full));
-        assert_eq!(CatalogProfile::from_query(Some("")), Ok(CatalogProfile::Full));
+        assert_eq!(
+            CatalogProfile::from_query(Some("")),
+            Ok(CatalogProfile::Full)
+        );
         assert_eq!(
             CatalogProfile::from_query(Some("catalog=full")),
             Ok(CatalogProfile::Full)
@@ -3937,8 +3978,13 @@ mod tests {
         let full = catalog_for(CatalogProfile::Full);
         let compact = catalog_for(CatalogProfile::Compact);
         assert_eq!(
-            full.iter().map(|tool| tool.name.clone()).collect::<Vec<_>>(),
-            compact.iter().map(|tool| tool.name.clone()).collect::<Vec<_>>(),
+            full.iter()
+                .map(|tool| tool.name.clone())
+                .collect::<Vec<_>>(),
+            compact
+                .iter()
+                .map(|tool| tool.name.clone())
+                .collect::<Vec<_>>(),
             "the compact catalog lists the same tools in the same order"
         );
         let find = |tools: &[Tool]| {

@@ -20,7 +20,8 @@ use std::time::Duration;
 type Client = RunningService<RoleClient, ()>;
 
 #[tokio::test]
-async fn a_compact_catalog_client_lists_a_slim_command_tool_and_reads_every_contract_from_the_full_catalog() {
+async fn a_compact_catalog_client_lists_a_slim_command_tool_and_reads_every_contract_from_the_full_catalog()
+ {
     let (_guard, _admin, _, store) = setup().await;
     let server = start(store).await;
     let full = connect(&server, "one", A).await.unwrap();
@@ -40,7 +41,10 @@ async fn a_compact_catalog_client_lists_a_slim_command_tool_and_reads_every_cont
     assert!(command(&compact_tools).input_schema.get("allOf").is_none());
     assert_eq!(
         full_tools.iter().map(|tool| &tool.name).collect::<Vec<_>>(),
-        compact_tools.iter().map(|tool| &tool.name).collect::<Vec<_>>()
+        compact_tools
+            .iter()
+            .map(|tool| &tool.name)
+            .collect::<Vec<_>>()
     );
     assert!(
         serde_json::to_vec(&*command(&compact_tools).input_schema)
@@ -529,8 +533,11 @@ async fn connect_with_query(
 ) -> Result<Client, String> {
     let transport = StreamableHttpClientTransport::with_client(
         http(),
-        StreamableHttpClientTransportConfig::with_uri(format!("{}/{alias}/mcp?{query}", server.url))
-            .auth_header(token),
+        StreamableHttpClientTransportConfig::with_uri(format!(
+            "{}/{alias}/mcp?{query}",
+            server.url
+        ))
+        .auth_header(token),
     );
     tokio::time::timeout(Duration::from_secs(10), ().serve(transport))
         .await
