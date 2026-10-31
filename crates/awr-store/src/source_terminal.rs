@@ -122,7 +122,7 @@ impl Store {
                 let outcome = if ends {
                     self.with_live_revision(project, |store, revision| {
                         store.interrupt_for_finished_work(
-                            project, revision, session, *work_id, &observed,
+                            project, revision, session, *work_id, &observed, None, false,
                         )
                     })
                     .map(|(claims, session)| (claims, vec![session]))
@@ -131,7 +131,9 @@ impl Store {
                     let mut failure = None;
                     for claim in &claims {
                         match self.with_live_revision(project, |store, revision| {
-                            store.release_for_finished_work(project, revision, claim.id, &observed)
+                            store.release_for_finished_work(
+                                project, revision, claim.id, &observed, None,
+                            )
                         }) {
                             Ok(id) => released.push(id),
                             Err(error) => {
@@ -267,6 +269,8 @@ impl Store {
         session: Id,
         work: Id,
         observed: &(Revision, String),
+        note: Option<&str>,
+        idle_ok: bool,
     ) -> Result<(Vec<Id>, Id)> {
         let (claims, event) = self.runtime_transaction_with_event(
             project,
@@ -290,7 +294,7 @@ impl Store {
                     .map_err(db_error)?
                     .collect::<rusqlite::Result<Vec<_>>>()
                     .map_err(db_error)?;
-                if rows.is_empty() {
+                if rows.is_empty() && !idle_ok {
                     return Err(Error::MutationConflict(format!(
                         "the claims of session {session} changed during reconciliation"
                     )));
@@ -342,6 +346,9 @@ impl Store {
                     "source_revision": observed.0,
                     "source_fingerprint": observed.1,
                 });
+                if let Some(note) = note {
+                    event.payload["note"] = serde_json::json!(note);
+                }
                 Ok(rows.into_iter().map(|(id, _)| id).collect::<Vec<_>>())
             },
         )?;
@@ -355,6 +362,7 @@ impl Store {
         expected: Revision,
         claim: Id,
         observed: &(Revision, String),
+        note: Option<&str>,
     ) -> Result<Id> {
         self.runtime_transaction_with_event(
             project,
@@ -408,6 +416,9 @@ impl Store {
                     "source_revision": observed.0,
                     "source_fingerprint": observed.1,
                 });
+                if let Some(note) = note {
+                    event.payload["note"] = serde_json::json!(note);
+                }
                 Ok(claim)
             },
         )
@@ -423,5 +434,261 @@ impl FinishedWorkReconcile {
             work_item_key: key.to_string(),
             reason: reason.into(),
         });
+    }
+}
+
+/// A session the explicit clean-up would close, with the claims on the finished work it would release.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PlannedSession {
+    pub session_id: Id,
+    pub agent_id: String,
+    pub work_item_id: Id,
+    pub work_item_key: String,
+    pub work_status: String,
+    pub claim_ids: Vec<Id>,
+    pub source_revision: Revision,
+    pub source_fingerprint: String,
+}
+
+/// A claim on finished work that the explicit clean-up would release while its session goes on.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct PlannedClaim {
+    pub claim_id: Id,
+    pub session_id: Id,
+    pub agent_id: String,
+    pub work_item_id: Id,
+    pub work_item_key: String,
+    pub source_revision: Revision,
+    pub source_fingerprint: String,
+}
+
+/// What the explicit clean-up of the backlog would do: the sessions still active on finished work and the
+/// claims still held on it, each with the source revision and fingerprint it rests on, and what it would
+/// leave alone. Reading it changes nothing; the fingerprint names it, so applying it needs the same plan.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct FinishedWorkPlan {
+    pub sessions: Vec<PlannedSession>,
+    pub claims: Vec<PlannedClaim>,
+    pub skipped: Vec<ReconcileSkip>,
+}
+
+impl FinishedWorkPlan {
+    fn skip(&mut self, kind: &'static str, id: Id, key: &str, reason: impl Into<String>) {
+        self.skipped.push(ReconcileSkip {
+            object_kind: kind,
+            object_id: id,
+            work_item_key: key.to_string(),
+            reason: reason.into(),
+        });
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.sessions.is_empty() && self.claims.is_empty()
+    }
+
+    /// A name for exactly this plan.
+    pub fn fingerprint(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let bytes = serde_json::to_vec(self).unwrap_or_default();
+        format!("sha256:{:x}", Sha256::digest(bytes))
+    }
+}
+
+impl Store {
+    /// The backlog: every active session bound to a completed or cancelled work (with or without a claim) and
+    /// every active claim on one, judged on the recorded projection when its source is fresh. It does not
+    /// refresh the sources and it writes nothing.
+    pub fn plan_finished_work(&self, project: Id) -> Result<FinishedWorkPlan> {
+        let current_branch = self.project(project)?.current_branch_id;
+        let finished = self
+            .conn
+            .prepare(
+                "SELECT id FROM work_items WHERE project_id=?1 AND active=1
+                   AND status IN ('completed','cancelled') ORDER BY id",
+            )
+            .map_err(db_error)?
+            .query_map([project.to_string()], |row| id_at(row, 0))
+            .map_err(db_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(db_error)?;
+        let mut plan = FinishedWorkPlan::default();
+        for work_id in finished {
+            let work = self.work_item_by_id(project, work_id)?;
+            let key = work.item.meta.external_key.clone();
+            if work.source.freshness != Freshness::Fresh {
+                plan.skipped.push(ReconcileSkip {
+                    object_kind: "work",
+                    object_id: work_id,
+                    work_item_key: key,
+                    reason: "source_not_fresh".into(),
+                });
+                continue;
+            }
+            let status = serde_json::to_value(work.item.status)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_default();
+            let observed = (
+                work.item.meta.source_ref.source_revision,
+                work.item.meta.source_ref.source_fingerprint.clone(),
+            );
+            let mut claims: BTreeMap<Id, Vec<OpenClaim>> = BTreeMap::new();
+            for claim in self.open_claims_on(project, work_id)? {
+                claims.entry(claim.session_id).or_default().push(claim);
+            }
+            let sessions = self
+                .conn
+                .prepare(
+                    "SELECT s.id,s.agent_id,s.branch_id FROM sessions s
+                     WHERE s.project_id=?1 AND s.status='active' AND (s.work_item_id=?2 OR EXISTS(
+                       SELECT 1 FROM claims c WHERE c.project_id=s.project_id AND c.session_id=s.id
+                         AND c.work_item_id=?2 AND c.status='active')) ORDER BY s.id",
+                )
+                .map_err(db_error)?
+                .query_map(params![project.to_string(), work_id.to_string()], |row| {
+                    Ok((
+                        id_at(row, 0)?,
+                        row.get::<_, String>(1)?,
+                        optional_id(row, 2)?,
+                    ))
+                })
+                .map_err(db_error)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(db_error)?;
+            for (session, agent, branch) in sessions {
+                let held = claims.remove(&session).unwrap_or_default();
+                if branch.is_some() && branch != current_branch {
+                    plan.skip("session", session, &key, "session_on_another_branch");
+                    continue;
+                }
+                if let Some(claim) = held
+                    .iter()
+                    .find(|c| c.branch_id.is_some() && c.branch_id != current_branch)
+                {
+                    plan.skip("claim", claim.id, &key, "claim_on_another_branch");
+                    continue;
+                }
+                if let Some(reason) = self.in_flight(project, session, work_id)? {
+                    plan.skip("session", session, &key, reason);
+                    continue;
+                }
+                if self.session_ends_with(project, session, work_id)? {
+                    plan.sessions.push(PlannedSession {
+                        session_id: session,
+                        agent_id: agent,
+                        work_item_id: work_id,
+                        work_item_key: key.clone(),
+                        work_status: status.clone(),
+                        claim_ids: held.iter().map(|c| c.id).collect(),
+                        source_revision: observed.0,
+                        source_fingerprint: observed.1.clone(),
+                    });
+                } else {
+                    for claim in held {
+                        plan.claims.push(PlannedClaim {
+                            claim_id: claim.id,
+                            session_id: session,
+                            agent_id: agent.clone(),
+                            work_item_id: work_id,
+                            work_item_key: key.clone(),
+                            source_revision: observed.0,
+                            source_fingerprint: observed.1.clone(),
+                        });
+                    }
+                }
+            }
+            // Claims whose session is not active any more belong to nobody who could release them.
+            for (session, held) in claims {
+                for claim in held {
+                    plan.claims.push(PlannedClaim {
+                        claim_id: claim.id,
+                        session_id: session,
+                        agent_id: String::new(),
+                        work_item_id: work_id,
+                        work_item_key: key.clone(),
+                        source_revision: observed.0,
+                        source_fingerprint: observed.1.clone(),
+                    });
+                }
+            }
+        }
+        Ok(plan)
+    }
+
+    /// Carry out a plan, each object in a runtime transaction of its own under the live revision, with the
+    /// operator's note on every receipt. What changed since the plan was made is skipped and reported.
+    pub fn apply_finished_work(
+        &mut self,
+        project: Id,
+        plan: &FinishedWorkPlan,
+        note: &str,
+    ) -> Result<FinishedWorkReconcile> {
+        let mut report = FinishedWorkReconcile::default();
+        for planned in &plan.sessions {
+            let observed = (planned.source_revision, planned.source_fingerprint.clone());
+            if let Some(reason) =
+                self.in_flight(project, planned.session_id, planned.work_item_id)?
+            {
+                report.skip(
+                    "session",
+                    planned.session_id,
+                    &planned.work_item_key,
+                    reason,
+                );
+                continue;
+            }
+            if !self.session_ends_with(project, planned.session_id, planned.work_item_id)? {
+                report.skip(
+                    "session",
+                    planned.session_id,
+                    &planned.work_item_key,
+                    "session_changed_since_the_preview",
+                );
+                continue;
+            }
+            match self.with_live_revision(project, |store, revision| {
+                store.interrupt_for_finished_work(
+                    project,
+                    revision,
+                    planned.session_id,
+                    planned.work_item_id,
+                    &observed,
+                    Some(note),
+                    true,
+                )
+            }) {
+                Ok((claims, session)) => {
+                    report.released_claim_ids.extend(claims);
+                    report.interrupted_session_ids.push(session);
+                }
+                Err(_) => report.skip(
+                    "session",
+                    planned.session_id,
+                    &planned.work_item_key,
+                    "could_not_reconcile",
+                ),
+            }
+        }
+        for planned in &plan.claims {
+            let observed = (planned.source_revision, planned.source_fingerprint.clone());
+            match self.with_live_revision(project, |store, revision| {
+                store.release_for_finished_work(
+                    project,
+                    revision,
+                    planned.claim_id,
+                    &observed,
+                    Some(note),
+                )
+            }) {
+                Ok(id) => report.released_claim_ids.push(id),
+                Err(_) => report.skip(
+                    "claim",
+                    planned.claim_id,
+                    &planned.work_item_key,
+                    "could_not_reconcile",
+                ),
+            }
+        }
+        Ok(report)
     }
 }
