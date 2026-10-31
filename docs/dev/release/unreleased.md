@@ -71,6 +71,12 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   those facts, goes stale when they change and opens no task; failures that alternate with
   successes, waits and blockers are shown and hold nothing, and recovery paths are never held. See
   [bounded reassessment](../reference/reassessment.md).
+- A claim on work the source now calls completed or cancelled is released when a command refreshes the sources
+  (`source reindex`, the reads that refresh, `session start`, `work claim`), and the session it leaves without a claim
+  is closed as `interrupted` with `reason: source_terminal` and the source revision and fingerprint it saw. A checkpoint
+  save in flight, a change waiting to be applied, an execution that has not ended and a claim on another branch are left
+  alone and reported; the reply carries `reconciliation` only when something happened. See
+  [database health](../reference/database-recovery.md#claims-and-sessions-of-work-the-source-calls-finished).
 - Rework and active-effort budgets for governed work: a definition may declare a `size` (small,
   medium or large) and a `budget`; the defaults of the size apply otherwise. AWR counts rework from
   its own reopen records and effort from the claims held on the work before it uses the counters a
