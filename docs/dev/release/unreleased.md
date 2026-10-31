@@ -4,6 +4,11 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
+- One shape for a work and its readiness in the CLI and the MCP server (`awr_core::work_brief`, `ready_brief`), in place of
+  two identical copies, and parity tests that hold the five result layers apart across both entries: a complete context
+  with a work that is not ready, a ready work with an incomplete context, an unknown value that is neither, a claim as its
+  own answer, and a `ready` answer that authorizes nothing because claims and transitions are judged on the facts of the
+  moment they are submitted. `docs/dev/reference/diagnostics.md` explains which layer each readiness code answers.
 - Governed work in a Team: a snapshot may declare governance (`governance.json`, written by
   `PublishPrepOptions::governance`), the Team reuses the Core admission rules on its own facts, and
   `admission.decide` records decisions attributed to the verified caller (`planning.approve`, a

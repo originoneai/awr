@@ -387,6 +387,115 @@ class Parity(unittest.TestCase):
                         "reason": "Inspect outdated revision", "next_action": "Refresh", "expected_revision": expected}, error=True))
         self.assertEqual(self.state(), before)
 
+    # ---- AWR-EVO-012: the five layers keep their own answers, and the entries give the same ones
+    NOT_DONE = WORK.replace("id: D\n  title: Required input\n  status: completed",
+                            "id: D\n  title: Required input\n  status: ready\n  next_action: Finish the input")
+
+    def facts(self, work):
+        """Change the facts behind earlier answers: the source is edited and recorded."""
+        (self.root / "work.yaml").write_text(work)
+        self.cli(["source", "reindex"])
+
+    def prepared(self, failure=None):
+        """work prepare through both entries. Each words a failure in its own envelope (the CLI on standard error, the
+        MCP server inside the result), so the bodies are compared without it and the error code on its own."""
+        if failure:
+            cli, cli_error = self.cli(["work", "prepare", "W", "--budget", "9000"], code=1)
+            self.assertEqual(cli_error["code"], failure)
+        else:
+            cli = self.cli(["work", "prepare", "W", "--budget", "9000"])
+        mcp = self.tool("awr_work_prepare", {"work": "W", "budget": 9000}, error=bool(failure), readonly=True)
+        if failure:
+            self.assertEqual(mcp.pop("error")["code"], failure)
+        self.equal_read(cli, mcp)
+        return cli, mcp
+
+    def test_the_layers_stay_apart_and_both_entries_agree_on_every_set_of_facts(self):
+        seen_codes = set()
+        # label, source, selectable, context complete, readiness diagnostics, failure of the prepared context
+        cases = [
+            ("every layer clear", WORK, True, True, set(), None),
+            ("a required dependency is not done: the context is complete and the work is not selectable",
+             self.NOT_DONE, False, True, {"dependency_not_completed"}, None),
+            ("a required dependency that is not done and has no next action: the context is not complete either",
+             WORK.replace("id: D\n  title: Required input\n  status: completed", "id: D\n  title: Required input\n  status: ready"),
+             False, False, {"dependency_not_completed"}, "ContextIncomplete"),
+            ("an active blocker: the context is complete and the work is not selectable",
+             WORK.replace("next_action: Draft the analysis", "next_action: Draft the analysis\n  blocker: Waiting for the customer"),
+             False, True, {"active_blocker"}, None),
+            ("no acceptance: the work is selectable and the context is not complete",
+             WORK.replace("  acceptance: [Deliver the reviewed analysis]\n", ""), True, False, set(), "ContextIncomplete"),
+            ("a status nobody knows is neither selectable nor complete",
+             WORK.replace("title: Prepare customer analysis\n  status: ready", "title: Prepare customer analysis\n  status: wibble"),
+             False, False, {"unknown_status"}, "ContextIncomplete"),
+            ("a dependency that does not exist is neither selectable nor complete",
+             WORK.replace("depends_on: [D]", "depends_on: [D, GONE]"), False, False, {"missing_dependency"}, "ContextIncomplete"),
+        ]
+        for label, work, selectable, complete, codes, failure in cases:
+            with self.subTest(label):
+                self.facts(work)
+                for cli, tool, args in [(["status", "--work", "W"], "awr_project_status", {"view": "action", "work": ["W"]}),
+                                        (["ready"], "awr_work_ready", {}),
+                                        (["work", "show", "W"], "awr_work_get", {"work": "W"})]:
+                    self.equal_read(self.cli(cli), self.tool(tool, args, readonly=True))
+                shown = self.cli(["work", "show", "W"])["work"]
+                self.assertEqual(shown["ready"], selectable)
+                self.assertEqual({d["code"] for d in shown["diagnostics"]}, codes)
+                cli, mcp = self.prepared(failure)
+                for prepared in (cli, mcp):
+                    self.assertEqual(prepared["ready"], selectable)
+                    self.assertEqual(prepared["context"]["completeness"]["complete"], complete)
+                    self.assertEqual({d["code"] for d in prepared["diagnostics"]}, codes)
+                    self.assertEqual(prepared["active_claims"], [], "reading claims nothing")
+                seen_codes |= codes
+        # Every code seen is explained in the diagnostics reference.
+        reference = (Path(__file__).resolve().parents[3] / "docs/dev/reference/diagnostics.md").read_text()
+        self.assertEqual({code for code in seen_codes if f"`{code}`" not in reference}, set())
+        # A claim is its own answer: the work is no longer selectable and its context is still complete.
+        self.facts(WORK)
+        self.session()
+        cli, mcp = self.prepared()
+        for prepared in (cli, mcp):
+            self.assertFalse(prepared["ready"])
+            self.assertTrue(prepared["context"]["completeness"]["complete"])
+            self.assertEqual({d["code"] for d in prepared["diagnostics"]}, {"active_claim"})
+            self.assertEqual(len(prepared["active_claims"]), 1)
+        self.assertTrue(mcp["read_only"] and not cli["read_only"])
+
+    def test_a_query_authorizes_nothing_and_a_claim_is_judged_on_the_facts_of_that_moment(self):
+        # Both entries say the work can be selected, and reading it claims nothing.
+        self.assertTrue(self.cli(["work", "show", "W"])["work"]["ready"])
+        self.assertTrue(self.tool("awr_work_get", {"work": "W"}, readonly=True)["work"]["ready"])
+        self.assertEqual(self.cli(["work", "show", "W"])["work"]["active_claims"], [])
+        # A required dependency becomes unfinished behind those answers: neither entry grants the claim.
+        self.facts(self.NOT_DONE)
+        revision = self.revision()
+        _, cli_error = self.cli(["session", "start", "--work", "W", "--agent", "parity-executor", "--provider", "fixture",
+                                 "--model", "no-model-call", "--claim", "--expected-revision", revision], code=1)
+        mcp_error = self.tool("awr_session_start", {"work": "W", "conversation": "parity-query", "agent": "parity-executor",
+                                                    "provider": "fixture", "model": "no-model-call",
+                                                    "expected_revision": revision, "claim": True}, error=True)
+        for error in (cli_error, mcp_error):
+            self.assertEqual(error["code"], "DependencyBlocked")
+            self.assertIn("dependency_not_completed", error["message"])
+        self.assertEqual(self.cli(["work", "show", "W"])["work"]["active_claims"], [])
+        # A lease that has ended authorizes nothing either, and the work shows as unclaimed.
+        self.facts(WORK)
+        sid = self.cli(["session", "start", "--work", "W", "--agent", "parity-executor", "--provider", "fixture",
+                        "--model", "no-model-call", "--claim", "--ttl-ms", "1000", "--expected-revision", self.revision()])["session"]["id"]
+        time.sleep(1.4)
+        revision = self.revision()
+        _, cli_error = self.cli(["work", "progress", "W", "--session", sid, "--reason", "Continue after the lease ended",
+                                 "--next-action", "Continue", "--expected-revision", revision], code=1)
+        mcp_error = self.tool("awr_work_transition", {"work": "W", "action": "progress", "session": sid,
+                                                      "reason": "Continue after the lease ended", "next_action": "Continue",
+                                                      "expected_revision": revision}, error=True)
+        self.assertEqual(cli_error, mcp_error)
+        self.assertEqual(cli_error["code"], "ClaimConflict")
+        shown = self.cli(["work", "show", "W"])["work"]
+        self.assertEqual(shown["active_claims"], [])
+        self.assertTrue(shown["ready"])
+
     def test_typed_errors_and_stale_cas_do_not_write(self):
         for cli, name, args in [
             (["work", "show", "ABSENT"], "awr_work_get", {"work": "ABSENT"}),

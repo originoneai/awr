@@ -117,7 +117,7 @@ cargo test -p awr-mcp --test shared --locked
 
 对照程序使用临时 fixture，实际启动 CLI 与 MCP stdio。读取比较完整领域 JSON，逐表检查 MCP 未写入 DB，检查权威来源字节不变；写入从同一快照分别执行，并核对状态、源文件结果、revision、缺口、证据和认领回执。Context hash 和必需事实不做归一化。独立写入的生成 ID / 时间分别验证，不能作为两次执行内容相等的条件。
 
-HTTP 集成另外覆盖多客户端、多项目、会话、等待、重复请求、重启和未知结果恢复；官方 Rust MCP SDK 客户端还验证协议发现与调用。八项 CLI 对照没有被扩充成全部新工具的逐项对照。
+HTTP 集成另外覆盖多客户端、多项目、会话、等待、重复请求、重启和未知结果恢复；官方 Rust MCP SDK 客户端还验证协议发现与调用。十一项 CLI 对照没有被扩充成全部新工具的逐项对照；其中两项（AWR-EVO-012）对同一组事实经两端核对结论、诊断与五层互不混用，并核对查询不授权。
 
 这些属于本地接口与功能验证，不代表真实 Agent 客户端业务验收、性能测量或发布结果。
 
@@ -146,6 +146,12 @@ HTTP 集成另外覆盖多客户端、多项目、会话、等待、重复请求
 
 - 上下文完整且依赖未完成（`CX-SEP-01`）
 - 可读但无执行权（`CX-SEP-02`；对照 `read_only` / 无 claim / MCP 只读）
+
+AWR-EVO-012：CLI 与 MCP 的 `ready` / `work` 简报由同一组函数生成（`awr_core::ready_brief`、`work_brief`）；
+`cli_parity.py` 的 `test_the_layers_stay_apart_and_both_entries_agree_on_every_set_of_facts` 对多组事实（依赖未完成、
+阻塞、未知状态、缺失依赖、无验收、已认领）逐项核对两端结论与诊断一致且各层答案互不推出；
+`test_a_query_authorizes_nothing_and_a_claim_is_judged_on_the_facts_of_that_moment` 核对查询不授权、事实变化或租约
+结束后提交重新判定。诊断含义见 [diagnostics](diagnostics.md#readiness-diagnostics-which-layer-answers)。
 
 ### 宿主模式
 
