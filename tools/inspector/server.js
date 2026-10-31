@@ -259,6 +259,7 @@ const COMMANDS = {
   ready: { argv: ['ready'], write: false },
   workShow: { argv: ['work', 'show'], write: false },
   workAssess: { argv: ['work', 'assess'], write: false },
+  specCheck: { argv: ['spec', 'check'], write: false },
   mainlineNav: { argv: ['nav'], write: false },
   search: { argv: ['search'], write: false },
   intakeInspect: { argv: ['intake', 'inspect'], write: false },
@@ -653,6 +654,20 @@ const routes = {
     }
     // Read-only assess. Query strings cannot add --explain or record observations.
     return runCommand('workAssess', [key]);
+  },
+
+  'GET /api/spec-check': async (url) => {
+    const extra = [];
+    const specParam = url.searchParams.get('spec');
+    if (specParam != null && specParam !== '') {
+      const spec = asKey(specParam);
+      if (!spec) {
+        return { ok: false, error: { code: 'BadRequest', message: 'A valid spec parameter is required' } };
+      }
+      extra.push('--spec', spec);
+    }
+    // Read-only declared-binding check. Query strings cannot add --limit or scan prose.
+    return runCommand('specCheck', extra);
   },
 
   'GET /api/search': async (url) => {

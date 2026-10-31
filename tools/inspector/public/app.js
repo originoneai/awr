@@ -76,6 +76,7 @@
       evidence:   ['evidence'],
       decisions:  ['decisions'],
       cycles:     ['dependency_cycles'],
+      specRefs:   ['spec_refs'],
     },
     // awr work assess --json: management intensity, not completion or admission.
     workAssess: {
@@ -91,6 +92,18 @@
       recordRequired:    ['record_required'],
       observationBasis:  ['observation_basis'],
       scope:             ['scope'],
+    },
+    // awr spec check --json: declared bindings only, not tests or implementation.
+    specCheck: {
+      status:                  ['status'],
+      specifications:          ['specifications'],
+      references:              ['references'],
+      requirements:            ['requirements'],
+      counts:                  ['counts'],
+      diagnostics:             ['diagnostics'],
+      associationDiagnostics:  ['association_diagnostics'],
+      coverageBasis:           ['coverage_basis'],
+      boundary:                ['boundary'],
     },
     context: {
       rendered:   ['work_context.rendered_context', 'rendered_context', 'diagnostic_text'],
@@ -304,6 +317,7 @@
     works: [],             // Normalized work-item list.
     workDetail: {},        // Key to details.
     workAssess: {},        // Key to read-only work assess results.
+    specCheck: {},         // Project-wide read-only spec check.
     sources: null,
     sessions: { items: [], loaded: false, error: null, command: null, mayHaveMore: false },
     selectedSession: null,
@@ -456,6 +470,7 @@
       diagnostics: pick(item, M.diagnostics, []) || [],
       evidence: pick(raw, M.evidence, []) || [],
       decisions: pick(raw, M.decisions, []) || [],
+      specRefs: pick(item, M.specRefs, null) || pick(raw, M.specRefs, []) || [],
     });
   }
 
@@ -1914,6 +1929,7 @@
     detailGuard.invalidate();
     state.workDetail = {};
     state.workAssess = {};
+    state.specCheck = {};
     state.workPageLoading = true;
     state.workPage = null;
     state.workPageError = null;
@@ -2213,6 +2229,158 @@
     renderWorkAssess(host, state.workAssess[key]);
   }
 
+  function applySpecCheck(response) {
+    if (isUnsupported(response)) {
+      state.unsupported.add('spec.check');
+      state.specCheck = {
+        loaded: true,
+        error: response.error,
+        data: null,
+        command: response.command,
+      };
+      return;
+    }
+    state.unsupported.delete('spec.check');
+    if (response && response.ok) {
+      state.specCheck = {
+        loaded: true,
+        error: null,
+        data: response.data || {},
+        command: response.command,
+      };
+      return;
+    }
+    state.specCheck = {
+      loaded: true,
+      error: (response && response.error) || { code: 'Error', message: '' },
+      data: null,
+      command: response && response.command,
+    };
+  }
+
+  function renderSpecCheck(host, bag, workKey) {
+    if (!host) return;
+    clear(host);
+    if (!bag || !bag.loaded) {
+      host.appendChild(el('p', 'sub', i18n.t('ui.spec_check_loading')));
+      return;
+    }
+    if (bag.error) {
+      host.appendChild(errorBlock(bag.error, bag.command));
+      return;
+    }
+    const data = bag.data || {};
+    const S = FIELD_MAP.specCheck;
+    const status = pick(data, S.status, null);
+    const references = pick(data, S.references, []) || [];
+    const requirements = pick(data, S.requirements, []) || [];
+    const diagnostics = pick(data, S.diagnostics, []) || [];
+    const associations = pick(data, S.associationDiagnostics, []) || [];
+    const basis = pick(data, S.coverageBasis, null);
+    const boundary = pick(data, S.boundary, null);
+    const declared = (state.workDetail[workKey] && state.workDetail[workKey].detail
+      && state.workDetail[workKey].detail.specRefs) || [];
+    const mine = Array.isArray(references)
+      ? references.filter((row) => row && row.work === workKey)
+      : [];
+    const uncovered = Array.isArray(requirements)
+      ? requirements.filter((row) => row && row.status === 'uncovered')
+      : [];
+    const relatedAssoc = Array.isArray(associations)
+      ? associations.filter((row) => row && row.work === workKey)
+      : [];
+
+    host.appendChild(el('h4', null, i18n.t('ui.spec_check')));
+    if (bag.command) {
+      const cmd = el('div', 'cmd');
+      cmd.appendChild(el('span', 'prompt', '$'));
+      cmd.appendChild(el('code', null, bag.command));
+      host.appendChild(cmd);
+    }
+    host.appendChild(el('p', 'figure-note', i18n.t('ui.spec_check_not_implementation')));
+    if (status) {
+      const line = el('p', null);
+      line.appendChild(el('span', 'sub', i18n.t('ui.spec_check_status') + ' '));
+      line.appendChild(document.createTextNode(String(status)));
+      host.appendChild(line);
+    }
+    host.appendChild(el('p', 'sub', i18n.t('ui.spec_check_declared')));
+    if (Array.isArray(declared) && declared.length) {
+      const ul = el('ul', 'open-loops');
+      for (const ref of declared) {
+        const spec = ref && (ref.specification || ref.spec);
+        const item = ref && ref.item;
+        ul.appendChild(el('li', null, [spec, item].filter(Boolean).join(' / ')));
+      }
+      host.appendChild(ul);
+    } else {
+      host.appendChild(el('p', null, i18n.t('ui.spec_check_no_refs')));
+    }
+    host.appendChild(el('p', 'sub', i18n.t('ui.spec_check_refs')));
+    if (mine.length) {
+      const ul = el('ul', 'open-loops');
+      for (const row of mine) {
+        const spec = row.reference && row.reference.specification;
+        const item = row.reference && row.reference.item;
+        const reasons = Array.isArray(row.reasons) ? row.reasons.join(', ') : '';
+        ul.appendChild(el('li', null, [spec, item, row.status, reasons].filter(Boolean).join(' · ')));
+      }
+      host.appendChild(ul);
+    } else {
+      host.appendChild(el('p', null, i18n.t('ui.spec_check_no_refs')));
+    }
+    host.appendChild(el('p', 'sub', i18n.t('ui.spec_check_uncovered')));
+    if (uncovered.length) {
+      const ul = el('ul', 'crit-list');
+      for (const row of uncovered) {
+        ul.appendChild(el('li', null, [row.specification, row.item].filter(Boolean).join(' / ')));
+      }
+      host.appendChild(ul);
+    } else {
+      host.appendChild(el('p', null, i18n.t('ui.spec_check_no_uncovered')));
+    }
+    if (relatedAssoc.length) {
+      host.appendChild(el('p', 'sub', i18n.t('ui.spec_check_association')));
+      const ul = el('ul', 'open-loops');
+      for (const row of relatedAssoc) {
+        const reasons = Array.isArray(row.reasons) ? row.reasons.join(', ') : '';
+        ul.appendChild(el('li', null, [row.specification, row.status, reasons].filter(Boolean).join(' · ')));
+      }
+      host.appendChild(ul);
+    }
+    if (Array.isArray(diagnostics) && diagnostics.length) {
+      host.appendChild(el('p', 'sub', i18n.t('ui.spec_check_diagnostics')));
+      const ul = el('ul', 'open-loops');
+      for (const d of diagnostics) ul.appendChild(el('li', null, String(d)));
+      host.appendChild(ul);
+    }
+    if (basis) host.appendChild(el('p', 'sub', String(basis)));
+    if (boundary) host.appendChild(el('p', 'sub', String(boundary)));
+  }
+
+  async function loadSpecCheck(key, token, host) {
+    const cached = state.specCheck;
+    if (cached && cached.loaded) {
+      renderSpecCheck(host, cached, key);
+      return;
+    }
+    renderSpecCheck(host, { loaded: false }, key);
+    let response;
+    if (state.mode === 'demo') {
+      const demo = window.AWR_DEMO && typeof window.AWR_DEMO.specCheck === 'function'
+        ? window.AWR_DEMO.specCheck()
+        : null;
+      response = demo
+        ? { ok: true, data: demo, command: 'awr spec check' }
+        : { ok: false, error: { code: 'NotFound', message: i18n.t('ui.spec_check_missing') } };
+    } else {
+      response = await callApi('/api/spec-check');
+    }
+    if (!detailGuard.isCurrent(token)) return;
+    applySpecCheck(response);
+    renderSpecCheck(host, state.specCheck, key);
+  }
+
   async function renderWorkDetail(key) {
     const token = detailGuard.begin(key);
     const box = $('workDetail');
@@ -2397,6 +2565,10 @@
     const assessHost = el('div');
     box.appendChild(assessHost);
     await loadWorkAssess(key, token, assessHost);
+    if (!detailGuard.isCurrent(token)) return;
+    const specHost = el('div');
+    box.appendChild(specHost);
+    await loadSpecCheck(key, token, specHost);
   }
 
   // Context
@@ -2779,6 +2951,7 @@
     detailGuard.invalidate();
     state.workDetail = {};
     state.workAssess = {};
+    state.specCheck = {};
     state.compile = null;
     await loadAll();
   }
@@ -2802,6 +2975,7 @@
     state.workPageError = null;
     state.workDetail = {};
     state.workAssess = {};
+    state.specCheck = {};
     state.status = null;
     state.sources = null;
     state.sessions = { items: [], loaded: false, error: null, command: null, mayHaveMore: false };
@@ -2847,6 +3021,7 @@
     detailGuard.invalidate();
     state.workDetail = {};
     state.workAssess = {};
+    state.specCheck = {};
     state.workPage = null;
     const health = await callApi('/api/health');
     if (generation !== loadGeneration) return;
@@ -3335,7 +3510,7 @@
       renderPacketSize, doCompile, renderQueueList, fillWorkSelect, loadAll,
       renderSessions, renderEvents, applyListResponse, applySessionShow, applyCompactionInspect, selectSession,
       renderPending, applyRecoveryInspect, applyExecutionInspect, selectRecovery,
-      applyEventShow, selectEvent, applyWorkAssess,
+      applyEventShow, selectEvent, applyWorkAssess, applySpecCheck,
     };
   }
 })();

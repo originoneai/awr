@@ -13,7 +13,7 @@ function fixture(total = 17, returned = total, revision = 7) {
 }
 function render(status, filter = "all") {
   app.state.mode = "live"; app.state.status = status; app.state.workFilter = filter; app.state.selectedWork = null;
-  app.state.workDetail = {}; app.state.workAssess = {}; app.renderWork();
+  app.state.workDetail = {}; app.state.workAssess = {}; app.state.specCheck = {}; app.renderWork();
 }
 test("17 ready items replace the five-item summary and render all twenty queue items", () => {
   const status = app.normStatus(...fixture()); render(status);
@@ -122,6 +122,7 @@ test('second-page detail keeps its context selection through refresh and submits
   app.state.workPage = pageResponse(10).data.page;
   app.state.workDetail = {};
   app.state.workAssess = {};
+  app.state.specCheck = {};
   app.fillWorkSelect();
   const select = document.getElementById('fWork');
   select.value = 'NOT-AN-OPTION';

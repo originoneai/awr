@@ -687,6 +687,60 @@ test('work assess rejects a missing or invalid key before execution', async () =
   }
 });
 
+test('spec check is forwarded without write flags or a limit override', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awr-argv-'));
+  const argvLog = path.join(dir, 'argv.jsonl');
+  let b;
+  try {
+    b = await startBridge({ env: { STUB_ARGV_OUT: argvLog } });
+    const shown = await (await fetch(
+      `${b.base}/api/spec-check?limit=1&scan=prd`,
+      { headers: GUARD }
+    )).json();
+    assert.equal(shown.ok, true, JSON.stringify(shown));
+    assert.equal(shown.data.status, 'unknown');
+    assert.equal(shown.data.read_only, true);
+    assert.match(shown.command, /spec check/);
+    assert.doesNotMatch(shown.command, /limit|scan|prd/);
+    const calls = fs.readFileSync(argvLog, 'utf8').trim().split('\n').map(JSON.parse);
+    const args = calls.find((row) => row.includes('spec') && row.includes('check'));
+    assert.ok(args);
+    assert.ok(!args.includes('--limit'));
+    assert.ok(!args.includes('scan'));
+  } finally {
+    if (b) await b.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('spec check forwards a validated spec key and rejects an invalid one', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awr-argv-'));
+  const argvLog = path.join(dir, 'argv.jsonl');
+  let b;
+  try {
+    b = await startBridge({ env: { STUB_ARGV_OUT: argvLog } });
+    const shown = await (await fetch(
+      `${b.base}/api/spec-check?spec=configuration-spec`,
+      { headers: GUARD }
+    )).json();
+    assert.equal(shown.ok, true, JSON.stringify(shown));
+    assert.match(shown.command, /spec check --spec configuration-spec/);
+    const before = fs.readFileSync(argvLog, 'utf8');
+    const invalid = await (await fetch(
+      `${b.base}/api/spec-check?spec=bad%20id`,
+      { headers: GUARD }
+    )).json();
+    assert.equal(invalid.ok, false);
+    assert.equal(invalid.error.code, 'BadRequest');
+    assert.ok(!invalid.command, 'Do not spawn a child process');
+    const after = fs.readFileSync(argvLog, 'utf8');
+    assert.equal(after, before, 'Do not spawn a child process');
+  } finally {
+    if (b) await b.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('execution inspect is forwarded with a validated id and no write flags', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awr-argv-'));
   const argvLog = path.join(dir, 'argv.jsonl');

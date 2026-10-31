@@ -151,6 +151,23 @@ if (mode === 'slow') {
   });
 } else if (joined.includes('ready')) {
   emit({ ok: true, ready: [], ready_total: 0, blocked_sample: [], blocked_total: 0 });
+} else if (joined.includes('spec check')) {
+  emit({
+    version: 1,
+    status: 'unknown',
+    selection: { spec: null },
+    specifications: [],
+    references: [],
+    requirements: [],
+    counts: { covered: 0, uncovered: 0, not_required: 0, needs_review: 0, unknown: 0 },
+    diagnostics: ['no_explicit_specifications'],
+    association_diagnostics: [],
+    read_only: true,
+    source_write_performed: false,
+    runtime_write_performed: false,
+    coverage_basis: 'Explicit registered items and exact task references only; no prose scanning or inferred cancellations.',
+    boundary: 'Matched/covered describe declared version bindings and task coverage, never semantic agreement, implementation, acceptance or completion. No source is modified.',
+  });
 } else if (joined.includes('work assess')) {
   emit({
     version: 1,
