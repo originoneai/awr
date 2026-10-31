@@ -167,8 +167,8 @@ fn a_file_that_is_not_a_policy_is_refused_without_echoing_it() {
     for text in [
         "",
         "[claims]\ndefault_ttl = \"4h\"\n",
-        "version = \"one\"\n",
-        "version = 1\n[claims]\nrenew_on_activity = \"yes\"\n",
+        "version = \"S3CRET\"\n",
+        "version = 1\n[claims]\nrenew_on_activity = \"S3CRET\"\n",
         "version = 1\n[claims]\ndefault_ttl = 4\n",
         "version = 1\n[claims]\ndefault_ttl = \"S3CRET-forever\"\n",
         "version = 1\nthis is not toml S3CRET\n",
