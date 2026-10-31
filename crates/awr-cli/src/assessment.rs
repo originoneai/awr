@@ -1,10 +1,11 @@
 //! Developer assessment entry points: offline replay, shadow compare, advice kill-switch.
-use awr_core::{Error, Result};
+use awr_core::{Error, PolicyCeiling, Result};
 use awr_runtime::{
     ASSESSMENT_ADVICE_MODE_CAPABILITY, ASSESSMENT_REPLAY_CAPABILITY,
     ASSESSMENT_SHADOW_COMPARE_CAPABILITY, AdviceDeliveryMode, AttachExplanationOptions,
-    apply_advice_delivery_mode, attach_according_to_advice_mode, hard_protections_after_disable,
-    parse_replay_snapshot, replay_assessment_from_bytes, shadow_compare,
+    apply_advice_delivery_mode, apply_policy_change, attach_according_to_advice_mode,
+    hard_protections_after_disable, parse_replay_snapshot, preview_policy_change,
+    replay_assessment_from_bytes, shadow_compare, show_policy,
 };
 use clap::{Args, Subcommand};
 use serde_json::{Value, json};
@@ -19,6 +20,53 @@ pub enum AssessmentCommand {
     Compare(CompareArgs),
     /// Inspect or apply advice delivery mode (kill-switch / shadow / enabled).
     AdviceMode(AdviceModeArgs),
+    /// The project's assessment policy: show it, preview a change, write a confirmed change (DEC-040).
+    Policy {
+        #[command(subcommand)]
+        command: PolicyCommand,
+    },
+}
+
+pub const ASSESSMENT_POLICY_CAPABILITY: &str = "assessment.policy";
+
+#[derive(Debug, Subcommand)]
+pub enum PolicyCommand {
+    /// The policy in force and the versions the file holds. Reads only.
+    Show(PolicyShowArgs),
+    /// What a candidate policy file would change. Writes nothing; prints what to send back to confirm.
+    Preview(PolicyChangeArgs),
+    /// Write a previewed candidate, if the file still holds the bytes that were read.
+    Apply(PolicyApplyArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct PolicyShowArgs {
+    /// The `as_of` to resolve the policy for; default the project revision (what an explanation uses).
+    #[arg(long)]
+    as_of: Option<i64>,
+}
+
+#[derive(Debug, Args)]
+pub struct PolicyChangeArgs {
+    /// The candidate `assessment-policy.toml`: the whole file as it should be, with the versions already in use unchanged.
+    #[arg(long)]
+    input: PathBuf,
+    #[arg(long)]
+    as_of: Option<i64>,
+}
+
+#[derive(Debug, Args)]
+pub struct PolicyApplyArgs {
+    #[arg(long)]
+    input: PathBuf,
+    #[arg(long)]
+    as_of: Option<i64>,
+    /// `current_fingerprint` of the preview, or `absent` when the preview found no file.
+    #[arg(long)]
+    expected_current: String,
+    /// `candidate_fingerprint` of the preview.
+    #[arg(long)]
+    expected_candidate: String,
 }
 
 #[derive(Debug, Args)]
@@ -46,11 +94,65 @@ pub struct AdviceModeArgs {
     receipt: Option<PathBuf>,
 }
 
-pub fn run(command: &AssessmentCommand, json_output: bool) -> Result<()> {
+pub fn run(root: &Path, command: &AssessmentCommand, json_output: bool) -> Result<()> {
     match command {
         AssessmentCommand::Replay(args) => replay(args, json_output),
         AssessmentCommand::Compare(args) => compare(args, json_output),
         AssessmentCommand::AdviceMode(args) => advice_mode(args, json_output),
+        AssessmentCommand::Policy { command } => policy(root, command, json_output),
+    }
+}
+
+/// The `as_of` an explanation would use: the project revision, read without refreshing anything.
+fn as_of_or_revision(root: &Path, as_of: Option<i64>) -> Result<i64> {
+    match as_of {
+        Some(as_of) => Ok(as_of),
+        None => {
+            let query = crate::query::QueryProject::open_read(root, true)?;
+            i64::try_from(query.project.project_revision)
+                .map_err(|_| Error::InvalidInput("project revision out of range".into()))
+        }
+    }
+}
+
+fn policy(root: &Path, command: &PolicyCommand, json_output: bool) -> Result<()> {
+    let ceiling = PolicyCeiling::builtin();
+    match command {
+        PolicyCommand::Show(args) => {
+            let as_of = as_of_or_revision(root, args.as_of)?;
+            let shown = show_policy(root, as_of, &ceiling);
+            print_json(
+                &json!({"ok": true, "capability": ASSESSMENT_POLICY_CAPABILITY, "policy": shown}),
+                json_output,
+            )
+        }
+        PolicyCommand::Preview(args) => {
+            let as_of = as_of_or_revision(root, args.as_of)?;
+            let preview = preview_policy_change(root, &read_file(&args.input)?, as_of, &ceiling)?;
+            let ok = preview.ok;
+            print_json(
+                &json!({"ok": ok, "capability": ASSESSMENT_POLICY_CAPABILITY, "preview": preview}),
+                json_output,
+            )?;
+            if ok { Ok(()) } else { std::process::exit(1) }
+        }
+        PolicyCommand::Apply(args) => {
+            let as_of = as_of_or_revision(root, args.as_of)?;
+            let expected_current =
+                (args.expected_current != "absent").then_some(args.expected_current.as_str());
+            let applied = apply_policy_change(
+                root,
+                &read_file(&args.input)?,
+                expected_current,
+                &args.expected_candidate,
+                as_of,
+                &ceiling,
+            )?;
+            print_json(
+                &json!({"ok": true, "capability": ASSESSMENT_POLICY_CAPABILITY, "applied": applied}),
+                json_output,
+            )
+        }
     }
 }
 

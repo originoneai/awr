@@ -70,6 +70,7 @@ pub fn assess(root: &Path, args: &AssessArgs) -> Result<()> {
         value,
         &AttachExplanationOptions {
             enabled: args.explain,
+            policy_root: Some(root.to_path_buf()),
             ..Default::default()
         },
     )?;

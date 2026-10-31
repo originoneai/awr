@@ -529,6 +529,18 @@ fn catalog() -> Vec<Capability> {
             ][..],
         ),
         (
+            "assessment.policy",
+            true,
+            &["assessment policy"][..],
+            &[
+                "file_is_the_authority",
+                "preview_writes_nothing",
+                "writes_only_the_confirmed_bytes",
+                "protected_rules_never_configurable",
+                "no_script_or_expression",
+            ][..],
+        ),
+        (
             "assessment.explain",
             true,
             &["work prepare", "work assess"],

@@ -432,6 +432,10 @@ pub struct AssessmentPolicy {
     pub max_advisory: usize,
     pub max_candidates: usize,
     pub max_return_bytes: usize,
+    /// Optional advice this policy withholds (DEC-040). Protected advice can never be named here; empty, and then
+    /// absent from the serialized policy, for every policy that existed before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_advice: Vec<String>,
 }
 
 impl Default for AssessmentPolicy {
@@ -452,6 +456,7 @@ impl Default for AssessmentPolicy {
             max_advisory: ASSESSMENT_MAX_ADVISORY,
             max_candidates: ASSESSMENT_MAX_CANDIDATES,
             max_return_bytes: ASSESSMENT_MAX_RETURN_BYTES,
+            disabled_advice: Vec::new(),
         }
     }
 }
@@ -480,7 +485,21 @@ impl AssessmentPolicy {
                 "assessment policy_id must be nonempty".into(),
             ));
         }
+        if self
+            .disabled_advice
+            .iter()
+            .any(|code| !crate::OPTIONAL_ADVICE.contains(&code.as_str()))
+        {
+            return Err(Error::InvalidInput(
+                "assessment policy may withhold only optional advice".into(),
+            ));
+        }
         Ok(self)
+    }
+
+    /// Whether an advice code is withheld by this policy.
+    pub fn withholds(&self, code: &str) -> bool {
+        self.disabled_advice.iter().any(|c| c == code)
     }
 
     pub fn is_hard_reason(&self, code: &str) -> bool {
@@ -885,6 +904,24 @@ pub fn compose_assessment_envelope(input: AssessmentComposeInput) -> Result<Asse
     sort_assessments(&policy, &mut assessments);
 
     let mut advisory_actions = input.advisory_actions;
+    let offered = advisory_actions.len();
+    advisory_actions.retain(|action| !policy.withholds(&action.code));
+    let withheld = offered - advisory_actions.len();
+    if withheld > 0 {
+        truncated = true;
+        truncation_reason =
+            Some(truncation_reason.unwrap_or_else(|| "advice_withheld_by_policy".into()));
+        omitted_count += withheld;
+        if advisory_actions.is_empty() {
+            advisory_actions.push(AdvisoryAction {
+                code: "no_advisory".into(),
+                when: Some("advice_withheld_by_policy".into()),
+                query_refs: vec![],
+                limits: vec!["withheld_advice_is_not_a_finding".into()],
+                reevaluation: Some("after_policy_changed".into()),
+            });
+        }
+    }
     advisory_actions.sort_by(|a, b| a.code.cmp(&b.code));
     if advisory_actions.len() > policy.max_advisory {
         truncated = true;
