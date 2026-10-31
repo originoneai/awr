@@ -37,6 +37,10 @@
   /** The bridge's declared staleness bound, reported wherever it is applied. */
   const OBSERVATION_STALE_AFTER_MS = 120000;
 
+  /** The bridge's declared read bounds: one page, and the whole composition. */
+  const READ_TIMEOUT_MS = 4000;
+  const OVERVIEW_DEADLINE_MS = 12000;
+
   const REPLACE = 'replace';
   const KEEP = 'keep';
   const INCOMPARABLE = 'incomparable';
@@ -95,5 +99,12 @@
     return result;
   }
 
-  return { PLANE_STATES, OBSERVATION_STALE_AFTER_MS, compareAuthoritative, resolveCurrency };
+  return {
+    PLANE_STATES,
+    OBSERVATION_STALE_AFTER_MS,
+    READ_TIMEOUT_MS,
+    OVERVIEW_DEADLINE_MS,
+    compareAuthoritative,
+    resolveCurrency,
+  };
 });

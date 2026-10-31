@@ -6,7 +6,7 @@
 'use strict';
 
 const { mapObservation, createGithubObserver } = require('./team-progress');
-const { OBSERVATION_STALE_AFTER_MS, resolveCurrency } = require('./observation-contract');
+const { OBSERVATION_STALE_AFTER_MS, READ_TIMEOUT_MS, OVERVIEW_DEADLINE_MS, resolveCurrency } = require('./observation-contract');
 
 const fs = require('fs');
 const path = require('path');
@@ -267,9 +267,10 @@ function readAttributionError(query, result, { strictWorkstream } = {}) {
  *   report_order_basis is surfaced unchanged.
  * - authoritative: the service's own measurement (envelope revision, source
  *   snapshot, coordinator epoch, and the query/observation time when known).
- *   The service declares no staleness for it, so the bridge applies the
- *   response's declared stale_after_ms or its own declared
- *   OBSERVATION_STALE_AFTER_MS — always reported next to the measurement.
+ *   The service declares no bound for it (reporting.stale_after_ms is the
+ *   report clock's bound, never this one's), so the bridge always applies
+ *   its own declared OBSERVATION_STALE_AFTER_MS — reported next to the
+ *   measurement.
  * - page_read: when this bridge read the page (always measured here).
  * A plane that was not measured says not_measured instead of borrowing
  * another clock's value; a plane whose measurement failed says failed with
@@ -314,7 +315,7 @@ function readFreshness(result, readAtMs) {
         serviceStale: false,
         atUnixMs: queried,
         readAtMs,
-        staleAfterMs: declaredBound != null ? declaredBound : OBSERVATION_STALE_AFTER_MS,
+        staleAfterMs: OBSERVATION_STALE_AFTER_MS,
       }),
       project_revision: revision, source_snapshot_id: source, coordinator_epoch: epoch,
       ...(queried != null ? { at_unix_ms: queried } : {}),
@@ -424,9 +425,9 @@ function createTeamBridge(opts) {
   // One page may wait readTimeoutMs; the whole overview composition answers
   // within overviewDeadlineMs, declaring whatever is left unread as failed.
   const readTimeoutMs = Number.isInteger(opts.readTimeoutMs) && opts.readTimeoutMs > 0
-    ? opts.readTimeoutMs : 4000;
+    ? opts.readTimeoutMs : READ_TIMEOUT_MS;
   const overviewDeadlineMs = Number.isInteger(opts.overviewDeadlineMs) && opts.overviewDeadlineMs > 0
-    ? opts.overviewDeadlineMs : 12000;
+    ? opts.overviewDeadlineMs : OVERVIEW_DEADLINE_MS;
   let publicUrl = null;
   if (live) {
     const url = new URL(opts.teamPublicUrl || opts.teamUrl);

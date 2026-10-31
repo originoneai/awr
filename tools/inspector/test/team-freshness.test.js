@@ -566,31 +566,71 @@ test('a report older than the service-declared bound reads stale with the bound 
   assert.equal(freshness.report_received.age_ms, 4000);
 });
 
-test('an authoritative measurement older than its bound reads stale; a fresh one stays measured', () => {
-  const declared = readFreshness({
+test('the authoritative plane always uses the bridge-declared bound, never the report bound', () => {
+  // The response declares the report bound (15 minutes) and its query time is
+  // 10 minutes old: the authoritative plane is stale by the bridge's own
+  // declared bound, the report plane is still inside the service's bound.
+  const readAt = 10000000;
+  const freshness = readFreshness({
+    ...ENVELOPE,
+    data: {
+      work_id: 'WORK',
+      reporting: { stale_after_ms: 900000 },
+      snapshot: { version: 1, queried_at_unix_ms: readAt - 600000 },
+      observation: { progress: { reported_at_unix_ms: readAt - 600000, recorded_project_revision: '19' } },
+    },
+  }, readAt);
+  assert.equal(freshness.authoritative.status, 'stale');
+  assert.equal(freshness.authoritative.stale_after_ms, OBSERVATION_STALE_AFTER_MS);
+  assert.equal(freshness.authoritative.age_ms, 600000);
+  assert.equal(freshness.report_received.status, 'measured');
+  assert.equal(freshness.report_received.stale_after_ms, 900000);
+  assert.equal(freshness.report_received.age_ms, 600000);
+  // A fresh measurement stays measured under the same bridge bound.
+  const fresh = readFreshness({
+    ...ENVELOPE,
+    data: { work_id: 'WORK', snapshot: { version: 1, queried_at_unix_ms: readAt - 1 } },
+  }, readAt);
+  assert.equal(fresh.authoritative.status, 'measured');
+  assert.equal(fresh.authoritative.age_ms, 1);
+});
+
+test('a stale report declaration never marks the authoritative plane stale', () => {
+  const freshness = readFreshness({
+    ...ENVELOPE,
+    data: {
+      work_id: 'WORK',
+      snapshot: { version: 1, queried_at_unix_ms: 4999 },
+      observation: { progress: { reported_at_unix_ms: 4999, recorded_project_revision: '19', stale: true } },
+    },
+  }, 5000);
+  assert.equal(freshness.report_received.status, 'stale');
+  assert.equal(freshness.authoritative.status, 'measured');
+});
+
+test('the reporting block is read from the observation as well as the top level', () => {
+  const nested = readFreshness({
+    ...ENVELOPE,
+    data: {
+      work_id: 'WORK',
+      observation: {
+        reporting: { stale_after_ms: 100 },
+        progress: { reported_at_unix_ms: 1000, recorded_project_revision: '19' },
+      },
+    },
+  }, 5000);
+  assert.equal(nested.report_received.status, 'stale');
+  assert.equal(nested.report_received.stale_after_ms, 100);
+  const topLevel = readFreshness({
     ...ENVELOPE,
     data: {
       work_id: 'WORK',
       reporting: { stale_after_ms: 100 },
-      snapshot: { version: 1, queried_at_unix_ms: 1000 },
+      observation: { progress: { reported_at_unix_ms: 1000, recorded_project_revision: '19' } },
     },
   }, 5000);
-  assert.equal(declared.authoritative.status, 'stale');
-  assert.equal(declared.authoritative.stale_after_ms, 100);
-  assert.equal(declared.authoritative.age_ms, 4000);
-  // With no service declaration the bridge applies and reports its own bound.
-  const fallbackStale = readFreshness({
-    ...ENVELOPE,
-    data: { work_id: 'WORK', snapshot: { version: 1, queried_at_unix_ms: 5000 - OBSERVATION_STALE_AFTER_MS - 1 } },
-  }, 5000);
-  assert.equal(fallbackStale.authoritative.status, 'stale');
-  assert.equal(fallbackStale.authoritative.stale_after_ms, OBSERVATION_STALE_AFTER_MS);
-  const fallbackFresh = readFreshness({
-    ...ENVELOPE,
-    data: { work_id: 'WORK', snapshot: { version: 1, queried_at_unix_ms: 4999 } },
-  }, 5000);
-  assert.equal(fallbackFresh.authoritative.status, 'measured');
-  assert.equal(fallbackFresh.authoritative.age_ms, 1);
+  assert.equal(topLevel.report_received.status, 'stale');
+  assert.equal(topLevel.report_received.stale_after_ms, 100);
 });
 
 // --- Failed reads keep the clocks instead of dropping them ---
@@ -742,6 +782,8 @@ test('an Unauthenticated reply mid-composition clears everything', async () => {
     assert.equal(overview.json.works, undefined);
     assert.equal(overview.json.coverage, undefined);
     assert.deepEqual(overview.json.freshness.authoritative, { status: 'failed', error_code: 'Unauthenticated' });
+    // A failed composition has no report plane to fail: it stays not_measured.
+    assert.deepEqual(overview.json.freshness.report_received, { status: 'not_measured' });
   } finally {
     await bridge.close();
     await upstream.close();
@@ -1001,4 +1043,233 @@ test('a stalled stream is declared failed while healthy streams are still read w
     await bridge.close();
     await upstream.close();
   }
+});
+
+// --- The scope read that fails ---
+
+test('a failed scope read keeps the confirmed streams and declares the scope failed', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (q, r) => {
+      if (!q.cursor) {
+        r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }], total: 2, next_cursor: 's2' } }));
+        return;
+      }
+      r.writeHead(500);
+      r.end(JSON.stringify({ code: 'DatabaseUnavailable', message: 'synthetic storage failure' }));
+    },
+    'work.list:backend': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'api-1' }], total: 1, next_cursor: null } })),
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    assert.equal(overview.json.ok, true, JSON.stringify(overview.json));
+    const scope = overview.json.coverage.scope;
+    assert.equal(scope.status, 'failed');
+    assert.equal(scope.error_code, 'DatabaseUnavailable');
+    assert.equal(scope.enumerated, 1);
+    // A failed scope is never a complete enumeration: truncated with the resume cursor.
+    assert.equal(scope.truncated, true);
+    assert.equal(scope.next_cursor, 's2');
+    assert.ok(Number.isFinite(scope.read_at_unix_ms));
+    // The confirmed stream is still read and retained.
+    assert.deepEqual(overview.json.works.map((w) => w.key), ['api-1']);
+    assert.equal(overview.json.coverage.succeeded, 1);
+    // No total exists while the scope itself was not fully enumerated.
+    assert.equal(overview.json.coverage.works_total, null);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('an auth failure during the scope read clears everything, even with confirmed streams', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (q, r) => {
+      if (!q.cursor) {
+        r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }], next_cursor: 's2' } }));
+        return;
+      }
+      r.writeHead(403);
+      r.end(JSON.stringify({ code: 'Forbidden', message: 'grant revoked' }));
+    },
+    'work.list:backend': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'api-1' }], total: 1, next_cursor: null } })),
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    assert.equal(overview.json.ok, false);
+    assert.equal(overview.json.error.code, 'Forbidden');
+    assert.equal(overview.json.works, undefined);
+    assert.equal(overview.json.coverage, undefined);
+    assert.deepEqual(overview.json.freshness.authoritative, { status: 'failed', error_code: 'Forbidden' });
+    assert.deepEqual(overview.json.freshness.report_received, { status: 'not_measured' });
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('a scope read that confirms nothing fails closed', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => {
+      r.writeHead(500);
+      r.end(JSON.stringify({ code: 'DatabaseUnavailable', message: 'synthetic storage failure' }));
+    },
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    assert.equal(overview.json.ok, false);
+    assert.equal(overview.json.error.code, 'DatabaseUnavailable');
+    assert.equal(overview.json.works, undefined);
+    assert.equal(overview.json.coverage, undefined);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+// --- The deadline and the timeouts ---
+
+test('a stream whose first page starts after the deadline fails without a request', async () => {
+  const requested = [];
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'stalled' }, { id: 'late' }], next_cursor: null } })),
+    'work.list:stalled': () => { requested.push('stalled'); }, // never answers
+    'work.list:late': (_q, r) => { requested.push('late'); r.end(JSON.stringify({ ...ENVELOPE, data: { items: [], next_cursor: null } })); },
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base, { readTimeoutMs: 800, overviewDeadlineMs: 400 });
+  try {
+    const started = Date.now();
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    assert.ok(Date.now() - started < 1600);
+    assert.equal(overview.json.ok, false);
+    assert.equal(overview.json.error.code, 'ReadTimeout');
+    // The stalled stream burned the deadline; the late stream's first page
+    // never started — no request was issued for it.
+    assert.deepEqual(requested, ['stalled']);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('the capabilities read is bounded by what is left of the deadline', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }], next_cursor: null } })),
+    'work.list:backend': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'api-1' }], total: 1, next_cursor: null } })),
+    'capabilities': (_q, r) => setTimeout(() => r.end(JSON.stringify({ identity: { actor_id: 'member' } })), 1200),
+  });
+  const bridge = await startLiveBridge(upstream.base, { readTimeoutMs: 800, overviewDeadlineMs: 12000 });
+  try {
+    const started = Date.now();
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    assert.ok(Date.now() - started < 1600);
+    assert.equal(overview.json.ok, false);
+    assert.equal(overview.json.error.code, 'ReadTimeout');
+    assert.equal(overview.json.works, undefined);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('a stalled page honors the configured page timeout', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'stalled' }], next_cursor: null } })),
+    'work.list:stalled': () => {}, // never answers
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base, { readTimeoutMs: 500 });
+  try {
+    const started = Date.now();
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 1500, `elapsed ${elapsed}ms must honor the 500ms page timeout`);
+    assert.equal(overview.json.ok, false);
+    assert.equal(overview.json.error.code, 'ReadTimeout');
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+// --- A refused request is not a failed read ---
+
+test('a request refused before any read carries unmeasured planes, not failed ones', async () => {
+  let calls = 0;
+  const upstream = await startMockUpstream((_request, response) => { calls++; response.end('{}'); });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const read = await req(bridge.base, 'POST', '/api/team/read', {
+      body: { project: 'demo', query: { protocol_version: 1, op: 'work.drop', work_id: 'WORK' } },
+    });
+    assert.equal(read.json.ok, false);
+    assert.equal(read.json.error.code, 'Unsupported');
+    assert.deepEqual(read.json.freshness.report_received, { status: 'not_measured' });
+    assert.deepEqual(read.json.freshness.authoritative, { status: 'not_measured' });
+    assert.equal(read.json.freshness.page_read.status, 'measured');
+    assert.equal(calls, 0);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+// --- Retention: a failed part whose pages mixed revisions claims no as-of ---
+
+test('a failed part whose pages mixed revisions claims no as-of', async () => {
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }, { id: 'frontend' }], next_cursor: null } })),
+    'work.list:backend': (q, r) => {
+      const page = q.cursor ? Number(q.cursor.slice(1)) : 0;
+      if (page === 0) {
+        r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'api-1' }], next_cursor: 'c1' } }));
+        return;
+      }
+      if (page === 1) {
+        r.end(JSON.stringify({ ...ENVELOPE, project_revision: '21', data: { items: [{ work_id: 'api-2' }], next_cursor: 'c2' } }));
+        return;
+      }
+      r.writeHead(500);
+      r.end(JSON.stringify({ code: 'DatabaseUnavailable', message: 'synthetic storage failure' }));
+    },
+    'work.list:frontend': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'ui-1' }], total: 1, next_cursor: null } })),
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo');
+    assert.equal(overview.json.ok, true, JSON.stringify(overview.json));
+    const backend = overview.json.coverage.streams.find((s) => s.workstream_id === 'backend');
+    assert.equal(backend.status, 'failed');
+    assert.equal(backend.works_enumerated, 2);
+    assert.equal(backend.as_of, null);
+    assert.equal(backend.next_cursor, 'c2');
+    assert.deepEqual(overview.json.works.map((w) => w.key), ['api-1', 'api-2', 'ui-1']);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+// --- Echo registry: session-selected reads and strict comparison ---
+
+test('a session-selected read has no work identity to echo and accepts the resolved one', () => {
+  const query = { protocol_version: 1, op: 'work.snapshot', session_id: 'session-1' };
+  assert.equal(readAttributionError(query, { ...ENVELOPE, data: { work_id: 'RESOLVED' } }), null);
+  assert.equal(readAttributionError(query, { ...ENVELOPE, data: {} }), null);
+});
+
+test('the identity echo compares strictly: a number is not the string', () => {
+  // delivery.integration.inspect echoes request_id as integration_id, an
+  // identity the generic work_id fallback below the echo loop never sees —
+  // only the echo comparison itself can refuse a loose match here.
+  const query = { protocol_version: 1, op: 'delivery.integration.inspect', request_id: '123' };
+  assert.equal(readAttributionError(query, { ...ENVELOPE, data: { integration_id: 123 } }).code, 'BadGateway');
+  assert.equal(readAttributionError(query, { ...ENVELOPE, data: { integration_id: '123' } }), null);
 });

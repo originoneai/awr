@@ -15,6 +15,8 @@ const assert = require('node:assert');
 const {
   PLANE_STATES,
   OBSERVATION_STALE_AFTER_MS,
+  READ_TIMEOUT_MS,
+  OVERVIEW_DEADLINE_MS,
   compareAuthoritative,
   resolveCurrency,
 } = require('../observation-contract');
@@ -117,5 +119,52 @@ test('resolveCurrency: the service declaration wins, then the declared bound, bo
   assert.deepEqual(
     resolveCurrency({ serviceStale: false, atUnixMs: 5000, readAtMs: 1000, staleAfterMs: 500 }),
     { status: 'measured', stale_after_ms: 500, age_ms: -4000 }
+  );
+});
+
+test('the declared bounds are pinned constants the PR text can name', () => {
+  assert.equal(OBSERVATION_STALE_AFTER_MS, 120000);
+  assert.equal(READ_TIMEOUT_MS, 4000);
+  assert.equal(OVERVIEW_DEADLINE_MS, 12000);
+});
+
+test('a failed or unmeasured plane is incomparable even when it carries all three fields', () => {
+  const fields = { project_revision: '21', source_snapshot_id: 'snap-1', coordinator_epoch: 'epoch-1' };
+  assert.equal(
+    compareAuthoritative(measured('20'), { status: 'failed', error_code: 'ReadTimeout', ...fields }),
+    'incomparable'
+  );
+  assert.equal(
+    compareAuthoritative(measured('20'), { status: 'not_measured', ...fields }),
+    'incomparable'
+  );
+  assert.equal(
+    compareAuthoritative({ status: 'failed', error_code: 'ReadTimeout', ...fields }, measured('20')),
+    'incomparable'
+  );
+});
+
+test('only a plain decimal revision is comparable', () => {
+  for (const bogus of ['1e3', '0x10', ' 12', '1.0']) {
+    assert.equal(compareAuthoritative(measured('20'), measured(bogus)), 'incomparable', bogus);
+    assert.equal(compareAuthoritative(measured(bogus), measured('20')), 'incomparable', bogus);
+  }
+});
+
+test('two planes that both lack a source or an epoch are incomparable, not equal', () => {
+  const noSource = { status: 'measured', project_revision: '20', coordinator_epoch: 'epoch-1' };
+  assert.equal(compareAuthoritative(noSource, { ...noSource }), 'incomparable');
+  const noEpoch = { status: 'measured', project_revision: '20', source_snapshot_id: 'snap-1' };
+  assert.equal(compareAuthoritative(noEpoch, { ...noEpoch }), 'incomparable');
+});
+
+test('an age exactly at the bound is not stale; one millisecond more is', () => {
+  assert.deepEqual(
+    resolveCurrency({ serviceStale: false, atUnixMs: 1000, readAtMs: 1500, staleAfterMs: 500 }),
+    { status: 'measured', stale_after_ms: 500, age_ms: 500 }
+  );
+  assert.deepEqual(
+    resolveCurrency({ serviceStale: false, atUnixMs: 1000, readAtMs: 1501, staleAfterMs: 500 }),
+    { status: 'stale', stale_after_ms: 500, age_ms: 501 }
   );
 });

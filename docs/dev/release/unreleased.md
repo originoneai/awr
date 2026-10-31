@@ -10,10 +10,13 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   measurement (project revision, source snapshot, coordinator epoch, query time) and the page-read
   clock side by side. Each plane is exactly `measured`, `stale`, `failed` or `not_measured`, and one
   state never substitutes for another: an unmeasured plane says so instead of borrowing another
-  clock's value, a stale plane is decided by the service's own declaration (`progress.stale` against
-  the declared `stale_after_ms`) or by a bound the bridge always reports next to the measurement
-  (`stale_after_ms` and `age_ms`), and a failed read keeps its clocks with the planes marked
-  `failed`. The pure ordering rule lives in `tools/inspector/observation-contract.js` (importable by
+  clock's value, a stale report-received plane is decided by the service's own declaration
+  (`progress.stale`, or the age against the service-declared `reporting.stale_after_ms`), a stale
+  authoritative plane is always decided against the bridge's own declared bound — never the
+  report's — with `stale_after_ms` and `age_ms` reported next to every measurement, and a failed
+  read keeps its clocks with the planes marked `failed`. The bridge's default bounds
+  (`OBSERVATION_STALE_AFTER_MS`, `READ_TIMEOUT_MS`, `OVERVIEW_DEADLINE_MS`) are exported constants
+  of the contract module. The pure ordering rule lives in `tools/inspector/observation-contract.js` (importable by
   the bridge and the browser): an incoming authoritative measurement replaces the held one only for
   the same source snapshot and coordinator epoch with a numerically higher or equal revision; a
   lower revision never replaces; anything else is incomparable and says so. The generic read route
