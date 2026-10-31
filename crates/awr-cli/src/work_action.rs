@@ -71,6 +71,18 @@ fn print_result(
         if let Some(binding) = result.proposal.bound_patch()?.work_action {
             println!("Bound transition: {:?} → {:?}", binding.from, binding.to);
         }
+        if let Some(close) = &result.close_out {
+            println!(
+                "Next: {} ({}; {})",
+                close.next, close.condition, close.basis
+            );
+        }
+        if let Some(end) = &result.session_end {
+            println!("Session: {} ({})", end.status, end.session_id);
+            if let Some(next) = end.next {
+                println!("Next: {next}");
+            }
+        }
     }
     match result.failure {
         Some(error) => Err(error),
@@ -92,6 +104,10 @@ pub struct CompleteArgs {
     expected_revision: Revision,
     #[arg(long, default_value = "full", value_parser = ["full", "summary"])]
     response_view: String,
+    /// End the session in the same request once the work is completed. Refused while the session
+    /// still holds claims on other work.
+    #[arg(long)]
+    end_session: bool,
 }
 pub fn complete(root: &Path, args: &CompleteArgs, json_output: bool) -> Result<()> {
     let root = root.canonicalize()?;
@@ -120,6 +136,7 @@ pub fn complete(root: &Path, args: &CompleteArgs, json_output: bool) -> Result<(
             expected_revision: args.expected_revision,
             reason: args.reason.clone(),
             input,
+            end_session: args.end_session,
         },
     )?;
     print_result(

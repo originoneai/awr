@@ -6,6 +6,7 @@ use std::path::Path;
 mod artifact;
 mod branch;
 mod branch_close;
+mod close_out;
 mod compaction;
 mod completion;
 pub use compaction::{
@@ -122,6 +123,7 @@ use awr_store::Store;
 pub use awr_store::{BranchFilter, EventCursor, EventPage, EventQuery};
 pub use branch::{CreateBranchRequest, create_branch, observe_git_ref, switch_branch};
 pub use branch_close::{CloseBranchRequest, close_branch};
+pub use close_out::{CloseOut, SessionEndReceipt};
 pub use completion::{CompleteWorkRequest, complete_work};
 pub use doctor::{ProjectDoctorReport, diagnose_project};
 pub use execution::{
