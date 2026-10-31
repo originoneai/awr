@@ -2945,6 +2945,18 @@ async fn a_completion_tells_how_to_close_the_session_and_can_end_it_in_the_same_
     let first = f.session("W", true, None).session.id;
     let second = f.session("NEXT", true, None).session.id;
     let client = f.client().await;
+    // The tool offers the argument, and only as a boolean.
+    let manifest = success(call(&client, "awr_work", json!({})).await);
+    let transition = manifest["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|child| child["name"] == "awr_work_transition")
+        .unwrap();
+    assert_eq!(
+        transition["input_schema"]["properties"]["end_session"]["type"],
+        json!(["boolean", "null"])
+    );
     // The server states the closing convention in one short sentence.
     let instructions = client.peer_info().unwrap().instructions.clone().unwrap();
     assert!(instructions.contains("checkpoint and end the session"));

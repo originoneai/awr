@@ -167,6 +167,11 @@ awrj session end --session "$AWR_SESSION" --outcome incomplete \
 The claim is then released; later resume needs a fresh claim for mutation.
 Ending a session does not mark the source work completed or certify its evidence.
 
+When the work is finished instead, complete it with `awr work complete ... --end-session` (or end the
+session as the `close_out` instruction of the response says); never complete work by editing its
+status in the source, which records no receipt and releases no claim. See
+[Finish the work and end the session](session-workflow.md#finish-the-work-and-end-the-session).
+
 ## Hooks, web connectors and verification
 
 Grok Build documents session and compact events in its hook system. Project

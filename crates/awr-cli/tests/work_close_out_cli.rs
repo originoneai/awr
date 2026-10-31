@@ -398,3 +398,35 @@ fn a_claim_on_other_work_that_has_expired_does_not_hold_the_end() {
     // The end closes what the session still listed, and says so.
     assert_eq!(done["session_end"]["closed_claim_ids"], json!([expired]));
 }
+
+#[test]
+fn reopening_cancelled_work_does_not_get_the_instruction() {
+    let f = Fixture::new();
+    f.ok(&[
+        "work",
+        "cancel",
+        "W",
+        "--session",
+        &f.session,
+        "--reason",
+        "No longer needed",
+        "--expected-revision",
+        &f.revision(),
+    ]);
+    // The session holds no claim now, so only the kind of action keeps the instruction away.
+    let reopened = f.ok(&[
+        "work",
+        "reopen",
+        "W",
+        "--session",
+        &f.session,
+        "--reason",
+        "Needed after all",
+        "--next-action",
+        "Replan the report",
+        "--expected-revision",
+        &f.revision(),
+    ]);
+    assert_eq!(reopened["event"]["event_type"], "work.reopened");
+    assert!(reopened.get("close_out").is_none(), "{reopened}");
+}

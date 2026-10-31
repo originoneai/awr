@@ -165,6 +165,11 @@ awrj session end --session "$AWR_SESSION" --outcome incomplete \
 This releases the claim; a later receiver needs a fresh claim. Source work
 completion still requires AWR's evidence/acceptance checks.
 
+When the work is finished instead, complete it with `awr work complete ... --end-session` (or end the
+session as the `close_out` instruction of the response says); never complete work by editing its
+status in the source, which records no receipt and releases no claim. See
+[Finish the work and end the session](session-workflow.md#finish-the-work-and-end-the-session).
+
 ## Hook and verification boundary
 
 Current Kimi documentation includes `SessionStart`, `SessionEnd`, `PreCompact`
