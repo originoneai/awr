@@ -131,3 +131,12 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   execution admission, context completeness, delivery observation, completion validity), which Team operations carry
   it and which entries of the personal CLI and MCP server have no Team operation, with the reason; the report is checked
   against the protocol's own operation lists. Asking for such an entry is still refused as `Unsupported`.
+- A bounded, read-only observation entry in the Inspector Team bridge (`POST /api/team/read`): every implemented Team
+  query is reachable except the deferred full ops audit (`audit.history`, `audit.export`, `audit.count`); commands are
+  never exposed, an arbitrary command or a full audit export cannot be requested. Each operation's selectors, paging and
+  byte budgets are checked against a hand mirror of the service's `WorkstreamQuery` rules — guarded by a drift test that
+  reads the service's query list — selector values are never echoed in errors, per-operation response limits apply
+  (`artifact.segment` pages stay at 64 KiB), and unsupported operations, denials, timeouts, partial pages and stale
+  cursors come back as explainable errors. The bridge adds no identity and grants no authority: the upstream service
+  reauthorizes the caller's own cookie session on every forwarded read. The `awr_team_command` MCP description now
+  matches the fixed delivery capability it declares.

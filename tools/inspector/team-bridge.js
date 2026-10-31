@@ -17,6 +17,172 @@ const INBOX_PAGE_SIZE = 20;
 const INBOX_READ_OPS = new Set(['work.prepare', 'work.observe', 'work.recovery',
   'review.inspect', 'delivery.neutral.inspect', 'delivery.integration.inspect', 'delivery.source.status']);
 
+/**
+ * Bounded read-only observation adapter (AWR-OBS-001). Every implemented Team
+ * query is reachable except the deferred full ops audit export
+ * (audit.history/audit.export/audit.count); commands are never exposed. The
+ * selector, paging and budget rules mirror the authoritative upstream
+ * WorkstreamQuery validation so bad requests fail here with an explainable
+ * error; the upstream service reauthorizes the caller's own cookie session on
+ * every forwarded read. Selector values are never echoed in errors.
+ */
+// Deferred full ops audit (W13): the only upstream queries this adapter must
+// never expose. The drift guard test pins READ_OPS against the service list.
+const READ_DEFERRED_OPS = new Set(['audit.history', 'audit.export', 'audit.count']);
+const READ_PROJECT_WIDE = new Set(['capabilities', 'workstreams.list', 'work.inbox']);
+const READ_WORK_LIST = new Set(['work.list', 'work.search', 'planning.outcome']);
+const READ_AUDIT = new Set(['audit.requests', 'audit.development']);
+const READ_EXACT_WORK = new Set(['task.assignees', 'delivery.neutral.inspect',
+  'delivery.submission.describe', 'delivery.neutral.outcome', 'delivery.source.status',
+  'delivery.integration.inspect']);
+const READ_WORK_SELECTION = new Set(['work.prepare', 'work.admission', 'work.snapshot',
+  'work.observe', 'work.recovery', 'command.inspect', 'claim.inspect', 'execution.inspect',
+  'handoff.inspect', 'evidence.inspect', 'review.inspect', 'completion.inspect',
+  'delivery.inspect', 'artifact.content', 'artifact.segment', 'delivery.exports']);
+const READ_PAGED = new Set(['workstreams.list', 'work.list', 'work.search', 'events.list',
+  'work.next', 'work.inbox', 'task.assignees', 'delivery.exports']);
+const READ_CONTEXT_BUDGET = new Set(['work.prepare', 'work.snapshot', 'work.observe', 'work.inbox',
+  'source.content', 'artifact.content', 'artifact.segment', 'review.inspect',
+  'delivery.neutral.inspect', 'delivery.submission.describe']);
+const READ_REQUIRED_SELECTOR = {
+  'command.inspect': 'request_id',
+  'planning.outcome': 'request_id',
+  'delivery.neutral.outcome': 'request_id',
+  'delivery.integration.inspect': 'request_id',
+  'claim.inspect': 'claim_id',
+  'execution.inspect': 'execution_id',
+  'handoff.inspect': 'handoff_id',
+  'evidence.inspect': 'evidence_id',
+  'review.inspect': 'review_round_id',
+  'source.content': 'source_path',
+  'session.inspect': 'session_id',
+};
+const READ_OPS = new Set([
+  ...READ_PROJECT_WIDE, ...READ_WORK_LIST, ...READ_AUDIT, ...READ_EXACT_WORK,
+  ...READ_WORK_SELECTION, ...READ_CONTEXT_BUDGET, ...READ_PAGED,
+  ...Object.keys(READ_REQUIRED_SELECTOR),
+]);
+const READ_ID_KEYS = new Set(['work_id', 'session_id', 'request_id', 'claim_id', 'execution_id',
+  'handoff_id', 'evidence_id', 'review_round_id', 'artifact_id', 'export_id', 'workstream_id',
+  'change_id', 'member_actor_id', 'category']);
+const READ_RESPONSE_LIMIT = { default: 1048576, 'artifact.content': 8388608, 'artifact.segment': 65536 };
+
+function invalidRead(message) {
+  return { error: { code: 'InvalidInput', message } };
+}
+
+function isBoundedId(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 128
+    && !/[\x00-\x1f\x7f]/.test(value);
+}
+
+function validateReadQuery(query) {
+  if (!query || Array.isArray(query) || typeof query !== 'object') {
+    return invalidRead('One bounded read query required');
+  }
+  if (query.protocol_version !== 1) return invalidRead('Unsupported read protocol version');
+  const op = query.op;
+  if (typeof op !== 'string' || !READ_OPS.has(op)) {
+    return { error: { code: 'Unsupported', message: 'Read operation is not exposed by this adapter' } };
+  }
+  // Key allow-list: identity and authority fields can never ride a read body.
+  const allowed = new Set(['protocol_version', 'op']);
+  const allowIds = (...keys) => keys.forEach((key) => allowed.add(key));
+  if (READ_PROJECT_WIDE.has(op)) {
+    // Navigation reads are selector-free.
+  } else if (READ_WORK_LIST.has(op)) {
+    allowIds('workstream_id');
+  } else if (READ_AUDIT.has(op)) {
+    allowIds('work_id', 'change_id', 'member_actor_id', 'category', 'request_id');
+    allowed.add('include_denies');
+  } else if (READ_EXACT_WORK.has(op)) {
+    allowIds('work_id', 'workstream_id');
+  } else if (op === 'work.next') {
+    // work.next is selector-free navigation.
+  } else {
+    allowIds('work_id', 'workstream_id', 'session_id');
+  }
+  if (READ_PAGED.has(op) || READ_AUDIT.has(op) || op === 'artifact.segment') allowed.add('cursor');
+  if (READ_PAGED.has(op) || READ_AUDIT.has(op)) allowed.add('limit');
+  if (op === 'work.search' || op === 'task.assignees') allowed.add('search');
+  if (READ_CONTEXT_BUDGET.has(op)) allowed.add('max_context_bytes');
+  const required = READ_REQUIRED_SELECTOR[op];
+  if (required) allowed.add(required);
+  if (op === 'artifact.content' || op === 'artifact.segment') allowIds('artifact_id', 'export_id');
+  if (['source.content', 'artifact.content', 'artifact.segment'].includes(op)) allowed.add('expected_sha256');
+  for (const key of Object.keys(query)) {
+    if (!allowed.has(key)) return invalidRead(`Selector ${key} is not valid for ${op}`);
+  }
+  for (const key of allowed) {
+    if (!(key in query)) continue;
+    if (READ_ID_KEYS.has(key) && !isBoundedId(query[key])) return invalidRead(`Selector ${key} is invalid`);
+  }
+  if (required && !(required in query)) return invalidRead(`Selector ${required} is required for ${op}`);
+  if (READ_WORK_SELECTION.has(op) && !query.work_id && !query.session_id) {
+    return invalidRead(`${op} requires a work or session selector`);
+  }
+  if (READ_EXACT_WORK.has(op) && !query.work_id) return invalidRead(`${op} requires a work selector`);
+  if ('search' in query) {
+    const search = query.search;
+    if (typeof search !== 'string' || search.length === 0 || search.length > 512
+      || /[\x00-\x1f\x7f]/.test(search)) return invalidRead('Selector search is invalid');
+  }
+  if (op === 'work.search' && query.search === undefined) return invalidRead('Selector search is required');
+  if ('cursor' in query) {
+    if (typeof query.cursor !== 'string' || query.cursor.length === 0 || query.cursor.length > 4096) {
+      return invalidRead('Selector cursor is invalid');
+    }
+  }
+  if ('limit' in query) {
+    if (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100) {
+      return invalidRead('Selector limit must be 1 through 100');
+    }
+  }
+  if ('max_context_bytes' in query) {
+    const bound = op === 'artifact.content' ? 1048576 : op === 'artifact.segment' ? 4096 : 262144;
+    if (!Number.isInteger(query.max_context_bytes)
+      || query.max_context_bytes < 1 || query.max_context_bytes > bound) {
+      return invalidRead('Selector max_context_bytes is out of bounds');
+    }
+  }
+  if ('expected_sha256' in query) {
+    if (typeof query.expected_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(query.expected_sha256)) {
+      return invalidRead('Selector expected_sha256 must be 64 lowercase hexadecimal characters');
+    }
+  }
+  if (op === 'artifact.segment' && query.expected_sha256 === undefined) {
+    return invalidRead('Selector expected_sha256 is required for artifact.segment');
+  }
+  if (op === 'artifact.content' || op === 'artifact.segment') {
+    if (('artifact_id' in query) === ('export_id' in query)) {
+      return invalidRead('Exactly one of artifact_id or export_id is required');
+    }
+  }
+  if ('source_path' in query) {
+    const path = query.source_path;
+    if (typeof path !== 'string' || path.length === 0 || path.length > 512 || path.startsWith('/')
+      || path.includes('..') || path.includes('\\') || path.includes(':') || /[\x00-\x1f\x7f]/.test(path)) {
+      return invalidRead('Selector source_path must be a controlled project-relative path');
+    }
+  }
+  if ('include_denies' in query && typeof query.include_denies !== 'boolean') {
+    return invalidRead('Selector include_denies must be a boolean');
+  }
+  return { ok: true };
+}
+
+function validReadResponse(reply, op) {
+  if (!reply || reply.protocol_version !== 1) return false;
+  // capabilities is the one flat discovery response; every other read carries data.
+  if (op === 'capabilities') return reply.protocol === 'awr-team-workstream';
+  const data = reply.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+  if (data.next_cursor != null
+    && (typeof data.next_cursor !== 'string' || data.next_cursor.length === 0
+      || data.next_cursor.length > 4096)) return false;
+  return true;
+}
+
 function inboxSelector(query) {
   if (!query || Array.isArray(query) || query.protocol_version !== 1 || !INBOX_READ_OPS.has(query.op)) return false;
   const extra = query.op === 'review.inspect' ? 'review_round_id'
@@ -400,6 +566,24 @@ function createTeamBridge(opts) {
       return reply;
     },
 
+    'POST /api/team/read': async (_url, body, req, res) => {
+      if (!TEAM.live) return { ok: false, error: { code: 'Unsupported', message: 'Live Team coordination required' } };
+      const input = asObject(body);
+      if (!input || typeof input.project !== 'string' || !input.project || input.project.length > 128
+        || Object.keys(input).some(k => !['project', 'query'].includes(k)))
+        return { ok: false, error: { code: 'InvalidInput', message: 'Project and one bounded read query required' } };
+      const checked = validateReadQuery(input.query);
+      if (checked.error) return { ok: false, error: checked.error };
+      // The upstream reauthorizes this read against the caller's own cookie
+      // session; the adapter adds no identity and grants no authority itself.
+      const maxBytes = READ_RESPONSE_LIMIT[input.query.op] || READ_RESPONSE_LIMIT.default;
+      const reply = await inboxRead(input.project, input.query, req, res, maxBytes);
+      if (reply.ok && !validReadResponse(reply.result, input.query.op))
+        return { ok: false, error: { code: 'BadGateway', message: 'Invalid Team read response' } };
+      if (reply.ok) return { ...reply, query: input.query };
+      return reply;
+    },
+
     'GET /api/team/work': async (url, _body, req, res) => {
       if (!TEAM.live) return { ok: false, error: { code: 'Unsupported', message: 'Live Team detail required' } };
       const project = url.searchParams.get('project');
@@ -717,4 +901,4 @@ function createTeamBridge(opts) {
   };
 }
 
-module.exports = { createTeamBridge, rewriteOwnedCookiePath };
+module.exports = { createTeamBridge, rewriteOwnedCookiePath, READ_OPS, READ_DEFERRED_OPS };

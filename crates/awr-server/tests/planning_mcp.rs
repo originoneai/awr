@@ -1380,6 +1380,18 @@ async fn ordinary_member_mcp_workflow_with_update(
                     .input_schema["properties"]["export_id"]["type"],
                 "string"
             );
+            // AWR-OBS-001 (A21): within one snapshot the tools/list description
+            // must not contradict the declared fixed_delivery capability.
+            let command_description = tools
+                .iter()
+                .find(|t| t.name == "awr_team_command")
+                .unwrap()
+                .description
+                .as_deref()
+                .unwrap_or_default();
+            assert!(!command_description.contains("remains unavailable"));
+            assert!(command_description.contains("fixed_delivery"));
+            assert!(command_description.contains("awr-approved-artifact-export-v2"));
             let cp = call(
                 &consumer,
                 "awr_team_query",
