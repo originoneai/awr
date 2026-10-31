@@ -121,3 +121,13 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   execution admission, context completeness, delivery observation, completion validity), which Team operations carry
   it and which entries of the personal CLI and MCP server have no Team operation, with the reason; the report is checked
   against the protocol's own operation lists. Asking for such an entry is still refused as `Unsupported`.
+- Team evidence keeps the caller's claim and the recorded outcome of an execution apart. `evidence.submit` compares a
+  claim bound to an execution with the Team's record of it (same work, scope, contract and input digest; a claim of
+  success against a recorded failure or cancellation, or the reverse) and refuses a provable contradiction as
+  `EvidenceInvalid` before anything is stored. In its response `claimed_success` is what the caller said,
+  `execution_success` is now the recorded outcome and null until the execution is terminal (it used to repeat the
+  claim), and `execution_consistency` says `consistent`, `unverifiable` or `contradicted` and why, always with
+  `independent_verification: false`. `evidence.inspect` and the review provenance recompute the same answer when
+  they are read, and only after the work binding, the replay of the evidence digest, the current review contract and
+  the current work binding of the execution; otherwise they say `unverifiable` with a reason and show no execution
+  fact. Completion and integration keep their strict result binding. No schema change.
