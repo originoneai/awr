@@ -6,6 +6,9 @@ import './i18n';
 import { createAppQueryClient } from './lib/queries';
 import { router } from './router';
 import './global.css';
+import { installStyleNonceShim } from './csp';
+
+installStyleNonceShim();
 
 const queryClient = createAppQueryClient();
 
