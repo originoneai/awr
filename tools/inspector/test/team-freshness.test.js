@@ -1140,28 +1140,86 @@ test('a scope read that confirms nothing fails closed', async () => {
 test('a stream whose first page starts after the deadline fails without a request', async () => {
   const requested = [];
   // A fake clock decides the deadline; the page timeout still finishes the
-  // stalled page on a real short timer. Whether that real timer fires a
-  // millisecond early or late cannot change the verdict: once the stalled
-  // page starts, the fake clock is already far past the deadline.
-  let fakeNow = Date.now();
+  // stalled page on a real short timer. The fake clock starts at a constant
+  // far from the real clock, so this test also pins the opts.now option
+  // itself: any deadline arithmetic that read Date.now() would see the
+  // deadline in the remote past and the stalled page would never start
+  // (requested would stay empty), and a deadlineAt built from Date.now()
+  // would let the late page out (requested would gain 'late').
+  let fakeNow = 1_000_000;
   const upstream = await overviewUpstream({
     'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'stalled' }, { id: 'late' }], next_cursor: null } })),
     'work.list:stalled': () => { requested.push('stalled'); fakeNow += 10000; }, // never answers
     'work.list:late': (_q, r) => { requested.push('late'); r.end(JSON.stringify({ ...ENVELOPE, data: { items: [], next_cursor: null } })); },
     'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
   });
+  // The page timeout (100ms real) is the smaller bound for the stalled page
+  // — no same-instant race with the deadline (400ms of fake time), and the
+  // clock is already 10s past the deadline when the late page would start.
   const bridge = await startLiveBridge(upstream.base, {
-    readTimeoutMs: 800, overviewDeadlineMs: 400, now: () => fakeNow,
+    readTimeoutMs: 100, overviewDeadlineMs: 400, now: () => fakeNow,
   });
   try {
-    const started = Date.now();
     const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { timeoutMs: 5000 });
-    assert.ok(Date.now() - started < 1600);
     assert.equal(overview.json.ok, false);
     assert.equal(overview.json.error.code, 'ReadTimeout');
     // The stalled stream burned the deadline; the late stream's first page
     // never started — no request was issued for it.
     assert.deepEqual(requested, ['stalled']);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('a page that would start exactly at the deadline is not sent', async () => {
+  const requested = [];
+  let fakeNow = 1_000_000;
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'stalled' }, { id: 'late' }], next_cursor: null } })),
+    // The clock stops exactly on the deadline while this page never answers.
+    'work.list:stalled': () => { requested.push('stalled'); fakeNow += 400; },
+    'work.list:late': (_q, r) => { requested.push('late'); r.end(JSON.stringify({ ...ENVELOPE, data: { items: [], next_cursor: null } })); },
+    'capabilities': (_q, r) => r.end(JSON.stringify({ identity: { actor_id: 'member' } })),
+  });
+  const bridge = await startLiveBridge(upstream.base, {
+    readTimeoutMs: 100, overviewDeadlineMs: 400, now: () => fakeNow,
+  });
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { timeoutMs: 5000 });
+    assert.equal(overview.json.ok, false);
+    assert.equal(overview.json.error.code, 'ReadTimeout');
+    // remaining == 0 is refused by `remaining <= 0`. This case cannot
+    // distinguish `< 0` from `<= 0`: with `< 0` the late page would leave
+    // with an already-aborted signal (AbortSignal.timeout(0)) and the fetch
+    // would reject before any request reached the upstream, so `requested`
+    // would still be ['stalled'] — that fault is equivalent here.
+    assert.deepEqual(requested, ['stalled']);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('the capabilities read is refused when the deadline has passed before it starts', async () => {
+  // The fake clock starts far in the future and jumps past the deadline when
+  // the last list is answered, so only the 1ms floor remains for the
+  // capabilities read. Its answer comes 100ms later: the 1ms abort always
+  // wins, while a read that computed its budget from Date.now() would see
+  // the whole 4s page timeout and succeed — red. (An instant answer would
+  // race the 1ms abort and make this test flaky.)
+  let fakeNow = 9_000_000_000_000;
+  const upstream = await overviewUpstream({
+    'workstreams.list': (_q, r) => r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }], next_cursor: null } })),
+    'work.list:backend': (_q, r) => { fakeNow += 10000; r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'api-1' }], total: 1, next_cursor: null } })); },
+    'capabilities': (_q, r) => setTimeout(() => r.end(JSON.stringify({ identity: { actor_id: 'member' } })), 100),
+  });
+  const bridge = await startLiveBridge(upstream.base, { overviewDeadlineMs: 400, now: () => fakeNow });
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { timeoutMs: 5000 });
+    assert.equal(overview.json.ok, false);
+    assert.equal(overview.json.error.code, 'ReadTimeout');
+    assert.equal(overview.json.works, undefined);
   } finally {
     await bridge.close();
     await upstream.close();
