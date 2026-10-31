@@ -355,8 +355,74 @@ fn a_plan_that_changed_a_revision_that_moved_and_a_missing_reason_are_refused() 
         ],
         "InvalidInput",
     );
+    // A reason of blanks is no reason.
+    f.refused(
+        &[
+            "doctor",
+            "repair",
+            "finished-work",
+            "--accept",
+            "--expected-preview",
+            fingerprint,
+            "--expected-revision",
+            &revision,
+            "--reason",
+            "   ",
+        ],
+        "InvalidInput",
+    );
     // Nothing was changed by any of them.
     assert_eq!(f.session_status(&on_w), "active");
     assert_eq!(f.claim_status(&claim), "active");
     assert!(f.events("session.interrupted").is_empty());
+}
+
+#[test]
+fn a_plan_read_before_something_changed_cannot_be_accepted() {
+    let (f, [_, _, on_open], _) = backlog();
+    let before = f.plan();
+    // Another work is finished meanwhile: its session joins the plan, so the plan is another one.
+    f.finish("OPEN", "completed");
+    let after = f.plan();
+    assert_ne!(before["preview_fingerprint"], after["preview_fingerprint"]);
+    assert!(
+        after["plan"]["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["session_id"] == json!(on_open))
+    );
+    f.refused(
+        &[
+            "doctor",
+            "repair",
+            "finished-work",
+            "--accept",
+            "--expected-preview",
+            before["preview_fingerprint"].as_str().unwrap(),
+            "--expected-revision",
+            &after["project_revision"].to_string(),
+            "--reason",
+            "Clean up",
+        ],
+        "MutationConflict",
+    );
+    assert_eq!(f.session_status(&on_open), "active");
+}
+
+#[test]
+fn a_claim_whose_session_is_not_active_any_more_is_planned_and_released() {
+    let (f, [on_w, _, _], claim) = backlog();
+    // As an interrupted writer can leave it: the session is closed and its claim is still active.
+    f.sql(
+        "UPDATE sessions SET status='interrupted',ended_at=?2 WHERE id=?1",
+        rusqlite::params![on_w, now_millis().unwrap()],
+    );
+    let plan = f.plan();
+    let claims = plan["plan"]["claims"].as_array().unwrap();
+    assert_eq!(claims.len(), 1, "{plan}");
+    assert_eq!(claims[0]["claim_id"], json!(claim));
+    f.accept(&plan, "Release a claim that nobody can release");
+    assert_eq!(f.claim_status(&claim), "released");
+    assert_eq!(f.session_status(&on_w), "interrupted");
 }
