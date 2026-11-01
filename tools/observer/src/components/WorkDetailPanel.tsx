@@ -316,7 +316,11 @@ export function WorkDetailPanel({
   const review = useQuery(reviewQueryOptions(work ? project : null, workId, reviewRoundId, revoked));
   const activity = useQuery(activityQueryOptions(work ? project : null, revoked, workId ?? undefined));
 
-  if (revoked || isAuthError(snapshot.error) || isAuthError(review.error) || isAuthError(activity.error)) {
+  // Only the work-level read decides the whole panel's access: a Forbidden
+  // from a review round of another work (stale/mistyped deep link) or from
+  // the activity log must not blank requirements and source state. Those
+  // failures stay inside their own tabs as partial failures with the code.
+  if (revoked || isAuthError(snapshot.error)) {
     return <ObservationForbidden />;
   }
   if (!work) {

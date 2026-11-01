@@ -197,7 +197,13 @@ export function resumeObservationReads(queryClient: QueryClient) {
 export function createAppQueryClient(overrides?: { retry?: number | boolean }) {
   const queryClient = new QueryClient({
     queryCache: new QueryCache({
-      onError: (error) => {
+      onError: (error, query) => {
+        // Object-scoped sub-reads (a review round of another work, the
+        // activity log) can be denied per object: a Forbidden there is a
+        // partial failure in their own tab, not a session revocation. Only
+        // work-level reads revoke the whole observation session.
+        const kind = query.queryKey[1];
+        if (kind === 'review.inspect' || kind === 'activity') return;
         if (isAuthError(error)) revokeObservationReads(queryClient);
       },
     }),

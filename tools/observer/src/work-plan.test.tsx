@@ -359,3 +359,130 @@ describe('work plan localization and accessibility', () => {
     expect(results).toHaveNoViolations();
   });
 });
+
+describe('work-plan review round 2: sub-read failures and behavior pins', () => {
+  it('a Forbidden review read degrades only its own tab, not the whole panel', async () => {
+    setupPlan({
+      path: '/projects/demo?tab=plan&work=W1&review_round_id=round-1',
+      review: { ok: false, error: { code: 'Forbidden', message: 'access denied' } },
+    });
+    // The work itself is readable: requirements stay visible with real content.
+    expect(await screen.findByTestId('plan-runtime-state')).toBeTruthy();
+    expect(screen.queryByTestId('state-forbidden')).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: '成果' }));
+    const partial = await screen.findByTestId('state-partial');
+    expect(partial.textContent).toContain('Forbidden');
+  });
+
+  it('a missing client_reported_at reads 未测量, never the current clock', async () => {
+    setupPlan({
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as {
+          result: { data: { observation: { reporting: { client_reported_at_unix_ms?: number } } } };
+        };
+        delete response.result.data.observation.reporting.client_reported_at_unix_ms;
+        return response;
+      },
+    });
+    const cell = await screen.findByTestId('last-report-W1');
+    await waitFor(() => expect(cell.textContent).toBe('未测量'));
+    expect(cell.textContent).not.toBe(formatUnixMs(Date.now(), 'zh-CN'));
+  });
+
+  it('a work in a workstream the overview does not list shows under its own id', async () => {
+    const works = [
+      DEMO_PROJECT_WORKS[0],
+      { ...DEMO_PROJECT_WORKS[1], key: 'W-orphan', title: 'Orphan task', workstream_id: 'WS-unlisted' },
+    ];
+    setupPlan({ overview: makePlanOverview(works) });
+    expect(await screen.findByTestId('workstream-group-WS-unlisted')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Orphan task' })).toBeTruthy();
+  });
+
+  it('a failed scope with zero enumerated is not the empty state', async () => {
+    const overview = {
+      ...DEMO_PROJECT_OVERVIEW,
+      works: [],
+      coverage: {
+        ...DEMO_PROJECT_OVERVIEW.coverage,
+        scope: { ...DEMO_PROJECT_OVERVIEW.coverage.scope, status: 'failed', enumerated: 0, error_code: 'DatabaseUnavailable' },
+        failed: 1,
+      },
+    };
+    setupPlan({ overview });
+    await waitFor(() => expect(screen.getByTestId('state-partial')).toBeTruthy());
+    expect(screen.queryByTestId('state-empty')).toBeNull();
+  });
+
+  it('a failed work.snapshot renders a partial failure, not a blank pane', async () => {
+    setupPlan({ snapshot: () => ({ ok: false, error: { code: 'ReadTimeout', message: 'slow' } }) });
+    const partial = await screen.findByTestId('state-partial', undefined, { timeout: 5000 });
+    expect(partial.textContent).toContain('ReadTimeout');
+  });
+
+  it('changing the page clears the selected work', async () => {
+    const works = makeTwoStreamWorks(61);
+    const { router } = setupPlan({ overview: makePlanOverview(works), path: '/projects/demo?tab=plan&work=W1' });
+    await screen.findByRole('link', { name: 'Observed plan task 1' });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('listitem', { name: '2' }));
+    await waitFor(() => expect(router.state.location.search).not.toContain('work='));
+    expect(router.state.location.search).toContain('page=2');
+  });
+
+  it('Enter and Space select a row', async () => {
+    const { router } = setupPlan({ path: '/projects/demo?tab=plan' });
+    const rowLink = await screen.findByRole('link', { name: 'Build the filter API' });
+    const user = userEvent.setup();
+    const row = rowLink.closest('tr')!;
+    await user.click(row);
+    await waitFor(() => expect(router.state.location.search).toContain('work=W1'));
+    row.focus();
+    await user.keyboard('[Enter]');
+    await waitFor(() => expect(router.state.location.search).toContain('work=W1'));
+    await user.keyboard('[Space]');
+    await waitFor(() => expect(router.state.location.search).toContain('work=W1'));
+  });
+
+  it('the owner cell prefers owner_person over agent when both are set', async () => {
+    const works = [{ ...DEMO_PROJECT_WORKS[0], owner_person: 'lin', agent: { id: 'agent-x', state: 'running' } }];
+    setupPlan({ overview: makePlanOverview(works) });
+    const cell = await screen.findByTestId('plan-owner-W1');
+    expect(cell.textContent).toBe('lin');
+    expect(cell.textContent).not.toContain('agent-x');
+  });
+
+  it('review reads are keyed per (work, round) with the right ids', async () => {
+    const { fetchMock, router } = setupPlan({ path: '/projects/demo?tab=plan&work=W1&review_round_id=round-1' });
+    const reviewCalls = () => fetchMock.mock.calls
+      .filter(([, init]) => String(init?.body ?? '').includes('review.inspect'))
+      .map(([, init]) => JSON.parse(String(init?.body)).query);
+    await waitFor(() => expect(reviewCalls().length).toBe(1));
+    expect(reviewCalls()[0]).toMatchObject({ work_id: 'W1', review_round_id: 'round-1' });
+    // Select another work: a new (work, round) pair must be read, not cached.
+    await act(async () => {
+      await router.navigate('/projects/demo?tab=plan&work=W2&review_round_id=round-1');
+    });
+    await waitFor(() => expect(reviewCalls().length).toBe(2));
+    expect(reviewCalls()[1]).toMatchObject({ work_id: 'W2', review_round_id: 'round-1' });
+    // Another round of the same work: a third distinct read.
+    await act(async () => {
+      await router.navigate('/projects/demo?tab=plan&work=W2&review_round_id=round-2');
+    });
+    await waitFor(() => expect(reviewCalls().length).toBe(3));
+    expect(reviewCalls()[2]).toMatchObject({ work_id: 'W2', review_round_id: 'round-2' });
+    // Back to an already-read pair: any further read must again name that
+    // exact pair (a background refetch of the same object is fine; an answer
+    // for the wrong object is not). Exactly three distinct pairs were read.
+    await act(async () => {
+      await router.navigate('/projects/demo?tab=plan&work=W1&review_round_id=round-1');
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const pairs = new Set(reviewCalls().map((query) => `${query.work_id}::${query.review_round_id}`));
+    expect(pairs).toEqual(new Set(['W1::round-1', 'W2::round-1', 'W2::round-2']));
+    for (const query of reviewCalls().slice(3)) {
+      expect(query).toMatchObject({ work_id: 'W1', review_round_id: 'round-1' });
+    }
+  });
+});
