@@ -707,6 +707,8 @@ fn moves_wait_for_sessions_checkpoint_recovery_and_unverified_execution_outcomes
                         },
                         cwd: f.root.to_string_lossy().into_owned(),
                         external_reference: (!managed).then(|| "fixture-external-job".into()),
+                        inputs: Vec::new(),
+                        input_binding: awr_core::InputBinding::None,
                     },
                 )
                 .unwrap();

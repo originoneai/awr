@@ -2,7 +2,8 @@ use crate::{query::QueryProject, session::RuntimeProject};
 use awr_core::*;
 use awr_store::Store;
 use clap::Subcommand;
-use serde_json::json;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::{Read, Write},
@@ -22,6 +23,12 @@ pub enum ExecutionCommand {
         key: String,
         #[arg(long)]
         purpose: String,
+        /// Bind an input file to the receipt by hashing it before the command starts.
+        #[arg(long)]
+        bind: Vec<PathBuf>,
+        /// Fail registration instead of skipping an input that cannot be hashed.
+        #[arg(long)]
+        require_input_hash: bool,
         #[arg(last = true, required = true)]
         command: Vec<String>,
     },
@@ -82,6 +89,172 @@ fn retry<T>(
     ))
 }
 
+/// Ceiling for hashing one declared input; the same cap guards the drift report.
+const INPUT_HASH_CAP: u64 = 256 * 1024 * 1024;
+
+fn is_interpreter(program: &str) -> bool {
+    let name = program.trim_end_matches(".exe");
+    matches!(
+        name,
+        "node" | "bash" | "sh" | "zsh" | "pwsh" | "powershell" | "ruby" | "perl"
+    ) || name == "python"
+        || name.starts_with("python3")
+}
+
+/// The script an interpreter command names, when argv makes it determinable.
+fn script_from_argv(command: &[String]) -> Option<String> {
+    let program = command.first()?;
+    let name = Path::new(program)
+        .file_name()?
+        .to_str()?
+        .to_ascii_lowercase();
+    if !is_interpreter(&name) {
+        return None;
+    }
+    for argument in &command[1..] {
+        if matches!(argument.as_str(), "-m" | "-c" | "-e") {
+            return None;
+        }
+        if argument.starts_with('-') {
+            continue;
+        }
+        return Some(argument.clone());
+    }
+    None
+}
+
+fn hash_file(path: &Path) -> Result<(String, u64, i64)> {
+    let meta = fs::metadata(path).map_err(|_| {
+        Error::SourceUnavailable(format!(
+            "declared execution input cannot be read: {}",
+            path.display()
+        ))
+    })?;
+    if !meta.is_file() {
+        return Err(Error::InvalidInput(format!(
+            "execution input is not a regular file: {}",
+            path.display()
+        )));
+    }
+    if meta.len() > INPUT_HASH_CAP {
+        return Err(Error::InvalidInput(format!(
+            "execution input exceeds {INPUT_HASH_CAP} byte hashing limit: {}",
+            path.display()
+        )));
+    }
+    let mut file = fs::File::open(path).map_err(|_| {
+        Error::SourceUnavailable(format!(
+            "declared execution input cannot be read: {}",
+            path.display()
+        ))
+    })?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    let mut size = 0u64;
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        size += read as u64;
+        if size > INPUT_HASH_CAP {
+            return Err(Error::InvalidInput(format!(
+                "execution input exceeds {INPUT_HASH_CAP} byte hashing limit: {}",
+                path.display()
+            )));
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let mtime_ns = meta
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|elapsed| elapsed.as_nanos() as i64)
+        .unwrap_or(0);
+    Ok((format!("{:x}", hasher.finalize()), size, mtime_ns))
+}
+
+fn bound_inputs(
+    root: &Path,
+    bind: &[PathBuf],
+    command: &[String],
+    require: bool,
+) -> Result<(Vec<ExecutionInput>, InputBinding)> {
+    let mut inputs = Vec::new();
+    for path in bind {
+        let resolved = if path.is_absolute() {
+            path.clone()
+        } else {
+            root.join(path)
+        };
+        match hash_file(&resolved) {
+            Ok((sha256, size, mtime_ns)) => inputs.push(ExecutionInput {
+                path: path.to_string_lossy().into_owned(),
+                sha256,
+                size,
+                mtime_ns,
+                source: InputSource::Bind,
+            }),
+            Err(error) if require => return Err(error),
+            Err(_) => {}
+        }
+    }
+    if let Some(script) = script_from_argv(command) {
+        let resolved = if Path::new(&script).is_absolute() {
+            PathBuf::from(&script)
+        } else {
+            root.join(&script)
+        };
+        match hash_file(&resolved) {
+            Ok((sha256, size, mtime_ns)) => inputs.push(ExecutionInput {
+                path: script,
+                sha256,
+                size,
+                mtime_ns,
+                source: InputSource::ArgvScript,
+            }),
+            Err(error) if require => return Err(error),
+            Err(_) => {}
+        }
+    }
+    let binding = if inputs.is_empty() {
+        InputBinding::None
+    } else if bind.is_empty() {
+        InputBinding::ArgvScript
+    } else {
+        InputBinding::Declared
+    };
+    Ok((inputs, binding))
+}
+
+fn input_drift(root: &Path, inputs: &[ExecutionInput]) -> Value {
+    let mut files = Vec::new();
+    let mut any = false;
+    for input in inputs {
+        let resolved = if Path::new(&input.path).is_absolute() {
+            PathBuf::from(&input.path)
+        } else {
+            root.join(&input.path)
+        };
+        let (state, sha256_now) = match hash_file(&resolved) {
+            Ok((sha256, _, _)) if sha256 == input.sha256 => ("unchanged", Some(sha256)),
+            Ok((sha256, _, _)) => ("changed", Some(sha256)),
+            Err(Error::InvalidInput(_)) => ("unreadable", None),
+            Err(_) => ("missing", None),
+        };
+        if state != "unchanged" {
+            any = true;
+        }
+        files.push(json!({
+            "path": input.path,
+            "sha256_at_run": input.sha256,
+            "sha256_now": sha256_now,
+            "state": state,
+        }));
+    }
+    json!({"any": any, "files": files})
+}
+
 fn register(root: &Path, session: Id, intent: ExecutionIntent) -> Result<(Execution, bool)> {
     let _lock = crate::client::lock(root, "executions", &format!("key:{}", intent.operation_key))?;
     protect_runtime(root)?;
@@ -96,6 +269,24 @@ fn register(root: &Path, session: Id, intent: ExecutionIntent) -> Result<(Execut
             || Some(existing.work_item_id) != bound.work_item_id
             || existing.branch_id != bound.branch_id
         {
+            // A retry after `touch` still matches, because intent equality ignores
+            // mtime. Reaching here with everything but the inputs equal means the
+            // recorded inputs and the requested ones disagree: either the bytes
+            // changed between the two attempts, or the earlier receipt recorded no
+            // inputs at all. The message must not claim the bytes changed, because
+            // the "recorded none" case never saw any bytes.
+            let mut previous = existing.intent.clone();
+            let mut requested = intent.clone();
+            previous.inputs.clear();
+            previous.input_binding = InputBinding::None;
+            requested.inputs.clear();
+            requested.input_binding = InputBinding::None;
+            if previous == requested
+                && Some(existing.work_item_id) == bound.work_item_id
+                && existing.branch_id == bound.branch_id
+            {
+                return Err(Error::SourceConflict("input binding conflicts with the receipt recorded for this operation key; use a new key for a new operation".into()));
+            }
             return Err(Error::SourceConflict("operation key belongs to different work, branch or intent; use a new key for a new operation".into()));
         }
         return Ok((existing, false));
@@ -155,8 +346,11 @@ pub fn run(root: &Path, command: &ExecutionCommand, _json_output: bool) -> Resul
             session,
             key,
             purpose,
+            bind,
+            require_input_hash,
             command,
         } => {
+            let (inputs, input_binding) = bound_inputs(&root, bind, command, *require_input_hash)?;
             let (e, created) = register(
                 &root,
                 *session,
@@ -167,6 +361,8 @@ pub fn run(root: &Path, command: &ExecutionCommand, _json_output: bool) -> Resul
                     command: command.clone(),
                     cwd: root.to_string_lossy().into(),
                     external_reference: None,
+                    inputs,
+                    input_binding,
                 },
             )?;
             let mut dispatch_error = None;
@@ -209,6 +405,8 @@ pub fn run(root: &Path, command: &ExecutionCommand, _json_output: bool) -> Resul
                     command: vec![],
                     cwd: root.to_string_lossy().into(),
                     external_reference: Some(reference.clone()),
+                    inputs: Vec::new(),
+                    input_binding: InputBinding::None,
                 },
             )?;
             json!({"execution":e,"created":created,"outcome_verified":false})
@@ -228,7 +426,7 @@ pub fn run(root: &Path, command: &ExecutionCommand, _json_output: bool) -> Resul
         ExecutionCommand::Inspect { id } => {
             let (store, project) = read_state(&root)?;
             let e = store.execution(project.id, *id)?;
-            json!({"observation":awr_runtime::inspect_execution(&root,&e)?,"external_report":store.latest_external_report(project.id,*id)?,"side_effects_performed":false})
+            json!({"observation":awr_runtime::inspect_execution(&root,&e)?,"external_report":store.latest_external_report(project.id,*id)?,"input_binding":e.intent.input_binding,"inputs":e.intent.inputs,"input_drift":input_drift(&root,&e.intent.inputs),"side_effects_performed":false})
         }
         ExecutionCommand::Show { id } => {
             let db = RuntimeProject::open(&root, false)?;
@@ -428,4 +626,44 @@ fn finish(
         s.finish_execution(project, r, result.clone())
     })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::script_from_argv;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn interpreter_scripts_are_detected_from_argv() {
+        assert_eq!(
+            script_from_argv(&args(&["python", "x.py"])),
+            Some("x.py".into())
+        );
+        assert_eq!(
+            script_from_argv(&args(&["python3.11", "x.py"])),
+            Some("x.py".into())
+        );
+        assert_eq!(script_from_argv(&args(&["python", "-m", "mod"])), None);
+        assert_eq!(
+            script_from_argv(&args(&["node", "-e", "console.log(1)"])),
+            None
+        );
+        assert_eq!(
+            script_from_argv(&args(&["bash", "-x", "y.sh"])),
+            Some("y.sh".into())
+        );
+        assert_eq!(
+            script_from_argv(&args(&["pwsh", "-File", "z.ps1"])),
+            Some("z.ps1".into())
+        );
+        assert_eq!(
+            script_from_argv(&args(&["ruby", "r.rb"])),
+            Some("r.rb".into())
+        );
+        assert_eq!(script_from_argv(&args(&["make", "all"])), None);
+        assert_eq!(script_from_argv(&[]), None);
+    }
 }

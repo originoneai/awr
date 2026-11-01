@@ -167,6 +167,8 @@ fn execution_context_keeps_all_current_results_and_drops_old_ownership_generatio
                     command: vec!["synthetic-worker".into()],
                     cwd: f.root.to_string_lossy().into_owned(),
                     external_reference: None,
+                    inputs: Vec::new(),
+                    input_binding: awr_core::InputBinding::None,
                 },
             )
             .unwrap()
