@@ -18,6 +18,7 @@ import type { KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
+import { ObservationValue } from '../components/ObservationValue';
 import { WorkDetailPanel } from '../components/WorkDetailPanel';
 import { isAuthError } from '../lib/api';
 import { overviewQueryOptions } from '../lib/queries';
@@ -138,11 +139,7 @@ export function WorkPlanPage({ project }: { project: string }) {
       width: 160,
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 0 : 1 }),
       render: (_, row) => row.kind === 'work' ? (
-        <span data-testid={`plan-status-${row.work.key}`}>
-          {row.work.status === 'unknown' || row.work.status == null
-            ? t('freshness.state.not_measured')
-            : row.work.status}
-        </span>
+        <ObservationValue testId={`plan-status-${row.work.key}`} value={row.work.status} />
       ) : null,
     },
     {
@@ -152,7 +149,7 @@ export function WorkPlanPage({ project }: { project: string }) {
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 0 : 1 }),
       render: (_, row) => row.kind === 'work' ? (
         <span data-testid={`plan-owner-${row.work.key}`}>
-          {rawText(row.work.owner_person ?? row.work.agent) ?? t('freshness.state.not_measured')}
+          {rawText(row.work.owner_person ?? row.work.agent) ?? t('common.notProvided')}
         </span>
       ) : null,
     },

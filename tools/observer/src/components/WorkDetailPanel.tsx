@@ -16,7 +16,9 @@ import {
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from './states';
+import { FieldLabel, ObservationValue } from './ObservationValue';
 import { isAuthError } from '../lib/api';
+import { formatObservationValue } from '../i18n/craft';
 import { formatUnixMs } from '../lib/format';
 import { activityQueryOptions, reviewQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
@@ -42,8 +44,7 @@ function rawText(value: unknown): string | null {
 }
 
 function Measured({ value, testId }: { value: unknown; testId?: string }) {
-  const { t } = useTranslation();
-  return <span data-testid={testId}>{rawText(value) ?? t('freshness.state.not_measured')}</span>;
+  return <ObservationValue value={value} testId={testId} />;
 }
 
 function ContractValues({ values }: { values?: WorkContractValue[] }) {
@@ -93,7 +94,7 @@ function Requirements({ query }: { query: SnapshotQuery }) {
             children: (
               <Tooltip title={guidance?.note ?? undefined}>
                 <Typography.Text data-testid="plan-guidance">
-                  {guidance?.op ?? t('freshness.state.not_measured')}
+                  {guidance?.op ?? t('common.notProvided')}
                 </Typography.Text>
               </Tooltip>
             ),
@@ -127,9 +128,9 @@ function Requirements({ query }: { query: SnapshotQuery }) {
             renderItem={(spec) => (
               <List.Item>
                 <Flex vertical style={{ minWidth: 0 }}>
-                  <Typography.Text code>{spec.path ?? t('freshness.state.not_measured')}</Typography.Text>
+                  <Typography.Text code>{spec.path ?? t('common.notProvided')}</Typography.Text>
                   <Typography.Text data-testid="required-spec-text" ellipsis={{ tooltip: spec.text }}>
-                    {spec.text ?? t('freshness.state.not_measured')}
+                    {spec.text ?? t('common.notProvided')}
                   </Typography.Text>
                 </Flex>
               </List.Item>
@@ -140,7 +141,7 @@ function Requirements({ query }: { query: SnapshotQuery }) {
       <section>
         <Typography.Title level={5}>{t('workbench.detail.currentOutcome')}</Typography.Title>
         {data?.observation?.progress
-          ? <pre className="workbench-progress">{JSON.stringify(data.observation.progress, null, 2)}</pre>
+          ? <pre className="workbench-progress">{rawText(data.observation.progress)}</pre>
           : data?.observation ? <NotReportedYet /> : <Measured value={null} />}
       </section>
     </Flex>
@@ -169,11 +170,11 @@ function ReviewOutcomes({ query, roundId }: { query: ReviewQuery; roundId: strin
         renderItem={(decision) => (
           <List.Item>
             <Space wrap data-testid={`review-decision-${decision.decision_id}`}>
-              <Typography.Text code data-testid="review-decision-code">{decision.decision}</Typography.Text>
-              <Typography.Text>{decision.approval_basis}</Typography.Text>
-              <Typography.Text>{decision.independence_kind}</Typography.Text>
+              <ObservationValue testId="review-decision-code" value={decision.decision} />
+              <ObservationValue value={decision.approval_basis} />
+              <ObservationValue value={decision.independence_kind} />
               <Typography.Text type="secondary">
-                human_approval: {String(decision.human_approval)}
+                <FieldLabel field="human_approval" />: <ObservationValue value={decision.human_approval} />
               </Typography.Text>
             </Space>
           </List.Item>
@@ -183,11 +184,11 @@ function ReviewOutcomes({ query, roundId }: { query: ReviewQuery; roundId: strin
         size="small"
         column={1}
         items={[
-          { key: 'actor', label: 'author_actor_id', children: review.author_actor_id },
-          { key: 'person', label: 'author_person_id', children: review.author_person_id },
-          { key: 'artifact', label: 'artifact_digest', children: review.artifact_digest },
-          { key: 'contract', label: 'contract_hash', children: review.contract_hash },
-          { key: 'bundle', label: 'bundle_hash', children: review.bundle_hash },
+          { key: 'actor', label: <FieldLabel field="author_actor_id" />, children: <ObservationValue value={review.author_actor_id} /> },
+          { key: 'person', label: <FieldLabel field="author_person_id" />, children: <ObservationValue value={review.author_person_id} /> },
+          { key: 'artifact', label: <FieldLabel field="artifact_digest" />, children: <ObservationValue value={review.artifact_digest} /> },
+          { key: 'contract', label: <FieldLabel field="contract_hash" />, children: <ObservationValue value={review.contract_hash} /> },
+          { key: 'bundle', label: <FieldLabel field="bundle_hash" />, children: <ObservationValue value={review.bundle_hash} /> },
         ]}
       />
       <Typography.Paragraph type="secondary">
@@ -198,7 +199,7 @@ function ReviewOutcomes({ query, roundId }: { query: ReviewQuery; roundId: strin
 }
 
 function ActivityItems({ items }: { items: TeamActivityItem[] }) {
-  const { t, i18n } = useTranslation();
+  const { i18n } = useTranslation();
   const latest = [...items]
     .sort((left, right) => right.created_at_unix_ms - left.created_at_unix_ms)
     .slice(0, 20);
@@ -214,7 +215,7 @@ function ActivityItems({ items }: { items: TeamActivityItem[] }) {
               <Typography.Text code data-testid="activity-action">{item.action}</Typography.Text>
               <Typography.Text data-testid="activity-actor">{item.actor_id}</Typography.Text>
               <Typography.Text data-testid="activity-result">
-                {rawText(item.result) ?? t('freshness.state.not_measured')}
+                {formatObservationValue(item.result, i18n.language)}
               </Typography.Text>
               <Typography.Text type="secondary" data-testid="activity-time">
                 {formatUnixMs(item.created_at_unix_ms, i18n.language)}
@@ -243,9 +244,9 @@ function History({ query }: { query: ActivityQuery }) {
     <div data-testid="plan-history">
       {data ? (
         <Typography.Paragraph type="secondary">
-          development_source: {rawText(data.development_source) ?? t('freshness.state.not_measured')}
+          <FieldLabel field="development_source" />: <ObservationValue value={data.development_source} />
           <br />
-          unknown_means: {rawText(data.unknown_means) ?? t('freshness.state.not_measured')}
+          <FieldLabel field="unknown_means" />: <ObservationValue value={data.unknown_means} />
         </Typography.Paragraph>
       ) : null}
       {content}
@@ -270,23 +271,23 @@ function SourceState({ query }: { query: SnapshotQuery }) {
           items={[
             {
               key: 'snapshot',
-              label: 'source_snapshot_id',
+              label: <FieldLabel field="source_snapshot_id" />,
               children: <Measured testId="source-snapshot-id" value={result?.source_snapshot_id} />,
             },
             {
               key: 'revision',
-              label: 'project_revision',
+              label: <FieldLabel field="project_revision" />,
               children: <Measured testId="source-project-revision" value={result?.project_revision} />,
             },
             {
               key: 'epoch',
-              label: 'coordinator_epoch',
+              label: <FieldLabel field="coordinator_epoch" />,
               children: <Measured testId="source-coordinator-epoch" value={result?.coordinator_epoch} />,
             },
-            { key: 'contract', label: 'contract_hash', children: <Measured value={data?.contract_hash} /> },
-            { key: 'definition', label: 'definition_state', children: <Measured value={data?.definition_state} /> },
-            { key: 'authority', label: 'authority_version', children: <Measured value={result?.authority_version} /> },
-            { key: 'selection', label: 'selection_basis', children: <Measured value={result?.selection_basis} /> },
+            { key: 'contract', label: <FieldLabel field="contract_hash" />, children: <Measured value={data?.contract_hash} /> },
+            { key: 'definition', label: <FieldLabel field="definition_state" />, children: <Measured value={data?.definition_state} /> },
+            { key: 'authority', label: <FieldLabel field="authority_version" />, children: <Measured value={result?.authority_version} /> },
+            { key: 'selection', label: <FieldLabel field="selection_basis" />, children: <Measured value={result?.selection_basis} /> },
           ]}
         />
         <Typography.Text type="secondary">{t('plan.detail.takeoverNote')}</Typography.Text>
@@ -337,9 +338,7 @@ export function WorkDetailPanel({
           <div>
             <Typography.Title level={3} style={{ marginTop: 0 }}>{work.title}</Typography.Title>
             <Space wrap>
-              <Tag>{work.status === 'unknown' || work.status == null
-                ? t('freshness.state.not_measured')
-                : work.status}</Tag>
+              <Tag><ObservationValue value={work.status} /></Tag>
               <Typography.Text type="secondary">{work.key}</Typography.Text>
             </Space>
           </div>

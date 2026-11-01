@@ -313,6 +313,7 @@ const zhCN = {
   },
   common: {
     loading: '加载中…',
+    notProvided: '未提供',
   },
 };
 

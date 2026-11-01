@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
+import { ObservationValue } from '../components/ObservationValue';
 import { isAuthError } from '../lib/api';
 import { formatUnixMs } from '../lib/format';
 import {
@@ -182,7 +183,7 @@ function WorkDetail({
               ? <Tag color={row.state === 'claimed' ? 'processing' : 'default'}>
                   {t(row.state === 'claimed' ? 'workbench.state.claimed' : 'workbench.state.unclaimed')}
                 </Tag>
-              : <Tag>{t('freshness.state.not_measured')}</Tag>}
+              : <Tag>{t('common.notProvided')}</Tag>}
             {navigationText(row.navigation, t) ? <Tag>{navigationText(row.navigation, t)}</Tag> : null}
           </Space>
         </div>
@@ -328,7 +329,7 @@ export function WorkbenchPage() {
             ? <Tag color={row.state === 'claimed' ? 'processing' : 'default'}>
                 {t(row.state === 'claimed' ? 'workbench.state.claimed' : 'workbench.state.unclaimed')}
               </Tag>
-            : <Tag>{t('freshness.state.not_measured')}</Tag>}
+            : <Tag>{t('common.notProvided')}</Tag>}
           {navigationText(row.navigation, t) ? <Tag>{navigationText(row.navigation, t)}</Tag> : null}
         </Space>
       ),
@@ -447,7 +448,7 @@ export function WorkbenchPage() {
             </Typography.Paragraph>
           </div>
           <Space wrap>
-            {nextData?.identity.role ? <Tag data-testid="workbench-role">{nextData.identity.role}</Tag> : null}
+            {nextData?.identity.role ? <Tag><ObservationValue testId="workbench-role" value={nextData.identity.role} /></Tag> : null}
             <Link to="/agent-connect">
               <Space size={4}><LinkIcon size={16} strokeWidth={1.5} aria-hidden />{t('nav.agentConnect')}</Space>
             </Link>

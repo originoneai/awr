@@ -34,21 +34,21 @@ function AccountObservationCards() {
               label: t('account.sessionCreated'),
               children: session?.created_at_ms != null
                 ? formatUnixMs(session.created_at_ms, i18n.language)
-                : t('freshness.state.not_measured'),
+                : t('common.notProvided'),
             },
             {
               key: 'expires',
               label: t('account.sessionExpires'),
               children: session?.expires_at_ms != null
                 ? formatUnixMs(session.expires_at_ms, i18n.language)
-                : t('freshness.state.not_measured'),
+                : t('common.notProvided'),
             },
             {
               key: 'lastSeen',
               label: t('account.sessionLastSeen'),
               children: session?.last_seen_ms != null
                 ? formatUnixMs(session.last_seen_ms, i18n.language)
-                : t('freshness.state.not_measured'),
+                : t('common.notProvided'),
             },
           ]}
         />

@@ -91,8 +91,8 @@ describe('effective plan table', () => {
     expect(await screen.findByRole('link', { name: 'Build the filter API' })).toBeTruthy();
     expect(screen.getByTestId('workstream-group-WS1').textContent).toContain('Backend workstream');
     expect(screen.getByTestId('workstream-group-WS2').textContent).toContain('Frontend workstream');
-    expect(screen.getByTestId('plan-status-W1').textContent).toBe('未测量');
-    expect(screen.getByTestId('plan-owner-W1').textContent).toBe('未测量');
+    expect(screen.getByTestId('plan-status-W1').textContent).toBe('未知');
+    expect(screen.getByTestId('plan-owner-W1').textContent).toBe('未提供');
     expect(screen.getByRole('radio', { name: '看板' })).toHaveProperty('disabled', true);
     expect(screen.queryByRole('button', { name: '提出需求' })).toBeNull();
 
@@ -160,7 +160,7 @@ describe('work detail requirements and source state', () => {
     expect(screen.getByTestId('plan-detail').textContent).toContain('Do not mutate input records');
     expect(screen.getByTestId('plan-detail').textContent).toContain('docs/support.md');
     expect(screen.getByTestId('plan-detail').textContent).toContain('Keep the support API stable.');
-    expect(screen.getByTestId('plan-runtime-state').textContent).toBe('claimed');
+    expect(screen.getByTestId('plan-runtime-state').textContent).toBe('已认领');
     expect(screen.getByTestId('plan-guidance').textContent).toBe('session.checkpoint');
     expect(screen.getByTestId('plan-guidance').textContent).not.toContain('Batch progress');
     expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
@@ -187,17 +187,17 @@ describe('work detail requirements and source state', () => {
     expect(card.textContent).toContain('snapshot-1');
     expect(card.textContent).toContain('epoch-1');
     expect(card.textContent).toContain('contract-1');
-    expect(card.textContent).toContain('enabled');
+    expect(card.textContent).toContain('已启用');
     expect(card.textContent).toContain('work');
-    expect(card.textContent).toContain('project_revision');
-    expect(card.textContent).toContain('authority_version');
-    expect(card.textContent).toContain('selection_basis');
+    expect(card.textContent).toContain('项目版本');
+    expect(card.textContent).toContain('权威版本');
+    expect(card.textContent).toContain('选择依据');
     expect(card.textContent).toContain('未测量');
     expect(card.textContent).not.toContain('已同步');
     expect(card.textContent).not.toContain('takeover complete');
   });
 
-  it('marks a missing attribution triple as not measured, never synchronized', async () => {
+  it('marks a missing attribution triple as not provided, never synchronized', async () => {
     setupPlan({
       snapshot: (workId) => {
         const response = demoWorkSnapshot(workId) as {
@@ -214,9 +214,9 @@ describe('work detail requirements and source state', () => {
       },
     });
     const card = await screen.findByTestId('source-state-card');
-    expect(within(card).getByTestId('source-snapshot-id').textContent).toBe('未测量');
-    expect(within(card).getByTestId('source-project-revision').textContent).toBe('未测量');
-    expect(within(card).getByTestId('source-coordinator-epoch').textContent).toBe('未测量');
+    expect(within(card).getByTestId('source-snapshot-id').textContent).toBe('未提供');
+    expect(within(card).getByTestId('source-project-revision').textContent).toBe('未提供');
+    expect(within(card).getByTestId('source-coordinator-epoch').textContent).toBe('未提供');
     expect(card.textContent).not.toContain('已同步');
   });
 
@@ -228,16 +228,15 @@ describe('work detail requirements and source state', () => {
 });
 
 describe('work detail review outcomes', () => {
-  it('renders raw review decisions and metadata without narrative', async () => {
+  it('renders localized review decisions with exact metadata and no narrative', async () => {
     const user = userEvent.setup();
     setupPlan({ path: '/projects/demo?tab=plan&work=W1&review_round_id=round-1' });
     await user.click(await screen.findByRole('tab', { name: '成果' }));
     const review = await screen.findByTestId('plan-review');
     const decision = within(review).getByTestId('review-decision-decision-1');
-    expect(within(decision).getByTestId('review-decision-code').textContent).toBe('approve');
-    expect(decision.textContent).toContain('simulated_member_independent_review');
-    expect(decision.textContent).toContain('simulated_member_independent');
-    expect(decision.textContent).toContain('human_approval');
+    expect(within(decision).getByTestId('review-decision-code').textContent).toBe('批准');
+    expect(decision.textContent).toContain('成员独立复核（模拟）');
+    expect(decision.textContent).toContain('人工批准');
     expect(review.textContent).toContain('author-agent-1');
     expect(review.textContent).toContain('artifact-digest-1');
     expect(review.textContent).toContain('bundle-hash-1');

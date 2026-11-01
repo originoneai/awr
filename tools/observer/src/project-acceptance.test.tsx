@@ -296,15 +296,15 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
   it('shows the decision human_approval value instead of hiding it', async () => {
     setupAcceptance();
     renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
-    expect((await screen.findByTestId('decision-human-approval')).textContent).toBe('false');
+    expect((await screen.findByTestId('decision-human-approval')).textContent).toBe('否');
   });
 
-  it('requires candidate_current true for current approval and reports missing as not measured', async () => {
+  it('requires candidate_current true for current approval and reports the fact as not provided', async () => {
     const { payloads } = setupAcceptance();
     payloads.reviews[WORK].submission.candidate_current = undefined as never;
     renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
     expect(screen.queryByTestId('acceptance-current-approval')).toBeNull();
-    expect((await screen.findByTestId('acceptance-review-currentness')).textContent).toBe('未测量');
+    expect((await screen.findByTestId('acceptance-review-currentness')).textContent).toBe('未提供');
   });
 
   it('disables segment mode when the review has no segment_query', async () => {
@@ -350,14 +350,14 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     }
   });
 
-  it('keeps missing clock values not measured instead of borrowing another clock', async () => {
+  it('marks missing clock facts as not provided instead of borrowing another clock', async () => {
     const { payloads } = setupAcceptance();
     const confirmation = payloads.integration.confirmation as { envelope: { record: { data: { provenance: Record<string, unknown> } } } };
     delete confirmation.envelope.record.data.provenance.observed_at_unix_ms;
     payloads.snapshots[WORK].observation.collaboration.source_state = undefined as never;
     renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
     const times = await screen.findByTestId('acceptance-times');
-    expect(times.textContent).toContain('未测量');
+    expect(times.textContent).toContain('未提供');
     expect(times.textContent).not.toContain('1793518656287');
   });
 
@@ -375,7 +375,7 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
     expect((await screen.findByTestId('completion-review-round')).textContent).toBe(ROUND);
     expect(screen.getByTestId('completion-review-decision').textContent).toBe('01M6AZ4XY0MEJHBR91AHDR578A');
-    expect(screen.getByTestId('completion-independence').textContent).toBe('simulated_member_independent');
+    expect(screen.getByTestId('completion-independence').textContent).toBe('成员独立复核（模拟）');
   });
 
   it('rejects completion when the snapshot selected id differs', async () => {
@@ -418,7 +418,7 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     const { payloads } = setupAcceptance();
     Object.assign(payloads.integration, structuredClone(LIVE_INTEGRATION.data));
     renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
-    expect((await screen.findByTestId('acceptance-dispatch-state')).textContent).toBe('dispatched');
+    expect((await screen.findByTestId('acceptance-dispatch-state')).textContent).toBe('已分派');
   });
 
   it('shows a rejected integration attempt as rejected with its intent state', async () => {
@@ -429,8 +429,8 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     };
     renderApp('/projects/demo?tab=acceptance&work=issue-filter-page');
     expect(await screen.findByTestId('acceptance-integration-rejected')).toBeTruthy();
-    expect(screen.getByTestId('acceptance-integration-state').textContent).toBe('rejected');
-    expect(screen.getByTestId('acceptance-integration-outcome').textContent).toBe('rejected');
+    expect(screen.getByTestId('acceptance-integration-state').textContent).toBe('已拒绝');
+    expect(screen.getByTestId('acceptance-integration-outcome').textContent).toBe('已拒绝');
     expect(screen.queryByText(/尚未交付/)).toBeNull();
   });
 
