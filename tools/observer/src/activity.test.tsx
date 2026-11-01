@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { screen } from '@testing-library/react';
+import { act, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { revokeObservationReads } from './lib/queries';
 import { DEMO_PROJECTS, renderApp } from './test-utils';
 
 const SELF_ACTOR = 'observer-host-native-20261031T203834Z-6427d37b0df9-aadc36';
@@ -100,6 +101,8 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect(calls.filter((call) => call.params.get('kind') === 'requests')).toHaveLength(0);
     expect(screen.getByTestId('activity-scope').textContent).toContain('self');
     expect(screen.getByTestId('activity-development-source').textContent).toContain('committed_events_with_operation_attribution');
+    expect(screen.getByTestId('activity-retention').textContent).toContain('oldest_pruned_soft_capacity');
+    expect(screen.getByTestId('activity-retention').textContent).toContain('10000');
     expect(screen.getByTestId('activity-collection-limits').textContent).toContain('chat_text_collected: false');
     expect(screen.getByTestId('activity-unknown-means').textContent).toContain(UNKNOWN_MEANS);
     expect(screen.getByTestId('activity-collection-limits').textContent).toContain('tool_io_collected: false');
@@ -115,7 +118,7 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     const all = fixture('derived-audit-development-project-scope-all-run09.json').data.items as Array<Record<string, unknown>>;
     const pages = [
       pagedDevelopment(all.slice(0, 50), 'cursor-1'),
-      pagedDevelopment(all.slice(50, 150), 'cursor-2'),
+      pagedDevelopment(all, 'cursor-2'),
       pagedDevelopment(all.slice(150), null),
     ];
     const { calls } = setupActivity({ projectAudit: true, developmentPages: pages });
@@ -123,7 +126,7 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect((await screen.findAllByTestId('activity-row')).length).toBe(50);
     const user = userEvent.setup();
     await user.click(screen.getByTestId('activity-load-earlier'));
-    expect((await screen.findAllByTestId('activity-row')).length).toBe(150);
+    expect((await screen.findAllByTestId('activity-row')).length).toBe(212);
     await user.click(screen.getByTestId('activity-load-earlier'));
     expect((await screen.findAllByTestId('activity-row')).length).toBe(212);
     const cursors = calls.map((call) => call.params.get('cursor'));
@@ -187,7 +190,10 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
   it('selects one audit row by event id and never treats it as a business request id', async () => {
     const { calls } = setupActivity();
     const event = '01M6A0PZ0CB6PZ6X8JQ4TSFQWN';
-    const { router } = renderApp(`/activity?project=demo&kind=requests&event=${event}`);
+    const { router } = renderApp('/activity?project=demo&kind=requests');
+    const user = userEvent.setup();
+    await user.click((await screen.findAllByTestId('activity-row'))[0]);
+    expect(router.state.location.search).toContain(`event=${event}`);
     const detail = await screen.findByTestId('activity-event-detail');
     expect(detail.textContent).toContain(event);
     expect(detail.textContent).toContain(SELF_ACTOR);
@@ -208,7 +214,8 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
   });
 
   it('filters access.changed only within loaded development and labels the limitation', async () => {
-    const { calls } = setupActivity();
+    const all = fixture('derived-audit-development-project-scope-all-run09.json').data.items as Array<Record<string, unknown>>;
+    const { calls } = setupActivity({ projectAudit: true, development: pagedDevelopment(all, null) });
     renderApp('/activity?project=demo');
     const user = userEvent.setup();
     const accessTab = await screen.findByText('授权变更');
@@ -216,7 +223,20 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect((await screen.findByTestId('activity-access-note')).textContent).toContain('已加载 development');
     expect(screen.getByTestId('activity-access-note').textContent).toContain('action=access.changed');
     expect((await screen.findAllByText('access.changed')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('session.end')).toBeNull();
     expect(calls.filter((call) => call.params.get('kind') === 'requests')).toHaveLength(0);
     expect(calls.some((call) => ['audit.history', 'audit.export', 'audit.count'].includes(call.params.get('kind') ?? ''))).toBe(false);
+  });
+
+  it('clears activity details and silences reads after revocation', async () => {
+    const { calls } = setupActivity();
+    const { queryClient } = renderApp('/activity?project=demo');
+    await screen.findByTestId('activity-row');
+    act(() => revokeObservationReads(queryClient));
+    expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
+    expect(screen.queryByTestId('activity-row')).toBeNull();
+    const settled = calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(calls.length).toBe(settled);
   });
 });
