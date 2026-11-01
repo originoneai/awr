@@ -25,7 +25,7 @@ export interface TeamProject {
 export interface TeamProjectsResponse {
   ok: boolean;
   projects: TeamProject[];
-  session?: { session_id: string; expires_at_ms: number };
+  session?: { session_id: string; expires_at_ms: number; created_at_ms?: number; last_seen_ms?: number };
   view?: string;
 }
 
@@ -71,6 +71,17 @@ export interface TeamOverviewResponse {
   freshness: TeamFreshness;
   schema?: string;
   error?: { code: string; message: string };
+  identity?: {
+    actor_id: string;
+    client_id?: string;
+    role: string;
+    business_roles?: string[];
+    can_manage_members?: boolean;
+    can_read_project_audit?: boolean;
+    membership_action_ceiling?: string[];
+  };
+  mcp_url?: string;
+  interaction_mode?: string;
 }
 
 export interface TeamActivityItem {
@@ -197,6 +208,7 @@ export interface WorkSnapshotData {
     observed_at_unix_ms?: number | null;
     progress?: Record<string, unknown> | null;
     reporting?: { client_reported_at_unix_ms?: number | null } & Record<string, unknown>;
+    client?: { actor_id?: string; actor_name?: string; client_id?: string; capabilities?: Record<string, unknown> };
     runtime?: { state?: string; work_version?: string };
     responsibility?: Record<string, unknown>;
     session?: Record<string, unknown> | null;
