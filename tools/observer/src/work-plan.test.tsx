@@ -4,6 +4,7 @@ import { axe, toHaveNoViolations } from 'jest-axe';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { formatUnixMs } from './lib/format';
+import { isObservationReadRevoked } from './lib/queries';
 import type { TeamWork } from './lib/types';
 import {
   DEMO_ACTIVITY,
@@ -485,4 +486,64 @@ describe('work-plan review round 2: sub-read failures and behavior pins', () => 
       expect(query).toMatchObject({ work_id: 'W1', review_round_id: 'round-1' });
     }
   });
+});
+
+describe('work-plan review round 3: three remaining pins', () => {
+  it('a Forbidden activity read degrades only the history tab, not the panel', async () => {
+    setupPlan({
+      path: '/projects/demo?tab=plan&work=W1',
+      activity: { ok: false, error: { code: 'Forbidden', message: 'access denied' } },
+    });
+    // Requirements and the source-state card stay visible with real content.
+    expect(await screen.findByTestId('plan-runtime-state')).toBeTruthy();
+    expect(screen.getByTestId('source-state-card')).toBeTruthy();
+    expect(screen.queryByTestId('state-forbidden')).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: '历史' }));
+    const partial = await screen.findByTestId('state-partial');
+    expect(partial.textContent).toContain('Forbidden');
+  });
+
+  it('Space on a focused row changes the selected work', async () => {
+    const { router } = setupPlan({ path: '/projects/demo?tab=plan' });
+    const rowLink = await screen.findByRole('link', { name: 'Build the filter API' });
+    const row = rowLink.closest('tr')!;
+    row.focus();
+    expect(document.activeElement).toBe(row);
+    const user = userEvent.setup();
+    await user.keyboard('[Space]');
+    await waitFor(() => expect(router.state.location.search).toContain('work=W1'));
+  });
+
+  it.each(['Forbidden', 'SessionExpired'])(
+    'a work-level auth error (%s) revokes the whole observation',
+    async (code) => {
+      const calls: string[] = [];
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const body = String(init?.body ?? '');
+        if (url.includes('/api/team/projects')) { calls.push('projects'); return json(DEMO_PROJECTS); }
+        if (url.includes('/api/team/overview')) { calls.push('overview'); return json(DEMO_PROJECT_OVERVIEW); }
+        if (url.includes('/api/team/activity')) { calls.push('activity'); return json(DEMO_ACTIVITY); }
+        if (url.includes('/api/team/read')) {
+          const op = JSON.parse(body).query.op as string;
+          calls.push(op);
+          if (op === 'work.snapshot') return json({ ok: false, error: { code, message: 'revoked' } });
+          if (op === 'review.inspect') return json(DEMO_REVIEW);
+        }
+        return json({ ok: false, error: { code: 'NoRoute', message: url } });
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const { queryClient } = renderApp('/projects/demo?tab=plan&work=W1');
+      // The work-level auth error revokes GLOBALLY (the panel's own guard
+      // would show the forbidden state either way, so assert the global
+      // revocation state itself): no further read goes out afterwards.
+      await screen.findByTestId('state-forbidden');
+      await waitFor(() => expect(isObservationReadRevoked(queryClient)).toBe(true));
+      const settled = calls.length;
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      expect(calls.length).toBe(settled);
+      expect(calls).toContain('work.snapshot');
+    },
+  );
 });
