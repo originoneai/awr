@@ -1,0 +1,360 @@
+{
+ "authority_version": "1",
+ "coordinator_epoch": "support-queue-4856fa-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+ "data": {
+  "acceptance_ready": false,
+  "candidate": {
+   "binding": {
+    "candidate_id": "issue-filter-page-v1-f05ae3809845",
+    "candidate_version": "1",
+    "contract_hash": "e08215826dea7fca65420fc775be43121d2fe170f7fefe0aeb3e0483431b213c",
+    "manifest_digest": "4e51495615b0205921a03578e09883e55ae4d70c88e7c1cbfb3a0461fe786ea2",
+    "project_id": "support-queue-4856fa",
+    "required_checks": [
+     "local_git.manifest"
+    ],
+    "scope_id": "main",
+    "source_fetch_ref": "refs/heads/mei/issue-filter-page-v1",
+    "source_revision": {
+     "format": "git_sha1",
+     "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+     "value": "f05ae38098459841eb3cbcde7c78cebe1af2ef39"
+    },
+    "target": {
+     "precondition": {
+      "kind": "exact",
+      "revision": {
+       "format": "git_sha1",
+       "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+       "value": "5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+      }
+     },
+     "reference": "refs/heads/main",
+     "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa"
+    },
+    "tenant_id": "awr-native-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "work_id": "issue-filter-page",
+    "workstream_id": "013FE5E5116E5A8987D377C479"
+   },
+   "manifest": {
+    "entries": [
+     {
+      "artifact_id": "public/app.js",
+      "byte_length": "5998",
+      "locator": "git-blob:public/app.js",
+      "sha256": "b008778e1b495d9872c792309237f885419116bfb15941643cb521fdc869adf7"
+     },
+     {
+      "artifact_id": "public/style.css",
+      "byte_length": "4234",
+      "locator": "git-blob:public/style.css",
+      "sha256": "19a46b09cbbe84741fb08c46a9523a2f8b972983e3c9edb31984efa123b26657"
+     },
+     {
+      "artifact_id": "test/ui.test.js",
+      "byte_length": "7732",
+      "locator": "git-blob:test/ui.test.js",
+      "sha256": "a2cbee8f748fbe77545b8ba9c722ef99d7bed2e04975ed78c6db52322b624b38"
+     }
+    ]
+   }
+  },
+  "confirmation": {
+   "candidate_digest": "663e295a5a41f795bdd0a947b35cf803a2283aaa00c0998da43cb480f79d1207",
+   "connector_version": "1",
+   "content_proof_facts": [
+    {
+     "envelope": {
+      "protocol": "awr-delivery",
+      "protocol_version": 1,
+      "record": {
+       "data": {
+        "binding": {
+         "candidate_id": "issue-filter-page-v1-f05ae3809845",
+         "candidate_version": "1",
+         "contract_hash": "e08215826dea7fca65420fc775be43121d2fe170f7fefe0aeb3e0483431b213c",
+         "manifest_digest": "4e51495615b0205921a03578e09883e55ae4d70c88e7c1cbfb3a0461fe786ea2",
+         "project_id": "support-queue-4856fa",
+         "required_checks": [
+          "local_git.manifest"
+         ],
+         "scope_id": "main",
+         "source_fetch_ref": "refs/heads/mei/issue-filter-page-v1",
+         "source_revision": {
+          "format": "git_sha1",
+          "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+          "value": "f05ae38098459841eb3cbcde7c78cebe1af2ef39"
+         },
+         "target": {
+          "precondition": {
+           "kind": "exact",
+           "revision": {
+            "format": "git_sha1",
+            "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+            "value": "5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+           }
+          },
+          "reference": "refs/heads/main",
+          "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa"
+         },
+         "tenant_id": "awr-native-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+         "work_id": "issue-filter-page",
+         "workstream_id": "013FE5E5116E5A8987D377C479"
+        },
+        "observation_reference": "local-git-target:local-issue-filter-page-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+        "provenance": {
+         "observed_at_unix_ms": 1793526733738,
+         "recorded_at_unix_ms": 1793526733768,
+         "reference": "awr-local-git-integration:local-issue-filter-page-native-20261101T045929Z-ee9ddb44e6e7-4856fa:efe1727b1b3431c2b3b8d7b32e25f49fe3b31abc7dbd5869a2724343dd6c9835",
+         "source": "adapter_observation"
+        },
+        "request_id": "01M6B8C5T27P910KKS0EJWX7M1",
+        "result_revision": {
+         "format": "git_sha1",
+         "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+         "value": "5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+        },
+        "witness": {
+         "kind": "unavailable",
+         "reason": "base_changed"
+        }
+       },
+       "kind": "integration_content_proof"
+      }
+     },
+     "fact_id": "01M6B8C6Y8XM5MB9EZX3A1TW48"
+    }
+   ],
+   "envelope": {
+    "protocol": "awr-delivery",
+    "protocol_version": 1,
+    "record": {
+     "data": {
+      "binding": {
+       "candidate_id": "issue-filter-page-v1-f05ae3809845",
+       "candidate_version": "1",
+       "contract_hash": "e08215826dea7fca65420fc775be43121d2fe170f7fefe0aeb3e0483431b213c",
+       "manifest_digest": "4e51495615b0205921a03578e09883e55ae4d70c88e7c1cbfb3a0461fe786ea2",
+       "project_id": "support-queue-4856fa",
+       "required_checks": [
+        "local_git.manifest"
+       ],
+       "scope_id": "main",
+       "source_fetch_ref": "refs/heads/mei/issue-filter-page-v1",
+       "source_revision": {
+        "format": "git_sha1",
+        "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+        "value": "f05ae38098459841eb3cbcde7c78cebe1af2ef39"
+       },
+       "target": {
+        "precondition": {
+         "kind": "exact",
+         "revision": {
+          "format": "git_sha1",
+          "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+          "value": "5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+         }
+        },
+        "reference": "refs/heads/main",
+        "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa"
+       },
+       "tenant_id": "awr-native-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+       "work_id": "issue-filter-page",
+       "workstream_id": "013FE5E5116E5A8987D377C479"
+      },
+      "contains_manifest_digest": null,
+      "external_reference": "local-git-target:local-issue-filter-page-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+      "outcome": "rejected",
+      "provenance": {
+       "observed_at_unix_ms": 1793526733738,
+       "recorded_at_unix_ms": 1793526733768,
+       "reference": "awr-local-git-integration:local-issue-filter-page-native-20261101T045929Z-ee9ddb44e6e7-4856fa:efe1727b1b3431c2b3b8d7b32e25f49fe3b31abc7dbd5869a2724343dd6c9835",
+       "source": "adapter_observation"
+      },
+      "request_id": "01M6B8C5T27P910KKS0EJWX7M1",
+      "result_revision": {
+       "format": "git_sha1",
+       "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+       "value": "5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+      }
+     },
+     "kind": "integration_observation"
+    }
+   },
+   "fact_id": "01M6B8C6Y8K2JGVNMT44YPXX0Z",
+   "inspection_id": "01M6B8C6SD6H73WYJH2PNRMWR1",
+   "receipt": {
+    "acceptance_ready": false,
+    "candidate_digest": "663e295a5a41f795bdd0a947b35cf803a2283aaa00c0998da43cb480f79d1207",
+    "connector_id": "repository-issue-filter-page",
+    "event_id": "original:151877a2147db30d245428b353aba439b9d84e4dc562852db077dc6ac00bb0ce:observation",
+    "fact_ids": [
+     "01M6B8C6Y8K2JGVNMT44YPXX0Z",
+     "01M6B8C6Y8XM5MB9EZX3A1TW48"
+    ],
+    "fact_source": "adapter_observation",
+    "generation": "2",
+    "input_digest": "d9fa20dc93dceec8fce05dc1a86105a4d3179e90e6ca19aa6faefd693caeeadc",
+    "inspection_id": "01M6B8C6SD6H73WYJH2PNRMWR1",
+    "notification_id": "01M6B8C6Y856W0GY86GNQ1BKYT",
+    "receipt_id": "01M6B8C6Y8JRE5Q5AX1F9TTT4W",
+    "recorded_at_unix_ms": 1793526733768,
+    "selection_version": "1",
+    "source_snapshot_id": "01M6AQN5X85AYFNRB0H5D15YVH",
+    "source_synchronized": false,
+    "state": "applied"
+   }
+  },
+  "confirmation_current": true,
+  "confirmation_fact_id": "01M6B8C6Y8K2JGVNMT44YPXX0Z",
+  "connector_id": "repository-issue-filter-page",
+  "connector_version": "1",
+  "current_binding": true,
+  "dispatch_receipt": {
+   "acceptance_ready": false,
+   "committed_project_revision": "107",
+   "data": {
+    "candidate_digest": "663e295a5a41f795bdd0a947b35cf803a2283aaa00c0998da43cb480f79d1207",
+    "eligibility_digest": "87a67f0ba7b32822fdfa00bcfca61761f3334a3cf2cb52ffef1330468735813f",
+    "integration_id": "01M6B8C5T27P910KKS0EJWX7M1",
+    "integration_request": {
+     "binding": {
+      "candidate_id": "issue-filter-page-v1-f05ae3809845",
+      "candidate_version": "1",
+      "contract_hash": "e08215826dea7fca65420fc775be43121d2fe170f7fefe0aeb3e0483431b213c",
+      "manifest_digest": "4e51495615b0205921a03578e09883e55ae4d70c88e7c1cbfb3a0461fe786ea2",
+      "project_id": "support-queue-4856fa",
+      "required_checks": [
+       "local_git.manifest"
+      ],
+      "scope_id": "main",
+      "source_fetch_ref": "refs/heads/mei/issue-filter-page-v1",
+      "source_revision": {
+       "format": "git_sha1",
+       "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+       "value": "f05ae38098459841eb3cbcde7c78cebe1af2ef39"
+      },
+      "target": {
+       "precondition": {
+        "kind": "exact",
+        "revision": {
+         "format": "git_sha1",
+         "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+         "value": "5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+        }
+       },
+       "reference": "refs/heads/main",
+       "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa"
+      },
+      "tenant_id": "awr-native-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+      "work_id": "issue-filter-page",
+      "workstream_id": "013FE5E5116E5A8987D377C479"
+     },
+     "operation": "fast_forward",
+     "request_id": "01M6B8C5T27P910KKS0EJWX7M1",
+     "review_decision_id": "01M6B6V1S1BXPNAT4YR2FDCWH2",
+     "review_round_id": "01M6B33RXNY0ZTRN3DQX45KDYR",
+     "verified_checks": [
+      {
+       "check": "local_git.manifest",
+       "run_id": "local-git-b59efebc08de07f8d356bae8575ad5d82112026a23d8e221340e0cea4c682a0d"
+      }
+     ]
+    },
+    "lease_id": "01M6B8C6ASVR7SK1PMXD8HEZT7",
+    "state": "dispatched"
+   },
+   "execution_authorized": false,
+   "op": "delivery.integration.dispatch",
+   "protocol": "awr-delivery-sync-v1",
+   "replayed": false,
+   "request_id": "git-dispatch:01M6B8C6ASVR7SK1PMXD8HEZT7",
+   "source_snapshot_id": "01M6AQN5X85AYFNRB0H5D15YVH",
+   "source_synchronized": false,
+   "state_basis": "at_commit",
+   "work_id": "issue-filter-page",
+   "workstream_id": "013FE5E5116E5A8987D377C479"
+  },
+  "dispatched_at": "2026-11-01 04:52:13.174579-05",
+  "eligibility_digest": "87a67f0ba7b32822fdfa00bcfca61761f3334a3cf2cb52ffef1330468735813f",
+  "execution_authorized": false,
+  "guidance": {
+   "action": "Inspect the refusal and current neutral facts with the responsible member or supervisor. No changed target was confirmed; do not infer that code revision is required or retry before resolving the refusal.",
+   "because": "Intent state describes the original requested version; it does not authorize repository effects or acceptance",
+   "recheck_on": "Intent, approval, source or permission changes",
+   "when": "An integration request exists"
+  },
+  "integration_id": "01M6B8C5T27P910KKS0EJWX7M1",
+  "integration_request": {
+   "binding": {
+    "candidate_id": "issue-filter-page-v1-f05ae3809845",
+    "candidate_version": "1",
+    "contract_hash": "e08215826dea7fca65420fc775be43121d2fe170f7fefe0aeb3e0483431b213c",
+    "manifest_digest": "4e51495615b0205921a03578e09883e55ae4d70c88e7c1cbfb3a0461fe786ea2",
+    "project_id": "support-queue-4856fa",
+    "required_checks": [
+     "local_git.manifest"
+    ],
+    "scope_id": "main",
+    "source_fetch_ref": "refs/heads/mei/issue-filter-page-v1",
+    "source_revision": {
+     "format": "git_sha1",
+     "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+     "value": "f05ae38098459841eb3cbcde7c78cebe1af2ef39"
+    },
+    "target": {
+     "precondition": {
+      "kind": "exact",
+      "revision": {
+       "format": "git_sha1",
+       "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+       "value": "5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+      }
+     },
+     "reference": "refs/heads/main",
+     "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa"
+    },
+    "tenant_id": "awr-native-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "work_id": "issue-filter-page",
+    "workstream_id": "013FE5E5116E5A8987D377C479"
+   },
+   "operation": "fast_forward",
+   "request_id": "01M6B8C5T27P910KKS0EJWX7M1",
+   "review_decision_id": "01M6B6V1S1BXPNAT4YR2FDCWH2",
+   "review_round_id": "01M6B33RXNY0ZTRN3DQX45KDYR",
+   "verified_checks": [
+    {
+     "check": "local_git.manifest",
+     "run_id": "local-git-b59efebc08de07f8d356bae8575ad5d82112026a23d8e221340e0cea4c682a0d"
+    }
+   ]
+  },
+  "lease_expires_at": "2026-11-01 04:53:13.146086-05",
+  "lease_id": "01M6B8C6ASVR7SK1PMXD8HEZT7",
+  "next_query": {
+   "op": "delivery.neutral.inspect",
+   "protocol_version": 1,
+   "work_id": "issue-filter-page"
+  },
+  "original_read_set": {
+   "authority_version": "1",
+   "contract_hash": "e08215826dea7fca65420fc775be43121d2fe170f7fefe0aeb3e0483431b213c",
+   "coordinator_epoch": "support-queue-4856fa-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+   "ownership_version": "1",
+   "source_snapshot_id": "01M6AQN5X85AYFNRB0H5D15YVH",
+   "work_id": "issue-filter-page",
+   "workstream_id": "013FE5E5116E5A8987D377C479"
+  },
+  "request_binding": "original_candidate_and_read_set",
+  "source_synchronized": false,
+  "state": "rejected",
+  "target_changed": false
+ },
+ "project_revision": "125",
+ "project_status": "active",
+ "protocol_version": 1,
+ "scope_id": "main",
+ "selection_basis": "work",
+ "source_snapshot_id": "01M6AQN5X85AYFNRB0H5D15YVH",
+ "workstream_id": "013FE5E5116E5A8987D377C479"
+}

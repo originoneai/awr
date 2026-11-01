@@ -1,0 +1,25 @@
+{
+ "authority_version": "1",
+ "coordinator_epoch": "support-queue-4856fa-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+ "data": {
+  "claim_id": "01M6ARHB295GP0PQ1P111N8MFC",
+  "current_fence": true,
+  "epoch_matches_current": true,
+  "execution_authorized": false,
+  "execution_eligibility_advisory": false,
+  "expires_at": "2026-11-01 01:15:24.618073-05",
+  "fence": "1",
+  "lease_live": false,
+  "lease_version": "1",
+  "owned_by_client": false,
+  "session_id": "01M6ARESNB6TC8FMRNFX6HP7M3",
+  "state": "active"
+ },
+ "project_revision": "104",
+ "project_status": "active",
+ "protocol_version": 1,
+ "scope_id": "main",
+ "selection_basis": "work",
+ "source_snapshot_id": "01M6AQN5X85AYFNRB0H5D15YVH",
+ "workstream_id": "013FE5E5116E5A8987D377C479"
+}
