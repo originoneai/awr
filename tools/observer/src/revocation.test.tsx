@@ -1,6 +1,8 @@
 import { act, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  DEMO_ACTIVITY,
+  DEMO_PROJECT_OVERVIEW,
   DEMO_PROJECTS,
   DEMO_WORK_NEXT,
   demoWorkSnapshot,
@@ -16,6 +18,10 @@ function revocationFetch(calls: { count: number }, revoked: { value: boolean }) 
       payload = { ok: false, error: { code: 'Unauthenticated', message: 'revoked' } };
     } else if (url.includes('/api/team/projects')) {
       payload = DEMO_PROJECTS;
+    } else if (url.includes('/api/team/overview')) {
+      payload = DEMO_PROJECT_OVERVIEW;
+    } else if (url.includes('/api/team/activity')) {
+      payload = DEMO_ACTIVITY;
     } else if (url.includes('/api/team/read')) {
       const request = JSON.parse(String(init?.body)) as { query: { op: string; work_id?: string } };
       if (request.query.op === 'work.next') payload = DEMO_WORK_NEXT;
@@ -42,19 +48,20 @@ afterEach(() => {
 });
 
 describe.each([
-  { path: '/projects', restrictedText: /Team mainline/ },
-  { path: '/workbench?scope=demo', restrictedText: /Build the filter API/ },
-])('rendered revocation on $path', ({ path, restrictedText }) => {
+  { path: '/projects', restrictedText: /Team mainline/, pageTestId: 'page-projects' },
+  { path: '/workbench?scope=demo', restrictedText: /Build the filter API/, pageTestId: 'page-workbench' },
+  { path: '/projects/demo?tab=overview', restrictedText: /Build the filter API/, pageTestId: 'page-project' },
+])('rendered revocation on $path', ({ path, restrictedText, pageTestId }) => {
   it('clears restricted content, shows forbidden, and stops reads for 10 seconds', async () => {
     vi.useFakeTimers();
     const calls = { count: 0 };
     const revoked = { value: false };
-    revocationFetch(calls, revoked);
+    const fetchMock = revocationFetch(calls, revoked);
     const { queryClient } = renderApp(path);
 
     await advance(0);
     expect(screen.getAllByText(restrictedText)).not.toHaveLength(0);
-    expect(screen.getByTestId(path.startsWith('/projects') ? 'page-projects' : 'page-workbench')).toBeTruthy();
+    expect(screen.getByTestId(pageTestId)).toBeTruthy();
     revoked.value = true;
     const callsAtRevocation = calls.count;
 
@@ -68,6 +75,10 @@ describe.each([
     const callsAfterForbidden = calls.count;
     await advance(10_000);
     expect(calls.count).toBe(callsAfterForbidden);
+    const laterUrls = fetchMock.mock.calls.slice(callsAfterForbidden).map(([input]) => String(input));
+    expect(laterUrls.filter((url) => url.includes('/api/team/overview')
+      || url.includes('/api/team/activity')
+      || url.includes('/api/team/read'))).toEqual([]);
     expect(screen.getByTestId('state-forbidden')).toBeTruthy();
   }, 20_000);
 });

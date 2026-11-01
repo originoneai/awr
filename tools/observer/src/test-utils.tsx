@@ -40,6 +40,97 @@ export const DEMO_OVERVIEW = {
   schema: 'awr-team-web-loop-fixture/v1',
 };
 
+export const DEMO_PROJECT_WORKS = [
+  {
+    key: 'W1',
+    title: 'Build the filter API',
+    status: 'unknown',
+    owner_person: null,
+    agent: null,
+    next_step: null,
+    detail_loaded: false,
+    workstream_id: 'WS1',
+    contract_hash: 'contract-1',
+  },
+  {
+    key: 'W2',
+    title: 'Prepare the support page',
+    status: 'unknown',
+    owner_person: null,
+    agent: null,
+    next_step: null,
+    detail_loaded: false,
+    workstream_id: 'WS2',
+    contract_hash: 'contract-2',
+  },
+];
+
+export const DEMO_PROJECT_OVERVIEW = {
+  ...DEMO_OVERVIEW,
+  works: DEMO_PROJECT_WORKS,
+  workstreams: [
+    { id: 'WS1', external_key: 'backend', title: 'Backend workstream' },
+    { id: 'WS2', external_key: 'frontend', title: 'Frontend workstream' },
+  ],
+  coverage: {
+    scope: {
+      status: 'succeeded',
+      enumerated: 2,
+      truncated: false,
+      next_cursor: null,
+      read_at_unix_ms: 1761840000000,
+    },
+    streams: [
+      {
+        workstream_id: 'WS1',
+        status: 'succeeded',
+        works_enumerated: 1,
+        works_total: 1,
+        truncated: false,
+        next_cursor: null,
+        read_at_unix_ms: 1761840000000,
+      },
+      {
+        workstream_id: 'WS2',
+        status: 'succeeded',
+        works_enumerated: 1,
+        works_total: 1,
+        truncated: false,
+        next_cursor: null,
+        read_at_unix_ms: 1761840000000,
+      },
+    ],
+    works_enumerated: 2,
+    works_total: null,
+    succeeded: 2,
+    failed: 0,
+    truncated: false,
+  },
+};
+
+export const DEMO_ACTIVITY = {
+  ok: true,
+  data: {
+    items: [{
+      action: 'access.changed',
+      actor_id: 'actor-raw-17',
+      client_id: 'client-1',
+      created_at_unix_ms: 1761839700000,
+      credential_id: 'credential-1',
+      id: 'activity-1',
+      result: 'granted',
+      work_id: 'W1',
+    }],
+    next_cursor: null,
+    development_source: 'audit.development',
+    chat_text_collected: false,
+    tool_io_collected: false,
+    request_retention: '30d',
+    scope: 'main',
+    unknown_means: 'not_observed',
+  },
+};
+
 export const DEMO_WORK_ITEMS = [
   {
     navigation: 'resume',
