@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ApiError } from './lib/api';
-import { createAppQueryClient, overviewQueryOptions, POLL_INTERVAL_MS, queryKeys, readQueryDefaults } from './lib/queries';
+import { createAppQueryClient, overviewQueryOptions, POLL_INTERVAL_MS, queryKeys, readQueryDefaults, workNextQueryOptions } from './lib/queries';
 
 describe('observation query behavior', () => {
   it('uses a five-second polling interval rather than the per-read timeout', () => {
@@ -51,5 +51,24 @@ describe('observation query behavior', () => {
 
   it('keeps project query keys isolated by scope', () => {
     expect(queryKeys.overview('demo')).not.toEqual(queryKeys.overview('docs'));
+    expect(queryKeys.workNext('demo')).not.toEqual(queryKeys.workNext('docs'));
+    expect(queryKeys.workSnapshot('demo', 'W1', 'WS1')).not.toEqual(queryKeys.workSnapshot('demo', 'W2', 'WS1'));
+  });
+
+  it('uses the generic read route and five-second defaults for work.next', async () => {
+    const options = workNextQueryOptions('demo');
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    await options.queryFn!({ signal: new AbortController().signal } as never);
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/team/read');
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      project: 'demo',
+      query: { protocol_version: 1, op: 'work.next' },
+    });
+    expect(options.refetchInterval).toBe(POLL_INTERVAL_MS);
+    expect(options.refetchOnWindowFocus).toBe(true);
   });
 });

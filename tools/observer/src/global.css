@@ -91,6 +91,13 @@ body,
   }
 }
 
+.workbench-progress {
+  max-width: 100%;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 576px) {
   .shell-header {
     gap: 8px;
