@@ -1,12 +1,20 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { Card, Input, List, Space, Tag, Tooltip, Typography } from 'antd';
-import { useState } from 'react';
+import { Card, Col, Input, List, Row, Space, Tag, Tooltip, Typography } from 'antd';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
 import { isAuthError } from '../lib/api';
 import { overviewQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
+import type { WorkContractValue } from '../lib/types';
+
+interface CitingWork {
+  key: string;
+  title: string;
+  goals?: WorkContractValue[];
+  acceptance?: WorkContractValue[];
+}
 
 interface SourceEntry {
   path: string;
@@ -14,14 +22,10 @@ interface SourceEntry {
   byteLength?: number;
   contentIncluded: boolean;
   text?: string;
-  citingWorks: Array<{ key: string; title: string }>;
-  goals?: import('../lib/types').WorkContractValue[];
-  acceptance?: import('../lib/types').WorkContractValue[];
-  /** More than one digest for the same path: the source changed. */
-  digestChanged?: boolean;
+  citingWorks: CitingWork[];
 }
 
-function textOf(value: import('../lib/types').WorkContractValue | undefined): string | null {
+function textOf(value: WorkContractValue | undefined): string | null {
   if (value == null) return null;
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
   return JSON.stringify(value);
@@ -30,6 +34,13 @@ function textOf(value: import('../lib/types').WorkContractValue | undefined): st
 function shortSha(sha: string) {
   return sha.length > 12 ? `${sha.slice(0, 12)}…` : sha;
 }
+
+/** UTF-8 byte length, not UTF-16 code units (multibyte documents). */
+function utf8Length(text: string) {
+  return new TextEncoder().encode(text).length;
+}
+
+type DigestCheck = 'pending' | 'verified' | 'mismatch' | 'unverified';
 
 /** Assemble the knowledge list from per-work reads, never a project-level read. */
 export function ProjectKnowledge({ project }: { project: string }) {
@@ -41,8 +52,8 @@ export function ProjectKnowledge({ project }: { project: string }) {
     queries: works.map((work) => workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked)),
   });
   const [filter, setFilter] = useState('');
-
-  if (revoked || isAuthError(overview.error)) return <ObservationForbidden />;
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [digestCheck, setDigestCheck] = useState('unverified' as DigestCheck);
 
   const failedReads = snapshots.filter((query) => query.isError).length;
   const entries = new Map<string, SourceEntry>();
@@ -74,9 +85,15 @@ export function ProjectKnowledge({ project }: { project: string }) {
     for (const source of sources) {
       const key = `${source.path}::${source.sha256}`;
       const existing = entries.get(key);
-      const citing = { key: work.key, title: work.title };
+      const citing: CitingWork = {
+        key: work.key,
+        title: work.title,
+        goals: data.visible_contract?.goals,
+        acceptance: data.visible_contract?.acceptance,
+      };
       if (existing) {
-        if (!existing.citingWorks.some((w) => w.key === citing.key) && !existing.citingWorks.some((w) => w.title === citing.title) && !existing.citingWorks.includes(citing)) {
+        // De-duplicate citing works by key only (same titles are allowed).
+        if (!existing.citingWorks.some((w) => w.key === citing.key)) {
           existing.citingWorks.push(citing);
         }
         if (source.text && !existing.text) {
@@ -84,13 +101,7 @@ export function ProjectKnowledge({ project }: { project: string }) {
           existing.contentIncluded = true;
           existing.byteLength = source.byte_length;
         }
-        existing.goals = existing.goals ?? data.visible_contract?.goals;
-        existing.acceptance = existing.acceptance ?? data.visible_contract?.acceptance;
       } else {
-        // A second digest for the same path proves the source changed:
-        // never present the older text as current.
-        const previous = allEntriesForPath(entries, source.path).find((entry) => entry.sha256 !== source.sha256);
-        if (previous) previous.digestChanged = true;
         entries.set(key, {
           path: source.path,
           sha256: source.sha256,
@@ -98,9 +109,6 @@ export function ProjectKnowledge({ project }: { project: string }) {
           contentIncluded: source.contentIncluded,
           text: source.text,
           citingWorks: [citing],
-          goals: data.visible_contract?.goals,
-          acceptance: data.visible_contract?.acceptance,
-          digestChanged: Boolean(previous),
         });
       }
     }
@@ -110,9 +118,39 @@ export function ProjectKnowledge({ project }: { project: string }) {
     return Array.from(map.values()).filter((entry) => entry.path === path);
   }
   const visibleEntries = allEntries.filter((entry) => entry.path.toLowerCase().includes(filter.toLowerCase()));
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const selected = visibleEntries.find((entry) => entry.path === selectedPath) ?? visibleEntries[0];
+  const selected = visibleEntries.find((entry) => `${entry.path}::${entry.sha256}` === selectedKey) ?? visibleEntries[0];
   const loadedCount = snapshots.filter((query) => query.data).length;
+  const selectedDigests = selected ? allEntriesForPath(entries, selected.path).length : 0;
+
+  const selectedText = selected?.text;
+  const selectedSha256 = selected?.sha256;
+  const selectedContentIncluded = selected?.contentIncluded;
+  useEffect(() => {
+    // Verify the displayed text against its declared digest with Web Crypto;
+    // without crypto.subtle the badge must read unverified, never verified.
+    if (!selectedText || !selectedContentIncluded || !selectedSha256) {
+      setDigestCheck('unverified');
+      return;
+    }
+    if (typeof crypto === 'undefined' || !crypto.subtle) {
+      setDigestCheck('unverified');
+      return;
+    }
+    let cancelled = false;
+    setDigestCheck('pending');
+    crypto.subtle.digest('SHA-256', new TextEncoder().encode(selectedText))
+      .then((buffer) => {
+        if (cancelled) return;
+        const hex = Array.from(new Uint8Array(buffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
+        setDigestCheck(hex === selectedSha256 ? 'verified' : 'mismatch');
+      })
+      .catch(() => {
+        if (!cancelled) setDigestCheck('unverified');
+      });
+    return () => { cancelled = true; };
+  }, [selectedText, selectedSha256, selectedContentIncluded]);
+
+  if (revoked || isAuthError(overview.error)) return <ObservationForbidden />;
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }} data-testid="page-knowledge">
@@ -135,69 +173,92 @@ export function ProjectKnowledge({ project }: { project: string }) {
       {allEntries.length === 0 ? (
         <ObservationEmpty />
       ) : (
-        <Space align="start" size={16} style={{ width: '100%' }}>
-          <Card size="small" style={{ width: '34%', minWidth: 0 }} title={t('knowledge.sources')}>
-            <List
-              size="small"
-              dataSource={visibleEntries}
-              renderItem={(entry) => (
-                <List.Item
-                  data-testid={`knowledge-source-${entry.path}`}
-                  onClick={() => setSelectedPath(entry.path)}
-                  style={{ cursor: 'pointer', background: selected?.path === entry.path ? '#EFF6FF' : undefined }}
-                >
-                  <Space direction="vertical" size={2} style={{ minWidth: 0 }}>
-                    <Typography.Text strong>{entry.path}</Typography.Text>
-                    <Tooltip title={entry.sha256}>
-                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>{shortSha(entry.sha256)}</Typography.Text>
-                    </Tooltip>
-                  </Space>
-                </List.Item>
-              )}
-            />
-          </Card>
-          {selected ? (
-            <Card size="small" style={{ flex: 1, minWidth: 0 }} title={selected.path}>
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                <Space size={8} wrap>
-                  <Tag color={selected.contentIncluded ? 'success' : 'default'}>
-                    {selected.contentIncluded ? t('knowledge.contentIncluded') : t('knowledge.contentMissing')}
-                  </Tag>
-                  {selected.byteLength != null && selected.text != null && selected.text.length !== selected.byteLength ? (
-                    <Tag color="warning">{t('knowledge.partial')}</Tag>
-                  ) : null}
-                </Space>
-                <Typography.Text type="secondary" data-testid="knowledge-citing-works">
-                  {t('knowledge.citingWorks')}: {selected.citingWorks.map((work) => work.title).join(', ')}
-                </Typography.Text>
-                {selected.digestChanged ? (
-                  <Typography.Text type="warning">{t('knowledge.sourceChanged')}</Typography.Text>
-                ) : selected.text && selected.contentIncluded ? (
-                  <Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>{selected.text}</Typography.Paragraph>
-                ) : (
-                  <Typography.Text type="secondary">{t('knowledge.contentMissing')}</Typography.Text>
+        <Row gutter={[16, 16]} style={{ width: '100%' }}>
+          <Col xs={24} lg={8}>
+            <Card size="small" style={{ width: '100%' }} title={t('knowledge.sources')}>
+              <List
+                size="small"
+                dataSource={visibleEntries}
+                rowKey={(entry) => `${entry.path}::${entry.sha256}`}
+                renderItem={(entry) => (
+                  <List.Item
+                    data-testid={`knowledge-source-${entry.path}-${entry.sha256.slice(0, 12)}`}
+                    onClick={() => setSelectedKey(`${entry.path}::${entry.sha256}`)}
+                    style={{ cursor: 'pointer', background: selected && `${selected.path}::${selected.sha256}` === `${entry.path}::${entry.sha256}` ? '#EFF6FF' : undefined }}
+                  >
+                    <Space direction="vertical" size={2} style={{ minWidth: 0 }}>
+                      <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{entry.path}</Typography.Text>
+                      <Tooltip title={entry.sha256}>
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>{shortSha(entry.sha256)}</Typography.Text>
+                      </Tooltip>
+                    </Space>
+                  </List.Item>
                 )}
-                {selected.goals?.length || selected.acceptance?.length ? (
-                  <Card size="small" type="inner" title={t('knowledge.contract')}>
-                    {selected.goals?.length ? (
-                      <List size="small" header={t('workbench.detail.goals')} dataSource={selected.goals} renderItem={(goal) => <List.Item>{textOf(goal)}</List.Item>} />
-                    ) : null}
-                    {selected.acceptance?.length ? (
-                      <List size="small" header={t('workbench.detail.acceptance')} dataSource={selected.acceptance} renderItem={(item) => <List.Item>{textOf(item)}</List.Item>} />
-                    ) : null}
-                  </Card>
-                ) : null}
-                <Space size={8} wrap>
-                  {selected.citingWorks.map((work) => (
-                    <Link key={work.key} to={`/projects/${project}?tab=plan&work=${encodeURIComponent(work.key)}`}>
-                      {t('knowledge.openWork', { title: work.title })}
-                    </Link>
-                  ))}
-                </Space>
-              </Space>
+              />
             </Card>
+          </Col>
+          {selected ? (
+            <Col xs={24} lg={16}>
+              <Card size="small" style={{ width: '100%', minWidth: 0 }} title={<Typography.Text style={{ overflowWrap: 'anywhere' }}>{selected.path}</Typography.Text>}>
+                <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                  <Space size={8} wrap>
+                    <Tag color={selected.contentIncluded ? 'success' : 'default'}>
+                      {selected.contentIncluded ? t('knowledge.contentIncluded') : t('knowledge.contentMissing')}
+                    </Tag>
+                    {selected.byteLength != null && selected.text != null && utf8Length(selected.text) !== selected.byteLength ? (
+                      <Tag color="warning">{t('knowledge.partial')}</Tag>
+                    ) : null}
+                    {selected.contentIncluded && selected.text ? (
+                      <Tag
+                        data-testid="digest-check"
+                        color={digestCheck === 'verified' ? 'success' : digestCheck === 'mismatch' ? 'error' : 'default'}
+                      >
+                        {digestCheck === 'verified'
+                          ? t('knowledge.digestVerified')
+                          : digestCheck === 'mismatch'
+                            ? t('knowledge.digestMismatch')
+                            : t('knowledge.digestUnverified')}
+                      </Tag>
+                    ) : null}
+                  </Space>
+                  {selectedDigests > 1 ? (
+                    <Typography.Text type="warning" data-testid="path-digest-notice">
+                      {t('knowledge.multipleDigests', { count: selectedDigests })}
+                    </Typography.Text>
+                  ) : null}
+                  <Typography.Text type="secondary" data-testid="knowledge-citing-works">
+                    {t('knowledge.citingWorks')}: {selected.citingWorks.map((work) => work.title).join(', ')}
+                  </Typography.Text>
+                  {selected.text && selected.contentIncluded ? (
+                    <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{selected.text}</Typography.Paragraph>
+                  ) : (
+                    <Typography.Text type="secondary">{t('knowledge.contentMissing')}</Typography.Text>
+                  )}
+                  {selected.citingWorks.map((work) => {
+                    if (!work.goals?.length && !work.acceptance?.length) return null;
+                    return (
+                      <Card key={work.key} size="small" type="inner" title={t('knowledge.contractFor', { title: work.title })}>
+                        {work.goals?.length ? (
+                          <List size="small" header={t('workbench.detail.goals')} dataSource={work.goals} renderItem={(goal) => <List.Item>{textOf(goal)}</List.Item>} />
+                        ) : null}
+                        {work.acceptance?.length ? (
+                          <List size="small" header={t('workbench.detail.acceptance')} dataSource={work.acceptance} renderItem={(item) => <List.Item>{textOf(item)}</List.Item>} />
+                        ) : null}
+                      </Card>
+                    );
+                  })}
+                  <Space size={8} wrap>
+                    {selected.citingWorks.map((work) => (
+                      <Link key={work.key} to={`/projects/${project}?tab=plan&work=${encodeURIComponent(work.key)}`}>
+                        {t('knowledge.openWork', { title: work.title })}
+                      </Link>
+                    ))}
+                  </Space>
+                </Space>
+              </Card>
+            </Col>
           ) : null}
-        </Space>
+        </Row>
       )}
     </Space>
   );

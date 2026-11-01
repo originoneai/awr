@@ -46,8 +46,11 @@ const zhCN = {
     contentMissing: '正文未随响应提供',
     partial: '部分（长度与 byte_length 不一致）',
     citingWorks: '引用它的工作项',
-    sourceChanged: '来源已变化（同一来源出现不同摘要，旧文本不再视为当前）',
-    contract: '合同目标与验收',
+    digestVerified: '摘要已校验',
+    digestMismatch: '摘要不匹配，正文不可信',
+    digestUnverified: '未校验',
+    multipleDigests: '该路径在不同工作项里出现了 {{count}} 个摘要；哪个是当前由后续 source.content 读取决定',
+    contractFor: '合同目标与验收（{{title}}）',
     openWork: '打开 {{title}}',
   },
   freshness: {
