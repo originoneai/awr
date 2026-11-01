@@ -47,7 +47,7 @@ describe('ProjectShell', () => {
   });
 
   it('tab bodies render the shared pending presentation, not fake data', async () => {
-    setup('/projects/demo?tab=plan');
+    setup('/projects/demo?tab=deps');
     await waitFor(() => expect(screen.getAllByText(/未观察到相关记录/).length).toBeGreaterThan(0));
   });
 });
