@@ -5,7 +5,9 @@ import { useParams, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
 import { isAuthError } from '../lib/api';
 import { ProjectAcceptance } from './ProjectAcceptance';
+import { ProjectKnowledge } from './ProjectKnowledge';
 import { ProjectOverview } from './ProjectOverview';
+import { WorkPlanPage } from './WorkPlanPage';
 import { projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 
@@ -64,7 +66,15 @@ export function ProjectShell() {
           items={TAB_KEYS.map((key) => ({
             key,
             label: t(`project.tabs.${key}`),
-            children: key === 'overview' ? <ProjectOverview project={project} /> : key === 'acceptance' ? <ProjectAcceptance project={project} /> : <ObservationEmpty />,
+            children: key === 'overview'
+              ? <ProjectOverview project={project} />
+              : key === 'plan'
+                ? <WorkPlanPage project={project} />
+                : key === 'knowledge'
+                  ? <ProjectKnowledge project={project} />
+                  : key === 'acceptance'
+                    ? <ProjectAcceptance project={project} />
+                    : <ObservationEmpty />,
           }))}
         />
       </Card>

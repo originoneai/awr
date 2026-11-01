@@ -25,7 +25,7 @@ export interface TeamProject {
 export interface TeamProjectsResponse {
   ok: boolean;
   projects: TeamProject[];
-  session?: { session_id: string; expires_at_ms: number };
+  session?: { session_id: string; expires_at_ms: number; created_at_ms?: number; last_seen_ms?: number };
   view?: string;
 }
 
@@ -71,6 +71,17 @@ export interface TeamOverviewResponse {
   freshness: TeamFreshness;
   schema?: string;
   error?: { code: string; message: string };
+  identity?: {
+    actor_id: string;
+    client_id?: string;
+    role: string;
+    business_roles?: string[];
+    can_manage_members?: boolean;
+    can_read_project_audit?: boolean;
+    membership_action_ceiling?: string[];
+  };
+  mcp_url?: string;
+  interaction_mode?: string;
 }
 
 export interface TeamActivityItem {
@@ -102,6 +113,8 @@ export interface TeamReadResponse<T> {
   ok: true;
   result: {
     data: T;
+    authority_version?: string;
+    selection_basis?: string;
     project_revision?: string;
     protocol_version?: number;
     scope_id?: string;
@@ -230,11 +243,14 @@ export interface WorkCollaboration {
 export interface WorkSnapshotData {
   work_id?: string;
   contract_hash?: string;
+  definition_state?: string;
+  runtime?: { state?: string; work_version?: string };
   observation?: {
     last_activity_at_unix_ms?: number | null;
     observed_at_unix_ms?: number | null;
     progress?: Record<string, unknown> | null;
     reporting?: { client_reported_at_unix_ms?: number | null } & Record<string, unknown>;
+    client?: { actor_id?: string; actor_name?: string; client_id?: string; capabilities?: Record<string, unknown> };
     runtime?: { state?: string; work_version?: string; selected_completion_id?: string | null };
     responsibility?: Record<string, unknown>;
     session?: Record<string, unknown> | null;
@@ -244,11 +260,43 @@ export interface WorkSnapshotData {
   };
   visible_contract?: WorkContract | null;
   published_contract?: WorkContract | null;
-  required_specs?: unknown[];
+  required_specs?: Array<{
+    path: string;
+    sha256: string;
+    byte_length?: number;
+    content_included?: boolean;
+    text?: string;
+    next_step?: unknown;
+  }>;
+  authorized_readable_refs?: Array<{
+    kind: string;
+    path: string;
+    sha256: string;
+    byte_length?: number;
+  }>;
   snapshot?: Record<string, unknown>;
   guidance?: {
     code?: string;
     action?: { op?: string; note?: string };
   } | null;
   next_step?: string | null;
+}
+
+export interface ReviewDecision {
+  decision: string;
+  decision_id: string;
+  approval_basis: string;
+  human_approval: boolean;
+  independence_kind: string;
+}
+
+export interface ReviewData {
+  review: {
+    decisions: ReviewDecision[];
+    author_actor_id: string;
+    author_person_id: string;
+    artifact_digest: string;
+    contract_hash: string;
+    bundle_hash: string;
+  } | null;
 }
