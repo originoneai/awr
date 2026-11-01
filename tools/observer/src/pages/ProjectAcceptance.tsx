@@ -115,7 +115,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
   if (works.length === 0) return <ObservationEmpty />;
 
   const reviewCandidateCurrent = reviewObject?.candidate_current ?? at(reviewObject, ['submission', 'candidate_current']);
-  const reviewIsCurrent = reviewCandidateCurrent !== false
+  const reviewIsCurrent = reviewCandidateCurrent === true
     && at(reviewObject, ['evidence_provenance', 'review_contract_matches_current']) !== false;
   const completionData = completion.data?.result.data;
   const completionObject = asObject(completionData?.completion);
@@ -231,6 +231,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                       <Tag color="success" data-testid="acceptance-current-approval">{t('acceptance.currentApproval')}</Tag>
                     ) : null}
                     {!reviewIsCurrent ? <Tag color="warning" data-testid="acceptance-review-history">{t('acceptance.historical')}</Tag> : null}
+                    {reviewCandidateCurrent == null ? <Tag data-testid="acceptance-review-currentness">{notMeasured}</Tag> : null}
                     {at(reviewObject, ['evidence_provenance', 'author_self_report']) === true ? <Tag>{t('acceptance.selfReport')}</Tag> : null}
                     {at(reviewObject, ['evidence_provenance', 'execution_consistency', 'independent_verification']) === false ? <Tag>{t('acceptance.nonIndependent')}</Tag> : null}
                   </Space>
@@ -243,21 +244,27 @@ export function ProjectAcceptance({ project }: { project: string }) {
                   ])} />
                   {asArray(reviewObject?.decisions).map((decision, index) => (
                     <Card key={asText(at(decision, ['decision_id'])) ?? index} size="small" type="inner">
-                      <Descriptions size="small" column={1} items={fields([
-                        ['decision', at(decision, ['decision'])],
-                        ['reviewer_actor_id', at(decision, ['reviewer_actor_id'])],
-                        ['human_approval', at(decision, ['human_approval'])],
-                        ['independence_kind', at(decision, ['independence_kind'])],
-                        ['approval_basis', at(decision, ['approval_basis'])],
-                        ['team_independent_acceptance', at(decision, ['team_independent_acceptance'])],
-                        ['reason', at(decision, ['reason'])],
-                      ])} />
+                      <Descriptions
+                        size="small"
+                        column={1}
+                        items={[
+                          ...fields([
+                            ['decision', at(decision, ['decision'])],
+                            ['reviewer_actor_id', at(decision, ['reviewer_actor_id'])],
+                            ['independence_kind', at(decision, ['independence_kind'])],
+                            ['approval_basis', at(decision, ['approval_basis'])],
+                            ['team_independent_acceptance', at(decision, ['team_independent_acceptance'])],
+                            ['reason', at(decision, ['reason'])],
+                          ]),
+                          { key: 'human_approval', label: 'human_approval', children: <span data-testid="decision-human-approval">{value(at(decision, ['human_approval']))}</span> },
+                        ]}
+                      />
                     </Card>
                   ))}
                   {asArray(at(reviewObject, ['findings', 'findings'])).map((finding, index) => (
                     <Card key={asText(at(finding, ['finding_key'])) ?? index} size="small" type="inner">
-                      <Typography.Text strong>
-                        {t('acceptance.originalWork', { work: workId, round: value(at(finding, ['round'])) })}
+                      <Typography.Text strong data-testid={`finding-original-${asText(at(finding, ['finding_key']))}`}>
+                        {t('acceptance.originalWork', { work: workId, round: value(at(finding, ['round'])) })} · {value(at(finding, ['criterion']))}
                       </Typography.Text>
                       <Descriptions size="small" column={1} items={fields([
                         ['criterion', at(finding, ['criterion'])],

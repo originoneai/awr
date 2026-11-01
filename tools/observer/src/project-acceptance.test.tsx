@@ -284,6 +284,39 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     expect(screen.queryByTestId('acceptance-current-approval')).toBeNull();
   });
 
+  it('labels findings with their original work, round and criterion', async () => {
+    setupAcceptance();
+    renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
+    const label = await screen.findByTestId('finding-original-finding-1');
+    expect(label.textContent).toContain(WORK);
+    expect(label.textContent).toContain('1');
+    expect(label.textContent).toContain('Combine filters');
+  });
+
+  it('shows the decision human_approval value instead of hiding it', async () => {
+    setupAcceptance();
+    renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
+    expect((await screen.findByTestId('decision-human-approval')).textContent).toBe('false');
+  });
+
+  it('requires candidate_current true for current approval and reports missing as not measured', async () => {
+    const { payloads } = setupAcceptance();
+    payloads.reviews[WORK].submission.candidate_current = undefined as never;
+    renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
+    expect(screen.queryByTestId('acceptance-current-approval')).toBeNull();
+    expect((await screen.findByTestId('acceptance-review-currentness')).textContent).toBe('未测量');
+  });
+
+  it('disables segment mode when the review has no segment_query', async () => {
+    const { payloads } = setupAcceptance();
+    payloads.reviews[WORK].submission.artifacts[0].segment_query = undefined as never;
+    renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId(`artifact-expand-${ARTIFACT}`));
+    const option = await screen.findByText('分段读取');
+    expect(option.closest('.ant-segmented-item')?.classList.contains('ant-segmented-item-disabled')).toBe(true);
+  });
+
   it('shows self-report and non-independence without inventing automatic sync', async () => {
     setupAcceptance();
     renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
@@ -442,14 +475,9 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     await user.click(await screen.findByTestId(`artifact-expand-${ARTIFACT}`));
     await screen.findByTestId(`artifact-read-content-${ARTIFACT}`);
     expect(calls.filter((call) => call.query?.op === 'artifact.content')).toHaveLength(1);
-    try {
-      vi.useFakeTimers();
-      await vi.advanceTimersByTimeAsync(11000);
-      expect(calls.filter((call) => call.query?.op === 'artifact.content')).toHaveLength(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+    await new Promise((resolve) => setTimeout(resolve, 11000));
+    expect(calls.filter((call) => call.query?.op === 'artifact.content')).toHaveLength(1);
+  }, 15000);
 
   it('does not retry an Unavailable artifact read or poll it later', async () => {
     const { calls } = setupAcceptance({ failOps: ['artifact.content'], failWith: { 'artifact.content': 'Unavailable' } });
@@ -458,14 +486,9 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     await user.click(await screen.findByTestId(`artifact-expand-${ARTIFACT}`));
     expect(await screen.findByText(/正文读取失败：Unavailable/, undefined, { timeout: 5000 })).toBeTruthy();
     expect(calls.filter((call) => call.query?.op === 'artifact.content')).toHaveLength(1);
-    try {
-      vi.useFakeTimers();
-      await vi.advanceTimersByTimeAsync(11000);
-      expect(calls.filter((call) => call.query?.op === 'artifact.content')).toHaveLength(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+    await new Promise((resolve) => setTimeout(resolve, 11000));
+    expect(calls.filter((call) => call.query?.op === 'artifact.content')).toHaveLength(1);
+  }, 15000);
 
   it('shows forbidden for an overview auth error', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

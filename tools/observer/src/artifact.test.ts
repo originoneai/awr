@@ -79,6 +79,26 @@ describe('artifact byte verification (AWR-OBS-006)', () => {
     expect(result.text).toBeNull();
   });
 
+  it('rejects a correct digest with the wrong declared byte_length', async () => {
+    vi.stubGlobal('crypto', webcrypto);
+    const text = 'abc';
+    const read = selector(text);
+    stubContent({ work_id: WORK, artifact_id: ARTIFACT, byte_length: 4, sha256: read.expected_sha256, text, content_base64: null });
+    const result = await fetchArtifactContent('demo', read);
+    expect(result.status).toBe('mismatch');
+    expect(result.text).toBeNull();
+  });
+
+  it('rejects correct bytes when the declared sha256 differs from the selector', async () => {
+    vi.stubGlobal('crypto', webcrypto);
+    const text = 'abc';
+    const read = selector(text);
+    stubContent({ work_id: WORK, artifact_id: ARTIFACT, byte_length: 3, sha256: '0'.repeat(64), text, content_base64: null });
+    const result = await fetchArtifactContent('demo', read);
+    expect(result.status).toBe('mismatch');
+    expect(result.text).toBeNull();
+  });
+
   it('says unverified without Web Crypto, never verified', async () => {
     vi.stubGlobal('crypto', {});
     const text = 'abc';
@@ -178,6 +198,26 @@ describe('artifact byte verification (AWR-OBS-006)', () => {
 
     vi.stubGlobal('fetch', vi.fn(async () => response({ ...page, end_of_artifact: true, next_cursor: null })));
     await expect(fetchArtifactSegments('demo', read)).rejects.toThrow(/byte_length|end_of_artifact|length/i);
+  });
+
+  it('rejects a segment belonging to another artifact on the frontend', async () => {
+    vi.stubGlobal('crypto', webcrypto);
+    const text = 'abc';
+    const read = selector(text);
+    const { pages } = segmentResponse(text, ['abc']);
+    pages[0].artifact_id = 'OTHER';
+    await expect(fetchArtifactSegments('demo', read)).rejects.toThrow();
+  });
+
+  it('rejects a segment whose decoded length differs from its range', async () => {
+    vi.stubGlobal('crypto', webcrypto);
+    const read = selector('ab');
+    vi.stubGlobal('fetch', vi.fn(async () => response({
+      artifact_id: ARTIFACT, byte_length: 2, content_base64: Buffer.from('a').toString('base64'),
+      range: { start: 0, end_exclusive: 2 }, segment_sha256: sha256('ab'), sha256: sha256('ab'),
+      end_of_artifact: true, next_cursor: null,
+    })));
+    await expect(fetchArtifactSegments('demo', read)).rejects.toThrow(/range|length/i);
   });
 
   it('rejects wrong object echoes instead of displaying bytes', async () => {
