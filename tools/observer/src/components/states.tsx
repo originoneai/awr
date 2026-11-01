@@ -34,6 +34,7 @@ export function ObservationForbidden() {
     <Result
       data-testid="state-forbidden"
       status="403"
+      icon={<></>}
       title="403"
       subTitle={t('state.forbidden.subtitle')}
     />

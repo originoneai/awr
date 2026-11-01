@@ -7,6 +7,12 @@ describe('craft product visual signature', () => {
     expect(readFileSync('src/components/EvidenceChain.tsx', 'utf8')).toContain('<Steps');
   });
 
+  it('removes the decorative stock 403 illustration without hiding the authorization state', () => {
+    const states = readFileSync('src/components/states.tsx', 'utf8');
+    expect(states).toContain('data-testid="state-forbidden"');
+    expect(states).toContain('icon={<></>}');
+  });
+
   it('marks only verified digests with the lucide stamp signature', () => {
     const artifact = readFileSync('src/components/ArtifactReader.tsx', 'utf8');
     const knowledge = readFileSync('src/pages/ProjectKnowledge.tsx', 'utf8');
