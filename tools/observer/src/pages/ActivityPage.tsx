@@ -2,7 +2,7 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Button, Card, Select, Space, Table, Tabs, Typography } from 'antd';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { activityListQueryOptions, capabilitiesQueryOptions, type ActivityKind } from '../lib/activity';
 import { isAuthError } from '../lib/api';
@@ -41,7 +41,14 @@ export function ActivityPage() {
   const kind: ActivityKind = tab === 'requests' ? 'requests' : 'development';
   const limit = limitOf(searchParams.get('limit'));
   const capabilities = useQuery(capabilitiesQueryOptions(project, revoked));
-  const activity = useInfiniteQuery(activityListQueryOptions(project, kind, { limit }, revoked));
+  const identity = capabilities.data?.result.data.identity;
+  const workFilter = searchParams.get('work') ?? undefined;
+  const actorParam = searchParams.get('actor') ?? undefined;
+  const projectAudit = identity?.can_read_project_audit === true;
+  const actorFilter = actorParam && (projectAudit || actorParam === identity?.actor_id) ? actorParam : undefined;
+  const activity = useInfiniteQuery(activityListQueryOptions(project, kind, {
+    workId: workFilter, actorId: actorFilter, limit,
+  }, revoked));
   const items = useMemo(() => {
     const unique = new Map<string, TeamActivityItem>();
     for (const page of activity.data?.pages ?? []) {
@@ -53,6 +60,23 @@ export function ActivityPage() {
   }, [activity.data]);
   const visibleItems = tab === 'access' ? items.filter((item) => item.action === 'access.changed') : items;
   const firstPage = activity.data?.pages[0]?.data;
+  const workOptions = useMemo(() => Array.from(new Set(
+    items.map((item) => item.work_id).filter((id): id is string => Boolean(id)),
+  )).map((value) => ({ value, label: value })), [items]);
+  const actorOptions = useMemo(() => {
+    const values = projectAudit
+      ? Array.from(new Set(items.map((item) => item.actor_id)))
+      : identity?.actor_id ? [identity.actor_id] : [];
+    return values.map((value) => ({ value, label: value }));
+  }, [items, projectAudit, identity?.actor_id]);
+
+  function updateFilter(key: 'work' | 'actor', value?: string) {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    next.delete('event');
+    setSearchParams(next);
+  }
 
   if (revoked || isAuthError(projects.error) || isAuthError(activity.error) || isAuthError(capabilities.error)) {
     return <ObservationForbidden />;
@@ -79,6 +103,26 @@ export function ActivityPage() {
               setSearchParams(next);
             }}
             options={[50, 100].map((value) => ({ value, label: String(value) }))}
+          />
+          <Select
+            aria-label={t('activity.workFilter')}
+            data-testid="activity-work-filter"
+            value={workFilter}
+            allowClear
+            placeholder={t('activity.workFilter')}
+            style={{ minWidth: 190, maxWidth: 320 }}
+            onChange={(value) => updateFilter('work', value)}
+            options={workOptions}
+          />
+          <Select
+            aria-label={t('activity.actorFilter')}
+            data-testid="activity-actor-filter"
+            value={actorFilter}
+            allowClear
+            placeholder={t('activity.actorFilter')}
+            style={{ minWidth: 220, maxWidth: 360 }}
+            onChange={(value) => updateFilter('actor', value)}
+            options={actorOptions}
           />
         </Space>
       </Card>
@@ -110,9 +154,23 @@ export function ActivityPage() {
             onRow={() => ({ className: 'activity-row', 'data-testid': 'activity-row' } as { className: string; 'data-testid': string })}
             columns={[
               { title: t('activity.time'), dataIndex: 'created_at_unix_ms', width: 160, render: (value) => formatUnixMs(value, i18n.language) },
-              { title: t('activity.actor'), dataIndex: 'actor_id', width: 230, render: (value) => <Typography.Text style={{ overflowWrap: 'anywhere' }}>{value}</Typography.Text> },
+              {
+                title: t('activity.actor'), dataIndex: 'actor_id', width: 230,
+                render: (value) => projectAudit || value === identity?.actor_id ? (
+                  <Button type="link" style={{ padding: 0 }} data-testid={`activity-actor-${value}`} onClick={() => updateFilter('actor', value)}>
+                    <Typography.Text style={{ overflowWrap: 'anywhere' }}>{value}</Typography.Text>
+                  </Button>
+                ) : <Typography.Text style={{ overflowWrap: 'anywhere' }}>{value}</Typography.Text>,
+              },
               { title: t('activity.action'), dataIndex: 'action', width: 190 },
-              { title: t('activity.work'), dataIndex: 'work_id', width: 170, render: (value) => value ?? t('freshness.state.not_measured') },
+              {
+                title: t('activity.work'), dataIndex: 'work_id', width: 170,
+                render: (value, record) => value ? (
+                  <Link data-testid={`activity-work-link-${value}`} to={`/projects/${encodeURIComponent(project)}?tab=acceptance&work=${encodeURIComponent(value)}`}>
+                    {value}
+                  </Link>
+                ) : <span data-testid={`activity-work-empty-${record.id}`}>{t('freshness.state.not_measured')}</span>,
+              },
               { title: t('activity.result'), dataIndex: 'result', width: 120, render: (value) => raw(value) ?? t('freshness.state.not_measured') },
             ]}
           />

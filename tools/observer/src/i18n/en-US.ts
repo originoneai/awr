@@ -54,6 +54,8 @@ const enUS: Messages = {
     action: 'Action',
     work: 'Linked work',
     result: 'Result',
+    workFilter: 'All work',
+    actorFilter: 'All members',
   },
   freshness: {
     title: 'Freshness',

@@ -50,6 +50,8 @@ const zhCN = {
     action: '行为',
     work: '关联工作',
     result: '结果',
+    workFilter: '全部工作',
+    actorFilter: '全部成员',
   },
   freshness: {
     title: '新鲜度',

@@ -141,4 +141,46 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     await screen.findByTestId('page-activity');
     expect(largeCalls[0].params.get('limit')).toBe('100');
   });
+
+  it('links non-null work ids to the exact outcome and never creates a null-work link', async () => {
+    setupActivity({ projectAudit: true, development: fixture('derived-audit-development-project-scope-run09.json') });
+    renderApp('/activity?project=demo');
+    const link = (await screen.findAllByTestId('activity-work-link-issue-filter-page'))[0];
+    expect(link.getAttribute('href')).toBe('/projects/demo?tab=acceptance&work=issue-filter-page');
+  });
+
+  it('uses work_id for the server-side work filter', async () => {
+    const { calls } = setupActivity({ projectAudit: true, development: fixture('derived-audit-development-project-scope-run09.json') });
+    renderApp('/activity?project=demo&work=issue-filter-api');
+    await screen.findByTestId('page-activity');
+    expect(calls[0].params.get('work_id')).toBe('issue-filter-api');
+    expect(screen.queryByTestId('activity-work-link-issue-filter-page')).toBeNull();
+  });
+
+  it('does not link a null work_id', async () => {
+    setupActivity();
+    renderApp('/activity?project=demo');
+    expect(await screen.findByTestId('activity-work-empty-01M69TZWWAF2FWZ0D1NHX1NJ0A')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'issue-filter-api' })).toBeNull();
+  });
+
+  it('allows self actor filtering but ignores another actor in self scope', async () => {
+    const { calls: ownCalls } = setupActivity();
+    renderApp(`/activity?project=demo&actor=${SELF_ACTOR}`);
+    await screen.findByTestId('page-activity');
+    expect(ownCalls.some((call) => call.params.get('member_actor_id') === SELF_ACTOR)).toBe(true);
+
+    const { calls: otherCalls } = setupActivity();
+    renderApp('/activity?project=demo&actor=OTHER');
+    await screen.findByTestId('page-activity');
+    expect(otherCalls.every((call) => call.params.get('member_actor_id') === null)).toBe(true);
+  });
+
+  it('uses member_actor_id for an authorized project-scope actor filter', async () => {
+    const actor = 'manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa';
+    const { calls } = setupActivity({ projectAudit: true, development: fixture('derived-audit-development-project-scope-run09.json') });
+    renderApp(`/activity?project=demo&actor=${actor}`);
+    await screen.findByTestId('page-activity');
+    expect(calls.some((call) => call.params.get('member_actor_id') === actor)).toBe(true);
+  });
 });
