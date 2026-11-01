@@ -4,6 +4,7 @@ import {
   DEMO_ACTIVITY,
   DEMO_PROJECT_OVERVIEW,
   DEMO_PROJECTS,
+  DEMO_REVIEW,
   DEMO_WORK_NEXT,
   demoWorkSnapshot,
   renderApp,
@@ -26,6 +27,7 @@ function revocationFetch(calls: { count: number }, revoked: { value: boolean }) 
       const request = JSON.parse(String(init?.body)) as { query: { op: string; work_id?: string } };
       if (request.query.op === 'work.next') payload = DEMO_WORK_NEXT;
       if (request.query.op === 'work.snapshot') payload = demoWorkSnapshot(request.query.work_id);
+      if (request.query.op === 'review.inspect') payload = DEMO_REVIEW;
     }
     return new Response(JSON.stringify(payload), {
       status: 200,
@@ -51,6 +53,7 @@ describe.each([
   { path: '/projects', restrictedText: /Team mainline/, pageTestId: 'page-projects' },
   { path: '/workbench?scope=demo', restrictedText: /Build the filter API/, pageTestId: 'page-workbench' },
   { path: '/projects/demo?tab=overview', restrictedText: /Build the filter API/, pageTestId: 'page-project' },
+  { path: '/projects/demo?tab=plan&work=W1', restrictedText: /Build the filter API/, pageTestId: 'page-project' },
 ])('rendered revocation on $path', ({ path, restrictedText, pageTestId }) => {
   it('clears restricted content, shows forbidden, and stops reads for 10 seconds', async () => {
     vi.useFakeTimers();

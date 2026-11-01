@@ -102,6 +102,8 @@ export interface TeamReadResponse<T> {
   ok: true;
   result: {
     data: T;
+    authority_version?: string;
+    selection_basis?: string;
     project_revision?: string;
     protocol_version?: number;
     scope_id?: string;
@@ -192,6 +194,9 @@ export interface WorkContract {
 
 export interface WorkSnapshotData {
   work_id?: string;
+  contract_hash?: string;
+  definition_state?: string;
+  runtime?: { state?: string; work_version?: string };
   observation?: {
     last_activity_at_unix_ms?: number | null;
     observed_at_unix_ms?: number | null;
@@ -204,11 +209,37 @@ export interface WorkSnapshotData {
   };
   visible_contract?: WorkContract | null;
   published_contract?: WorkContract | null;
-  required_specs?: unknown[];
+  required_specs?: Array<{
+    path?: string;
+    text?: string;
+    content_included?: boolean;
+    byte_length?: number;
+    sha256?: string;
+    next_step?: unknown;
+  }>;
   snapshot?: Record<string, unknown>;
   guidance?: {
     code?: string;
     action?: { op?: string; note?: string };
   } | null;
   next_step?: string | null;
+}
+
+export interface ReviewDecision {
+  decision: string;
+  decision_id: string;
+  approval_basis: string;
+  human_approval: boolean;
+  independence_kind: string;
+}
+
+export interface ReviewData {
+  review: {
+    decisions: ReviewDecision[];
+    author_actor_id: string;
+    author_person_id: string;
+    artifact_digest: string;
+    contract_hash: string;
+    bundle_hash: string;
+  } | null;
 }

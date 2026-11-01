@@ -2,6 +2,7 @@ import { QueryCache, QueryClient, type UseQueryOptions } from '@tanstack/react-q
 import pLimit from 'p-limit';
 import { apiGet, apiPost, isAuthError } from './api';
 import type {
+  ReviewData,
   TeamActivityResponse,
   TeamOverviewResponse,
   TeamProjectsResponse,
@@ -31,7 +32,10 @@ export const readQueryDefaults = {
 export const queryKeys = {
   projects: ['team', 'projects'] as const,
   overview: (project: string | null) => ['team', 'overview', project] as const,
-  activity: (project: string | null) => ['team', 'activity', 'development', project] as const,
+  activity: (project: string | null, workId?: string) =>
+    ['team', 'activity', 'development', project, workId ?? null] as const,
+  review: (project: string | null, workId: string | null) =>
+    ['team', 'review.inspect', project, workId] as const,
   inbox: (project: string | null) => ['team', 'inbox', project] as const,
   workNext: (project: string | null) => ['team', 'work.next', project] as const,
   workInbox: (project: string | null) => ['team', 'work.inbox', project] as const,
@@ -58,11 +62,11 @@ export function overviewQueryOptions(project: string | null, revoked = false) {
   } satisfies UseQueryOptions<TeamOverviewResponse>;
 }
 
-export function activityQueryOptions(project: string | null, revoked = false) {
+export function activityQueryOptions(project: string | null, revoked = false, workId?: string) {
   return {
-    queryKey: queryKeys.activity(project),
+    queryKey: queryKeys.activity(project, workId),
     queryFn: () => apiGet<TeamActivityResponse>(
-      `/api/team/activity?project=${encodeURIComponent(project ?? '')}&kind=development`,
+      `/api/team/activity?project=${encodeURIComponent(project ?? '')}&kind=development${workId ? `&work_id=${encodeURIComponent(workId)}` : ''}`,
     ),
     enabled: Boolean(project) && !revoked,
     ...readQueryDefaults,
@@ -71,13 +75,26 @@ export function activityQueryOptions(project: string | null, revoked = false) {
 
 interface TeamReadQuery {
   protocol_version: 1;
-  op: 'work.next' | 'work.inbox' | 'work.snapshot';
+  op: 'work.next' | 'work.inbox' | 'work.snapshot' | 'review.inspect';
   work_id?: string;
   workstream_id?: string;
 }
 
 function teamRead<T>(project: string, query: TeamReadQuery, signal?: AbortSignal) {
   return apiPost<TeamReadResponse<T>>('/api/team/read', { project, query }, signal);
+}
+
+export function reviewQueryOptions(project: string | null, workId: string | null, revoked = false) {
+  return {
+    queryKey: queryKeys.review(project, workId),
+    queryFn: ({ signal }: { signal: AbortSignal }) => teamRead<ReviewData>(project ?? '', {
+      protocol_version: 1,
+      op: 'review.inspect',
+      work_id: workId ?? '',
+    }, signal),
+    enabled: Boolean(project && workId) && !revoked,
+    ...readQueryDefaults,
+  } satisfies UseQueryOptions<TeamReadResponse<ReviewData>>;
 }
 
 export function workNextQueryOptions(project: string | null, revoked = false) {
