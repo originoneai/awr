@@ -274,9 +274,12 @@ describe('agent-connect and account review round 2', () => {
   it('no part of session.session_id appears in the account page DOM', async () => {
     setupAccount();
     renderApp('/account?scope=demo');
-    await screen.findByTestId('account-session-card');
-    const parts = FULL_SESSION_ID.split(/[_-]/).filter((part) => part.length >= 4);
-    for (const part of parts) {
+    // Wait for the session data to actually load before asserting: an
+    // unloaded page would pass vacuously (the reviewer's fault survived).
+    await screen.findAllByText(/2025/);
+    expect(document.body.textContent).not.toContain(FULL_SESSION_ID);
+    // Only distinctive fragments, not words that are legal in English UI.
+    for (const part of ['secret_full', 'full_session', 'session_id', 'ws_secret']) {
       expect(document.body.textContent).not.toContain(part);
     }
   });
