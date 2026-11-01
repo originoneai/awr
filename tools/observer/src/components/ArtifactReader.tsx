@@ -5,7 +5,6 @@ import { useTranslation } from 'react-i18next';
 import { ApiError } from '../lib/api';
 import { fetchArtifactContent, fetchArtifactSegments, type ArtifactSelector } from '../lib/artifact';
 import { asText, at } from '../lib/json';
-import { readQueryDefaults } from '../lib/queries';
 
 type ReadMode = 'content' | 'segment';
 
@@ -36,7 +35,11 @@ export function ArtifactReader({
       ? fetchArtifactContent(project, selector as ArtifactSelector, signal)
       : fetchArtifactSegments(project, selector as ArtifactSelector, signal),
     enabled: expanded && !revoked && Boolean(selector?.work_id),
-    ...readQueryDefaults,
+    // Digest-addressed bytes are immutable: one read per selector, never a poll.
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+    staleTime: Infinity,
+    retry: (failureCount, error) => !(error instanceof ApiError && error.code === 'Unavailable') && failureCount < 1,
   });
   const status = read.data?.status;
   const digestText = status === 'verified' ? t('artifact.verified')

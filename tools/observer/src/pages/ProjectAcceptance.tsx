@@ -1,11 +1,13 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { Card, Col, Descriptions, List, Pagination, Row, Space, Tag, Typography } from 'antd';
+import { Card, Col, Descriptions, List, Pagination, Row, Space, Tag, Tooltip, Typography } from 'antd';
+import { isValidElement } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import { ArtifactReader } from '../components/ArtifactReader';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { ApiError, isAuthError } from '../lib/api';
+import { formatUnixMs } from '../lib/format';
 import { asArray, asObject, asText, at } from '../lib/json';
 import { outcomeQueryOptions } from '../lib/outcome';
 import { overviewQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
@@ -25,7 +27,7 @@ function errorCode(error: unknown) {
 
 /** Exact outcome evidence; no status is inferred from CI, merge or artifact readability. */
 export function ProjectAcceptance({ project }: { project: string }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { revoked } = useRevocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const overview = useQuery(overviewQueryOptions(project, revoked));
@@ -83,10 +85,21 @@ export function ProjectAcceptance({ project }: { project: string }) {
 
   const notMeasured = t('freshness.state.not_measured');
   const value = (input: unknown) => asText(input) ?? notMeasured;
+  const timeValue = (input: unknown) => {
+    const raw = asText(input);
+    if (raw == null || !Number.isFinite(Number(raw))) return notMeasured;
+    return (
+      <Tooltip title={raw}>
+        <Typography.Text>{formatUnixMs(Number(raw), i18n.language)}</Typography.Text>
+      </Tooltip>
+    );
+  };
   const fields = (input: Array<[string, unknown]>) => input.map(([label, child]) => ({
     key: label,
     label,
-    children: <Typography.Text style={{ overflowWrap: 'anywhere' }}>{value(child)}</Typography.Text>,
+    children: isValidElement(child)
+      ? child
+      : <Typography.Text style={{ overflowWrap: 'anywhere' }}>{value(child)}</Typography.Text>,
   }));
   const readError = (query: { error: unknown }, testId: string) => (
     <Typography.Text type="warning" data-testid={testId}>
@@ -108,6 +121,9 @@ export function ProjectAcceptance({ project }: { project: string }) {
   const completionObject = asObject(completionData?.completion);
   const completionReceipt = asText(completionObject?.receipt_id);
   const completionSelected = asText(completionData?.selected_completion_id);
+  const completionReviewRound = asText(at(completionObject, ['approved_by', 'review_round_id']));
+  const completionReviewDecision = asText(at(completionObject, ['approved_by', 'review_decision_id']));
+  const completionIndependence = asText(at(completionObject, ['approved_by', 'independence_kind']));
   const deliveryObject = asObject(at(delivery.data?.result.data, ['delivery']));
   const deliverySelected = asText(at(deliveryObject, ['awr_acceptance', 'selected_completion_id']));
   const completionConflict = Boolean(completionData && (
@@ -117,6 +133,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
     || (completionObject?.evidence_id != null && completionObject.evidence_id !== evidenceId)
     || (completionObject?.execution_id != null && completionObject.execution_id !== executionId)
     || (completionObject?.contract_hash != null && completionObject.contract_hash !== snapshotData?.contract_hash)
+    || (completionReviewRound != null && completionReviewRound !== selectedRound)
   ));
   const integrationData = integration.data?.result.data;
   const observedAt = at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'provenance', 'observed_at_unix_ms']);
@@ -316,18 +333,25 @@ export function ProjectAcceptance({ project }: { project: string }) {
                   </Typography.Text>
                 ) : (
                   <div data-testid="acceptance-completion">
-                    <Descriptions size="small" column={{ xs: 1, sm: 2 }} items={fields([
-                      ['receipt_id', completionReceipt],
-                      ['selected_completion_id', completionSelected],
-                      ['runtime_state', completionData?.runtime_state],
-                      ['contract_hash', completionObject?.contract_hash],
-                      ['evidence_id', completionObject?.evidence_id],
-                      ['execution_id', completionObject?.execution_id],
-                      ['review_round_id', completionObject?.review_round_id],
-                      ['review_decision_id', completionObject?.review_decision_id],
-                      ['human_approval', at(completionObject, ['approved_by', 'human_approval'])],
-                      ['team_independent_acceptance', at(completionObject, ['approved_by', 'team_independent_acceptance'])],
-                    ])} />
+                    <Descriptions
+                      size="small"
+                      column={{ xs: 1, sm: 2 }}
+                      items={[
+                        ...fields([
+                          ['receipt_id', completionReceipt],
+                          ['selected_completion_id', completionSelected],
+                          ['runtime_state', completionData?.runtime_state],
+                          ['contract_hash', completionObject?.contract_hash],
+                          ['evidence_id', completionObject?.evidence_id],
+                          ['execution_id', completionObject?.execution_id],
+                          ['human_approval', at(completionObject, ['approved_by', 'human_approval'])],
+                          ['team_independent_acceptance', at(completionObject, ['approved_by', 'team_independent_acceptance'])],
+                        ]),
+                        { key: 'review_round_id', label: 'review_round_id', children: <span data-testid="completion-review-round">{value(completionReviewRound)}</span> },
+                        { key: 'review_decision_id', label: 'review_decision_id', children: <span data-testid="completion-review-decision">{value(completionReviewDecision)}</span> },
+                        { key: 'independence_kind', label: 'independence_kind', children: <span data-testid="completion-independence">{value(completionIndependence)}</span> },
+                      ]}
+                    />
                   </div>
                 )}
               </Card>
@@ -356,18 +380,30 @@ export function ProjectAcceptance({ project }: { project: string }) {
               <Card size="small" title={t('acceptance.integration')}>
                 {integration.isPending ? loading : integration.isError ? readError(integration, 'acceptance-integration-error') : (
                   <div data-testid="acceptance-integration">
-                    <Descriptions size="small" column={{ xs: 1, sm: 2 }} items={fields([
-                      ['integration_id', integrationData?.integration_id],
-                      ['target', at(integrationData, ['integration_request', 'binding', 'target', 'reference'])],
-                      ['target_resource', at(integrationData, ['integration_request', 'binding', 'target', 'resource'])],
-                      ['precondition', at(integrationData, ['integration_request', 'binding', 'target', 'precondition', 'revision', 'value'])],
-                      ['result_revision', at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'result_revision', 'value'])],
-                      ['outcome', at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'outcome'])],
-                      ['dispatch_state', at(integrationData, ['dispatch_receipt', 'state'])],
-                      ['current_binding', integrationData?.current_binding],
-                      ['target_changed', integrationData?.target_changed],
-                      ['dispatched_at', integrationData?.dispatched_at],
-                    ])} />
+                    <Descriptions
+                      size="small"
+                      column={{ xs: 1, sm: 2 }}
+                      items={[
+                        ...fields([
+                          ['integration_id', integrationData?.integration_id],
+                          ['target', at(integrationData, ['integration_request', 'binding', 'target', 'reference'])],
+                          ['target_resource', at(integrationData, ['integration_request', 'binding', 'target', 'resource'])],
+                          ['precondition', at(integrationData, ['integration_request', 'binding', 'target', 'precondition', 'revision', 'value'])],
+                          ['result_revision', at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'result_revision', 'value'])],
+                        ]),
+                        { key: 'outcome', label: 'outcome', children: <span data-testid="acceptance-integration-outcome">{value(at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'outcome']))}</span> },
+                        { key: 'state', label: 'state', children: <span data-testid="acceptance-integration-state">{value(integrationData?.state)}</span> },
+                        { key: 'dispatch_state', label: 'dispatch_state', children: <span data-testid="acceptance-dispatch-state">{value(at(integrationData, ['dispatch_receipt', 'data', 'state']))}</span> },
+                        ...fields([
+                          ['current_binding', integrationData?.current_binding],
+                          ['target_changed', integrationData?.target_changed],
+                          ['dispatched_at', integrationData?.dispatched_at],
+                        ]),
+                      ]}
+                    />
+                    {at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'outcome']) === 'rejected' ? (
+                      <Tag color="error" data-testid="acceptance-integration-rejected">{t('acceptance.integrationRejected')}</Tag>
+                    ) : null}
                   </div>
                 )}
               </Card>
@@ -394,17 +430,23 @@ export function ProjectAcceptance({ project }: { project: string }) {
             <Card size="small" title={t('acceptance.delivery')}>
               {delivery.isPending ? loading : delivery.isError ? readError(delivery, 'acceptance-delivery-error') : (
                 <div data-testid="acceptance-delivery">
-                  <Descriptions size="small" column={{ xs: 1, sm: 2 }} items={fields([
-                    ['complete', at(deliveryObject, ['awr_acceptance', 'complete'])],
-                    ['runtime_state', at(deliveryObject, ['awr_acceptance', 'runtime_state'])],
-                    ['selected_completion_id', deliverySelected],
-                    ['github.submitted', at(deliveryObject, ['github', 'submitted'])],
-                    ['github.approved', at(deliveryObject, ['github', 'approved'])],
-                    ['github.merged', at(deliveryObject, ['github', 'merged'])],
-                    ['pr', deliveryObject?.pr],
-                    ['webhook_auto_sync', deliveryObject?.webhook_auto_sync],
-                    ['cannot_skip_acceptance_via', deliveryObject?.cannot_skip_acceptance_via],
-                  ])} />
+                  <Descriptions
+                    size="small"
+                    column={{ xs: 1, sm: 2 }}
+                    items={[
+                      { key: 'complete', label: 'complete', children: <span data-testid="acceptance-delivery-complete">{completionConflict ? t('acceptance.conflict') : value(at(deliveryObject, ['awr_acceptance', 'complete']))}</span> },
+                      ...fields([
+                        ['runtime_state', at(deliveryObject, ['awr_acceptance', 'runtime_state'])],
+                        ['selected_completion_id', deliverySelected],
+                        ['github.submitted', at(deliveryObject, ['github', 'submitted'])],
+                        ['github.approved', at(deliveryObject, ['github', 'approved'])],
+                        ['github.merged', at(deliveryObject, ['github', 'merged'])],
+                        ['pr', deliveryObject?.pr],
+                        ['webhook_auto_sync', deliveryObject?.webhook_auto_sync],
+                        ['cannot_skip_acceptance_via', deliveryObject?.cannot_skip_acceptance_via],
+                      ]),
+                    ]}
+                  />
                 </div>
               )}
             </Card>
@@ -440,10 +482,10 @@ export function ProjectAcceptance({ project }: { project: string }) {
             <Card size="small" title={t('acceptance.times')}>
               <div data-testid="acceptance-times">
                 <Descriptions size="small" column={{ xs: 1, sm: 2 }} items={fields([
-                  [t('acceptance.externalObserved'), observedAt],
-                  [t('acceptance.awrRecorded'), recordedAt],
-                  [t('acceptance.pageRead'), selectedSnapshot?.data?.freshness.page_read.at_unix_ms],
-                  [t('acceptance.sourceQuery'), collaboration?.source_state?.query_started_at_unix_ms],
+                  [t('acceptance.externalObserved'), timeValue(observedAt)],
+                  [t('acceptance.awrRecorded'), timeValue(recordedAt)],
+                  [t('acceptance.pageRead'), timeValue(selectedSnapshot?.data?.freshness.page_read.at_unix_ms)],
+                  [t('acceptance.sourceQuery'), timeValue(collaboration?.source_state?.query_started_at_unix_ms)],
                 ])} />
               </div>
             </Card>

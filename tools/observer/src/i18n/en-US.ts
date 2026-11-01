@@ -53,6 +53,7 @@ const enUS: Messages = {
     completion: 'Contract endpoint (completion)',
     localGit: 'Local Git connector',
     integration: 'Exact integration target and receipts',
+    integrationRejected: 'Rejected',
     source: 'Source publication and current state',
     delivery: 'GitHub and delivery summary',
     exports: 'Export and adoption summary',

@@ -1,9 +1,21 @@
 import { createHash, webcrypto } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { act, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import i18n from './i18n';
+import { formatUnixMs } from './lib/format';
 import { revokeObservationReads } from './lib/queries';
 import { DEMO_OVERVIEW, DEMO_PROJECTS, renderApp } from './test-utils';
+
+// Verbatim service replies used by the review-regression cases:
+// service-completion-inspect-api-run09.json,
+// service-delivery-integration-inspect-api-run09.json, and
+// service-delivery-integration-inspect-page-rejected-run09.json.
+const LIVE_COMPLETION = JSON.parse(readFileSync(resolve('../inspector/test/fixtures/obs006/completion-inspect.json'), 'utf8'));
+const LIVE_INTEGRATION = JSON.parse(readFileSync(resolve('../inspector/test/fixtures/obs006/delivery-integration-inspect.json'), 'utf8'));
+const REJECTED_INTEGRATION = JSON.parse(readFileSync(resolve('../inspector/test/fixtures/obs006/delivery-integration-inspect-page-rejected.json'), 'utf8'));
 
 const WORK = 'issue-filter-api';
 const PAGE = 'issue-filter-page';
@@ -117,7 +129,7 @@ function envelope(data: unknown, workId = WORK) {
   };
 }
 
-function setupAcceptance({ failOps = [] }: { failOps?: string[] } = {}) {
+function setupAcceptance({ failOps = [], failWith = {} }: { failOps?: string[]; failWith?: Record<string, string> } = {}) {
   const calls: Array<{ url: string; query?: Record<string, unknown> }> = [];
   const snapshots = { [WORK]: snapshotFor(WORK, true), [PAGE]: snapshotFor(PAGE, false) };
   const reviews = { [WORK]: reviewFor(WORK, true), [PAGE]: reviewFor(PAGE, false) };
@@ -129,7 +141,18 @@ function setupAcceptance({ failOps = [] }: { failOps?: string[] } = {}) {
     },
     runtime_state: 'completed', selected_completion_id: COMPLETION,
   };
-  const payloads = { snapshots, reviews, completion };
+  const deliveryByWork = {
+    [WORK]: { delivery: { work_id: WORK, awr_acceptance: { complete: true, runtime_state: 'completed', selected_completion_id: COMPLETION }, cannot_skip_acceptance_via: ['green_ci', 'already_merged'], github: { approved: false, merged: false, submitted: false }, pr: null, webhook_auto_sync: false } },
+    [PAGE]: { delivery: { work_id: PAGE, awr_acceptance: { complete: false, runtime_state: 'claimed', selected_completion_id: null }, cannot_skip_acceptance_via: ['green_ci', 'already_merged'], github: { approved: false, merged: false, submitted: false }, pr: null, webhook_auto_sync: false } },
+  };
+  const integration: Record<string, unknown> = {
+    integration_id: INTEGRATION,
+    integration_request: { binding: { target: { reference: 'refs/heads/main', resource: 'local-repository:synthetic', precondition: { kind: 'exact', revision: { value: 'a516342436e434d0072ef9c138f419f2f128caac' } } }, source_revision: { value: '5f7eb2fe9c563e4d355aa64a527e0aef754116c1' } } },
+    dispatch_receipt: { data: { state: 'dispatched' }, lease_id: 'lease-1', recorded_at_unix_ms: 1793518656318 },
+    confirmation: { envelope: { record: { data: { outcome: 'applied', result_revision: { value: '5f7eb2fe9c563e4d355aa64a527e0aef754116c1' }, provenance: { observed_at_unix_ms: 1793518656287, recorded_at_unix_ms: 1793518656318, source: 'adapter_observation' } } } } },
+    current_binding: true, confirmation_current: true, target_changed: false, request_binding: 'original_candidate_and_read_set', dispatched_at: '2026-11-01T07:37:35Z', state: 'confirmed',
+  };
+  const payloads = { snapshots, reviews, completion, deliveryByWork, integration };
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     let query: Record<string, unknown> | undefined;
@@ -140,7 +163,7 @@ function setupAcceptance({ failOps = [] }: { failOps?: string[] } = {}) {
       return json({ ...DEMO_OVERVIEW, works: WORKS, workstreams: [{ id: 'WS1', external_key: 'support', title: 'Support' }] });
     }
     if (query) {
-      if (failOps.includes(String(query.op))) return json({ ok: false, error: { code: 'ReadTimeout', message: 'slow' } });
+      if (failOps.includes(String(query.op))) return json({ ok: false, error: { code: failWith[String(query.op)] ?? 'ReadTimeout', message: 'slow' } });
       let data: unknown;
       switch (query.op) {
         case 'work.snapshot': data = snapshots[query.work_id as keyof typeof snapshots]; break;
@@ -155,26 +178,14 @@ function setupAcceptance({ failOps = [] }: { failOps?: string[] } = {}) {
           data = { claim_id: CLAIM, current_fence: true, epoch_matches_current: true, lease_live: false, lease_version: '1', expires_at: '2026-11-01T06:15:24Z', state: 'active', execution_authorized: false, execution_eligibility_advisory: false, owned_by_client: false };
           break;
         case 'completion.inspect': data = completion; break;
-        case 'delivery.inspect': {
-          const delivered = query.work_id === WORK;
-          data = { delivery: { work_id: query.work_id, awr_acceptance: { complete: delivered, runtime_state: delivered ? 'completed' : 'claimed', selected_completion_id: delivered ? COMPLETION : null }, cannot_skip_acceptance_via: ['green_ci', 'already_merged'], github: { approved: false, merged: false, submitted: false }, pr: null, webhook_auto_sync: false } };
-          break;
-        }
+        case 'delivery.inspect': data = deliveryByWork[query.work_id as keyof typeof deliveryByWork]; break;
         case 'delivery.neutral.inspect':
           data = { work_id: WORK, connectors: [{ connector_id: 'repository-api', connector_version: '1', current_epoch: true, enabled: true, fact_source: 'adapter_observation', provider: 'local_git', resource: 'local-repository:synthetic' }], connectors_truncated: false, selected_current: true, selection_version: '1' };
           break;
         case 'delivery.submission.describe':
           data = { work_id: WORK, read_only: true, stored_selection: { binding_digest: CANDIDATE, current: true, selection_version: '1' }, connectors: [{ provider: 'local_git', enabled: true, current_epoch: true }], local_git: { basis: 'local_git.manifest verifies committed bytes' } };
           break;
-        case 'delivery.integration.inspect':
-          data = {
-            integration_id: INTEGRATION,
-            integration_request: { binding: { target: { reference: 'refs/heads/main', resource: 'local-repository:synthetic', precondition: { kind: 'exact', revision: { value: 'a516342436e434d0072ef9c138f419f2f128caac' } } }, source_revision: { value: '5f7eb2fe9c563e4d355aa64a527e0aef754116c1' } } },
-            dispatch_receipt: { state: 'dispatched', lease_id: 'lease-1', recorded_at_unix_ms: 1793518656318 },
-            confirmation: { envelope: { record: { data: { outcome: 'applied', result_revision: { value: '5f7eb2fe9c563e4d355aa64a527e0aef754116c1' }, provenance: { observed_at_unix_ms: 1793518656287, recorded_at_unix_ms: 1793518656318, source: 'adapter_observation' } } } } },
-            current_binding: true, confirmation_current: true, target_changed: false, request_binding: 'original_candidate_and_read_set', dispatched_at: '2026-11-01T07:37:35Z',
-          };
-          break;
+        case 'delivery.integration.inspect': data = integration; break;
         case 'delivery.source.status':
           data = { work_id: WORK, source_observation: 'observed', confirmed_fingerprint: 'sha256:confirmed', source_fingerprint: 'sha256:confirmed', source_synchronized: true, cursor_current: true, projection_current: true, pending_publication_id: null, metadata_revision: '5', history: [{ phase: 'confirmed', source_synchronized_at_commit: true, source_written_observed: true, confirmation: { operation_effects: { source_metadata_written: true, work_finalized: false }, effect_basis: 'this_publication_operation; not current_work_state' } }], history_truncated: false };
           break;
@@ -204,6 +215,22 @@ function freshness() {
 
 function json(payload: unknown) {
   return new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } });
+}
+
+type AcceptancePayloads = ReturnType<typeof setupAcceptance>['payloads'];
+
+function installLiveCompletion(payloads: AcceptancePayloads) {
+  Object.assign(payloads.completion, structuredClone(LIVE_COMPLETION.data));
+}
+
+async function expectLiveCompletionConflict(mutate: (payloads: AcceptancePayloads) => void) {
+  const { payloads } = setupAcceptance();
+  installLiveCompletion(payloads);
+  mutate(payloads);
+  renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
+  expect(await screen.findByTestId('acceptance-completion-conflict')).toBeTruthy();
+  expect(screen.queryByTestId('acceptance-completion')).toBeNull();
+  expect(screen.getByTestId('acceptance-delivery-complete').textContent).not.toBe('true');
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -263,8 +290,42 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     expect((await screen.findAllByText(/作者自报/)).length).toBeGreaterThan(0);
     expect((await screen.findAllByText(/非独立验证/)).length).toBeGreaterThan(0);
     expect(screen.queryByText(/后台自动同步/)).toBeNull();
-    expect(screen.getByTestId('acceptance-times').textContent).toContain('1793518656287');
-    expect(screen.getByTestId('acceptance-times').textContent).toContain('1793518656318');
+    expect(screen.getByTestId('acceptance-times')).toBeTruthy();
+  });
+
+  it('formats all four clocks with the shared formatter and keeps raw values in tooltips', async () => {
+    setupAcceptance();
+    renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
+    const observed = 1793518656287;
+    const recorded = 1793518656318;
+    const zhObserved = formatUnixMs(observed, 'zh-CN');
+    const enObserved = formatUnixMs(observed, 'en-US');
+    await screen.findByTestId('acceptance-integration');
+    const times = await screen.findByTestId('acceptance-times');
+    expect(times.textContent).toContain(zhObserved);
+    expect(times.textContent).not.toContain(String(observed));
+    const user = userEvent.setup();
+    await user.hover(screen.getAllByText(zhObserved)[0]);
+    expect(await screen.findByText(String(observed))).toBeTruthy();
+    expect(times.textContent).toContain(formatUnixMs(recorded, 'zh-CN'));
+    try {
+      await i18n.changeLanguage('en-US');
+      expect((await screen.findAllByText(enObserved)).length).toBeGreaterThan(0);
+      expect(screen.getByTestId('acceptance-times').textContent).toContain(formatUnixMs(recorded, 'en-US'));
+    } finally {
+      await i18n.changeLanguage('zh-CN');
+    }
+  });
+
+  it('keeps missing clock values not measured instead of borrowing another clock', async () => {
+    const { payloads } = setupAcceptance();
+    const confirmation = payloads.integration.confirmation as { envelope: { record: { data: { provenance: Record<string, unknown> } } } };
+    delete confirmation.envelope.record.data.provenance.observed_at_unix_ms;
+    payloads.snapshots[WORK].observation.collaboration.source_state = undefined as never;
+    renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
+    const times = await screen.findByTestId('acceptance-times');
+    expect(times.textContent).toContain('未测量');
+    expect(times.textContent).not.toContain('1793518656287');
   });
 
   it('shows a version conflict instead of a mismatched completion endpoint', async () => {
@@ -273,6 +334,71 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
     expect(await screen.findByTestId('acceptance-completion-conflict')).toBeTruthy();
     expect(screen.queryByTestId('acceptance-completion')).toBeNull();
+  });
+
+  it('shows completion review identifiers and independence from the verbatim approved_by object', async () => {
+    const { payloads } = setupAcceptance();
+    installLiveCompletion(payloads);
+    renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
+    expect((await screen.findByTestId('completion-review-round')).textContent).toBe(ROUND);
+    expect(screen.getByTestId('completion-review-decision').textContent).toBe('01M6AZ4XY0MEJHBR91AHDR578A');
+    expect(screen.getByTestId('completion-independence').textContent).toBe('simulated_member_independent');
+  });
+
+  it('rejects completion when the snapshot selected id differs', async () => {
+    await expectLiveCompletionConflict((payloads) => {
+      payloads.snapshots[WORK].observation.runtime.selected_completion_id = 'OTHER';
+    });
+  });
+
+  it('rejects completion when delivery selects another completion', async () => {
+    await expectLiveCompletionConflict((payloads) => {
+      payloads.deliveryByWork[WORK].delivery.awr_acceptance.selected_completion_id = 'OTHER';
+    });
+  });
+
+  it('rejects completion when the contract hash differs', async () => {
+    await expectLiveCompletionConflict((payloads) => {
+      payloads.completion.completion.contract_hash = 'OTHER';
+    });
+  });
+
+  it('rejects completion when the evidence id differs', async () => {
+    await expectLiveCompletionConflict((payloads) => {
+      payloads.completion.completion.evidence_id = 'OTHER';
+    });
+  });
+
+  it('rejects completion when the execution id differs', async () => {
+    await expectLiveCompletionConflict((payloads) => {
+      payloads.completion.completion.execution_id = 'OTHER';
+    });
+  });
+
+  it('rejects completion when its approving review round differs', async () => {
+    await expectLiveCompletionConflict((payloads) => {
+      (payloads.completion.completion.approved_by as unknown as Record<string, unknown>).review_round_id = 'OTHER';
+    });
+  });
+
+  it('reads dispatch state from dispatch_receipt.data in the verbatim integration reply', async () => {
+    const { payloads } = setupAcceptance();
+    Object.assign(payloads.integration, structuredClone(LIVE_INTEGRATION.data));
+    renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
+    expect((await screen.findByTestId('acceptance-dispatch-state')).textContent).toBe('dispatched');
+  });
+
+  it('shows a rejected integration attempt as rejected with its intent state', async () => {
+    const { payloads } = setupAcceptance();
+    Object.assign(payloads.integration, structuredClone(REJECTED_INTEGRATION.data));
+    payloads.snapshots[PAGE].observation.collaboration.integration = {
+      id: REJECTED_INTEGRATION.data.integration_id, state: 'rejected', current_binding: true, target_changed: false, reviewed_execution_id: EXECUTION,
+    };
+    renderApp('/projects/demo?tab=acceptance&work=issue-filter-page');
+    expect(await screen.findByTestId('acceptance-integration-rejected')).toBeTruthy();
+    expect(screen.getByTestId('acceptance-integration-state').textContent).toBe('rejected');
+    expect(screen.getByTestId('acceptance-integration-outcome').textContent).toBe('rejected');
+    expect(screen.queryByText(/尚未交付/)).toBeNull();
   });
 
   it('keeps a child read timeout local to its card', async () => {
@@ -306,6 +432,39 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     await user.click(await screen.findByTestId(`artifact-expand-${ARTIFACT}`));
     expect(await screen.findByTestId(`artifact-read-content-${ARTIFACT}`)).toBeTruthy();
     expect(screen.getByTestId(`artifact-digest-${ARTIFACT}`).textContent).toBe('未校验');
+  });
+
+  it('reads immutable artifact bytes only once across multiple poll intervals', async () => {
+    vi.stubGlobal('crypto', webcrypto);
+    const { calls } = setupAcceptance();
+    renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId(`artifact-expand-${ARTIFACT}`));
+    await screen.findByTestId(`artifact-read-content-${ARTIFACT}`);
+    expect(calls.filter((call) => call.query?.op === 'artifact.content')).toHaveLength(1);
+    try {
+      vi.useFakeTimers();
+      await vi.advanceTimersByTimeAsync(11000);
+      expect(calls.filter((call) => call.query?.op === 'artifact.content')).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not retry an Unavailable artifact read or poll it later', async () => {
+    const { calls } = setupAcceptance({ failOps: ['artifact.content'], failWith: { 'artifact.content': 'Unavailable' } });
+    renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId(`artifact-expand-${ARTIFACT}`));
+    expect(await screen.findByText(/正文读取失败：Unavailable/, undefined, { timeout: 5000 })).toBeTruthy();
+    expect(calls.filter((call) => call.query?.op === 'artifact.content')).toHaveLength(1);
+    try {
+      vi.useFakeTimers();
+      await vi.advanceTimersByTimeAsync(11000);
+      expect(calls.filter((call) => call.query?.op === 'artifact.content')).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('shows forbidden for an overview auth error', async () => {

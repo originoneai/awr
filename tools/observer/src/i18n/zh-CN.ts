@@ -49,6 +49,7 @@ const zhCN = {
     completion: '合同终点（completion）',
     localGit: '本地 Git 连接器',
     integration: '集成精确目标与回执',
+    integrationRejected: '已拒绝',
     source: '来源发布与当前状态',
     delivery: 'GitHub 与交付摘要',
     exports: '导出与采用摘要',
