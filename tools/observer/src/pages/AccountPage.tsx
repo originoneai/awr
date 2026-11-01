@@ -1,9 +1,104 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { App, Button, Card, Input, Space, Typography } from 'antd';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Alert, App, Button, Card, Descriptions, Input, Space, Typography } from 'antd';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router';
 import { apiPost, ApiError } from '../lib/api';
+import { formatUnixMs } from '../lib/format';
+import { projectsQueryOptions } from '../lib/queries';
+import { ObservationForbidden } from '../components/states';
 import { useRevocation } from '../lib/revocation';
+
+
+/** Read-only observation cards for the account area (AWR-OBS-008). */
+function AccountObservationCards() {
+  const { t, i18n } = useTranslation();
+  const { revoked } = useRevocation();
+  const projects = useQuery(projectsQueryOptions(revoked));
+  const session = projects.data?.session;
+
+  if (revoked) {
+    // A revoked session clears the observation cards; the login entry below
+    // stays available for signing in again (AWR-OBS-008).
+    return <ObservationForbidden />;
+  }
+  return (
+    <>
+      <Card title={t('account.sessionTitle')} data-testid="account-session-card">
+        <Descriptions
+          size="small"
+          column={1}
+          items={[
+            {
+              key: 'created',
+              label: t('account.sessionCreated'),
+              children: session?.created_at_ms != null
+                ? formatUnixMs(session.created_at_ms, i18n.language)
+                : t('freshness.state.not_measured'),
+            },
+            {
+              key: 'expires',
+              label: t('account.sessionExpires'),
+              children: session?.expires_at_ms != null
+                ? formatUnixMs(session.expires_at_ms, i18n.language)
+                : t('freshness.state.not_measured'),
+            },
+            {
+              key: 'lastSeen',
+              label: t('account.sessionLastSeen'),
+              children: session?.last_seen_ms != null
+                ? formatUnixMs(session.last_seen_ms, i18n.language)
+                : t('freshness.state.not_measured'),
+            },
+          ]}
+        />
+      </Card>
+
+      <Card title={t('account.revokeAllMineTitle')} data-testid="account-revoke-all-mine">
+        <Space direction="vertical" size={12}>
+          <RevokeAllMineButton />
+          <Alert
+            type="info"
+            showIcon
+            data-testid="independent-revoke-unavailable"
+            title={t('account.independentUnavailable')}
+          />
+          <Typography.Text type="secondary" data-testid="revocation-boundary">
+            {t('account.boundary')}
+          </Typography.Text>
+        </Space>
+      </Card>
+
+      <Card title={t('account.resumeTitle')}>
+        <Link to="/workbench">{t('account.resumeEntry')}</Link>
+        <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+          {t('account.adminNote')}
+        </Typography.Paragraph>
+      </Card>
+    </>
+  );
+}
+
+function RevokeAllMineButton() {
+  const { t } = useTranslation();
+  const { message } = App.useApp();
+  const { revoke } = useRevocation();
+  const mutation = useMutation({
+    mutationFn: () => apiPost('/api/team/session/revoke', { all_mine: true }),
+    onSuccess: () => {
+      revoke();
+      message.success(t('account.done'));
+    },
+    onError: (error: unknown) => {
+      message.error(`${t('account.failed')}: ${error instanceof ApiError ? `${error.code} — ${error.message}` : String(error)}`);
+    },
+  });
+  return (
+    <Button danger loading={mutation.isPending} onClick={() => mutation.mutate()}>
+      {t('account.revokeAllMine')}
+    </Button>
+  );
+}
 
 /** Account and connection entries stay separate from business observation pages. */
 export function AccountPage() {
@@ -37,20 +132,13 @@ export function AccountPage() {
     },
     onError: showError,
   });
-  const revokeConnections = useMutation({
-    mutationFn: () => apiPost('/api/team/session/revoke', {}),
-    onSuccess: () => {
-      revoke();
-      message.success(t('account.done'));
-    },
-    onError: showError,
-  });
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }} data-testid="page-account">
       <Typography.Title level={4} style={{ margin: 0 }}>
         {t('account.title')}
       </Typography.Title>
+      <AccountObservationCards />
       <Card title={t('account.login')}>
         <Space.Compact style={{ maxWidth: 420, width: '100%' }}>
           <Input.Password
@@ -78,15 +166,7 @@ export function AccountPage() {
           {t('account.connectSubmit')}
         </Button>
       </Card>
-      <Card title={t('account.revoke')}>
-        <Button
-          danger
-          loading={revokeConnections.isPending}
-          onClick={() => revokeConnections.mutate()}
-        >
-          {t('account.revokeSubmit')}
-        </Button>
-      </Card>
+
     </Space>
   );
 }

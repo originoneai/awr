@@ -163,11 +163,12 @@ describe('project workstream progress', () => {
         return response;
       },
     });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-    });
-    expect(screen.getByTestId('last-report-W1').textContent).toBe('未测量');
-    expect(screen.getByTestId('last-report-W2').textContent).toBe('未测量');
+    // Wait for hydration to finish instead of a fixed sleep: on a slow
+    // runner the cells can still read 加载中 at the 1200ms mark.
+    await waitFor(() => {
+      expect(screen.getByTestId('last-report-W1').textContent).toBe('未测量');
+      expect(screen.getByTestId('last-report-W2').textContent).toBe('未测量');
+    }, { timeout: 4000 });
     expect(screen.getByTestId('last-report-W1').textContent).not.toBe(currentTime);
     expect(screen.getByTestId('last-report-W2').textContent).not.toBe(currentTime);
   });
