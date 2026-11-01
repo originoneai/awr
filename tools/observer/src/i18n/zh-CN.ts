@@ -113,6 +113,7 @@ const zhCN = {
     chainIntegration: '集成',
     chainCompletion: '完成',
     evidenceChain: '证据链',
+    noCompletionReceipt: '无完成回执',
   },
   artifact: {
     verified: '摘要已校验',

@@ -110,7 +110,7 @@ describe('project workstream progress', () => {
     expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
     expect(screen.getByTestId('last-report-W1').textContent).not.toBe(formatUnixMs(1761839900000, 'zh-CN'));
     expect(screen.getByTestId('last-report-W1').style.whiteSpace).toBe('nowrap');
-    const timeColumn = screen.getByRole('columnheader', { name: '最近报告' }).closest('table')?.querySelector('colgroup')?.lastElementChild;
+    const timeColumn = screen.getByRole('columnheader', { name: '最近报告' }).closest('table')?.querySelector('colgroup')?.lastElementChild as HTMLElement | undefined;
     expect(timeColumn?.style.width || timeColumn?.getAttribute('width')).toBe('220px');
   });
 

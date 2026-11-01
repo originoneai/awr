@@ -117,6 +117,7 @@ const enUS: Messages = {
     chainIntegration: 'Integration',
     chainCompletion: 'Completion',
     evidenceChain: 'Evidence chain',
+    noCompletionReceipt: 'No completion receipt',
   },
   artifact: {
     verified: 'Digest verified',

@@ -243,6 +243,17 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     expect(screen.getByTestId('acceptance-work-issue-filter-page').textContent).toContain('进行中');
   });
 
+  it('uses a missing-receipt label instead of a runtime state in the completion step (review r1.6)', async () => {
+    setupAcceptance();
+    renderApp('/projects/demo?tab=acceptance&work=issue-filter-page');
+    const chain = await screen.findByTestId('acceptance-evidence-chain');
+    expect(chain.textContent).toContain('无完成回执');
+    expect(chain.textContent).not.toContain('已认领');
+    await i18n.changeLanguage('en-US');
+    expect(chain.textContent).toContain('No completion receipt');
+    await i18n.changeLanguage('zh-CN');
+  });
+
   it('loads exact evidence, execution, claim, completion, integration and source facts', async () => {
     setupAcceptance();
     renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');

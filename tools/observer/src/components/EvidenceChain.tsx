@@ -16,12 +16,14 @@ export function EvidenceChain({
   reviewCurrent,
   integrationState,
   completionState,
+  completionReceipt,
 }: {
   candidateCurrent?: boolean;
   reviewState?: unknown;
   reviewCurrent: boolean;
   integrationState?: unknown;
   completionState?: unknown;
+  completionReceipt?: unknown;
 }) {
   const { t } = useTranslation();
   const items = [
@@ -42,8 +44,11 @@ export function EvidenceChain({
     },
     {
       title: t('acceptance.chainCompletion'),
-      value: completionState,
+      value: completionReceipt == null || completionReceipt === '' ? null : completionState,
       current: false,
+      description: completionReceipt == null || completionReceipt === ''
+        ? <Typography.Text type="secondary">{t('acceptance.noCompletionReceipt')}</Typography.Text>
+        : <ObservationValue value={completionReceipt} />,
     },
   ];
   return (
@@ -52,7 +57,7 @@ export function EvidenceChain({
       size="small"
       items={items.map((item) => ({
         title: <Typography.Text>{item.title}</Typography.Text>,
-        description: <ObservationValue value={item.value} field="state" />,
+        description: item.description ?? <ObservationValue value={item.value} field="state" />,
         status: stepStatus(item.value, item.current),
       }))}
     />

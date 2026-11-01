@@ -232,6 +232,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                 reviewCurrent={reviewIsCurrent}
                 integrationState={integrationData?.state ?? collaboration?.integration?.state}
                 completionState={completionData?.runtime_state ?? snapshotData?.observation?.runtime?.state}
+                completionReceipt={completionSelected ?? selectedCompletionId}
               />
             </Card>
 
