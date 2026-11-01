@@ -84,6 +84,8 @@ export interface TeamOverviewResponse {
   interaction_mode?: string;
 }
 
+export type TeamIdentity = NonNullable<TeamOverviewResponse['identity']>;
+
 export interface TeamActivityItem {
   action: string;
   actor_id: string;

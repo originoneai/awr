@@ -77,6 +77,8 @@ const enUS: Messages = {
     selectEvent: 'Select an activity row to inspect it',
     auditRowId: 'Audit row id, not a business request_id; never used for command.inspect',
     unknownResult: 'Unknown result; inspect the original business request first. No retry or reconciliation control',
+    noWork: 'no work',
+    selfFilterNote: 'You can only view your own activity; the actor filter was ignored',
   },
   acceptance: {
     title: 'Outcomes and acceptance',

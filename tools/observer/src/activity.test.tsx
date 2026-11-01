@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { act, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { formatUnixMs } from './lib/format';
 import { revokeObservationReads } from './lib/queries';
 import { DEMO_PROJECTS, renderApp } from './test-utils';
 
@@ -42,6 +43,7 @@ function setupActivity({
   requestsPages,
 }: SetupOptions = {}) {
   const calls: Array<{ url: string; params: URLSearchParams }> = [];
+  const capabilityCalls: string[] = [];
   const devPages = developmentPages ?? [development];
   const requestPages = requestsPages ?? [requests];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -65,6 +67,7 @@ function setupActivity({
     if (url.includes('/api/team/read')) {
       const query = JSON.parse(String(init?.body)).query;
       if (query.op === 'capabilities') {
+        capabilityCalls.push(url);
         return json({
           ok: true,
           result: {
@@ -77,7 +80,7 @@ function setupActivity({
     return json({ ok: false, error: { code: 'NoRoute', message: url } });
   });
   vi.stubGlobal('fetch', fetchMock);
-  return { calls };
+  return { calls, capabilityCalls };
 }
 
 function json(payload: unknown) {
@@ -226,6 +229,80 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect(screen.queryByText('session.end')).toBeNull();
     expect(calls.filter((call) => call.params.get('kind') === 'requests')).toHaveLength(0);
     expect(calls.some((call) => ['audit.history', 'audit.export', 'audit.count'].includes(call.params.get('kind') ?? ''))).toBe(false);
+  });
+
+  it('stops polling activity pages and capabilities after the second page is loaded', async () => {
+    const all = fixture('derived-audit-development-project-scope-all-run09.json').data.items as Array<Record<string, unknown>>;
+    const pages = [
+      pagedDevelopment(all.slice(0, 50), 'cursor-1'),
+      pagedDevelopment(all, 'cursor-2'),
+      pagedDevelopment(all.slice(150), null),
+    ];
+    const { calls, capabilityCalls } = setupActivity({ projectAudit: true, developmentPages: pages });
+    renderApp('/activity?project=demo&limit=100');
+    expect((await screen.findAllByTestId('activity-row')).length).toBe(50);
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('activity-load-earlier'));
+    expect((await screen.findAllByTestId('activity-row')).length).toBe(212);
+    const activityCount = calls.length;
+    const capabilityCount = capabilityCalls.length;
+    await new Promise((resolve) => setTimeout(resolve, 6000));
+    expect(calls.length).toBe(activityCount);
+    expect(capabilityCalls.length).toBe(capabilityCount);
+  }, 10000);
+
+  it('labels a null work_id as no work, not not measured', async () => {
+    setupActivity();
+    renderApp('/activity?project=demo');
+    const empty = await screen.findByTestId('activity-work-empty-01M69TZWWAF2FWZ0D1NHX1NJ0A');
+    expect(empty.textContent).toBe('无关联工作');
+    expect(empty.textContent).not.toBe('未测量');
+  });
+
+  it('encodes work ids that need URL encoding in outcome links', async () => {
+    const base = fixture('observer-activity-development.json');
+    const development = { data: { ...base.data, items: [{ ...base.data.items[0], work_id: 'work/id ?' }] } };
+    setupActivity({ development });
+    renderApp('/activity?project=demo');
+    const link = await screen.findByTestId('activity-work-link-work/id ?');
+    expect(link.getAttribute('href')).toBe('/projects/demo?tab=acceptance&work=work%2Fid%20%3F');
+  });
+
+  it('shows the unknown alert only for result unknown', async () => {
+    setupActivity();
+    renderApp('/activity?project=demo&kind=requests&event=01M6A0PZ04TGSJR97FA2E0QGHD');
+    expect(await screen.findByTestId('activity-event-detail')).toBeTruthy();
+    expect(screen.queryByTestId('activity-unknown-result')).toBeNull();
+  });
+
+  it('does not show load earlier without a next cursor', async () => {
+    setupActivity();
+    renderApp('/activity?project=demo');
+    await screen.findByTestId('activity-row');
+    expect(screen.queryByTestId('activity-load-earlier')).toBeNull();
+  });
+
+  it('formats table times with the shared formatter rather than raw milliseconds', async () => {
+    const timestamp = 1793479144330;
+    setupActivity();
+    renderApp('/activity?project=demo');
+    const row = await screen.findByTestId('activity-row');
+    expect(row.textContent).toContain(formatUnixMs(timestamp, 'zh-CN'));
+    expect(row.textContent).not.toContain(String(timestamp));
+  });
+
+  it('treats an empty next_cursor as no more pages', async () => {
+    const base = fixture('observer-activity-development.json');
+    setupActivity({ development: { data: { ...base.data, next_cursor: '' } } });
+    renderApp('/activity?project=demo');
+    await screen.findByTestId('activity-row');
+    expect(screen.queryByTestId('activity-load-earlier')).toBeNull();
+  });
+
+  it('explains when a self-scope actor filter is ignored', async () => {
+    setupActivity();
+    renderApp('/activity?project=demo&actor=OTHER');
+    expect((await screen.findByTestId('activity-self-filter-note')).textContent).toContain('仅能查看本人活动，已忽略筛选');
   });
 
   it('clears activity details and silences reads after revocation', async () => {

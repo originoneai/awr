@@ -73,6 +73,8 @@ const zhCN = {
     selectEvent: '选择一行活动查看详情',
     auditRowId: '审计行 id，不是业务 request_id；不用于 command.inspect',
     unknownResult: '结果未知；先核对原业务请求，不提供重试或对账按钮',
+    noWork: '无关联工作',
+    selfFilterNote: '仅能查看本人活动，已忽略筛选',
   },
   acceptance: {
     title: '成果与验收',

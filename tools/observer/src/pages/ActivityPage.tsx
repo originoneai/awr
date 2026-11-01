@@ -98,6 +98,9 @@ export function ActivityPage() {
         <Space size={16} wrap>
           <Typography.Title level={4} style={{ margin: 0 }}>{t('activity.title')}</Typography.Title>
           <Typography.Text type="secondary" data-testid="activity-scope">scope: {raw(firstPage?.scope) ?? t('freshness.state.not_measured')}</Typography.Text>
+          {actorParam && !actorFilter && !projectAudit ? (
+            <Typography.Text type="warning" data-testid="activity-self-filter-note">{t('activity.selfFilterNote')}</Typography.Text>
+          ) : null}
           <Select
             aria-label={t('activity.limit')}
             data-testid="activity-limit"
@@ -180,7 +183,7 @@ export function ActivityPage() {
                       <Link data-testid={`activity-work-link-${value}`} to={`/projects/${encodeURIComponent(project)}?tab=acceptance&work=${encodeURIComponent(value)}`}>
                         {value}
                       </Link>
-                    ) : <span data-testid={`activity-work-empty-${record.id}`}>{t('freshness.state.not_measured')}</span>,
+                    ) : <span data-testid={`activity-work-empty-${record.id}`}>{t('activity.noWork')}</span>,
                   },
                   { title: t('activity.result'), dataIndex: 'result', width: 120, render: (value) => raw(value) ?? t('freshness.state.not_measured') },
                 ]}
