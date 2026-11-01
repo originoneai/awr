@@ -122,22 +122,41 @@ describe('artifact byte verification (AWR-OBS-006)', () => {
     expect(result.text).toBe(text);
   });
 
-  it('rejects range gaps and overlapping segments', async () => {
+  it('rejects a range gap even when reconstructed length and digest happen to match', async () => {
     vi.stubGlobal('crypto', webcrypto);
     const text = 'abcdefgh';
-    const read = selector(text);
-    for (const ranges of [[[0, 2], [3, 5]], [[0, 3], [2, 4]]]) {
-      const pages = ranges.map(([start, end], index) => ({
-        artifact_id: ARTIFACT, byte_length: 8, content_base64: Buffer.from(text.slice(start, end)).toString('base64'),
-        range: { start, end_exclusive: end }, segment_sha256: sha256(text.slice(start, end)), sha256: sha256(text),
-        end_of_artifact: index === 1, next_cursor: index === 0 ? 'cursor-1' : null,
-      }));
-      vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-        const query = JSON.parse(String(init?.body)).query;
-        return response(pages[query.cursor ? 1 : 0]);
-      }));
-      await expect(fetchArtifactSegments('demo', read)).rejects.toThrow();
-    }
+    // Without the continuity guard, the buffer is [a, b, 0, d, e]. Make even
+    // that incorrect reconstruction pass every downstream length/digest check.
+    const expected = Buffer.from([97, 98, 0, 100, 101]);
+    const read = { ...SELECTOR, expected_sha256: sha256(expected) };
+    const ranges = [[0, 2], [3, 5]];
+    const pages = ranges.map(([start, end], index) => ({
+      artifact_id: ARTIFACT, byte_length: expected.length, content_base64: Buffer.from(text.slice(start, end)).toString('base64'),
+      range: { start, end_exclusive: end }, segment_sha256: sha256(text.slice(start, end)), sha256: sha256(expected),
+      end_of_artifact: index === 1, next_cursor: index === 0 ? 'cursor-1' : null,
+    }));
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const query = JSON.parse(String(init?.body)).query;
+      return response(pages[query.cursor ? 1 : 0]);
+    }));
+    await expect(fetchArtifactSegments('demo', read)).rejects.toThrow();
+  });
+
+  it('rejects overlapping ranges', async () => {
+    vi.stubGlobal('crypto', webcrypto);
+    const text = 'abcdefgh';
+    const read = selector('abcc');
+    const ranges = [[0, 3], [2, 4]];
+    const pages = ranges.map(([start, end], index) => ({
+      artifact_id: ARTIFACT, byte_length: 4, content_base64: Buffer.from(text.slice(start, end)).toString('base64'),
+      range: { start, end_exclusive: end }, segment_sha256: sha256(text.slice(start, end)), sha256: sha256('abcc'),
+      end_of_artifact: index === 1, next_cursor: index === 0 ? 'cursor-1' : null,
+    }));
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const query = JSON.parse(String(init?.body)).query;
+      return response(pages[query.cursor ? 1 : 0]);
+    }));
+    await expect(fetchArtifactSegments('demo', read)).rejects.toThrow();
   });
 
   it('rejects cursor loops and premature last pages', async () => {
@@ -148,7 +167,13 @@ describe('artifact byte verification (AWR-OBS-006)', () => {
       range: { start: 0, end_exclusive: 2 }, segment_sha256: sha256('ab'), sha256: sha256('abcd'),
       end_of_artifact: false, next_cursor: 'cursor-1',
     };
-    vi.stubGlobal('fetch', vi.fn(async () => response(page)));
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      const start = calls * 2;
+      calls += 1;
+      // Ranges stay contiguous, so only the repeated-cursor guard can fail first.
+      return response({ ...page, range: { start, end_exclusive: start + 2 } });
+    }));
     await expect(fetchArtifactSegments('demo', read)).rejects.toThrow(/cursor|continuation|range/i);
 
     vi.stubGlobal('fetch', vi.fn(async () => response({ ...page, end_of_artifact: true, next_cursor: null })));
