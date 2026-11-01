@@ -166,6 +166,20 @@ describe('work detail requirements and source state', () => {
     expect(screen.getByTestId('last-report-W1').textContent).not.toBe(formatUnixMs(1761839900000, 'zh-CN'));
   });
 
+  it('constrains long required-spec text with ellipsis and a zero-min-width flex child', async () => {
+    const longSpec = 'Required source text with a very long immutable locator and validation payload. '.repeat(8);
+    setupPlan({
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId);
+        response.result.data.required_specs[0].text = longSpec;
+        return response;
+      },
+    });
+    const text = await screen.findByTestId('required-spec-text');
+    expect(text.className).toContain('ant-typography-ellipsis');
+    expect(text.parentElement?.style.minWidth).toBe('0px');
+  });
+
   it('shows factual source fields and an honest not-measured takeover note', async () => {
     setupPlan();
     const card = await screen.findByTestId('source-state-card');
@@ -215,7 +229,7 @@ describe('work detail requirements and source state', () => {
 describe('work detail review outcomes', () => {
   it('renders raw review decisions and metadata without narrative', async () => {
     const user = userEvent.setup();
-    setupPlan();
+    setupPlan({ path: '/projects/demo?tab=plan&work=W1&review_round_id=round-1' });
     await user.click(await screen.findByRole('tab', { name: '成果' }));
     const review = await screen.findByTestId('plan-review');
     const decision = within(review).getByTestId('review-decision-decision-1');
@@ -233,6 +247,7 @@ describe('work detail review outcomes', () => {
   it('presents a missing review as absent rather than an error', async () => {
     const user = userEvent.setup();
     setupPlan({
+      path: '/projects/demo?tab=plan&work=W1&review_round_id=round-1',
       review: {
         ...DEMO_REVIEW,
         result: { ...DEMO_REVIEW.result, data: { review: null } },
@@ -241,6 +256,16 @@ describe('work detail review outcomes', () => {
     await user.click(await screen.findByRole('tab', { name: '成果' }));
     expect(await screen.findByTestId('review-absent')).toBeTruthy();
     expect(screen.queryByTestId('state-partial')).toBeNull();
+  });
+
+  it('does not request review.inspect without a verified review round id', async () => {
+    const user = userEvent.setup();
+    const { fetchMock } = setupPlan();
+    await user.click(await screen.findByRole('tab', { name: '成果' }));
+    expect((await screen.findByTestId('review-round-unavailable')).textContent)
+      .toContain('复核轮次无已证实来源');
+    const reviewCalls = fetchMock.mock.calls.filter(([, init]) => String(init?.body ?? '').includes('"review.inspect"'));
+    expect(reviewCalls).toHaveLength(0);
   });
 });
 

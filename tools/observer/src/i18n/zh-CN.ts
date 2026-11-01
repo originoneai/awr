@@ -107,6 +107,7 @@ const zhCN = {
       guidance: '下一步',
       lastReport: '最近报告',
       reviewAbsent: '未观察到评审记录',
+      reviewRoundUnavailable: '复核轮次无已证实来源；后续切片提供后再读取。',
       deliveryPending: '交付详情将在后续切片交付',
       sourceState: '来源状态',
       takeoverNote: '首次接管 / 跨端接管状态未测量。',

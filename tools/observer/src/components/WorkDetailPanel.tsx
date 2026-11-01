@@ -126,9 +126,9 @@ function Requirements({ query }: { query: SnapshotQuery }) {
             dataSource={data.required_specs}
             renderItem={(spec) => (
               <List.Item>
-                <Flex vertical>
+                <Flex vertical style={{ minWidth: 0 }}>
                   <Typography.Text code>{spec.path ?? t('freshness.state.not_measured')}</Typography.Text>
-                  <Typography.Text ellipsis={{ tooltip: spec.text }}>
+                  <Typography.Text data-testid="required-spec-text" ellipsis={{ tooltip: spec.text }}>
                     {spec.text ?? t('freshness.state.not_measured')}
                   </Typography.Text>
                 </Flex>
@@ -147,8 +147,11 @@ function Requirements({ query }: { query: SnapshotQuery }) {
   );
 }
 
-function ReviewOutcomes({ query }: { query: ReviewQuery }) {
+function ReviewOutcomes({ query, roundId }: { query: ReviewQuery; roundId: string | null }) {
   const { t } = useTranslation();
+  if (!roundId) {
+    return <Empty data-testid="review-round-unavailable" description={t('plan.detail.reviewRoundUnavailable')} />;
+  }
   if (query.isPending) return <Spin />;
   if (query.isError) {
     return <PartialFailure errorCode={(query.error as { code?: string }).code}><div /></PartialFailure>;
@@ -292,7 +295,15 @@ function SourceState({ query }: { query: SnapshotQuery }) {
   );
 }
 
-export function WorkDetailPanel({ project, work }: { project: string; work?: TeamWork }) {
+export function WorkDetailPanel({
+  project,
+  work,
+  reviewRoundId,
+}: {
+  project: string;
+  work?: TeamWork;
+  reviewRoundId: string | null;
+}) {
   const { t } = useTranslation();
   const { revoked } = useRevocation();
   const workId = work?.key ?? null;
@@ -302,7 +313,7 @@ export function WorkDetailPanel({ project, work }: { project: string; work?: Tea
     work?.workstream_id ?? '',
     revoked,
   ));
-  const review = useQuery(reviewQueryOptions(work ? project : null, workId, revoked));
+  const review = useQuery(reviewQueryOptions(work ? project : null, workId, reviewRoundId, revoked));
   const activity = useQuery(activityQueryOptions(work ? project : null, revoked, workId ?? undefined));
 
   if (revoked || isAuthError(snapshot.error) || isAuthError(review.error) || isAuthError(activity.error)) {
@@ -339,7 +350,7 @@ export function WorkDetailPanel({ project, work }: { project: string; work?: Tea
               {
                 key: 'outcomes',
                 label: t('plan.detail.outcomes'),
-                children: <ReviewOutcomes query={review} />,
+                children: <ReviewOutcomes query={review} roundId={reviewRoundId} />,
               },
               {
                 key: 'history',

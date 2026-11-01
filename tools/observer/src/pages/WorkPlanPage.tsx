@@ -258,7 +258,11 @@ export function WorkPlanPage({ project }: { project: string }) {
         </Col>
         <Col xs={24} lg={8} style={{ minWidth: 0 }}>
           <Flex vertical gap={16}>
-            <WorkDetailPanel project={project} work={selectedWork} />
+            <WorkDetailPanel
+              project={project}
+              work={selectedWork}
+              reviewRoundId={searchParams.get('review_round_id')}
+            />
             <Card data-testid="plan-source-set-placeholder" size="small">
               <Typography.Text strong>{t('state.placeholder.title')}</Typography.Text>
               <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>

@@ -111,6 +111,7 @@ const enUS: Messages = {
       guidance: 'Next step',
       lastReport: 'Last report',
       reviewAbsent: 'No review records observed',
+      reviewRoundUnavailable: 'No verified review round source; the review read ships in a later slice.',
       deliveryPending: 'Delivery details ship in a later slice',
       sourceState: 'Source state',
       takeoverNote: 'First-ingest/takeover status is not measured.',

@@ -53,7 +53,7 @@ describe.each([
   { path: '/projects', restrictedText: /Team mainline/, pageTestId: 'page-projects' },
   { path: '/workbench?scope=demo', restrictedText: /Build the filter API/, pageTestId: 'page-workbench' },
   { path: '/projects/demo?tab=overview', restrictedText: /Build the filter API/, pageTestId: 'page-project' },
-  { path: '/projects/demo?tab=plan&work=W1', restrictedText: /Build the filter API/, pageTestId: 'page-project' },
+  { path: '/projects/demo?tab=plan&work=W1&review_round_id=round-1', restrictedText: /Build the filter API/, pageTestId: 'page-project' },
 ])('rendered revocation on $path', ({ path, restrictedText, pageTestId }) => {
   it('clears restricted content, shows forbidden, and stops reads for 10 seconds', async () => {
     vi.useFakeTimers();

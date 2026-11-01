@@ -60,7 +60,26 @@ describe('observation query behavior', () => {
   });
 
   it('disables review reads when observation is revoked', () => {
-    expect(reviewQueryOptions('demo', 'W1', true).enabled).toBe(false);
+    expect(reviewQueryOptions('demo', 'W1', 'round-1', true).enabled).toBe(false);
+  });
+
+  it('gates review reads on a real review round id', () => {
+    expect(reviewQueryOptions('demo', 'W1', null, false).enabled).toBe(false);
+    expect(reviewQueryOptions('demo', 'W1', 'round-1', false).enabled).toBe(true);
+  });
+
+  it('sends review_round_id in review.inspect queries', async () => {
+    const options = reviewQueryOptions('demo', 'W1', 'round-1', false);
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    await options.queryFn!({ signal: new AbortController().signal } as never);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      project: 'demo',
+      query: { protocol_version: 1, op: 'review.inspect', work_id: 'W1', review_round_id: 'round-1' },
+    });
   });
 
   it('uses the generic read route and five-second defaults for work.next', async () => {

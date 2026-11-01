@@ -34,8 +34,8 @@ export const queryKeys = {
   overview: (project: string | null) => ['team', 'overview', project] as const,
   activity: (project: string | null, workId?: string) =>
     ['team', 'activity', 'development', project, workId ?? null] as const,
-  review: (project: string | null, workId: string | null) =>
-    ['team', 'review.inspect', project, workId] as const,
+  review: (project: string | null, workId: string | null, roundId?: string | null) =>
+    ['team', 'review.inspect', project, workId, roundId ?? null] as const,
   inbox: (project: string | null) => ['team', 'inbox', project] as const,
   workNext: (project: string | null) => ['team', 'work.next', project] as const,
   workInbox: (project: string | null) => ['team', 'work.inbox', project] as const,
@@ -78,21 +78,28 @@ interface TeamReadQuery {
   op: 'work.next' | 'work.inbox' | 'work.snapshot' | 'review.inspect';
   work_id?: string;
   workstream_id?: string;
+  review_round_id?: string;
 }
 
 function teamRead<T>(project: string, query: TeamReadQuery, signal?: AbortSignal) {
   return apiPost<TeamReadResponse<T>>('/api/team/read', { project, query }, signal);
 }
 
-export function reviewQueryOptions(project: string | null, workId: string | null, revoked = false) {
+export function reviewQueryOptions(
+  project: string | null,
+  workId: string | null,
+  roundId: string | null,
+  revoked = false,
+) {
   return {
-    queryKey: queryKeys.review(project, workId),
+    queryKey: queryKeys.review(project, workId, roundId),
     queryFn: ({ signal }: { signal: AbortSignal }) => teamRead<ReviewData>(project ?? '', {
       protocol_version: 1,
       op: 'review.inspect',
       work_id: workId ?? '',
+      review_round_id: roundId ?? '',
     }, signal),
-    enabled: Boolean(project && workId) && !revoked,
+    enabled: Boolean(roundId) && !revoked,
     ...readQueryDefaults,
   } satisfies UseQueryOptions<TeamReadResponse<ReviewData>>;
 }
