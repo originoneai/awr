@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { Button, Segmented, Space, Tag, Tooltip, Typography } from 'antd';
 import { useState } from 'react';
+import { Stamp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ApiError } from '../lib/api';
+import { FieldLabel, ObservationValue } from './ObservationValue';
 import { fetchArtifactContent, fetchArtifactSegments, type ArtifactSelector } from '../lib/artifact';
 import { asText, at } from '../lib/json';
 
@@ -49,16 +51,17 @@ export function ArtifactReader({
   return (
     <Space direction="vertical" size={6} style={{ width: '100%' }}>
       <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>
-        {asText(at(artifact, ['manifest_artifact_id'])) ?? t('freshness.state.not_measured')}
+        <ObservationValue value={at(artifact, ['manifest_artifact_id'])} />
       </Typography.Text>
-      <Typography.Text type="secondary">artifact_id: {artifactId ?? t('freshness.state.not_measured')}</Typography.Text>
-      <Typography.Text type="secondary">byte_length: {asText(at(artifact, ['byte_length'])) ?? t('freshness.state.not_measured')}</Typography.Text>
+      <Typography.Text type="secondary"><FieldLabel field="artifact_id" />: <ObservationValue value={artifactId} /></Typography.Text>
+      <Typography.Text type="secondary"><FieldLabel field="byte_length" />: <ObservationValue value={at(artifact, ['byte_length'])} field="byte_length" /></Typography.Text>
       <Space size={8} wrap>
         <Tooltip title={expected}>
-          <Typography.Text type="secondary">{expected ? `${expected.slice(0, 12)}…` : t('freshness.state.not_measured')}</Typography.Text>
+          <Typography.Text type="secondary">{expected ? `${expected.slice(0, 12)}…` : t('common.notProvided')}</Typography.Text>
         </Tooltip>
         {status ? (
           <Tag data-testid={`artifact-digest-${artifactId}`} color={status === 'verified' ? 'success' : status === 'mismatch' ? 'error' : 'default'}>
+            {status === 'verified' ? <Stamp size={16} strokeWidth={1.5} aria-label={digestText} /> : null}
             {digestText}
           </Tag>
         ) : <Tag>{t('acceptance.unverified')}</Tag>}

@@ -53,16 +53,8 @@ function selectedNavigation(pathname: string) {
     ?? '/workbench';
 }
 
-function NavigationIcon({ icon: Icon, selected }: { icon: LucideIcon; selected: boolean }) {
-  return (
-    <Icon
-      size={18}
-      strokeWidth={1.8}
-      fill={selected ? 'currentColor' : 'none'}
-      fillOpacity={selected ? 0.14 : 0}
-      aria-hidden
-    />
-  );
+function NavigationIcon({ icon: Icon }: { icon: LucideIcon }) {
+  return <Icon size={16} strokeWidth={1.5} aria-hidden />;
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -79,7 +71,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (index === 5) menuItems.push({ type: 'divider' });
     menuItems.push({
       key: item.path,
-      icon: <NavigationIcon icon={item.icon} selected={selectedKey === item.path} />,
+      icon: <NavigationIcon icon={item.icon} />,
       label: <NavLink to={item.path}>{t(`nav.${item.label}`)}</NavLink>,
     });
   }
@@ -101,7 +93,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <Layout hasSider style={{ minHeight: '100vh' }}>
       <Sider
-        width={220}
+        width={240}
         breakpoint="lg"
         collapsedWidth={0}
         className="shell-sider"
@@ -124,7 +116,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             selectable={false}
             items={[{
               key: '/advanced',
-              icon: <Wrench size={18} strokeWidth={1.8} aria-hidden />,
+              icon: <Wrench size={16} strokeWidth={1.5} aria-hidden />,
               label: <NavLink to="/advanced">{t('nav.advanced')}</NavLink>,
             }]}
             style={{ borderInlineEnd: 'none' }}
@@ -144,14 +136,14 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Dropdown menu={scopeMenu} trigger={['click']}>
             <Button data-testid="scope-switcher" className="shell-scope">
               <span className="shell-scope-label">{scopeLabel}</span>
-              <ChevronDown size={14} aria-hidden />
+              <ChevronDown size={16} strokeWidth={1.5} aria-hidden />
             </Button>
           </Dropdown>
           <div className="shell-header-spacer" />
           <Tooltip title={t('shell.later')}>
             <Input
               placeholder={t('shell.searchPlaceholder')}
-              prefix={<Search size={16} aria-hidden />}
+              prefix={<Search size={16} strokeWidth={1.5} aria-hidden />}
               disabled
               className="shell-search"
             />
@@ -169,7 +161,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           >
             <Button
               data-testid="language-switcher"
-              icon={<Languages size={16} aria-hidden />}
+              icon={<Languages size={16} strokeWidth={1.5} aria-hidden />}
               aria-label={t('shell.language')}
             >
               <span className="shell-language-label">{i18n.language === 'zh-CN' ? '中文' : 'EN'}</span>
@@ -180,7 +172,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               type="text"
               disabled
               aria-label={t('shell.notifications')}
-              icon={<Bell size={17} aria-hidden />}
+              icon={<Bell size={16} strokeWidth={1.5} aria-hidden />}
             />
           </Tooltip>
           <Tooltip title={t('shell.later')}>
@@ -190,7 +182,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               className="shell-avatar-button"
               aria-label={t('shell.identity')}
             >
-              <Avatar style={{ background: '#EFF6FF', color: '#2563EB' }}>
+              <Avatar style={{ background: token.colorFillSecondary, color: token.colorPrimary }}>
                 {(selectedProject?.title ?? t('app.wordmark')).slice(0, 1)}
               </Avatar>
             </Button>

@@ -3,6 +3,7 @@ import { Card, List, Space, Tag, Typography } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
+import { ObservationValue } from '../components/ObservationValue';
 import { isAuthError } from '../lib/api';
 import { projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
@@ -31,7 +32,7 @@ export function ProjectsPage() {
               <Space>
                 <Link to={`/projects/${encodeURIComponent(project.key)}`}>{project.title}</Link>
                 <Typography.Text type="secondary">{project.key}</Typography.Text>
-                <Tag>{project.role}</Tag>
+                <Tag><ObservationValue value={project.role} field="role" /></Tag>
               </Space>
             </List.Item>
           )}

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, App, Button, Card, Descriptions, Input, Space, Typography } from 'antd';
+import { Alert, App, Button, Card, Col, Descriptions, Input, Row, Space, Typography } from 'antd';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
@@ -23,59 +23,63 @@ function AccountObservationCards() {
     return <ObservationForbidden />;
   }
   return (
-    <>
-      <Card title={t('account.sessionTitle')} data-testid="account-session-card">
-        <Descriptions
-          size="small"
-          column={1}
-          items={[
-            {
-              key: 'created',
-              label: t('account.sessionCreated'),
-              children: session?.created_at_ms != null
-                ? formatUnixMs(session.created_at_ms, i18n.language)
-                : t('freshness.state.not_measured'),
-            },
-            {
-              key: 'expires',
-              label: t('account.sessionExpires'),
-              children: session?.expires_at_ms != null
-                ? formatUnixMs(session.expires_at_ms, i18n.language)
-                : t('freshness.state.not_measured'),
-            },
-            {
-              key: 'lastSeen',
-              label: t('account.sessionLastSeen'),
-              children: session?.last_seen_ms != null
-                ? formatUnixMs(session.last_seen_ms, i18n.language)
-                : t('freshness.state.not_measured'),
-            },
-          ]}
-        />
-      </Card>
-
-      <Card title={t('account.revokeAllMineTitle')} data-testid="account-revoke-all-mine">
-        <Space direction="vertical" size={12}>
-          <RevokeAllMineButton />
-          <Alert
-            type="info"
-            showIcon
-            data-testid="independent-revoke-unavailable"
-            title={t('account.independentUnavailable')}
+    <Row gutter={[16, 16]}>
+      <Col xs={24} lg={10}>
+        <Card title={t('account.sessionTitle')} data-testid="account-session-card">
+          <Descriptions
+            size="small"
+            column={1}
+            items={[
+              {
+                key: 'created',
+                label: t('account.sessionCreated'),
+                children: session?.created_at_ms != null
+                  ? formatUnixMs(session.created_at_ms, i18n.language)
+                  : t('common.notProvided'),
+              },
+              {
+                key: 'expires',
+                label: t('account.sessionExpires'),
+                children: session?.expires_at_ms != null
+                  ? formatUnixMs(session.expires_at_ms, i18n.language)
+                  : t('common.notProvided'),
+              },
+              {
+                key: 'lastSeen',
+                label: t('account.sessionLastSeen'),
+                children: session?.last_seen_ms != null
+                  ? formatUnixMs(session.last_seen_ms, i18n.language)
+                  : t('common.notProvided'),
+              },
+            ]}
           />
-          <Typography.Text type="secondary" data-testid="revocation-boundary">
-            {t('account.boundary')}
-          </Typography.Text>
-        </Space>
-      </Card>
-
-      <Card title={t('account.resumeTitle')}>
-        <Link to="/workbench">{t('account.resumeEntry')}</Link>
-        <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
-          {t('account.adminNote')}
-        </Typography.Paragraph>
-      </Card>
-    </>
+        </Card>
+      </Col>
+      <Col xs={24} lg={14}>
+        <Card title={t('account.revokeAllMineTitle')} data-testid="account-revoke-all-mine">
+          <Space direction="vertical" size={12}>
+            <RevokeAllMineButton />
+            <Alert
+              type="info"
+              showIcon
+              data-testid="independent-revoke-unavailable"
+              title={t('account.independentUnavailable')}
+            />
+            <Typography.Text type="secondary" data-testid="revocation-boundary">
+              {t('account.boundary')}
+            </Typography.Text>
+          </Space>
+        </Card>
+      </Col>
+      <Col span={24}>
+        <Card title={t('account.resumeTitle')}>
+          <Link to="/workbench">{t('account.resumeEntry')}</Link>
+          <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+            {t('account.adminNote')}
+          </Typography.Paragraph>
+        </Card>
+      </Col>
+    </Row>
   );
 }
 
@@ -139,33 +143,41 @@ export function AccountPage() {
         {t('account.title')}
       </Typography.Title>
       <AccountObservationCards />
-      <Card title={t('account.login')}>
-        <Space.Compact style={{ maxWidth: 420, width: '100%' }}>
-          <Input.Password
-            placeholder={t('account.loginBearer')}
-            value={bearer}
-            onChange={(e) => setBearer(e.target.value)}
-            aria-label={t('account.loginBearer')}
-          />
-          <Button
-            type="primary"
-            loading={login.isPending}
-            onClick={() => login.mutate()}
-          >
-            {t('account.loginSubmit')}
-          </Button>
-        </Space.Compact>
-      </Card>
-      <Card title={t('account.logout')}>
-        <Button loading={logout.isPending} onClick={() => logout.mutate()}>
-          {t('account.logoutSubmit')}
-        </Button>
-      </Card>
-      <Card title={t('account.connect')}>
-        <Button type="primary" href="/agent-connect">
-          {t('account.connectSubmit')}
-        </Button>
-      </Card>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={14}>
+          <Card title={t('account.login')}>
+            <Space.Compact style={{ maxWidth: 420, width: '100%' }}>
+              <Input.Password
+                placeholder={t('account.loginBearer')}
+                value={bearer}
+                onChange={(e) => setBearer(e.target.value)}
+                aria-label={t('account.loginBearer')}
+              />
+              <Button
+                type="primary"
+                loading={login.isPending}
+                onClick={() => login.mutate()}
+              >
+                {t('account.loginSubmit')}
+              </Button>
+            </Space.Compact>
+          </Card>
+        </Col>
+        <Col xs={24} lg={10}>
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <Card title={t('account.logout')}>
+              <Button loading={logout.isPending} onClick={() => logout.mutate()}>
+                {t('account.logoutSubmit')}
+              </Button>
+            </Card>
+            <Card title={t('account.connect')}>
+              <Button type="primary" href="/agent-connect">
+                {t('account.connectSubmit')}
+              </Button>
+            </Card>
+          </Space>
+        </Col>
+      </Row>
 
     </Space>
   );

@@ -112,6 +112,12 @@ const enUS: Messages = {
     awrRecorded: 'AWR recorded at',
     pageRead: 'Page read at',
     sourceQuery: 'Source query started at',
+    chainCandidate: 'Candidate',
+    chainReview: 'Review',
+    chainIntegration: 'Integration',
+    chainCompletion: 'Completion',
+    evidenceChain: 'Evidence chain',
+    noCompletionReceipt: 'No completion receipt',
   },
   artifact: {
     verified: 'Digest verified',
@@ -339,6 +345,7 @@ const enUS: Messages = {
   },
   common: {
     loading: 'Loading…',
+    notProvided: 'Not provided',
   },
 };
 

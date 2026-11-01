@@ -104,11 +104,14 @@ describe('project workstream progress', () => {
     expect(await screen.findByRole('link', { name: 'Build the filter API' })).toBeTruthy();
     expect(screen.getByTestId('workstream-group-WS1').textContent).toContain('Backend workstream');
     expect(screen.getByTestId('workstream-group-WS2').textContent).toContain('Frontend workstream');
-    expect(screen.getByTestId('project-status-W1').textContent).toBe('未测量');
-    expect(screen.getByTestId('project-owner-W1').textContent).toBe('未测量');
+    expect(screen.getByTestId('project-status-W1').textContent).toBe('未知');
+    expect(screen.getByTestId('project-owner-W1').textContent).toBe('未提供');
     expect(screen.getByTestId('project-next-W1').textContent).toBe('session.checkpoint');
     expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
     expect(screen.getByTestId('last-report-W1').textContent).not.toBe(formatUnixMs(1761839900000, 'zh-CN'));
+    expect(screen.getByTestId('last-report-W1').style.whiteSpace).toBe('nowrap');
+    const timeColumn = screen.getByRole('columnheader', { name: '最近报告' }).closest('table')?.querySelector('colgroup')?.lastElementChild as HTMLElement | undefined;
+    expect(timeColumn?.style.width || timeColumn?.getAttribute('width')).toBe('220px');
   });
 
   it.each([59, 60])('renders every work on page one across two workstreams: %i', async (count) => {
@@ -186,7 +189,7 @@ describe('project workstream progress', () => {
       await new Promise((resolve) => setTimeout(resolve, 1200));
     });
     expect(screen.getByTestId('project-next-W1').textContent).toBe('Review the contract');
-    expect(screen.getByTestId('project-next-W2').textContent).toBe('未测量');
+    expect(screen.getByTestId('project-next-W2').textContent).toBe('未提供');
   });
 
   it('groups shared workstreams once and uses an unlisted workstream id as its header', async () => {

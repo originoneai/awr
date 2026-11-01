@@ -33,7 +33,10 @@ export function ObservationForbidden() {
   return (
     <Result
       data-testid="state-forbidden"
-      status="403"
+      // antd always renders its stock illustration for status="403".
+      // Keep the factual title while using the neutral, icon-free variant.
+      status="info"
+      icon={null}
       title="403"
       subTitle={t('state.forbidden.subtitle')}
     />

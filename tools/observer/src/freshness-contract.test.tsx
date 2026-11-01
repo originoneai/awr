@@ -49,9 +49,10 @@ describe('freshness behavior contract', () => {
     expect(planes).toEqual(['freshness-report_received', 'freshness-authoritative', 'freshness-page_read']);
   });
 
-  it('uses the 403 Result status for revoked access', () => {
+  it('keeps the 403 title for revoked access without the stock illustration', () => {
     const { container } = render(<ObservationForbidden />);
-    expect(container.querySelector('.ant-result-403')).not.toBeNull();
+    expect(screen.getByTestId('state-forbidden').textContent).toContain('403');
+    expect(container.querySelector('.ant-result-image')).toBeNull();
   });
 
   it('prints the confirmation timestamp for a partial failure', () => {
