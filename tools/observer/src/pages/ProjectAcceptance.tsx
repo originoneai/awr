@@ -187,7 +187,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                   >
                     <Space direction="vertical" size={2}>
                       <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{work.title}</Typography.Text>
-                      <Typography.Text type="secondary">{state ?? t('acceptance.notObserved')}</Typography.Text>
+                      <Typography.Text type="secondary">{state ? <ObservationValue value={state} field="state" /> : t('acceptance.notObserved')}</Typography.Text>
                     </Space>
                   </List.Item>
                 );

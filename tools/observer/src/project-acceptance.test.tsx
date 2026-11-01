@@ -236,6 +236,13 @@ async function expectLiveCompletionConflict(mutate: (payloads: AcceptancePayload
 afterEach(() => vi.unstubAllGlobals());
 
 describe('project acceptance evidence (AWR-OBS-006)', () => {
+  it('localizes review states in the outcome source list (review r1.4)', async () => {
+    setupAcceptance();
+    renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
+    expect((await screen.findByTestId('acceptance-work-issue-filter-api')).textContent).toContain('已批准');
+    expect(screen.getByTestId('acceptance-work-issue-filter-page').textContent).toContain('进行中');
+  });
+
   it('loads exact evidence, execution, claim, completion, integration and source facts', async () => {
     setupAcceptance();
     renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
