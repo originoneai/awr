@@ -32,7 +32,7 @@ export function ProjectsPage() {
               <Space>
                 <Link to={`/projects/${encodeURIComponent(project.key)}`}>{project.title}</Link>
                 <Typography.Text type="secondary">{project.key}</Typography.Text>
-                <Tag><ObservationValue value={project.role} /></Tag>
+                <Tag><ObservationValue value={project.role} field="role" /></Tag>
               </Space>
             </List.Item>
           )}

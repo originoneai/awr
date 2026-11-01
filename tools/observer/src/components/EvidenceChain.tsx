@@ -52,7 +52,7 @@ export function EvidenceChain({
       size="small"
       items={items.map((item) => ({
         title: <Typography.Text>{item.title}</Typography.Text>,
-        description: <ObservationValue value={item.value} />,
+        description: <ObservationValue value={item.value} field="state" />,
         status: stepStatus(item.value, item.current),
       }))}
     />

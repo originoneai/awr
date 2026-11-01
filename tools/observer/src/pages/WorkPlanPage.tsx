@@ -139,7 +139,7 @@ export function WorkPlanPage({ project }: { project: string }) {
       width: 160,
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 0 : 1 }),
       render: (_, row) => row.kind === 'work' ? (
-        <ObservationValue testId={`plan-status-${row.work.key}`} value={row.work.status} />
+        <ObservationValue testId={`plan-status-${row.work.key}`} value={row.work.status} field="state" />
       ) : null,
     },
     {

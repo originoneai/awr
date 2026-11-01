@@ -42,8 +42,8 @@ describe('craft copy vocabulary', () => {
       committed: ['已提交', 'Committed'], succeeded: ['成功', 'Succeeded'], unknown: ['未知', 'Unknown'],
     };
     for (const [status, [zh, en]] of Object.entries(examples)) {
-      expect(statusLabel(status, 'zh-CN')).toBe(zh);
-      expect(statusLabel(status, 'en-US')).toBe(en);
+      expect(statusLabel(status, 'zh-CN', 'state')).toBe(zh);
+      expect(statusLabel(status, 'en-US', 'state')).toBe(en);
       expect(STATUS_LABELS[status]).toEqual([zh, en]);
       expect(zh).not.toMatch(/[A-Za-z]/);
       expect(en).not.toMatch(/[\u4e00-\u9fff]/);
@@ -51,11 +51,11 @@ describe('craft copy vocabulary', () => {
   });
 
   it('formats metrics, booleans and missing facts consistently', () => {
-    expect(formatMetric('1234567', 'en-US')).toBe('1,234,567');
-    expect(formatMetric('1', 'zh-CN')).toBe('1');
+    expect(formatMetric('1234567', 'en-US', 'items_count')).toBe('1,234,567');
+    expect(formatMetric('1', 'zh-CN', 'selection_version')).toBe('1');
     expect(formatObservationValue(true, 'zh-CN')).toBe('是');
     expect(formatObservationValue(false, 'en-US')).toBe('No');
-    expect(formatObservationValue('approved', 'zh-CN')).toBe('已批准');
+    expect(formatObservationValue('approved', 'zh-CN', 'state')).toBe('已批准');
     expect(notProvided('zh-CN')).toBe('未提供');
     expect(fieldLabel('dispatch_state', 'en-US')).toBe('Dispatch state');
   });

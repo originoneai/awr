@@ -83,12 +83,12 @@ export function AgentConnectPage() {
                     items={[
                       { key: 'actor', label: t('account.actorId'), children: <ObservationValue value={identity?.actor_id} /> },
                       { key: 'client', label: t('account.clientId'), children: <ObservationValue value={identity?.client_id} /> },
-                      { key: 'role', label: t('account.role'), children: <ObservationValue value={identity?.role} /> },
+                      { key: 'role', label: t('account.role'), children: <ObservationValue value={identity?.role} field="role" /> },
                       { key: 'project', label: t('agentConnect.project'), children: <ObservationValue value={project} /> },
                       {
                         key: 'roles',
                         label: t('agentConnect.businessRoles'),
-                        children: <ObservationValue value={identity?.business_roles} />,
+                        children: <ObservationValue value={identity?.business_roles} field="business_roles" />,
                       },
                       {
                         key: 'ceiling',

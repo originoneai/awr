@@ -230,7 +230,7 @@ function ActivityItems({ items }: { items: TeamActivityItem[] }) {
             <Space wrap size={[12, 4]}>
               <Typography.Text code data-testid="activity-action">{item.action}</Typography.Text>
               <Typography.Text data-testid="activity-actor">{item.actor_id}</Typography.Text>
-              <ObservationValue testId="activity-result" value={item.result} />
+              <ObservationValue testId="activity-result" value={item.result} field="result" />
               <Typography.Text type="secondary" data-testid="activity-time">
                 {formatUnixMs(item.created_at_unix_ms, i18n.language)}
               </Typography.Text>
@@ -348,7 +348,7 @@ export function ProjectOverview({ project }: { project: string }) {
       width: 170,
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 0 : 1 }),
       render: (_, row) => row.kind === 'work' ? (
-        <ObservationValue testId={`project-status-${row.work.key}`} value={row.work.status} />
+        <ObservationValue testId={`project-status-${row.work.key}`} value={row.work.status} field="state" />
       ) : null,
     },
     {

@@ -54,7 +54,7 @@ export function ArtifactReader({
         <ObservationValue value={at(artifact, ['manifest_artifact_id'])} />
       </Typography.Text>
       <Typography.Text type="secondary"><FieldLabel field="artifact_id" />: <ObservationValue value={artifactId} /></Typography.Text>
-      <Typography.Text type="secondary"><FieldLabel field="byte_length" />: <ObservationValue value={at(artifact, ['byte_length'])} /></Typography.Text>
+      <Typography.Text type="secondary"><FieldLabel field="byte_length" />: <ObservationValue value={at(artifact, ['byte_length'])} field="byte_length" /></Typography.Text>
       <Space size={8} wrap>
         <Tooltip title={expected}>
           <Typography.Text type="secondary">{expected ? `${expected.slice(0, 12)}…` : t('common.notProvided')}</Typography.Text>

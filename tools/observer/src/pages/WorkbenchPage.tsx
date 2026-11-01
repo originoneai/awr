@@ -448,7 +448,7 @@ export function WorkbenchPage() {
             </Typography.Paragraph>
           </div>
           <Space wrap>
-            {nextData?.identity.role ? <Tag><ObservationValue testId="workbench-role" value={nextData.identity.role} /></Tag> : null}
+            {nextData?.identity.role ? <Tag><ObservationValue testId="workbench-role" value={nextData.identity.role} field="role" /></Tag> : null}
             <Link to="/agent-connect">
               <Space size={4}><LinkIcon size={16} strokeWidth={1.5} aria-hidden />{t('nav.agentConnect')}</Space>
             </Link>

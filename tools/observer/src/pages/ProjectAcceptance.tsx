@@ -89,7 +89,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
   }, revoked, enabled));
 
   const missing = notProvided(i18n.language);
-  const value = (input: unknown) => formatObservationValue(input, i18n.language);
+  const value = (input: unknown, field?: string) => formatObservationValue(input, i18n.language, field);
   const timeValue = (input: unknown) => {
     const raw = asText(input);
     if (raw == null || !Number.isFinite(Number(raw))) return missing;
@@ -102,7 +102,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
   const fields = (input: Array<[string, unknown]>) => input.map(([field, child]) => ({
     key: field,
     label: <FieldLabel field={field} />,
-    children: isValidElement(child) ? child : <ObservationValue value={child} />,
+    children: isValidElement(child) ? child : <ObservationValue value={child} field={field} />,
   }));
   const readError = (query: { error: unknown }, testId: string) => (
     <Typography.Text type="warning" data-testid={testId}>
@@ -244,7 +244,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
               {!selectedRound ? empty : review.isPending ? loading : review.isError ? readError(review, 'acceptance-review-error') : (
                 <Space direction="vertical" size={12} style={{ width: '100%' }} data-testid={`acceptance-review-${selectedRound}`}>
                   <Space size={8} wrap>
-                    <Tag>{value(reviewObject?.state)}</Tag>
+                    <Tag>{value(reviewObject?.state, 'state')}</Tag>
                     {reviewIsCurrent && reviewObject?.state === 'approved' ? (
                       <Tag color="success" data-testid="acceptance-current-approval">{t('acceptance.currentApproval')}</Tag>
                     ) : null}
@@ -374,7 +374,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                         ]),
                         { key: 'review_round_id', label: <FieldLabel field="review_round_id" />, children: <span data-testid="completion-review-round">{value(completionReviewRound)}</span> },
                         { key: 'review_decision_id', label: <FieldLabel field="review_decision_id" />, children: <span data-testid="completion-review-decision">{value(completionReviewDecision)}</span> },
-                        { key: 'independence_kind', label: <FieldLabel field="independence_kind" />, children: <span data-testid="completion-independence">{value(completionIndependence)}</span> },
+                        { key: 'independence_kind', label: <FieldLabel field="independence_kind" />, children: <span data-testid="completion-independence">{value(completionIndependence, 'independence_kind')}</span> },
                       ]}
                     />
                   </div>
@@ -416,9 +416,9 @@ export function ProjectAcceptance({ project }: { project: string }) {
                           ['precondition', at(integrationData, ['integration_request', 'binding', 'target', 'precondition', 'revision', 'value'])],
                           ['result_revision', at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'result_revision', 'value'])],
                         ]),
-                        { key: 'outcome', label: <FieldLabel field="outcome" />, children: <span data-testid="acceptance-integration-outcome">{value(at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'outcome']))}</span> },
-                        { key: 'state', label: <FieldLabel field="state" />, children: <span data-testid="acceptance-integration-state">{value(integrationData?.state)}</span> },
-                        { key: 'dispatch_state', label: <FieldLabel field="dispatch_state" />, children: <span data-testid="acceptance-dispatch-state">{value(at(integrationData, ['dispatch_receipt', 'data', 'state']))}</span> },
+                        { key: 'outcome', label: <FieldLabel field="outcome" />, children: <span data-testid="acceptance-integration-outcome">{value(at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'outcome']), 'outcome')}</span> },
+                        { key: 'state', label: <FieldLabel field="state" />, children: <span data-testid="acceptance-integration-state">{value(integrationData?.state, 'state')}</span> },
+                        { key: 'dispatch_state', label: <FieldLabel field="dispatch_state" />, children: <span data-testid="acceptance-dispatch-state">{value(at(integrationData, ['dispatch_receipt', 'data', 'state']), 'dispatch_state')}</span> },
                         ...fields([
                           ['current_binding', integrationData?.current_binding],
                           ['target_changed', integrationData?.target_changed],

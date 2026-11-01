@@ -40,12 +40,12 @@ export function ProjectShell() {
               <Typography.Title level={4} style={{ margin: 0 }}>
                 {meta?.title ?? project}
               </Typography.Title>
-              {meta?.role ? <Tag color="blue"><ObservationValue value={meta.role} /></Tag> : null}
+              {meta?.role ? <Tag color="blue"><ObservationValue value={meta.role} field="role" /></Tag> : null}
             </Space>
             <div>
               <Typography.Text type="secondary">
                 {t('project.metaKey')} {project}
-                {meta?.role ? <> · {t('project.metaRole')} <ObservationValue value={meta.role} /></> : null}
+                {meta?.role ? <> · {t('project.metaRole')} <ObservationValue value={meta.role} field="role" /></> : null}
               </Typography.Text>
             </div>
           </div>

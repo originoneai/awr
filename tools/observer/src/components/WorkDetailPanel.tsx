@@ -43,8 +43,8 @@ function rawText(value: unknown): string | null {
   return JSON.stringify(value) ?? null;
 }
 
-function Measured({ value, testId }: { value: unknown; testId?: string }) {
-  return <ObservationValue value={value} testId={testId} />;
+function Measured({ value, testId, field }: { value: unknown; testId?: string; field?: string }) {
+  return <ObservationValue value={value} testId={testId} field={field} />;
 }
 
 function ContractValues({ values }: { values?: WorkContractValue[] }) {
@@ -86,7 +86,7 @@ function Requirements({ query }: { query: SnapshotQuery }) {
           {
             key: 'runtime',
             label: t('plan.detail.runtimeState'),
-            children: <Measured testId="plan-runtime-state" value={runtimeState} />,
+            children: <Measured testId="plan-runtime-state" value={runtimeState} field="runtime_state" />,
           },
           {
             key: 'guidance',
@@ -170,9 +170,9 @@ function ReviewOutcomes({ query, roundId }: { query: ReviewQuery; roundId: strin
         renderItem={(decision) => (
           <List.Item>
             <Space wrap data-testid={`review-decision-${decision.decision_id}`}>
-              <ObservationValue testId="review-decision-code" value={decision.decision} />
-              <ObservationValue value={decision.approval_basis} />
-              <ObservationValue value={decision.independence_kind} />
+              <ObservationValue testId="review-decision-code" value={decision.decision} field="decision" />
+              <ObservationValue value={decision.approval_basis} field="approval_basis" />
+              <ObservationValue value={decision.independence_kind} field="independence_kind" />
               <Typography.Text type="secondary">
                 <FieldLabel field="human_approval" />: <ObservationValue value={decision.human_approval} />
               </Typography.Text>
@@ -215,7 +215,7 @@ function ActivityItems({ items }: { items: TeamActivityItem[] }) {
               <Typography.Text code data-testid="activity-action">{item.action}</Typography.Text>
               <Typography.Text data-testid="activity-actor">{item.actor_id}</Typography.Text>
               <Typography.Text data-testid="activity-result">
-                {formatObservationValue(item.result, i18n.language)}
+                {formatObservationValue(item.result, i18n.language, 'result')}
               </Typography.Text>
               <Typography.Text type="secondary" data-testid="activity-time">
                 {formatUnixMs(item.created_at_unix_ms, i18n.language)}
@@ -277,7 +277,7 @@ function SourceState({ query }: { query: SnapshotQuery }) {
             {
               key: 'revision',
               label: <FieldLabel field="project_revision" />,
-              children: <Measured testId="source-project-revision" value={result?.project_revision} />,
+              children: <Measured testId="source-project-revision" value={result?.project_revision} field="project_revision" />,
             },
             {
               key: 'epoch',
@@ -285,9 +285,9 @@ function SourceState({ query }: { query: SnapshotQuery }) {
               children: <Measured testId="source-coordinator-epoch" value={result?.coordinator_epoch} />,
             },
             { key: 'contract', label: <FieldLabel field="contract_hash" />, children: <Measured value={data?.contract_hash} /> },
-            { key: 'definition', label: <FieldLabel field="definition_state" />, children: <Measured value={data?.definition_state} /> },
-            { key: 'authority', label: <FieldLabel field="authority_version" />, children: <Measured value={result?.authority_version} /> },
-            { key: 'selection', label: <FieldLabel field="selection_basis" />, children: <Measured value={result?.selection_basis} /> },
+            { key: 'definition', label: <FieldLabel field="definition_state" />, children: <Measured value={data?.definition_state} field="definition_state" /> },
+            { key: 'authority', label: <FieldLabel field="authority_version" />, children: <Measured value={result?.authority_version} field="authority_version" /> },
+            { key: 'selection', label: <FieldLabel field="selection_basis" />, children: <Measured value={result?.selection_basis} field="selection_basis" /> },
           ]}
         />
         <Typography.Text type="secondary">{t('plan.detail.takeoverNote')}</Typography.Text>
@@ -338,7 +338,7 @@ export function WorkDetailPanel({
           <div>
             <Typography.Title level={3} style={{ marginTop: 0 }}>{work.title}</Typography.Title>
             <Space wrap>
-              <Tag><ObservationValue value={work.status} /></Tag>
+              <Tag><ObservationValue value={work.status} field="state" /></Tag>
               <Typography.Text type="secondary">{work.key}</Typography.Text>
             </Space>
           </div>

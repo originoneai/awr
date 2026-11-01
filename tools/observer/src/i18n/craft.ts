@@ -159,7 +159,21 @@ export function fieldLabel(field: string, language: string): string {
   return label ? label[zh(language) ? 0 : 1] : field.replaceAll('_', ' ');
 }
 
-export function statusLabel(status: string, language: string): string {
+export const STATUS_FIELDS = new Set([
+  'state', 'status', 'result', 'runtime_state', 'decision', 'outcome', 'dispatch_state',
+  'definition_state', 'selection_basis', 'source_observation', 'trust_basis', 'fact_source',
+  'provider', 'independence_kind', 'approval_basis', 'severity', 'role', 'business_roles',
+  'relation', 'adoption_version_policies',
+]);
+
+export const NUMERIC_STRING_FIELDS = new Set([
+  'byte_length', 'items_count', 'project_revision', 'metadata_revision', 'selection_version',
+  'authority_version', 'connector_version', 'round_index', 'lease_version', 'work_version',
+  'count', 'total', 'enumerated', 'works_enumerated', 'works_total', 'succeeded', 'failed',
+]);
+
+export function statusLabel(status: string, language: string, field: string): string {
+  if (!STATUS_FIELDS.has(field)) return status;
   const label = STATUS_LABELS[status];
   return label ? label[zh(language) ? 0 : 1] : status;
 }
@@ -175,19 +189,25 @@ export function rawObservationValue(value: unknown): string | null {
   return JSON.stringify(value) ?? null;
 }
 
-export function formatMetric(value: number | string, language: string): string {
-  const number = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(number) ? new Intl.NumberFormat(language).format(number) : String(value);
+export function formatMetric(value: number | string, language: string, field?: string): string {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? new Intl.NumberFormat(language).format(value) : String(value);
+  }
+  const numeric = Number(value);
+  if (NUMERIC_STRING_FIELDS.has(field ?? '') && String(numeric) === value && Number.isSafeInteger(numeric)) {
+    return new Intl.NumberFormat(language).format(numeric);
+  }
+  return value;
 }
 
-export function formatObservationValue(value: unknown, language: string): string {
+export function formatObservationValue(value: unknown, language: string, field?: string): string {
   if (value == null || value === '') return notProvided(language);
   if (typeof value === 'boolean') return value ? (zh(language) ? '是' : 'Yes') : (zh(language) ? '否' : 'No');
-  if (typeof value === 'number') return formatMetric(value, language);
-  if (Array.isArray(value)) return value.length ? value.map((item) => formatObservationValue(item, language)).join(', ') : notProvided(language);
+  if (typeof value === 'number') return formatMetric(value, language, field);
+  if (Array.isArray(value)) return value.length ? value.map((item) => formatObservationValue(item, language, field)).join(', ') : notProvided(language);
   if (typeof value === 'string') {
-    if (/^-?\d+(?:\.\d+)?$/.test(value)) return formatMetric(value, language);
-    return statusLabel(value, language);
+    if (NUMERIC_STRING_FIELDS.has(field ?? '')) return formatMetric(value, language, field);
+    return statusLabel(value, language, field ?? '');
   }
   return rawObservationValue(value) ?? notProvided(language);
 }
