@@ -183,4 +183,40 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     await screen.findByTestId('page-activity');
     expect(calls.some((call) => call.params.get('member_actor_id') === actor)).toBe(true);
   });
+
+  it('selects one audit row by event id and never treats it as a business request id', async () => {
+    const { calls } = setupActivity();
+    const event = '01M6A0PZ0CB6PZ6X8JQ4TSFQWN';
+    const { router } = renderApp(`/activity?project=demo&kind=requests&event=${event}`);
+    const detail = await screen.findByTestId('activity-event-detail');
+    expect(detail.textContent).toContain(event);
+    expect(detail.textContent).toContain(SELF_ACTOR);
+    expect(detail.textContent).toContain('audit.requests');
+    expect(detail.textContent).toContain('unknown');
+    expect(screen.getByTestId('activity-event-not-request').textContent).toContain('不是业务 request_id');
+    expect(router.state.location.search).toContain(`event=${event}`);
+    expect(calls.some((call) => call.url.includes('command.inspect'))).toBe(false);
+  });
+
+  it('keeps unknown results unknown with verbatim unknown_means and no retry or reconciliation control', async () => {
+    const { calls } = setupActivity();
+    const event = '01M6A0PZ0CB6PZ6X8JQ4TSFQWN';
+    renderApp(`/activity?project=demo&kind=requests&event=${event}`);
+    expect((await screen.findByTestId('activity-unknown-result')).textContent).toContain(UNKNOWN_MEANS);
+    expect(screen.queryByRole('button', { name: /重试|对账|Retry|Reconcile/i })).toBeNull();
+    expect(calls.some((call) => call.url.includes('command.inspect'))).toBe(false);
+  });
+
+  it('filters access.changed only within loaded development and labels the limitation', async () => {
+    const { calls } = setupActivity();
+    renderApp('/activity?project=demo');
+    const user = userEvent.setup();
+    const accessTab = await screen.findByText('授权变更');
+    await user.click(accessTab);
+    expect((await screen.findByTestId('activity-access-note')).textContent).toContain('已加载 development');
+    expect(screen.getByTestId('activity-access-note').textContent).toContain('action=access.changed');
+    expect((await screen.findAllByText('access.changed')).length).toBeGreaterThan(0);
+    expect(calls.filter((call) => call.params.get('kind') === 'requests')).toHaveLength(0);
+    expect(calls.some((call) => ['audit.history', 'audit.export', 'audit.count'].includes(call.params.get('kind') ?? ''))).toBe(false);
+  });
 });

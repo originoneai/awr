@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { Button, Card, Select, Space, Table, Tabs, Typography } from 'antd';
+import { Alert, Button, Card, Col, Descriptions, Row, Select, Space, Table, Tabs, Typography } from 'antd';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
@@ -78,6 +78,13 @@ export function ActivityPage() {
     setSearchParams(next);
   }
 
+  const selectedEvent = visibleItems.find((item) => item.id === searchParams.get('event'));
+  function selectEvent(id: string) {
+    const next = new URLSearchParams(searchParams);
+    next.set('event', id);
+    setSearchParams(next);
+  }
+
   if (revoked || isAuthError(projects.error) || isAuthError(activity.error) || isAuthError(capabilities.error)) {
     return <ObservationForbidden />;
   }
@@ -145,35 +152,78 @@ export function ActivityPage() {
           <Typography.Text type="secondary" data-testid="activity-access-note">{t('activity.accessNote')}</Typography.Text>
         ) : null}
         {visibleItems.length === 0 ? <ObservationEmpty /> : (
-          <Table<TeamActivityItem>
-            size="small"
-            rowKey="id"
-            pagination={false}
-            scroll={{ x: 720 }}
-            dataSource={visibleItems}
-            onRow={() => ({ className: 'activity-row', 'data-testid': 'activity-row' } as { className: string; 'data-testid': string })}
-            columns={[
-              { title: t('activity.time'), dataIndex: 'created_at_unix_ms', width: 160, render: (value) => formatUnixMs(value, i18n.language) },
-              {
-                title: t('activity.actor'), dataIndex: 'actor_id', width: 230,
-                render: (value) => projectAudit || value === identity?.actor_id ? (
-                  <Button type="link" style={{ padding: 0 }} data-testid={`activity-actor-${value}`} onClick={() => updateFilter('actor', value)}>
-                    <Typography.Text style={{ overflowWrap: 'anywhere' }}>{value}</Typography.Text>
-                  </Button>
-                ) : <Typography.Text style={{ overflowWrap: 'anywhere' }}>{value}</Typography.Text>,
-              },
-              { title: t('activity.action'), dataIndex: 'action', width: 190 },
-              {
-                title: t('activity.work'), dataIndex: 'work_id', width: 170,
-                render: (value, record) => value ? (
-                  <Link data-testid={`activity-work-link-${value}`} to={`/projects/${encodeURIComponent(project)}?tab=acceptance&work=${encodeURIComponent(value)}`}>
-                    {value}
-                  </Link>
-                ) : <span data-testid={`activity-work-empty-${record.id}`}>{t('freshness.state.not_measured')}</span>,
-              },
-              { title: t('activity.result'), dataIndex: 'result', width: 120, render: (value) => raw(value) ?? t('freshness.state.not_measured') },
-            ]}
-          />
+          <Row gutter={[16, 16]}>
+            <Col xs={24} xl={16}>
+              <Table<TeamActivityItem>
+                size="small"
+                rowKey="id"
+                pagination={false}
+                scroll={{ x: 720 }}
+                dataSource={visibleItems}
+                onRow={(record) => ({
+                  className: 'activity-row', 'data-testid': 'activity-row', onClick: () => selectEvent(record.id),
+                } as { className: string; 'data-testid': string; onClick: () => void })}
+                columns={[
+                  { title: t('activity.time'), dataIndex: 'created_at_unix_ms', width: 160, render: (value) => formatUnixMs(value, i18n.language) },
+                  {
+                    title: t('activity.actor'), dataIndex: 'actor_id', width: 230,
+                    render: (value) => projectAudit || value === identity?.actor_id ? (
+                      <Button type="link" style={{ padding: 0 }} data-testid={`activity-actor-${value}`} onClick={() => updateFilter('actor', value)}>
+                        <Typography.Text style={{ overflowWrap: 'anywhere' }}>{value}</Typography.Text>
+                      </Button>
+                    ) : <Typography.Text style={{ overflowWrap: 'anywhere' }}>{value}</Typography.Text>,
+                  },
+                  { title: t('activity.action'), dataIndex: 'action', width: 190 },
+                  {
+                    title: t('activity.work'), dataIndex: 'work_id', width: 170,
+                    render: (value, record) => value ? (
+                      <Link data-testid={`activity-work-link-${value}`} to={`/projects/${encodeURIComponent(project)}?tab=acceptance&work=${encodeURIComponent(value)}`}>
+                        {value}
+                      </Link>
+                    ) : <span data-testid={`activity-work-empty-${record.id}`}>{t('freshness.state.not_measured')}</span>,
+                  },
+                  { title: t('activity.result'), dataIndex: 'result', width: 120, render: (value) => raw(value) ?? t('freshness.state.not_measured') },
+                ]}
+              />
+            </Col>
+            <Col xs={24} xl={8}>
+              <Card size="small" title={t('activity.detail')}>
+                {selectedEvent ? (
+                  <Space direction="vertical" size={12} style={{ width: '100%' }} data-testid="activity-event-detail">
+                    <Descriptions
+                      size="small"
+                      column={1}
+                      items={([
+                        ['id', 'activity-event-id', selectedEvent.id],
+                        ['actor_id', 'activity-event-actor', selectedEvent.actor_id],
+                        ['client_id', 'activity-event-client', selectedEvent.client_id],
+                        ['credential_id', 'activity-event-credential', selectedEvent.credential_id],
+                        ['action', 'activity-event-action', selectedEvent.action],
+                        ['work_id', 'activity-event-work', selectedEvent.work_id],
+                        ['result', 'activity-event-result', selectedEvent.result],
+                        ['created_at_unix_ms', 'activity-event-time', formatUnixMs(selectedEvent.created_at_unix_ms, i18n.language)],
+                      ] as const).map(([label, testId, field]) => ({
+                        key: label,
+                        label,
+                        children: <span data-testid={testId}>{raw(field) ?? t('freshness.state.not_measured')}</span>,
+                      }))}
+                    />
+                    <Typography.Text type="secondary" data-testid="activity-event-not-request">
+                      {t('activity.auditRowId')}
+                    </Typography.Text>
+                    {selectedEvent.result === 'unknown' ? (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message={t('activity.unknownResult')}
+                        description={<span data-testid="activity-unknown-result">{raw(firstPage?.unknown_means) ?? t('freshness.state.not_measured')}</span>}
+                      />
+                    ) : null}
+                  </Space>
+                ) : <Typography.Text type="secondary">{t('activity.selectEvent')}</Typography.Text>}
+              </Card>
+            </Col>
+          </Row>
         )}
         {activity.hasNextPage ? (
           <Button

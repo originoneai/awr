@@ -56,6 +56,10 @@ const enUS: Messages = {
     result: 'Result',
     workFilter: 'All work',
     actorFilter: 'All members',
+    detail: 'Activity detail',
+    selectEvent: 'Select an activity row to inspect it',
+    auditRowId: 'Audit row id, not a business request_id; never used for command.inspect',
+    unknownResult: 'Unknown result; inspect the original business request first. No retry or reconciliation control',
   },
   freshness: {
     title: 'Freshness',
