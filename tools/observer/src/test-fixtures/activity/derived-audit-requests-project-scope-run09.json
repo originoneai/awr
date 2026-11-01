@@ -1,0 +1,515 @@
+{
+ "_note": "DERIVED, NOT A LIVE HTTP REPLY: rows projected from the run-09 database dump by the documented SQL of crates/awr-team-pg/src/workstream_read/activity.rs; next_cursor is a placeholder (the service's cursor is opaque); scope 'project' is what a caller holding AuditReadProject would see",
+ "data": {
+  "scope": "project",
+  "items": [
+   {
+    "id": "01M6BER7FYPQ9YTMEV11G0HXHN",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.source.status",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533419006,
+    "credential_id": "native-observer"
+   },
+   {
+    "id": "01M6BER7D0JWV1RVSSKQ7CZ4TA",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.integration.inspect",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533418912,
+    "credential_id": "native-observer"
+   },
+   {
+    "id": "01M6BER7A3G2RWT0JV09Z8TA62",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "completion.inspect",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533418819,
+    "credential_id": "native-observer"
+   },
+   {
+    "id": "01M6BER77BK441SSFZA8NVMP3H",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.inspect",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533418731,
+    "credential_id": "native-observer"
+   },
+   {
+    "id": "01M6BER73MEW7M5TSZERY6HFV8",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "work.snapshot",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533418612,
+    "credential_id": "native-observer"
+   },
+   {
+    "id": "01M6BEM3X1P9J7CNPXFDGS8XA5",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.inspect",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533284258,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BEM3X1V64QZFKE75KG41Z7",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "work.inbox",
+    "work_id": null,
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533284257,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BEK3D7QYEH0RWDKCXE3R9J",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.end",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533250983,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BEJ7PTAKVM8XG0GWHXF1GD",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533222618,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BEHJKB0M8K3E460GY189Z4",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "work.prepare",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533201003,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BEGXFXKEN2S8AAPPKW95D9",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "work.observe",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533179389,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BEG8DFA81M3ZJ5X1MK8Q42",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.inspect",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533157807,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BEG8DEVT1383ME2EYEB2NP",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "work.next",
+    "work_id": null,
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533157806,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BEENAHMWA401M6Y3AF18JC",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "completion.inspect",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533105490,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BEENAHVGHYKPSE8J5DBQ1T",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.source.status",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533105489,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BEENAH7XJZ7CCM93F16350",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.inspect",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533105489,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BEENAG7K963VMN5WAZ2VWM",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "work.inbox",
+    "work_id": null,
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533105489,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BEBW1PYA5GSAK144F5JWT0",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.finalize",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793533014070,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BE1XRAGETQ296XD792WNBJ",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793532688138,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BE0M5JPY9TYWH6VX9K737K",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.start",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793532645554,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BDZZ3S1Z9T6CEFXJ2Q96JZ",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "work.prepare",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793532623993,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BDZA2BX5GWBD39BM7EMK4H",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.source.status",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793532602444,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BDZA27SGSV1M0G19S7SNXZ",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.neutral.inspect",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793532602439,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BDWT9QR58P3Y32NP8F5H84",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.integration.inspect",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793532520759,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BDW2TYKVMDEXVA7XTH52AN",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.integration.prepare",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793532496734,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BDKPD8XB9GTASZAEY9GSK7",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "work.prepare",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793532221865,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BDFMVA3MMKMN9X37Q0XTA2",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "artifact.segment",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793532089195,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BDFMVAHTNXCYBJSFDNRE46",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "artifact.segment",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793532089194,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BDDRN2WD1PJM4NBG7RDJ88",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.submission.describe",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793532027554,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BDDRN2RD8EZNYB22EM2GJX",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "artifact.segment",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793532027554,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BDDRN2EGGRK1YQGG1CJDTX",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "artifact.segment",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793532027554,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BDDRN29C70A3AA9BS7ZVG5",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.source.status",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793532027554,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BD98NEKB6ZQT1BX99BTM7X",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "artifact.segment",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531880110,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BD7ZZVQ3QWWVY5V46XEV0Y",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "awr_team_input_contract",
+    "work_id": null,
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531838459,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BD7ZZQ6RBD94ZZDHWPF7TA",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "artifact.segment",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531838455,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BD625MYXSAPDH9VYP44SNY",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "work.inbox",
+    "work_id": null,
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531775156,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BD625MYTCC40R79G2J2G74",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.inspect",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531775156,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BD625MNB0ZEHTGCE3QTBSP",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.neutral.inspect",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531775156,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BD2VSK639QFGYQKS21ECB5",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "artifact.content",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531670324,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BD1K4DQFNY411XFPBJWQPA",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "review.inspect",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531628685,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BD0MPBM829MDGQ6RH1BRTX",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "work.snapshot",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531597515,
+    "credential_id": "native-observer"
+   },
+   {
+    "id": "01M6BD0MKB07J188M07GEYK9PC",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "review.inspect",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531597419,
+    "credential_id": "native-observer"
+   },
+   {
+    "id": "01M6BD0MGB6Z30MA93KW544KSS",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "review.inspect",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531597323,
+    "credential_id": "native-observer"
+   },
+   {
+    "id": "01M6BD0MDFSB62DASTWYT5FYEK",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "review.inspect",
+    "work_id": "issue-filter-api",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531597231,
+    "credential_id": "native-observer"
+   },
+   {
+    "id": "01M6BD0ADP6V0YYEP8GT0Z83KV",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "work.prepare",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531586998,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BCZ1QF8NF3FKP5TNCN9XGT",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "work.next",
+    "work_id": null,
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531545328,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BCYCP1SK8C82N0SEHW83D5",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "capabilities",
+    "work_id": null,
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531523777,
+    "credential_id": "native-manager"
+   },
+   {
+    "id": "01M6BCRWZ9W1MD3VB64CV4Y8XH",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.end",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531343849,
+    "credential_id": "native-chen"
+   },
+   {
+    "id": "01M6BCQM8Q1QVQXC587KY2YB6J",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531302167,
+    "credential_id": "native-chen"
+   },
+   {
+    "id": "01M6BCPBMCEWSZEWM15BPZXQFT",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.neutral.inspect",
+    "work_id": "issue-filter-page",
+    "result": "succeeded",
+    "created_at_unix_ms": 1793531260556,
+    "credential_id": "native-chen"
+   }
+  ],
+  "next_cursor": "OPAQUE-PLACEHOLDER",
+  "request_retention_capacity": 10000,
+  "request_retention": "oldest_pruned_soft_capacity",
+  "unknown_means": "completion_not_recorded; inspect business request before retrying",
+  "development_source": "committed_events_with_operation_attribution; historical client may be unavailable",
+  "chat_text_collected": false,
+  "tool_io_collected": false
+ }
+}

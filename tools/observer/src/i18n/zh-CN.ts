@@ -37,6 +37,20 @@ const zhCN = {
       knowledge: '项目知识',
     },
   },
+  activity: {
+    title: '活动与审计',
+    development: '开发记录',
+    requests: '访问记录',
+    access: '授权变更',
+    accessNote: '仅筛选当前已加载 development 中 action=access.changed 的记录；不是完整授权历史',
+    limit: '每批条数',
+    loadEarlier: '加载更早',
+    time: '时间',
+    actor: '成员与 Agent',
+    action: '行为',
+    work: '关联工作',
+    result: '结果',
+  },
   freshness: {
     title: '新鲜度',
     plane: {

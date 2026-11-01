@@ -1,0 +1,65 @@
+{
+ "ok": true,
+ "data": {
+  "chat_text_collected": false,
+  "development_source": "committed_events_with_operation_attribution; historical client may be unavailable",
+  "items": [
+   {
+    "action": "audit.requests",
+    "actor_id": "observer-host-native-20261031T203834Z-6427d37b0df9-aadc36",
+    "client_id": "observer-computer-use-native-20261031T203834Z-6427d37b0df9-aadc36",
+    "created_at_unix_ms": 1793485143052,
+    "credential_id": "native-observer",
+    "id": "01M6A0PZ0CB6PZ6X8JQ4TSFQWN",
+    "result": "unknown",
+    "work_id": null
+   },
+   {
+    "action": "audit.development",
+    "actor_id": "observer-host-native-20261031T203834Z-6427d37b0df9-aadc36",
+    "client_id": "observer-computer-use-native-20261031T203834Z-6427d37b0df9-aadc36",
+    "created_at_unix_ms": 1793485143044,
+    "credential_id": "native-observer",
+    "id": "01M6A0PZ04TGSJR97FA2E0QGHD",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "work.prepare",
+    "actor_id": "observer-host-native-20261031T203834Z-6427d37b0df9-aadc36",
+    "client_id": "observer-computer-use-native-20261031T203834Z-6427d37b0df9-aadc36",
+    "created_at_unix_ms": 1793479345797,
+    "credential_id": "native-observer",
+    "id": "01M69V61M5PKS4TC697EX9GP2J",
+    "result": "succeeded",
+    "work_id": "issue-filter-page"
+   },
+   {
+    "action": "work.prepare",
+    "actor_id": "observer-host-native-20261031T203834Z-6427d37b0df9-aadc36",
+    "client_id": "observer-computer-use-native-20261031T203834Z-6427d37b0df9-aadc36",
+    "created_at_unix_ms": 1793479345773,
+    "credential_id": "native-observer",
+    "id": "01M69V61KDSAZVP0GHG4P0ETPA",
+    "result": "succeeded",
+    "work_id": "issue-filter-api"
+   },
+   {
+    "action": "capabilities",
+    "actor_id": "observer-host-native-20261031T203834Z-6427d37b0df9-aadc36",
+    "client_id": "observer-computer-use-native-20261031T203834Z-6427d37b0df9-aadc36",
+    "created_at_unix_ms": 1793479345765,
+    "credential_id": "native-observer",
+    "id": "01M69V61K4JVHTPV2HGWHCM4SW",
+    "result": "succeeded",
+    "work_id": null
+   }
+  ],
+  "next_cursor": null,
+  "request_retention": "oldest_pruned_soft_capacity",
+  "request_retention_capacity": 10000,
+  "scope": "self",
+  "tool_io_collected": false,
+  "unknown_means": "completion_not_recorded; inspect business request before retrying"
+ }
+}

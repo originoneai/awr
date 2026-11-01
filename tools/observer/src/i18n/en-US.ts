@@ -41,6 +41,20 @@ const enUS: Messages = {
       knowledge: 'Project knowledge',
     },
   },
+  activity: {
+    title: 'Activity and audit',
+    development: 'Development',
+    requests: 'Requests',
+    access: 'Access changes',
+    accessNote: 'Only filters action=access.changed within loaded development records; not a complete authorization history',
+    limit: 'Page size',
+    loadEarlier: 'Load earlier',
+    time: 'Time',
+    actor: 'Member and agent',
+    action: 'Action',
+    work: 'Linked work',
+    result: 'Result',
+  },
   freshness: {
     title: 'Freshness',
     plane: {
