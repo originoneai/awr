@@ -65,6 +65,9 @@ describe('observation query behavior', () => {
 
   it('gates review reads on a real review round id', () => {
     expect(reviewQueryOptions('demo', 'W1', null, false).enabled).toBe(false);
+    // A round id alone is not enough: an empty work id must not fire either.
+    expect(reviewQueryOptions('demo', null, 'round-1', false).enabled).toBe(false);
+    expect(reviewQueryOptions('demo', '', 'round-1', false).enabled).toBe(false);
     expect(reviewQueryOptions('demo', 'W1', 'round-1', false).enabled).toBe(true);
   });
 

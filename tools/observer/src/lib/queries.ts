@@ -99,7 +99,7 @@ export function reviewQueryOptions(
       work_id: workId ?? '',
       review_round_id: roundId ?? '',
     }, signal),
-    enabled: Boolean(roundId) && !revoked,
+    enabled: Boolean(roundId) && Boolean(workId) && !revoked,
     ...readQueryDefaults,
   } satisfies UseQueryOptions<TeamReadResponse<ReviewData>>;
 }
