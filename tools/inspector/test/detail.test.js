@@ -19,6 +19,22 @@ const app = require('../public/app.js');
 const i18n = require('../public/i18n.js');
 
 /** Install a fetch stub, record requests, and return responses by work key. */
+function specPayload() {
+  return {
+    ok: true,
+    command: 'awr spec check',
+    data: {
+      status: 'unknown',
+      specifications: [],
+      references: [],
+      requirements: [],
+      counts: { covered: 0, uncovered: 0, not_required: 0, needs_review: 0, unknown: 0 },
+      diagnostics: ['no_explicit_specifications'],
+      association_diagnostics: [],
+    },
+  };
+}
+
 function assessPayload(key) {
   return {
     ok: true,
@@ -45,6 +61,9 @@ function stubFetch() {
   const calls = [];
   global.fetch = async (url) => {
     const key = decodeURIComponent(String(url).split('key=')[1] || '');
+    if (String(url).includes('/api/spec-check')) {
+      return { json: async () => specPayload() };
+    }
     if (String(url).includes('/api/assess')) {
       return { json: async () => assessPayload(key) };
     }
@@ -85,6 +104,7 @@ beforeEach(() => {
   app.state.mode = 'live';
   app.state.workDetail = {};
   app.state.workAssess = {};
+  app.state.specCheck = {};
   app.state.raw = {};
   app.state.selectedWork = null;
   app.detailGuard.invalidate();
@@ -148,6 +168,9 @@ test('late responses cannot replace the selection (end to end)', async () => {
   const resolvers = {};
   global.fetch = (url) => {
     const key = decodeURIComponent(String(url).split('key=')[1] || '');
+    if (String(url).includes('/api/spec-check')) {
+      return Promise.resolve({ json: async () => specPayload() });
+    }
     if (String(url).includes('/api/assess')) {
       return Promise.resolve({ json: async () => assessPayload(key) });
     }
@@ -191,6 +214,9 @@ test('late failure responses cannot replace the selection', async () => {
   const resolvers = {};
   global.fetch = (url) => {
     const key = decodeURIComponent(String(url).split('key=')[1] || '');
+    if (String(url).includes('/api/spec-check')) {
+      return Promise.resolve({ json: async () => specPayload() });
+    }
     if (String(url).includes('/api/assess')) {
       return Promise.resolve({ json: async () => assessPayload(key) });
     }
@@ -234,6 +260,9 @@ test('refresh invalidates older requests for the same key', async () => {
   const resolvers = {};
   global.fetch = (url) => {
     const key = decodeURIComponent(String(url).split('key=')[1] || '');
+    if (String(url).includes('/api/spec-check')) {
+      return Promise.resolve({ json: async () => specPayload() });
+    }
     if (String(url).includes('/api/assess')) {
       return Promise.resolve({ json: async () => assessPayload(key) });
     }
@@ -262,6 +291,7 @@ test('refresh invalidates older requests for the same key', async () => {
   app.detailGuard.invalidate();
   app.state.workDetail = {};
   app.state.workAssess = {};
+  app.state.specCheck = {};
 
   resolvers['EXAMPLE-A']('旧的-A');
   await stale;

@@ -58,9 +58,14 @@ test('work assess expands intensity and admission gaps without treating them as 
   const $ = (id) => document.getElementById(id);
   app.state.mode = 'live';
   global.fetch = async (url) => ({
-    json: async () => String(url).includes('/api/assess')
-      ? { ok: true, command: 'awr work assess W1', data: ASSESS }
-      : { ok: true, command: 'awr work show W1', data: WORK },
+    json: async () => {
+      if (String(url).includes('/api/spec-check')) {
+        return { ok: true, command: 'awr spec check', data: { status: 'unknown', references: [], requirements: [], diagnostics: [] } };
+      }
+      return String(url).includes('/api/assess')
+        ? { ok: true, command: 'awr work assess W1', data: ASSESS }
+        : { ok: true, command: 'awr work show W1', data: WORK };
+    },
   });
   await app.renderWorkDetail('W1');
   const text = $('workDetail').textContent;
@@ -99,13 +104,18 @@ test('work assess Unsupported keeps work show visible', async () => {
   const $ = (id) => document.getElementById(id);
   app.state.mode = 'live';
   global.fetch = async (url) => ({
-    json: async () => String(url).includes('/api/assess')
-      ? {
-          ok: false,
-          command: 'awr work assess W1',
-          error: { code: 'Unsupported', message: 'operation is not implemented' },
-        }
-      : { ok: true, command: 'awr work show W1', data: WORK },
+    json: async () => {
+      if (String(url).includes('/api/spec-check')) {
+        return { ok: true, command: 'awr spec check', data: { status: 'unknown', references: [], requirements: [], diagnostics: [] } };
+      }
+      return String(url).includes('/api/assess')
+        ? {
+            ok: false,
+            command: 'awr work assess W1',
+            error: { code: 'Unsupported', message: 'operation is not implemented' },
+          }
+        : { ok: true, command: 'awr work show W1', data: WORK };
+    },
   });
   await app.renderWorkDetail('W1');
   const text = $('workDetail').textContent;

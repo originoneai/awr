@@ -98,6 +98,12 @@
       required_dependencies: [],
       missing_dependencies: [],
       milestone: 'goal#demo',
+      spec_refs: [{
+        specification: 'configuration-spec',
+        item: 'NEW',
+        source_fingerprint: 'sha256:' + 'a'.repeat(64),
+        criterion: i18n.t('demo.packet_budget'),
+      }],
     },
     'EXAMPLE-002': {
       acceptance: [
@@ -395,6 +401,53 @@
           ? 'repair_required_context_before_execution'
           : 'record_current_assessment_with_explicit_host_observations',
         scope: 'Management requirements only. Readiness, required goals/rules, authorization and completion remain enforced by their existing operations.',
+      };
+    },
+
+    specCheck() {
+      return {
+        version: 1,
+        status: 'needs_review',
+        selection: { spec: null },
+        specifications: [{
+          key: 'configuration-spec',
+          version: '2',
+          status: 'current',
+          item_count: 2,
+        }],
+        references: [{
+          work: 'EXAMPLE-001',
+          reference: {
+            specification: 'configuration-spec',
+            item: 'NEW',
+            source_fingerprint: 'sha256:' + 'a'.repeat(64),
+            criterion: i18n.t('demo.packet_budget'),
+          },
+          status: 'current',
+          reasons: [],
+        }],
+        requirements: [
+          {
+            specification: 'configuration-spec',
+            item: 'NEW',
+            status: 'covered',
+            work_items: ['EXAMPLE-001'],
+          },
+          {
+            specification: 'configuration-spec',
+            item: 'EXPORT',
+            status: 'uncovered',
+            work_items: [],
+          },
+        ],
+        counts: { covered: 1, uncovered: 1, not_required: 0, needs_review: 0, unknown: 0 },
+        diagnostics: [],
+        association_diagnostics: [],
+        read_only: true,
+        source_write_performed: false,
+        runtime_write_performed: false,
+        coverage_basis: 'Explicit registered items and exact task references only; no prose scanning or inferred cancellations.',
+        boundary: 'Matched/covered describe declared version bindings and task coverage, never semantic agreement, implementation, acceptance or completion. No source is modified.',
       };
     },
 
