@@ -190,17 +190,57 @@ export interface WorkContract {
   [key: string]: unknown;
 }
 
+export interface WorkCollaboration {
+  candidate?: {
+    current?: boolean;
+    digest?: string;
+    selection_version?: string;
+    required_checks?: string[];
+  };
+  review?: {
+    id?: string;
+    state?: string;
+    current_candidate?: boolean;
+    bundle_hash?: string;
+    author_actor_id?: string;
+  } | null;
+  integration?: {
+    id?: string;
+    state?: string;
+    current_binding?: boolean;
+    target_changed?: boolean;
+    reviewed_execution_id?: string;
+  } | null;
+  publication?: {
+    id?: string;
+    phase?: string;
+    metadata_revision?: string;
+    basis?: string;
+  } | null;
+  source_state?: {
+    observation?: string;
+    source_synchronized?: boolean;
+    query_started_at_unix_ms?: number;
+    [key: string]: unknown;
+  } | null;
+  verification?: Array<{ check?: string; run_id?: string; outcome?: string }>;
+  facts_truncated?: boolean;
+}
+
 export interface WorkSnapshotData {
   work_id?: string;
+  contract_hash?: string;
   observation?: {
     last_activity_at_unix_ms?: number | null;
     observed_at_unix_ms?: number | null;
     progress?: Record<string, unknown> | null;
     reporting?: { client_reported_at_unix_ms?: number | null } & Record<string, unknown>;
-    runtime?: { state?: string; work_version?: string };
+    runtime?: { state?: string; work_version?: string; selected_completion_id?: string | null };
     responsibility?: Record<string, unknown>;
     session?: Record<string, unknown> | null;
     claim?: Record<string, unknown> | null;
+    execution?: { claim_id?: string; execution_id?: string };
+    collaboration?: WorkCollaboration | null;
   };
   visible_contract?: WorkContract | null;
   published_contract?: WorkContract | null;
