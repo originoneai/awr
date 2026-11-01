@@ -138,3 +138,20 @@ body,
     display: none;
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ant-motion-duration-fast: 0ms;
+    --ant-motion-duration-mid: 0ms;
+    --ant-motion-duration-slow: 0ms;
+  }
+
+  .shell-nav .ant-menu-item,
+  .shell-header .ant-btn,
+  .shell-content *,
+  .shell-content *::before,
+  .shell-content *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
