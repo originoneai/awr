@@ -45,8 +45,7 @@ body,
 }
 
 .shell-nav .ant-menu-item-selected {
-  outline: 1px solid var(--ant-color-primary);
-  outline-offset: -1px;
+  box-shadow: inset 0 0 0 1px var(--ant-color-border-secondary);
 }
 
 .shell-header button:focus-visible,

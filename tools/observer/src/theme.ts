@@ -52,6 +52,19 @@ export const craftValueStyle = {
   letterSpacing: 0,
 } as const;
 
+export function craftSelectionStyle(
+  token: { colorFillSecondary: string; colorBorderSecondary: string; borderRadius: number },
+  selected: boolean,
+) {
+  if (!selected) return { cursor: 'pointer' } as const;
+  return {
+    cursor: 'pointer',
+    background: token.colorFillSecondary,
+    boxShadow: `inset 0 0 0 1px ${token.colorBorderSecondary}`,
+    borderRadius: token.borderRadius,
+  } as const;
+}
+
 export const themeConfig: ThemeConfig = {
   token: {
     fontFamily: craftTokens.font.interface,

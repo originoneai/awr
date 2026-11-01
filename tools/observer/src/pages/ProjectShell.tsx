@@ -40,7 +40,7 @@ export function ProjectShell() {
               <Typography.Title level={4} style={{ margin: 0 }}>
                 {meta?.title ?? project}
               </Typography.Title>
-              {meta?.role ? <Tag color="blue"><ObservationValue value={meta.role} field="role" /></Tag> : null}
+              {meta?.role ? <Tag><ObservationValue value={meta.role} field="role" /></Tag> : null}
             </Space>
             <div>
               <Typography.Text type="secondary">

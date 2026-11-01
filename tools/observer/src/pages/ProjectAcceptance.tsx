@@ -10,7 +10,7 @@ import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../compo
 import { FieldLabel, ObservationValue } from '../components/ObservationValue';
 import { ApiError, isAuthError } from '../lib/api';
 import { formatObservationValue, notProvided } from '../i18n/craft';
-import { craftValueStyle } from '../theme';
+import { craftSelectionStyle, craftValueStyle } from '../theme';
 import { formatUnixMs } from '../lib/format';
 import { asArray, asObject, asText, at } from '../lib/json';
 import { outcomeQueryOptions } from '../lib/outcome';
@@ -183,12 +183,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                   <List.Item
                     data-testid={`acceptance-work-${work.key}`}
                     onClick={() => selectWork(work.key)}
-                    style={{
-                      cursor: 'pointer',
-                      background: selectedWork?.key === work.key ? token.colorFillSecondary : undefined,
-                      border: selectedWork?.key === work.key ? `1px solid ${token.colorPrimary}` : undefined,
-                      borderRadius: selectedWork?.key === work.key ? token.borderRadius : undefined,
-                    }}
+                    style={craftSelectionStyle(token, selectedWork?.key === work.key)}
                   >
                     <Space direction="vertical" size={2}>
                       <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{work.title}</Typography.Text>
