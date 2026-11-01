@@ -10,7 +10,8 @@ describe('craft product visual signature', () => {
   it('removes the decorative stock 403 illustration without hiding the authorization state', () => {
     const states = readFileSync('src/components/states.tsx', 'utf8');
     expect(states).toContain('data-testid="state-forbidden"');
-    expect(states).toContain('icon={<></>}');
+    expect(states).toContain('status="info"');
+    expect(states).toContain('icon={null}');
   });
 
   it('marks only verified digests with the lucide stamp signature', () => {
