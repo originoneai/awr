@@ -37,6 +37,19 @@ const zhCN = {
       knowledge: '项目知识',
     },
   },
+  knowledge: {
+    filterPlaceholder: '筛选当前页已加载的来源',
+    fromWorks: '来自 {{count}}／{{total}} 个工作项',
+    failedReads: '{{count}} 个工作项读取失败',
+    sources: '来源',
+    contentIncluded: '含正文',
+    contentMissing: '正文未随响应提供',
+    partial: '部分（长度与 byte_length 不一致）',
+    citingWorks: '引用它的工作项',
+    sourceChanged: '来源已变化（同一来源出现不同摘要，旧文本不再视为当前）',
+    contract: '合同目标与验收',
+    openWork: '打开 {{title}}',
+  },
   freshness: {
     title: '新鲜度',
     plane: {

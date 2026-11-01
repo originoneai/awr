@@ -204,7 +204,20 @@ export interface WorkSnapshotData {
   };
   visible_contract?: WorkContract | null;
   published_contract?: WorkContract | null;
-  required_specs?: unknown[];
+  required_specs?: Array<{
+    path: string;
+    sha256: string;
+    byte_length?: number;
+    content_included?: boolean;
+    text?: string;
+    next_step?: unknown;
+  }>;
+  authorized_readable_refs?: Array<{
+    kind: string;
+    path: string;
+    sha256: string;
+    byte_length?: number;
+  }>;
   snapshot?: Record<string, unknown>;
   guidance?: {
     code?: string;

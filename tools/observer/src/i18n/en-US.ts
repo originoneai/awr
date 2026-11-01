@@ -41,6 +41,19 @@ const enUS: Messages = {
       knowledge: 'Project knowledge',
     },
   },
+  knowledge: {
+    filterPlaceholder: 'Filter sources loaded on this page',
+    fromWorks: 'From {{count}} of {{total}} works',
+    failedReads: '{{count}} work reads failed',
+    sources: 'Sources',
+    contentIncluded: 'Text included',
+    contentMissing: 'Text not included in the response',
+    partial: 'Partial (length differs from byte_length)',
+    citingWorks: 'Citing works',
+    sourceChanged: 'Source changed (multiple digests for one path; older text is no longer current)',
+    contract: 'Contract goals and acceptance',
+    openWork: 'Open {{title}}',
+  },
   freshness: {
     title: 'Freshness',
     plane: {
