@@ -5,6 +5,8 @@ describe('craft spacing tokens', () => {
   it('uses the approved app shell rhythm', () => {
     expect(themeConfig.components?.Menu?.itemHeight).toBe(craftTokens.navigationRowHeight);
     expect(craftTokens.navigationRowHeight).toBe(36);
+    expect(craftTokens.controlHeight).toBe(36);
+    expect(themeConfig.token?.controlHeight).toBe(craftTokens.controlHeight);
     expect(craftTokens.headerHeight).toBeGreaterThanOrEqual(56);
     expect(craftTokens.headerHeight).toBeLessThanOrEqual(64);
     expect(craftTokens.siderWidth).toBeGreaterThanOrEqual(240);
