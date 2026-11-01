@@ -449,7 +449,7 @@ export function WorkbenchPage() {
           <Space wrap>
             {nextData?.identity.role ? <Tag data-testid="workbench-role">{nextData.identity.role}</Tag> : null}
             <Link to="/agent-connect">
-              <Space size={4}><LinkIcon size={14} aria-hidden />{t('nav.agentConnect')}</Space>
+              <Space size={4}><LinkIcon size={16} strokeWidth={1.5} aria-hidden />{t('nav.agentConnect')}</Space>
             </Link>
           </Space>
         </Flex>

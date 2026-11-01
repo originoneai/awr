@@ -78,7 +78,7 @@ export const themeConfig: ThemeConfig = {
       itemSelectedColor: craftTokens.color.accent,
       itemMarginInline: 12,
       itemMarginBlock: craftTokens.spacing.compact,
-      iconSize: 18,
+      iconSize: 16,
     },
   },
 };

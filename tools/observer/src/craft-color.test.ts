@@ -3,23 +3,23 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { craftTokens } from './theme';
 
-function filesUnder(path) {
+function filesUnder(path: string): string[] {
   return readdirSync(path).flatMap((name) => {
     const file = join(path, name);
     return statSync(file).isDirectory() ? filesUnder(file) : [file];
   });
 }
 
-function channel(hex, index) {
+function channel(hex: string, index: number): number {
   return Number.parseInt(hex.slice(index, index + 2), 16) / 255;
 }
-function luminance(hex) {
+function luminance(hex: string): number {
   const [r, g, b] = [1, 3, 5].map((index) => channel(hex, index)).map((value) => (
     value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
   ));
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
-function contrast(left, right) {
+function contrast(left: string, right: string): number {
   const [high, low] = [luminance(left), luminance(right)].sort((a, b) => b - a);
   return (high + 0.05) / (low + 0.05);
 }
