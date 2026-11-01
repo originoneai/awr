@@ -3,6 +3,7 @@ import { AccountPage } from './pages/AccountPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { InboxPage } from './pages/InboxPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
+import { AgentConnectPage } from './pages/AgentConnectPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectShell } from './pages/ProjectShell';
 import { WorkbenchPage } from './pages/WorkbenchPage';
@@ -23,7 +24,7 @@ export const routes: RouteObject[] = [
       { path: 'activity', element: <ActivityPage /> },
       { path: 'settings', element: <PlaceholderPage pageKey="settings" /> },
       { path: 'account', element: <AccountPage /> },
-      { path: 'agent-connect', element: <PlaceholderPage pageKey="agentConnect" /> },
+      { path: 'agent-connect', element: <AgentConnectPage /> },
       { path: 'advanced', element: <PlaceholderPage pageKey="advanced" /> },
       { path: '*', element: <Navigate to="/workbench" replace /> },
     ],

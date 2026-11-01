@@ -84,7 +84,25 @@ const READ_ECHOES = {
     { path: ['review', 'work_id'], selector: 'work_id' },
     { path: ['review', 'round_id'], selector: 'review_round_id' },
   ],
-  'delivery.inspect': [{ path: ['work_id'], selector: 'work_id' }],
+  'evidence.inspect': [
+    { path: ['evidence', 'work_id'], selector: 'work_id' },
+    { path: ['evidence', 'evidence_id'], selector: 'evidence_id' },
+  ],
+  'execution.inspect': [
+    { path: ['work_id'], selector: 'work_id' },
+    { path: ['execution_id'], selector: 'execution_id' },
+    { path: ['claim_id'], selector: 'claim_id' },
+  ],
+  'claim.inspect': [{ path: ['claim_id'], selector: 'claim_id' }],
+  'artifact.content': [
+    { path: ['work_id'], selector: 'work_id' },
+    { path: ['artifact_id'], selector: 'artifact_id' },
+  ],
+  // Segments require their artifact, but work attribution stays at the
+  // request binding; completion.inspect likewise has no work echo and is
+  // bound by the UI through selected_completion_id instead.
+  'artifact.segment': [{ path: ['artifact_id'], selector: 'artifact_id' }],
+  'delivery.inspect': [{ path: ['delivery', 'work_id'], selector: 'work_id' }],
   'delivery.neutral.inspect': [{ path: ['work_id'], selector: 'work_id' }],
   'delivery.submission.describe': [{ path: ['work_id'], selector: 'work_id' }],
   'delivery.neutral.outcome': [{ path: ['work_id'], selector: 'work_id' }],

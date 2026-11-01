@@ -131,6 +131,41 @@ export const DEMO_ACTIVITY = {
   },
 };
 
+export const DEMO_REVIEW = {
+  ok: true,
+  result: {
+    authority_version: '1',
+    coordinator_epoch: 'epoch-1',
+    data: {
+      review: {
+        decisions: [{
+          decision: 'approve',
+          decision_id: 'decision-1',
+          approval_basis: 'simulated_member_independent_review',
+          human_approval: false,
+          independence_kind: 'simulated_member_independent',
+        }],
+        author_actor_id: 'author-agent-1',
+        author_person_id: 'lin',
+        artifact_digest: 'artifact-digest-1',
+        contract_hash: 'contract-1',
+        bundle_hash: 'bundle-hash-1',
+      },
+    },
+    project_revision: '1',
+    protocol_version: 1,
+    scope_id: 'main',
+    selection_basis: 'work',
+    source_snapshot_id: 'snapshot-1',
+  },
+  query: { protocol_version: 1, op: 'review.inspect', work_id: 'W1' },
+  freshness: {
+    report_received: { status: 'not_measured' },
+    authoritative: { status: 'not_measured' },
+    page_read: { status: 'measured', at_unix_ms: 1761840000000 },
+  },
+};
+
 export const DEMO_WORK_ITEMS = [
   {
     navigation: 'resume',
@@ -210,8 +245,13 @@ export function demoWorkSnapshot(workId = 'W1') {
   return {
     ok: true,
     result: {
+      authority_version: '1',
+      selection_basis: 'work',
       data: {
         work_id: workId,
+        contract_hash: 'contract-1',
+        definition_state: 'enabled',
+        runtime: { state: 'claimed', work_version: '1' },
         observation: {
           last_activity_at_unix_ms: 1761839900000,
           observed_at_unix_ms: 1761839999000,
@@ -229,7 +269,11 @@ export function demoWorkSnapshot(workId = 'W1') {
           required_dependencies: ['upstream-contract-v1'],
         },
         published_contract: null,
-        required_specs: [],
+        required_specs: [{
+          path: 'docs/support.md',
+          text: 'Keep the support API stable.',
+          content_included: true,
+        }],
         snapshot: { queried_at_unix_ms: 1761839999000 },
         guidance: {
           code: 'report_at_boundary',

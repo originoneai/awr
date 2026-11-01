@@ -1,0 +1,34 @@
+{
+ "authority_version": "1",
+ "coordinator_epoch": "support-queue-4856fa-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+ "data": {
+  "evidence": {
+   "artifact_digest": "37f728ac073d23df94311a460b8c403a6a81be9b8c36b7479a2011a2869f9a87",
+   "artifact_id": "01M6ATNTRB664BA81892TRHKQ4",
+   "contract_hash": "295b63612f58425c516a25c6e4d5d777d1da6661cc11cce9fb93ffc3c9597c4d",
+   "created_by": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+   "digest": "462ae495f7aa6bdb9a2265b61475968adcdec42446463caa09e87bce114ac71d",
+   "evidence_id": "01M6ATNTRCBT4VEV44CYT66CWN",
+   "execution_consistency": {
+    "claimed_success": true,
+    "execution_success": true,
+    "fact_source": "team_execution_record",
+    "independent_verification": false,
+    "reason": "caller_claim_matches_execution",
+    "recorded_state": "succeeded",
+    "status": "consistent"
+   },
+   "execution_id": "01M6ARNTMQCWJMWM5QQVEK51MC",
+   "execution_result_digest": "37f728ac073d23df94311a460b8c403a6a81be9b8c36b7479a2011a2869f9a87",
+   "trust_basis": "caller_asserted",
+   "work_id": "issue-filter-api"
+  }
+ },
+ "project_revision": "104",
+ "project_status": "active",
+ "protocol_version": 1,
+ "scope_id": "main",
+ "selection_basis": "work",
+ "source_snapshot_id": "01M6AQN5X85AYFNRB0H5D15YVH",
+ "workstream_id": "013FE5E5116E5A8987D377C479"
+}

@@ -140,6 +140,14 @@ test('read adapter forwards every registered read op with its exact selectors, u
       if (parsed.op === 'review.inspect') {
         echo.review = { work_id: parsed.work_id, round_id: parsed.review_round_id };
       }
+      if (parsed.op === 'delivery.inspect') echo.delivery = { work_id: parsed.work_id };
+      if (parsed.op === 'evidence.inspect') echo.evidence = { work_id: parsed.work_id, evidence_id: parsed.evidence_id };
+      if (parsed.op === 'execution.inspect') {
+        echo.execution_id = parsed.execution_id;
+        if (parsed.claim_id) echo.claim_id = parsed.claim_id;
+      }
+      if (parsed.op === 'claim.inspect') echo.claim_id = parsed.claim_id;
+      if (parsed.op === 'artifact.segment') echo.artifact_id = parsed.artifact_id;
       if (parsed.op === 'delivery.integration.inspect') echo.integration_id = parsed.request_id;
       response.end(JSON.stringify(parsed.op === 'capabilities'
         ? { protocol: 'awr-team-workstream', protocol_version: 1, queries: [], commands: [] }
@@ -371,7 +379,7 @@ test('read adapter registry stays in sync with the service query list (drift gua
 test('read adapter caps an artifact.segment page at its own bound', async () => {
   let padded = null;
   const upstream = await startMockUpstream((_request, response) => {
-    response.end(JSON.stringify({ ...ENVELOPE, data: { text: padded, next_cursor: null } }));
+    response.end(JSON.stringify({ ...ENVELOPE, data: { text: padded, next_cursor: null, artifact_id: 'artifact-1' } }));
   });
   const bridge = await startLiveBridge(upstream.base);
   const query = { protocol_version: 1, op: 'artifact.segment', work_id: 'WORK',

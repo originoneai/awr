@@ -1,0 +1,141 @@
+{
+ "authority_version": "1",
+ "coordinator_epoch": "support-queue-4856fa-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+ "data": {
+  "completion": {
+   "approved_by": {
+    "approval_basis": "simulated_member_independent_review",
+    "approved_by": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "approved_by_person_id": "chen",
+    "author_actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "author_self_report": true,
+    "caller_execution_binding": {
+     "artifact_verified": true,
+     "caller_receipt_id": "01M6ASG98RMV81F5ZP0G5829M1",
+     "effects_settled": true,
+     "execution_basis": "caller_asserted_workspace_settled",
+     "executor_client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+     "settlement_mode": "independent_workspace_v2",
+     "settlement_scope": "admitted_workspace_paths",
+     "terminal_reported": true,
+     "workspace_id": "support-queue-4856fa-backend"
+    },
+    "execution_basis": "caller_asserted_workspace_settled",
+    "execution_success": true,
+    "executor_actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "final_submitter_actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "github_merged_does_not_complete": true,
+    "human_approval": false,
+    "independence_kind": "simulated_member_independent",
+    "member_review_basis": {
+     "approval_basis": "simulated_member_independent_review",
+     "authority": {
+      "delegation_id": "authorization-chen",
+      "membership_version": "1",
+      "snapshot_id": "01M6AQN5X85AYFNRB0H5D15YVH",
+      "workstream_grant_versions": {
+       "013FE5E5116E5A8987D377C479": 1
+      }
+     },
+     "codec": "awr-simulated-member-review-v1",
+     "human_approval": false,
+     "origins": {
+      "codec": "awr-member-review-origins-v1",
+      "executor": {
+       "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+       "actor_kind": "agent",
+       "actor_membership_version": "1",
+       "binding_id": "binding-lin",
+       "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+       "codec": "awr-member-origin-v1",
+       "member_actor_kind": "agent",
+       "member_id": "lin",
+       "member_identity": {
+        "controller_ref": "one-human-controller",
+        "kind": "simulated_member"
+       },
+       "member_membership_version": "1"
+      },
+      "opener": {
+       "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+       "actor_kind": "agent",
+       "actor_membership_version": "1",
+       "binding_id": "binding-lin",
+       "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+       "codec": "awr-member-origin-v1",
+       "member_actor_kind": "agent",
+       "member_id": "lin",
+       "member_identity": {
+        "controller_ref": "one-human-controller",
+        "kind": "simulated_member"
+       },
+       "member_membership_version": "1"
+      },
+      "submitter": {
+       "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+       "actor_kind": "agent",
+       "actor_membership_version": "1",
+       "binding_id": "binding-lin",
+       "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+       "codec": "awr-member-origin-v1",
+       "member_actor_kind": "agent",
+       "member_id": "lin",
+       "member_identity": {
+        "controller_ref": "one-human-controller",
+        "kind": "simulated_member"
+       },
+       "member_membership_version": "1"
+      }
+     },
+     "policy": "caller_managed_execution_and_simulated_member_review",
+     "reviewer": {
+      "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+      "actor_kind": "agent",
+      "actor_membership_version": "1",
+      "binding_id": "binding-chen",
+      "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+      "codec": "awr-member-origin-v1",
+      "member_actor_kind": "agent",
+      "member_id": "chen",
+      "member_identity": {
+       "controller_ref": "one-human-controller",
+       "kind": "simulated_member"
+      },
+      "member_membership_version": "1"
+     },
+     "team_independent_acceptance": false
+    },
+    "owner_person_id": null,
+    "pr_delivery_id": null,
+    "review_decision_id": "01M6AZ4XY0MEJHBR91AHDR578A",
+    "review_round_id": "01M6AVQ870N7MBRJ5MPCN79T55",
+    "reviewer_actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "reviewer_client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "submitted_by": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "submitted_by_person_id": "manager",
+    "team_independent_acceptance": false
+   },
+   "approved_by_person_id": "chen",
+   "author_actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+   "contract_hash": "295b63612f58425c516a25c6e4d5d777d1da6661cc11cce9fb93ffc3c9597c4d",
+   "evidence_id": "01M6ATNTRCBT4VEV44CYT66CWN",
+   "execution_id": "01M6ARNTMQCWJMWM5QQVEK51MC",
+   "executor_actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+   "final_submitter_actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+   "independence_kind": "simulated_member_independent",
+   "policy": "caller_managed_execution_and_simulated_member_review",
+   "provider_private_session": null,
+   "receipt_id": "01M6B189DXC1A21ZD5YQ6V7EG5",
+   "submitted_by_person_id": "manager"
+  },
+  "runtime_state": "completed",
+  "selected_completion_id": "01M6B189DXC1A21ZD5YQ6V7EG5"
+ },
+ "project_revision": "104",
+ "project_status": "active",
+ "protocol_version": 1,
+ "scope_id": "main",
+ "selection_basis": "work",
+ "source_snapshot_id": "01M6AQN5X85AYFNRB0H5D15YVH",
+ "workstream_id": "013FE5E5116E5A8987D377C479"
+}

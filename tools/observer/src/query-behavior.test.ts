@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ApiError } from './lib/api';
-import { activityQueryOptions, createAppQueryClient, overviewQueryOptions, POLL_INTERVAL_MS, queryKeys, readQueryDefaults, workNextQueryOptions } from './lib/queries';
+import { activityQueryOptions, createAppQueryClient, overviewQueryOptions, POLL_INTERVAL_MS, queryKeys, readQueryDefaults, reviewQueryOptions, workNextQueryOptions } from './lib/queries';
 
 describe('observation query behavior', () => {
   it('uses a five-second polling interval rather than the per-read timeout', () => {
@@ -57,6 +57,32 @@ describe('observation query behavior', () => {
 
   it('disables activity reads when observation is revoked', () => {
     expect(activityQueryOptions('demo', true).enabled).toBe(false);
+  });
+
+  it('disables review reads when observation is revoked', () => {
+    expect(reviewQueryOptions('demo', 'W1', 'round-1', true).enabled).toBe(false);
+  });
+
+  it('gates review reads on a real review round id', () => {
+    expect(reviewQueryOptions('demo', 'W1', null, false).enabled).toBe(false);
+    // A round id alone is not enough: an empty work id must not fire either.
+    expect(reviewQueryOptions('demo', null, 'round-1', false).enabled).toBe(false);
+    expect(reviewQueryOptions('demo', '', 'round-1', false).enabled).toBe(false);
+    expect(reviewQueryOptions('demo', 'W1', 'round-1', false).enabled).toBe(true);
+  });
+
+  it('sends review_round_id in review.inspect queries', async () => {
+    const options = reviewQueryOptions('demo', 'W1', 'round-1', false);
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    await options.queryFn!({ signal: new AbortController().signal } as never);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      project: 'demo',
+      query: { protocol_version: 1, op: 'review.inspect', work_id: 'W1', review_round_id: 'round-1' },
+    });
   });
 
   it('uses the generic read route and five-second defaults for work.next', async () => {

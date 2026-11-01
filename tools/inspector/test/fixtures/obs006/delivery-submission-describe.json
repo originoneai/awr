@@ -1,0 +1,570 @@
+{
+ "authority_version": "1",
+ "coordinator_epoch": "support-queue-4856fa-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+ "data": {
+  "acceptance_ready": false,
+  "binding_values": {
+   "contract_hash": "295b63612f58425c516a25c6e4d5d777d1da6661cc11cce9fb93ffc3c9597c4d",
+   "project_id": "support-queue-4856fa",
+   "required_checks": [
+    "local_git.manifest"
+   ],
+   "scope_id": "main",
+   "tenant_id": "awr-native-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+   "work_id": "issue-filter-api",
+   "workstream_id": "013FE5E5116E5A8987D377C479"
+  },
+  "command": {
+   "args_schema": {
+    "additionalProperties": false,
+    "properties": {
+     "candidate": {
+      "additionalProperties": false,
+      "properties": {
+       "binding": {
+        "additionalProperties": false,
+        "allOf": [
+         {
+          "if": {
+           "properties": {
+            "source_fetch_ref": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "source_fetch_ref"
+           ]
+          },
+          "then": {
+           "properties": {
+            "source_revision": {
+             "properties": {
+              "format": {
+               "enum": [
+                "git_sha1",
+                "git_sha256"
+               ]
+              }
+             },
+             "required": [
+              "format"
+             ],
+             "type": "object"
+            }
+           },
+           "required": [
+            "source_revision"
+           ]
+          }
+         }
+        ],
+        "properties": {
+         "candidate_id": {
+          "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+         },
+         "candidate_version": {
+          "description": "Canonical decimal u64 string, not a JSON number.",
+          "maxLength": 20,
+          "pattern": "^[1-9][0-9]*$",
+          "type": "string"
+         },
+         "contract_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+         },
+         "manifest_digest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+         },
+         "project_id": {
+          "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+         },
+         "required_checks": {
+          "items": {
+           "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+           "maxLength": 128,
+           "minLength": 1,
+           "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array",
+          "uniqueItems": true
+         },
+         "scope_id": {
+          "const": "main"
+         },
+         "source_fetch_ref": {
+          "anyOf": [
+           {
+            "allOf": [
+             {
+              "not": {
+               "pattern": "\\.\\."
+              }
+             },
+             {
+              "not": {
+               "pattern": "(^|/)\\."
+              }
+             },
+             {
+              "not": {
+               "pattern": "(\\.lock|\\.)(/|$)"
+              }
+             },
+             {
+              "not": {
+               "pattern": "//|/$"
+              }
+             }
+            ],
+            "description": "Optional ordinary advertised Git ref using only portable ASCII letters, digits, '.', '_', '/', '-', '+', and '@'. Other Git-legal names are outside this contract. The ref is mutable and only locates an object; pass it as one process argument without a shell, fetch it exactly, and verify the resulting commit against source_revision.",
+            "maxLength": 1024,
+            "pattern": "^refs/(heads|tags)/[A-Za-z0-9._/+@-]+$",
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "source_revision": {
+          "anyOf": [
+           {
+            "additionalProperties": false,
+            "allOf": [
+             {
+              "if": {
+               "properties": {
+                "format": {
+                 "const": "git_sha1"
+                }
+               }
+              },
+              "then": {
+               "properties": {
+                "value": {
+                 "pattern": "^[0-9a-f]{40}$"
+                }
+               }
+              }
+             },
+             {
+              "if": {
+               "properties": {
+                "format": {
+                 "const": "git_sha256"
+                }
+               }
+              },
+              "then": {
+               "properties": {
+                "value": {
+                 "pattern": "^[0-9a-f]{64}$"
+                }
+               }
+              }
+             }
+            ],
+            "properties": {
+             "format": {
+              "enum": [
+               "git_sha1",
+               "git_sha256",
+               "artifact"
+              ]
+             },
+             "resource": {
+              "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+             },
+             "value": {
+              "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+             }
+            },
+            "required": [
+             "resource",
+             "format",
+             "value"
+            ],
+            "type": "object"
+           },
+           {
+            "type": "null"
+           }
+          ]
+         },
+         "target": {
+          "additionalProperties": false,
+          "properties": {
+           "precondition": {
+            "oneOf": [
+             {
+              "additionalProperties": false,
+              "properties": {
+               "kind": {
+                "const": "missing"
+               }
+              },
+              "required": [
+               "kind"
+              ],
+              "type": "object"
+             },
+             {
+              "additionalProperties": false,
+              "properties": {
+               "kind": {
+                "const": "exact"
+               },
+               "revision": {
+                "additionalProperties": false,
+                "allOf": [
+                 {
+                  "if": {
+                   "properties": {
+                    "format": {
+                     "const": "git_sha1"
+                    }
+                   }
+                  },
+                  "then": {
+                   "properties": {
+                    "value": {
+                     "pattern": "^[0-9a-f]{40}$"
+                    }
+                   }
+                  }
+                 },
+                 {
+                  "if": {
+                   "properties": {
+                    "format": {
+                     "const": "git_sha256"
+                    }
+                   }
+                  },
+                  "then": {
+                   "properties": {
+                    "value": {
+                     "pattern": "^[0-9a-f]{64}$"
+                    }
+                   }
+                  }
+                 }
+                ],
+                "properties": {
+                 "format": {
+                  "enum": [
+                   "git_sha1",
+                   "git_sha256",
+                   "artifact"
+                  ]
+                 },
+                 "resource": {
+                  "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+                  "maxLength": 1024,
+                  "minLength": 1,
+                  "type": "string"
+                 },
+                 "value": {
+                  "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                 }
+                },
+                "required": [
+                 "resource",
+                 "format",
+                 "value"
+                ],
+                "type": "object"
+               }
+              },
+              "required": [
+               "kind",
+               "revision"
+              ],
+              "type": "object"
+             }
+            ]
+           },
+           "reference": {
+            "anyOf": [
+             {
+              "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+             },
+             {
+              "type": "null"
+             }
+            ]
+           },
+           "resource": {
+            "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+           }
+          },
+          "required": [
+           "resource",
+           "precondition"
+          ],
+          "type": "object"
+         },
+         "tenant_id": {
+          "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+         },
+         "work_id": {
+          "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+         },
+         "workstream_id": {
+          "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+         }
+        },
+        "required": [
+         "tenant_id",
+         "project_id",
+         "scope_id",
+         "workstream_id",
+         "work_id",
+         "candidate_id",
+         "candidate_version",
+         "contract_hash",
+         "manifest_digest",
+         "required_checks",
+         "target"
+        ],
+        "type": "object"
+       },
+       "manifest": {
+        "additionalProperties": false,
+        "properties": {
+         "entries": {
+          "description": "Each artifact_id must be unique. Hash and length refer to the actual immutable bytes.",
+          "items": {
+           "additionalProperties": false,
+           "properties": {
+            "artifact_id": {
+             "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+             "maxLength": 128,
+             "minLength": 1,
+             "type": "string"
+            },
+            "byte_length": {
+             "description": "Canonical decimal u64 string, not a JSON number.",
+             "maxLength": 20,
+             "pattern": "^(0|[1-9][0-9]*)$",
+             "type": "string"
+            },
+            "locator": {
+             "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+             "maxLength": 4096,
+             "minLength": 1,
+             "type": "string"
+            },
+            "sha256": {
+             "pattern": "^[0-9a-f]{64}$",
+             "type": "string"
+            }
+           },
+           "required": [
+            "artifact_id",
+            "sha256",
+            "byte_length",
+            "locator"
+           ],
+           "type": "object"
+          },
+          "maxItems": 128,
+          "minItems": 1,
+          "type": "array"
+         }
+        },
+        "required": [
+         "entries"
+        ],
+        "type": "object"
+       }
+      },
+      "required": [
+       "binding",
+       "manifest"
+      ],
+      "type": "object"
+     },
+     "claim_id": {
+      "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+     },
+     "expected_selected_digest": {
+      "anyOf": [
+       {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "fence": {
+      "description": "Canonical decimal u64 string, not a JSON number.",
+      "maxLength": 20,
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+     },
+     "lease_version": {
+      "description": "Canonical decimal u64 string, not a JSON number.",
+      "maxLength": 20,
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+     },
+     "session_id": {
+      "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+     },
+     "source_snapshot_id": {
+      "description": "Nonblank text without control characters; the domain enforces the UTF-8 byte limit.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+     }
+    },
+    "required": [
+     "source_snapshot_id",
+     "session_id",
+     "claim_id",
+     "fence",
+     "lease_version",
+     "candidate"
+    ],
+    "type": "object"
+   },
+   "header_from": "Fresh work.prepare: protocol_version=1, a stable request_id, workstream_id, work_id, coordinator_epoch, expected_project_revision=project_revision, expected_authority_version=authority_version, expected_ownership_version=data.ownership_version, expected_contract_hash=data.contract_hash.",
+   "op": "delivery.candidate.select",
+   "runtime_inputs": "Use your actual active session and claim.inspect's current claim_id, fence and lease_version. args.source_snapshot_id comes from fresh work.prepare. expected_selected_digest is the stored selection binding_digest, or null when none. Do not send read_set or request_id inside args; the transport derives them."
+  },
+  "connectors": [
+   {
+    "connector_id": "repository-issue-filter-api",
+    "connector_version": "1",
+    "current_epoch": true,
+    "enabled": true,
+    "fact_source": "adapter_observation",
+    "provider": "local_git",
+    "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa"
+   }
+  ],
+  "connectors_truncated": false,
+  "contract": "awr-delivery-submission-v1",
+  "coordinator_epoch": "support-queue-4856fa-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+  "evidence": {
+   "artifacts": "Submit each manifest entry's exact bytes separately with artifact_text (UTF-8) or artifact_hex in delivery.evidence.submit. The server assigns stored artifact IDs and measures digests; the manifest's logical IDs do not replace them. Measured SHA-256 and length must match. A local path or report alone is insufficient.",
+   "candidate_binding": "Set args.delivery_payload.delivery_candidate_digest to data.candidate_digest in the successful selection receipt (receipt.data.candidate_digest over MCP/HTTP). delivery_payload is a required JSON object; optional passed (boolean) and output_digest (64 lowercase hex) share the same object and other keys are preserved unchanged.",
+   "command": "delivery.evidence.submit",
+   "next_query": {
+    "op": "delivery.neutral.inspect",
+    "protocol_version": 1,
+    "work_id": "issue-filter-api"
+   },
+   "policy_required_args": {
+    "execution_id": "Required for every simulated-member evidence item; obtain the actual execution ID from work.observe."
+   },
+   "required_args": [
+    "session_id",
+    "expected_session_version",
+    "delivery_payload",
+    "dirty_tree"
+   ],
+   "review_binding": "Use the primary report's submitted evidence_id; do not reuse the evidence submission payload. Refresh the session version before opening review.",
+   "review_command": "delivery.submit_and_request_review",
+   "review_required_args": [
+    "session_id",
+    "expected_session_version",
+    "evidence_id"
+   ]
+  },
+  "execution_authorized": false,
+  "guidance": {
+   "action": "Publish through the shared channel and target disclosed in this project's working agreement, then select the measured candidate and submit readable bound evidence. If the channel or target is unavailable, record the missing prerequisite for the supervisor; do not guess or search server configuration, peer workspaces or implementation.",
+   "because": "The input contract describes structure; only authorized project publication and actual bytes establish material facts",
+   "recheck_on": "Source, contract, ownership, selection, claim, authority or publication changes; refresh work.prepare and claim.inspect before any command",
+   "when": "Preparing a version-bound submission for neutral delivery"
+  },
+  "local_git": {
+   "action": "Use this repository's existing authorized remote to publish an immutable development branch, not the protected integration target. Read source revision and file bytes from that commit; use git-blob:relative/path locators. Observe the actual project target reference through that same authorized remote.",
+   "basis": "local_git.manifest verifies committed bytes; it does not run tests, approve work or grant repository write permission",
+   "recheck_on": "Published commit, authorized remote, target revision or connector configuration changes",
+   "when": "The authorized shared project channel is a Git remote observed by a local_git connector"
+  },
+  "manifest_hash_codec": {
+   "algorithm": "sha256",
+   "digest_encoding": "lowercase hexadecimal",
+   "envelope": {
+    "codec": "awr-team-hash-v1",
+    "fields": {
+     "codec": "awr-delivery-manifest-v1",
+     "manifest": "the actual manifest object"
+    },
+    "kind": "request"
+   },
+   "instruction": "Replace envelope.fields.manifest with the actual manifest object and hash the complete envelope once; do not add another wrapper.",
+   "json": "UTF-8 compact JSON; recursively sort object keys, preserve array order, emit non-ASCII characters directly",
+   "manifest_pointer": "/fields/manifest"
+  },
+  "material_inputs": {
+   "candidate_identity": "Choose a stable candidate_id and a positive decimal candidate_version for this immutable submission; never silently reuse its identity for changed facts.",
+   "manifest": "Measure every actual artifact's SHA-256 and decimal byte_length; use its inspectable locator. Compute binding.manifest_digest over the full manifest using manifest_hash_codec.",
+   "source_fetch_ref": "For a Git source revision, optionally declare the full ordinary advertised refs/heads/... or refs/tags/... ref from which that exact commit can be fetched. Only the documented portable ASCII subset is accepted; other Git-legal names are outside this contract. Pass the ref as one argv value without shell interpolation or eval. This ref is candidate-bound but mutable; it is not target.reference and never replaces verification of source_revision after fetch.",
+   "source_revision": "Observe the actual published immutable revision using its opaque connector resource and git_sha1, git_sha256 or artifact format. Null is only a structural option; the configured adapter may require an exact revision.",
+   "target": "Use the authorized connector resource and project target reference. Observe its exact current revision, or confirmed absence; errors and inaccessible targets never mean missing. An exact precondition's revision.resource must equal target.resource."
+  },
+  "project_revision": "104",
+  "read_only": true,
+  "source_snapshot_id": "01M6AQN5X85AYFNRB0H5D15YVH",
+  "source_synchronized": false,
+  "stored_selection": {
+   "binding_digest": "26361fecff514828e5de69770120ba7bca170ba5425197f38988fe60853a33e3",
+   "current": true,
+   "selection_version": "1"
+  },
+  "work_id": "issue-filter-api",
+  "workstream_id": "013FE5E5116E5A8987D377C479"
+ },
+ "project_revision": "104",
+ "project_status": "active",
+ "protocol_version": 1,
+ "scope_id": "main",
+ "selection_basis": "work",
+ "source_snapshot_id": "01M6AQN5X85AYFNRB0H5D15YVH",
+ "workstream_id": "013FE5E5116E5A8987D377C479"
+}

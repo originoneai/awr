@@ -1,0 +1,25 @@
+{
+ "authority_version": "1",
+ "coordinator_epoch": "support-queue-4856fa-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+ "data": {
+  "artifact_id": "01M6ATNTRB664BA81892TRHKQ4",
+  "byte_length": 2753,
+  "content_base64": null,
+  "history_bypass": false,
+  "kind": "artifact",
+  "media_type": "application/octet-stream",
+  "next_step": null,
+  "path_bypass": false,
+  "sha256": "37f728ac073d23df94311a460b8c403a6a81be9b8c36b7479a2011a2869f9a87",
+  "text": "issue-filter-api first version\nFilters: status and keyword combine with AND. Blank values are ignored.\nKeyword matches title only, case-insensitive. Issue records are not written.\nnpm test: 5 passed, 0 failed. Checks: empty list, no match, combined filters, unchanged queue.\ngit HEAD a516342436e434d0072ef9c138f419f2f128caac\n M src/filter.js\n?? test/filter.test.js\nsrc/filter.js sha256 b320e82afee04a1e10363180ddb57ee660cdc6cc819c2859a8e3ba8dc213c0ad\ntest/filter.test.js sha256 76bb4d15dd1d3074105c465ed4f8db290af9b1913e6ee9aebceb6aca496d7aef\n\n----- src/filter.js -----\nfunction criterion(value) {\n  return typeof value === \"string\" ? value.trim().toLowerCase() : \"\";\n}\n\nexport function filterIssues(issues, filters = {}) {\n  const status = criterion(filters.status);\n  const keyword = criterion(filters.keyword);\n  if (!status && !keyword) return issues.slice();\n  return issues.filter((issue) => {\n    const issueStatus = typeof issue.status === \"string\" ? issue.status.toLowerCase() : \"\";\n    const title = typeof issue.title === \"string\" ? issue.title.toLowerCase() : \"\";\n    if (status && issueStatus !== status) return false;\n    if (keyword && !title.includes(keyword)) return false;\n    return true;\n  });\n}\n\n----- test/filter.test.js -----\nimport test from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { filterIssues } from \"../src/filter.js\";\nimport { issues } from \"../src/issues.js\";\n\ntest(\"empty list stays empty\", () => {\n  const input = [];\n  assert.deepEqual(filterIssues(input, { status: \"open\", keyword: \"login\" }), []);\n  assert.deepEqual(input, []);\n});\n\ntest(\"no match returns an empty list and leaves records unchanged\", () => {\n  const input = structuredClone(issues);\n  const before = structuredClone(input);\n  const result = filterIssues(input, { status: \"open\", keyword: \"does-not-match\" });\n  assert.deepEqual(result, []);\n  assert.deepEqual(input, before);\n});\n\ntest(\"status and keyword filters combine without changing records\", () => {\n  const input = [\n    { id: 1, title: \"Login help\", status: \"open\", owner: \"Lin\" },\n    { id: 2, title: \"Login verification\", status: \"pending\", owner: \"Chen\" },\n    { id: 3, title: \"Invoice correction\", status: \"open\", owner: \"Mei\" },\n  ];\n  const before = structuredClone(input);\n  const result = filterIssues(input, { status: \"open\", keyword: \"login\" });\n  assert.deepEqual(result.map((issue) => issue.id), [1]);\n  assert.equal(result[0], input[0]);\n  assert.deepEqual(input, before);\n});\n\ntest(\"queue records stay unchanged after filtering\", () => {\n  const before = structuredClone(issues);\n  const result = filterIssues(issues, { status: \"open\", keyword: \"login\" });\n  assert.deepEqual(result.map((issue) => issue.id), [1]);\n  assert.deepEqual(issues, before);\n});\n",
+  "url_bypass": false,
+  "work_id": "issue-filter-api"
+ },
+ "project_revision": "104",
+ "project_status": "active",
+ "protocol_version": 1,
+ "scope_id": "main",
+ "selection_basis": "work",
+ "source_snapshot_id": "01M6AQN5X85AYFNRB0H5D15YVH",
+ "workstream_id": "013FE5E5116E5A8987D377C479"
+}
