@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
 import { isAuthError } from '../lib/api';
+import { ProjectKnowledge } from './ProjectKnowledge';
 import { ProjectOverview } from './ProjectOverview';
 import { WorkPlanPage } from './WorkPlanPage';
 import { projectsQueryOptions } from '../lib/queries';
@@ -68,7 +69,9 @@ export function ProjectShell() {
               ? <ProjectOverview project={project} />
               : key === 'plan'
                 ? <WorkPlanPage project={project} />
-                : <ObservationEmpty />,
+                : key === 'knowledge'
+                  ? <ProjectKnowledge project={project} />
+                  : <ObservationEmpty />,
           }))}
         />
       </Card>

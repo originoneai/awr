@@ -54,6 +54,22 @@ const zhCN = {
       knowledge: '项目知识',
     },
   },
+  knowledge: {
+    filterPlaceholder: '筛选当前页已加载的来源',
+    fromWorks: '来自 {{count}}／{{total}} 个工作项',
+    failedReads: '{{count}} 个工作项读取失败',
+    sources: '来源',
+    contentIncluded: '含正文',
+    contentMissing: '正文未随响应提供',
+    partial: '部分（长度与 byte_length 不一致）',
+    citingWorks: '引用它的工作项',
+    digestVerified: '摘要已校验',
+    digestMismatch: '摘要不匹配，正文不可信',
+    digestUnverified: '未校验',
+    multipleDigests: '该路径在不同工作项里出现了 {{count}} 个摘要；哪个是当前由后续 source.content 读取决定',
+    contractFor: '合同目标与验收（{{title}}）',
+    openWork: '打开 {{title}}',
+  },
   freshness: {
     title: '新鲜度',
     plane: {

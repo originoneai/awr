@@ -222,12 +222,18 @@ export interface WorkSnapshotData {
   visible_contract?: WorkContract | null;
   published_contract?: WorkContract | null;
   required_specs?: Array<{
-    path?: string;
-    text?: string;
-    content_included?: boolean;
+    path: string;
+    sha256: string;
     byte_length?: number;
-    sha256?: string;
+    content_included?: boolean;
+    text?: string;
     next_step?: unknown;
+  }>;
+  authorized_readable_refs?: Array<{
+    kind: string;
+    path: string;
+    sha256: string;
+    byte_length?: number;
   }>;
   snapshot?: Record<string, unknown>;
   guidance?: {

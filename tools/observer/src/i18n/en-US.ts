@@ -58,6 +58,22 @@ const enUS: Messages = {
       knowledge: 'Project knowledge',
     },
   },
+  knowledge: {
+    filterPlaceholder: 'Filter sources loaded on this page',
+    fromWorks: 'From {{count}} of {{total}} works',
+    failedReads: '{{count}} work reads failed',
+    sources: 'Sources',
+    contentIncluded: 'Text included',
+    contentMissing: 'Text not included in the response',
+    partial: 'Partial (length differs from byte_length)',
+    citingWorks: 'Citing works',
+    digestVerified: 'Digest verified',
+    digestMismatch: 'Digest does not match, text not trusted',
+    digestUnverified: 'Not verified',
+    multipleDigests: 'This path appears with {{count}} digests across works; which is current is decided by a later source.content read',
+    contractFor: 'Contract goals and acceptance ({{title}})',
+    openWork: 'Open {{title}}',
+  },
   freshness: {
     title: 'Freshness',
     plane: {
