@@ -4,6 +4,7 @@ import { isValidElement } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import { ArtifactReader } from '../components/ArtifactReader';
+import { EvidenceChain } from '../components/EvidenceChain';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { FieldLabel, ObservationValue } from '../components/ObservationValue';
@@ -224,6 +225,16 @@ export function ProjectAcceptance({ project }: { project: string }) {
               )}
             </Card>
 
+            <Card size="small" title={t('acceptance.evidenceChain')} data-testid="acceptance-evidence-chain">
+              <EvidenceChain
+                candidateCurrent={collaboration?.candidate?.current}
+                reviewState={reviewObject?.state}
+                reviewCurrent={reviewIsCurrent}
+                integrationState={integrationData?.state ?? collaboration?.integration?.state}
+                completionState={completionData?.runtime_state ?? snapshotData?.observation?.runtime?.state}
+              />
+            </Card>
+
             <Card size="small" title={t('acceptance.review')}>
               {!selectedRound ? empty : review.isPending ? loading : review.isError ? readError(review, 'acceptance-review-error') : (
                 <Space direction="vertical" size={12} style={{ width: '100%' }} data-testid={`acceptance-review-${selectedRound}`}>
@@ -282,7 +293,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
             </Card>
 
             <Row gutter={[16, 16]}>
-              <Col xs={24} xl={8}>
+              <Col xs={24} xl={10}>
                 <Card size="small" title={t('acceptance.evidence')}>
                   {!evidenceId ? empty : evidence.isPending ? loading : evidence.isError ? readError(evidence, 'acceptance-evidence-error') : (
                     <div data-testid="acceptance-evidence">
@@ -315,7 +326,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                   )}
                 </Card>
               </Col>
-              <Col xs={24} xl={8}>
+              <Col xs={24} xl={6}>
                 <Card size="small" title={t('acceptance.claim')}>
                   {!claimId ? empty : claim.isPending ? loading : claim.isError ? readError(claim, 'acceptance-claim-error') : (
                     <div data-testid="acceptance-claim">

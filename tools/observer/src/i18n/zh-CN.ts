@@ -86,6 +86,11 @@ const zhCN = {
     awrRecorded: 'AWR 记录时间',
     pageRead: '页面读取时间',
     sourceQuery: '来源查询开始时间',
+    chainCandidate: '候选',
+    chainReview: '复核',
+    chainIntegration: '集成',
+    chainCompletion: '完成',
+    evidenceChain: '证据链',
   },
   artifact: {
     verified: '摘要已校验',

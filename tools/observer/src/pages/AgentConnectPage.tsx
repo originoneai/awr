@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Button, Card, Descriptions, Space, Tabs, Typography } from 'antd';
+import { Button, Card, Col, Descriptions, Row, Space, Tabs, Typography } from 'antd';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ObservationForbidden } from '../components/states';
@@ -38,7 +38,8 @@ export function AgentConnectPage() {
             key: 'mine',
             label: t('agentConnect.myConnections'),
             children: (
-              <Space direction="vertical" size={16} style={{ width: '100%' }}>
+              <Row gutter={[16, 16]}>
+                <Col xs={24} lg={14}>
                 <Card title={t('agentConnect.instructions')} data-testid="connect-instructions">
                   <Space direction="vertical" size={12}>
                     <Typography.Text strong>{t('agentConnect.serviceAddress')}</Typography.Text>
@@ -73,7 +74,8 @@ export function AgentConnectPage() {
                     </Typography.Text>
                   </Space>
                 </Card>
-
+                </Col>
+                <Col xs={24} lg={10}>
                 <Card title={t('agentConnect.capabilities')} data-testid="connect-capabilities">
                   <Descriptions
                     size="small"
@@ -106,12 +108,16 @@ export function AgentConnectPage() {
                     ]}
                   />
                 </Card>
-
+                </Col>
+                <Col span={24}>
                 <Card title={t('agentConnect.existing')} data-testid="connect-existing">
                   <Typography.Text type="secondary">{t('agentConnect.existingLater')}</Typography.Text>
                 </Card>
-                <Typography.Text type="secondary">{t('account.independentUnavailable')}</Typography.Text>
-              </Space>
+                </Col>
+                <Col span={24}>
+                  <Typography.Text type="secondary">{t('account.independentUnavailable')}</Typography.Text>
+                </Col>
+              </Row>
             ),
           },
           {

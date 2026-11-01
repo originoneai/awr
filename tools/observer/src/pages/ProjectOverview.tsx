@@ -441,10 +441,10 @@ export function ProjectOverview({ project }: { project: string }) {
         {progress}
       </section>
       <Row gutter={[16, 16]}>
-        <Col xs={24} lg={12} style={{ minWidth: 0 }}>
+        <Col xs={24} lg={16} style={{ minWidth: 0 }}>
           <RecentActivity query={activity} />
         </Col>
-        <Col xs={24} lg={12}>
+        <Col xs={24} lg={8}>
           <LaterBlock title={t('projectOverview.dependencies')} testId="project-deps-placeholder" />
         </Col>
       </Row>

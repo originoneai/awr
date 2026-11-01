@@ -90,6 +90,11 @@ const enUS: Messages = {
     awrRecorded: 'AWR recorded at',
     pageRead: 'Page read at',
     sourceQuery: 'Source query started at',
+    chainCandidate: 'Candidate',
+    chainReview: 'Review',
+    chainIntegration: 'Integration',
+    chainCompletion: 'Completion',
+    evidenceChain: 'Evidence chain',
   },
   artifact: {
     verified: 'Digest verified',

@@ -3,6 +3,7 @@ import { Button, Card, Space, Tabs, Tag, Tooltip, Typography } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
+import { ObservationValue } from '../components/ObservationValue';
 import { isAuthError } from '../lib/api';
 import { ProjectAcceptance } from './ProjectAcceptance';
 import { ProjectKnowledge } from './ProjectKnowledge';
@@ -39,12 +40,12 @@ export function ProjectShell() {
               <Typography.Title level={4} style={{ margin: 0 }}>
                 {meta?.title ?? project}
               </Typography.Title>
-              {meta?.role ? <Tag color="blue">{meta.role}</Tag> : null}
+              {meta?.role ? <Tag color="blue"><ObservationValue value={meta.role} /></Tag> : null}
             </Space>
             <div>
               <Typography.Text type="secondary">
                 {t('project.metaKey')} {project}
-                {meta?.role ? ` · ${t('project.metaRole')} ${meta.role}` : ''}
+                {meta?.role ? <> · {t('project.metaRole')} <ObservationValue value={meta.role} /></> : null}
               </Typography.Text>
             </div>
           </div>
