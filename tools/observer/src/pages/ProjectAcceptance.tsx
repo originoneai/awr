@@ -9,6 +9,7 @@ import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../compo
 import { FieldLabel, ObservationValue } from '../components/ObservationValue';
 import { ApiError, isAuthError } from '../lib/api';
 import { formatObservationValue, notProvided } from '../i18n/craft';
+import { craftValueStyle } from '../theme';
 import { formatUnixMs } from '../lib/format';
 import { asArray, asObject, asText, at } from '../lib/json';
 import { outcomeQueryOptions } from '../lib/outcome';
@@ -93,7 +94,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
     if (raw == null || !Number.isFinite(Number(raw))) return missing;
     return (
       <Tooltip title={raw}>
-        <Typography.Text className="craft-value">{formatUnixMs(Number(raw), i18n.language)}</Typography.Text>
+        <Typography.Text className="craft-value" style={craftValueStyle}>{formatUnixMs(Number(raw), i18n.language)}</Typography.Text>
       </Tooltip>
     );
   };

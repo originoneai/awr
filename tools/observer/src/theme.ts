@@ -26,10 +26,31 @@ export const craftTokens = {
     negative: '#B91C1C',
     warning: '#925F0B',
   },
+  font: {
+    interface: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif',
+    meta: 'ui-monospace, "SFMono-Regular", "Cascadia Mono", "Roboto Mono", monospace',
+  },
+} as const;
+
+export const craftValueStyle = {
+  fontFamily: craftTokens.font.meta,
+  fontVariantNumeric: 'tabular-nums',
+  fontWeight: 400,
+  letterSpacing: 0,
 } as const;
 
 export const themeConfig: ThemeConfig = {
   token: {
+    fontFamily: craftTokens.font.interface,
+    fontFamilyCode: craftTokens.font.meta,
+    fontWeightStrong: 500,
+    fontSize: 14,
+    fontSizeSM: 12,
+    fontSizeHeading1: 32,
+    fontSizeHeading2: 28,
+    fontSizeHeading3: 24,
+    fontSizeHeading4: 20,
+    fontSizeHeading5: 16,
     colorPrimary: craftTokens.color.accent,
     colorLink: craftTokens.color.accent,
     colorText: craftTokens.color.ink,
