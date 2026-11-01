@@ -96,6 +96,9 @@ export const FIELD_LABELS: Record<string, readonly [string, string]> = {
   actor_id: ['认证 actor', 'Actor'],
   client_id: ['客户端', 'Client'],
   result: ['结果', 'Result'],
+  id: ['审计行', 'Audit row'],
+  credential_id: ['凭据', 'Credential'],
+  created_at_unix_ms: ['记录时间', 'Recorded at'],
 };
 
 export const STATUS_LABELS: Record<string, readonly [string, string]> = {
