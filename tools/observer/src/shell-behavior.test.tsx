@@ -33,7 +33,7 @@ describe('prototype shell behavior', () => {
     expect(innerLayout?.querySelector(':scope > .ant-layout-content')).not.toBeNull();
     expect(container.querySelector(':scope > .ant-layout > .ant-layout-header')).toBeNull();
     expect(themeConfig.token?.colorBgLayout).toBe('#F8FAFC');
-    expect(themeConfig.components?.Menu?.itemHeight).toBe(52);
+    expect(themeConfig.components?.Menu?.itemHeight).toBe(36);
   });
 
   it('renders real NavLinks and derives project selection from nested routes', async () => {

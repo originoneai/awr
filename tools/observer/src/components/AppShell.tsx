@@ -101,7 +101,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <Layout hasSider style={{ minHeight: '100vh' }}>
       <Sider
-        width={220}
+        width={240}
         breakpoint="lg"
         collapsedWidth={0}
         className="shell-sider"
