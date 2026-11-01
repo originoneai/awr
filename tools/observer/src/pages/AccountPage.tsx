@@ -6,6 +6,7 @@ import { Link } from 'react-router';
 import { apiPost, ApiError } from '../lib/api';
 import { formatUnixMs } from '../lib/format';
 import { overviewQueryOptions, projectsQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
+import { ObservationForbidden } from '../components/states';
 import { useRevocation } from '../lib/revocation';
 import { useScope } from '../lib/scope';
 
@@ -31,6 +32,11 @@ function AccountObservationCards() {
   const actorName = snapshot.data?.result.data.observation?.client?.actor_name;
   const [copied, setCopied] = useState(false);
 
+  if (revoked) {
+    // A revoked session clears the observation cards; the login entry below
+    // stays available for signing in again (AWR-OBS-008).
+    return <ObservationForbidden />;
+  }
   return (
     <>
       <Card title={t('account.identityTitle')} data-testid="account-identity-card">

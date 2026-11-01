@@ -159,3 +159,23 @@ describe('account and connections (AWR-OBS-008)', () => {
     expect(await axe(container)).toHaveNoViolations();
   });
 });
+
+describe('account revocation presentation', () => {
+  it('a revoked session shows the forbidden state on the account page', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ ok: false, error: { code: 'Unauthenticated', message: 'revoked' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderApp('/account?scope=demo');
+    expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
+    const settled = calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(calls.length).toBe(settled);
+  });
+});
