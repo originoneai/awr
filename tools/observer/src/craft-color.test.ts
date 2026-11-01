@@ -35,10 +35,12 @@ describe('craft color tokens', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('uses one accent with accessible text contrast', () => {
-    expect(contrast(craftTokens.color.accent, craftTokens.color.surface)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(craftTokens.color.ink, craftTokens.color.surface)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(craftTokens.color.secondary, craftTokens.color.surface)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(craftTokens.color.muted, craftTokens.color.surface)).toBeGreaterThanOrEqual(4.5);
-  });
+  const roles = ['ink', 'secondary', 'muted', 'accent', 'positive', 'negative', 'warning'] as const;
+  const surfaces = ['page', 'surface', 'raised'] as const;
+  it.each(roles.flatMap((role) => surfaces.map((surface) => ({ role, surface }))))(
+    'keeps $role text accessible on $surface (review r1.2)',
+    ({ role, surface }) => {
+      expect(contrast(craftTokens.color[role], craftTokens.color[surface])).toBeGreaterThanOrEqual(4.5);
+    },
+  );
 });
