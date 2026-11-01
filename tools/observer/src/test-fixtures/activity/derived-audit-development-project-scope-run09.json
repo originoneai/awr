@@ -1,0 +1,515 @@
+{
+ "_note": "DERIVED, NOT A LIVE HTTP REPLY: rows projected from the run-09 database dump by the documented SQL of crates/awr-team-pg/src/workstream_read/activity.rs; next_cursor is a placeholder (the service's cursor is opaque); scope 'project' is what a caller holding AuditReadProject would see",
+ "data": {
+  "scope": "project",
+  "items": [
+   {
+    "id": "01M6BEK3DFG8R70K6Q3FA38JW3",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.end",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533250991,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEJ7RG4BP2NBMSDN64JWGH",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533222672,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEBWKCGCVXACX6KHCWE8WH",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.confirm",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533014637,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEBWJ2Q9ZHHEYNJ2GVNPYV",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.write",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533014594,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEBWGB9HXX9S5N0F529GVZ",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.prepare",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533014539,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEBWERN2KPP1ZZ0DD8DFSJ",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533014489,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEBWEKVFW2NQSW3N28F400",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.refresh",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533014483,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEBWE3TX08M2VC9EJ19H6T",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533014467,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEBW2ESHMXGFKYS2W75Q9X",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.finalize",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533014094,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEBW2E4B2Z1DFV0SMPQQY8",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "work.completed",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533014094,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BE1XSHAAW2GNVA1XS6Y081",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532688177,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BE0M5QFR8R2DN2X1A7S1F7",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.start",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532645559,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW5MPRAVH3WPDWQCYE2BY",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.confirm",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532499606,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW5KQR3H1P73TMVXKN12P",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.write",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532499575,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW5J8HE1JSS1EXXAF1KT0",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.prepare",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532499528,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW5GXCZC4469AVZZY2FAP",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532499485,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW5GQWBQQ78NTMA0EHAWZ",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.refresh",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532499479,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW5FJWD5BGGWP0V3FN987",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532499442,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW554F1FJ6NA587M48PJ1",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.facts.ingest",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532499108,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW4YRVZ2DJAFSVWSKBYDB",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.inspection.reserve",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498904,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW4YM8FSDZ5ZMM76NM9C3",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.confirm",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498900,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW4XJAFPJPBZKFBD6ZDSR",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.write",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498867,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW4W4VR2K3340DT57F1T3",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.prepare",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498820,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW4TTM6AD22YWJ0NF53PB",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498778,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW4TNT10N871RXW8H86Q5",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.refresh",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498773,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW4TADS6MBXPWGTH0B1HB",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498762,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW49R9N0QFG41DE50EQRM",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.confirm",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498232,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW48TQAT8784EZD0Y4965",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.write",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498202,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW47EMHER2NZN3S3539XQ",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.integration.confirm",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498158,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW46S1PSGX49DT69R2X25",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.facts.ingest",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498137,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW46GPMKHTSCBVACEAH8B",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.prepare",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498128,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW44D86WM1ZC55PD3Y9D3",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498061,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW447ZQ5HBHY8KFR45ANG",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.refresh",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498056,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW43XA7WRTC4NQ8HDEYAD",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498045,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW3ZQZA75GHCY0QTT4N1X",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.integration.inspection.reserve",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532497911,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW3VJV5VSH9AJKHVMWK5W",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.facts.ingest",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793532497778,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW3KHKQEA10V40MST11R7",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.inspection.reserve",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793532497522,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW3B0KFGN497WG65TTFEJ",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.integration.dispatch",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532497248,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW3AAZFM3JR9E7JG40ENP",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.integration.lease",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532497226,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW2VMX8MP098Y31PAAVNE",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": null,
+    "action": "delivery.integration.prepare",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532496756,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BCRWZETRCYZ6F3DTEGPWK0",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.end",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793531343854,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BCQM9WANWGGV3G5VM1TKB9",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793531302204,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BCA5E9DDS2R7E7YBYEMN78",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "review.decide",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793530861001,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BCA5E8MK0A9C05P2D6TGKH",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "review.decided",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793530861001,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BC5PZ9NXTYKX7K9GHXE0E0",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793530715113,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BC3SNCJF22F90J9V08S0Z2",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.start",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793530652332,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9TWJK5M8BJPXVW39MB6RY",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793528263251,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9S27KWGD1CEPG3EEPH0JJ",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.submit_and_request_review",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793528203508,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9S27KJYTQZWJFNYQ4HH7S",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "review.opened",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793528203507,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9QEE4D8DGRXH04XSPPGZR",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.evidence.submit",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793528150469,
+    "credential_id": null
+   }
+  ],
+  "next_cursor": "OPAQUE-PLACEHOLDER",
+  "request_retention_capacity": 10000,
+  "request_retention": "oldest_pruned_soft_capacity",
+  "unknown_means": "completion_not_recorded; inspect business request before retrying",
+  "development_source": "committed_events_with_operation_attribution; historical client may be unavailable",
+  "chat_text_collected": false,
+  "tool_io_collected": false
+ }
+}

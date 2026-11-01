@@ -84,12 +84,14 @@ export interface TeamOverviewResponse {
   interaction_mode?: string;
 }
 
+export type TeamIdentity = NonNullable<TeamOverviewResponse['identity']>;
+
 export interface TeamActivityItem {
   action: string;
   actor_id: string;
-  client_id: string;
+  client_id: string | null;
   created_at_unix_ms: number;
-  credential_id: string;
+  credential_id: string | null;
   id: string;
   result: unknown;
   work_id: string | null;
@@ -104,6 +106,7 @@ export interface TeamActivityResponse {
     chat_text_collected: false;
     tool_io_collected: false;
     request_retention: unknown;
+    request_retention_capacity?: number;
     scope: unknown;
     unknown_means: unknown;
   };
