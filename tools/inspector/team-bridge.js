@@ -216,6 +216,27 @@ function validReadResponse(reply, op) {
  * workstream (coordination detail always selects one).
  */
 function readAttributionError(query, result, { strictWorkstream } = {}) {
+  // work.next is an identity-scoped navigation read: the real upstream
+  // response carries only { data, project_revision, protocol_version } — no
+  // scope/snapshot attribution envelope exists for it (verified against a
+  // live Team service). The standard envelope check therefore does not
+  // apply, and nothing is fabricated for it either; its authoritative
+  // freshness plane stays not_measured (readFreshness requires the full
+  // triple), never a borrowed clock. The response must still be well formed
+  // and must never grant execution.
+  if (query.op === 'work.next') {
+    if (!result || result.protocol_version !== 1) {
+      return { code: 'BadGateway', message: 'Invalid Team read response' };
+    }
+    const data = result.data;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      return { code: 'BadGateway', message: 'Invalid Team read response' };
+    }
+    if (data.execution_authorized === true) {
+      return { code: 'BadGateway', message: 'A Team read response never authorizes execution' };
+    }
+    return null;
+  }
   if (!result || result.protocol_version !== 1 || result.scope_id !== 'main'
     || !['source_snapshot_id', 'project_revision', 'coordinator_epoch']
       .every((k) => typeof result[k] === 'string' && result[k])

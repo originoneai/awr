@@ -4,6 +4,17 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
+- The generic Team read adapter (`POST /api/team/read`) now serves the real `work.next`
+  response. Upstream's identity-scoped navigation read carries only
+  `{ data, project_revision, protocol_version }` — no scope/snapshot attribution
+  envelope — so the OBS-002 envelope check rejected every real `work.next` as
+  `BadGateway`. `work.next` is now treated as what it is: the response must still be
+  well formed (protocol version, object `data`, valid `next_cursor`) and is still
+  refused if it claims `execution_authorized`, but no envelope is required or
+  fabricated for it. Its freshness planes say the truth: `authoritative` is
+  `not_measured` (a bare `project_revision` is not a comparable measurement and never
+  borrows another clock), `page_read` is `measured`, and `report_received` follows the
+  usual contract. Envelope-carrying reads are unchanged.
 - A compact Team MCP tool catalog for clients whose model provider caps the size of a tool schema
   (AWR-TF-014AN). Moonshot's API refuses `awr_team_command` because its full input schema is about
   130 KB (`schema exceeds maximum allowed size`), which stopped every Kimi Code turn against a Team
