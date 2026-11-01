@@ -183,7 +183,12 @@ export function ProjectAcceptance({ project }: { project: string }) {
                   <List.Item
                     data-testid={`acceptance-work-${work.key}`}
                     onClick={() => selectWork(work.key)}
-                    style={{ cursor: 'pointer', background: selectedWork?.key === work.key ? token.colorFillSecondary : undefined }}
+                    style={{
+                      cursor: 'pointer',
+                      background: selectedWork?.key === work.key ? token.colorFillSecondary : undefined,
+                      border: selectedWork?.key === work.key ? `1px solid ${token.colorPrimary}` : undefined,
+                      borderRadius: selectedWork?.key === work.key ? token.borderRadius : undefined,
+                    }}
                   >
                     <Space direction="vertical" size={2}>
                       <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{work.title}</Typography.Text>

@@ -30,9 +30,16 @@ export const craftTokens = {
     interface: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif',
     meta: 'ui-monospace, "SFMono-Regular", "Cascadia Mono", "Roboto Mono", monospace',
   },
+  radius: {
+    control: 8,
+    card: 12,
+    panel: 16,
+    nested: 4,
+  },
 } as const;
 
 export const craftValueStyle = {
+  color: craftTokens.color.secondary,
   fontFamily: craftTokens.font.meta,
   fontVariantNumeric: 'tabular-nums',
   fontWeight: 400,
@@ -75,7 +82,11 @@ export const themeConfig: ThemeConfig = {
     colorInfo: craftTokens.color.accent,
     colorInfoBg: craftTokens.color.raised,
     colorInfoBorder: craftTokens.color.hairline,
-    borderRadius: 8,
+    borderRadius: craftTokens.radius.control,
+    borderRadiusLG: craftTokens.radius.card,
+    borderRadiusSM: craftTokens.radius.nested,
+    boxShadowTertiary: '0 1px 2px rgba(17, 24, 39, 0.05)',
+    boxShadowSecondary: '0 8px 24px rgba(17, 24, 39, 0.06)',
     controlHeight: craftTokens.navigationRowHeight,
     padding: craftTokens.spacing.page,
     paddingSM: craftTokens.spacing.group,
@@ -91,8 +102,12 @@ export const themeConfig: ThemeConfig = {
       siderBg: craftTokens.color.surface,
       bodyBg: craftTokens.color.page,
     },
+    Card: {
+      borderRadiusLG: craftTokens.radius.card,
+    },
     Menu: {
       itemHeight: craftTokens.navigationRowHeight,
+      itemBorderRadius: craftTokens.radius.control,
       itemColor: craftTokens.color.secondary,
       itemHoverBg: craftTokens.color.raised,
       itemSelectedBg: craftTokens.color.raised,

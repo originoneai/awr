@@ -185,7 +185,12 @@ export function ProjectKnowledge({ project }: { project: string }) {
                   <List.Item
                     data-testid={`knowledge-source-${entry.path}-${entry.sha256.slice(0, 12)}`}
                     onClick={() => setSelectedKey(`${entry.path}::${entry.sha256}`)}
-                    style={{ cursor: 'pointer', background: selected && `${selected.path}::${selected.sha256}` === `${entry.path}::${entry.sha256}` ? token.colorFillSecondary : undefined }}
+                    style={{
+                      cursor: 'pointer',
+                      background: selected && `${selected.path}::${selected.sha256}` === `${entry.path}::${entry.sha256}` ? token.colorFillSecondary : undefined,
+                      border: selected && `${selected.path}::${selected.sha256}` === `${entry.path}::${entry.sha256}` ? `1px solid ${token.colorPrimary}` : undefined,
+                      borderRadius: selected && `${selected.path}::${selected.sha256}` === `${entry.path}::${entry.sha256}` ? token.borderRadius : undefined,
+                    }}
                   >
                     <Space direction="vertical" size={2} style={{ minWidth: 0 }}>
                       <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{entry.path}</Typography.Text>
