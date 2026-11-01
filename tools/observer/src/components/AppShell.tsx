@@ -190,7 +190,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               className="shell-avatar-button"
               aria-label={t('shell.identity')}
             >
-              <Avatar style={{ background: '#EFF6FF', color: '#2563EB' }}>
+              <Avatar style={{ background: token.colorFillSecondary, color: token.colorPrimary }}>
                 {(selectedProject?.title ?? t('app.wordmark')).slice(0, 1)}
               </Avatar>
             </Button>

@@ -1,5 +1,5 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { Card, Col, Descriptions, List, Pagination, Row, Space, Tag, Tooltip, Typography } from 'antd';
+import { Card, Col, Descriptions, List, Pagination, Row, Space, Tag, Tooltip, Typography, theme } from 'antd';
 import { isValidElement } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
@@ -28,6 +28,7 @@ function errorCode(error: unknown) {
 /** Exact outcome evidence; no status is inferred from CI, merge or artifact readability. */
 export function ProjectAcceptance({ project }: { project: string }) {
   const { t, i18n } = useTranslation();
+  const { token } = theme.useToken();
   const { revoked } = useRevocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const overview = useQuery(overviewQueryOptions(project, revoked));
@@ -180,7 +181,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                   <List.Item
                     data-testid={`acceptance-work-${work.key}`}
                     onClick={() => selectWork(work.key)}
-                    style={{ cursor: 'pointer', background: selectedWork?.key === work.key ? '#EFF6FF' : undefined }}
+                    style={{ cursor: 'pointer', background: selectedWork?.key === work.key ? token.colorFillSecondary : undefined }}
                   >
                     <Space direction="vertical" size={2}>
                       <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{work.title}</Typography.Text>

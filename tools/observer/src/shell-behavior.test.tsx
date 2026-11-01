@@ -32,7 +32,7 @@ describe('prototype shell behavior', () => {
     expect(innerLayout?.querySelector(':scope > .ant-layout-header')).not.toBeNull();
     expect(innerLayout?.querySelector(':scope > .ant-layout-content')).not.toBeNull();
     expect(container.querySelector(':scope > .ant-layout > .ant-layout-header')).toBeNull();
-    expect(themeConfig.token?.colorBgLayout).toBe('#F8FAFC');
+    expect(themeConfig.token?.colorBgLayout).toBe('#F5F7FA');
     expect(themeConfig.components?.Menu?.itemHeight).toBe(36);
   });
 
@@ -126,8 +126,8 @@ describe('prototype shell behavior', () => {
 });
 
 describe('theme and antd integration', () => {
-  it('uses the prototype primary color', () => {
-    expect(themeConfig.token?.colorPrimary).toBe('#2563EB');
+  it('uses the approved indicator accent', () => {
+    expect(themeConfig.token?.colorPrimary).toBe('#1D4ED8');
   });
 
   it('maps Chinese and English to the corresponding antd locales', () => {

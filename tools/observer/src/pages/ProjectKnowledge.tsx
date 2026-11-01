@@ -1,5 +1,5 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { Card, Col, Input, List, Row, Space, Tag, Tooltip, Typography } from 'antd';
+import { Card, Col, Input, List, Row, Space, Tag, Tooltip, Typography, theme } from 'antd';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
@@ -45,6 +45,7 @@ type DigestCheck = 'pending' | 'verified' | 'mismatch' | 'unverified';
 /** Assemble the knowledge list from per-work reads, never a project-level read. */
 export function ProjectKnowledge({ project }: { project: string }) {
   const { t } = useTranslation();
+  const { token } = theme.useToken();
   const { revoked } = useRevocation();
   const overview = useQuery(overviewQueryOptions(project, revoked));
   const works = overview.data?.works ?? [];
@@ -184,7 +185,7 @@ export function ProjectKnowledge({ project }: { project: string }) {
                   <List.Item
                     data-testid={`knowledge-source-${entry.path}-${entry.sha256.slice(0, 12)}`}
                     onClick={() => setSelectedKey(`${entry.path}::${entry.sha256}`)}
-                    style={{ cursor: 'pointer', background: selected && `${selected.path}::${selected.sha256}` === `${entry.path}::${entry.sha256}` ? '#EFF6FF' : undefined }}
+                    style={{ cursor: 'pointer', background: selected && `${selected.path}::${selected.sha256}` === `${entry.path}::${entry.sha256}` ? token.colorFillSecondary : undefined }}
                   >
                     <Space direction="vertical" size={2} style={{ minWidth: 0 }}>
                       <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{entry.path}</Typography.Text>
