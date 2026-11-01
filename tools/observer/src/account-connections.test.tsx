@@ -221,3 +221,70 @@ describe('account page (AWR-OBS-008)', () => {
     expect(calls.length).toBe(settled);
   });
 });
+
+describe('agent-connect and account review round 2', () => {
+  it('shows manage-members and read-audit as distinct rows with their own values', async () => {
+    const custom = {
+      ...OVERVIEW,
+      identity: { ...OVERVIEW.identity, can_manage_members: true, can_read_project_audit: false },
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/team/projects')) return jsonResponse(PROJECTS);
+      if (url.includes('/api/team/overview')) return jsonResponse(custom);
+      return jsonResponse({ ok: false, error: { code: 'NoRoute' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderApp('/agent-connect?scope=demo');
+    const card = await screen.findByTestId('connect-capabilities');
+    const rows = card.querySelectorAll('.ant-descriptions-item');
+    const textOf = (label: string) => Array.from(rows).find((row) => row.textContent?.includes(label))?.textContent;
+    await waitFor(() => expect(textOf('可管理成员')).toContain('true'));
+    expect(textOf('可管理成员')).not.toContain('false');
+    expect(textOf('可读项目审计')).toContain('false');
+    expect(textOf('可读项目审计')).not.toContain('true');
+  });
+
+  it('the first copy button copies exactly the MCP address too', async () => {
+    setupAccount();
+    const user = userEvent.setup();
+    const written: string[] = [];
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { written.push(text); } } });
+    renderApp('/agent-connect?scope=demo');
+    await user.click(await screen.findByRole('button', { name: /^复\s*制$/ }));
+    await waitFor(() => expect(written.length).toBe(1));
+    expect(written[0]).toBe('http://127.0.0.1:9000/v1/projects/demo/mcp');
+  });
+
+  it('a revoked session shows the forbidden state on /agent-connect and silences reads', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      return jsonResponse({ ok: false, error: { code: 'Unauthenticated', message: 'revoked' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderApp('/agent-connect?scope=demo');
+    expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
+    const settled = calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(calls.length).toBe(settled);
+  });
+
+  it('no part of session.session_id appears in the account page DOM', async () => {
+    setupAccount();
+    renderApp('/account?scope=demo');
+    await screen.findByTestId('account-session-card');
+    const parts = FULL_SESSION_ID.split(/[_-]/).filter((part) => part.length >= 4);
+    for (const part of parts) {
+      expect(document.body.textContent).not.toContain(part);
+    }
+  });
+
+  it('the account page also declares independent revocation unavailable, with no single-connection revoke button', async () => {
+    setupAccount();
+    renderApp('/account?scope=demo');
+    await screen.findByTestId('independent-revoke-unavailable');
+    expect(screen.queryByRole('button', { name: /撤销独立连接|撤销代理连接|撤销单个连接/ })).toBeNull();
+  });
+});

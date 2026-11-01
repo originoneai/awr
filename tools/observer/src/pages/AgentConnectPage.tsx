@@ -56,9 +56,13 @@ export function AgentConnectPage() {
                       </Button>
                       <Button size="small" onClick={async () => {
                         if (!mcpUrl) return;
-                        // The full instructions contain the address only,
-                        // never a credential value (AWR-OBS-008).
-                        await navigator.clipboard.writeText(`MCP: ${mcpUrl}`);
+                        try {
+                          // The full instructions contain the address only,
+                          // never a credential value (AWR-OBS-008).
+                          await navigator.clipboard.writeText(`MCP: ${mcpUrl}`);
+                        } catch {
+                          // Clipboard can be denied; do not leave an unhandled rejection.
+                        }
                       }}>
                         {t('agentConnect.copyInstructions')}
                       </Button>
