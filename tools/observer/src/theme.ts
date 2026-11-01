@@ -36,6 +36,12 @@ export const craftTokens = {
     panel: 16,
     nested: 4,
   },
+  motion: {
+    easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+    feedbackMs: 160,
+    overlayMs: 200,
+    enterMs: 400,
+  },
 } as const;
 
 export const craftValueStyle = {
@@ -51,6 +57,10 @@ export const themeConfig: ThemeConfig = {
     fontFamily: craftTokens.font.interface,
     fontFamilyCode: craftTokens.font.meta,
     fontWeightStrong: 500,
+    motionEaseOut: craftTokens.motion.easing,
+    motionDurationFast: `${craftTokens.motion.feedbackMs}ms`,
+    motionDurationMid: `${craftTokens.motion.overlayMs}ms`,
+    motionDurationSlow: `${craftTokens.motion.enterMs}ms`,
     fontSize: 14,
     fontSizeSM: 12,
     fontSizeHeading1: 32,

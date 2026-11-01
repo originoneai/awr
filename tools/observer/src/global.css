@@ -35,6 +35,15 @@ body,
   font-weight: 500;
 }
 
+.shell-nav .ant-menu-item,
+.shell-header .ant-btn {
+  transition:
+    color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 .shell-nav .ant-menu-item-selected {
   outline: 1px solid var(--ant-color-primary);
   outline-offset: -1px;
