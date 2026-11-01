@@ -1,0 +1,24 @@
+{
+ "data": {
+  "chat_text_collected": false,
+  "development_source": "committed_events_with_operation_attribution; historical client may be unavailable",
+  "items": [
+   {
+    "action": "access.changed",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": null,
+    "created_at_unix_ms": 1793509201984,
+    "credential_id": null,
+    "id": "01M6AQN620E2D2M9BQWBH8W9NX",
+    "result": "committed",
+    "work_id": null
+   }
+  ],
+  "next_cursor": null,
+  "request_retention": "oldest_pruned_soft_capacity",
+  "request_retention_capacity": 10000,
+  "scope": "self",
+  "tool_io_collected": false,
+  "unknown_means": "completion_not_recorded; inspect business request before retrying"
+ }
+}

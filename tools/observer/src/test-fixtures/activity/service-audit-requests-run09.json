@@ -1,0 +1,514 @@
+{
+ "data": {
+  "chat_text_collected": false,
+  "development_source": "committed_events_with_operation_attribution; historical client may be unavailable",
+  "items": [
+   {
+    "action": "audit.requests",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526356827,
+    "credential_id": "native-observer",
+    "id": "01M6B80PTVAK8E8B2EPV5XYXAM",
+    "result": "unknown",
+    "work_id": null
+   },
+   {
+    "action": "capabilities",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526356820,
+    "credential_id": "native-observer",
+    "id": "01M6B80PTM232PGPVQCXY9C0K3",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "work.next",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526356810,
+    "credential_id": "native-observer",
+    "id": "01M6B80PTAZH70EKMEP8Z40XYG",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "audit.development",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526356723,
+    "credential_id": "native-observer",
+    "id": "01M6B80PQKNMYPZZNZ9TYJYPM9",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "capabilities",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526356717,
+    "credential_id": "native-observer",
+    "id": "01M6B80PQDX3J9E14AC5S2VAPH",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "work.next",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526356708,
+    "credential_id": "native-observer",
+    "id": "01M6B80PQ3EVXB4PBCGTSG6EKC",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "artifact.segment",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526356627,
+    "credential_id": "native-observer",
+    "id": "01M6B80PMJBJ7GP15JFS0PPW3Q",
+    "result": "unknown",
+    "work_id": "issue-filter-api"
+   },
+   {
+    "action": "capabilities",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526347967,
+    "credential_id": "native-observer",
+    "id": "01M6B80E5Z9G97JF56G7EDNTHF",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "work.next",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526347959,
+    "credential_id": "native-observer",
+    "id": "01M6B80E5QZKZ4SQSC22EY0Q8V",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "capabilities",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526347872,
+    "credential_id": "native-observer",
+    "id": "01M6B80E301W0JYEVBYZNK923E",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "work.next",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526347861,
+    "credential_id": "native-observer",
+    "id": "01M6B80E2N0X8CTK7XAW3A9Z74",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "execution.inspect",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526347700,
+    "credential_id": "native-observer",
+    "id": "01M6B80DXM7E22JJY2HNYRQ5WE",
+    "result": "succeeded",
+    "work_id": "issue-filter-api"
+   },
+   {
+    "action": "claim.inspect",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526347618,
+    "credential_id": "native-observer",
+    "id": "01M6B80DV20MDPBBMYSCYM0M7G",
+    "result": "succeeded",
+    "work_id": "issue-filter-api"
+   },
+   {
+    "action": "work.recovery",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526347508,
+    "credential_id": "native-observer",
+    "id": "01M6B80DQM518YXG8JG696QK8Y",
+    "result": "succeeded",
+    "work_id": "issue-filter-api"
+   },
+   {
+    "action": "work.admission",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526347422,
+    "credential_id": "native-observer",
+    "id": "01M6B80DMXCHG2VJ90XR3GR67P",
+    "result": "succeeded",
+    "work_id": "issue-filter-api"
+   },
+   {
+    "action": "delivery.exports",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526347333,
+    "credential_id": "native-observer",
+    "id": "01M6B80DJ4BDPAH3HEBXMM2AEE",
+    "result": "succeeded",
+    "work_id": "issue-filter-api"
+   },
+   {
+    "action": "delivery.submission.describe",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526347241,
+    "credential_id": "native-observer",
+    "id": "01M6B80DF9HY280864W25WEBSP",
+    "result": "succeeded",
+    "work_id": "issue-filter-api"
+   },
+   {
+    "action": "delivery.neutral.inspect",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526347150,
+    "credential_id": "native-observer",
+    "id": "01M6B80DCD9AQJMETVYJ1R534H",
+    "result": "succeeded",
+    "work_id": "issue-filter-api"
+   },
+   {
+    "action": "completion.inspect",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526347066,
+    "credential_id": "native-observer",
+    "id": "01M6B80D9S2HJHZZ4T11TG6XCZ",
+    "result": "succeeded",
+    "work_id": "issue-filter-api"
+   },
+   {
+    "action": "evidence.inspect",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526346982,
+    "credential_id": "native-observer",
+    "id": "01M6B80D76W2BP36HXRRKSXP1Q",
+    "result": "succeeded",
+    "work_id": "issue-filter-api"
+   },
+   {
+    "action": "delivery.neutral.inspect",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526314385,
+    "credential_id": "native-observer",
+    "id": "01M6B7ZDCHK31QEYVQKS8TX0VF",
+    "result": "succeeded",
+    "work_id": "issue-filter-page"
+   },
+   {
+    "action": "delivery.inspect",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526314301,
+    "credential_id": "native-observer",
+    "id": "01M6B7ZD9XRTXTGV3BH90P722N",
+    "result": "succeeded",
+    "work_id": "issue-filter-api"
+   },
+   {
+    "action": "work.admission",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526314214,
+    "credential_id": "native-observer",
+    "id": "01M6B7ZD762QX78P73EA2NFPRQ",
+    "result": "succeeded",
+    "work_id": "issue-filter-api"
+   },
+   {
+    "action": "delivery.neutral.inspect",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526314121,
+    "credential_id": "native-observer",
+    "id": "01M6B7ZD49TWTY8GEWGQ96KVH7",
+    "result": "succeeded",
+    "work_id": "issue-filter-api"
+   },
+   {
+    "action": "delivery.neutral.inspect",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526314032,
+    "credential_id": "native-observer",
+    "id": "01M6B7ZD1GVCS8WJQB4JFW99VD",
+    "result": "succeeded",
+    "work_id": "issue-filter-api"
+   },
+   {
+    "action": "delivery.neutral.inspect",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526313910,
+    "credential_id": "native-observer",
+    "id": "01M6B7ZCXPFNZNHTWS0VBZF6EN",
+    "result": "succeeded",
+    "work_id": "issue-filter-api"
+   },
+   {
+    "action": "invalid.query",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526306064,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z58GNY8XJG8E3NHZT3DG",
+    "result": "failed",
+    "work_id": null
+   },
+   {
+    "action": "capabilities",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526306057,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z58916H54PZYDRZK9994",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "work.next",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526306047,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z57Z22AZ4HXDR10C5CG0",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "invalid.query",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305964,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z55CNTJRD3GFX4W6AQ5K",
+    "result": "failed",
+    "work_id": null
+   },
+   {
+    "action": "capabilities",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305958,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z556338T2FS8H28H6V3F",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "work.next",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305949,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z54XY1J8JFEKDQ3M4502",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "invalid.query",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305869,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z52DB6E416X3DRAFYQCK",
+    "result": "failed",
+    "work_id": null
+   },
+   {
+    "action": "capabilities",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305863,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z527NPM1WA4T4Y1P830J",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "work.next",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305854,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z51YSQXWX6FR9NEP3PX2",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "invalid.query",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305775,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z4ZFB20EZ2RYGQ09VJXF",
+    "result": "failed",
+    "work_id": null
+   },
+   {
+    "action": "capabilities",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305768,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z4Z8ERHXTV5GKW9AZJTE",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "work.next",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305760,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z4YZV6W8QW9DMK67TMXM",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "invalid.query",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305680,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z4WGRPH4A01M5B2FBSYH",
+    "result": "failed",
+    "work_id": null
+   },
+   {
+    "action": "capabilities",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305674,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z4WAHEA9J395FBJY84AK",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "work.next",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305665,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z4W1V9WF2296VESD9RT8",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "invalid.query",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305583,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z4SFG7X9VGDEQFZKPTM5",
+    "result": "failed",
+    "work_id": null
+   },
+   {
+    "action": "capabilities",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305576,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z4S8SMRKH3J3Q5FKBQ5Z",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "work.next",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305565,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z4RXBCYS3F6Q86ETV9MS",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "invalid.query",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305480,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z4P825A8DFV24V83VS4Q",
+    "result": "failed",
+    "work_id": null
+   },
+   {
+    "action": "capabilities",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305472,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z4P0R1XJVZGE16XM32YM",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "work.next",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305461,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z4NNDZ71QZCDQSVE5V3X",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "invalid.query",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305373,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z4JXMQ8VXCVJ6K2TYXNS",
+    "result": "failed",
+    "work_id": null
+   },
+   {
+    "action": "capabilities",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305365,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z4JNRCKNFEE562GA9EX5",
+    "result": "succeeded",
+    "work_id": null
+   },
+   {
+    "action": "work.next",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "observer-computer-use-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "created_at_unix_ms": 1793526305355,
+    "credential_id": "native-observer",
+    "id": "01M6B7Z4JB2KNES5PF0RYP80N3",
+    "result": "succeeded",
+    "work_id": null
+   }
+  ],
+  "next_cursor": "{\"binding\":\"f3eefd048df7939434d1d99141763c8e891c1723b5eac92077756772a4a1089e\",\"key\":\"01M6B7Z4JB2KNES5PF0RYP80N3\",\"revision\":\"1793526305355984\",\"index\":-1}",
+  "request_retention": "oldest_pruned_soft_capacity",
+  "request_retention_capacity": 10000,
+  "scope": "self",
+  "tool_io_collected": false,
+  "unknown_means": "completion_not_recorded; inspect business request before retrying"
+ }
+}

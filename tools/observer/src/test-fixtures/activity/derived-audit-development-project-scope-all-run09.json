@@ -1,0 +1,2135 @@
+{
+ "_note": "DERIVED, NOT A LIVE HTTP REPLY: ALL 212 committed events of run-09 projected by the documented SQL of crates/awr-team-pg/src/workstream_read/activity.rs (newest first); a real reply holds at most `limit` (default 50, max 100) items per page plus an opaque next_cursor; this file is meant to build paged fixtures with real action codes (review.decided, delivery.integration.confirm, delivery.finalize, work.completed, ...), real actors and work ids",
+ "data": {
+  "scope": "project",
+  "items": [
+   {
+    "id": "01M6BEK3DFG8R70K6Q3FA38JW3",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.end",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533250991,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEJ7RG4BP2NBMSDN64JWGH",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533222672,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEBWKCGCVXACX6KHCWE8WH",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.confirm",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533014637,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEBWJ2Q9ZHHEYNJ2GVNPYV",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.write",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533014594,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEBWGB9HXX9S5N0F529GVZ",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.prepare",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533014539,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEBWERN2KPP1ZZ0DD8DFSJ",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533014489,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEBWEKVFW2NQSW3N28F400",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.refresh",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533014483,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEBWE3TX08M2VC9EJ19H6T",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533014467,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEBW2ESHMXGFKYS2W75Q9X",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.finalize",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533014094,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BEBW2E4B2Z1DFV0SMPQQY8",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "work.completed",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793533014094,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BE1XSHAAW2GNVA1XS6Y081",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532688177,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BE0M5QFR8R2DN2X1A7S1F7",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.start",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532645559,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW5MPRAVH3WPDWQCYE2BY",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.confirm",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532499606,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW5KQR3H1P73TMVXKN12P",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.write",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532499575,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW5J8HE1JSS1EXXAF1KT0",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.prepare",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532499528,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW5GXCZC4469AVZZY2FAP",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532499485,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW5GQWBQQ78NTMA0EHAWZ",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.refresh",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532499479,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW5FJWD5BGGWP0V3FN987",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532499442,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW554F1FJ6NA587M48PJ1",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.facts.ingest",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532499108,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW4YRVZ2DJAFSVWSKBYDB",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.inspection.reserve",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498904,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW4YM8FSDZ5ZMM76NM9C3",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.confirm",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498900,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW4XJAFPJPBZKFBD6ZDSR",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.write",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498867,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW4W4VR2K3340DT57F1T3",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.prepare",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498820,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW4TTM6AD22YWJ0NF53PB",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498778,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW4TNT10N871RXW8H86Q5",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.refresh",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498773,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW4TADS6MBXPWGTH0B1HB",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498762,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW49R9N0QFG41DE50EQRM",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.confirm",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498232,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW48TQAT8784EZD0Y4965",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.write",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498202,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW47EMHER2NZN3S3539XQ",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.integration.confirm",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498158,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW46S1PSGX49DT69R2X25",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.facts.ingest",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498137,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW46GPMKHTSCBVACEAH8B",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.prepare",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498128,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW44D86WM1ZC55PD3Y9D3",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498061,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW447ZQ5HBHY8KFR45ANG",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.refresh",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498056,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW43XA7WRTC4NQ8HDEYAD",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793532498045,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW3ZQZA75GHCY0QTT4N1X",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.integration.inspection.reserve",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532497911,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW3VJV5VSH9AJKHVMWK5W",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.facts.ingest",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793532497778,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW3KHKQEA10V40MST11R7",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.inspection.reserve",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793532497522,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW3B0KFGN497WG65TTFEJ",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.integration.dispatch",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532497248,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW3AAZFM3JR9E7JG40ENP",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.integration.lease",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532497226,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BDW2VMX8MP098Y31PAAVNE",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": null,
+    "action": "delivery.integration.prepare",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793532496756,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BCRWZETRCYZ6F3DTEGPWK0",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.end",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793531343854,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BCQM9WANWGGV3G5VM1TKB9",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793531302204,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BCA5E9DDS2R7E7YBYEMN78",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "review.decide",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793530861001,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BCA5E8MK0A9C05P2D6TGKH",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "review.decided",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793530861001,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BC5PZ9NXTYKX7K9GHXE0E0",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793530715113,
+    "credential_id": null
+   },
+   {
+    "id": "01M6BC3SNCJF22F90J9V08S0Z2",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.start",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793530652332,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9TWJK5M8BJPXVW39MB6RY",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793528263251,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9S27KWGD1CEPG3EEPH0JJ",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.submit_and_request_review",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793528203508,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9S27KJYTQZWJFNYQ4HH7S",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "review.opened",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793528203507,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9QEE4D8DGRXH04XSPPGZR",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.evidence.submit",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793528150469,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9QEE4R6YCB5Q9KPY5BEB4",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "evidence.recorded",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793528150468,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9NYWC5DQJC9911E5JS334",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.evidence.submit",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793528101772,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9NYWB3Q7V5DZDESKZ0JKQ",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "evidence.recorded",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793528101772,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9MS1PP363JT52C0BD80J2",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.evidence.submit",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793528063030,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9MS1PB809VMSASCHJG4V7",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "evidence.recorded",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793528063030,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9GT2VNK3CEB3YFA8NZK5Z",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.evidence.submit",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527933019,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9GT2VGWHSPVFPD1GG92YG",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "evidence.recorded",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527933019,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9EZ7TY8WWXF950J5ZQDSM",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.confirm",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527872762,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9EZ6W84QX4BXW02SHGF7X",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.write",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527872733,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9EZ5KD5QHV5P3KK13WJEY",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.prepare",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527872691,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9EZ4CNH351D42NYYT8JCE",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527872653,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9EZ478E1FA3W0DHW30GFP",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.refresh",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527872647,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9EZ3STFKSRJG9G84B93NT",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527872633,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9EYSPS51J886EX6GQPD2T",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.facts.ingest",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527872310,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9EYKSDTGK10BZW4G1Q4NC",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.inspection.reserve",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527872121,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9EY6EP8KGAGKMAVNDZ4ZE",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": null,
+    "action": "delivery.candidate.select",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527871694,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9C523GWJW0XT3NB7SVZSS",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "execution.report",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527780419,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B9827W4V5251Z53JN1KRQP",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "execution.start",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527646461,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B97NRYZ5CWBHZKPDKGB2X0",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "execution.prepare",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527633695,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B96HGXNQ5XA0SFN92W3S7J",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "claim.expired",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527596573,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B96HGXKWJVJRZC60ETP6Y8",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "claim.acquire",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527596573,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B95PAE2ZNDA8ARGHHNZ8VQ",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527568718,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B92SK77VWAWE2TP3Q4HWZD",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527473768,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8Q49EBQ28XHMHN8S1KGF8",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.end",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527091503,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8NVKKWWMQ9BQ6FQR8YZC2",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793527049843,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8J118J49A5KEGZX5NX8EF",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.start",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526924328,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C89HW58F79B35D55FDED",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.confirm",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526735153,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C88HQK88TBEK53ZZV61Z",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.write",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526735121,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C8757DAW17TPB3MGW5DD",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.prepare",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526735077,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C85X3PXNSAED79C2V6BF",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526735037,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C85Q2G71TJ8EZ6BN96MT",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.refresh",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526735031,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C8599CT2PSGSFMSWCY5M",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526735018,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C7T6C7J8J4RNJR0V12BS",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.facts.ingest",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526734662,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C7MRAFRHQ5K120J27J5Q",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.inspection.reserve",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526734488,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C74F6YZA7TJTG8MXX7ZK",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.confirm",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526733967,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C73FDQXF2K3WYE2FD1Y7",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.write",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526733935,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C7242DBQYTQJ320MR3FG",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.prepare",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526733893,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C710W0C7X8BKQN4SPM6Y",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526733856,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C70VGR0XW2MBYDJGGTKK",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.refresh",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526733852,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C70JM4799DBP1ER1KDN6",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526733842,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C6Z1X6SPCEW3QQARSAYJ",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.integration.confirm",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526733793,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C6YBAZ6VP1G8RA6WK818",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.facts.ingest",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526733772,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C6SEGARPYFXMFMXKRJC9",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.integration.inspection.reserve",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526733614,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C6BGNZYA1NK0CP21VYNT",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.integration.dispatch",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526733168,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C6AVMZQW8TZWGHS7W1P9",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.integration.lease",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526733147,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B8C5T5XPMZN4ZMH0VMHRVT",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": null,
+    "action": "delivery.integration.prepare",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793526732613,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B6XR6C1VCSSKWW1X0W33RC",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.end",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793525211340,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B6WFKDA5ZX5SZ30T9TB3T8",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793525169773,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B6V1S5DWYT71S9JK4GE38W",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "review.decide",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793525122854,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B6V1S5GXQ6ME6NG9VA36A2",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "review.decided",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793525122853,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B6KY8ZD9PHJG4513MV8HQ3",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793524889888,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B5BPTQ7BV0TCY9R8MS0X3N",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.start",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793523571543,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B35K1RD6K65QMVNZAE5ETN",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793521273913,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B33RXQV2JBR3D25TN09PX8",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.submit_and_request_review",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793521214391,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B33RXQSK7VN0R58MDQ6XD9",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "review.opened",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793521214391,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B327ZZ09FBKP8R8W2JHZ78",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.evidence.submit",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793521164288,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B327ZZ5R7ANGXCATKK1E0F",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "evidence.recorded",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793521164287,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2YJEQ69XW0TP6KSDB32H8",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.evidence.submit",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793521043928,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2YJEQ0KAT9SJD87TPTVBH",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "evidence.recorded",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793521043927,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2X47JZQYY66Z9FDEZDRPF",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "evidence.recorded",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520996594,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2X47JFZ5SZ8HBW5JQF6NK",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.evidence.submit",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520996594,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2VWFQH6YS2HB9T2187BHG",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.evidence.submit",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520955895,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2VWFPBVFW431GXE87PWPN",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "evidence.recorded",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520955894,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2RZ5T80KSSPDB6HV3RAFA",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.confirm",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520860346,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2RZ4WK91QZE39AT3RP6QG",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.write",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520860316,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2RZ3TBSPSKP2WFKXCPC4J",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.prepare",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520860282,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2RZ2VEV6QK97A6S1JHSJ3",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520860251,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2RZ2PGK92A4TBW60TZHYM",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.refresh",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520860246,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2RZ26ZXMFDPS9KXMDP71S",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520860230,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2RYWJDHSPXAF3037RTGXG",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.facts.ingest",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520860050,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2RYQZSTGN6RGQYBYZZGVT",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.inspection.reserve",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520859903,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2RY4PFPGFNE4P5G85FGE8",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": null,
+    "action": "delivery.candidate.select",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520859286,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2J0HMZAGWFW8K6TPJX482",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "execution.report",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520632372,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B2FM5FSNRJK0XQ94YP945K",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520554159,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B245EST5GFYPG7T1K2GVPK",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "execution.start",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520178649,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B23H3VSM4WMGZ28TZ366Y2",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "execution.prepare",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793520157819,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B1X79XCEZKZZ39HY5JY4WD",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "task.claim_available",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793519951165,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B1WQJ00EBEZRWF6QPT1Y88",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793519935040,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B1VZGDC7NPRA0X6EB0X1XC",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "mei-kimi-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.start",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793519910413,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B1K4DC8J59NVY7J8TBWFRS",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.end",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793519620524,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B1HVTNGVNW8PQT1MEWCJJF",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793519578965,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B18A0VJYRKX4J7ZFK2RQWQ",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.confirm",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793519265819,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B189ZBPM0TH3A4SRWQ5ZMZ",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.write",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793519265772,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B189XNVRTXZJRQ0BBNWMJ5",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.prepare",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793519265718,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B189W2JXJ1SX09BNAJY36N",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793519265666,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B189VSSM55MERFYZ02X74K",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.refresh",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793519265658,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B189V27EJ0G4BTSPP2V5Y1",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793519265635,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B189E8SW5GH471GEVGVX74",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.finalize",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793519265224,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B189E7W8JT5Q1DFXF662F2",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "work.completed",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793519265224,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B1044W68VTYSV6EHZ5H7VK",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.start",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518997660,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NQTNJ5JMPJDXNW9E8E2B",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.confirm",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518657366,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NQSV3M8MHQVQ7AVJHAN5",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.write",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518657339,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NQRM24FR5G002Y5FRQ2R",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.prepare",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518657300,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NQQHQ3PZ08HY2TS1XJX8",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518657265,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NQQC627Z4X4WJ413QERR",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.refresh",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518657260,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NQQ07AF65CS35YEQ2T4N",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518657248,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NQMNH09ASADTZRGY922Z",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.facts.ingest",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518657174,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NQFYATXCKS4D0NN1W4A5",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.inspection.reserve",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518657023,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NQ6RYHHH85CGP72SH413",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.confirm",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518656728,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NQ5YGKPBJQZ59Y6GJMR8",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.write",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518656702,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NQ4R5XJDD3SBEAVBDAJ4",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.prepare",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518656664,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NQ3J21KM62ZJENEQAGMZ",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518656626,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NQ3BK3ZW7WVPBZCXSMEA",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.refresh",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518656620,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NQ2W5GVBA0Q3F00MR9NE",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518656604,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NPTRJJRAPDPWB403DQEJ",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.integration.confirm",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518656344,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NPT3F2TP0FQ1FH7G5HDC",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.facts.ingest",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518656323,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NPMR3BHMMJTAC460JNBW",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.integration.inspection.reserve",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518656152,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NP4Y9NT1VVS0Z52QXWYT",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.integration.dispatch",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518655647,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NP47K975YFM4JWC664ZK",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.integration.lease",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518655623,
+    "credential_id": null
+   },
+   {
+    "id": "01M6B0NNN6DC7KFAHER0E1V85N",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": null,
+    "action": "delivery.integration.prepare",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793518655142,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AZCK143C98CZBBV67B15B5",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.end",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793517308964,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AZBABRHM5P8Y67J5GPZEJP",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793517267321,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AZ4XY4HCSPMG5WGBNZX2CE",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "review.decide",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793517057988,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AZ4XY3T6GXNDQNHCJ5XMY0",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "review.decided",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793517057988,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AYVAB72SEEJZJ4TCES933M",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793516743015,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AYRRWR61KHNAZCYX9K9AFD",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "chen-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.start",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793516659608,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AVV25V6G60KM332T6C4QNQ",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793513588923,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AVQ872R141VM32R68BFX4E",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "review.opened",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793513464034,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AVQ872CMXKM7KXWCQGNYHM",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.submit_and_request_review",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793513464034,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AV662V709844BV6XM0123B",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "evidence.recorded",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793512904795,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AV662V47PMBW5K44AHV64W",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.evidence.submit",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793512904795,
+    "credential_id": null
+   },
+   {
+    "id": "01M6ATY2TS683EFJQEQCRZRDR4",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.evidence.submit",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793512639322,
+    "credential_id": null
+   },
+   {
+    "id": "01M6ATY2TSNZ1HWN1KW3MSJ8SB",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "evidence.recorded",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793512639321,
+    "credential_id": null
+   },
+   {
+    "id": "01M6ATNTRD3ETSNAB3Y0DRHVWC",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "delivery.evidence.submit",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793512368910,
+    "credential_id": null
+   },
+   {
+    "id": "01M6ATNTRDJ4FZXXGBDXSB518N",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "evidence.recorded",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793512368909,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AT1N2B3K6FQ67E4J2NBBAC",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.confirm",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793511707724,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AT1N1JMV1W51A8G1A75RAP",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.write",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793511707698,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AT1N0F6TJD0AWE1NCM8BZF",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.source.prepare",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793511707663,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AT1MZHDR6Z4QMDBNYBXR44",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793511707634,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AT1MZCP7DC60K4AENWH96E",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.refresh",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793511707628,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AT1MZ09AR66V74TN4FCT8F",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.pump.claim",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793511707616,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AT1MXJC2NVM6QZTS9NH0FP",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.facts.ingest",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793511707571,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AT1MR31BWK2ZDMMS6R7KY1",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "delivery.inspection.reserve",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793511707395,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AT1MJDZG8ZPW1ARP39KDYS",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": null,
+    "action": "delivery.candidate.select",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793511707214,
+    "credential_id": null
+   },
+   {
+    "id": "01M6ASG98X3M7P4DF9MKQA93Y8",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "execution.report",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793511138589,
+    "credential_id": null
+   },
+   {
+    "id": "01M6ARYTPM9TQDEEP1ZMFSY3XB",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.checkpoint",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793510566612,
+    "credential_id": null
+   },
+   {
+    "id": "01M6ARRBZEWDA6EVZTR7X14V9S",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "execution.start",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793510354926,
+    "credential_id": null
+   },
+   {
+    "id": "01M6ARNTMSFGTWJZSNEA3GKTFB",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "execution.prepare",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793510271641,
+    "credential_id": null
+   },
+   {
+    "id": "01M6ARHB2HA2S61AWSQ8HZMBHC",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "task.accept_assignment",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793510124625,
+    "credential_id": null
+   },
+   {
+    "id": "01M6ARESNHQ74BPTHPXDZ1BWRC",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "session.start",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793510041265,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AR4NCE8VY4MWQV6AHZRM8B",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "action": "task.assign",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793509709199,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN67RK2SA1KW7NRJ5KBHA",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.connector.configure",
+    "work_id": "issue-filter-page",
+    "result": "committed",
+    "created_at_unix_ms": 1793509202168,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN679Q1ZSDN0FRG3FSK66",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "delivery.connector.configure",
+    "work_id": "issue-filter-api",
+    "result": "committed",
+    "created_at_unix_ms": 1793509202153,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN6308AP19GTMCEVQNNN0",
+    "actor_id": "recovery-human-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": null,
+    "action": "access.changed",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509202016,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN62RTKEG0VFK5ZRSDVAB",
+    "actor_id": "repository-worker",
+    "client_id": null,
+    "action": "access.changed",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509202008,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN62JHK90F4PGG9EFRNC3",
+    "actor_id": "source-worker",
+    "client_id": null,
+    "action": "access.changed",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509202002,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN626Q9N81WHNCNP94089",
+    "actor_id": "awr_3fe5e5116e5a8987_owner",
+    "client_id": null,
+    "action": "agent.authorization.issued",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509201992,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN620E2D2M9BQWBH8W9NX",
+    "actor_id": "observer-host-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": null,
+    "action": "access.changed",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509201984,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN61TMQG02Z06HY7634NT",
+    "actor_id": "observer",
+    "client_id": null,
+    "action": "access.changed",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509201978,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN61FFSMJZS6G8NPVNN7X",
+    "actor_id": "awr_3fe5e5116e5a8987_owner",
+    "client_id": null,
+    "action": "agent.authorization.issued",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509201969,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN6195WD8APHB1JQ2N57Q",
+    "actor_id": "chen-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": null,
+    "action": "access.changed",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509201961,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN612PDJ23K2C891CRVKD",
+    "actor_id": "chen",
+    "client_id": null,
+    "action": "access.changed",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509201954,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN60Q6MWBVY1AEYNNC0PP",
+    "actor_id": "awr_3fe5e5116e5a8987_owner",
+    "client_id": null,
+    "action": "agent.authorization.issued",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509201946,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN60HTQGF724M453KWNDJ",
+    "actor_id": "mei-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": null,
+    "action": "access.changed",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509201937,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN60A0K3EW8VAS3HWYMMA",
+    "actor_id": "mei",
+    "client_id": null,
+    "action": "access.changed",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509201930,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN5ZVK7KE3C4WVHPF96PA",
+    "actor_id": "awr_3fe5e5116e5a8987_owner",
+    "client_id": null,
+    "action": "agent.authorization.issued",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509201918,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN5ZJ5DVPZ5G74GETXGWM",
+    "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": null,
+    "action": "access.changed",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509201906,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN5Z8DFE5HBQ4DDDQMHP3",
+    "actor_id": "lin",
+    "client_id": null,
+    "action": "access.changed",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509201896,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN5YS0503CQA60CEGJ78H",
+    "actor_id": "awr_3fe5e5116e5a8987_owner",
+    "client_id": null,
+    "action": "agent.authorization.issued",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509201884,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN5YEHH2MEGVGHZM2GNXB",
+    "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "client_id": null,
+    "action": "access.changed",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509201870,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN5Y3MJSF9EZXMSR7PQ80",
+    "actor_id": "manager",
+    "client_id": null,
+    "action": "access.changed",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509201860,
+    "credential_id": null
+   },
+   {
+    "id": "01M6AQN5XS66XZAFHW09596M1M",
+    "actor_id": "source-bootstrap",
+    "client_id": null,
+    "action": "source.activated",
+    "work_id": null,
+    "result": "committed",
+    "created_at_unix_ms": 1793509201849,
+    "credential_id": null
+   }
+  ],
+  "next_cursor": null,
+  "request_retention_capacity": 10000,
+  "request_retention": "oldest_pruned_soft_capacity",
+  "unknown_means": "completion_not_recorded; inspect business request before retrying",
+  "development_source": "committed_events_with_operation_attribution; historical client may be unavailable",
+  "chat_text_collected": false,
+  "tool_io_collected": false
+ }
+}
