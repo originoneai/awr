@@ -1,0 +1,35 @@
+{
+ "authority_version": "1",
+ "coordinator_epoch": "support-queue-4856fa-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+ "data": {
+  "delivery": {
+   "awr_acceptance": {
+    "complete": true,
+    "runtime_state": "completed",
+    "selected_completion_id": "01M6B189DXC1A21ZD5YQ6V7EG5"
+   },
+   "cannot_skip_acceptance_via": [
+    "pr_url_alone",
+    "green_ci",
+    "admin_role",
+    "already_merged"
+   ],
+   "github": {
+    "approved": false,
+    "merged": false,
+    "submitted": false
+   },
+   "neutral_observation": null,
+   "pr": null,
+   "webhook_auto_sync": false,
+   "work_id": "issue-filter-api"
+  }
+ },
+ "project_revision": "77",
+ "project_status": "active",
+ "protocol_version": 1,
+ "scope_id": "main",
+ "selection_basis": "work",
+ "source_snapshot_id": "01M6AQN5X85AYFNRB0H5D15YVH",
+ "workstream_id": "013FE5E5116E5A8987D377C479"
+}

@@ -1,0 +1,354 @@
+{
+ "authority_version": "1",
+ "coordinator_epoch": "support-queue-4856fa-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+ "data": {
+  "acceptance_ready": false,
+  "candidate": {
+   "binding": {
+    "candidate_id": "issue-filter-api-v1",
+    "candidate_version": "1",
+    "contract_hash": "295b63612f58425c516a25c6e4d5d777d1da6661cc11cce9fb93ffc3c9597c4d",
+    "manifest_digest": "f3b2e7c797a937b7a05ea08c767b43ec1364d07508219415a04b5d9536dcfa03",
+    "project_id": "support-queue-4856fa",
+    "required_checks": [
+     "local_git.manifest"
+    ],
+    "scope_id": "main",
+    "source_fetch_ref": "refs/heads/issue-filter-api",
+    "source_revision": {
+     "format": "git_sha1",
+     "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+     "value": "5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+    },
+    "target": {
+     "precondition": {
+      "kind": "exact",
+      "revision": {
+       "format": "git_sha1",
+       "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+       "value": "a516342436e434d0072ef9c138f419f2f128caac"
+      }
+     },
+     "reference": "refs/heads/main",
+     "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa"
+    },
+    "tenant_id": "awr-native-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "work_id": "issue-filter-api",
+    "workstream_id": "013FE5E5116E5A8987D377C479"
+   },
+   "manifest": {
+    "entries": [
+     {
+      "artifact_id": "src/filter.js",
+      "byte_length": "646",
+      "locator": "git-blob:src/filter.js",
+      "sha256": "b320e82afee04a1e10363180ddb57ee660cdc6cc819c2859a8e3ba8dc213c0ad"
+     },
+     {
+      "artifact_id": "test/filter.test.js",
+      "byte_length": "1504",
+      "locator": "git-blob:test/filter.test.js",
+      "sha256": "76bb4d15dd1d3074105c465ed4f8db290af9b1913e6ee9aebceb6aca496d7aef"
+     }
+    ]
+   }
+  },
+  "confirmation": {
+   "candidate_digest": "26361fecff514828e5de69770120ba7bca170ba5425197f38988fe60853a33e3",
+   "connector_version": "1",
+   "content_proof_facts": [
+    {
+     "envelope": {
+      "protocol": "awr-delivery",
+      "protocol_version": 1,
+      "record": {
+       "data": {
+        "binding": {
+         "candidate_id": "issue-filter-api-v1",
+         "candidate_version": "1",
+         "contract_hash": "295b63612f58425c516a25c6e4d5d777d1da6661cc11cce9fb93ffc3c9597c4d",
+         "manifest_digest": "f3b2e7c797a937b7a05ea08c767b43ec1364d07508219415a04b5d9536dcfa03",
+         "project_id": "support-queue-4856fa",
+         "required_checks": [
+          "local_git.manifest"
+         ],
+         "scope_id": "main",
+         "source_fetch_ref": "refs/heads/issue-filter-api",
+         "source_revision": {
+          "format": "git_sha1",
+          "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+          "value": "5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+         },
+         "target": {
+          "precondition": {
+           "kind": "exact",
+           "revision": {
+            "format": "git_sha1",
+            "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+            "value": "a516342436e434d0072ef9c138f419f2f128caac"
+           }
+          },
+          "reference": "refs/heads/main",
+          "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa"
+         },
+         "tenant_id": "awr-native-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+         "work_id": "issue-filter-api",
+         "workstream_id": "013FE5E5116E5A8987D377C479"
+        },
+        "observation_reference": "local-git-target:local-issue-filter-api-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+        "provenance": {
+         "observed_at_unix_ms": 1793518656287,
+         "recorded_at_unix_ms": 1793518656318,
+         "reference": "awr-local-git-integration:local-issue-filter-api-native-20261101T045929Z-ee9ddb44e6e7-4856fa:dc59881326158553e95f3783791941bfa7758488de8c4ad97728c83c72e8025e",
+         "source": "adapter_observation"
+        },
+        "request_id": "01M6B0NNN221D857AA1YTBR66A",
+        "result_revision": {
+         "format": "git_sha1",
+         "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+         "value": "5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+        },
+        "witness": {
+         "kind": "exact_revision"
+        }
+       },
+       "kind": "integration_content_proof"
+      }
+     },
+     "fact_id": "01M6B0NPSZAHTDT894VF1TBZTT"
+    }
+   ],
+   "envelope": {
+    "protocol": "awr-delivery",
+    "protocol_version": 1,
+    "record": {
+     "data": {
+      "binding": {
+       "candidate_id": "issue-filter-api-v1",
+       "candidate_version": "1",
+       "contract_hash": "295b63612f58425c516a25c6e4d5d777d1da6661cc11cce9fb93ffc3c9597c4d",
+       "manifest_digest": "f3b2e7c797a937b7a05ea08c767b43ec1364d07508219415a04b5d9536dcfa03",
+       "project_id": "support-queue-4856fa",
+       "required_checks": [
+        "local_git.manifest"
+       ],
+       "scope_id": "main",
+       "source_fetch_ref": "refs/heads/issue-filter-api",
+       "source_revision": {
+        "format": "git_sha1",
+        "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+        "value": "5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+       },
+       "target": {
+        "precondition": {
+         "kind": "exact",
+         "revision": {
+          "format": "git_sha1",
+          "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+          "value": "a516342436e434d0072ef9c138f419f2f128caac"
+         }
+        },
+        "reference": "refs/heads/main",
+        "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa"
+       },
+       "tenant_id": "awr-native-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+       "work_id": "issue-filter-api",
+       "workstream_id": "013FE5E5116E5A8987D377C479"
+      },
+      "contains_manifest_digest": "f3b2e7c797a937b7a05ea08c767b43ec1364d07508219415a04b5d9536dcfa03",
+      "external_reference": "local-git-target:local-issue-filter-api-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+      "outcome": "applied",
+      "provenance": {
+       "observed_at_unix_ms": 1793518656287,
+       "recorded_at_unix_ms": 1793518656318,
+       "reference": "awr-local-git-integration:local-issue-filter-api-native-20261101T045929Z-ee9ddb44e6e7-4856fa:dc59881326158553e95f3783791941bfa7758488de8c4ad97728c83c72e8025e",
+       "source": "adapter_observation"
+      },
+      "request_id": "01M6B0NNN221D857AA1YTBR66A",
+      "result_revision": {
+       "format": "git_sha1",
+       "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+       "value": "5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+      }
+     },
+     "kind": "integration_observation"
+    }
+   },
+   "fact_id": "01M6B0NPSZ8D3WSRY5AXJPPX08",
+   "inspection_id": "01M6B0NPMQFBMCCZXRADQ14F0V",
+   "receipt": {
+    "acceptance_ready": false,
+    "candidate_digest": "26361fecff514828e5de69770120ba7bca170ba5425197f38988fe60853a33e3",
+    "connector_id": "repository-issue-filter-api",
+    "event_id": "original:443f214e309027d59927c2d9b7e2029c36ceec3a19c0b9ac6f4917353ec8ee0e:observation",
+    "fact_ids": [
+     "01M6B0NPSZ8D3WSRY5AXJPPX08",
+     "01M6B0NPSZAHTDT894VF1TBZTT"
+    ],
+    "fact_source": "adapter_observation",
+    "generation": "2",
+    "input_digest": "3ab5402d2734626b0057c8dce5000f64ecdf9f15b0e8c03ac7ed0a5b7b4a88fb",
+    "inspection_id": "01M6B0NPMQFBMCCZXRADQ14F0V",
+    "notification_id": "01M6B0NPSZ09Q5A1DXSBWYKNVW",
+    "receipt_id": "01M6B0NPSZ8VDFH81ZJ2XG3RYA",
+    "recorded_at_unix_ms": 1793518656318,
+    "selection_version": "1",
+    "source_snapshot_id": "01M6AQN5X85AYFNRB0H5D15YVH",
+    "source_synchronized": false,
+    "state": "applied"
+   }
+  },
+  "confirmation_current": true,
+  "confirmation_fact_id": "01M6B0NPSZ8D3WSRY5AXJPPX08",
+  "connector_id": "repository-issue-filter-api",
+  "connector_version": "1",
+  "current_binding": true,
+  "dispatch_receipt": {
+   "acceptance_ready": false,
+   "committed_project_revision": "50",
+   "data": {
+    "candidate_digest": "26361fecff514828e5de69770120ba7bca170ba5425197f38988fe60853a33e3",
+    "eligibility_digest": "1a5319a1afe15c6599ffcfdecf5a95516fd249d147726380ebfa41b7f4854c0f",
+    "integration_id": "01M6B0NNN221D857AA1YTBR66A",
+    "integration_request": {
+     "binding": {
+      "candidate_id": "issue-filter-api-v1",
+      "candidate_version": "1",
+      "contract_hash": "295b63612f58425c516a25c6e4d5d777d1da6661cc11cce9fb93ffc3c9597c4d",
+      "manifest_digest": "f3b2e7c797a937b7a05ea08c767b43ec1364d07508219415a04b5d9536dcfa03",
+      "project_id": "support-queue-4856fa",
+      "required_checks": [
+       "local_git.manifest"
+      ],
+      "scope_id": "main",
+      "source_fetch_ref": "refs/heads/issue-filter-api",
+      "source_revision": {
+       "format": "git_sha1",
+       "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+       "value": "5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+      },
+      "target": {
+       "precondition": {
+        "kind": "exact",
+        "revision": {
+         "format": "git_sha1",
+         "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+         "value": "a516342436e434d0072ef9c138f419f2f128caac"
+        }
+       },
+       "reference": "refs/heads/main",
+       "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa"
+      },
+      "tenant_id": "awr-native-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+      "work_id": "issue-filter-api",
+      "workstream_id": "013FE5E5116E5A8987D377C479"
+     },
+     "operation": "fast_forward",
+     "request_id": "01M6B0NNN221D857AA1YTBR66A",
+     "review_decision_id": "01M6AZ4XY0MEJHBR91AHDR578A",
+     "review_round_id": "01M6AVQ870N7MBRJ5MPCN79T55",
+     "verified_checks": [
+      {
+       "check": "local_git.manifest",
+       "run_id": "local-git-ff31e289f03bf92c0fc63be37b3db7f3f1c14c01cd621742e77bd6489ed2169d"
+      }
+     ]
+    },
+    "lease_id": "01M6B0NP469TVXNCN1SXQXYY2V",
+    "state": "dispatched"
+   },
+   "execution_authorized": false,
+   "op": "delivery.integration.dispatch",
+   "protocol": "awr-delivery-sync-v1",
+   "replayed": false,
+   "request_id": "git-dispatch:01M6B0NP469TVXNCN1SXQXYY2V",
+   "source_snapshot_id": "01M6AQN5X85AYFNRB0H5D15YVH",
+   "source_synchronized": false,
+   "state_basis": "at_commit",
+   "work_id": "issue-filter-api",
+   "workstream_id": "013FE5E5116E5A8987D377C479"
+  },
+  "dispatched_at": "2026-11-01 02:37:35.653484-05",
+  "eligibility_digest": "1a5319a1afe15c6599ffcfdecf5a95516fd249d147726380ebfa41b7f4854c0f",
+  "execution_authorized": false,
+  "guidance": {
+   "action": "Read current neutral facts and source status before any acceptance action",
+   "because": "Intent state describes the original requested version; it does not authorize repository effects or acceptance",
+   "recheck_on": "Intent, approval, source or permission changes",
+   "when": "An integration request exists"
+  },
+  "integration_id": "01M6B0NNN221D857AA1YTBR66A",
+  "integration_request": {
+   "binding": {
+    "candidate_id": "issue-filter-api-v1",
+    "candidate_version": "1",
+    "contract_hash": "295b63612f58425c516a25c6e4d5d777d1da6661cc11cce9fb93ffc3c9597c4d",
+    "manifest_digest": "f3b2e7c797a937b7a05ea08c767b43ec1364d07508219415a04b5d9536dcfa03",
+    "project_id": "support-queue-4856fa",
+    "required_checks": [
+     "local_git.manifest"
+    ],
+    "scope_id": "main",
+    "source_fetch_ref": "refs/heads/issue-filter-api",
+    "source_revision": {
+     "format": "git_sha1",
+     "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+     "value": "5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+    },
+    "target": {
+     "precondition": {
+      "kind": "exact",
+      "revision": {
+       "format": "git_sha1",
+       "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+       "value": "a516342436e434d0072ef9c138f419f2f128caac"
+      }
+     },
+     "reference": "refs/heads/main",
+     "resource": "local-repository:customer-support-native-20261101T045929Z-ee9ddb44e6e7-4856fa"
+    },
+    "tenant_id": "awr-native-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+    "work_id": "issue-filter-api",
+    "workstream_id": "013FE5E5116E5A8987D377C479"
+   },
+   "operation": "fast_forward",
+   "request_id": "01M6B0NNN221D857AA1YTBR66A",
+   "review_decision_id": "01M6AZ4XY0MEJHBR91AHDR578A",
+   "review_round_id": "01M6AVQ870N7MBRJ5MPCN79T55",
+   "verified_checks": [
+    {
+     "check": "local_git.manifest",
+     "run_id": "local-git-ff31e289f03bf92c0fc63be37b3db7f3f1c14c01cd621742e77bd6489ed2169d"
+    }
+   ]
+  },
+  "lease_expires_at": "2026-11-01 02:38:35.622701-05",
+  "lease_id": "01M6B0NP469TVXNCN1SXQXYY2V",
+  "next_query": {
+   "op": "delivery.integration.inspect",
+   "protocol_version": 1,
+   "request_id": "01M6B0NNN221D857AA1YTBR66A",
+   "work_id": "issue-filter-api"
+  },
+  "original_read_set": {
+   "authority_version": "1",
+   "contract_hash": "295b63612f58425c516a25c6e4d5d777d1da6661cc11cce9fb93ffc3c9597c4d",
+   "coordinator_epoch": "support-queue-4856fa-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
+   "ownership_version": "1",
+   "source_snapshot_id": "01M6AQN5X85AYFNRB0H5D15YVH",
+   "work_id": "issue-filter-api",
+   "workstream_id": "013FE5E5116E5A8987D377C479"
+  },
+  "request_binding": "original_candidate_and_read_set",
+  "source_synchronized": false,
+  "state": "confirmed",
+  "target_changed": false
+ },
+ "project_revision": "104",
+ "project_status": "active",
+ "protocol_version": 1,
+ "scope_id": "main",
+ "selection_basis": "work",
+ "source_snapshot_id": "01M6AQN5X85AYFNRB0H5D15YVH",
+ "workstream_id": "013FE5E5116E5A8987D377C479"
+}

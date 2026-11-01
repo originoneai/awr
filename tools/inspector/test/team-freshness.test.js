@@ -683,7 +683,7 @@ test('a failed work detail read reports its planes as failed instead of dropping
 // --- Attribution: single-object reads must echo the requested identity ---
 
 test('the echo registry refuses an omitted identity per single-object op class', () => {
-  for (const op of ['work.prepare', 'work.snapshot', 'work.observe', 'delivery.inspect',
+  for (const op of ['work.prepare', 'work.snapshot', 'work.observe',
     'delivery.neutral.inspect', 'delivery.submission.describe', 'delivery.neutral.outcome',
     'delivery.source.status']) {
     const query = { protocol_version: 1, op, work_id: 'WORK' };
@@ -691,6 +691,11 @@ test('the echo registry refuses an omitted identity per single-object op class',
     assert.equal(readAttributionError(query, { ...ENVELOPE, data: { work_id: 'WORK' } }), null, `${op} echoed`);
     assert.equal(readAttributionError(query, { ...ENVELOPE, data: { work_id: 'OTHER' } }).code, 'BadGateway', `${op} mismatched`);
   }
+  // delivery.inspect nests its work echo inside delivery (D37).
+  const deliveryQuery = { protocol_version: 1, op: 'delivery.inspect', work_id: 'WORK' };
+  assert.equal(readAttributionError(deliveryQuery, { ...ENVELOPE, data: {} }).code, 'BadGateway', 'delivery omitted');
+  assert.equal(readAttributionError(deliveryQuery, { ...ENVELOPE, data: { delivery: { work_id: 'WORK' } } }), null, 'delivery echoed');
+  assert.equal(readAttributionError(deliveryQuery, { ...ENVELOPE, data: { delivery: { work_id: 'OTHER' } } }).code, 'BadGateway', 'delivery mismatched');
   // review.inspect echoes the work and the round inside the review object.
   const reviewQuery = { protocol_version: 1, op: 'review.inspect', work_id: 'WORK', review_round_id: 'round-1' };
   assert.equal(readAttributionError(reviewQuery, { ...ENVELOPE, data: { work_id: 'WORK', review: { round_id: 'round-1' } } }).code, 'BadGateway', 'review work omitted');
