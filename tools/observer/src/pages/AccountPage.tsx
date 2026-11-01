@@ -5,32 +5,17 @@ import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { apiPost, ApiError } from '../lib/api';
 import { formatUnixMs } from '../lib/format';
-import { overviewQueryOptions, projectsQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
+import { projectsQueryOptions } from '../lib/queries';
 import { ObservationForbidden } from '../components/states';
 import { useRevocation } from '../lib/revocation';
-import { useScope } from '../lib/scope';
 
 
 /** Read-only observation cards for the account area (AWR-OBS-008). */
 function AccountObservationCards() {
   const { t, i18n } = useTranslation();
-  const { projectKey } = useScope();
   const { revoked } = useRevocation();
   const projects = useQuery(projectsQueryOptions(revoked));
-  const project = projectKey ?? projects.data?.projects?.[0]?.key ?? null;
-  const overview = useQuery(overviewQueryOptions(project, revoked));
-  const firstWork = overview.data?.works?.[0];
-  const snapshot = useQuery(workSnapshotQueryOptions(
-    firstWork ? project : null,
-    firstWork?.key ?? '',
-    firstWork?.workstream_id ?? '',
-    revoked,
-  ));
-  const identity = overview.data?.identity;
   const session = projects.data?.session;
-  const mcpUrl = overview.data?.mcp_url;
-  const actorName = snapshot.data?.result.data.observation?.client?.actor_name;
-  const [copied, setCopied] = useState(false);
 
   if (revoked) {
     // A revoked session clears the observation cards; the login entry below
@@ -39,22 +24,6 @@ function AccountObservationCards() {
   }
   return (
     <>
-      <Card title={t('account.identityTitle')} data-testid="account-identity-card">
-        <Descriptions
-          size="small"
-          column={1}
-          items={[
-            { key: 'actor', label: t('account.actorId'), children: identity?.actor_id ?? t('freshness.state.not_measured') },
-            { key: 'client', label: t('account.clientId'), children: identity?.client_id ?? t('freshness.state.not_measured') },
-            { key: 'role', label: t('account.role'), children: identity?.role ?? t('freshness.state.not_measured') },
-          ]}
-        />
-        <Typography.Text type="secondary" data-testid="self-reported-agent-name">
-          {t('account.selfReportedName')}: {actorName ?? t('freshness.state.not_measured')}
-          {' '}({t('account.selfReportedNote')})
-        </Typography.Text>
-      </Card>
-
       <Card title={t('account.sessionTitle')} data-testid="account-session-card">
         <Descriptions
           size="small"
@@ -83,25 +52,6 @@ function AccountObservationCards() {
             },
           ]}
         />
-      </Card>
-
-      <Card title={t('account.connectGuide')} data-testid="account-connect-guide">
-        <Space direction="vertical" size={8}>
-          <Typography.Text code>{mcpUrl ?? t('freshness.state.not_measured')}</Typography.Text>
-          {mcpUrl ? (
-            <Button size="small" onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(mcpUrl);
-                setCopied(true);
-              } catch {
-                setCopied(false);
-              }
-            }}>
-              {copied ? t('account.copied') : t('account.copy')}
-            </Button>
-          ) : null}
-          <Typography.Text type="secondary">{t('account.noBearerNote')}</Typography.Text>
-        </Space>
       </Card>
 
       <Card title={t('account.revokeAllMineTitle')} data-testid="account-revoke-all-mine">
@@ -182,14 +132,6 @@ export function AccountPage() {
     },
     onError: showError,
   });
-  const revokeConnections = useMutation({
-    mutationFn: () => apiPost('/api/team/session/revoke', {}),
-    onSuccess: () => {
-      revoke();
-      message.success(t('account.done'));
-    },
-    onError: showError,
-  });
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }} data-testid="page-account">
@@ -224,15 +166,7 @@ export function AccountPage() {
           {t('account.connectSubmit')}
         </Button>
       </Card>
-      <Card title={t('account.revoke')}>
-        <Button
-          danger
-          loading={revokeConnections.isPending}
-          onClick={() => revokeConnections.mutate()}
-        >
-          {t('account.revokeSubmit')}
-        </Button>
-      </Card>
+
     </Space>
   );
 }

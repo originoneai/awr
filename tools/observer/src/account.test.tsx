@@ -51,7 +51,7 @@ describe('Account mutations and connection entry', () => {
 
   it.each([
     { button: '退出登录', path: '/api/team/logout' },
-    { button: '撤销全部连接', path: '/api/team/session/revoke' },
+    { button: '撤销本凭据的全部 Web 会话', path: '/api/team/session/revoke' },
   ])('clears and stops restricted reads after $button succeeds', async ({ button, path }) => {
     const { calls } = accountFetch();
     const user = userEvent.setup();
@@ -65,7 +65,7 @@ describe('Account mutations and connection entry', () => {
       expect(call).toBeDefined();
       expect(call?.init?.credentials).toBe('same-origin');
       expect((call?.init?.headers as Record<string, string>)['x-awr-observer']).toBe('1');
-      expect(call?.init?.body).toBe('{}');
+      expect(call?.init?.body).toBe(path === '/api/team/session/revoke' ? JSON.stringify({ all_mine: true }) : '{}');
       expect(screen.queryByText(/Team mainline/)).toBeNull();
       expect(queryClient.getQueryCache().getAll().every((query) => query.state.data === undefined)).toBe(true);
     });
