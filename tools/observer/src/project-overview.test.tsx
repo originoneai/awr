@@ -109,6 +109,9 @@ describe('project workstream progress', () => {
     expect(screen.getByTestId('project-next-W1').textContent).toBe('session.checkpoint');
     expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
     expect(screen.getByTestId('last-report-W1').textContent).not.toBe(formatUnixMs(1761839900000, 'zh-CN'));
+    expect(screen.getByTestId('last-report-W1').style.whiteSpace).toBe('nowrap');
+    const timeColumn = screen.getByRole('columnheader', { name: '最近报告' }).closest('table')?.querySelector('colgroup')?.lastElementChild;
+    expect(timeColumn?.style.width || timeColumn?.getAttribute('width')).toBe('220px');
   });
 
   it.each([59, 60])('renders every work on page one across two workstreams: %i', async (count) => {

@@ -104,7 +104,7 @@ function LastReport({ work, query }: { work: TeamWork; query?: SnapshotQuery }) 
   else if (query && !query.isPending) {
     text = reportedAt == null ? t('freshness.state.not_measured') : formatUnixMs(reportedAt, i18n.language);
   }
-  return <span data-testid={`last-report-${work.key}`}>{text}</span>;
+  return <span data-testid={`last-report-${work.key}`} style={{ whiteSpace: 'nowrap' }}>{text}</span>;
 }
 
 function LaterBlock({ title, testId }: { title: string; testId: string }) {
@@ -363,7 +363,7 @@ export function ProjectOverview({ project }: { project: string }) {
     {
       title: t('projectOverview.columns.lastReport'),
       key: 'lastReport',
-      width: 160,
+      width: 220,
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 0 : 1 }),
       render: (_, row) => row.kind === 'work'
         ? <LastReport work={row.work} query={snapshots[row.index]} />
