@@ -73,6 +73,17 @@ const enUS: Messages = {
     pageRead: 'Page read at',
     sourceQuery: 'Source query started at',
   },
+  artifact: {
+    verified: 'Digest verified',
+    mismatch: 'Digest does not match; text is not trusted',
+    expand: 'Read text',
+    collapse: 'Hide text',
+    content: 'Whole read',
+    segment: 'Segments',
+    readFailed: 'Artifact read failed: {{code}}',
+    digestMayChange: 'The digest may have changed',
+    missing: 'Text was not included in the response',
+  },
   freshness: {
     title: 'Freshness',
     plane: {

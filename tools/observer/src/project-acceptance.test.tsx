@@ -1,3 +1,4 @@
+import { createHash, webcrypto } from 'node:crypto';
 import { act, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -16,7 +17,8 @@ const INTEGRATION = '01M6B0NNN221D857AA1YTBR66A';
 const COMPLETION = '01M6B189DXC1A21ZD5YQ6V7EG5';
 const CONTRACT = '295b63612f58425c516a25c6e4d5d777d1da6661cc11cce9fb93ffc3c9597c4d';
 const CANDIDATE = '26361fecff514828e5de69770120ba7bca170ba5425197f38988fe60853a33e3';
-const DIGEST = '37f728ac073d23df94311a460b8c403a6a81be9b8c36b7479a2011a2869f9a87';
+const ARTIFACT_TEXT = 'PRIMARY REPORT\nExact bytes are verified.';
+const DIGEST = createHash('sha256').update(ARTIFACT_TEXT, 'utf8').digest('hex');
 
 // Fixtures are synthetic but follow the exact shapes of the run-09 samples:
 // service-work-snapshot-api-delivered.json, service-review-inspect-api-open.json,
@@ -177,6 +179,12 @@ function setupAcceptance({ failOps = [] }: { failOps?: string[] } = {}) {
           data = { work_id: WORK, source_observation: 'observed', confirmed_fingerprint: 'sha256:confirmed', source_fingerprint: 'sha256:confirmed', source_synchronized: true, cursor_current: true, projection_current: true, pending_publication_id: null, metadata_revision: '5', history: [{ phase: 'confirmed', source_synchronized_at_commit: true, source_written_observed: true, confirmation: { operation_effects: { source_metadata_written: true, work_finalized: false }, effect_basis: 'this_publication_operation; not current_work_state' } }], history_truncated: false };
           break;
         case 'delivery.exports': data = { adoption_available: true, adoption_version_policies: ['current_contract', 'fixed_delivery'], items: [], next_cursor: null, upstream_source_access: false }; break;
+        case 'artifact.content':
+          data = { work_id: query.work_id, artifact_id: query.artifact_id, byte_length: Buffer.byteLength(ARTIFACT_TEXT, 'utf8'), sha256: DIGEST, text: ARTIFACT_TEXT, content_base64: null };
+          break;
+        case 'artifact.segment':
+          data = { artifact_id: query.artifact_id, work_id: query.work_id, byte_length: Buffer.byteLength(ARTIFACT_TEXT, 'utf8'), content_base64: Buffer.from(ARTIFACT_TEXT, 'utf8').toString('base64'), range: { start: 0, end_exclusive: Buffer.byteLength(ARTIFACT_TEXT, 'utf8') }, segment_sha256: DIGEST, sha256: DIGEST, disclosure_sha256: null, end_of_artifact: true, next_cursor: null, next_query: null };
+          break;
         default: return json({ ok: false, error: { code: 'NoRoute', message: String(query.op) } });
       }
       return json({ ok: true, result: envelope(data, String(query.work_id ?? WORK)), query, freshness: freshness() });
@@ -272,6 +280,32 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
     expect(await screen.findByTestId('acceptance-completion')).toBeTruthy();
     expect((await screen.findByTestId('acceptance-evidence-error', undefined, { timeout: 5000 })).textContent).toContain('ReadTimeout');
+  });
+
+  it('reads and verifies artifact bytes only after expansion, including segment mode', async () => {
+    vi.stubGlobal('crypto', webcrypto);
+    const { calls } = setupAcceptance();
+    renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
+    await screen.findByTestId(`acceptance-artifact-${ARTIFACT}`);
+    expect(calls.filter((call) => ['artifact.content', 'artifact.segment'].includes(String(call.query?.op)))).toHaveLength(0);
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId(`artifact-expand-${ARTIFACT}`));
+    expect(await screen.findByTestId(`artifact-read-content-${ARTIFACT}`)).toBeTruthy();
+    expect(screen.getByTestId(`artifact-digest-${ARTIFACT}`).textContent).toBe('摘要已校验');
+    await user.click(screen.getByText('分段读取'));
+    expect(await screen.findByTestId(`artifact-read-segment-${ARTIFACT}`)).toBeTruthy();
+    expect(calls.filter((call) => call.query?.op === 'artifact.content')).toHaveLength(1);
+    expect(calls.filter((call) => call.query?.op === 'artifact.segment')).toHaveLength(1);
+  });
+
+  it('shows artifact text as unverified when Web Crypto is unavailable', async () => {
+    vi.stubGlobal('crypto', {});
+    setupAcceptance();
+    renderApp('/projects/demo?tab=acceptance&work=issue-filter-api');
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId(`artifact-expand-${ARTIFACT}`));
+    expect(await screen.findByTestId(`artifact-read-content-${ARTIFACT}`)).toBeTruthy();
+    expect(screen.getByTestId(`artifact-digest-${ARTIFACT}`).textContent).toBe('未校验');
   });
 
   it('shows forbidden for an overview auth error', async () => {

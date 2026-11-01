@@ -69,6 +69,17 @@ const zhCN = {
     pageRead: '页面读取时间',
     sourceQuery: '来源查询开始时间',
   },
+  artifact: {
+    verified: '摘要已校验',
+    mismatch: '摘要不匹配，正文不可信',
+    expand: '读取正文',
+    collapse: '收起正文',
+    content: '整读',
+    segment: '分段读取',
+    readFailed: '正文读取失败：{{code}}',
+    digestMayChange: '摘要可能已变化',
+    missing: '正文未随响应提供',
+  },
   freshness: {
     title: '新鲜度',
     plane: {

@@ -1,7 +1,8 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { Card, Col, Descriptions, List, Pagination, Row, Space, Tag, Tooltip, Typography } from 'antd';
+import { Card, Col, Descriptions, List, Pagination, Row, Space, Tag, Typography } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
+import { ArtifactReader } from '../components/ArtifactReader';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { ApiError, isAuthError } from '../lib/api';
@@ -20,11 +21,6 @@ function validPage(value: string | null) {
 
 function errorCode(error: unknown) {
   return error instanceof ApiError ? error.code : 'UnknownError';
-}
-
-function shortDigest(value: unknown) {
-  const text = asText(value);
-  return text && text.length > 12 ? `${text.slice(0, 12)}…` : text;
 }
 
 /** Exact outcome evidence; no status is inferred from CI, merge or artifact readability. */
@@ -432,19 +428,10 @@ export function ProjectAcceptance({ project }: { project: string }) {
               <div data-testid="acceptance-artifacts">
                 {artifacts.length === 0 ? empty : artifacts.map((artifact, index) => {
                   const artifactId = asText(at(artifact, ['query', 'artifact_id']));
-                  const expected = at(artifact, ['query', 'expected_sha256']);
                   return (
-                    <Space key={artifactId ?? index} direction="vertical" size={2} data-testid={`acceptance-artifact-${artifactId}`}>
-                      <Typography.Text strong>{value(at(artifact, ['manifest_artifact_id']))}</Typography.Text>
-                      <Typography.Text type="secondary">artifact_id: {value(artifactId)}</Typography.Text>
-                      <Typography.Text type="secondary">byte_length: {value(at(artifact, ['byte_length']))}</Typography.Text>
-                      <Space size={8}>
-                        <Tooltip title={asText(expected)}>
-                          <Typography.Text type="secondary">{shortDigest(expected)}</Typography.Text>
-                        </Tooltip>
-                        <Tag>{t('acceptance.unverified')}</Tag>
-                      </Space>
-                    </Space>
+                    <div key={artifactId ?? index} data-testid={`acceptance-artifact-${artifactId}`}>
+                      <ArtifactReader project={project} artifact={artifact} revoked={revoked} />
+                    </div>
                   );
                 })}
               </div>
