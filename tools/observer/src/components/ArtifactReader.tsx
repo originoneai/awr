@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Button, Segmented, Space, Tag, Tooltip, Typography } from 'antd';
 import { useState } from 'react';
+import { Stamp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ApiError } from '../lib/api';
 import { FieldLabel, ObservationValue } from './ObservationValue';
@@ -60,6 +61,7 @@ export function ArtifactReader({
         </Tooltip>
         {status ? (
           <Tag data-testid={`artifact-digest-${artifactId}`} color={status === 'verified' ? 'success' : status === 'mismatch' ? 'error' : 'default'}>
+            {status === 'verified' ? <Stamp size={16} strokeWidth={1.5} aria-label={digestText} /> : null}
             {digestText}
           </Tag>
         ) : <Tag>{t('acceptance.unverified')}</Tag>}

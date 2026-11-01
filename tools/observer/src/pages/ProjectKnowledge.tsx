@@ -1,6 +1,7 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { Card, Col, Input, List, Row, Space, Tag, Tooltip, Typography, theme } from 'antd';
 import { useEffect, useState } from 'react';
+import { Stamp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
@@ -219,6 +220,7 @@ export function ProjectKnowledge({ project }: { project: string }) {
                         data-testid="digest-check"
                         color={digestCheck === 'verified' ? 'success' : digestCheck === 'mismatch' ? 'error' : 'default'}
                       >
+                        {digestCheck === 'verified' ? <Stamp size={16} strokeWidth={1.5} aria-label={t('knowledge.digestVerified')} /> : null}
                         {digestCheck === 'verified'
                           ? t('knowledge.digestVerified')
                           : digestCheck === 'mismatch'
