@@ -1,0 +1,52 @@
+name: Observer verification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/observer/**'
+      - '.github/workflows/observer.yml'
+  pull_request:
+    paths:
+      - 'tools/observer/**'
+      - '.github/workflows/observer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: observer shell
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: tools/observer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npx vitest run
+      - name: Build
+        run: npx vite build
+      - name: Server syntax check
+        run: node --check server.js
+      - name: Server tests
+        run: node --test test/*.test.js
+      - name: No external asset loads
+        run: |
+          # This local tool must not load external resources: the CSP allows
+          # 'self' only, so dist/ must contain no external script/link/url()/@import.
+          # Sourcemap comments are not resource loads.
+          if grep -rnE '<script[^>]+src="https?://|<link[^>]+href="https?://|url\(\s*["'"'"']?https?://|@import[^;]*https?://' \
+               --include='*.html' --include='*.css' --include='*.js' dist/ \
+             | grep -v 'sourceMappingURL'; then
+            echo "External resource loading found under dist/"
+            exit 1
+          fi
