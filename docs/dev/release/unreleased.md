@@ -4,18 +4,6 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
-- A work that delivers a selected candidate into a repository (a connector is configured for it, a
-  candidate is selected and its completion policy can be integrated) can no longer be completed before
-  that candidate's integration is confirmed. `delivery.finalize` and `work.complete` (and the library
-  `ReviewStore::complete`) are refused with HTTP 409 `IntegrationNotConfirmed` unless an integration of
-  the selected candidate is `confirmed` for the current binding, and the `reason` names the missing
-  step: `integration_not_prepared`, `integration_prepared`, `integration_dispatched`,
-  `integration_unknown`, `integration_rejected`, `integration_target_changed` (rebuild on the new
-  target) or `integration_confirmation_not_current`. `work.prepare` and `work.inbox` show an
-  `integration` step instead of `finalization` until then. All other works behave as before,
-  completion receipts that already exist are not changed, and an integration confirmation
-  still never creates a completion receipt by itself. See
-  [delivery integration](../integrations/delivery-integration.md#finalize-only-after-the-integration-is-confirmed).
 - The generic Team read adapter (`POST /api/team/read`) now serves the real `work.next`
   response. Upstream's identity-scoped navigation read carries only
   `{ data, project_revision, protocol_version }` — no scope/snapshot attribution
@@ -215,3 +203,18 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   cursors come back as explainable errors. The bridge adds no identity and grants no authority: the upstream service
   reauthorizes the caller's own cookie session on every forwarded read. The `awr_team_command` MCP description now
   matches the fixed delivery capability it declares.
+
+## Changed
+
+- A work that delivers a selected candidate into a repository (a connector is configured for it, a
+  candidate is selected and its completion policy can be integrated) can no longer be completed before
+  that candidate's integration is confirmed. `delivery.finalize` and `work.complete` (and the library
+  `ReviewStore::complete`) are refused with HTTP 409 `IntegrationNotConfirmed` unless an integration of
+  the selected candidate is `confirmed` for the current binding, and the `reason` names the missing
+  step: `integration_not_prepared`, `integration_prepared`, `integration_dispatched`,
+  `integration_unknown`, `integration_rejected`, `integration_target_changed` (rebuild on the new
+  target) or `integration_confirmation_not_current`. `work.prepare` and `work.inbox` show an
+  `integration` step instead of `finalization` until then. All other works behave as before,
+  completion receipts that already exist are not changed, and an integration confirmation
+  still never creates a completion receipt by itself. See
+  [delivery integration](../integrations/delivery-integration.md#finalize-only-after-the-integration-is-confirmed).
