@@ -68,7 +68,7 @@ describe.each([
     revoked.value = true;
     const callsAtRevocation = calls.count;
     const revokedAtMs = Date.now();
-    const detectionWindowMs = path === '/projects' ? 31_000 : 10_000;
+    const detectionWindowMs = path === '/projects' || path.includes('tab=overview') ? 31_000 : 10_000;
 
     await advance(detectionWindowMs);
 

@@ -95,6 +95,9 @@ export function activityQueryOptions(project: string | null, revoked = false, wo
     ),
     enabled: Boolean(project) && !revoked,
     ...readQueryDefaults,
+    // Embedded project/work summaries use the list cadence; the dedicated
+    // activity page keeps its own 5 s first-page query in lib/activity.ts.
+    refetchInterval: SNAPSHOT_POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamActivityResponse>;
 }
 

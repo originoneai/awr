@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from './api';
 import {
+  activityQueryOptions,
   createAppQueryClient,
   capabilitiesQueryOptions,
   overviewQueryOptions,
@@ -38,6 +39,12 @@ describe('TanStack Query read configuration (observation contract bounds)', () =
     expect(projectsQueryOptions().refetchOnWindowFocus).toBe(true);
     expect(workSnapshotQueryOptions('demo', 'W1', 'WS1').refetchOnWindowFocus).toBe(true);
     expect('placeholderData' in options).toBe(false);
+  });
+
+  it('polls embedded activity summaries at the list cadence', () => {
+    const options = activityQueryOptions('demo');
+    expect(options.refetchInterval).toBe(60000);
+    expect(options.refetchOnWindowFocus).toBe(true);
   });
 
   it('shares the non-polling capabilities options', () => {
