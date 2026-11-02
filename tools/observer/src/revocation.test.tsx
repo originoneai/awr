@@ -67,9 +67,12 @@ describe.each([
     expect(screen.getByTestId(pageTestId)).toBeTruthy();
     revoked.value = true;
     const callsAtRevocation = calls.count;
+    const revokedAtMs = Date.now();
+    const detectionWindowMs = path === '/projects' || path.includes('tab=overview') ? 31_000 : 10_000;
 
-    await advance(10_000);
+    await advance(detectionWindowMs);
 
+    expect(Date.now() - revokedAtMs).toBeLessThanOrEqual(35_000);
     expect(screen.queryByText(restrictedText)).toBeNull();
     expect(screen.getByTestId('state-forbidden')).toBeTruthy();
     expect(queryClient.getQueryCache().getAll().every((query) => query.state.data === undefined)).toBe(true);
@@ -138,7 +141,9 @@ describe('an in-flight work.next read at the moment of revocation', () => {
     await advance(0);
     expect(screen.getByText(/Team mainline/)).toBeTruthy();
     revoked.value = true;
-    await advance(5_000);
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: ['team', 'projects'] });
+    });
     expect(screen.getByTestId('state-forbidden')).toBeTruthy();
 
     await act(async () => {

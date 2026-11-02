@@ -114,6 +114,18 @@ describe('project workstream progress', () => {
     expect(timeColumn?.style.width || timeColumn?.getAttribute('width')).toBe('220px');
   });
 
+  it('uses the 60-second list cadence for every visible work snapshot', async () => {
+    const { fetchMock, queryClient } = setupOverview();
+    await waitFor(() => expect(snapshotCalls(fetchMock)).toHaveLength(2));
+    const snapshots = queryClient.getQueryCache().getAll().filter((query) => (
+      query.queryKey[0] === 'team' && query.queryKey[1] === 'work.snapshot'
+    ));
+    expect(snapshots).toHaveLength(2);
+    expect(snapshots.map((query) => (
+      'refetchInterval' in query.options ? query.options.refetchInterval : undefined
+    ))).toEqual([60000, 60000]);
+  });
+
   it.each([59, 60])('renders every work on page one across two workstreams: %i', async (count) => {
     setupOverview({ overview: makeProjectOverview(makeTwoStreamWorks(count)) });
     await waitFor(() => expect(screen.getAllByRole('link', { name: /Observed project task/ })).toHaveLength(count));
@@ -185,11 +197,10 @@ describe('project workstream progress', () => {
       overview: makeProjectOverview(works),
       snapshot: () => ({ ok: false, error: { code: 'ReadTimeout', message: 'slow' } }),
     });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
+    await waitFor(() => {
+      expect(screen.getByTestId('project-next-W1').textContent).toBe('Review the contract');
+      expect(screen.getByTestId('project-next-W2').textContent).toBe('未提供');
     });
-    expect(screen.getByTestId('project-next-W1').textContent).toBe('Review the contract');
-    expect(screen.getByTestId('project-next-W2').textContent).toBe('未提供');
   });
 
   it('groups shared workstreams once and uses an unlisted workstream id as its header', async () => {

@@ -1,5 +1,9 @@
 import { cleanup } from '@testing-library/react';
+import { configure } from '@testing-library/dom';
 import { afterEach, vi } from 'vitest';
+
+// CI runners can take over 1s to hydrate the heaviest acceptance evidence panel.
+configure({ asyncUtilTimeout: 5000 });
 
 afterEach(() => {
   cleanup();

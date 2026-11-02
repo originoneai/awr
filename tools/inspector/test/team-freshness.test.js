@@ -73,14 +73,16 @@ function startLiveBridge(teamUrl, opts = {}) {
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address();
-      resolve({ base: `http://127.0.0.1:${port}`, close: () => new Promise((r) => server.close(r)) });
+      resolve({ base: `http://127.0.0.1:${port}`, routes: bridge.routes, cacheSize: bridge.cacheSize, close: () => new Promise((r) => server.close(r)) });
     });
   });
 }
 
-function req(base, method, path, { body, timeoutMs } = {}) {
+function req(base, method, path, { body, timeoutMs, cookie } = {}) {
   return new Promise((resolve, reject) => {
-    const request = http.request(base + path, { method, headers: { 'content-type': 'application/json' } }, (res) => {
+    const headers = { 'content-type': 'application/json' };
+    if (cookie) headers.cookie = cookie;
+    const request = http.request(base + path, { method, headers }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => resolve({ status: res.statusCode, json: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
@@ -196,14 +198,29 @@ test('generic read and coordination detail share one attribution semantics', asy
   }
 });
 
-function overviewUpstream(pages, sessionId = 'ws_obs2') {
+function overviewUpstream(pages, sessionId = 'ws_obs2', state = {}) {
   return startMockUpstream((request, response) => {
     const chunks = [];
     request.on('data', (c) => chunks.push(c));
     request.on('end', () => {
       response.setHeader('content-type', 'application/json');
+      if (request.url === '/v1/web/session/revoke' || request.url === '/v1/web/logout') {
+        state.revoked = true;
+        response.end(JSON.stringify({ ok: true }));
+        return;
+      }
       if (request.url === '/v1/web/session') {
-        response.end(JSON.stringify({ session_id: sessionId }));
+        if (Array.isArray(state.calls)) state.calls.push('session');
+        if (state.failSession) {
+          state.failSession = false;
+          response.writeHead(503);
+          response.end(JSON.stringify({ code: 'Unavailable', message: 'synthetic session refresh failure' }));
+        } else if (state.revoked) {
+          response.writeHead(401);
+          response.end(JSON.stringify({ code: 'Unauthenticated', message: 'revoked' }));
+        } else {
+          response.end(JSON.stringify({ session_id: sessionId, expires_at_ms: state.expires_at_ms }));
+        }
         return;
       }
       const query = JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -1329,6 +1346,319 @@ test('a failed part whose pages mixed revisions claims no as-of', async () => {
     assert.equal(backend.as_of, null);
     assert.equal(backend.next_cursor, 'c2');
     assert.deepEqual(overview.json.works.map((w) => w.key), ['api-1', 'api-2', 'ui-1']);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+// --- Per-cookie-session bounded composition cache ---
+
+function overviewCachePages(calls, state = {}) {
+  return {
+    'workstreams.list': (_q, r) => {
+      calls.push('workstreams.list');
+      if (state.failWorkstreams) {
+        state.failWorkstreams = false;
+        r.writeHead(503);
+        r.end(JSON.stringify({ code: 'Unavailable', message: 'synthetic workstream failure' }));
+        return;
+      }
+      r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }], next_cursor: null } }));
+    },
+    'work.list:backend': (_q, r) => {
+      if (state.stallWork) return;
+      calls.push('work.list');
+      r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ work_id: 'api-1' }], total: 1, next_cursor: null } }));
+    },
+    'capabilities': (_q, r) => {
+      calls.push('capabilities');
+      if (state.failCapabilities) {
+        state.failCapabilities = false;
+        r.writeHead(503);
+        r.end(JSON.stringify({ code: 'Unavailable', message: 'synthetic refresh failure' }));
+        return;
+      }
+      r.end(JSON.stringify({ identity: { actor_id: 'member' } }));
+    },
+  };
+}
+
+test('a failed workstream list is not cached after the upstream recovers', async () => {
+  const calls = [];
+  const state = { calls, failWorkstreams: true };
+  const upstream = await overviewUpstream(overviewCachePages(calls, state), 'ws_obs2', state);
+  const bridge = await startLiveBridge(upstream.base);
+  const cookie = 'awr_web_session=ws_obs2';
+  try {
+    const failed = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(failed.json.ok, false);
+    assert.equal(failed.json.error.code, 'Unavailable');
+    assert.equal(bridge.cacheSize(), 0);
+
+    const recovered = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(recovered.json.ok, true, JSON.stringify(recovered.json));
+    assert.equal(recovered.json.works.length, 1);
+    assert.equal(calls.filter((key) => key === 'workstreams.list').length, 2);
+
+    const cached = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(cached.json.ok, true);
+    assert.equal(calls.filter((key) => key === 'workstreams.list').length, 2);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('cached overview parts are re-read at the upstream session expiry', async () => {
+  const calls = [];
+  let fakeNow = 1_000_000;
+  const state = { calls, expires_at_ms: 1_030_000 };
+  const upstream = await overviewUpstream(overviewCachePages(calls, state), 'ws_obs2', state);
+  const bridge = await startLiveBridge(upstream.base, { now: () => fakeNow });
+  const cookie = 'awr_web_session=ws_obs2';
+  try {
+    const first = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(first.json.ok, true);
+    assert.equal(bridge.cacheSize(), 2);
+    const firstScopeReadAt = first.json.coverage.scope.read_at_unix_ms;
+
+    fakeNow = 1_030_000;
+    const refreshed = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(refreshed.json.ok, true, JSON.stringify(refreshed.json));
+    assert.ok(refreshed.json.coverage.scope.read_at_unix_ms > firstScopeReadAt);
+    // The upstream still authorizes the session, but its declared expiry means
+    // neither the scope nor identity reply from before that instant is reusable.
+    assert.deepEqual(calls, [
+      'session', 'workstreams.list', 'work.list', 'capabilities',
+      'session', 'workstreams.list', 'work.list', 'capabilities',
+    ]);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('overview cache is invisible to another cookie session', async () => {
+  const calls = [];
+  const state = { calls };
+  const upstream = await overviewUpstream(overviewCachePages(calls, state), 'ws_obs2', state);
+  const bridge = await startLiveBridge(upstream.base);
+  const first = 'awr_web_session=ws_obs2';
+  try {
+    for (let index = 0; index < 2; index += 1) {
+      const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie: first });
+      assert.equal(overview.json.ok, true, JSON.stringify(overview.json));
+    }
+    assert.deepEqual(calls, ['session', 'workstreams.list', 'work.list', 'capabilities', 'session', 'work.list']);
+    calls.length = 0;
+    const other = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie: 'awr_web_session=ws_other' });
+    assert.equal(other.json.ok, true);
+    assert.deepEqual(calls, ['session', 'workstreams.list', 'work.list', 'capabilities']);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('overview cache expires at the TTL and keeps original read times', async () => {
+  const calls = [];
+  let fakeNow = 1_000_000;
+  const upstream = await overviewUpstream(overviewCachePages(calls));
+  const bridge = await startLiveBridge(upstream.base, { now: () => fakeNow });
+  const cookie = 'awr_web_session=ws_obs2';
+  try {
+    const first = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(first.json.ok, true);
+    const firstReadAt = first.json.freshness.page_read.at_unix_ms;
+    const scopeReadAt = first.json.coverage.scope.read_at_unix_ms;
+    fakeNow += 30000;
+    const cached = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(cached.json.ok, true);
+    assert.equal(cached.json.freshness.page_read.at_unix_ms, firstReadAt);
+    assert.equal(cached.json.coverage.scope.read_at_unix_ms, scopeReadAt);
+    assert.deepEqual(calls, ['workstreams.list', 'work.list', 'capabilities', 'work.list']);
+    fakeNow += 30000;
+    const refreshed = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(refreshed.json.ok, true);
+    assert.ok(refreshed.json.freshness.page_read.at_unix_ms > firstReadAt);
+    assert.deepEqual(calls, ['workstreams.list', 'work.list', 'capabilities', 'work.list', 'workstreams.list', 'work.list', 'capabilities']);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('a failed refresh cannot extend an expired cached composition', async () => {
+  const calls = [];
+  const state = {};
+  let fakeNow = 1_000_000;
+  const upstream = await overviewUpstream(overviewCachePages(calls, state));
+  const bridge = await startLiveBridge(upstream.base, { now: () => fakeNow });
+  const cookie = 'awr_web_session=ws_obs2';
+  try {
+    const first = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(first.json.ok, true);
+    fakeNow += 60000;
+    state.failCapabilities = true;
+    const failed = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(failed.json.ok, false, JSON.stringify(failed.json));
+    assert.equal(failed.json.works, undefined);
+    const recovered = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(recovered.json.ok, true);
+    assert.equal(calls.filter((key) => key === 'capabilities').length, 3);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('revoke and logout drop the cookie session cache before the next read', async () => {
+  const calls = [];
+  const state = { calls };
+  const upstream = await overviewUpstream(overviewCachePages(calls, state), 'ws_obs2', state);
+  const bridge = await startLiveBridge(upstream.base);
+  const cookie = 'awr_web_session=ws_obs2';
+  try {
+    const first = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(first.json.ok, true);
+    await req(bridge.base, 'POST', '/api/team/session/revoke', { body: {}, cookie });
+    const revoked = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(revoked.json.ok, false);
+    assert.equal(revoked.json.error.code, 'Unauthenticated');
+    state.revoked = false;
+    const resumed = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(resumed.json.ok, true);
+    await req(bridge.base, 'POST', '/api/team/logout', { body: {}, cookie });
+    const loggedOut = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(loggedOut.json.ok, false);
+    assert.equal(loggedOut.json.error.code, 'Unauthenticated');
+    assert.equal(calls.filter((key) => key === 'session').length, 4);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('cached list and identity reads cannot bypass the composition deadline', async () => {
+  const calls = [];
+  const state = {};
+  const upstream = await overviewUpstream(overviewCachePages(calls, state));
+  const bridge = await startLiveBridge(upstream.base, { readTimeoutMs: 100, overviewDeadlineMs: 200 });
+  const cookie = 'awr_web_session=ws_obs2';
+  try {
+    const first = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(first.json.ok, true);
+    state.stallWork = true;
+    const timedOut = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie, timeoutMs: 3000 });
+    assert.equal(timedOut.json.ok, false);
+    assert.equal(timedOut.json.error.code, 'ReadTimeout');
+    assert.equal(timedOut.json.works, undefined);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('storing a session sweeps expired entries from other sessions', async () => {
+  const calls = [];
+  let fakeNow = 1_000_000;
+  const upstream = await overviewUpstream(overviewCachePages(calls));
+  const bridge = await startLiveBridge(upstream.base, { now: () => fakeNow });
+  try {
+    const first = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie: 'awr_web_session=ws_obs2' });
+    assert.equal(first.json.ok, true);
+    assert.equal(bridge.cacheSize(), 2);
+    fakeNow += 60001;
+    const second = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie: 'awr_web_session=ws_other' });
+    assert.equal(second.json.ok, true);
+    // Only the new session's workstreams and capabilities remain live.
+    assert.equal(bridge.cacheSize(), 2);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+async function seedOverviewCache(state = {}, now) {
+  const calls = [];
+  state.calls = calls;
+  const upstream = await overviewUpstream(overviewCachePages(calls, state), 'ws_obs2', state);
+  const bridge = await startLiveBridge(upstream.base, now ? { now } : {});
+  const cookie = 'awr_web_session=ws_obs2';
+  const first = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+  assert.equal(first.json.ok, true, JSON.stringify(first.json));
+  assert.equal(bridge.cacheSize(), 2);
+  return { calls, state, upstream, bridge, cookie };
+}
+
+for (const action of ['revoke', 'logout']) {
+  test(`${action} empties the cookie session cache immediately`, async () => {
+    const { upstream, bridge, cookie } = await seedOverviewCache();
+    try {
+      const path = action === 'revoke' ? '/api/team/session/revoke' : '/api/team/logout';
+      const response = await req(bridge.base, 'POST', path, { body: {}, cookie });
+      assert.equal(response.json.ok, true, JSON.stringify(response.json));
+      assert.equal(bridge.cacheSize(), 0);
+    } finally {
+      await bridge.close();
+      await upstream.close();
+    }
+  });
+}
+
+test('a failed session refresh empties the cookie session cache', async () => {
+  const { state, upstream, bridge, cookie } = await seedOverviewCache();
+  try {
+    state.failSession = true;
+    const failed = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(failed.json.ok, false);
+    assert.equal(failed.json.error.code, 'Unavailable');
+    assert.equal(bridge.cacheSize(), 0);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('a failed capabilities refresh empties the cookie session cache', async () => {
+  let fakeNow = 1_000_000;
+  const { state, upstream, bridge, cookie } = await seedOverviewCache({}, () => fakeNow);
+  try {
+    fakeNow += 60000;
+    state.failCapabilities = true;
+    const failed = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(failed.json.ok, false);
+    assert.equal(failed.json.error.code, 'Unavailable');
+    assert.equal(bridge.cacheSize(), 0);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('mutating the original composition cannot change a stored cache value', async () => {
+  const calls = [];
+  const upstream = await overviewUpstream(overviewCachePages(calls));
+  const bridge = await startLiveBridge(upstream.base);
+  const cookie = 'awr_web_session=ws_obs2';
+  const readDirect = () => bridge.routes['GET /api/team/overview'](
+    new URL('http://127.0.0.1/api/team/overview?project=demo'),
+    null,
+    { method: 'GET', headers: { cookie } },
+    { setHeader() {} },
+  );
+  try {
+    const first = await readDirect();
+    assert.equal(first.ok, true);
+    assert.equal(first.identity.actor_id, 'member');
+    // Direct route results retain object identity, unlike an HTTP round trip.
+    // This is the original object that was just passed to the cache store.
+    first.identity.actor_id = 'edited-after-store';
+
+    const cached = await readDirect();
+    assert.equal(cached.ok, true);
+    assert.equal(cached.identity.actor_id, 'member');
   } finally {
     await bridge.close();
     await upstream.close();
