@@ -7,14 +7,6 @@ export interface CraftViolation {
 
 const ALLOWED_ANTD_COLORS = new Set(['success', 'error', 'warning', 'processing', 'default', 'currentColor', 'inherit']);
 const ALLOWED_RADII = new Set([4, 8, 12, 16]);
-const FRESHNESS_FILES = new Set([
-  'components/FreshnessBadge.tsx',
-  'components/WorkDetailPanel.tsx',
-  'pages/ProjectOverview.tsx',
-  'pages/WorkbenchPage.tsx',
-  // Out of this baseline PR; its separate craft pass owns all remaining copy.
-  'pages/ActivityPage.tsx',
-]);
 
 /** Pure source scanner used by both the self-test and the full workspace guard. */
 export function scanCraftSource(source: string, fileType: CraftFileType, filePath = ''): CraftViolation[] {
@@ -51,7 +43,8 @@ export function scanCraftSource(source: string, fileType: CraftFileType, filePat
   for (const match of source.matchAll(/\bborder-radius\s*:\s*(\d+)px/g)) {
     if (!ALLOWED_RADII.has(Number(match[1]))) violations.push({ rule: 'radius', match: match[0] });
   }
-  if (!FRESHNESS_FILES.has(filePath)) add('freshness-misuse', /freshness\.state\.not_measured/g);
+  void filePath; // Kept for scanner API compatibility; freshness is checked at every call site.
+  add('freshness-misuse', /freshness\.state\.not_measured/g);
 
   // The file type is explicit so callers cannot accidentally scan an unsupported extension.
   if (fileType !== 'tsx' && fileType !== 'css') throw new Error(`Unsupported craft source type: ${fileType}`);

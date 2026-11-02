@@ -75,6 +75,8 @@ const zhCN = {
     unknownResult: '结果未知；先核对原业务请求，不提供重试或对账按钮',
     noWork: '无关联工作',
     selfFilterNote: '仅能查看本人活动，已忽略筛选',
+    identityReadFailed: '身份信息暂时读取不到，请重试',
+    identityRetry: '重试',
   },
   acceptance: {
     title: '成果与验收',

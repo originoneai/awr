@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { act, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import i18n from './i18n';
 import { formatUnixMs } from './lib/format';
 import { revokeObservationReads } from './lib/queries';
 import { DEMO_PROJECTS, renderApp } from './test-utils';
@@ -33,6 +34,8 @@ type SetupOptions = {
   requests?: ActivityPayload;
   developmentPages?: ActivityPayload[];
   requestsPages?: ActivityPayload[];
+  capabilitiesGate?: Promise<void>;
+  capabilitiesError?: { code: string; message: string; recover?: { value: boolean } };
 };
 
 function setupActivity({
@@ -41,6 +44,8 @@ function setupActivity({
   requests = fixture('observer-activity-requests.json'),
   developmentPages,
   requestsPages,
+  capabilitiesGate,
+  capabilitiesError,
 }: SetupOptions = {}) {
   const calls: Array<{ url: string; params: URLSearchParams }> = [];
   const capabilityCalls: string[] = [];
@@ -68,6 +73,11 @@ function setupActivity({
       const query = JSON.parse(String(init?.body)).query;
       if (query.op === 'capabilities') {
         capabilityCalls.push(url);
+        if (capabilitiesGate) await capabilitiesGate;
+        if (capabilitiesError && !capabilitiesError.recover?.value) {
+          const { code, message } = capabilitiesError;
+          return json({ ok: false, error: { code, message } });
+        }
         return json({
           ok: true,
           result: {
@@ -92,7 +102,10 @@ function pagedDevelopment(items: Array<Record<string, unknown>>, nextCursor: unk
   return { data: { ...base.data, items, next_cursor: nextCursor } };
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  await i18n.changeLanguage('zh-CN');
+});
 
 describe('object activity page (AWR-OBS-006 PR-A)', () => {
   it('serves development and requests as separate bounded kinds with full disclosures', async () => {
@@ -115,6 +128,42 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect((await screen.findAllByText('audit.requests')).length).toBeGreaterThan(0);
     expect(calls.filter((call) => call.params.get('kind') === 'requests')).toHaveLength(1);
     expect(calls.filter((call) => ['audit.history', 'audit.export', 'audit.count'].includes(call.params.get('kind') ?? ''))).toHaveLength(0);
+  });
+
+  it.each([
+    ['zh-CN', '已提交', '未提供'],
+    ['en-US', 'Committed', 'Not provided'],
+  ])('uses shared status and missing-value vocabulary in %s', async (language, status, missing) => {
+    const base = fixture('observer-activity-development.json');
+    setupActivity({
+      development: {
+        data: {
+          ...base.data,
+          scope: null,
+          request_retention: null,
+          development_source: null,
+          unknown_means: null,
+          chat_text_collected: null,
+          tool_io_collected: null,
+        },
+      },
+    });
+    await i18n.changeLanguage(language);
+    renderApp('/activity?project=demo');
+    const row = await screen.findByTestId('activity-row');
+    expect(row.textContent).toContain(status);
+    for (const testId of [
+      'activity-scope',
+      'activity-retention',
+      'activity-development-source',
+      'activity-collection-limits',
+      'activity-unknown-means',
+    ]) {
+      expect(screen.getByTestId(testId).textContent).toContain(missing);
+    }
+    const user = userEvent.setup();
+    await user.click(row);
+    expect(screen.getByTestId('activity-event-result').textContent).toBe(status);
   });
 
   it('loads older keyset pages without duplicates and keeps limit at or below 100', async () => {
@@ -175,11 +224,59 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     renderApp(`/activity?project=demo&actor=${SELF_ACTOR}`);
     await screen.findByTestId('page-activity');
     expect(ownCalls.some((call) => call.params.get('member_actor_id') === SELF_ACTOR)).toBe(true);
+    expect(screen.queryByTestId('activity-self-filter-note')).toBeNull();
 
     const { calls: otherCalls } = setupActivity();
     renderApp('/activity?project=demo&actor=OTHER');
     await screen.findByTestId('page-activity');
     expect(otherCalls.every((call) => call.params.get('member_actor_id') === null)).toBe(true);
+  });
+
+  it('waits for identity before filtering a project-audit actor deep link', async () => {
+    const actor = 'manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa';
+    let releaseCapabilities!: () => void;
+    const capabilitiesGate = new Promise<void>((resolve) => { releaseCapabilities = resolve; });
+    const { calls } = setupActivity({
+      projectAudit: true,
+      development: fixture('derived-audit-development-project-scope-run09.json'),
+      capabilitiesGate,
+    });
+    renderApp(`/activity?project=demo&actor=${actor}`);
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByTestId('activity-self-filter-note')).toBeNull();
+    expect(calls).toHaveLength(0);
+
+    await act(async () => {
+      releaseCapabilities();
+      await capabilitiesGate;
+    });
+    expect(await screen.findByTestId('page-activity')).toBeTruthy();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].params.get('member_actor_id')).toBe(actor);
+    expect(screen.queryByTestId('activity-self-filter-note')).toBeNull();
+  });
+
+  it('shows a useful identity failure and retries without an unfiltered read', async () => {
+    const actor = 'manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa';
+    const recovery = { value: false };
+    const { calls } = setupActivity({
+      projectAudit: true,
+      development: fixture('derived-audit-development-project-scope-run09.json'),
+      capabilitiesError: { code: 'ReadTimeout', message: 'slow', recover: recovery },
+    });
+    renderApp(`/activity?project=demo&actor=${actor}`);
+    const failure = await screen.findByTestId('activity-identity-error');
+    expect(failure.textContent).toContain('身份信息暂时读取不到，请重试');
+    expect(failure.textContent).not.toContain('CapabilitiesReadError');
+    expect(failure.textContent).not.toContain('ReadTimeout');
+    expect(calls).toHaveLength(0);
+
+    const user = userEvent.setup();
+    recovery.value = true;
+    await user.click(screen.getByTestId('activity-identity-retry'));
+    expect(await screen.findByTestId('page-activity')).toBeTruthy();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].params.get('member_actor_id')).toBe(actor);
   });
 
   it('uses member_actor_id for an authorized project-scope actor filter', async () => {
@@ -201,7 +298,7 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect(detail.textContent).toContain(event);
     expect(detail.textContent).toContain(SELF_ACTOR);
     expect(detail.textContent).toContain('audit.requests');
-    expect(detail.textContent).toContain('unknown');
+    expect(detail.textContent).toContain('未知');
     expect(screen.getByTestId('activity-event-not-request').textContent).toContain('不是业务 request_id');
     expect(router.state.location.search).toContain(`event=${event}`);
     expect(calls.some((call) => call.url.includes('command.inspect'))).toBe(false);
@@ -230,6 +327,15 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect(calls.filter((call) => call.params.get('kind') === 'requests')).toHaveLength(0);
     expect(calls.some((call) => ['audit.history', 'audit.export', 'audit.count'].includes(call.params.get('kind') ?? ''))).toBe(false);
   });
+
+  it('keeps polling a single loaded activity page', async () => {
+    const { calls } = setupActivity();
+    renderApp('/activity?project=demo');
+    await screen.findByTestId('activity-row');
+    const initialCalls = calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 6500));
+    expect(calls.length).toBeGreaterThan(initialCalls);
+  }, 10000);
 
   it('stops polling activity pages and capabilities after the second page is loaded', async () => {
     const all = fixture('derived-audit-development-project-scope-all-run09.json').data.items as Array<Record<string, unknown>>;
@@ -313,7 +419,7 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
     expect(screen.queryByTestId('activity-row')).toBeNull();
     const settled = calls.length;
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await new Promise((resolve) => setTimeout(resolve, 6500));
     expect(calls.length).toBe(settled);
-  });
+  }, 10000);
 });

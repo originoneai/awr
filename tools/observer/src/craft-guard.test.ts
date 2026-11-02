@@ -49,7 +49,20 @@ describe('craft source scanner self-test', () => {
       't("common.notProvided")',
     ].join('\n');
     expect(scanCraftSource(legal, 'tsx')).toEqual([]);
-    expect(scanCraftSource('t("freshness.state.not_measured")', 'tsx', 'components/FreshnessBadge.tsx')).toEqual([]);
+  });
+
+  it('rejects raw freshness keys even in formerly exempt files', () => {
+    for (const file of [
+      'components/FreshnessBadge.tsx',
+      'components/WorkDetailPanel.tsx',
+      'pages/ProjectOverview.tsx',
+      'pages/WorkbenchPage.tsx',
+      'pages/ActivityPage.tsx',
+    ]) {
+      expect(scanCraftSource('t("freshness.state.not_measured")', 'tsx', file)).toEqual([
+        { rule: 'freshness-misuse', match: 'freshness.state.not_measured' },
+      ]);
+    }
   });
 });
 

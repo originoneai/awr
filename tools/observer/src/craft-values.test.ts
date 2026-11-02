@@ -23,6 +23,7 @@ describe('observed value fidelity (review r1.1)', () => {
     expect(formatMetric(1000, 'en-US')).toBe('1,000');
     expect(formatObservationValue(1000, 'en-US')).toBe('1,000');
     expect(formatObservationValue('1000', 'en-US', 'items_count')).toBe('1,000');
+    expect(formatObservationValue('0042', 'en-US', 'round_index')).toBe('0042');
     expect(formatObservationValue('1000', 'en-US', 'work_id')).toBe('1000');
     expect(formatObservationValue('approved', 'zh-CN', 'state')).toBe('已批准');
   });

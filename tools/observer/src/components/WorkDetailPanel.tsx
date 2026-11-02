@@ -19,6 +19,7 @@ import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure 
 import { FieldLabel, ObservationValue } from './ObservationValue';
 import { isAuthError } from '../lib/api';
 import { formatObservationValue } from '../i18n/craft';
+import { freshnessWord } from '../lib/freshness';
 import { formatUnixMs } from '../lib/format';
 import { activityQueryOptions, reviewQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
@@ -105,7 +106,7 @@ function Requirements({ query }: { query: SnapshotQuery }) {
             children: (
               <span data-testid={`last-report-${data?.work_id ?? ''}`}>
                 {reportedAt == null
-                  ? t('freshness.state.not_measured')
+                  ? freshnessWord(t, 'not_measured')
                   : formatUnixMs(reportedAt, i18n.language)}
               </span>
             ),
