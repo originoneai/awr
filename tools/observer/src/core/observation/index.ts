@@ -5,7 +5,7 @@ export { actorAliases, checkLabel, workLabel } from './labels';
 export { groupWorks } from './groups';
 export { deriveWorkState } from './work-state';
 export { claimState } from './claim';
-export { abbreviateIds } from './readable';
+export { abbreviateIds, readableSentence } from './readable';
 export { utf8ByteLength, verifyTextDigest } from './digest';
 export { describeProgressReport, moreLinesText, REPORT_LIST_LIMIT } from './report';
 export {

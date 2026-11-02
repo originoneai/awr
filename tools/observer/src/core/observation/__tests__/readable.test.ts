@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { abbreviateIds } from '../index';
+import { OPERATION_VOCABULARY } from '../../../i18n/human-language';
+import REPORTS from '../../../test-fixtures/work-state/progress-reports-run09.json';
+import { abbreviateIds, readableSentence } from '../index';
 
 describe('abbreviateIds', () => {
   it('cuts ULIDs, git object ids, digests and UUIDs to their first eight characters', () => {
@@ -32,5 +34,47 @@ describe('abbreviateIds', () => {
   it('does nothing the second time', () => {
     const once = abbreviateIds('round 01M6AVQ870N7MBRJ5MPCN79T55 at 5f7eb2fe9c563e4d355aa64a527e0aef754116c1');
     expect(abbreviateIds(once)).toBe(once);
+  });
+});
+
+describe('readableSentence', () => {
+  const DELIVERED = REPORTS['api-delivered'];
+  const IN_REVIEW = REPORTS['api-in-review-owned-by-other'];
+
+  it('says the operation and check names of the real checkpoints in words and cuts the ids, in both languages', () => {
+    expect(readableSentence(DELIVERED.completed[0], 'zh-CN')).toBe('准备并入主线 01M6B0NN… confirmed applied');
+    expect(readableSentence(DELIVERED.completed[0], 'en-US')).toBe('Prepare mainline integration 01M6B0NN… confirmed applied');
+    expect(readableSentence(DELIVERED.completed[1], 'zh-CN')).toBe('完成交付 receipt 01M6B189…');
+    expect(readableSentence(DELIVERED.completed[1], 'en-US')).toBe('Finalize delivery receipt 01M6B189…');
+    expect(readableSentence(IN_REVIEW.summary, 'zh-CN')).toBe('Status and keyword filters are on branch issue-filter-api at 5f7eb2fe…. npm test passed 5 of 5. 本地内容与测试 passed. Review is open.');
+    expect(readableSentence(IN_REVIEW.summary, 'en-US')).toContain('npm test passed 5 of 5. Local content and tests passed. Review is open.');
+  });
+
+  it('says every operation of the shared vocabulary that has a dotted or snake_case name as the activity page words it', () => {
+    const named = Object.entries(OPERATION_VOCABULARY).filter(([name]) => /[._]/.test(name));
+    expect(named.length).toBeGreaterThan(30);
+    for (const [name, words] of named) {
+      expect(readableSentence(name, 'zh-CN'), name).toBe(words.zh);
+      expect(readableSentence(`ran ${name}.`, 'en-US'), name).toBe(`ran ${words.en}.`);
+    }
+  });
+
+  it('leaves a machine name nobody has words for exactly as written', () => {
+    for (const text of ['ran foo.bar_baz', 'the read_only flag', 'see refs/heads/issue-filter-api', 'filterIssues combines status']) {
+      expect(readableSentence(text, 'zh-CN'), text).toBe(text);
+    }
+  });
+
+  it('replaces whole names only', () => {
+    for (const text of ['xdelivery.finalize', 'Xdelivery.finalize', '2delivery.finalize', 'delivery.finalize2x', 'my.delivery.finalize', 'delivery.finalizes']) {
+      expect(readableSentence(text, 'en-US'), text).toBe(text);
+    }
+    expect(readableSentence('(delivery.finalize), then delivery.finalize.', 'en-US')).toBe('(Finalize delivery), then Finalize delivery.');
+  });
+
+  it('does nothing the second time and nothing to an empty text', () => {
+    const once = readableSentence(DELIVERED.completed[0], 'en-US');
+    expect(readableSentence(once, 'en-US')).toBe(once);
+    expect(readableSentence('', 'zh-CN')).toBe('');
   });
 });
