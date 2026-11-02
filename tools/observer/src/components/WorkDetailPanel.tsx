@@ -17,6 +17,7 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from './states';
 import { FieldLabel, ObservationValue } from './ObservationValue';
+import { rawObservationText } from '../core/observation';
 import { RecentChanges } from './RecentChanges';
 import { pageTechnicalItems } from '../lib/activity-technical';
 import { isAuthError } from '../lib/api';
@@ -37,13 +38,6 @@ type SnapshotQuery = UseQueryResult<TeamReadResponse<WorkSnapshotData>, unknown>
 type ReviewQuery = UseQueryResult<TeamReadResponse<ReviewData>, unknown>;
 type ActivityQuery = UseQueryResult<TeamActivityResponse, unknown>;
 
-function rawText(value: unknown): string | null {
-  if (value == null) return null;
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return JSON.stringify(value) ?? null;
-}
-
 function Measured({ value, testId, field }: { value: unknown; testId?: string; field?: string }) {
   return <ObservationValue value={value} testId={testId} field={field} />;
 }
@@ -60,7 +54,7 @@ function ContractValues({ values }: { values?: WorkContractValue[] }) {
       dataSource={values}
       renderItem={(value) => (
         <List.Item>
-          <Typography.Text>{rawText(value)}</Typography.Text>
+          <Typography.Text>{rawObservationText(value).text}</Typography.Text>
         </List.Item>
       )}
     />
@@ -142,7 +136,7 @@ function Requirements({ query }: { query: SnapshotQuery }) {
       <section>
         <Typography.Title level={5}>{t('workbench.detail.currentOutcome')}</Typography.Title>
         {data?.observation?.progress
-          ? <pre className="workbench-progress">{rawText(data.observation.progress)}</pre>
+          ? <pre className="workbench-progress">{rawObservationText(data.observation.progress).text}</pre>
           : data?.observation ? <NotReportedYet /> : <Measured value={null} />}
       </section>
     </Flex>

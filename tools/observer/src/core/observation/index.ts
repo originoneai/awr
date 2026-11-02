@@ -2,6 +2,7 @@ export { rawObservationText, statusWord, describeUnknown, STATUS_FIELDS } from '
 export { absoluteTimeText, ageText } from './time';
 export { foldOperations, operationWord } from './operations';
 export { actorAliases, workLabel } from './labels';
+export { groupWorks } from './groups';
 export {
   PLANE_STATES,
   OBSERVATION_STALE_AFTER_MS,
@@ -17,6 +18,7 @@ export type {
   AgeTextResult,
   DescribeUnknownResult,
   FoldOperationsResult,
+  GroupWorksResult,
   OperationDisclosure,
   OperationEvent,
   OperationStep,
@@ -24,7 +26,10 @@ export type {
   RawObservationTextResult,
   SemanticTone,
   StatusWordResult,
+  WorkGroup,
+  WorkGroupWork,
   WorkLabelKind,
   WorkLabelResult,
+  WorkstreamRef,
 } from './types';
 export type { OperationKind } from '../../i18n/human-language';

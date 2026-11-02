@@ -98,3 +98,20 @@ export interface WorkLabelResult {
   text: string;
   technical: { raw: string | null };
 }
+
+export type WorkGroupWork = { workstream_id: string };
+export type WorkstreamRef = { id: string; external_key?: unknown; title?: unknown };
+
+export interface WorkGroup<W extends WorkGroupWork = WorkGroupWork> {
+  id: string;
+  title: string;
+  works: W[];
+}
+
+export interface GroupWorksResult<W extends WorkGroupWork = WorkGroupWork> {
+  /** Every input work once: grouped works in workstream order, then works of unknown workstreams. */
+  works: W[];
+  groups: WorkGroup<W>[];
+  /** Title of each known workstream by id; an unknown id has no entry (callers fall back to the id). */
+  titles: Record<string, string>;
+}

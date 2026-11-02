@@ -16,6 +16,7 @@ import {
 } from 'antd';
 import type { KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import { groupWorks, rawObservationText } from '../core/observation';
 import { Link, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { ObservationValue } from '../components/ObservationValue';
@@ -23,20 +24,13 @@ import { WorkDetailPanel } from '../components/WorkDetailPanel';
 import { isAuthError } from '../lib/api';
 import { overviewQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
-import type { TeamOverviewResponse, TeamWork } from '../lib/types';
+import type { TeamWork } from '../lib/types';
 
 const PAGE_SIZE = 60;
 
 type DisplayRow =
   | { kind: 'group'; key: string; id: string; title: string }
   | { kind: 'work'; key: string; work: TeamWork };
-
-function rawText(value: unknown): string | null {
-  if (value == null) return null;
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return JSON.stringify(value) ?? null;
-}
 
 function validPage(value: string | null) {
   if (!value || !/^[1-9]\d*$/.test(value)) return 1;
@@ -48,20 +42,6 @@ function taskPath(project: string, workId: string) {
   return `/projects/${encodeURIComponent(project)}?tab=plan&work=${encodeURIComponent(workId)}`;
 }
 
-function groupedWorks(works: TeamWork[], workstreams: TeamOverviewResponse['workstreams']) {
-  const groups = workstreams.map((workstream) => ({
-    id: workstream.id,
-    title: rawText(workstream.title) ?? rawText(workstream.external_key) ?? workstream.id,
-    works: works.filter((work) => work.workstream_id === workstream.id),
-  }));
-  const known = new Set(workstreams.map((workstream) => workstream.id));
-  const remaining = works.filter((work) => !known.has(work.workstream_id));
-  return {
-    works: [...groups.flatMap((group) => group.works), ...remaining],
-    title: (id: string) => groups.find((group) => group.id === id)?.title ?? id,
-  };
-}
-
 export function WorkPlanPage({ project }: { project: string }) {
   const { t } = useTranslation();
   const { revoked } = useRevocation();
@@ -70,7 +50,8 @@ export function WorkPlanPage({ project }: { project: string }) {
   const data = overview.data;
   const stream = searchParams.get('stream');
   const filteredWorks = (data?.works ?? []).filter((work) => !stream || work.workstream_id === stream);
-  const grouped = groupedWorks(filteredWorks, data?.workstreams ?? []);
+  const grouped = groupWorks(filteredWorks, data?.workstreams ?? []);
+  const allTitles = groupWorks([], data?.workstreams ?? []).titles;
   const page = Math.min(
     validPage(searchParams.get('page')),
     Math.max(1, Math.ceil(grouped.works.length / PAGE_SIZE)),
@@ -117,7 +98,7 @@ export function WorkPlanPage({ project }: { project: string }) {
         kind: 'group',
         key: `group-${currentWorkstream}`,
         id: currentWorkstream,
-        title: grouped.title(currentWorkstream),
+        title: (grouped.titles[currentWorkstream] ?? currentWorkstream),
       });
     }
     displayRows.push({ kind: 'work', key: work.key, work });
@@ -149,7 +130,7 @@ export function WorkPlanPage({ project }: { project: string }) {
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 0 : 1 }),
       render: (_, row) => row.kind === 'work' ? (
         <span data-testid={`plan-owner-${row.work.key}`}>
-          {rawText(row.work.owner_person ?? row.work.agent) ?? t('common.notProvided')}
+          {rawObservationText(row.work.owner_person ?? row.work.agent).text ?? t('common.notProvided')}
         </span>
       ) : null,
     },
@@ -235,7 +216,7 @@ export function WorkPlanPage({ project }: { project: string }) {
               { value: 'all', label: t('plan.allWorkstreams') },
               ...(data?.workstreams ?? []).map((workstream) => ({
                 value: workstream.id,
-                label: rawText(workstream.title) ?? rawText(workstream.external_key) ?? workstream.id,
+                label: allTitles[workstream.id] ?? workstream.id,
               })),
             ]}
           />
