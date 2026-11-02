@@ -1,10 +1,11 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { Card, Col, Input, List, Row, Space, Tag, Tooltip, Typography } from 'antd';
+import { Card, Col, Input, List, Pagination, Row, Space, Tag, Tooltip, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
 import { isAuthError } from '../lib/api';
+import { OBSERVATION_PAGE_SIZE, validObservationPage } from '../lib/pagination';
 import { overviewQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import type { WorkContractValue } from '../lib/types';
@@ -48,8 +49,14 @@ export function ProjectKnowledge({ project }: { project: string }) {
   const { revoked } = useRevocation();
   const overview = useQuery(overviewQueryOptions(project, revoked));
   const works = overview.data?.works ?? [];
+  const [searchParams, setSearchParams] = useSearchParams();
+  const page = Math.min(
+    validObservationPage(searchParams.get('page')),
+    Math.max(1, Math.ceil(works.length / OBSERVATION_PAGE_SIZE)),
+  );
+  const visibleWorks = works.slice((page - 1) * OBSERVATION_PAGE_SIZE, page * OBSERVATION_PAGE_SIZE);
   const snapshots = useQueries({
-    queries: works.map((work) => workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked)),
+    queries: visibleWorks.map((work) => workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked)),
   });
   const [filter, setFilter] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -59,7 +66,7 @@ export function ProjectKnowledge({ project }: { project: string }) {
   const entries = new Map<string, SourceEntry>();
   snapshots.forEach((query, index) => {
     const data = query.data?.result.data;
-    const work = works[index];
+    const work = visibleWorks[index];
     if (!data || !work) return;
     const sources: Array<{
       path: string;
@@ -170,6 +177,19 @@ export function ProjectKnowledge({ project }: { project: string }) {
           ) : null}
         </Space>
       </Card>
+      <Pagination
+        current={page}
+        total={works.length}
+        pageSize={OBSERVATION_PAGE_SIZE}
+        showSizeChanger={false}
+        onChange={(nextPage) => {
+          const next = new URLSearchParams(searchParams);
+          if (nextPage > 1) next.set('page', String(nextPage));
+          else next.delete('page');
+          setSearchParams(next);
+        }}
+        style={{ display: 'flex', justifyContent: 'flex-end' }}
+      />
       {allEntries.length === 0 ? (
         <ObservationEmpty />
       ) : (

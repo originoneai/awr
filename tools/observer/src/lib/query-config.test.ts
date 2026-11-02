@@ -7,6 +7,7 @@ import {
   projectsQueryOptions,
   queryKeys,
   readQueryDefaults,
+  workSnapshotQueryOptions,
 } from './queries';
 
 describe('TanStack Query read configuration (observation contract bounds)', () => {
@@ -26,10 +27,14 @@ describe('TanStack Query read configuration (observation contract bounds)', () =
     expect(overviewQueryOptions('demo').queryKey).toEqual(['team', 'overview', 'demo']);
   });
 
-  it('applies the read defaults to wired queries', () => {
+  it('uses slow shell and snapshot cadences while retaining focus refreshes', () => {
     const options = overviewQueryOptions('demo');
-    expect(options.refetchInterval).toBe(POLL_INTERVAL_MS);
+    expect(options.refetchInterval).toBe(60000);
+    expect(projectsQueryOptions().refetchInterval).toBe(60000);
+    expect(workSnapshotQueryOptions('demo', 'W1', 'WS1').refetchInterval).toBe(60000);
     expect(options.refetchOnWindowFocus).toBe(true);
+    expect(projectsQueryOptions().refetchOnWindowFocus).toBe(true);
+    expect(workSnapshotQueryOptions('demo', 'W1', 'WS1').refetchOnWindowFocus).toBe(true);
     expect('placeholderData' in options).toBe(false);
   });
 

@@ -15,6 +15,8 @@ import type {
 // AWR-前后端能力审查完整清单.md:212 and reviewer-web.md:22 require a 5 s
 // visible-page cadence; READ_TIMEOUT_MS is only the per-read deadline.
 export const POLL_INTERVAL_MS = 5000;
+export const SHELL_POLL_INTERVAL_MS = 60000;
+export const SNAPSHOT_POLL_INTERVAL_MS = 60000;
 
 const snapshotReadLimit = pLimit(4);
 
@@ -49,6 +51,7 @@ export function projectsQueryOptions(revoked = false) {
     queryFn: () => apiGet<TeamProjectsResponse>('/api/team/projects'),
     enabled: !revoked,
     ...readQueryDefaults,
+    refetchInterval: SHELL_POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamProjectsResponse>;
 }
 
@@ -59,6 +62,7 @@ export function overviewQueryOptions(project: string | null, revoked = false) {
       apiGet<TeamOverviewResponse>(`/api/team/overview?project=${encodeURIComponent(project ?? '')}`),
     enabled: Boolean(project) && !revoked,
     ...readQueryDefaults,
+    refetchInterval: SHELL_POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamOverviewResponse>;
 }
 
@@ -143,6 +147,7 @@ export function workSnapshotQueryOptions(
     }),
     enabled: Boolean(project && workId && workstreamId) && !revoked,
     ...readQueryDefaults,
+    refetchInterval: SNAPSHOT_POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamReadResponse<WorkSnapshotData>>;
 }
 

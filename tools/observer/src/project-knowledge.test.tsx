@@ -1,6 +1,6 @@
 import { createHash, webcrypto } from 'node:crypto';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -144,6 +144,7 @@ function json(payload: unknown) {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -157,6 +158,33 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     expect(screen.getByTestId('knowledge-citing-works').textContent).toContain('issue-filter-page');
     expect(screen.getByTestId('knowledge-from-works').textContent).toBe('来自 2／2 个工作项');
   });
+
+  it('hydrates only the visible 60-work page and reads the next work on demand', async () => {
+    const user = userEvent.setup();
+    const works = Array.from({ length: 61 }, (_, index) => ({
+      key: `W${index + 1}`,
+      title: `Knowledge work ${index + 1}`,
+      status: 'unknown',
+      owner_person: null,
+      agent: null,
+      next_step: null,
+      detail_loaded: false,
+      workstream_id: 'WS1',
+      contract_hash: `c${index + 1}`,
+    }));
+    const snapshots = Object.fromEntries(works.map((work) => [work.key, snapshotFor(work.key)]));
+    const { calls } = setupKnowledge({ works, snapshots });
+    const snapshotReads = () => calls.filter(({ init }) => String(init?.body ?? '').includes('"work.snapshot"'));
+    const { router } = renderApp('/projects/demo?tab=knowledge');
+    await waitFor(() => expect(screen.getByRole('link', { name: '打开 Knowledge work 1' })).toBeTruthy(), { timeout: 10000 });
+    await waitFor(() => expect(snapshotReads()).toHaveLength(60), { timeout: 10000 });
+    expect(screen.queryByRole('link', { name: '打开 Knowledge work 61' })).toBeNull();
+
+    await user.click(screen.getByRole('listitem', { name: '下一页' }));
+    await screen.findByRole('link', { name: '打开 Knowledge work 61' });
+    await waitFor(() => expect(snapshotReads()).toHaveLength(61));
+    expect(new URLSearchParams(router.state.location.search).get('page')).toBe('2');
+  }, 20000);
 
   it('keeps same-title works distinct by key and gives both encoded work links', async () => {
     const works = [
@@ -383,9 +411,11 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
     expect(screen.queryByText(/Build a useful filterable queue/)).toBeNull();
     const settled = calls.length;
+    vi.useFakeTimers();
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
+      await vi.advanceTimersByTimeAsync(61000);
     });
+    vi.useRealTimers();
     expect(calls.length).toBe(settled);
 
     // Even a cached overview reappearing after revocation must not reactivate
