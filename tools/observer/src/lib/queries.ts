@@ -1,6 +1,6 @@
 import { QueryCache, QueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import pLimit from 'p-limit';
-import { apiGet, apiPost, isAuthError } from './api';
+import { apiGet, apiPost, ApiError, isAuthError } from './api';
 import type {
   ReviewData,
   TeamActivityResponse,
@@ -16,7 +16,7 @@ import type {
 // AWR-前后端能力审查完整清单.md:212 and reviewer-web.md:22 require a 5 s
 // visible-page cadence; READ_TIMEOUT_MS is only the per-read deadline.
 export const POLL_INTERVAL_MS = 5000;
-export const SHELL_POLL_INTERVAL_MS = 60000;
+export const SHELL_POLL_INTERVAL_MS = 30000;
 export const SNAPSHOT_POLL_INTERVAL_MS = 60000;
 
 const snapshotReadLimit = pLimit(4);
@@ -230,7 +230,9 @@ export function createAppQueryClient(overrides?: { retry?: number | boolean }) {
         // partial failure in their own tab, not a session revocation. Only
         // work-level reads revoke the whole observation session.
         const kind = query.queryKey[1];
-        if (kind === 'review.inspect' || kind === 'activity') return;
+        const sessionExpired = error instanceof ApiError
+          && (error.code === 'Unauthenticated' || error.code === 'SessionExpired');
+        if ((kind === 'review.inspect' || kind === 'activity') && !sessionExpired) return;
         if (isAuthError(error)) revokeObservationReads(queryClient);
       },
     }),

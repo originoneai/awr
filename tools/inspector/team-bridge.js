@@ -591,14 +591,12 @@ function createTeamBridge(opts) {
   }
 
   async function readOverviewSession(req) {
-    const cached = cachedOverviewValue(req, 'session', '');
-    if (cached) return { status: 200, json: cached.value, setCookie: [], readAt: cached.readAt };
+    // Session checks are small but revocation-sensitive: always revalidate.
     const session = await proxyTeam('/v1/web/session', req, null, 'GET');
     if (!session || session.status >= 400) {
       clearOverviewCache(req);
       return session;
     }
-    storeOverviewValue(req, 'session', '', session.json, session.json && session.json.expires_at_ms);
     return { ...session, readAt: now() };
   }
 

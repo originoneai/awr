@@ -66,14 +66,17 @@ describe.each([
     expect(screen.getAllByText(restrictedText)).not.toHaveLength(0);
     expect(screen.getByTestId(pageTestId)).toBeTruthy();
     revoked.value = true;
+    const callsAtRevocation = calls.count;
+    const revokedAtMs = Date.now();
+    const detectionWindowMs = path === '/projects' ? 31_000 : 10_000;
 
-    await advance(61_000);
+    await advance(detectionWindowMs);
 
+    expect(Date.now() - revokedAtMs).toBeLessThanOrEqual(35_000);
     expect(screen.queryByText(restrictedText)).toBeNull();
     expect(screen.getByTestId('state-forbidden')).toBeTruthy();
     expect(queryClient.getQueryCache().getAll().every((query) => query.state.data === undefined)).toBe(true);
-    // Concurrent slow-cadence reads may each report Unauthenticated before
-    // the state settles. The hard requirement is silence after forbidden.
+    expect(calls.count - callsAtRevocation).toBeLessThanOrEqual(2);
 
     const callsAfterForbidden = calls.count;
     await advance(10_000);

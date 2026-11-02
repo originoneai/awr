@@ -1376,7 +1376,8 @@ function overviewCachePages(calls, state = {}) {
 
 test('overview cache is invisible to another cookie session', async () => {
   const calls = [];
-  const upstream = await overviewUpstream(overviewCachePages(calls));
+  const state = { calls };
+  const upstream = await overviewUpstream(overviewCachePages(calls, state), 'ws_obs2', state);
   const bridge = await startLiveBridge(upstream.base);
   const first = 'awr_web_session=ws_obs2';
   try {
@@ -1384,11 +1385,11 @@ test('overview cache is invisible to another cookie session', async () => {
       const overview = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie: first });
       assert.equal(overview.json.ok, true, JSON.stringify(overview.json));
     }
-    assert.deepEqual(calls, ['workstreams.list', 'work.list', 'capabilities', 'work.list']);
+    assert.deepEqual(calls, ['session', 'workstreams.list', 'work.list', 'capabilities', 'session', 'work.list']);
     calls.length = 0;
     const other = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie: 'awr_web_session=ws_other' });
     assert.equal(other.json.ok, true);
-    assert.deepEqual(calls, ['workstreams.list', 'work.list', 'capabilities']);
+    assert.deepEqual(calls, ['session', 'workstreams.list', 'work.list', 'capabilities']);
   } finally {
     await bridge.close();
     await upstream.close();

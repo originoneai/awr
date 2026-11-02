@@ -30,8 +30,8 @@ describe('TanStack Query read configuration (observation contract bounds)', () =
 
   it('uses detail and list snapshot cadences while retaining focus refreshes', () => {
     const options = overviewQueryOptions('demo');
-    expect(options.refetchInterval).toBe(60000);
-    expect(projectsQueryOptions().refetchInterval).toBe(60000);
+    expect(options.refetchInterval).toBe(30000);
+    expect(projectsQueryOptions().refetchInterval).toBe(30000);
     expect(workSnapshotQueryOptions('demo', 'W1', 'WS1').refetchInterval).toBe(POLL_INTERVAL_MS);
     expect(workSnapshotQueryOptions('demo', 'W1', 'WS1', false, 'list').refetchInterval).toBe(60000);
     expect(options.refetchOnWindowFocus).toBe(true);
@@ -69,6 +69,26 @@ describe('auth revocation clears restricted content', () => {
       }),
     ).rejects.toThrow('access denied');
     expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+  });
+
+  it('revokes globally on activity Unauthenticated but not on an object Forbidden', async () => {
+    const expiredClient = createAppQueryClient({ retry: false });
+    expiredClient.setQueryData(queryKeys.projects, { ok: true });
+    await expect(expiredClient.fetchQuery({
+      queryKey: queryKeys.activity('demo'),
+      queryFn: () => Promise.reject(new ApiError('Unauthenticated', 'expired')),
+      retry: false,
+    })).rejects.toThrow('expired');
+    expect(expiredClient.getQueryCache().getAll()).toHaveLength(0);
+
+    const forbiddenClient = createAppQueryClient({ retry: false });
+    forbiddenClient.setQueryData(queryKeys.projects, { ok: true });
+    await expect(forbiddenClient.fetchQuery({
+      queryKey: queryKeys.activity('demo'),
+      queryFn: () => Promise.reject(new ApiError('Forbidden', 'object denied')),
+      retry: false,
+    })).rejects.toThrow('object denied');
+    expect(forbiddenClient.getQueryCache().getAll().length).toBeGreaterThan(0);
   });
 
   it('keeps cached queries on non-auth failures', async () => {
