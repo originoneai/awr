@@ -18,7 +18,6 @@ import { useTranslation } from 'react-i18next';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from './states';
 import { FieldLabel, ObservationValue } from './ObservationValue';
 import { RecentChanges } from './RecentChanges';
-import { TechnicalDetails } from './TechnicalDetails';
 import { pageTechnicalItems } from '../lib/activity-technical';
 import { isAuthError } from '../lib/api';
 import { freshnessWord } from '../lib/freshness';
@@ -213,7 +212,7 @@ function History({ query, project, workId }: { query: ActivityQuery; project: st
   } else if (data) {
     content = data.items.length === 0
       ? <ObservationEmpty />
-      : <RecentChanges items={data.items} maxSteps={10} viewAllHref={viewAllHref} testId="plan-recent-changes" />;
+      : <RecentChanges items={data.items} maxSteps={10} viewAllHref={viewAllHref} testId="plan-recent-changes" extraTechnical={pageTechnicalItems(data)} />;
   }
   return (
     <div data-testid="plan-history">
@@ -221,7 +220,6 @@ function History({ query, project, workId }: { query: ActivityQuery; project: st
       {data?.next_cursor != null
         ? <Alert type="info" showIcon message={t('projectOverview.activity.earlier')} />
         : null}
-      {data ? <TechnicalDetails items={pageTechnicalItems(data)} /> : null}
     </div>
   );
 }

@@ -21,7 +21,6 @@ import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { RecentChanges } from '../components/RecentChanges';
-import { TechnicalDetails } from '../components/TechnicalDetails';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { ObservationValue } from '../components/ObservationValue';
 import { pageTechnicalItems } from '../lib/activity-technical';
@@ -222,7 +221,13 @@ function RecentActivity({ query, project }: { query: ActivityQuery; project: str
   const data = query.data?.data;
   const errorCode = (query.error as { code?: string } | null)?.code;
   const changes = (items: TeamActivityItem[]) => (
-    <RecentChanges items={items} maxSteps={8} viewAllHref={`/activity?project=${encodeURIComponent(project)}`} testId="project-recent-changes" />
+    <RecentChanges
+      items={items}
+      maxSteps={8}
+      viewAllHref={`/activity?project=${encodeURIComponent(project)}`}
+      testId="project-recent-changes"
+      extraTechnical={pageTechnicalItems(query.data?.data)}
+    />
   );
   let content: ReactNode = <Spin />;
   if (errorCode === 'Unsupported') {
@@ -244,7 +249,6 @@ function RecentActivity({ query, project }: { query: ActivityQuery; project: str
       {data?.next_cursor != null ? (
         <Alert type="info" showIcon message={t('projectOverview.activity.earlier')} />
       ) : null}
-      {data ? <TechnicalDetails items={pageTechnicalItems(data)} /> : null}
     </section>
   );
 }
