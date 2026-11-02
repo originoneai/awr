@@ -251,7 +251,8 @@ describe('work detail requirements and source state', () => {
     await screen.findByTestId('plan-detail');
     await waitFor(() => expect(screen.getByTestId('plan-detail').textContent).toContain('Keep support filters useful'));
     expect(screen.getByTestId('plan-detail').textContent).toContain('Do not mutate input records');
-    expect(screen.getByTestId('plan-detail').textContent).toContain('docs/support.md');
+    expect(screen.getByTestId('required-spec-name').textContent).toBe('support');
+    expect(defaultVisibleText(screen.getByTestId('plan-detail'))).not.toContain('docs/support.md');
     expect(screen.getByTestId('plan-detail').textContent).toContain('Keep the support API stable.');
     expect(screen.getByTestId('plan-runtime-state').textContent).toBe('已认领');
     expect(screen.getByTestId('plan-guidance').textContent).toBe('未报告下一步');
@@ -261,10 +262,15 @@ describe('work detail requirements and source state', () => {
     expect(screen.getByTestId('last-report-W1').textContent).not.toBe(formatUnixMs(1761839900000, 'zh-CN'));
     // The service's own guidance is addressed to the agent: verbatim, but only behind the technical details.
     const user = userEvent.setup();
-    await user.click(within(screen.getByTestId('plan-detail')).getByText('技术细节'));
+    await user.click(within(screen.getByTestId('plan-detail')).getAllByText('技术细节')[0]);
     expect((await screen.findByTestId('technical-guidance-op')).textContent).toContain('session.checkpoint');
     expect(screen.getByTestId('technical-guidance-note').textContent).toContain(longNote);
     expect(screen.getByTestId('technical-next-step').textContent).toContain('未提供');
+    // the path of the required source, with its digest and size, is behind its own technical details
+    await user.click(within(screen.getByTestId('plan-detail')).getAllByText('技术细节')[1]);
+    expect((await screen.findByTestId('technical-detail-required_specs[0].path')).textContent).toContain('docs/support.md');
+    expect(screen.getByTestId('technical-detail-required_specs[0].sha256')).toBeTruthy();
+    expect(screen.getByTestId('technical-detail-required_specs[0].byte_length')).toBeTruthy();
   });
 
   it('shows the reporter\'s own next action in the detail, keeps the raw value in the technical details, and marks a report the service declared stale', async () => {
@@ -280,7 +286,7 @@ describe('work detail requirements and source state', () => {
     });
     await waitFor(() => expect(screen.getByTestId('plan-guidance').textContent).toBe('Review the contract first'));
     expect(screen.getByTestId('last-report-W1').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}可能已过期`);
-    await userEvent.setup().click(within(screen.getByTestId('plan-detail')).getByText('技术细节'));
+    await userEvent.setup().click(within(screen.getByTestId('plan-detail')).getAllByText('技术细节')[0]);
     expect((await screen.findByTestId('technical-next-action')).textContent).toContain('Review the contract first');
     // why the note is (not) there stays checkable: the service's flag and the work's own state, verbatim
     expect(screen.getByTestId('technical-client-stale').textContent).toContain('true');

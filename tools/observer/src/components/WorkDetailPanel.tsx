@@ -18,7 +18,7 @@ import { WorkProgress } from './WorkProgress';
 import { ProgressReport } from './ProgressReport';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from './states';
 import { FieldLabel, ObservationValue } from './ObservationValue';
-import { deriveWorkState, describeProgressReport, rawObservationText } from '../core/observation';
+import { deriveWorkState, describeProgressReport, documentLabel, rawObservationText } from '../core/observation';
 import { sourceStateTechnicalItems } from '../lib/source-technical';
 import { workStateTechnicalItems } from '../lib/work-state-technical';
 import { RecentChanges } from './RecentChanges';
@@ -111,10 +111,12 @@ function Requirements({ query }: { query: SnapshotQuery }) {
           <List
             size="small"
             dataSource={data.required_specs}
-            renderItem={(spec) => (
+            renderItem={(spec, index) => (
               <List.Item>
                 <Flex vertical style={{ minWidth: 0 }}>
-                  <Typography.Text code>{spec.path ?? t('common.notProvided')}</Typography.Text>
+                  <Typography.Text strong data-testid="required-spec-name">
+                    {documentLabel(spec.path, { language: i18n.language, position: index + 1 }).text}
+                  </Typography.Text>
                   <Typography.Text data-testid="required-spec-text" ellipsis={{ tooltip: spec.text }}>
                     {spec.text ?? t('common.notProvided')}
                   </Typography.Text>
@@ -123,6 +125,13 @@ function Requirements({ query }: { query: SnapshotQuery }) {
             )}
           />
         ) : <Measured value={null} />}
+        <TechnicalDetails
+          items={(data?.required_specs ?? []).flatMap((spec, index) => [
+            { label: `required_specs[${index}].path`, value: spec.path },
+            { label: `required_specs[${index}].sha256`, value: spec.sha256 },
+            { label: `required_specs[${index}].byte_length`, value: spec.byte_length },
+          ])}
+        />
       </section>
       <section>
         <Typography.Title level={5}>{t('workbench.detail.currentOutcome')}</Typography.Title>

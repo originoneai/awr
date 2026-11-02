@@ -95,6 +95,14 @@ export type WorkLabelKind = 'none' | 'named' | 'unnamed';
 
 export type CheckLabelKind = 'named' | 'known' | 'numbered';
 
+export type DocumentLabelKind = 'named' | 'numbered';
+
+export interface DocumentLabelResult {
+  kind: DocumentLabelKind;
+  text: string;
+  technical: { raw: string | null };
+}
+
 export interface CheckLabelResult {
   kind: CheckLabelKind;
   text: string;

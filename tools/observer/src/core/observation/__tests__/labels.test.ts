@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import DERIVED_RUN09 from '../../../test-fixtures/activity/derived-audit-development-project-scope-all-run09.json';
 import { findForbiddenVisibleText } from '../../../lib/human-language-guard';
 import REPORTS from '../../../test-fixtures/work-state/progress-reports-run09.json';
-import { actorAliases, checkLabel, workLabel } from '../index';
+import { actorAliases, checkLabel, documentLabel, workLabel } from '../index';
 
 const ITEMS = DERIVED_RUN09.data.items as Array<{ actor_id: string; work_id: string | null }>;
 const ACTORS = ITEMS.map((item) => item.actor_id);
@@ -112,5 +112,41 @@ describe('checkLabel', () => {
         expect(findForbiddenVisibleText(checkLabel(name, { language, position: index + 1 }).text), `${String(name)} ${language}`).toEqual([]);
       }
     });
+  });
+});
+
+describe('documentLabel', () => {
+  const zh = { language: 'zh-CN' } as const;
+  const en = { language: 'en-US' } as const;
+
+  it('names a document by its file name without directories and extension, hyphens and underscores read as spaces', () => {
+    expect(documentLabel('docs/specs/issue-filter-api.md', { ...zh, position: 1 })).toEqual({ kind: 'named', text: 'issue filter api', technical: { raw: 'docs/specs/issue-filter-api.md' } });
+    expect(documentLabel('docs/support.md', { ...en, position: 2 }).text).toBe('support');
+    expect(documentLabel('notes\\team_notes.txt', { ...en, position: 1 }).text).toBe('team notes');
+    expect(documentLabel('说明/接口约定.md', { ...zh, position: 1 }).text).toBe('接口约定');
+    expect(documentLabel('  docs/a  b--c__d.md  ', { ...en, position: 1 })).toMatchObject({ text: 'a b c d', technical: { raw: 'docs/a  b--c__d.md' } });
+  });
+
+  it('keeps a file name without an extension and a dotfile as they are', () => {
+    expect(documentLabel('docs/README', { ...en, position: 1 }).text).toBe('README');
+    expect(documentLabel('.gitignore', { ...en, position: 1 }).text).toBe('.gitignore');
+    expect(documentLabel('config/.env', { ...en, position: 1 }).text).toBe('.env');
+    expect(documentLabel('docs/', { ...en, position: 1 })).toMatchObject({ kind: 'named', text: 'docs' });
+  });
+
+  it('numbers a path with no usable name, or one the human-language guard would flag, by its place in the list and keeps the path', () => {
+    for (const path of ['docs/digest-spec.md', 'archive.tar.gz', 'a.b.c.md', 'checkpoint_notes.md']) {
+      const result = documentLabel(path, { ...zh, position: 3 });
+      expect(result, path).toEqual({ kind: 'numbered', text: '文档 3', technical: { raw: path } });
+      expect(findForbiddenVisibleText(result.text)).toEqual([]);
+    }
+    expect(documentLabel('docs/digest-spec.md', { ...en, position: 3 }).text).toBe('Document 3');
+  });
+
+  it('numbers a missing, blank or non-string path and has nothing to keep', () => {
+    for (const missing of [undefined, null, '', '   ', '/', 7, {}, ['docs/a.md']]) {
+      expect(documentLabel(missing, { ...zh, position: 2 }), JSON.stringify(missing)).toEqual({ kind: 'numbered', text: '文档 2', technical: { raw: missing === '/' ? '/' : null } });
+    }
+    expect(documentLabel(undefined, { ...en, position: 1 }).text).toBe('Document 1');
   });
 });

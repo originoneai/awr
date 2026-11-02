@@ -1,6 +1,6 @@
 import { CHECK_VOCABULARY, FORBIDDEN_VISIBLE_PATTERNS, humanText } from '../../i18n/human-language';
 import { statementText } from './values';
-import type { ActorAliasEntry, ActorAliasResult, CheckLabelResult, WorkLabelResult } from './types';
+import type { ActorAliasEntry, ActorAliasResult, CheckLabelResult, DocumentLabelResult, WorkLabelResult } from './types';
 
 function present(value: string | null | undefined): value is string {
   return typeof value === 'string' && value.length > 0;
@@ -57,4 +57,24 @@ export function checkLabel(name: unknown, options: { language: string; position:
   }
   if (FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(raw))) return { kind: 'numbered', text: numbered, technical: { raw } };
   return { kind: 'named', text: raw, technical: { raw } };
+}
+
+/**
+ * The name to show for a document known by its path: the file name without its directories and its
+ * extension, with hyphens and underscores read as spaces ("docs/specs/issue-filter-api.md" as
+ * "issue filter api"). A path with no usable name, or one whose name the human-language guard would
+ * flag, reads "Document N", N being its place in the list. The path itself is always returned for
+ * the technical details.
+ */
+export function documentLabel(path: unknown, options: { language: string; position: number }): DocumentLabelResult {
+  const raw = statementText(path);
+  const numbered = humanText('documentNumbered', options.language).replace('{{count}}', String(options.position));
+  if (raw == null) return { kind: 'numbered', text: numbered, technical: { raw: null } };
+  const file = raw.split(/[\\/]/).filter((part) => part !== '').pop() ?? '';
+  const stem = file.replace(/(?<=.)\.[A-Za-z0-9]{1,8}$/, '');
+  const name = stem.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (name === '' || FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(name))) {
+    return { kind: 'numbered', text: numbered, technical: { raw } };
+  }
+  return { kind: 'named', text: name, technical: { raw } };
 }
