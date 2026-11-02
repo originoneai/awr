@@ -98,7 +98,7 @@ describe('prototype shell behavior', () => {
     expect(selected?.textContent).toContain('English');
   });
 
-  it('uses the lg sider breakpoint', () => {
+  it('switches the navigation at the lg breakpoint', () => {
     const media = vi.fn((query: string) => ({
       matches: false,
       media: query,
@@ -111,7 +111,7 @@ describe('prototype shell behavior', () => {
     })) as unknown as typeof window.matchMedia;
     window.matchMedia = media;
     setup();
-    expect(vi.mocked(media).mock.calls.some(([query]) => query.includes('991.98px'))).toBe(true);
+    expect(vi.mocked(media).mock.calls.some(([query]) => query.includes('min-width: 992px'))).toBe(true);
   });
 
   it('uses the narrow-screen layout without fixed-width content', () => {
