@@ -20,10 +20,10 @@ import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { LastReportText } from '../components/LastReportText';
+import { ToneBadge } from '../components/ToneBadge';
 import { deriveWorkState, groupWorks, rawObservationText } from '../core/observation';
 import { RecentChanges } from '../components/RecentChanges';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
-import { ObservationValue } from '../components/ObservationValue';
 import { pageTechnicalItems } from '../lib/activity-technical';
 import { isAuthError } from '../lib/api';
 import { readStateOf } from '../lib/read-state';
@@ -58,14 +58,25 @@ function taskPath(project: string, workId: string) {
   return `/projects/${encodeURIComponent(project)}?tab=plan&work=${encodeURIComponent(workId)}`;
 }
 
-function NextStep({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
+/** What the overview row and the work's own read together say about one work. */
+function useWorkState(work: TeamWork, query?: SnapshotQuery) {
   const { i18n } = useTranslation();
-  const state = deriveWorkState({
+  return deriveWorkState({
     language: i18n.language,
     readState: readStateOf(query),
     workNextStep: work.next_step,
+    workStatus: work.status,
     snapshot: query?.data?.result.data,
   });
+}
+
+function Progress({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
+  const { progress } = useWorkState(work, query);
+  return <ToneBadge tone={progress.tone} text={progress.text} testId={`project-status-${work.key}`} />;
+}
+
+function NextStep({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
+  const state = useWorkState(work, query);
   return (
     <Typography.Text
       data-testid={`project-next-${work.key}`}
@@ -81,8 +92,7 @@ function NextStep({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
 }
 
 function LastReport({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
-  const { i18n } = useTranslation();
-  const state = deriveWorkState({ language: i18n.language, readState: readStateOf(query), snapshot: query?.data?.result.data });
+  const state = useWorkState(work, query);
   return <LastReportText report={state.lastReport} testId={`last-report-${work.key}`} />;
 }
 
@@ -300,9 +310,9 @@ export function ProjectOverview({ project }: { project: string }) {
       key: 'status',
       width: 170,
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 0 : 1 }),
-      render: (_, row) => row.kind === 'work' ? (
-        <ObservationValue testId={`project-status-${row.work.key}`} value={row.work.status} field="state" />
-      ) : null,
+      render: (_, row) => row.kind === 'work'
+        ? <Progress work={row.work} query={snapshots[row.index]} />
+        : null,
     },
     {
       title: t('projectOverview.columns.next'),

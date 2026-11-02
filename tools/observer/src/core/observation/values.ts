@@ -5,12 +5,12 @@ export const STATUS_FIELDS = new Set([
   'state', 'status', 'result', 'runtime_state', 'decision', 'outcome', 'dispatch_state',
   'definition_state', 'selection_basis', 'source_observation', 'trust_basis', 'fact_source',
   'provider', 'independence_kind', 'approval_basis', 'severity', 'role', 'business_roles',
-  'relation', 'adoption_version_policies',
+  'relation', 'adoption_version_policies', 'phase',
 ]);
 
-const POSITIVE = new Set(['approved', 'confirmed', 'committed', 'succeeded', 'completed', 'passed', 'applied', 'consistent', 'exact', 'observed', 'enabled']);
-const NEGATIVE = new Set(['rejected', 'invalidated', 'failed', 'blocking']);
-const WARNING = new Set(['open', 'pending', 'dispatched', 'claimed', 'active', 'return']);
+const POSITIVE = new Set(['approved', 'confirmed', 'committed', 'succeeded', 'completed', 'passed', 'applied', 'consistent', 'exact', 'observed', 'enabled', 'delivered']);
+const NEGATIVE = new Set(['rejected', 'invalidated', 'failed', 'blocking', 'blocked']);
+const WARNING = new Set(['open', 'pending', 'dispatched', 'claimed', 'active', 'return', 'waiting_user', 'waiting_dependency', 'ready_for_review', 'reviewing', 'reworking']);
 
 function isZh(language: string): boolean {
   return language.toLowerCase().startsWith('zh');

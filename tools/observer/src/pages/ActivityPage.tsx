@@ -4,6 +4,7 @@ import { useMemo, type HTMLAttributes } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { TechnicalDetails } from '../components/TechnicalDetails';
+import { badgeStatusOf } from '../components/ToneBadge';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import {
   absoluteTimeText,
@@ -39,13 +40,6 @@ function limitOf(value: string | null) {
   if (!value || !/^[1-9]\d*$/.test(value)) return 50;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? Math.min(parsed, 100) : 50;
-}
-
-function badgeStatus(tone: SemanticTone): 'success' | 'error' | 'warning' | 'default' {
-  if (tone === 'positive') return 'success';
-  if (tone === 'negative') return 'error';
-  if (tone === 'warning') return 'warning';
-  return 'default';
 }
 
 /** Bounded object activity, not the deferred full ops-audit/export surface. */
@@ -154,7 +148,7 @@ export function ActivityPage() {
   function renderResult(value: unknown) {
     const word = statusWord(value, { language, field: 'result' });
     const tone: SemanticTone = value === 'unknown' ? 'warning' : word.tone;
-    return <Badge status={badgeStatus(tone)} text={word.text} />;
+    return <Badge status={badgeStatusOf(tone)} text={word.text} />;
   }
 
   function renderDetail(event: OperationEvent) {
