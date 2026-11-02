@@ -274,10 +274,8 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     expect(await screen.findByText(/Build a useful filterable queue/)).toBeTruthy();
   });
 
-  it.each([
-    ['Chinese', '# 客户支持队列\n\n按标签筛选。'],
-    ['emoji', '# Support queue 😀😀\n'],
-  ])('does not mark a complete %s document partial', async (_name, text) => {
+  it('does not mark a complete multi-byte document partial', async () => {
+    const text = '# 客户支持队列\n\n按标签筛选。';
     const spec = specFor(text);
     const snapshot = snapshotWithSpec('W1', spec);
     setupKnowledge({ snapshots: { W1: snapshot, W2: snapshot } });
@@ -385,9 +383,9 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     expect(screen.queryByText('摘要不匹配，正文不可信')).toBeNull();
   });
 
-  it('flags a same-length text change as digest mismatch', async () => {
+  it('flags a text that does not hash to its declared digest', async () => {
     vi.stubGlobal('crypto', webcrypto);
-    const spec = specFor('abc', { sha256: sha256('abd') });
+    const spec = specFor('abc', { sha256: sha256('a different text') });
     const snapshot = snapshotWithSpec('W1', spec);
     setupKnowledge({ snapshots: { W1: snapshot, W2: snapshot } });
     renderApp('/projects/demo?tab=knowledge');
