@@ -1,13 +1,13 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { Card, Col, Descriptions, List, Pagination, Row, Space, Tag, Tooltip, Typography, theme } from 'antd';
-import { isValidElement } from 'react';
+import { Card, Col, List, Pagination, Row, Segmented, Space, Table, Tag, Tooltip, Typography, theme } from 'antd';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import { ArtifactReader } from '../components/ArtifactReader';
-import { EvidenceChain } from '../components/EvidenceChain';
+import { DeliverySteps, type DeliveryStep } from '../components/DeliverySteps';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
-import { FieldLabel, ObservationValue } from '../components/ObservationValue';
+import { TechnicalDetails } from '../components/TechnicalDetails';
 import { ApiError, isAuthError } from '../lib/api';
 import { formatObservationValue, notProvided } from '../i18n/craft';
 import { craftSelectionStyle, craftValueStyle } from '../theme';
@@ -29,12 +29,13 @@ function errorCode(error: unknown) {
   return error instanceof ApiError ? error.code : 'UnknownError';
 }
 
-/** Exact outcome evidence; no status is inferred from CI, merge or artifact readability. */
+/** Prototype's master/detail outcome view; exact evidence stays in disclosure groups. */
 export function ProjectAcceptance({ project }: { project: string }) {
   const { t, i18n } = useTranslation();
   const { token } = theme.useToken();
   const { revoked } = useRevocation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [versionFilter, setVersionFilter] = useState<'all' | 'current' | 'history'>('current');
   const overview = useQuery(overviewQueryOptions(project, revoked));
   const works = overview.data?.works ?? [];
   const requestedWork = searchParams.get('work');
@@ -43,11 +44,14 @@ export function ProjectAcceptance({ project }: { project: string }) {
   const requestedPage = validPage(searchParams.get('page'));
   const page = requestedIndex >= 0 ? Math.floor(requestedIndex / PAGE_SIZE) + 1 : Math.min(requestedPage, lastPage);
   const visibleWorks = works.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const selectedWork = visibleWorks.find((work) => work.key === requestedWork) ?? visibleWorks[0];
   const snapshots = useQueries({
-    queries: visibleWorks.map((work) => workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked)),
+    queries: visibleWorks.map((work) => (
+      workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked)
+    )),
   });
-  const selectedSnapshot = snapshots.find((query) => query.data?.result.data.work_id === selectedWork?.key);
+  const selectedWork = visibleWorks.find((work) => work.key === requestedWork) ?? visibleWorks[0];
+  const selectedWorkIndex = selectedWork ? visibleWorks.indexOf(selectedWork) : -1;
+  const selectedSnapshot = selectedWorkIndex >= 0 ? snapshots[selectedWorkIndex] : undefined;
   const snapshotData = selectedSnapshot?.data?.result.data;
   const collaboration = snapshotData?.observation?.collaboration;
   const currentRound = collaboration?.review?.id;
@@ -99,14 +103,10 @@ export function ProjectAcceptance({ project }: { project: string }) {
       </Tooltip>
     );
   };
-  const fields = (input: Array<[string, unknown]>) => input.map(([field, child]) => ({
-    key: field,
-    label: <FieldLabel field={field} />,
-    children: isValidElement(child) ? child : <ObservationValue value={child} field={field} />,
-  }));
   const readError = (query: { error: unknown }, testId: string) => (
     <Typography.Text type="warning" data-testid={testId}>
-      {t('acceptance.readFailed', { code: errorCode(query.error) })}
+      {t('acceptance.readFailed')}
+      <TechnicalDetails items={[{ label: 'Error', value: errorCode(query.error) }]} />
     </Typography.Text>
   );
   const loading = <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>;
@@ -145,6 +145,11 @@ export function ProjectAcceptance({ project }: { project: string }) {
   const connectors = asArray(at(neutral.data?.result.data, ['connectors']));
   const exportData = exports.data?.result.data;
   const exportItems = asArray(exportData?.items);
+  const verification = asArray(collaboration?.verification);
+  const requiredDependencies = snapshotData?.visible_contract?.required_dependencies
+    ?? snapshotData?.published_contract?.required_dependencies
+    ?? asArray(at(snapshotData, ['adopted_dependencies']))
+    ?? [];
 
   function selectWork(key: string) {
     const next = new URLSearchParams(searchParams);
@@ -157,6 +162,126 @@ export function ProjectAcceptance({ project }: { project: string }) {
     else next.delete('page');
     setSearchParams(next);
   }
+
+  function snapshotForWork(key: string) {
+    return snapshots.find((query) => query.data?.result.data.work_id === key)?.data?.result.data;
+  }
+
+  function versionOf(data: typeof snapshotData) {
+    const selection = data?.observation?.collaboration?.candidate?.selection_version;
+    return selection == null ? null : `v${selection}`;
+  }
+
+  function isCurrentVersion(key: string) {
+    return snapshotForWork(key)?.observation?.collaboration?.candidate?.current === true;
+  }
+
+  const filteredWorks = visibleWorks.filter((work) => (
+    versionFilter === 'all'
+    || (versionFilter === 'current' && isCurrentVersion(work.key))
+    || (versionFilter === 'history' && !isCurrentVersion(work.key))
+  ));
+  const candidatePresent = collaboration?.candidate != null || collaboration?.review != null || reviewObject != null;
+  const reviewState = asText(reviewObject?.state ?? collaboration?.review?.state);
+  const reviewApproved = reviewState === 'approved' && reviewIsCurrent;
+  const reviewIsHistorical = reviewCandidateCurrent === false
+    || at(reviewObject, ['evidence_provenance', 'review_contract_matches_current']) === false;
+  const integrationState = asText(integrationData?.state ?? collaboration?.integration?.state);
+  const integrationOutcome = asText(at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'outcome']));
+  const integrationConfirmed = integrationState === 'confirmed' && integrationOutcome === 'applied';
+  const integrationRejected = integrationState === 'rejected' || integrationOutcome === 'rejected';
+  const deliveryComplete = at(deliveryObject, ['awr_acceptance', 'complete']) === true
+    && at(deliveryObject, ['awr_acceptance', 'runtime_state']) === 'completed';
+  const completionKnown = completionSelected != null && completionReceipt != null;
+  const snapshotLoading = Boolean(selectedWork) && (selectedSnapshot == null || selectedSnapshot.isPending);
+  const snapshotFailed = selectedSnapshot?.isError === true;
+  const reviewLoading = Boolean(selectedRound) && review.isPending;
+  const integrationLoading = Boolean(integrationId) && integration.isPending;
+  const completionLoading = Boolean(selectedCompletionId) && completion.isPending;
+  const acceptanceLoading = snapshotLoading || reviewLoading || integrationLoading || completionLoading || delivery.isPending;
+  const acceptanceUnknown = snapshotFailed || review.isError || integration.isError || completion.isError || delivery.isError;
+  const steps: DeliveryStep[] = [
+    {
+      key: 'candidate', title: t('acceptance.stepCandidate'),
+      text: snapshotLoading ? t('common.loading') : snapshotFailed ? t('acceptance.statusUnknown') : candidatePresent ? t('acceptance.statusRecorded') : t('acceptance.statusNotGenerated'),
+      tone: snapshotFailed ? 'warning' : snapshotLoading ? 'neutral' : candidatePresent ? 'positive' : 'neutral',
+    },
+    {
+      key: 'verification', title: t('acceptance.stepVerification'),
+      text: snapshotLoading
+        ? t('common.loading')
+        : snapshotFailed
+          ? t('acceptance.statusUnknown')
+          : verification.length === 0
+            ? t('acceptance.statusNoRecord')
+            : verification.every((entry) => at(entry, ['outcome']) === 'passed')
+              ? t('acceptance.statusPassRecord')
+              : t('acceptance.statusCheckRecord'),
+      tone: snapshotFailed ? 'warning' : snapshotLoading || verification.length === 0 ? 'neutral' : verification.every((entry) => at(entry, ['outcome']) === 'passed') ? 'positive' : 'warning',
+    },
+    {
+      key: 'review', title: t('acceptance.stepReview'),
+      text: snapshotLoading || reviewLoading
+        ? t('common.loading')
+        : snapshotFailed || review.isError
+          ? t('acceptance.statusUnknown')
+          : reviewApproved
+            ? t('acceptance.statusApproved')
+            : reviewState === 'approved' && reviewCandidateCurrent == null
+              ? t('acceptance.statusUnknown')
+              : reviewState === 'open'
+                ? t('acceptance.statusReviewPending')
+                : reviewState
+                  ? t('acceptance.statusNotApproved')
+                  : t('acceptance.statusNotStarted'),
+      tone: snapshotFailed || review.isError ? 'warning' : snapshotLoading || reviewLoading ? 'neutral' : reviewApproved ? 'positive' : reviewState === 'open' ? 'warning' : reviewState ? 'negative' : 'neutral',
+      testId: reviewApproved && !review.isError ? 'acceptance-current-approval' : reviewIsHistorical ? 'acceptance-review-history' : undefined,
+    },
+    {
+      key: 'integration', title: t('acceptance.stepIntegration'),
+      text: integrationConfirmed
+        ? t('acceptance.statusIntegrated')
+        : integrationRejected
+          ? t('acceptance.statusIntegrationRejected')
+          : snapshotLoading || integrationLoading
+            ? t('common.loading')
+            : snapshotFailed || integration.isError
+              ? t('acceptance.statusUnknown')
+              : integrationId
+                ? t('acceptance.statusIntegrationPending')
+                : t('acceptance.statusIntegrationNotPrepared'),
+      tone: integrationConfirmed ? 'positive' : integrationRejected ? 'negative' : snapshotFailed || integration.isError ? 'warning' : snapshotLoading || integrationLoading ? 'neutral' : integrationId ? 'warning' : 'neutral',
+      testId: integrationRejected ? 'acceptance-integration-rejected' : undefined,
+    },
+    {
+      key: 'acceptance', title: t('acceptance.stepAcceptance'),
+      text: completionConflict
+        ? t('acceptance.statusConflict')
+        : acceptanceLoading
+          ? t('common.loading')
+          : acceptanceUnknown
+            ? t('acceptance.statusUnknown')
+            : deliveryComplete && completionKnown && integrationConfirmed
+              ? t('acceptance.statusCompleted')
+              : deliveryComplete
+                ? t('acceptance.statusCompletionUnconfirmed')
+                : completionKnown
+                  ? t('acceptance.statusIntegrationPending')
+                  : t('acceptance.noCompletionReceipt'),
+      tone: completionConflict ? 'negative' : acceptanceUnknown ? 'warning' : acceptanceLoading ? 'neutral' : deliveryComplete && completionKnown && integrationConfirmed ? 'positive' : deliveryComplete || completionKnown ? 'warning' : 'neutral',
+      testId: completionConflict ? 'acceptance-completion-conflict' : undefined,
+    },
+  ];
+
+  const currentVersion = versionOf(snapshotData);
+  const currentVersionText = currentVersion ?? t('acceptance.currentVersion');
+  const verificationRows = verification.map((entry, index) => ({
+    key: index,
+    check: at(entry, ['check']) === 'local_git.manifest' ? t('acceptance.localVerification') : asText(at(entry, ['check'])) ?? t('acceptance.otherVerification', { count: index + 1 }),
+    outcome: at(entry, ['outcome']) === 'passed' ? t('acceptance.statusPassed') : at(entry, ['outcome']) === 'failed' ? t('acceptance.statusFailed') : t('acceptance.statusUnknown'),
+    version: currentVersionText,
+    raw: entry,
+  }));
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }} data-testid="acceptance-page">
@@ -172,27 +297,59 @@ export function ProjectAcceptance({ project }: { project: string }) {
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={7}>
           <Card size="small" title={t('acceptance.sources')}>
-            <List
+            <Segmented
+              block
               size="small"
-              dataSource={visibleWorks}
-              rowKey={(work) => work.key}
-              renderItem={(work) => {
-                const query = snapshots.find((item) => item.data?.result.data.work_id === work.key);
-                const state = query?.data?.result.data.observation?.collaboration?.review?.state;
-                return (
-                  <List.Item
-                    data-testid={`acceptance-work-${work.key}`}
-                    onClick={() => selectWork(work.key)}
-                    style={craftSelectionStyle(token, selectedWork?.key === work.key)}
-                  >
-                    <Space direction="vertical" size={2}>
-                      <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{work.title}</Typography.Text>
-                      <Typography.Text type="secondary">{state ? <ObservationValue value={state} field="state" /> : t('acceptance.notObserved')}</Typography.Text>
-                    </Space>
-                  </List.Item>
-                );
-              }}
+              style={{ marginBottom: token.marginSM }}
+              value={versionFilter}
+              onChange={(next) => setVersionFilter(next as typeof versionFilter)}
+              options={[
+                { label: t('acceptance.currentVersion'), value: 'current' },
+                { label: t('acceptance.allVersions'), value: 'all' },
+                { label: t('acceptance.historyVersions'), value: 'history' },
+              ]}
             />
+            {filteredWorks.length === 0 ? <ObservationEmpty /> : (
+              <List
+                size="small"
+                dataSource={filteredWorks}
+                rowKey={(work) => work.key}
+                renderItem={(work) => {
+                  const data = snapshotForWork(work.key);
+                  const observation = data?.observation;
+                  const state = observation?.collaboration?.review?.state;
+                  const version = versionOf(data);
+                  const author = asText(observation?.responsibility?.owner_name)
+                    ?? asText(observation?.collaboration?.review?.author_actor_id)
+                    ?? asText(observation?.responsibility?.owner)
+                    ?? missing;
+                  const reportedAt = observation?.last_activity_at_unix_ms
+                    ?? at(observation, ['progress', 'reported_at_unix_ms'])
+                    ?? observation?.reporting?.client_reported_at_unix_ms;
+                  const label = state === 'approved'
+                    ? t('acceptance.statusApproved')
+                    : state === 'open'
+                      ? t('acceptance.statusReviewPending')
+                      : observation?.collaboration?.candidate || observation?.collaboration?.review
+                        ? t('acceptance.statusRecorded')
+                        : t('acceptance.statusNotGenerated');
+                  return (
+                    <List.Item data-testid={`acceptance-work-${work.key}`} onClick={() => selectWork(work.key)} style={craftSelectionStyle(token, selectedWork?.key === work.key)}>
+                      <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                        <Space style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                          <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{work.title}{version ? ` ${version}` : ''}</Typography.Text>
+                          <Tag color={state === 'approved' ? 'success' : state === 'open' ? 'warning' : 'default'}>{label}</Tag>
+                        </Space>
+                        <Typography.Text type="secondary">
+                          {author}
+                          {reportedAt != null ? ` · ${formatUnixMs(Number(reportedAt), i18n.language)}` : ` · ${missing}`}
+                        </Typography.Text>
+                      </Space>
+                    </List.Item>
+                  );
+                }}
+              />
+            )}
             <Pagination
               current={page}
               total={works.length}
@@ -212,304 +369,136 @@ export function ProjectAcceptance({ project }: { project: string }) {
         </Col>
         <Col xs={24} lg={17}>
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
-            <Card size="small" title={t('acceptance.version')} data-testid="acceptance-version">
-              {selectedSnapshot?.isError ? <PartialFailure errorCode={errorCode(selectedSnapshot.error)}>{null}</PartialFailure> : (
-                <Descriptions size="small" column={{ xs: 1, sm: 2 }} items={fields([
-                  ['work_id', selectedWork.key],
-                  ['contract_hash', snapshotData?.contract_hash],
-                  ['candidate_digest', collaboration?.candidate?.digest],
-                  ['candidate_current', collaboration?.candidate?.current],
-                  ['selection_version', collaboration?.candidate?.selection_version],
-                  ['source_revision', at(reviewObject, ['submission', 'source_revision', 'value'])],
-                ])} />
-              )}
+            <Card size="small" title={selectedWork?.title ?? t('acceptance.title')}>
+              <DeliverySteps steps={steps} testId="acceptance-evidence-chain" />
             </Card>
 
-            <Card size="small" title={t('acceptance.evidenceChain')} data-testid="acceptance-evidence-chain">
-              <EvidenceChain
-                candidateCurrent={collaboration?.candidate?.current}
-                reviewState={reviewObject?.state}
-                reviewCurrent={reviewIsCurrent}
-                integrationState={integrationData?.state ?? collaboration?.integration?.state}
-                completionState={completionData?.runtime_state ?? snapshotData?.observation?.runtime?.state}
-                completionReceipt={completionSelected ?? selectedCompletionId}
-              />
-            </Card>
+            {verificationRows.length > 0 ? (
+              <Card size="small" title={t('acceptance.verificationTitle')} data-testid="acceptance-verification">
+                <Table
+                  size="small"
+                  rowKey="key"
+                  pagination={false}
+                  dataSource={verificationRows}
+                  columns={[
+                    { title: t('acceptance.verificationContent'), dataIndex: 'check' },
+                    { title: t('acceptance.verificationResult'), dataIndex: 'outcome', render: (text) => <Tag color={text === t('acceptance.statusPassed') ? 'success' : text === t('acceptance.statusFailed') ? 'error' : 'default'}>{text}</Tag> },
+                    { title: t('acceptance.boundVersion'), dataIndex: 'version' },
+                  ]}
+                />
+                <Typography.Text type="secondary">{t('acceptance.verificationNote')}</Typography.Text>
+              </Card>
+            ) : null}
 
-            <Card size="small" title={t('acceptance.review')}>
-              {!selectedRound ? empty : review.isPending ? loading : review.isError ? readError(review, 'acceptance-review-error') : (
-                <Space direction="vertical" size={12} style={{ width: '100%' }} data-testid={`acceptance-review-${selectedRound}`}>
-                  <Space size={8} wrap>
-                    <Tag>{value(reviewObject?.state, 'state')}</Tag>
-                    {reviewIsCurrent && reviewObject?.state === 'approved' ? (
-                      <Tag color="success" data-testid="acceptance-current-approval">{t('acceptance.currentApproval')}</Tag>
-                    ) : null}
-                    {!reviewIsCurrent ? <Tag color="warning" data-testid="acceptance-review-history">{t('acceptance.historical')}</Tag> : null}
-                    {reviewCandidateCurrent == null ? <Tag data-testid="acceptance-review-currentness">{missing}</Tag> : null}
-                    {at(reviewObject, ['evidence_provenance', 'author_self_report']) === true ? <Tag>{t('acceptance.selfReport')}</Tag> : null}
-                    {at(reviewObject, ['evidence_provenance', 'execution_consistency', 'independent_verification']) === false ? <Tag>{t('acceptance.nonIndependent')}</Tag> : null}
-                  </Space>
-                  <Descriptions size="small" column={{ xs: 1, sm: 2 }} items={fields([
-                    ['round_id', reviewObject?.round_id],
-                    ['round_index', reviewObject?.round_index],
-                    ['author_actor_id', reviewObject?.author_actor_id],
-                    ['bundle_hash', reviewObject?.bundle_hash],
-                    ['artifact_digest', reviewObject?.artifact_digest],
-                  ])} />
-                  {asArray(reviewObject?.decisions).map((decision, index) => (
-                    <Card key={asText(at(decision, ['decision_id'])) ?? index} size="small" type="inner">
-                      <Descriptions
-                        size="small"
-                        column={1}
-                        items={[
-                          ...fields([
-                            ['decision', at(decision, ['decision'])],
-                            ['reviewer_actor_id', at(decision, ['reviewer_actor_id'])],
-                            ['independence_kind', at(decision, ['independence_kind'])],
-                            ['approval_basis', at(decision, ['approval_basis'])],
-                            ['team_independent_acceptance', at(decision, ['team_independent_acceptance'])],
-                            ['reason', at(decision, ['reason'])],
-                          ]),
-                          { key: 'human_approval', label: <FieldLabel field="human_approval" />, children: <span data-testid="decision-human-approval">{value(at(decision, ['human_approval']))}</span> },
-                        ]}
-                      />
-                    </Card>
-                  ))}
-                  {asArray(at(reviewObject, ['findings', 'findings'])).map((finding, index) => (
-                    <Card key={asText(at(finding, ['finding_key'])) ?? index} size="small" type="inner">
-                      <Typography.Text strong data-testid={`finding-original-${asText(at(finding, ['finding_key']))}`}>
-                        {t('acceptance.originalWork', { work: workId, round: value(at(finding, ['round'])) })} · {value(at(finding, ['criterion']))}
-                      </Typography.Text>
-                      <Descriptions size="small" column={1} items={fields([
-                        ['criterion', at(finding, ['criterion'])],
-                        ['rule', at(finding, ['rule'])],
-                        ['severity', at(finding, ['severity'])],
-                        ['state', at(finding, ['state'])],
-                        ['summary', at(finding, ['summary'])],
-                      ])} />
-                    </Card>
-                  ))}
+            <Card size="small" title={t('acceptance.reviewChanges')} data-testid={`acceptance-review-${selectedRound ?? 'none'}`}>
+              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                <Space style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                  <Typography.Text>{t('acceptance.currentVersion')}</Typography.Text>
+                  <Typography.Text>{currentVersionText} · {steps[2].text}</Typography.Text>
                 </Space>
-              )}
+                {reviewCandidateCurrent == null ? (
+                  <Typography.Text type="secondary" data-testid="acceptance-review-currentness">{missing}</Typography.Text>
+                ) : null}
+                {reviewIsHistorical ? <Tag color="warning">{t('acceptance.historical')}</Tag> : null}
+                <Typography.Text type="secondary">{t('acceptance.reviewChangeNote')}</Typography.Text>
+              </Space>
             </Card>
 
-            <Row gutter={[16, 16]}>
-              <Col xs={24} xl={10}>
-                <Card size="small" title={t('acceptance.evidence')}>
-                  {!evidenceId ? empty : evidence.isPending ? loading : evidence.isError ? readError(evidence, 'acceptance-evidence-error') : (
-                    <div data-testid="acceptance-evidence">
-                      <Descriptions size="small" column={1} items={fields([
-                        ['evidence_id', at(evidence.data?.result.data, ['evidence', 'evidence_id'])],
-                        ['execution_id', at(evidence.data?.result.data, ['evidence', 'execution_id'])],
-                        ['artifact_id', at(evidence.data?.result.data, ['evidence', 'artifact_id'])],
-                        ['artifact_digest', at(evidence.data?.result.data, ['evidence', 'artifact_digest'])],
-                        ['trust_basis', at(evidence.data?.result.data, ['evidence', 'trust_basis'])],
-                      ])} />
-                    </div>
-                  )}
-                </Card>
-              </Col>
-              <Col xs={24} xl={8}>
-                <Card size="small" title={t('acceptance.execution')}>
-                  {!executionId ? empty : execution.isPending ? loading : execution.isError ? readError(execution, 'acceptance-execution-error') : (
-                    <div data-testid="acceptance-execution">
-                      <Descriptions size="small" column={1} items={fields([
-                        ['execution_id', execution.data?.result.data.execution_id],
-                        ['state', execution.data?.result.data.state],
-                        ['artifact_verified', execution.data?.result.data.artifact_verified],
-                        ['artifact_verification_basis', execution.data?.result.data.artifact_verification_basis],
-                        ['effects_settled', execution.data?.result.data.effects_settled],
-                        ['contract_matches_current', execution.data?.result.data.contract_matches_current],
-                        ['epoch_matches_current', execution.data?.result.data.epoch_matches_current],
-                        ['execution_authorized', execution.data?.result.data.execution_authorized],
-                      ])} />
-                    </div>
-                  )}
-                </Card>
-              </Col>
-              <Col xs={24} xl={6}>
-                <Card size="small" title={t('acceptance.claim')}>
-                  {!claimId ? empty : claim.isPending ? loading : claim.isError ? readError(claim, 'acceptance-claim-error') : (
-                    <div data-testid="acceptance-claim">
-                      <Descriptions size="small" column={1} items={fields([
-                        ['claim_id', claim.data?.result.data.claim_id],
-                        ['state', claim.data?.result.data.state],
-                        ['lease_live', claim.data?.result.data.lease_live],
-                        ['current_fence', claim.data?.result.data.current_fence],
-                        ['epoch_matches_current', claim.data?.result.data.epoch_matches_current],
-                        ['execution_authorized', claim.data?.result.data.execution_authorized],
-                        ['expires_at', claim.data?.result.data.expires_at],
-                      ])} />
-                    </div>
-                  )}
-                </Card>
-              </Col>
-            </Row>
-
-            {selectedCompletionId ? (
-              <Card size="small" title={t('acceptance.completion')}>
-                {completion.isPending ? loading : completion.isError ? readError(completion, 'acceptance-completion-error') : completionConflict ? (
-                  <Typography.Text type="warning" data-testid="acceptance-completion-conflict">
-                    {t('acceptance.conflict')}
-                  </Typography.Text>
-                ) : (
-                  <div data-testid="acceptance-completion">
-                    <Descriptions
-                      size="small"
-                      column={{ xs: 1, sm: 2 }}
-                      items={[
-                        ...fields([
-                          ['receipt_id', completionReceipt],
-                          ['selected_completion_id', completionSelected],
-                          ['runtime_state', completionData?.runtime_state],
-                          ['contract_hash', completionObject?.contract_hash],
-                          ['evidence_id', completionObject?.evidence_id],
-                          ['execution_id', completionObject?.execution_id],
-                          ['human_approval', at(completionObject, ['approved_by', 'human_approval'])],
-                          ['team_independent_acceptance', at(completionObject, ['approved_by', 'team_independent_acceptance'])],
-                        ]),
-                        { key: 'review_round_id', label: <FieldLabel field="review_round_id" />, children: <span data-testid="completion-review-round">{value(completionReviewRound)}</span> },
-                        { key: 'review_decision_id', label: <FieldLabel field="review_decision_id" />, children: <span data-testid="completion-review-decision">{value(completionReviewDecision)}</span> },
-                        { key: 'independence_kind', label: <FieldLabel field="independence_kind" />, children: <span data-testid="completion-independence">{value(completionIndependence, 'independence_kind')}</span> },
-                      ]}
-                    />
-                  </div>
-                )}
+            {requiredDependencies.length > 0 ? (
+              <Card size="small" title={t('acceptance.downstream')}>
+                <List
+                  size="small"
+                  dataSource={requiredDependencies}
+                  renderItem={(dependency) => {
+                    const key = asText(dependency);
+                    const related = works.find((work) => work.key === key);
+                    return (
+                      <List.Item>
+                        <Typography.Text>{related?.title ?? t('acceptance.relatedWork')}</Typography.Text>
+                        <TechnicalDetails items={[{ label: 'Dependency', value: dependency }]} />
+                      </List.Item>
+                    );
+                  }}
+                />
               </Card>
             ) : null}
 
-            <Card size="small" title={t('acceptance.localGit')}>
-              {neutral.isPending || submission.isPending ? loading : neutral.isError ? readError(neutral, 'acceptance-connectors-error') : (
-                <div data-testid="acceptance-connectors">
-                  {connectors.length === 0 ? empty : connectors.map((connector, index) => (
-                    <Descriptions key={asText(at(connector, ['connector_id'])) ?? index} size="small" column={{ xs: 1, sm: 2 }} items={fields([
-                      ['provider', at(connector, ['provider'])],
-                      ['connector_id', at(connector, ['connector_id'])],
-                      ['connector_version', at(connector, ['connector_version'])],
-                      ['enabled', at(connector, ['enabled'])],
-                      ['current_epoch', at(connector, ['current_epoch'])],
-                      ['fact_source', at(connector, ['fact_source'])],
-                      ['resource', at(connector, ['resource'])],
-                      ['read_only', at(submission.data?.result.data, ['read_only'])],
-                    ])} />
-                  ))}
-                </div>
-              )}
-            </Card>
-
-            {integrationId ? (
-              <Card size="small" title={t('acceptance.integration')}>
-                {integration.isPending ? loading : integration.isError ? readError(integration, 'acceptance-integration-error') : (
-                  <div data-testid="acceptance-integration">
-                    <Descriptions
-                      size="small"
-                      column={{ xs: 1, sm: 2 }}
-                      items={[
-                        ...fields([
-                          ['integration_id', integrationData?.integration_id],
-                          ['target', at(integrationData, ['integration_request', 'binding', 'target', 'reference'])],
-                          ['target_resource', at(integrationData, ['integration_request', 'binding', 'target', 'resource'])],
-                          ['precondition', at(integrationData, ['integration_request', 'binding', 'target', 'precondition', 'revision', 'value'])],
-                          ['result_revision', at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'result_revision', 'value'])],
-                        ]),
-                        { key: 'outcome', label: <FieldLabel field="outcome" />, children: <span data-testid="acceptance-integration-outcome">{value(at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'outcome']), 'outcome')}</span> },
-                        { key: 'state', label: <FieldLabel field="state" />, children: <span data-testid="acceptance-integration-state">{value(integrationData?.state, 'state')}</span> },
-                        { key: 'dispatch_state', label: <FieldLabel field="dispatch_state" />, children: <span data-testid="acceptance-dispatch-state">{value(at(integrationData, ['dispatch_receipt', 'data', 'state']), 'dispatch_state')}</span> },
-                        ...fields([
-                          ['current_binding', integrationData?.current_binding],
-                          ['target_changed', integrationData?.target_changed],
-                          ['dispatched_at', integrationData?.dispatched_at],
-                        ]),
-                      ]}
-                    />
-                    {at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'outcome']) === 'rejected' ? (
-                      <Tag color="error" data-testid="acceptance-integration-rejected">{t('acceptance.integrationRejected')}</Tag>
-                    ) : null}
+            <TechnicalDetails items={[
+              { label: 'Outcome and version', testId: 'acceptance-version', value: { workId, snapshot: snapshotData } },
+              { label: 'Review', testId: 'acceptance-review', value: reviewObject },
+              ...(evidenceId ? [{ label: 'Evidence', testId: 'acceptance-evidence', value: evidence.data?.result.data }] : []),
+              ...(executionId ? [{ label: 'Execution', testId: 'acceptance-execution', value: execution.data?.result.data }] : []),
+              ...(claimId ? [{ label: 'Claim', testId: 'acceptance-claim', value: claim.data?.result.data }] : []),
+              ...(selectedCompletionId && !completionConflict ? [{ label: 'Completion', testId: 'acceptance-completion', value: completionData }] : []),
+              { label: 'Connectors and submission', testId: 'acceptance-connectors', value: { neutral: neutral.data?.result.data, submission: submission.data?.result.data, connectors } },
+              ...(integrationId ? [{ label: 'Integration', testId: 'acceptance-integration', value: integrationData }] : []),
+              ...(collaboration?.source_state ? [{ label: 'Source', testId: 'acceptance-source', value: source.data?.result.data }] : []),
+              { label: 'Delivery', testId: 'acceptance-delivery', value: deliveryObject },
+              { label: 'Exports', testId: 'acceptance-exports', value: { ...exportData, items: exportItems } },
+              { label: 'Artifacts', testId: 'acceptance-artifacts', value: artifacts },
+              {
+                label: 'Record times', testId: 'acceptance-times',
+                copyValue: JSON.stringify({ observedAt, recordedAt, pageRead: selectedSnapshot?.data?.freshness.page_read.at_unix_ms, sourceQuery: collaboration?.source_state?.query_started_at_unix_ms }),
+                value: (
+                  <>
+                    <span>{t('acceptance.externalObserved')}: {timeValue(observedAt)}</span>{' · '}
+                    <span>{t('acceptance.awrRecorded')}: {timeValue(recordedAt)}</span>{' · '}
+                    <span>{t('acceptance.pageRead')}: {timeValue(selectedSnapshot?.data?.freshness.page_read.at_unix_ms)}</span>{' · '}
+                    <span>{t('acceptance.sourceQuery')}: {timeValue(collaboration?.source_state?.query_started_at_unix_ms)}</span>
+                  </>
+                ),
+              },
+            ]}>
+              {asArray(reviewObject?.decisions).map((decision, index) => (
+                <span key={asText(at(decision, ['decision_id'])) ?? index} data-testid="decision-human-approval">
+                  {value(at(decision, ['human_approval']))}
+                </span>
+              ))}
+              {asArray(at(reviewObject, ['findings', 'findings'])).map((finding, index) => (
+                <Typography.Text key={asText(at(finding, ['finding_key'])) ?? index} data-testid={`finding-original-${asText(at(finding, ['finding_key']))}`}>
+                  {t('acceptance.originalWork', { work: workId, round: value(at(finding, ['round'])) })} · {value(at(finding, ['criterion']))}
+                </Typography.Text>
+              ))}
+              {at(reviewObject, ['evidence_provenance', 'author_self_report']) === true ? <span>{t('acceptance.selfReport')}</span> : null}
+              {at(reviewObject, ['evidence_provenance', 'execution_consistency', 'independent_verification']) === false ? <span>{t('acceptance.nonIndependent')}</span> : null}
+              {selectedCompletionId && !completionConflict ? (
+                <>
+                  <span data-testid="completion-review-round">{completionReviewRound ?? missing}</span>
+                  <span data-testid="completion-review-decision">{completionReviewDecision ?? missing}</span>
+                  <span data-testid="completion-independence">{value(completionIndependence, 'independence_kind')}</span>
+                </>
+              ) : null}
+              {integrationId ? (
+                <>
+                  <span data-testid="acceptance-integration-outcome">{value(at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'outcome']), 'outcome')}</span>
+                  <span data-testid="acceptance-integration-state">{value(integrationData?.state, 'state')}</span>
+                  <span data-testid="acceptance-dispatch-state">{value(at(integrationData, ['dispatch_receipt', 'data', 'state']), 'dispatch_state')}</span>
+                </>
+              ) : null}
+              <span data-testid="acceptance-delivery-complete">{completionConflict ? t('acceptance.conflict') : value(at(deliveryObject, ['awr_acceptance', 'complete']))}</span>
+              {artifacts.map((artifact, index) => {
+                const artifactId = asText(at(artifact, ['query', 'artifact_id']));
+                return (
+                  <div key={artifactId ?? index} data-testid={`acceptance-artifact-${artifactId}`}>
+                    <ArtifactReader project={project} artifact={artifact} revoked={revoked} />
                   </div>
-                )}
-              </Card>
-            ) : null}
+                );
+              })}
+            </TechnicalDetails>
 
-            <Card size="small" title={t('acceptance.source')}>
-              {!collaboration?.source_state ? empty : source.isPending ? loading : source.isError ? readError(source, 'acceptance-source-error') : (
-                <div data-testid="acceptance-source">
-                  <Descriptions size="small" column={{ xs: 1, sm: 2 }} items={fields([
-                    ['source_observation', source.data?.result.data.source_observation],
-                    ['confirmed_fingerprint', source.data?.result.data.confirmed_fingerprint],
-                    ['source_fingerprint', source.data?.result.data.source_fingerprint],
-                    ['source_synchronized', source.data?.result.data.source_synchronized],
-                    ['cursor_current', source.data?.result.data.cursor_current],
-                    ['projection_current', source.data?.result.data.projection_current],
-                    ['pending_publication_id', source.data?.result.data.pending_publication_id],
-                    ['metadata_revision', source.data?.result.data.metadata_revision],
-                    ['history_truncated', source.data?.result.data.history_truncated],
-                  ])} />
-                </div>
-              )}
-            </Card>
-
-            <Card size="small" title={t('acceptance.delivery')}>
-              {delivery.isPending ? loading : delivery.isError ? readError(delivery, 'acceptance-delivery-error') : (
-                <div data-testid="acceptance-delivery">
-                  <Descriptions
-                    size="small"
-                    column={{ xs: 1, sm: 2 }}
-                    items={[
-                      { key: 'complete', label: <FieldLabel field="complete" />, children: <span data-testid="acceptance-delivery-complete">{completionConflict ? t('acceptance.conflict') : value(at(deliveryObject, ['awr_acceptance', 'complete']))}</span> },
-                      ...fields([
-                        ['runtime_state', at(deliveryObject, ['awr_acceptance', 'runtime_state'])],
-                        ['selected_completion_id', deliverySelected],
-                        ['github.submitted', at(deliveryObject, ['github', 'submitted'])],
-                        ['github.approved', at(deliveryObject, ['github', 'approved'])],
-                        ['github.merged', at(deliveryObject, ['github', 'merged'])],
-                        ['pr', deliveryObject?.pr],
-                        ['webhook_auto_sync', deliveryObject?.webhook_auto_sync],
-                        ['cannot_skip_acceptance_via', deliveryObject?.cannot_skip_acceptance_via],
-                      ]),
-                    ]}
-                  />
-                </div>
-              )}
-            </Card>
-
-            <Card size="small" title={t('acceptance.exports')}>
-              {exports.isPending ? loading : exports.isError ? readError(exports, 'acceptance-exports-error') : (
-                <div data-testid="acceptance-exports">
-                  <Descriptions size="small" column={{ xs: 1, sm: 2 }} items={fields([
-                    ['adoption_available', exportData?.adoption_available],
-                    ['adoption_version_policies', exportData?.adoption_version_policies],
-                    ['upstream_source_access', exportData?.upstream_source_access],
-                    ['items_count', exportItems.length],
-                    ['next_cursor', exportData?.next_cursor],
-                  ])} />
-                  {exportItems.length > 0 ? <Typography.Text type="warning">{t('acceptance.exportDetailsLater')}</Typography.Text> : empty}
-                </div>
-              )}
-            </Card>
-
-            <Card size="small" title={t('acceptance.artifacts')}>
-              <div data-testid="acceptance-artifacts">
-                {artifacts.length === 0 ? empty : artifacts.map((artifact, index) => {
-                  const artifactId = asText(at(artifact, ['query', 'artifact_id']));
-                  return (
-                    <div key={artifactId ?? index} data-testid={`acceptance-artifact-${artifactId}`}>
-                      <ArtifactReader project={project} artifact={artifact} revoked={revoked} />
-                    </div>
-                  );
-                })}
-              </div>
-            </Card>
-
-            <Card size="small" title={t('acceptance.times')}>
-              <div data-testid="acceptance-times">
-                <Descriptions size="small" column={{ xs: 1, sm: 2 }} items={fields([
-                  [t('acceptance.externalObserved'), timeValue(observedAt)],
-                  [t('acceptance.awrRecorded'), timeValue(recordedAt)],
-                  [t('acceptance.pageRead'), timeValue(selectedSnapshot?.data?.freshness.page_read.at_unix_ms)],
-                  [t('acceptance.sourceQuery'), timeValue(collaboration?.source_state?.query_started_at_unix_ms)],
-                ])} />
-              </div>
-            </Card>
+            {review.isError ? readError(review, 'acceptance-review-error') : null}
+            {evidence.isError ? readError(evidence, 'acceptance-evidence-error') : null}
+            {execution.isError ? readError(execution, 'acceptance-execution-error') : null}
+            {claim.isError ? readError(claim, 'acceptance-claim-error') : null}
+            {completion.isError ? readError(completion, 'acceptance-completion-error') : null}
+            {integration.isError ? readError(integration, 'acceptance-integration-error') : null}
+            {source.isError ? readError(source, 'acceptance-source-error') : null}
+            {delivery.isError ? readError(delivery, 'acceptance-delivery-error') : null}
+            {neutral.isError ? readError(neutral, 'acceptance-connectors-error') : null}
+            {exports.isError ? readError(exports, 'acceptance-exports-error') : null}
+            {selectedSnapshot?.isError ? readError(selectedSnapshot, 'acceptance-snapshot-error') : null}
+            {selectedSnapshot?.isPending || reviewLoading || (Boolean(evidenceId) && evidence.isPending) || (Boolean(executionId) && execution.isPending) || (Boolean(claimId) && claim.isPending) || completionLoading || integrationLoading || delivery.isPending || neutral.isPending || submission.isPending || (Boolean(collaboration?.source_state) && source.isPending) || exports.isPending ? loading : null}
+            {!acceptanceLoading && !acceptanceUnknown && (!selectedRound || !evidenceId || !executionId || !claimId || !selectedCompletionId) ? empty : null}
           </Space>
         </Col>
       </Row>

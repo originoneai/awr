@@ -393,7 +393,10 @@ describe('visible-row snapshot hydration', () => {
     });
     await screen.findAllByText('Build the filter API');
     expect(await screen.findByTestId('state-partial')).toBeTruthy();
-    expect(screen.getByTestId('state-partial').textContent).toContain('ReadTimeout');
+    const partial = screen.getByTestId('state-partial');
+    expect(partial.textContent).not.toContain('ReadTimeout');
+    await userEvent.setup().click(within(partial).getByText('技术细节'));
+    expect(await within(partial).findByText('ReadTimeout')).toBeTruthy();
     expect(screen.getByText('Prepare the support page')).toBeTruthy();
   });
 });
