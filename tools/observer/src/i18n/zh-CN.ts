@@ -344,15 +344,16 @@ const zhCN = {
       waiting_dependency: '等待依赖',
       observe: '观测',
       prepare: '准备',
+      other: '其他状态',
     },
     nextAction: {
       observe: '查看任务（仅观测）',
       prepare: '准备任务（由 Agent 执行）',
-      advisory: '建议动作：{{op}}',
+      advisory: '建议的下一步',
     },
     resume: {
       title: '继续上次工作',
-      session: '会话 {{id}} · 版本 {{version}}',
+      continue: '上次的进度还在，可以接着做',
     },
     agents: '我的 Agent',
     handoffs: '最近交接',

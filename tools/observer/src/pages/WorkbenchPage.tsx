@@ -18,7 +18,7 @@ import type { TFunction } from 'i18next';
 import { Link as LinkIcon } from 'lucide-react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { deriveWorkState, describeProgressReport } from '../core/observation';
+import { deriveWorkState, describeProgressReport, workLabel } from '../core/observation';
 import { Link, useSearchParams } from 'react-router';
 import { ClaimTag } from '../components/ClaimTag';
 import { FreshnessBadge } from '../components/FreshnessBadge';
@@ -91,13 +91,24 @@ function navigationText(navigation: string | undefined, t: TFunction) {
   if (!navigation) return null;
   return NAVIGATIONS.includes(navigation as WorkNavigation)
     ? t(`workbench.navigation.${navigation as WorkNavigation}`)
-    : navigation;
+    : t('workbench.navigation.other');
+}
+
+/** A work's name for a person: its title, or, when the service gave none, what the work label makes of its key. */
+function rowName(row: { title?: string | null; work_id: string }, language: string): string {
+  const title = row.title?.trim();
+  return title ? title : workLabel(row.work_id, { language }).text;
+}
+
+/** A resumable session's work, named by the title the work.next reply gives that work. */
+function resumeName(workId: string, items: ReadonlyArray<{ work_id: string; title?: string | null }> | undefined, language: string): string {
+  return rowName(items?.find((item) => item.work_id === workId) ?? { work_id: workId }, language);
 }
 
 function nextActionText(query: WorkQuery, t: TFunction) {
   if (query.op === 'work.observe') return t('workbench.nextAction.observe');
   if (query.op === 'work.prepare') return t('workbench.nextAction.prepare');
-  return t('workbench.nextAction.advisory', { op: query.op });
+  return t('workbench.nextAction.advisory');
 }
 
 function LastReport({ workId, query }: { workId: string; query?: SnapshotQuery }) {
@@ -174,7 +185,7 @@ function WorkDetail({
     <Card data-testid="workbench-detail">
       <Flex vertical gap={20}>
         <div>
-          <Typography.Title level={3} style={{ marginTop: 0 }}>{row.title}</Typography.Title>
+          <Typography.Title level={3} style={{ marginTop: 0 }}>{rowName(row, i18n.language)}</Typography.Title>
           <Space wrap>
             <ClaimTag value={row.state} />
             {navigationText(row.navigation, t) ? <Tag>{navigationText(row.navigation, t)}</Tag> : null}
@@ -211,7 +222,14 @@ function WorkDetail({
             <DetailSection title={t('workbench.detail.nextStep')}>
               {state.next.kind === 'reported' ? <Typography.Paragraph data-reporter-text>{state.next.text}</Typography.Paragraph> : <DetailAbsent />}
             </DetailSection>
-            <TechnicalDetails items={workStateTechnicalItems(state)} />
+            <TechnicalDetails
+              items={[
+                { label: 'work_id', value: row.work_id, testId: 'technical-work-id' },
+                { label: 'navigation', value: row.navigation, testId: 'technical-navigation' },
+                { label: 'next_query.op', value: row.next_query.op, testId: 'technical-next-query-op' },
+                ...workStateTechnicalItems(state),
+              ]}
+            />
           </>
         )}
         <Link to={taskPath(project, row.work_id)}>{t('workbench.detail.openFull')}</Link>
@@ -233,7 +251,7 @@ function LaterSlice({ testId }: { testId?: string }) {
 }
 
 export function WorkbenchPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { projectKey } = useScope();
   const { revoked } = useRevocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -303,14 +321,11 @@ export function WorkbenchPage() {
       key: 'task',
       width: 200,
       render: (_, row) => (
-        <Flex vertical gap={4}>
-          {effectiveProject ? (
-            <Link to={taskPath(effectiveProject, row.work_id)} onClick={(event) => event.stopPropagation()}>
-              {row.title}
-            </Link>
-          ) : row.title}
-          <Typography.Text type="secondary">{row.work_id}</Typography.Text>
-        </Flex>
+        effectiveProject ? (
+          <Link to={taskPath(effectiveProject, row.work_id)} onClick={(event) => event.stopPropagation()}>
+            {rowName(row, i18n.language)}
+          </Link>
+        ) : rowName(row, i18n.language)
       ),
     },
     {
@@ -396,11 +411,16 @@ export function WorkbenchPage() {
               dataSource={nextData?.resume ?? []}
               renderItem={(entry) => (
                 <List.Item>
-                  <Flex vertical>
-                    {effectiveProject ? <Link to={taskPath(effectiveProject, entry.work_id)}>{entry.work_id}</Link> : entry.work_id}
-                    <Typography.Text type="secondary">
-                      {t('workbench.resume.session', { id: entry.session_id, version: entry.session_version })}
-                    </Typography.Text>
+                  <Flex vertical gap={4}>
+                    {effectiveProject ? <Link to={taskPath(effectiveProject, entry.work_id)}>{resumeName(entry.work_id, nextData?.items, i18n.language)}</Link> : resumeName(entry.work_id, nextData?.items, i18n.language)}
+                    <Typography.Text type="secondary">{t('workbench.resume.continue')}</Typography.Text>
+                    <TechnicalDetails
+                      items={[
+                        { label: 'work_id', value: entry.work_id },
+                        { label: 'session_id', value: entry.session_id, testId: 'technical-session-id' },
+                        { label: 'session_version', value: entry.session_version },
+                      ]}
+                    />
                   </Flex>
                 </List.Item>
               )}

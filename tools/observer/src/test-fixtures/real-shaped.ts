@@ -49,6 +49,21 @@ export function realShapedActivity() {
   };
 }
 
+/** The resume entry of a real work.next reply of the run: a session id that is a ULID, and its version as a string. */
+const RESUME_ENTRY = {
+  next_query: {
+    op: 'work.observe',
+    protocol_version: 1,
+    session_id: '01M69PHCX2R0Y5M588J945JDEH',
+    work_id: REAL_API_WORK,
+    workstream_id: STREAM.id,
+  },
+  session_id: '01M69PHCX2R0Y5M588J945JDEH',
+  session_version: '1',
+  work_id: REAL_API_WORK,
+  workstream_id: STREAM.id,
+};
+
 export function realShapedWorkNext(): typeof DEMO_WORK_NEXT {
   const keys = [REAL_API_WORK, REAL_PAGE_WORK];
   return {
@@ -57,6 +72,7 @@ export function realShapedWorkNext(): typeof DEMO_WORK_NEXT {
       ...DEMO_WORK_NEXT.result,
       data: {
         ...DEMO_WORK_NEXT.result.data,
+        resume: [RESUME_ENTRY] as never[],
         items: DEMO_WORK_ITEMS.map((item, index) => ({
           ...item,
           work_id: keys[index],
