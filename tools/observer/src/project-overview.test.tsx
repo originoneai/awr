@@ -121,7 +121,9 @@ describe('project workstream progress', () => {
       query.queryKey[0] === 'team' && query.queryKey[1] === 'work.snapshot'
     ));
     expect(snapshots).toHaveLength(2);
-    expect(snapshots.map((query) => query.options.refetchInterval)).toEqual([60000, 60000]);
+    expect(snapshots.map((query) => (
+      'refetchInterval' in query.options ? query.options.refetchInterval : undefined
+    ))).toEqual([60000, 60000]);
   });
 
   it.each([59, 60])('renders every work on page one across two workstreams: %i', async (count) => {

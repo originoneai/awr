@@ -168,7 +168,9 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
       query.queryKey[0] === 'team' && query.queryKey[1] === 'work.snapshot'
     ));
     expect(snapshots).toHaveLength(2);
-    expect(snapshots.map((query) => query.options.refetchInterval)).toEqual([60000, 60000]);
+    expect(snapshots.map((query) => (
+      'refetchInterval' in query.options ? query.options.refetchInterval : undefined
+    ))).toEqual([60000, 60000]);
   });
 
   it('hydrates only the visible 60-work page and reads the next work on demand', async () => {
