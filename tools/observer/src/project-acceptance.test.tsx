@@ -269,8 +269,11 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     setupAcceptance();
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api', { expand: false });
     await waitFor(() => expect(screen.getByTestId('acceptance-from-works').textContent).toContain('2／2'));
+    // The one outcome disclosure: the header's project-key disclosure and the freshness badge
+    // are metadata, not raw evidence groups.
     const outcomeDetails = screen.getAllByTestId('technical-details')
-      .filter((element) => !screen.getByTestId('freshness-badge').contains(element));
+      .filter((element) => !screen.getByTestId('freshness-badge').contains(element))
+      .filter((element) => !element.closest('[data-testid="project-header"]'));
     expect(outcomeDetails).toHaveLength(1);
     const visible = screen.getByTestId('acceptance-page').textContent ?? '';
     expect(visible).not.toContain(EVIDENCE);

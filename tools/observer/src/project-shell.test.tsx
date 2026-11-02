@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { DEMO_OVERVIEW, DEMO_PROJECTS, renderApp, stubFetch } from './test-utils';
@@ -49,5 +49,25 @@ describe('ProjectShell', () => {
   it('tab bodies render the shared pending presentation, not fake data', async () => {
     setup('/projects/demo?tab=deps');
     await waitFor(() => expect(screen.getAllByText(/未观察到相关记录/).length).toBeGreaterThan(0));
+  });
+});
+
+describe('project header human language', () => {
+  it('keeps the project key out of the default view and inside the technical details', async () => {
+    const user = userEvent.setup();
+    stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
+    renderApp('/projects/demo');
+    // The header card renders before the projects read resolves; wait for the title.
+    const header = await screen.findByText('Team mainline').then(() => screen.getByTestId('project-header'));
+    // The default view names the project by its title with the role tag; the key is engineering.
+    expect(header.textContent).toContain('Team mainline');
+    expect(header.textContent).toContain('项目管理员');
+    expect(header.textContent).not.toContain('项目键');
+    expect(header.textContent).not.toContain('demo');
+
+    await user.click(within(header).getByText('技术细节'));
+    const detail = await screen.findByTestId('technical-project-key');
+    expect(detail.textContent).toContain('project_key');
+    expect(detail.textContent).toContain('demo');
   });
 });
