@@ -18,3 +18,7 @@ export function defaultVisibleText(root: ParentNode): string {
   clone.querySelectorAll('[data-testid="technical-details"]').forEach((element) => element.remove());
   return clone.textContent ?? '';
 }
+
+export function withinHumanLanguageBaseline(current: number, baseline: number): boolean {
+  return current <= baseline;
+}

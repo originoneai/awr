@@ -2,13 +2,15 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 describe('craft layout rhythm', () => {
-  it('makes the evidence chain the dominant acceptance region with varied supporting widths', () => {
+  it('uses the prototype master/detail outcome layout with a dominant status and evidence region', () => {
     const source = readFileSync('src/pages/ProjectAcceptance.tsx', 'utf8');
-    expect(source).toContain('data-testid="acceptance-evidence-chain"');
-    expect(source).toContain('<EvidenceChain');
-    expect(source).toContain('xl={10}');
-    expect(source).toContain('xl={8}');
-    expect(source).toContain('xl={6}');
+    expect(source).toContain('<DeliverySteps');
+    expect(source).toContain('testId="acceptance-evidence-chain"');
+    expect(source).toContain('lg={7}');
+    expect(source).toContain('lg={17}');
+    expect(source).toContain('acceptance.verificationTitle');
+    expect(source).toContain('acceptance.reviewChanges');
+    expect(source).toContain('acceptance.downstream');
   });
 
   it('uses asymmetric account and connection grids instead of equal card stacks', () => {

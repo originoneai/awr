@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import i18n from '../i18n';
 import {
@@ -52,9 +53,11 @@ describe('observation state presentations', () => {
     );
     // Confirmed facts stay on screen...
     expect(screen.getByText('已确认的事实')).toBeTruthy();
-    // ...next to a warning that names the failed read.
+    // The warning is human-readable; the exact error stays in disclosure.
     expect(screen.getByRole('alert')).toBeTruthy();
-    expect(screen.getByText(/ReadTimeout/)).toBeTruthy();
+    expect(screen.queryByText(/ReadTimeout/)).toBeNull();
+    await userEvent.setup().click(screen.getByText('技术细节'));
+    expect(await screen.findByText(/ReadTimeout/)).toBeTruthy();
     await i18n.changeLanguage('en-US');
     expect(screen.getByText(/partial read failure/i)).toBeTruthy();
   });

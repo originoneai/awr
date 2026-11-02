@@ -422,7 +422,10 @@ describe('project recent development activity', () => {
       await new Promise((resolve) => setTimeout(resolve, 1200));
     });
     const block = screen.getByTestId('project-activity');
-    expect(within(block).getByTestId('state-partial').textContent).toContain('ReadTimeout');
+    const partial = within(block).getByTestId('state-partial');
+    expect(partial.textContent).not.toContain('ReadTimeout');
+    await userEvent.setup().click(within(partial).getByText('技术细节'));
+    expect(await within(partial).findByText('ReadTimeout')).toBeTruthy();
   });
 
   it('discloses earlier activity records without continuation', async () => {

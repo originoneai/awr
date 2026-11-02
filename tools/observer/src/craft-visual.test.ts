@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 describe('craft product visual signature', () => {
-  it('uses the existing evidence chain rather than decorative generated imagery', () => {
-    expect(readFileSync('src/pages/ProjectAcceptance.tsx', 'utf8')).toContain('<EvidenceChain');
-    expect(readFileSync('src/components/EvidenceChain.tsx', 'utf8')).toContain('<Steps');
+  it('uses antd steps for the delivery evidence signature rather than decorative generated imagery', () => {
+    expect(readFileSync('src/pages/ProjectAcceptance.tsx', 'utf8')).toContain('<DeliverySteps');
+    expect(readFileSync('src/components/DeliverySteps.tsx', 'utf8')).toContain('<Steps');
   });
 
   it('removes the decorative stock 403 illustration without hiding the authorization state', () => {
