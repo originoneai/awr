@@ -46,9 +46,14 @@ export function ActivityPage() {
   const actorParam = searchParams.get('actor') ?? undefined;
   const projectAudit = identity?.can_read_project_audit === true;
   const actorFilter = actorParam && (projectAudit || actorParam === identity?.actor_id) ? actorParam : undefined;
-  const activity = useInfiniteQuery(activityListQueryOptions(project, kind, {
+  const waitingForActorIdentity = Boolean(actorParam) && !capabilities.isSuccess;
+  const activityOptions = activityListQueryOptions(project, kind, {
     workId: workFilter, actorId: actorFilter, limit,
-  }, revoked));
+  }, revoked);
+  const activity = useInfiniteQuery({
+    ...activityOptions,
+    enabled: activityOptions.enabled && !waitingForActorIdentity,
+  });
   const items = useMemo(() => {
     const unique = new Map<string, TeamActivityItem>();
     for (const page of activity.data?.pages ?? []) {
@@ -98,7 +103,7 @@ export function ActivityPage() {
         <Space size={16} wrap>
           <Typography.Title level={4} style={{ margin: 0 }}>{t('activity.title')}</Typography.Title>
           <Typography.Text type="secondary" data-testid="activity-scope">scope: {raw(firstPage?.scope) ?? t('freshness.state.not_measured')}</Typography.Text>
-          {actorParam && !actorFilter && !projectAudit ? (
+          {capabilities.isSuccess && actorParam && !actorFilter && !projectAudit ? (
             <Typography.Text type="warning" data-testid="activity-self-filter-note">{t('activity.selfFilterNote')}</Typography.Text>
           ) : null}
           <Select

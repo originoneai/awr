@@ -33,6 +33,7 @@ type SetupOptions = {
   requests?: ActivityPayload;
   developmentPages?: ActivityPayload[];
   requestsPages?: ActivityPayload[];
+  capabilitiesGate?: Promise<void>;
 };
 
 function setupActivity({
@@ -41,6 +42,7 @@ function setupActivity({
   requests = fixture('observer-activity-requests.json'),
   developmentPages,
   requestsPages,
+  capabilitiesGate,
 }: SetupOptions = {}) {
   const calls: Array<{ url: string; params: URLSearchParams }> = [];
   const capabilityCalls: string[] = [];
@@ -68,6 +70,7 @@ function setupActivity({
       const query = JSON.parse(String(init?.body)).query;
       if (query.op === 'capabilities') {
         capabilityCalls.push(url);
+        if (capabilitiesGate) await capabilitiesGate;
         return json({
           ok: true,
           result: {
@@ -180,6 +183,30 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     renderApp('/activity?project=demo&actor=OTHER');
     await screen.findByTestId('page-activity');
     expect(otherCalls.every((call) => call.params.get('member_actor_id') === null)).toBe(true);
+  });
+
+  it('waits for identity before filtering a project-audit actor deep link', async () => {
+    const actor = 'manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa';
+    let releaseCapabilities!: () => void;
+    const capabilitiesGate = new Promise<void>((resolve) => { releaseCapabilities = resolve; });
+    const { calls } = setupActivity({
+      projectAudit: true,
+      development: fixture('derived-audit-development-project-scope-run09.json'),
+      capabilitiesGate,
+    });
+    renderApp(`/activity?project=demo&actor=${actor}`);
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByTestId('activity-self-filter-note')).toBeNull();
+    expect(calls).toHaveLength(0);
+
+    await act(async () => {
+      releaseCapabilities();
+      await capabilitiesGate;
+    });
+    expect(await screen.findByTestId('page-activity')).toBeTruthy();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].params.get('member_actor_id')).toBe(actor);
+    expect(screen.queryByTestId('activity-self-filter-note')).toBeNull();
   });
 
   it('uses member_actor_id for an authorized project-scope actor filter', async () => {
