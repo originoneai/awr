@@ -1,16 +1,17 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { Card, Col, List, Pagination, Row, Segmented, Space, Table, Tag, Tooltip, Typography, theme } from 'antd';
+import { Card, Col, List, Pagination, Row, Segmented, Space, Table, Tag, Typography, theme } from 'antd';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import { ArtifactReader } from '../components/ArtifactReader';
 import { DeliverySteps, type DeliveryStep } from '../components/DeliverySteps';
 import { FreshnessBadge } from '../components/FreshnessBadge';
+import { RecordedTime } from '../components/RecordedTime';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { TechnicalDetails } from '../components/TechnicalDetails';
 import { ApiError, isAuthError } from '../lib/api';
 import { formatObservationValue, notProvided } from '../i18n/craft';
-import { craftSelectionStyle, craftValueStyle } from '../theme';
+import { craftSelectionStyle } from '../theme';
 import { formatUnixMs } from '../lib/format';
 import { asArray, asObject, asText, at } from '../lib/json';
 import { outcomeQueryOptions } from '../lib/outcome';
@@ -94,15 +95,6 @@ export function ProjectAcceptance({ project }: { project: string }) {
 
   const missing = notProvided(i18n.language);
   const value = (input: unknown, field?: string) => formatObservationValue(input, i18n.language, field);
-  const timeValue = (input: unknown) => {
-    const raw = asText(input);
-    if (raw == null || !Number.isFinite(Number(raw))) return missing;
-    return (
-      <Tooltip title={raw}>
-        <Typography.Text className="craft-value" style={craftValueStyle}>{formatUnixMs(Number(raw), i18n.language)}</Typography.Text>
-      </Tooltip>
-    );
-  };
   const readError = (query: { error: unknown }, testId: string) => (
     <Typography.Text type="warning" data-testid={testId}>
       {t('acceptance.readFailed')}
@@ -441,10 +433,10 @@ export function ProjectAcceptance({ project }: { project: string }) {
                 copyValue: JSON.stringify({ observedAt, recordedAt, pageRead: selectedSnapshot?.data?.freshness.page_read.at_unix_ms, sourceQuery: collaboration?.source_state?.query_started_at_unix_ms }),
                 value: (
                   <>
-                    <span>{t('acceptance.externalObserved')}: {timeValue(observedAt)}</span>{' · '}
-                    <span>{t('acceptance.awrRecorded')}: {timeValue(recordedAt)}</span>{' · '}
-                    <span>{t('acceptance.pageRead')}: {timeValue(selectedSnapshot?.data?.freshness.page_read.at_unix_ms)}</span>{' · '}
-                    <span>{t('acceptance.sourceQuery')}: {timeValue(collaboration?.source_state?.query_started_at_unix_ms)}</span>
+                    <span>{t('acceptance.externalObserved')}: <RecordedTime value={observedAt} /></span>{' · '}
+                    <span>{t('acceptance.awrRecorded')}: <RecordedTime value={recordedAt} /></span>{' · '}
+                    <span>{t('acceptance.pageRead')}: <RecordedTime value={selectedSnapshot?.data?.freshness.page_read.at_unix_ms} /></span>{' · '}
+                    <span>{t('acceptance.sourceQuery')}: <RecordedTime value={collaboration?.source_state?.query_started_at_unix_ms} /></span>
                   </>
                 ),
               },

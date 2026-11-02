@@ -1,14 +1,17 @@
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Card, Col, Input, List, Pagination, Row, Space, Tag, Tooltip, Typography, theme } from 'antd';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Stamp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
+import { rawObservationText, utf8ByteLength } from '../core/observation';
 import { isAuthError } from '../lib/api';
 import { OBSERVATION_PAGE_SIZE, validObservationPage } from '../lib/pagination';
-import { overviewQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
+import { overviewQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
+import { useTextDigest, type DigestCheck } from '../lib/text-digest';
+import { useWorkSnapshots } from '../lib/work-snapshots';
 import { craftSelectionStyle } from '../theme';
 import type { WorkContractValue } from '../lib/types';
 
@@ -28,22 +31,17 @@ interface SourceEntry {
   citingWorks: CitingWork[];
 }
 
-function textOf(value: WorkContractValue | undefined): string | null {
-  if (value == null) return null;
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return JSON.stringify(value);
-}
-
 function shortSha(sha: string) {
   return sha.length > 12 ? `${sha.slice(0, 12)}…` : sha;
 }
 
-/** UTF-8 byte length, not UTF-16 code units (multibyte documents). */
-function utf8Length(text: string) {
-  return new TextEncoder().encode(text).length;
-}
-
-type DigestCheck = 'pending' | 'verified' | 'mismatch' | 'unverified';
+/** The words of the digest check; a check that has not finished reads as not verified. */
+const DIGEST_LABEL = {
+  verified: 'knowledge.digestVerified',
+  mismatch: 'knowledge.digestMismatch',
+  unverified: 'knowledge.digestUnverified',
+  pending: 'knowledge.digestUnverified',
+} as const satisfies Record<DigestCheck, string>;
 
 /** Assemble the knowledge list from per-work reads, never a project-level read. */
 export function ProjectKnowledge({ project }: { project: string }) {
@@ -58,12 +56,9 @@ export function ProjectKnowledge({ project }: { project: string }) {
     Math.max(1, Math.ceil(works.length / OBSERVATION_PAGE_SIZE)),
   );
   const visibleWorks = works.slice((page - 1) * OBSERVATION_PAGE_SIZE, page * OBSERVATION_PAGE_SIZE);
-  const snapshots = useQueries({
-    queries: visibleWorks.map((work) => workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked, 'list')),
-  });
+  const snapshots = useWorkSnapshots(project, visibleWorks, revoked);
   const [filter, setFilter] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [digestCheck, setDigestCheck] = useState('unverified' as DigestCheck);
 
   const failedReads = snapshots.filter((query) => query.isError).length;
   const entries = new Map<string, SourceEntry>();
@@ -132,33 +127,9 @@ export function ProjectKnowledge({ project }: { project: string }) {
   const loadedCount = snapshots.filter((query) => query.data).length;
   const selectedDigests = selected ? allEntriesForPath(entries, selected.path).length : 0;
 
-  const selectedText = selected?.text;
-  const selectedSha256 = selected?.sha256;
-  const selectedContentIncluded = selected?.contentIncluded;
-  useEffect(() => {
-    // Verify the displayed text against its declared digest with Web Crypto;
-    // without crypto.subtle the badge must read unverified, never verified.
-    if (!selectedText || !selectedContentIncluded || !selectedSha256) {
-      setDigestCheck('unverified');
-      return;
-    }
-    if (typeof crypto === 'undefined' || !crypto.subtle) {
-      setDigestCheck('unverified');
-      return;
-    }
-    let cancelled = false;
-    setDigestCheck('pending');
-    crypto.subtle.digest('SHA-256', new TextEncoder().encode(selectedText))
-      .then((buffer) => {
-        if (cancelled) return;
-        const hex = Array.from(new Uint8Array(buffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
-        setDigestCheck(hex === selectedSha256 ? 'verified' : 'mismatch');
-      })
-      .catch(() => {
-        if (!cancelled) setDigestCheck('unverified');
-      });
-    return () => { cancelled = true; };
-  }, [selectedText, selectedSha256, selectedContentIncluded]);
+  // The displayed text is verified against its declared digest; without Web Crypto the badge reads
+  // not verified, never verified.
+  const digestCheck = useTextDigest(selected?.contentIncluded ? selected.text : null, selected?.sha256);
 
   if (revoked || isAuthError(overview.error)) return <ObservationForbidden />;
 
@@ -228,7 +199,7 @@ export function ProjectKnowledge({ project }: { project: string }) {
                     <Tag color={selected.contentIncluded ? 'success' : 'default'}>
                       {selected.contentIncluded ? t('knowledge.contentIncluded') : t('knowledge.contentMissing')}
                     </Tag>
-                    {selected.byteLength != null && selected.text != null && utf8Length(selected.text) !== selected.byteLength ? (
+                    {selected.byteLength != null && selected.text != null && utf8ByteLength(selected.text) !== selected.byteLength ? (
                       <Tag color="warning">{t('knowledge.partial')}</Tag>
                     ) : null}
                     {selected.contentIncluded && selected.text ? (
@@ -237,11 +208,7 @@ export function ProjectKnowledge({ project }: { project: string }) {
                         color={digestCheck === 'verified' ? 'success' : digestCheck === 'mismatch' ? 'error' : 'default'}
                       >
                         {digestCheck === 'verified' ? <Stamp size={16} strokeWidth={1.5} aria-label={t('knowledge.digestVerified')} /> : null}
-                        {digestCheck === 'verified'
-                          ? t('knowledge.digestVerified')
-                          : digestCheck === 'mismatch'
-                            ? t('knowledge.digestMismatch')
-                            : t('knowledge.digestUnverified')}
+                        {t(DIGEST_LABEL[digestCheck])}
                       </Tag>
                     ) : null}
                   </Space>
@@ -263,10 +230,10 @@ export function ProjectKnowledge({ project }: { project: string }) {
                     return (
                       <Card key={work.key} size="small" type="inner" title={t('knowledge.contractFor', { title: work.title })}>
                         {work.goals?.length ? (
-                          <List size="small" header={t('workbench.detail.goals')} dataSource={work.goals} renderItem={(goal) => <List.Item>{textOf(goal)}</List.Item>} />
+                          <List size="small" header={t('workbench.detail.goals')} dataSource={work.goals} renderItem={(goal) => <List.Item>{rawObservationText(goal).text}</List.Item>} />
                         ) : null}
                         {work.acceptance?.length ? (
-                          <List size="small" header={t('workbench.detail.acceptance')} dataSource={work.acceptance} renderItem={(item) => <List.Item>{textOf(item)}</List.Item>} />
+                          <List size="small" header={t('workbench.detail.acceptance')} dataSource={work.acceptance} renderItem={(item) => <List.Item>{rawObservationText(item).text}</List.Item>} />
                         ) : null}
                       </Card>
                     );

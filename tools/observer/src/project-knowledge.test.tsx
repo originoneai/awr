@@ -344,6 +344,22 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     expect(screen.queryByTestId('path-digest-notice')).toBeNull();
   });
 
+  it('shows a goal or acceptance entry that is not a plain sentence as its exact JSON, a number or a flag as its text', async () => {
+    const spec = specFor();
+    const snapshot = snapshotFor('W1', {
+      required_specs: [spec],
+      authorized_readable_refs: [refFor(spec)],
+      visible_contract: { goals: [{ kind: 'metric', target: 5 }, 7, true], acceptance: [{ check: 'empty list' }] },
+    });
+    setupKnowledge({ snapshots: { W1: snapshot, W2: snapshot } });
+    renderApp('/projects/demo?tab=knowledge');
+    expect((await screen.findAllByText('{"kind":"metric","target":5}')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('7').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('true').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('{"check":"empty list"}').length).toBeGreaterThan(0);
+    expect(screen.queryByText('[object Object]')).toBeNull();
+  });
+
   it('shows each citing work contract with that work label', async () => {
     const spec = specFor();
     setupKnowledge({
