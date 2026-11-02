@@ -177,7 +177,7 @@ export const OPERATION_VOCABULARY: Record<string, { kind: OperationKind; zh: str
   'execution.report': { kind: 'execute', zh: '报告执行结果', en: 'Report execution result' },
   'claim.expired': { kind: 'other', zh: '负责已到期', en: 'Responsibility expired' },
   'claim.acquire': { kind: 'other', zh: '接手工作', en: 'Take over work' },
-  'task.claim_available': { kind: 'other', zh: '开放接手', en: 'Open for takeover' },
+  'task.claim_available': { kind: 'other', zh: '自行接手工作', en: 'Take an open task' },
   'task.accept_assignment': { kind: 'other', zh: '接受指派', en: 'Accept assignment' },
   'task.assign': { kind: 'other', zh: '指派工作', en: 'Assign work' },
   'delivery.connector.configure': { kind: 'other', zh: '配置交付方式', en: 'Configure delivery' },

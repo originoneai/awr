@@ -57,6 +57,11 @@ describe('operation vocabulary', () => {
     }
   });
 
+  it('words a member taking an open task as the member acting, not as the task being opened', () => {
+    expect(operationWord('task.claim_available', { language: 'zh-CN' })).toMatchObject({ kind: 'other', text: '自行接手工作' });
+    expect(operationWord('task.claim_available', { language: 'en-US' }).text).toBe('Take an open task');
+  });
+
   it('shows connector and system mechanics as one plain phrase with the raw name kept technical', () => {
     const mechanics = [
       'delivery.source.prepare', 'delivery.source.write', 'delivery.source.confirm', 'delivery.pump.claim', 'delivery.pump.refresh',
