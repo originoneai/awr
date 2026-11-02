@@ -8,7 +8,8 @@
 //! separate source-reviewed task performed before coding begins or after all earlier effects are
 //! settled". Guidance that told the developer to update "in a new admitted execution" led a native
 //! run into exactly that failure, so every site that names this next action builds it from the
-//! text below.
+//! text below: the integration inspection, the owner's work inbox and the refusal to complete a
+//! work whose integration was rejected because the target moved.
 
 /// What the responsible developer does after a changed target, without the surrounding sentence.
 macro_rules! revision_steps {
@@ -30,6 +31,14 @@ pub(crate) const TARGET_CHANGED_INSPECT_ACTION: &str = concat!(
     " Supervisors coordinate that revision; do not retry or finalize the rejected version."
 );
 
+/// Next action of the `IntegrationNotConfirmed` refusal whose reason is `integration_target_changed`:
+/// the same order, followed by what completes the work.
+pub(crate) const TARGET_CHANGED_COMPLETION_ACTION: &str = concat!(
+    revision_steps!(),
+    " Then prepare that candidate's integration, wait until it is confirmed and finalize. Do not \
+     finalize the rejected version."
+);
+
 /// Next action in the work inbox of the developer who owns the rejected work. Inbox guidance is
 /// bounded (one item must stay under 1000 bytes), so this is the short form of
 /// [`TARGET_CHANGED_INSPECT_ACTION`]; the inspection carries the full text.
@@ -44,9 +53,10 @@ pub(crate) const TARGET_CHANGED_OWN_REJECTION_ACTION: &str = "Inspect the reject
 mod tests {
     use super::*;
 
-    const ALL: [&str; 2] = [
+    const ALL: [&str; 3] = [
         TARGET_CHANGED_INSPECT_ACTION,
         TARGET_CHANGED_OWN_REJECTION_ACTION,
+        TARGET_CHANGED_COMPLETION_ACTION,
     ];
 
     #[test]
@@ -91,5 +101,11 @@ mod tests {
                 .contains("old approval cannot authorize changed content")
         );
         assert!(TARGET_CHANGED_OWN_REJECTION_ACTION.contains("resume your own session/claim"));
+        assert!(
+            TARGET_CHANGED_COMPLETION_ACTION.contains("wait until it is confirmed and finalize")
+        );
+        assert!(
+            TARGET_CHANGED_COMPLETION_ACTION.ends_with("Do not finalize the rejected version.")
+        );
     }
 }

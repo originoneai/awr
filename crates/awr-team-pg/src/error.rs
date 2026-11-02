@@ -573,7 +573,7 @@ impl PgError {
             ),
             "integration_target_changed" => (
                 "The repository target changed after the candidate was built, so its integration was refused.",
-                "The responsible developer rebuilds on the current target in a new admitted execution, publishes a new candidate with its actual target precondition and obtains a fresh independent review. Then prepare that candidate's integration, wait until it is confirmed and finalize. Do not finalize the rejected version.",
+                crate::delivery_guidance::TARGET_CHANGED_COMPLETION_ACTION,
             ),
             "integration_confirmation_not_current" => (
                 "The integration was confirmed, but that confirmation is no longer current for the selected candidate.",

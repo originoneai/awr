@@ -153,7 +153,8 @@ change is not such proof.
 
 A rejection because the repository target moved (`target_changed` in the inspection)
 is repaired with a new candidate, never by retrying the rejected one. The guidance
-for it says the responsible developer updates the workspace to the current target as
+for it (the inspection, the owner's inbox and the `integration_target_changed` refusal
+to complete) says the responsible developer updates the workspace to the current target as
 a separate baseline step before the next coding execution begins, then retests in a
 new admitted execution, publishes a new candidate with its actual target precondition
 and obtains fresh independent review. The update is not part of the admitted
@@ -222,7 +223,7 @@ is recorded, and `reason` names the missing step:
 | `integration_dispatched` | dispatched; the outcome is not recorded | Wait for the original attempt to be reconciled; never dispatch again. |
 | `integration_unknown` | of unknown outcome | Do not retry; the integrator resolves the original attempt by query. |
 | `integration_rejected` | rejected by the repository, or withdrawn before dispatch | Inspect the reason. Prepare a new integration once it is resolved, or change the candidate. |
-| `integration_target_changed` | rejected because the repository target changed | The developer rebuilds on the new target, the new candidate gets a fresh independent review, then it is integrated. |
+| `integration_target_changed` | rejected because the repository target changed | The developer updates the workspace to the new target as a separate baseline step before the next coding execution, retests in a new admitted execution and publishes a new candidate; it gets a fresh independent review, then it is integrated. |
 | `integration_confirmation_not_current` | confirmed, but not current when it was recorded | Prepare a new integration of the current candidate. |
 
 Each refusal carries the same condition, basis, next action and recheck guidance
