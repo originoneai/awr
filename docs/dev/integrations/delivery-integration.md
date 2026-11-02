@@ -235,10 +235,15 @@ integration is refused as changed preconditions and completion is refused as
 `integration_not_prepared`. The new selection keeps the candidate and its
 approval. After the connector has observed it, the integration is prepared,
 confirmed and the work finalized. An integration that was confirmed before the
-activation still counts as long as the selection is left alone. Selecting an
-already integrated candidate again starts a new selection, so its earlier
-integration no longer counts; the one more integration then needed ends as
-already applied in the repository (checked with the local Git integrator). The tests
+activation still counts as long as the selection is left alone.
+
+A deliberate re-selection of an already integrated candidate needs one more
+integration. An integration belongs to the selection it was prepared for, so a
+work is never completed on a confirmation made for another binding. The
+repository accepts the new integration as already applied (checked with the
+local Git integrator), and the target does not change.
+
+The tests
 `an_approved_work_is_integrated_after_an_unrelated_activation_once_its_binding_is_refreshed`
 and
 `selecting_an_integrated_candidate_again_needs_one_more_integration_that_the_repository_accepts`
