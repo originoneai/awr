@@ -9,7 +9,8 @@
       }
     },
     "runtime": {
-      "state": "claimed"
+      "state": "claimed",
+      "selected_completion_id": null
     },
     "observation": {
       "reporting": {
@@ -17,7 +18,8 @@
         "client_stale": true
       },
       "runtime": {
-        "state": "claimed"
+        "state": "claimed",
+        "selected_completion_id": null
       },
       "progress": null
     }
@@ -31,7 +33,8 @@
       }
     },
     "runtime": {
-      "state": "completed"
+      "state": "completed",
+      "selected_completion_id": "01M6B189DXC1A21ZD5YQ6V7EG5"
     },
     "observation": {
       "reporting": {
@@ -39,7 +42,8 @@
         "client_stale": true
       },
       "runtime": {
-        "state": "completed"
+        "state": "completed",
+        "selected_completion_id": "01M6B189DXC1A21ZD5YQ6V7EG5"
       },
       "progress": {
         "next_action": "Leave issue-filter-page available for self-claim. Eligible assignees are lin and mei. The page has no implementation, review, or delivery.",
@@ -56,7 +60,8 @@
       }
     },
     "runtime": {
-      "state": "claimed"
+      "state": "claimed",
+      "selected_completion_id": null
     },
     "observation": {
       "reporting": {
@@ -64,7 +69,8 @@
         "client_stale": false
       },
       "runtime": {
-        "state": "claimed"
+        "state": "claimed",
+        "selected_completion_id": null
       },
       "progress": {
         "next_action": "Wait for independent review of round 01M6AVQ870N7MBRJ5MPCN79T55. Do not self-approve or merge to main.",

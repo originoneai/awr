@@ -159,10 +159,10 @@ export interface WorkStateSnapshot {
   /** The service's own hint addressed to the calling agent, not the reporter's statement. */
   next_step?: unknown;
   guidance?: { action?: { op?: unknown; note?: unknown } | null } | null;
-  runtime?: { state?: unknown } | null;
+  runtime?: { state?: unknown; selected_completion_id?: unknown } | null;
   observation?: {
     reporting?: { client_reported_at_unix_ms?: unknown; client_stale?: unknown } | null;
-    runtime?: { state?: unknown } | null;
+    runtime?: { state?: unknown; selected_completion_id?: unknown } | null;
     /** The reporter's own checkpoint; `next_action` is what the reporter says comes next. */
     progress?: { next_action?: unknown; phase?: unknown } | null;
   } | null;
@@ -188,7 +188,7 @@ export interface WorkStateResult {
     kind: 'loading' | 'phase' | 'runtime' | 'row' | 'unknown';
     text: string;
     tone: SemanticTone;
-    technical: { phase: string | null; runtimeState: string | null; rowStatus: string | null };
+    technical: { phase: string | null; runtimeState: string | null; rowStatus: string | null; completionId: string | null };
   };
   next: {
     kind: 'loading' | 'reported' | 'missing';

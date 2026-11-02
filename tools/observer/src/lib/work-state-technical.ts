@@ -12,5 +12,6 @@ export function workStateTechnicalItems(state: WorkStateResult): TechnicalDetail
     { label: 'client_stale', value: state.lastReport.stale, testId: 'technical-client-stale' },
     { label: 'runtime.state', value: state.lastReport.technical.runtimeState, testId: 'technical-runtime-state' },
     { label: 'progress.phase', value: state.lastReport.technical.phase, testId: 'technical-phase' },
+    { label: 'runtime.selected_completion_id', value: state.progress.technical.completionId, testId: 'technical-completion-id' },
   ];
 }

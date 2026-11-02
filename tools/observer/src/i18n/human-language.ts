@@ -49,6 +49,7 @@ export const HUMAN_VOCABULARY = {
     blockersNone: '未报告阻塞',
     moreLines: '还有 {{count}} 条',
     testUnnamed: '未命名的测试',
+    deliveredUnconfirmed: '汇报称已交付',
   },
   'en-US': {
     technicalDetails: 'Technical details',
@@ -99,6 +100,7 @@ export const HUMAN_VOCABULARY = {
     blockersNone: 'No blockers reported',
     moreLines: '{{count}} more',
     testUnnamed: 'An unnamed test',
+    deliveredUnconfirmed: 'Reported as delivered',
   },
 } as const;
 
