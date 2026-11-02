@@ -186,6 +186,24 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     expect(new URLSearchParams(router.state.location.search).get('page')).toBe('2');
   }, 20000);
 
+  it('clamps an out-of-range page and hydrates only the last visible page', async () => {
+    const works = Array.from({ length: 61 }, (_, index) => ({
+      ...WORKS[index % WORKS.length],
+      key: `W${index + 1}`,
+      title: `Knowledge work ${index + 1}`,
+      contract_hash: `c${index + 1}`,
+    }));
+    const snapshots = Object.fromEntries(works.map((work) => [work.key, snapshotFor(work.key)]));
+    const { calls } = setupKnowledge({ works, snapshots });
+    const snapshotReads = () => calls.filter(({ init }) => String(init?.body ?? '').includes('"work.snapshot"'));
+    renderApp('/projects/demo?tab=knowledge&page=99');
+
+    expect(await screen.findByRole('link', { name: '打开 Knowledge work 61' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: '打开 Knowledge work 1' })).toBeNull();
+    await waitFor(() => expect(snapshotReads()).toHaveLength(1));
+    expect(String(snapshotReads()[0].init?.body)).toContain('"work_id":"W61"');
+  });
+
   it('keeps same-title works distinct by key and gives both encoded work links', async () => {
     const works = [
       { ...WORKS[0], key: 'W/1 ?', title: 'Support filter' },

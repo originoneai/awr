@@ -211,9 +211,10 @@ function overviewUpstream(pages, sessionId = 'ws_obs2', state = {}) {
       }
       if (request.url === '/v1/web/session') {
         if (Array.isArray(state.calls)) state.calls.push('session');
-        if (state.revoked) {
+        const expired = typeof state.now === 'function' && state.expires_at_ms <= state.now();
+        if (state.revoked || expired) {
           response.writeHead(401);
-          response.end(JSON.stringify({ code: 'Unauthenticated', message: 'revoked' }));
+          response.end(JSON.stringify({ code: expired ? 'SessionExpired' : 'Unauthenticated', message: expired ? 'expired' : 'revoked' }));
         } else {
           response.end(JSON.stringify({ session_id: sessionId, expires_at_ms: state.expires_at_ms }));
         }
@@ -1354,6 +1355,12 @@ function overviewCachePages(calls, state = {}) {
   return {
     'workstreams.list': (_q, r) => {
       calls.push('workstreams.list');
+      if (state.failWorkstreams) {
+        state.failWorkstreams = false;
+        r.writeHead(503);
+        r.end(JSON.stringify({ code: 'Unavailable', message: 'synthetic workstream failure' }));
+        return;
+      }
       r.end(JSON.stringify({ ...ENVELOPE, data: { items: [{ id: 'backend' }], next_cursor: null } }));
     },
     'work.list:backend': (_q, r) => {
@@ -1373,6 +1380,58 @@ function overviewCachePages(calls, state = {}) {
     },
   };
 }
+
+test('a failed workstream list is not cached after the upstream recovers', async () => {
+  const calls = [];
+  const state = { calls, failWorkstreams: true };
+  const upstream = await overviewUpstream(overviewCachePages(calls, state), 'ws_obs2', state);
+  const bridge = await startLiveBridge(upstream.base);
+  const cookie = 'awr_web_session=ws_obs2';
+  try {
+    const failed = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(failed.json.ok, false);
+    assert.equal(failed.json.error.code, 'Unavailable');
+    assert.equal(bridge.cacheSize(), 0);
+
+    const recovered = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(recovered.json.ok, true, JSON.stringify(recovered.json));
+    assert.equal(recovered.json.works.length, 1);
+    assert.equal(calls.filter((key) => key === 'workstreams.list').length, 2);
+
+    const cached = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(cached.json.ok, true);
+    assert.equal(calls.filter((key) => key === 'workstreams.list').length, 2);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('cached overview parts cannot outlive the upstream session expiry', async () => {
+  const calls = [];
+  let fakeNow = 1_000_000;
+  const state = { calls, expires_at_ms: 1_030_000, now: () => fakeNow };
+  const upstream = await overviewUpstream(overviewCachePages(calls, state), 'ws_obs2', state);
+  const bridge = await startLiveBridge(upstream.base, { now: () => fakeNow });
+  const cookie = 'awr_web_session=ws_obs2';
+  try {
+    const first = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(first.json.ok, true);
+    assert.equal(bridge.cacheSize(), 2);
+
+    fakeNow = 1_030_000;
+    const expired = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(expired.json.ok, false);
+    assert.equal(expired.json.error.code, 'SessionExpired');
+    assert.equal(expired.json.works, undefined);
+    assert.equal(bridge.cacheSize(), 0);
+    // Only the session was revalidated: no cached or fresh scoped read ran.
+    assert.deepEqual(calls, ['session', 'workstreams.list', 'work.list', 'capabilities', 'session']);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
 
 test('overview cache is invisible to another cookie session', async () => {
   const calls = [];
