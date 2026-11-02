@@ -1,9 +1,10 @@
 import { QueryCache, QueryClient, type UseQueryOptions } from '@tanstack/react-query';
 import pLimit from 'p-limit';
-import { apiGet, apiPost, isAuthError } from './api';
+import { apiGet, apiPost, ApiError, isAuthError } from './api';
 import type {
   ReviewData,
   TeamActivityResponse,
+  TeamIdentity,
   TeamOverviewResponse,
   TeamProjectsResponse,
   TeamReadResponse,
@@ -15,6 +16,8 @@ import type {
 // AWR-前后端能力审查完整清单.md:212 and reviewer-web.md:22 require a 5 s
 // visible-page cadence; READ_TIMEOUT_MS is only the per-read deadline.
 export const POLL_INTERVAL_MS = 5000;
+export const SHELL_POLL_INTERVAL_MS = 30000;
+export const SNAPSHOT_POLL_INTERVAL_MS = 60000;
 
 const snapshotReadLimit = pLimit(4);
 
@@ -32,6 +35,7 @@ export const readQueryDefaults = {
 export const queryKeys = {
   projects: ['team', 'projects'] as const,
   overview: (project: string | null) => ['team', 'overview', project] as const,
+  capabilities: (project: string | null) => ['team', 'capabilities', project] as const,
   activity: (project: string | null, workId?: string) =>
     ['team', 'activity', 'development', project, workId ?? null] as const,
   review: (project: string | null, workId: string | null, roundId?: string | null) =>
@@ -49,6 +53,7 @@ export function projectsQueryOptions(revoked = false) {
     queryFn: () => apiGet<TeamProjectsResponse>('/api/team/projects'),
     enabled: !revoked,
     ...readQueryDefaults,
+    refetchInterval: SHELL_POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamProjectsResponse>;
 }
 
@@ -59,7 +64,27 @@ export function overviewQueryOptions(project: string | null, revoked = false) {
       apiGet<TeamOverviewResponse>(`/api/team/overview?project=${encodeURIComponent(project ?? '')}`),
     enabled: Boolean(project) && !revoked,
     ...readQueryDefaults,
+    refetchInterval: SHELL_POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamOverviewResponse>;
+}
+
+interface CapabilitiesResponse {
+  result: { data: { identity?: TeamIdentity } };
+}
+
+export function capabilitiesQueryOptions(project: string, revoked = false) {
+  return {
+    queryKey: queryKeys.capabilities(project),
+    queryFn: () => apiPost<CapabilitiesResponse>(
+      '/api/team/read',
+      { project, query: { protocol_version: 1, op: 'capabilities' } },
+    ),
+    enabled: Boolean(project) && !revoked,
+    ...readQueryDefaults,
+    staleTime: Infinity,
+    refetchInterval: false as const,
+    refetchOnWindowFocus: false as const,
+  } satisfies UseQueryOptions<CapabilitiesResponse>;
 }
 
 export function activityQueryOptions(project: string | null, revoked = false, workId?: string) {
@@ -70,6 +95,9 @@ export function activityQueryOptions(project: string | null, revoked = false, wo
     ),
     enabled: Boolean(project) && !revoked,
     ...readQueryDefaults,
+    // Embedded project/work summaries use the list cadence; the dedicated
+    // activity page keeps its own 5 s first-page query in lib/activity.ts.
+    refetchInterval: SNAPSHOT_POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamActivityResponse>;
 }
 
@@ -129,6 +157,7 @@ export function workSnapshotQueryOptions(
   workId: string,
   workstreamId: string,
   revoked = false,
+  cadence: 'detail' | 'list' = 'detail',
 ) {
   return {
     queryKey: queryKeys.workSnapshot(project, workId, workstreamId),
@@ -143,6 +172,7 @@ export function workSnapshotQueryOptions(
     }),
     enabled: Boolean(project && workId && workstreamId) && !revoked,
     ...readQueryDefaults,
+    refetchInterval: cadence === 'list' ? SNAPSHOT_POLL_INTERVAL_MS : POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamReadResponse<WorkSnapshotData>>;
 }
 
@@ -203,7 +233,9 @@ export function createAppQueryClient(overrides?: { retry?: number | boolean }) {
         // partial failure in their own tab, not a session revocation. Only
         // work-level reads revoke the whole observation session.
         const kind = query.queryKey[1];
-        if (kind === 'review.inspect' || kind === 'activity') return;
+        const sessionExpired = error instanceof ApiError
+          && (error.code === 'Unauthenticated' || error.code === 'SessionExpired');
+        if ((kind === 'review.inspect' || kind === 'activity') && !sessionExpired) return;
         if (isAuthError(error)) revokeObservationReads(queryClient);
       },
     }),

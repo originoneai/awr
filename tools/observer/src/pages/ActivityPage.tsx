@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
+import { formatObservationValue } from '../i18n/craft';
 import { activityListQueryOptions, capabilitiesQueryOptions, type ActivityKind } from '../lib/activity';
 import { isAuthError } from '../lib/api';
 import { formatUnixMs } from '../lib/format';
@@ -46,9 +47,14 @@ export function ActivityPage() {
   const actorParam = searchParams.get('actor') ?? undefined;
   const projectAudit = identity?.can_read_project_audit === true;
   const actorFilter = actorParam && (projectAudit || actorParam === identity?.actor_id) ? actorParam : undefined;
-  const activity = useInfiniteQuery(activityListQueryOptions(project, kind, {
+  const waitingForActorIdentity = Boolean(actorParam) && (capabilities.isPending || capabilities.isError);
+  const activityOptions = activityListQueryOptions(project, kind, {
     workId: workFilter, actorId: actorFilter, limit,
-  }, revoked));
+  }, revoked);
+  const activity = useInfiniteQuery({
+    ...activityOptions,
+    enabled: activityOptions.enabled && !waitingForActorIdentity,
+  });
   const items = useMemo(() => {
     const unique = new Map<string, TeamActivityItem>();
     for (const page of activity.data?.pages ?? []) {
@@ -88,6 +94,20 @@ export function ActivityPage() {
   if (revoked || isAuthError(projects.error) || isAuthError(activity.error) || isAuthError(capabilities.error)) {
     return <ObservationForbidden />;
   }
+  if (actorParam && capabilities.isError) {
+    return (
+      <Card>
+        <div data-testid="activity-identity-error">
+          <Alert
+            type="error"
+            showIcon
+            message={t('activity.identityReadFailed')}
+            action={<Button data-testid="activity-identity-retry" onClick={() => void capabilities.refetch()}>{t('activity.identityRetry')}</Button>}
+          />
+        </div>
+      </Card>
+    );
+  }
   if (projects.isPending || (project && activity.isPending)) return <Card>{t('common.loading')}</Card>;
   if (projects.isError) return <PartialFailure errorCode="ActivityProjectsError">{null}</PartialFailure>;
   if (activity.isError) return <PartialFailure errorCode="ActivityReadError">{null}</PartialFailure>;
@@ -97,8 +117,8 @@ export function ActivityPage() {
       <Card size="small">
         <Space size={16} wrap>
           <Typography.Title level={4} style={{ margin: 0 }}>{t('activity.title')}</Typography.Title>
-          <Typography.Text type="secondary" data-testid="activity-scope">scope: {raw(firstPage?.scope) ?? t('freshness.state.not_measured')}</Typography.Text>
-          {actorParam && !actorFilter && !projectAudit ? (
+          <Typography.Text type="secondary" data-testid="activity-scope">scope: {raw(firstPage?.scope) ?? t('common.notProvided')}</Typography.Text>
+          {capabilities.isSuccess && actorParam && !actorFilter && !projectAudit ? (
             <Typography.Text type="warning" data-testid="activity-self-filter-note">{t('activity.selfFilterNote')}</Typography.Text>
           ) : null}
           <Select
@@ -185,7 +205,7 @@ export function ActivityPage() {
                       </Link>
                     ) : <span data-testid={`activity-work-empty-${record.id}`}>{t('activity.noWork')}</span>,
                   },
-                  { title: t('activity.result'), dataIndex: 'result', width: 120, render: (value) => raw(value) ?? t('freshness.state.not_measured') },
+                  { title: t('activity.result'), dataIndex: 'result', width: 120, render: (value) => formatObservationValue(value, i18n.language, 'result') },
                 ]}
               />
             </Col>
@@ -208,7 +228,7 @@ export function ActivityPage() {
                       ] as const).map(([label, testId, field]) => ({
                         key: label,
                         label,
-                        children: <span data-testid={testId}>{raw(field) ?? t('freshness.state.not_measured')}</span>,
+                        children: <span data-testid={testId}>{formatObservationValue(field, i18n.language, label)}</span>,
                       }))}
                     />
                     <Typography.Text type="secondary" data-testid="activity-event-not-request">
@@ -219,7 +239,7 @@ export function ActivityPage() {
                         type="warning"
                         showIcon
                         message={t('activity.unknownResult')}
-                        description={<span data-testid="activity-unknown-result">{raw(firstPage?.unknown_means) ?? t('freshness.state.not_measured')}</span>}
+                        description={<span data-testid="activity-unknown-result">{raw(firstPage?.unknown_means) ?? t('common.notProvided')}</span>}
                       />
                     ) : null}
                   </Space>
@@ -241,18 +261,18 @@ export function ActivityPage() {
       <Card size="small">
         <Space direction="vertical" size={4}>
           <Typography.Text type="secondary" data-testid="activity-retention">
-            request_retention: {raw(firstPage?.request_retention) ?? t('freshness.state.not_measured')}
+            request_retention: {raw(firstPage?.request_retention) ?? t('common.notProvided')}
             {firstPage?.request_retention_capacity != null ? ` (${firstPage.request_retention_capacity})` : ''}
           </Typography.Text>
           <Typography.Text type="secondary" data-testid="activity-development-source">
-            development_source: {raw(firstPage?.development_source) ?? t('freshness.state.not_measured')}
+            development_source: {raw(firstPage?.development_source) ?? t('common.notProvided')}
           </Typography.Text>
           <Typography.Text type="secondary" data-testid="activity-collection-limits">
-            chat_text_collected: {raw(firstPage?.chat_text_collected) ?? t('freshness.state.not_measured')}
-            {' · '}tool_io_collected: {raw(firstPage?.tool_io_collected) ?? t('freshness.state.not_measured')}
+            chat_text_collected: {raw(firstPage?.chat_text_collected) ?? t('common.notProvided')}
+            {' · '}tool_io_collected: {raw(firstPage?.tool_io_collected) ?? t('common.notProvided')}
           </Typography.Text>
           <Typography.Text type="secondary" data-testid="activity-unknown-means">
-            unknown_means: {raw(firstPage?.unknown_means) ?? t('freshness.state.not_measured')}
+            unknown_means: {raw(firstPage?.unknown_means) ?? t('common.notProvided')}
           </Typography.Text>
         </Space>
       </Card>

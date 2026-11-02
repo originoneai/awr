@@ -31,7 +31,7 @@ describe('freshness behavior contract', () => {
       : { status } as TeamFreshness['report_received'];
     const { container } = render(<FreshnessBadge freshness={freshness} />);
     const plane = screen.getByTestId('freshness-report_received');
-    expect(plane.textContent).toContain('未测量');
+    expect(plane.textContent).toContain('尚未读取');
     expect(plane.querySelector('.ant-tag-default')).not.toBeNull();
     expect(container.querySelector('.ant-tag-success')).toBeNull();
   });

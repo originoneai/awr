@@ -24,6 +24,7 @@ import { FreshnessBadge } from '../components/FreshnessBadge';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { FieldLabel, ObservationValue } from '../components/ObservationValue';
 import { isAuthError } from '../lib/api';
+import { freshnessWord } from '../lib/freshness';
 import { formatUnixMs } from '../lib/format';
 import { activityQueryOptions, overviewQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
@@ -100,9 +101,9 @@ function LastReport({ work, query }: { work: TeamWork; query?: SnapshotQuery }) 
   const { t, i18n } = useTranslation();
   const reportedAt = query?.data?.result.data.observation?.reporting?.client_reported_at_unix_ms;
   let text = t('common.loading');
-  if (query?.isError) text = t('freshness.state.not_measured');
+  if (query?.isError) text = freshnessWord(t, 'not_measured');
   else if (query && !query.isPending) {
-    text = reportedAt == null ? t('freshness.state.not_measured') : formatUnixMs(reportedAt, i18n.language);
+    text = reportedAt == null ? freshnessWord(t, 'not_measured') : formatUnixMs(reportedAt, i18n.language);
   }
   return <span data-testid={`last-report-${work.key}`} style={{ whiteSpace: 'nowrap' }}>{text}</span>;
 }
@@ -194,7 +195,7 @@ function Coverage({ data }: { data: TeamOverviewResponse }) {
               {stream.error_code ? <Typography.Text code>{stream.error_code}</Typography.Text> : null}
               <Typography.Text type="secondary">
                 {stream.read_at_unix_ms == null
-                  ? t('freshness.state.not_measured')
+                  ? freshnessWord(t, 'not_measured')
                   : formatUnixMs(stream.read_at_unix_ms, i18n.language)}
               </Typography.Text>
             </Space>
@@ -291,7 +292,7 @@ export function ProjectOverview({ project }: { project: string }) {
   );
   const visibleWorks = grouped.works.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const snapshots = useQueries({
-    queries: visibleWorks.map((work) => workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked)),
+    queries: visibleWorks.map((work) => workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked, 'list')),
   });
 
   if (revoked || isAuthError(overview.error) || isAuthError(activity.error)) {

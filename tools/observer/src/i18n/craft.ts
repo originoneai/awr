@@ -1,3 +1,9 @@
+import { STATUS_FIELDS, rawObservationText, statusWord } from '../core/observation';
+import { humanText } from './human-language';
+
+export { STATUS_FIELDS } from '../core/observation';
+export { STATUS_LABELS } from './human-language';
+
 /** Bilingual field and status vocabulary shared by every observation surface. */
 export const FIELD_LABELS: Record<string, readonly [string, string]> = {
   work_id: ['工作项', 'Work item'],
@@ -101,55 +107,6 @@ export const FIELD_LABELS: Record<string, readonly [string, string]> = {
   created_at_unix_ms: ['记录时间', 'Recorded at'],
 };
 
-export const STATUS_LABELS: Record<string, readonly [string, string]> = {
-  approved: ['已批准', 'Approved'],
-  approve: ['批准', 'Approve'],
-  rejected: ['已拒绝', 'Rejected'],
-  invalidated: ['已失效', 'Invalidated'],
-  open: ['进行中', 'Open'],
-  confirmed: ['已确认', 'Confirmed'],
-  dispatched: ['已分派', 'Dispatched'],
-  committed: ['已提交', 'Committed'],
-  succeeded: ['成功', 'Succeeded'],
-  unknown: ['未知', 'Unknown'],
-  claimed: ['已认领', 'Claimed'],
-  completed: ['已完成', 'Completed'],
-  active: ['有效', 'Active'],
-  current: ['当前', 'Current'],
-  observed: ['已观测', 'Observed'],
-  enabled: ['已启用', 'Enabled'],
-  disabled: ['已停用', 'Disabled'],
-  passed: ['已通过', 'Passed'],
-  failed: ['失败', 'Failed'],
-  pending: ['待处理', 'Pending'],
-  return: ['已退回', 'Returned'],
-  resolved: ['已解决', 'Resolved'],
-  blocking: ['阻塞', 'Blocking'],
-  applied: ['已应用', 'Applied'],
-  consistent: ['一致', 'Consistent'],
-  exact: ['精确', 'Exact'],
-  current_contract: ['当前合同', 'Current contract'],
-  fixed_delivery: ['固定交付', 'Fixed delivery'],
-  caller_asserted: ['调用方声明', 'Caller asserted'],
-  simulated_member_independent: ['成员独立复核（模拟）', 'Simulated member-independent'],
-  simulated_member_independent_review: ['成员独立复核（模拟）', 'Simulated member-independent review'],
-  local_git: ['本地 Git', 'Local Git'],
-  read_only: ['只读', 'Read-only'],
-  green_ci: ['CI 通过', 'Green CI'],
-  already_merged: ['已合并', 'Already merged'],
-  project_admin: ['项目管理员', 'Project admin'],
-  observer: ['观察者', 'Observer'],
-  reader: ['只读成员', 'Reader'],
-  developer: ['开发者', 'Developer'],
-  owned_by_me: ['由我负责', 'Owned by me'],
-  owned_by_other: ['由他人负责', 'Owned by other'],
-  assigned_to_me: ['指派给我', 'Assigned to me'],
-  assigned_to_other: ['指派给他人', 'Assigned to other'],
-  handoff_required: ['需要转交', 'Handoff required'],
-  responsibility_pending: ['责任待确认', 'Responsibility pending'],
-  pool: ['待接手指派', 'Pool'],
-};
-
 function zh(language: string): boolean {
   return language.toLowerCase().startsWith('zh');
 }
@@ -159,13 +116,6 @@ export function fieldLabel(field: string, language: string): string {
   return label ? label[zh(language) ? 0 : 1] : field.replaceAll('_', ' ');
 }
 
-export const STATUS_FIELDS = new Set([
-  'state', 'status', 'result', 'runtime_state', 'decision', 'outcome', 'dispatch_state',
-  'definition_state', 'selection_basis', 'source_observation', 'trust_basis', 'fact_source',
-  'provider', 'independence_kind', 'approval_basis', 'severity', 'role', 'business_roles',
-  'relation', 'adoption_version_policies',
-]);
-
 export const NUMERIC_STRING_FIELDS = new Set([
   'byte_length', 'items_count', 'project_revision', 'metadata_revision', 'selection_version',
   'authority_version', 'connector_version', 'round_index', 'lease_version', 'work_version',
@@ -173,20 +123,17 @@ export const NUMERIC_STRING_FIELDS = new Set([
 ]);
 
 export function statusLabel(status: string, language: string, field: string): string {
-  if (!STATUS_FIELDS.has(field)) return status;
-  const label = STATUS_LABELS[status];
-  return label ? label[zh(language) ? 0 : 1] : status;
+  const result = statusWord(status, { language, field });
+  // Compatibility only: existing pages keep unknown raw enums until their adoption slice.
+  return STATUS_FIELDS.has(field) && !result.known ? status : result.text;
 }
 
 export function notProvided(language: string): string {
-  return zh(language) ? '未提供' : 'Not provided';
+  return humanText('notProvided', language);
 }
 
 export function rawObservationValue(value: unknown): string | null {
-  if (value == null || value === '') return null;
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return JSON.stringify(value) ?? null;
+  return rawObservationText(value).technical.raw;
 }
 
 export function formatMetric(value: number | string, language: string, field?: string): string {

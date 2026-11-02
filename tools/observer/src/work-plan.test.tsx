@@ -192,7 +192,7 @@ describe('work detail requirements and source state', () => {
     expect(card.textContent).toContain('项目版本');
     expect(card.textContent).toContain('权威版本');
     expect(card.textContent).toContain('选择依据');
-    expect(card.textContent).toContain('未测量');
+    expect(card.textContent).toContain('尚未读取');
     expect(card.textContent).not.toContain('已同步');
     expect(card.textContent).not.toContain('takeover complete');
   });
@@ -222,8 +222,8 @@ describe('work detail requirements and source state', () => {
 
   it('keeps candidate and source-set blocks as later-slice placeholders', async () => {
     setupPlan();
-    expect((await screen.findByTestId('plan-candidates-placeholder')).textContent).toContain('后续切片');
-    expect((await screen.findByTestId('plan-source-set-placeholder')).textContent).toContain('后续切片');
+    expect((await screen.findByTestId('plan-candidates-placeholder')).textContent).toContain('尚未开放');
+    expect((await screen.findByTestId('plan-source-set-placeholder')).textContent).toContain('尚未开放');
   });
 });
 
@@ -241,7 +241,7 @@ describe('work detail review outcomes', () => {
     expect(review.textContent).toContain('artifact-digest-1');
     expect(review.textContent).toContain('bundle-hash-1');
     expect(review.querySelector('[data-testid="review-narrative"]')).toBeNull();
-    expect(review.textContent).toContain('后续切片');
+    expect(review.textContent).toContain('尚未开放');
   });
 
   it('presents a missing review as absent rather than an error', async () => {
@@ -263,7 +263,7 @@ describe('work detail review outcomes', () => {
     const { fetchMock } = setupPlan();
     await user.click(await screen.findByRole('tab', { name: '成果' }));
     expect((await screen.findByTestId('review-round-unavailable')).textContent)
-      .toContain('复核轮次无已证实来源');
+      .toContain('暂时无法读取这次检查');
     const reviewCalls = fetchMock.mock.calls.filter(([, init]) => String(init?.body ?? '').includes('"review.inspect"'));
     expect(reviewCalls).toHaveLength(0);
   });
@@ -316,8 +316,11 @@ describe('work detail history', () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 1200));
     });
-    expect(screen.getByTestId('plan-history').textContent).toContain('ReadTimeout');
-    expect(screen.getByTestId('plan-history').textContent).toContain('部分读取失败');
+    const history = screen.getByTestId('plan-history');
+    expect(history.textContent).toContain('部分读取失败');
+    expect(history.textContent).not.toContain('ReadTimeout');
+    await user.click(within(history).getByText('技术细节'));
+    expect(await within(history).findByText('ReadTimeout')).toBeTruthy();
   });
 
   it('discloses earlier records and caps the newest history at twenty', async () => {
@@ -372,10 +375,12 @@ describe('work-plan review round 2: sub-read failures and behavior pins', () => 
     const user = userEvent.setup();
     await user.click(screen.getByRole('tab', { name: '成果' }));
     const partial = await screen.findByTestId('state-partial');
-    expect(partial.textContent).toContain('Forbidden');
+    expect(partial.textContent).not.toContain('Forbidden');
+    await user.click(within(partial).getByText('技术细节'));
+    expect(await within(partial).findByText('Forbidden')).toBeTruthy();
   });
 
-  it('a missing client_reported_at reads 未测量, never the current clock', async () => {
+  it('a missing client_reported_at reads 尚未读取, never the current clock', async () => {
     setupPlan({
       snapshot: (workId) => {
         const response = demoWorkSnapshot(workId) as {
@@ -386,7 +391,7 @@ describe('work-plan review round 2: sub-read failures and behavior pins', () => 
       },
     });
     const cell = await screen.findByTestId('last-report-W1');
-    await waitFor(() => expect(cell.textContent).toBe('未测量'));
+    await waitFor(() => expect(cell.textContent).toBe('尚未读取'));
     expect(cell.textContent).not.toBe(formatUnixMs(Date.now(), 'zh-CN'));
   });
 
@@ -418,7 +423,9 @@ describe('work-plan review round 2: sub-read failures and behavior pins', () => 
   it('a failed work.snapshot renders a partial failure, not a blank pane', async () => {
     setupPlan({ snapshot: () => ({ ok: false, error: { code: 'ReadTimeout', message: 'slow' } }) });
     const partial = await screen.findByTestId('state-partial', undefined, { timeout: 5000 });
-    expect(partial.textContent).toContain('ReadTimeout');
+    expect(partial.textContent).not.toContain('ReadTimeout');
+    await userEvent.setup().click(within(partial).getByText('技术细节'));
+    expect(await within(partial).findByText('ReadTimeout')).toBeTruthy();
   });
 
   it('changing the page clears the selected work', async () => {
@@ -500,7 +507,9 @@ describe('work-plan review round 3: three remaining pins', () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole('tab', { name: '历史' }));
     const partial = await screen.findByTestId('state-partial');
-    expect(partial.textContent).toContain('Forbidden');
+    expect(partial.textContent).not.toContain('Forbidden');
+    await user.click(within(partial).getByText('技术细节'));
+    expect(await within(partial).findByText('Forbidden')).toBeTruthy();
   });
 
   it('Space on a focused row changes the selected work', async () => {

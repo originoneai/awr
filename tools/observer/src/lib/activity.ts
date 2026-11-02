@@ -1,11 +1,8 @@
-import type { UseQueryOptions } from '@tanstack/react-query';
-import { apiGet, apiPost } from './api';
+import { apiGet } from './api';
 import { POLL_INTERVAL_MS, readQueryDefaults } from './queries';
-import type { TeamActivityResponse, TeamIdentity } from './types';
+import type { TeamActivityResponse } from './types';
 
-interface CapabilitiesResponse {
-  result: { data: { identity?: TeamIdentity } };
-}
+export { capabilitiesQueryOptions } from './queries';
 
 export type ActivityKind = 'development' | 'requests';
 
@@ -13,21 +10,6 @@ export interface ActivityFilters {
   workId?: string;
   actorId?: string;
   limit: number;
-}
-
-export function capabilitiesQueryOptions(project: string, revoked: boolean) {
-  return {
-    queryKey: ['team', 'capabilities', project],
-    queryFn: () => apiPost<CapabilitiesResponse>(
-      '/api/team/read',
-      { project, query: { protocol_version: 1, op: 'capabilities' } },
-    ),
-    enabled: Boolean(project) && !revoked,
-    ...readQueryDefaults,
-    staleTime: Infinity,
-    refetchInterval: false as const,
-    refetchOnWindowFocus: false as const,
-  } satisfies UseQueryOptions<CapabilitiesResponse>;
 }
 
 export function activityListQueryOptions(
@@ -52,7 +34,7 @@ export function activityListQueryOptions(
     },
     enabled: Boolean(project) && !revoked,
     ...readQueryDefaults,
-    // Only the first page refreshes on the normal cadence; loaded history is stable.
+    // Poll only while one page is loaded; loading older history stops all polling.
     refetchInterval: (query: { state: { data?: { pages: TeamActivityResponse[] } } }) =>
       (query.state.data?.pages.length ?? 0) <= 1 ? POLL_INTERVAL_MS : false,
   };

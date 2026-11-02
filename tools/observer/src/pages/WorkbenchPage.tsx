@@ -23,6 +23,7 @@ import { FreshnessBadge } from '../components/FreshnessBadge';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { ObservationValue } from '../components/ObservationValue';
 import { isAuthError } from '../lib/api';
+import { freshnessWord } from '../lib/freshness';
 import { formatUnixMs } from '../lib/format';
 import {
   projectsQueryOptions,
@@ -99,10 +100,10 @@ function LastReport({ workId, query }: { workId: string; query?: SnapshotQuery }
   const observation = query?.data?.result.data.observation;
   const clientReportedAt = observation?.reporting?.client_reported_at_unix_ms;
   let text = t('common.loading');
-  if (query?.isError) text = t('freshness.state.not_measured');
+  if (query?.isError) text = freshnessWord(t, 'not_measured');
   else if (query && !query.isPending) {
     text = clientReportedAt == null
-      ? t('freshness.state.not_measured')
+      ? freshnessWord(t, 'not_measured')
       : formatUnixMs(clientReportedAt, i18n.language);
   }
   return <span data-testid={`last-report-${workId}`}>{text}</span>;

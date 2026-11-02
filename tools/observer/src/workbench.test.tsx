@@ -127,7 +127,7 @@ describe('My work sourced rows and navigation', () => {
       await user.click(screen.getByRole('tab', { name }));
       expect(router.state.location.search).toContain(`tab=${key}`);
       expect(await screen.findByTestId('workbench-tab-placeholder')).toBeTruthy();
-      expect(screen.getByTestId('workbench-tab-placeholder').textContent).toContain('后续切片');
+      expect(screen.getByTestId('workbench-tab-placeholder').textContent).toContain('尚未开放');
     }
   });
 
@@ -368,8 +368,8 @@ describe('visible-row snapshot hydration', () => {
     const first = await screen.findByTestId('last-report-W1');
     const second = await screen.findByTestId('last-report-W2');
     await waitFor(() => {
-      expect(first.textContent).toBe('未测量');
-      expect(second.textContent).toBe('未测量');
+      expect(first.textContent).toBe('尚未读取');
+      expect(second.textContent).toBe('尚未读取');
     });
     expect(first.textContent).not.toContain(listRead);
     expect(first.textContent).not.toContain(observedAt);
@@ -393,7 +393,10 @@ describe('visible-row snapshot hydration', () => {
     });
     await screen.findAllByText('Build the filter API');
     expect(await screen.findByTestId('state-partial')).toBeTruthy();
-    expect(screen.getByTestId('state-partial').textContent).toContain('ReadTimeout');
+    const partial = screen.getByTestId('state-partial');
+    expect(partial.textContent).not.toContain('ReadTimeout');
+    await userEvent.setup().click(within(partial).getByText('技术细节'));
+    expect(await within(partial).findByText('ReadTimeout')).toBeTruthy();
     expect(screen.getByText('Prepare the support page')).toBeTruthy();
   });
 });

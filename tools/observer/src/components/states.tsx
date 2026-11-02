@@ -1,7 +1,9 @@
 import { Alert, Empty, Result, Typography } from 'antd';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { humanText } from '../i18n/human-language';
 import { formatUnixMs } from '../lib/format';
+import { TechnicalDetails } from './TechnicalDetails';
 
 /**
  * Empty means "nothing observed as of a specific read", never "no data ever".
@@ -82,7 +84,8 @@ export function PartialFailure({
         message={t('state.partial.alert')}
         description={
           <>
-            {t('state.partial.description', { code: errorCode ?? 'UnknownError' })}
+            {humanText('partialFailure', i18n.language)}
+            <TechnicalDetails items={[{ label: 'Error', value: errorCode ?? 'UnknownError' }]} />
             {confirmedAtUnixMs != null
               ? ` ${t('state.partial.confirmedAt', { time: formatUnixMs(confirmedAtUnixMs, i18n.language) })}`
               : ''}
