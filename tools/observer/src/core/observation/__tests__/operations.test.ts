@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import DERIVED_RUN09 from '../../../test-fixtures/activity/derived-audit-development-project-scope-all-run09.json';
 import LIVE_REQUESTS from '../../../test-fixtures/activity/service-audit-requests-run09.json';
 import { findForbiddenVisibleText } from '../../../lib/human-language-guard';
+import { OPERATION_KIND_LABELS, OPERATION_VOCABULARY } from '../../../i18n/human-language';
 import { foldOperations, operationWord } from '../index';
 import type { OperationEvent } from '../index';
 
@@ -35,6 +36,38 @@ describe('operationWord', () => {
 
   it('does not invent an action for a missing value', () => {
     expect(operationWord(undefined, { language: 'en-US' })).toEqual({ kind: 'other', text: 'other operation', technical: { rawAction: null } });
+  });
+});
+
+describe('operation vocabulary', () => {
+  const PROCESS_WORDS = /领取|预留|租约|写入|事实|准入|claim|lease|reserve|ingest|admission|pump/i;
+
+  it('keeps every operation label and count word in plain business words in both languages', () => {
+    for (const [name, entry] of Object.entries(OPERATION_VOCABULARY)) {
+      for (const text of [entry.zh, entry.en]) {
+        expect(findForbiddenVisibleText(text), `${name}: ${text}`).toEqual([]);
+        expect(text, name).not.toMatch(PROCESS_WORDS);
+      }
+    }
+    for (const [kind, labels] of Object.entries(OPERATION_KIND_LABELS)) {
+      for (const text of [labels.zh, labels.en, labels.enPlural]) {
+        expect(findForbiddenVisibleText(text), `${kind}: ${text}`).toEqual([]);
+        expect(text, kind).not.toMatch(PROCESS_WORDS);
+      }
+    }
+  });
+
+  it('shows connector and system mechanics as one plain phrase with the raw name kept technical', () => {
+    const mechanics = [
+      'delivery.source.prepare', 'delivery.source.write', 'delivery.source.confirm', 'delivery.pump.claim', 'delivery.pump.refresh',
+      'delivery.facts.ingest', 'delivery.inspection.reserve', 'delivery.integration.inspection.reserve', 'delivery.integration.lease',
+      'delivery.integration.dispatch',
+    ];
+    for (const name of mechanics) {
+      expect(operationWord(name, { language: 'zh-CN' }).text, name).toBe('系统同步交付状态');
+      expect(operationWord(name, { language: 'en-US' }).text, name).toBe('System syncs delivery status');
+      expect(operationWord(name, { language: 'zh-CN' }).technical.rawAction).toBe(name);
+    }
   });
 });
 
