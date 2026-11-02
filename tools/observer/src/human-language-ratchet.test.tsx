@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { act } from '@testing-library/react';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import i18n from './i18n';
 import BASELINE from './test-fixtures/human-language-baseline.json';
 import { defaultVisibleText, findForbiddenVisibleText, withinHumanLanguageBaseline } from './lib/human-language-guard';
 import {
@@ -28,6 +29,7 @@ const PAGES = {
   placeholders: '/members',
 } as const;
 const STATES = ['data', 'empty', 'error', 'partial', 'revoked', 'unknown'] as const;
+const LANGUAGES = ['zh-CN', 'en-US'] as const;
 type State = (typeof STATES)[number];
 
 function json(payload: unknown) {
@@ -127,6 +129,10 @@ afterAll(() => {
   }
 });
 
+afterEach(async () => {
+  await act(async () => { await i18n.changeLanguage('zh-CN'); });
+});
+
 describe('human-language violation ratchet', () => {
   it('requires the exact recorded baseline in both directions', () => {
     expect(withinHumanLanguageBaseline(1, 0)).toBe(false);
@@ -134,14 +140,20 @@ describe('human-language violation ratchet', () => {
     expect(withinHumanLanguageBaseline(0, 0)).toBe(true);
   });
 
-  it.each(Object.entries(PAGES).flatMap(([page, path]) => STATES.map((state) => [page, path, state] as const)))(
-    '%s / %s / %s matches its recorded debt exactly',
-    async (page, path, state) => {
+  it('records one entry for every page, state and language, and nothing else', () => {
+    const expected = Object.keys(PAGES).flatMap((page) => LANGUAGES.flatMap((language) => STATES.map((state) => (language === 'zh-CN' ? `${page}/${state}` : `${page}/${state}@${language}`))));
+    expect(Object.keys(BASELINE).sort()).toEqual(expected.sort());
+  });
+
+  it.each(Object.entries(PAGES).flatMap(([page, path]) => LANGUAGES.flatMap((language) => STATES.map((state) => [page, path, state, language] as const))))(
+    '%s / %s / %s / %s matches its recorded debt exactly',
+    async (page, path, state, language) => {
+      await act(async () => { await i18n.changeLanguage(language); });
       installRealShapeMock(state);
       renderApp(path);
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)); });
       const count = findForbiddenVisibleText(defaultVisibleText(document.body)).length;
-      const key = `${page}/${state}`;
+      const key = language === 'zh-CN' ? `${page}/${state}` : `${page}/${state}@${language}`;
       generatedBaseline[key] = count;
       const baseline = BASELINE[key as keyof typeof BASELINE] ?? 0;
       expect(
