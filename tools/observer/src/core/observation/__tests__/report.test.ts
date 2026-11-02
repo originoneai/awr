@@ -28,7 +28,7 @@ describe('describeProgressReport: the real checkpoints', () => {
     expect(JSON.stringify(visible)).not.toContain('5f7eb2fe9c563e4d355aa64a527e0aef754116c1');
     expect(JSON.stringify(technical)).toContain('5f7eb2fe9c563e4d355aa64a527e0aef754116c1');
     expect(report.blockers).toEqual({ shown: [], more: 0, reported: true });
-    expect(report.tests).toEqual({ shown: [{ name: 'local_git.manifest', outcome: '已通过', tone: 'positive' }], more: 0 });
+    expect(report.tests).toEqual({ shown: [{ name: '本地内容与测试', outcome: '已通过', tone: 'positive' }], more: 0 });
     expect(report.artifacts).toEqual({ shown: [], more: 0 });
     expect(report.declaration).toEqual([
       `Project manager Agent 于 ${absoluteTimeText(DELIVERED.reported_at_unix_ms, { language: 'zh-CN' }).text} 汇报`,
@@ -41,7 +41,7 @@ describe('describeProgressReport: the real checkpoints', () => {
     const report = describeProgressReport(IN_REVIEW, zh);
     expect(report.tests.shown.map((test) => [test.name, test.outcome, test.tone])).toEqual([
       ['npm test', '已通过', 'positive'],
-      ['local_git.manifest', '已通过', 'positive'],
+      ['本地内容与测试', '已通过', 'positive'],
     ]);
     expect(report.artifacts.shown).toEqual(['development branch', 'review round']);
     expect(JSON.stringify(report.artifacts)).not.toContain('refs/heads');
@@ -113,9 +113,29 @@ describe('describeProgressReport: lists', () => {
       { name: 'e2e', outcome: '失败', tone: 'negative' },
       { name: 'lint', outcome: '未识别状态', tone: 'neutral' },
       { name: 'smoke', outcome: '未提供', tone: 'neutral' },
-      { name: '未命名的测试', outcome: '已通过', tone: 'positive' },
+      { name: '检查 5', outcome: '已通过', tone: 'positive' },
     ]);
     expect(describeProgressReport({ tests: [{ name: 'unit', outcome: 'passed' }] }, en).tests.shown[0].outcome).toBe('Passed');
+  });
+
+  it('shows a machine-named test as a numbered check by its place in the reporter\'s list, and keeps the name whole in the technical items', () => {
+    const tests = [{ name: 'unit_tests', outcome: 'passed' }, 'not an object', { name: 'ci.build.lint', outcome: 'failed' }, { name: 'npm test', outcome: 'passed' }];
+    const report = describeProgressReport({ tests }, zh);
+    expect(report.tests.shown.map((test) => test.name)).toEqual(['检查 1', '检查 3', 'npm test']);
+    expect(findForbiddenVisibleText(report.tests.shown.map((test) => test.name).join(' '))).toEqual([]);
+    expect(describeProgressReport({ tests }, en).tests.shown.map((test) => test.name)).toEqual(['Check 1', 'Check 3', 'npm test']);
+    const raw = report.technical.items.find((item) => item.label === 'progress.tests')?.value as string;
+    expect(JSON.parse(raw)).toEqual(tests);
+  });
+
+  it('leaves the guard nothing to flag in any test name of the real checkpoints', () => {
+    for (const checkpoint of [DELIVERED, IN_REVIEW]) {
+      for (const options of [zh, en]) {
+        const names = describeProgressReport(checkpoint, options).tests.shown.map((test) => test.name);
+        expect(names.length).toBeGreaterThan(0);
+        expect(findForbiddenVisibleText(names.join(' ')), options.language).toEqual([]);
+      }
+    }
   });
 
   it('shows only the labels of artifacts and skips entries that have none', () => {

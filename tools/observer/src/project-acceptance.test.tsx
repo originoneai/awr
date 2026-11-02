@@ -340,6 +340,18 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     expect(screen.getByTestId('acceptance-version').textContent).toContain(CONTRACT);
   });
 
+  it('words a machine-named verification check in plain words and keeps its raw name in the technical details', async () => {
+    setupAcceptance();
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+    const card = await screen.findByTestId('acceptance-verification');
+    expect(card.textContent).toContain('本地内容与测试');
+    expect(card.textContent).not.toContain('local_git.manifest');
+    expect(screen.getByTestId('acceptance-version').textContent).toContain('local_git.manifest');
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    expect((await screen.findByTestId('acceptance-verification')).textContent).toContain('Local content and tests');
+    await act(async () => { await i18n.changeLanguage('zh-CN'); });
+  });
+
   it('uses exact selectors per object and never eagerly reads artifact bytes', async () => {
     const { calls } = setupAcceptance();
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api', { expand: false });

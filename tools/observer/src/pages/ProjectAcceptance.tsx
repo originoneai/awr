@@ -9,6 +9,7 @@ import { FreshnessBadge } from '../components/FreshnessBadge';
 import { RecordedTime } from '../components/RecordedTime';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { TechnicalDetails } from '../components/TechnicalDetails';
+import { checkLabel } from '../core/observation';
 import { ApiError, isAuthError } from '../lib/api';
 import { formatObservationValue, notProvided } from '../i18n/craft';
 import { craftSelectionStyle } from '../theme';
@@ -269,7 +270,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
   const currentVersionText = currentVersion ?? t('acceptance.currentVersion');
   const verificationRows = verification.map((entry, index) => ({
     key: index,
-    check: at(entry, ['check']) === 'local_git.manifest' ? t('acceptance.localVerification') : asText(at(entry, ['check'])) ?? t('acceptance.otherVerification', { count: index + 1 }),
+    check: checkLabel(at(entry, ['check']), { language: i18n.language, position: index + 1 }).text,
     outcome: at(entry, ['outcome']) === 'passed' ? t('acceptance.statusPassed') : at(entry, ['outcome']) === 'failed' ? t('acceptance.statusFailed') : t('acceptance.statusUnknown'),
     version: currentVersionText,
     raw: entry,

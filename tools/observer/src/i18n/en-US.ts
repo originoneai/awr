@@ -167,8 +167,6 @@ const enUS: Messages = {
     currentVersion: 'Current',
     allVersions: 'All',
     historyVersions: 'Earlier',
-    localVerification: 'Local content and tests',
-    otherVerification: 'Check {{count}}',
     verificationTitle: 'Verification for this version',
     verificationContent: 'Check',
     verificationResult: 'Result',

@@ -163,8 +163,6 @@ const zhCN = {
     currentVersion: '当前版本',
     allVersions: '全部版本',
     historyVersions: '历史版本',
-    localVerification: '本地内容与测试',
-    otherVerification: '检查 {{count}}',
     verificationTitle: '本版本验证依据',
     verificationContent: '验证内容',
     verificationResult: '结果',

@@ -93,6 +93,14 @@ export interface ActorAliasResult {
 
 export type WorkLabelKind = 'none' | 'named' | 'unnamed';
 
+export type CheckLabelKind = 'named' | 'known' | 'numbered';
+
+export interface CheckLabelResult {
+  kind: CheckLabelKind;
+  text: string;
+  technical: { raw: string | null };
+}
+
 export interface WorkLabelResult {
   kind: WorkLabelKind;
   text: string;
