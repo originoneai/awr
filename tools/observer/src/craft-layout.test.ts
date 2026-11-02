@@ -27,6 +27,6 @@ describe('craft layout rhythm', () => {
   it('keeps workline progress and recent activity as the main overview blocks', () => {
     const overview = readFileSync('src/pages/ProjectOverview.tsx', 'utf8');
     expect(overview).toContain('<Col xs={24} lg={16} style={{ minWidth: 0 }}>');
-    expect(overview).toContain('<RecentActivity query={activity} />');
+    expect(overview).toContain('<RecentActivity query={activity} project={project} />');
   });
 });

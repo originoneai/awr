@@ -4,6 +4,7 @@ import { axe, toHaveNoViolations } from 'jest-axe';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { formatUnixMs } from './lib/format';
+import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
 import { queryKeys } from './lib/queries';
 import type { TeamWork } from './lib/types';
 import {
@@ -381,18 +382,24 @@ describe('project coverage and freshness', () => {
 });
 
 describe('project recent development activity', () => {
-  it('renders raw fields, source notes, and development-only reads without narrative', async () => {
+  it('shows recent changes in plain words, keeps the raw records in the technical details, and reads development activity only', async () => {
     const { fetchMock } = setupOverview();
     const block = await screen.findByTestId('project-activity');
-    const item = await within(block).findByTestId('activity-item-activity-1');
-    expect(within(item).getByTestId('activity-action').textContent).toBe('access.changed');
-    expect(within(item).getByTestId('activity-actor').textContent).toBe('actor-raw-17');
-    expect(within(item).getByTestId('activity-result').textContent).toBe('granted');
-    expect(within(item).getByTestId('activity-time').textContent)
-      .toBe(formatUnixMs(1761839700000, 'zh-CN'));
-    expect(block.textContent).toContain('audit.development');
-    expect(block.textContent).toContain('not_observed');
-    expect(item.querySelector('[data-testid="activity-narrative"]')).toBeNull();
+    const step = await within(block).findByTestId('recent-step-0');
+    expect(within(step).getByTestId('recent-step-text').textContent).toBe('变更授权');
+    expect(within(step).getByTestId('recent-step-time').textContent).toBe(formatUnixMs(1761839700000, 'zh-CN'));
+    for (const hidden of ['access.changed', 'actor-raw-17', 'activity-1', 'audit.development', 'not_observed']) {
+      expect(defaultVisibleText(block)).not.toContain(hidden);
+    }
+    expect(findForbiddenVisibleText(defaultVisibleText(block))).toEqual([]);
+    expect(step.querySelector('[data-testid="activity-narrative"]')).toBeNull();
+    const user = userEvent.setup();
+    for (const toggle of within(block).getAllByRole('button', { name: /技术细节/ })) await user.click(toggle);
+    expect((await within(block).findByTestId('recent-step-technical-0')).textContent).toContain('access.changed');
+    expect(within(block).getByTestId('recent-step-technical-0').textContent).toContain('activity-1');
+    expect(within(block).getByTestId('technical-detail-development_source').textContent).toContain('audit.development');
+    expect(within(block).getByTestId('technical-detail-unknown_means').textContent).toContain('not_observed');
+    expect(within(block).getByTestId('recent-changes-all').getAttribute('href')).toBe('/activity?project=demo');
     const activityUrls = fetchMock.mock.calls.map(([input]) => String(input))
       .filter((url) => url.includes('/api/team/activity'));
     expect(activityUrls).toHaveLength(1);
@@ -434,23 +441,58 @@ describe('project recent development activity', () => {
     expect(await within(block).findByText('还有更早的记录')).toBeTruthy();
   });
 
-  it('shows at most twenty items, newest first', async () => {
+  it('shows at most eight steps, newest first, and says that earlier changes exist', async () => {
     const items = Array.from({ length: 22 }, (_, index) => ({
       ...DEMO_ACTIVITY.data.items[0],
       id: `activity-${index + 1}`,
-      action: `action-${index + 1}`,
-      actor_id: `actor-${index + 1}`,
+      action: index % 2 === 0 ? 'work.snapshot' : 'execution.start',
       created_at_unix_ms: 1761839700000 + index * 1000,
     }));
     setupOverview({ activity: makeActivity(items) });
     const block = await screen.findByTestId('project-activity');
-    await waitFor(() => expect(block.querySelectorAll('[data-testid^="activity-item-"]')).toHaveLength(20));
-    const rendered = block.querySelectorAll('[data-testid^="activity-item-"]');
-    expect(rendered[0].getAttribute('data-testid')).toBe('activity-item-activity-22');
-    expect(rendered[19].getAttribute('data-testid')).toBe('activity-item-activity-3');
-    expect(block.querySelector('[data-testid="activity-item-activity-1"]')).toBeNull();
-    expect(block.querySelector('[data-testid="activity-item-activity-2"]')).toBeNull();
+    await waitFor(() => expect(block.querySelectorAll('[data-testid^="recent-step-"][data-testid$="0"], [data-testid^="recent-step-"]').length).toBeGreaterThan(0));
+    const steps = Array.from(block.querySelectorAll('li[data-testid^="recent-step-"]'));
+    expect(steps).toHaveLength(8);
+    expect(within(steps[0] as HTMLElement).getByTestId('recent-step-text').textContent).toBe('开始执行');
+    expect(within(steps[1] as HTMLElement).getByTestId('recent-step-text').textContent).toBe('查看工作现状');
+    expect(within(block).getByTestId('recent-changes-more').textContent).toBe('更早的变化请在“活动与审计”里查看');
+    const user = userEvent.setup();
+    for (const toggle of within(block).getAllByRole('button', { name: /技术细节/ })) await user.click(toggle);
+    expect(within(block).getByTestId('recent-step-technical-0').textContent).toContain('activity-22');
+    expect(block.textContent).not.toContain('activity-1 ');
   });
+
+  it('folds a run of the same kind into one counted step and marks an unknown result', async () => {
+    const base = DEMO_ACTIVITY.data.items[0];
+    const items = [
+      ...Array.from({ length: 5 }, (_, index) => ({ ...base, id: `read-${index}`, action: 'work.snapshot', result: 'committed', created_at_unix_ms: 1761839700000 + index * 1000 })),
+      { ...base, id: 'unknown-1', action: 'execution.report', result: 'unknown', created_at_unix_ms: 1761839700000 + 6000 },
+    ];
+    setupOverview({ activity: makeActivity(items) });
+    const block = await screen.findByTestId('project-activity');
+    const steps = await within(block).findAllByTestId(/^recent-step-\d+$/);
+    expect(steps.map((step) => within(step).getByTestId('recent-step-text').textContent)).toEqual(['报告执行结果', '5 次读取']);
+    expect(within(steps[0]).getByTestId('recent-step-unknown').textContent).toBe('结果未知');
+    expect(within(steps[1]).queryByTestId('recent-step-unknown')).toBeNull();
+    // A counted step shows when its newest record happened.
+    expect(within(steps[1]).getByTestId('recent-step-time').textContent).toBe(formatUnixMs(1761839700000 + 4000, 'zh-CN'));
+  });
+
+  it('counts a repeated audit id once and says so in plain words', async () => {
+    const base = DEMO_ACTIVITY.data.items[0];
+    const items = [
+      { ...base, id: 'dup-1', action: 'work.snapshot' },
+      { ...base, id: 'dup-1', action: 'work.snapshot' },
+      { ...base, id: 'other-1', action: 'work.snapshot', created_at_unix_ms: base.created_at_unix_ms - 1000 },
+    ];
+    setupOverview({ activity: makeActivity(items) });
+    const block = await screen.findByTestId('project-activity');
+    const steps = await within(block).findAllByTestId(/^recent-step-\d+$/);
+    expect(steps).toHaveLength(1);
+    expect(within(steps[0]).getByTestId('recent-step-text').textContent).toBe('2 次读取');
+    expect(within(block).getByTestId('recent-note-duplicate-id').textContent).toBe('发现重复记录，原始事件已全部保留');
+  });
+
 });
 
 describe('project overview placeholders, localization, and accessibility', () => {

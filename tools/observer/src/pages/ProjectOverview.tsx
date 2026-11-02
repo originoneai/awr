@@ -6,7 +6,6 @@ import {
   Descriptions,
   Empty,
   Flex,
-  List,
   Pagination,
   Row,
   Space,
@@ -21,8 +20,10 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { FreshnessBadge } from '../components/FreshnessBadge';
+import { RecentChanges } from '../components/RecentChanges';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
-import { FieldLabel, ObservationValue } from '../components/ObservationValue';
+import { ObservationValue } from '../components/ObservationValue';
+import { pageTechnicalItems } from '../lib/activity-technical';
 import { isAuthError } from '../lib/api';
 import { freshnessWord } from '../lib/freshness';
 import { formatUnixMs } from '../lib/format';
@@ -215,61 +216,35 @@ function Coverage({ data }: { data: TeamOverviewResponse }) {
   );
 }
 
-function ActivityItems({ items }: { items: TeamActivityItem[] }) {
-  const { i18n } = useTranslation();
-  const latest = [...items]
-    .sort((left, right) => right.created_at_unix_ms - left.created_at_unix_ms)
-    .slice(0, 20);
-  return (
-    <List
-      size="small"
-      dataSource={latest}
-      rowKey="id"
-      renderItem={(item) => (
-        <List.Item>
-          <div data-testid={`activity-item-${item.id}`}>
-            <Space wrap size={[12, 4]}>
-              <Typography.Text code data-testid="activity-action">{item.action}</Typography.Text>
-              <Typography.Text data-testid="activity-actor">{item.actor_id}</Typography.Text>
-              <ObservationValue testId="activity-result" value={item.result} field="result" />
-              <Typography.Text type="secondary" data-testid="activity-time">
-                {formatUnixMs(item.created_at_unix_ms, i18n.language)}
-              </Typography.Text>
-            </Space>
-          </div>
-        </List.Item>
-      )}
-    />
-  );
-}
-
-function RecentActivity({ query }: { query: ActivityQuery }) {
+function RecentActivity({ query, project }: { query: ActivityQuery; project: string }) {
   const { t } = useTranslation();
   const data = query.data?.data;
   const errorCode = (query.error as { code?: string } | null)?.code;
+  const changes = (items: TeamActivityItem[]) => (
+    <RecentChanges
+      items={items}
+      maxSteps={8}
+      viewAllHref={`/activity?project=${encodeURIComponent(project)}`}
+      testId="project-recent-changes"
+      extraTechnical={pageTechnicalItems(query.data?.data)}
+    />
+  );
   let content: ReactNode = <Spin />;
   if (errorCode === 'Unsupported') {
     content = <Empty data-testid="activity-unavailable" description={t('projectOverview.activity.unavailable')} />;
   } else if (query.error) {
     content = (
       <PartialFailure errorCode={errorCode}>
-        {data?.items.length ? <ActivityItems items={data.items} /> : <div />}
+        {data?.items.length ? changes(data.items) : <div />}
       </PartialFailure>
     );
   } else if (data) {
-    content = data.items.length === 0 ? <ObservationEmpty /> : <ActivityItems items={data.items} />;
+    content = data.items.length === 0 ? <ObservationEmpty /> : changes(data.items);
   }
 
   return (
     <section data-testid="project-activity">
       <Typography.Title level={5}>{t('projectOverview.activity.title')}</Typography.Title>
-      {data ? (
-        <Typography.Paragraph type="secondary">
-          <FieldLabel field="development_source" />: <ObservationValue value={data.development_source} />
-          <br />
-          <FieldLabel field="unknown_means" />: <ObservationValue value={data.unknown_means} />
-        </Typography.Paragraph>
-      ) : null}
       {content}
       {data?.next_cursor != null ? (
         <Alert type="info" showIcon message={t('projectOverview.activity.earlier')} />
@@ -443,7 +418,7 @@ export function ProjectOverview({ project }: { project: string }) {
       </section>
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={16} style={{ minWidth: 0 }}>
-          <RecentActivity query={activity} />
+          <RecentActivity query={activity} project={project} />
         </Col>
         <Col xs={24} lg={8}>
           <LaterBlock title={t('projectOverview.dependencies')} testId="project-deps-placeholder" />

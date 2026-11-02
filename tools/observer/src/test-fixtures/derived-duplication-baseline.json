@@ -1,8 +1,8 @@
 {
-  "total": 93,
+  "total": 90,
   "target": 0,
   "slices": {
-    "fold-operations": 3,
+    "fold-operations": 0,
     "work-state": 60,
     "page-adoption": 30
   },
@@ -11,7 +11,7 @@
     "last-report": 18,
     "next-guidance": 5,
     "workstream-grouping": 13,
-    "activity-ordering": 3,
+    "activity-ordering": 0,
     "claimed-status": 6,
     "time-wrapper": 3,
     "knowledge-digest": 17,
