@@ -143,6 +143,19 @@ describe('foldOperations boundaries', () => {
     expect(result.steps[0].technical.eventIds).toEqual(['r1', 'r2', 'r3']);
   });
 
+  it('words the folded counts in English with singular and plural nouns', () => {
+    const result = foldOperations([
+      event('r1', 'work.snapshot', 1000),
+      event('r2', 'review.inspect', 1001),
+      event('r3', 'evidence.inspect', 1002),
+      event('x1', 'execution.start', 1003),
+      event('e1', 'delivery.evidence.submit', 1004),
+      event('e2', 'evidence.recorded', 1005),
+    ], { language: 'en-US', gapThresholdMs: THIRTY_MINUTES, order: 'oldest-first' });
+    expect(result.steps.map((step) => step.text)).toEqual(['3 read operations', '1 execution operation', '2 evidence operations']);
+    expect(foldOperations([event('only', 'work.snapshot', 1000)], { language: 'en-US', gapThresholdMs: THIRTY_MINUTES }).steps.map((step) => step.text)).toEqual(['1 read operation']);
+  });
+
   it('separates only when the gap is greater than the required threshold', () => {
     const input = [event('first', 'work.snapshot', 1000), event('second', 'work.snapshot', 1000 + THIRTY_MINUTES)];
     expect(foldOperations(input, { language: 'zh-CN', gapThresholdMs: THIRTY_MINUTES, order: 'oldest-first' }).steps).toHaveLength(1);
