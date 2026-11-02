@@ -211,10 +211,9 @@ function overviewUpstream(pages, sessionId = 'ws_obs2', state = {}) {
       }
       if (request.url === '/v1/web/session') {
         if (Array.isArray(state.calls)) state.calls.push('session');
-        const expired = typeof state.now === 'function' && state.expires_at_ms <= state.now();
-        if (state.revoked || expired) {
+        if (state.revoked) {
           response.writeHead(401);
-          response.end(JSON.stringify({ code: expired ? 'SessionExpired' : 'Unauthenticated', message: expired ? 'expired' : 'revoked' }));
+          response.end(JSON.stringify({ code: 'Unauthenticated', message: 'revoked' }));
         } else {
           response.end(JSON.stringify({ session_id: sessionId, expires_at_ms: state.expires_at_ms }));
         }
@@ -1407,10 +1406,10 @@ test('a failed workstream list is not cached after the upstream recovers', async
   }
 });
 
-test('cached overview parts cannot outlive the upstream session expiry', async () => {
+test('cached overview parts are re-read at the upstream session expiry', async () => {
   const calls = [];
   let fakeNow = 1_000_000;
-  const state = { calls, expires_at_ms: 1_030_000, now: () => fakeNow };
+  const state = { calls, expires_at_ms: 1_030_000 };
   const upstream = await overviewUpstream(overviewCachePages(calls, state), 'ws_obs2', state);
   const bridge = await startLiveBridge(upstream.base, { now: () => fakeNow });
   const cookie = 'awr_web_session=ws_obs2';
@@ -1418,15 +1417,18 @@ test('cached overview parts cannot outlive the upstream session expiry', async (
     const first = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
     assert.equal(first.json.ok, true);
     assert.equal(bridge.cacheSize(), 2);
+    const firstScopeReadAt = first.json.coverage.scope.read_at_unix_ms;
 
     fakeNow = 1_030_000;
-    const expired = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
-    assert.equal(expired.json.ok, false);
-    assert.equal(expired.json.error.code, 'SessionExpired');
-    assert.equal(expired.json.works, undefined);
-    assert.equal(bridge.cacheSize(), 0);
-    // Only the session was revalidated: no cached or fresh scoped read ran.
-    assert.deepEqual(calls, ['session', 'workstreams.list', 'work.list', 'capabilities', 'session']);
+    const refreshed = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(refreshed.json.ok, true, JSON.stringify(refreshed.json));
+    assert.ok(refreshed.json.coverage.scope.read_at_unix_ms > firstScopeReadAt);
+    // The upstream still authorizes the session, but its declared expiry means
+    // neither the scope nor identity reply from before that instant is reusable.
+    assert.deepEqual(calls, [
+      'session', 'workstreams.list', 'work.list', 'capabilities',
+      'session', 'workstreams.list', 'work.list', 'capabilities',
+    ]);
   } finally {
     await bridge.close();
     await upstream.close();

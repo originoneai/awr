@@ -558,6 +558,7 @@ function createTeamBridge(opts) {
 
   const OVERVIEW_CACHE_TTL_MS = 60000;
   const overviewCache = new Map();
+  const overviewSessionExpiries = new WeakMap();
 
   function overviewEntryExpired(entry) {
     return now() - entry.readAt >= OVERVIEW_CACHE_TTL_MS || now() < entry.readAt
@@ -577,9 +578,10 @@ function createTeamBridge(opts) {
     return { value: structuredClone(entry.value), readAt: entry.readAt };
   }
 
-  function storeOverviewValue(req, kind, project, value, expiresAtMs = null) {
+  function storeOverviewValue(req, kind, project, value) {
     const sessionId = parseTeamCookie(req);
     if (!sessionId) return;
+    const expiresAtMs = overviewSessionExpiries.get(req) ?? null;
     // Sweep on every write so sessions that never return cannot accumulate.
     for (const [key, entry] of overviewCache.entries()) {
       if (overviewEntryExpired(entry)) overviewCache.delete(key);
@@ -604,6 +606,10 @@ function createTeamBridge(opts) {
       clearOverviewCache(req);
       return session;
     }
+    const expiresAtMs = session.json && session.json.expires_at_ms;
+    // Keep only this request's expiry metadata, never the session response.
+    // Every value stored later in the composition inherits that hard limit.
+    overviewSessionExpiries.set(req, Number.isFinite(expiresAtMs) ? expiresAtMs : null);
     return { ...session, readAt: now() };
   }
 
