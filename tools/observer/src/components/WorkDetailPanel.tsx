@@ -88,7 +88,7 @@ function Requirements({ query }: { query: SnapshotQuery }) {
           {
             key: 'guidance',
             label: t('plan.detail.guidance'),
-            children: <Typography.Text data-testid="plan-guidance">{state.next.text}</Typography.Text>,
+            children: <Typography.Text data-testid="plan-guidance" data-reporter-text={state.next.kind === 'reported' ? '' : undefined}>{state.next.text}</Typography.Text>,
           },
           {
             key: 'report',

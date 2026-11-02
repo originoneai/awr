@@ -348,15 +348,16 @@ const enUS: Messages = {
       waiting_dependency: 'Waiting on dependency',
       observe: 'Observe',
       prepare: 'Prepare',
+      other: 'Another state',
     },
     nextAction: {
       observe: 'Observe task (read only)',
       prepare: 'Prepare task (agent executes)',
-      advisory: 'Advisory action: {{op}}',
+      advisory: 'A suggested next step',
     },
     resume: {
       title: 'Resume previous work',
-      session: 'Session {{id}} · version {{version}}',
+      continue: 'Your earlier progress is still here; you can pick it up',
     },
     agents: 'My agents',
     handoffs: 'Recent handoffs',

@@ -31,11 +31,11 @@ export function ProgressReport({ report }: { report: ProgressReportResult }) {
   return (
     <Flex vertical gap={12} data-testid="progress-report">
       {report.contractNote ? <Alert type="warning" message={report.contractNote} data-testid="progress-report-contract" /> : null}
-      {report.summary ? <Typography.Paragraph data-testid="progress-report-summary" style={{ marginBottom: 0 }}>{report.summary}</Typography.Paragraph> : null}
-      <ReportList title={t('progressReport.completed')} list={report.completed} testId="progress-report-completed" render={(line) => <Typography.Text>{line}</Typography.Text>} />
+      {report.summary ? <Typography.Paragraph data-testid="progress-report-summary" data-reporter-text style={{ marginBottom: 0 }}>{report.summary}</Typography.Paragraph> : null}
+      <ReportList title={t('progressReport.completed')} list={report.completed} testId="progress-report-completed" render={(line) => <Typography.Text data-reporter-text>{line}</Typography.Text>} />
       {report.blockers.reported ? (
         report.blockers.shown.length > 0
-          ? <ReportList title={t('progressReport.blockers')} list={report.blockers} testId="progress-report-blockers" render={(line) => <Typography.Text>{line}</Typography.Text>} />
+          ? <ReportList title={t('progressReport.blockers')} list={report.blockers} testId="progress-report-blockers" render={(line) => <Typography.Text data-reporter-text>{line}</Typography.Text>} />
           : <Typography.Text type="secondary" data-testid="progress-report-blockers">{humanText('blockersNone', i18n.language)}</Typography.Text>
       ) : null}
       <ReportList
