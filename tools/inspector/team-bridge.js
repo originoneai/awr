@@ -556,6 +556,65 @@ function createTeamBridge(opts) {
     return { status: res.status, json, setCookie };
   }
 
+  const OVERVIEW_CACHE_TTL_MS = 60000;
+  const overviewCache = new Map();
+
+  function cachedOverviewValue(req, kind, project) {
+    const sessionId = parseTeamCookie(req);
+    if (!sessionId) return null;
+    const key = `${sessionId}:${kind}:${project}`;
+    const entry = overviewCache.get(key);
+    if (!entry) return null;
+    const expired = now() - entry.readAt >= OVERVIEW_CACHE_TTL_MS || now() < entry.readAt
+      || (entry.expiresAtMs != null && entry.expiresAtMs <= now());
+    if (expired) {
+      overviewCache.delete(key);
+      return null;
+    }
+    return { value: structuredClone(entry.value), readAt: entry.readAt };
+  }
+
+  function storeOverviewValue(req, kind, project, value, expiresAtMs = null) {
+    const sessionId = parseTeamCookie(req);
+    if (!sessionId) return;
+    overviewCache.set(`${sessionId}:${kind}:${project}`, {
+      value: structuredClone(value), readAt: now(), expiresAtMs,
+    });
+  }
+
+  function clearOverviewCache(req) {
+    const sessionId = parseTeamCookie(req);
+    if (!sessionId) return;
+    for (const key of overviewCache.keys()) {
+      if (key.startsWith(`${sessionId}:`)) overviewCache.delete(key);
+    }
+  }
+
+  async function readOverviewSession(req) {
+    const cached = cachedOverviewValue(req, 'session', '');
+    if (cached) return { status: 200, json: cached.value, setCookie: [], readAt: cached.readAt };
+    const session = await proxyTeam('/v1/web/session', req, null, 'GET');
+    if (!session || session.status >= 400) {
+      clearOverviewCache(req);
+      return session;
+    }
+    storeOverviewValue(req, 'session', '', session.json, session.json && session.json.expires_at_ms);
+    return { ...session, readAt: now() };
+  }
+
+  async function readOverviewCapabilities(project, req, signal) {
+    const cached = cachedOverviewValue(req, 'capabilities', project);
+    if (cached) return { status: 200, json: cached.value, setCookie: [], readAt: cached.readAt };
+    const capabilities = await proxyTeam(`/v1/web/projects/${encodeURIComponent(project)}/query`, req,
+      { protocol_version: 1, op: 'capabilities' }, 'POST', signal);
+    if (!capabilities || capabilities.status >= 400) {
+      clearOverviewCache(req);
+      return capabilities;
+    }
+    storeOverviewValue(req, 'capabilities', project, capabilities.json);
+    return { ...capabilities, readAt: now() };
+  }
+
   function liveError(proxied) {
     const body = proxied && proxied.json;
     if (body && body.code) {
@@ -618,7 +677,7 @@ function createTeamBridge(opts) {
    * pages: the caller declares the part failed with the error code, what was
    * read, its as-of and the cursor that resumes the failed page.
    */
-  async function queryAllPages(project, query, req, res, { pageTimeoutMs = 4000, deadlineAt = null } = {}) {
+  async function queryAllPagesUncached(project, query, req, res, { pageTimeoutMs = 4000, deadlineAt = null } = {}) {
     const items = [];
     const seen = new Set();
     let cursor;
@@ -686,6 +745,18 @@ function createTeamBridge(opts) {
     return { items, total, truncated: true, next_cursor: cursor, as_of: mixed ? null : asOf };
   }
 
+  async function queryAllPages(project, query, req, res, options = {}) {
+    if (query.op === 'workstreams.list') {
+      const cached = cachedOverviewValue(req, 'workstreams', project);
+      if (cached) return { ...cached.value, readAt: cached.readAt };
+    }
+    const result = await queryAllPagesUncached(project, query, req, res, options);
+    if (query.op === 'workstreams.list' && !result.error) {
+      storeOverviewValue(req, 'workstreams', project, result);
+    }
+    return { ...result, readAt: now() };
+  }
+
   async function inboxRead(project, query, req, res, maxBytes) {
     const signal = AbortSignal.timeout(readTimeoutMs);
     try {
@@ -705,7 +776,7 @@ function createTeamBridge(opts) {
   const routes = {
     'GET /api/team/projects': async (url, _body, req, res) => {
       if (TEAM.live) {
-        const session = await proxyTeam('/v1/web/session', req, null, 'GET');
+        const session = await readOverviewSession(req);
         if (!session || session.status >= 400) return liveError(session);
         applyProxiedCookies(res, session.setCookie);
         const proxied = await proxyTeam('/v1/web/projects', req, null, 'GET');
@@ -733,7 +804,7 @@ function createTeamBridge(opts) {
           return { ok: false, error: { code: 'InvalidInput', message: 'project required' },
             freshness: unmeasuredFreshness(Date.now()) };
         }
-        const session = await proxyTeam('/v1/web/session', req, null, 'GET');
+        const session = await readOverviewSession(req);
         if (!session) {
           return { ok: false, error: { code: 'BadGateway', message: 'live proxy unavailable' },
             freshness: compositionFailedFreshness('BadGateway', Date.now()) };
@@ -751,7 +822,7 @@ function createTeamBridge(opts) {
         const deadlineAt = now() + overviewDeadlineMs;
         const streams = await queryAllPages(project, { op: 'workstreams.list' }, req, res,
           { pageTimeoutMs: readTimeoutMs, deadlineAt });
-        const scopeReadAt = Date.now();
+        const scopeReadAt = streams.readAt ?? now();
         if (streams.error && (READ_AUTH_FAILURES.has(streams.error.code) || streams.items.length === 0)) {
           // Identity or permission revocation clears restricted content at
           // once; with nothing confirmed there is nothing to retain either.
@@ -793,7 +864,7 @@ function createTeamBridge(opts) {
               workstream_id: stream.id, status: 'failed', error_code: page.error.code,
               works_enumerated: page.items.length, works_total: page.total,
               truncated: false, next_cursor: page.next_cursor, as_of: page.as_of,
-              read_at_unix_ms: Date.now(),
+              read_at_unix_ms: page.readAt ?? now(),
             });
             works.push(...mapWorksFromQuery(page).map((work) => ({
               ...work, workstream_id: stream.id,
@@ -804,7 +875,7 @@ function createTeamBridge(opts) {
             workstream_id: stream.id, status: 'succeeded',
             works_enumerated: page.items.length, works_total: page.total,
             truncated: page.truncated, next_cursor: page.next_cursor, as_of: page.as_of,
-            read_at_unix_ms: Date.now(),
+            read_at_unix_ms: page.readAt ?? now(),
           });
           works.push(...mapWorksFromQuery(page).map((work) => ({
             ...work, workstream_id: stream.id,
@@ -817,8 +888,7 @@ function createTeamBridge(opts) {
         }
         let capabilities;
         try {
-          capabilities = await proxyTeam(`/v1/web/projects/${encodeURIComponent(project)}/query`, req,
-            { protocol_version: 1, op: 'capabilities' }, 'POST',
+          capabilities = await readOverviewCapabilities(project, req,
             AbortSignal.timeout(Math.max(1, Math.min(readTimeoutMs, deadlineAt - now()))));
         } catch (error) {
           return { ok: false, error: { code: 'ReadTimeout', message: 'Capabilities read exceeded the composition deadline' },
@@ -843,6 +913,12 @@ function createTeamBridge(opts) {
           && new Set(triples.map((triple) => JSON.stringify(triple))).size === 1
           ? triples[0]
           : null;
+        const pageReadAt = Math.min(
+          session.readAt ?? now(),
+          scopeReadAt,
+          capabilities.readAt ?? now(),
+          ...parts.map((part) => part.read_at_unix_ms ?? now()),
+        );
         return {
           ok: true,
           identity: identity || null,
@@ -866,7 +942,7 @@ function createTeamBridge(opts) {
             authoritative: common
               ? { status: 'measured', ...common }
               : { status: 'not_measured' },
-            page_read: { status: 'measured', at_unix_ms: Date.now() },
+            page_read: { status: 'measured', at_unix_ms: pageReadAt },
           },
           schema: 'awr-team-web-loop-live/v1',
           interaction_mode: 'mcp',
@@ -1170,6 +1246,7 @@ function createTeamBridge(opts) {
     },
 
     'POST /api/team/logout': async (_url, _body, req, res) => {
+      clearOverviewCache(req);
       if (TEAM.live) {
         const proxied = await proxyTeam('/v1/web/logout', req, '{}', 'POST');
         if (!proxied) {
@@ -1189,6 +1266,7 @@ function createTeamBridge(opts) {
     },
 
     'POST /api/team/session/revoke': async (_url, body, req, res) => {
+      clearOverviewCache(req);
       if (TEAM.live) {
         const proxied = await proxyTeam('/v1/web/session/revoke', req, body, 'POST');
         if (!proxied) {
@@ -1219,7 +1297,7 @@ function createTeamBridge(opts) {
           return { ok: false, error: { code: 'InvalidInput', message: 'project required' } };
         }
         // Live writes must hit the authorized command store — never invent receipts.
-        const session = await proxyTeam('/v1/web/session', req, null, 'GET');
+        const session = await readOverviewSession(req);
         if (!session) {
           return { ok: false, error: { code: 'BadGateway', message: 'live proxy unavailable' } };
         }
