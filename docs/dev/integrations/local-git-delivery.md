@@ -414,3 +414,15 @@ missing selections, cancellation/restart, stable unknown queries, damaged proof
 and abandoned observation recovery. `delivery_worker` covers combined admission
 failure without source effects. Physical source-first closure and end-to-end
 native collaboration acceptance remain separate delivery work.
+
+`team_delivery_order_pg` drives the command handlers with member credentials
+through one complete delivery order against an isolated PostgreSQL fixture and a
+synthetic repository: assignment and self-claim, two refinement rounds before
+any review decision, one returned review with its rework, a fast-forward
+delivery, a second item whose declared base is no longer the target (accepted
+as a request, rejected by the connector, with the changed target or base
+reported), the rebuilt follow-up, and the refusals that every route to
+follow-up work gives after finalization. A second test shows that delivering the
+first version closes the item to refinement. The tests pin the service state
+machine and the order of commands; they say nothing about what a model or
+operator decides and carry no native business, approval or deployment credit.
