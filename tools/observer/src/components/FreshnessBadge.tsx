@@ -1,6 +1,7 @@
 import { Space, Tag, Typography } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { PLANE_STATES, type PlaneState } from '../lib/contract';
+import { freshnessWord } from '../lib/freshness';
 import { formatUnixMs } from '../lib/format';
 import type { PlaneFreshness, TeamFreshness } from '../lib/types';
 
@@ -35,7 +36,7 @@ function PlaneView({ planeKey, plane }: { planeKey: (typeof PLANE_KEYS)[number];
         {t(`freshness.plane.${planeKey}`)}
       </Typography.Text>
       <Tag color={STATE_COLORS[status]} style={{ marginInlineEnd: 4 }}>
-        {t(`freshness.state.${status}`)}
+        {freshnessWord(t, status)}
       </Tag>
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         {detail}
