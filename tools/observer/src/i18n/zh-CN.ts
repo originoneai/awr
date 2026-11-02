@@ -26,9 +26,10 @@ const zhCN = {
     capabilities: '这份连接能做什么',
     project: '项目',
     businessRoles: '业务角色',
-    actionCeiling: '允许的动作上限',
-    canManageMembers: '可管理成员',
-    canReadProjectAudit: '可读项目审计',
+    allowedActions: '允许的操作',
+    notIncluded: '不包含',
+    noActions: '没有授权任何操作',
+    revocationNote: '暂时不能单独让某个 Agent 的连接失效；需要时请联系管理员。',
     existing: '现有连接',
     existingLater: '暂时无法读取现有连接。',
     records: '连接记录',
@@ -407,6 +408,7 @@ const zhCN = {
   common: {
     loading: '加载中…',
     notProvided: '未提供',
+    listSeparator: '、',
   },
 };
 

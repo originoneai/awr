@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import DERIVED_RUN09 from '../../../test-fixtures/activity/derived-audit-development-project-scope-all-run09.json';
 import { findForbiddenVisibleText } from '../../../lib/human-language-guard';
 import REPORTS from '../../../test-fixtures/work-state/progress-reports-run09.json';
-import { actorAliases, checkLabel, documentLabel, workLabel } from '../index';
+import { ACTION_VOCABULARY } from '../../../i18n/human-language';
+import { actionWords, actorAliases, checkLabel, documentLabel, workLabel } from '../index';
 
 const ITEMS = DERIVED_RUN09.data.items as Array<{ actor_id: string; work_id: string | null }>;
 const ACTORS = ITEMS.map((item) => item.actor_id);
@@ -148,5 +149,39 @@ describe('documentLabel', () => {
       expect(documentLabel(missing, { ...zh, position: 2 }), JSON.stringify(missing)).toEqual({ kind: 'numbered', text: '文档 2', technical: { raw: missing === '/' ? '/' : null } });
     }
     expect(documentLabel(undefined, { ...en, position: 1 }).text).toBe('Document 1');
+  });
+});
+
+describe('actionWords', () => {
+  const zh = { language: 'zh-CN' } as const;
+  const en = { language: 'en-US' } as const;
+
+  it('says the real ceiling of a reader in plain words and keeps the exact names', () => {
+    expect(actionWords(['work.read'], zh)).toEqual({ shown: ['查看授权的任务'], other: 0, technical: { raw: ['work.read'] } });
+    expect(actionWords(['work.read'], en).shown).toEqual(['View authorized work']);
+  });
+
+  it('says every action the Team service knows in words that the guard has nothing to flag in, in both languages', () => {
+    const names = Object.keys(ACTION_VOCABULARY);
+    expect(names).toHaveLength(14);
+    for (const language of ['zh-CN', 'en-US']) {
+      const result = actionWords(names, { language });
+      expect(result.shown).toHaveLength(14);
+      expect(result.other).toBe(0);
+      expect(new Set(result.shown).size).toBe(14);
+      expect(findForbiddenVisibleText(result.shown.join('\n')), language).toEqual([]);
+    }
+  });
+
+  it('keeps the order of the service, lists each action once and counts a name nobody has words for without showing it', () => {
+    const result = actionWords(['review.decide', 'work.read', 'review.decide', 'future.thing', 'other_one'], en);
+    expect(result).toEqual({ shown: ['Decide reviews', 'View authorized work'], other: 2, technical: { raw: ['review.decide', 'work.read', 'future.thing', 'other_one'] } });
+    expect(findForbiddenVisibleText(result.shown.join(' '))).toEqual([]);
+  });
+
+  it('reads anything that is not a list of names as none', () => {
+    for (const value of [undefined, null, 'work.read', 7, {}, [], ['', '  ', 7, null]]) {
+      expect(actionWords(value, zh), JSON.stringify(value)).toEqual({ shown: [], other: 0, technical: { raw: [] } });
+    }
   });
 });
