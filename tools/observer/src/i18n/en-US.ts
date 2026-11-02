@@ -190,6 +190,12 @@ const enUS: Messages = {
   freshness: {
     title: 'Freshness',
     recentRead: 'Latest read: {{time}}',
+    statusLabel: '{{plane}}: {{status}}',
+    display: {
+      report_received: 'Agent report',
+      authoritative: 'System check',
+      page_read: 'This page',
+    },
     plane: {
       report_received: 'Report received',
       authoritative: 'Authoritative',

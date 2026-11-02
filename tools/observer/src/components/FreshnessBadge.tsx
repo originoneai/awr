@@ -28,7 +28,10 @@ function PlaneView({ planeKey, plane }: { planeKey: (typeof PLANE_KEYS)[number];
   return (
     <span data-testid={`freshness-${planeKey}`}>
       <Tag color={STATE_COLORS[status]} style={{ marginInlineEnd: 4 }}>
-        {freshnessWord(t, status)}
+        {t('freshness.statusLabel', {
+          plane: t(`freshness.display.${planeKey}`),
+          status: freshnessWord(t, status),
+        })}
       </Tag>
     </span>
   );

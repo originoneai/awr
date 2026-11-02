@@ -30,6 +30,18 @@ describe('FreshnessBadge (four-state vocabulary from observation-contract)', () 
     expect(screen.getByTestId('freshness-badge').textContent).not.toContain('页面读取');
   });
 
+  it('labels every mixed plane state with its human source', () => {
+    render(<FreshnessBadge freshness={freshness({
+      report_received: { status: 'not_measured' },
+      page_read: { status: 'measured', at_unix_ms: 1761850000000 },
+    })} />);
+    expect(screen.getByTestId('freshness-report_received').textContent).toBe('Agent 汇报：尚未读取');
+    expect(screen.getByTestId('freshness-authoritative').textContent).toBe('系统核对：可能已过期');
+    expect(screen.getByTestId('freshness-page_read').textContent).toBe('本页读取：已更新');
+    expect(screen.getByTestId('freshness-badge').textContent).not.toContain('上报接收');
+    expect(screen.getByTestId('freshness-badge').textContent).not.toContain('权威测量');
+  });
+
   it('shows one latest-read sentence using the latest factual time', () => {
     render(<FreshnessBadge freshness={freshness({ page_read: { status: 'measured', at_unix_ms: 1761850000000 } })} />);
     const badge = screen.getByTestId('freshness-badge');
