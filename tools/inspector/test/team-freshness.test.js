@@ -73,7 +73,7 @@ function startLiveBridge(teamUrl, opts = {}) {
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address();
-      resolve({ base: `http://127.0.0.1:${port}`, cacheSize: bridge.cacheSize, close: () => new Promise((r) => server.close(r)) });
+      resolve({ base: `http://127.0.0.1:${port}`, routes: bridge.routes, cacheSize: bridge.cacheSize, close: () => new Promise((r) => server.close(r)) });
     });
   });
 }
@@ -211,7 +211,11 @@ function overviewUpstream(pages, sessionId = 'ws_obs2', state = {}) {
       }
       if (request.url === '/v1/web/session') {
         if (Array.isArray(state.calls)) state.calls.push('session');
-        if (state.revoked) {
+        if (state.failSession) {
+          state.failSession = false;
+          response.writeHead(503);
+          response.end(JSON.stringify({ code: 'Unavailable', message: 'synthetic session refresh failure' }));
+        } else if (state.revoked) {
           response.writeHead(401);
           response.end(JSON.stringify({ code: 'Unauthenticated', message: 'revoked' }));
         } else {
@@ -1570,6 +1574,91 @@ test('storing a session sweeps expired entries from other sessions', async () =>
     assert.equal(second.json.ok, true);
     // Only the new session's workstreams and capabilities remain live.
     assert.equal(bridge.cacheSize(), 2);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+async function seedOverviewCache(state = {}, now) {
+  const calls = [];
+  state.calls = calls;
+  const upstream = await overviewUpstream(overviewCachePages(calls, state), 'ws_obs2', state);
+  const bridge = await startLiveBridge(upstream.base, now ? { now } : {});
+  const cookie = 'awr_web_session=ws_obs2';
+  const first = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+  assert.equal(first.json.ok, true, JSON.stringify(first.json));
+  assert.equal(bridge.cacheSize(), 2);
+  return { calls, state, upstream, bridge, cookie };
+}
+
+for (const action of ['revoke', 'logout']) {
+  test(`${action} empties the cookie session cache immediately`, async () => {
+    const { upstream, bridge, cookie } = await seedOverviewCache();
+    try {
+      const path = action === 'revoke' ? '/api/team/session/revoke' : '/api/team/logout';
+      const response = await req(bridge.base, 'POST', path, { body: {}, cookie });
+      assert.equal(response.json.ok, true, JSON.stringify(response.json));
+      assert.equal(bridge.cacheSize(), 0);
+    } finally {
+      await bridge.close();
+      await upstream.close();
+    }
+  });
+}
+
+test('a failed session refresh empties the cookie session cache', async () => {
+  const { state, upstream, bridge, cookie } = await seedOverviewCache();
+  try {
+    state.failSession = true;
+    const failed = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(failed.json.ok, false);
+    assert.equal(failed.json.error.code, 'Unavailable');
+    assert.equal(bridge.cacheSize(), 0);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('a failed capabilities refresh empties the cookie session cache', async () => {
+  let fakeNow = 1_000_000;
+  const { state, upstream, bridge, cookie } = await seedOverviewCache({}, () => fakeNow);
+  try {
+    fakeNow += 60000;
+    state.failCapabilities = true;
+    const failed = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(failed.json.ok, false);
+    assert.equal(failed.json.error.code, 'Unavailable');
+    assert.equal(bridge.cacheSize(), 0);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('mutating the original composition cannot change a stored cache value', async () => {
+  const calls = [];
+  const upstream = await overviewUpstream(overviewCachePages(calls));
+  const bridge = await startLiveBridge(upstream.base);
+  const cookie = 'awr_web_session=ws_obs2';
+  const readDirect = () => bridge.routes['GET /api/team/overview'](
+    new URL('http://127.0.0.1/api/team/overview?project=demo'),
+    null,
+    { method: 'GET', headers: { cookie } },
+    { setHeader() {} },
+  );
+  try {
+    const first = await readDirect();
+    assert.equal(first.ok, true);
+    assert.equal(first.identity.actor_id, 'member');
+    // Direct route results retain object identity, unlike an HTTP round trip.
+    // This is the original object that was just passed to the cache store.
+    first.identity.actor_id = 'edited-after-store';
+
+    const cached = await readDirect();
+    assert.equal(cached.ok, true);
+    assert.equal(cached.identity.actor_id, 'member');
   } finally {
     await bridge.close();
     await upstream.close();
