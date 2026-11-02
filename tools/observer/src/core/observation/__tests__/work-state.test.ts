@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import SNAPSHOTS from '../../../test-fixtures/work-state/snapshots-run09.json';
 import { findForbiddenVisibleText } from '../../../lib/human-language-guard';
-import { absoluteTimeText, deriveWorkState } from '../index';
+import { abbreviateIds, absoluteTimeText, deriveWorkState } from '../index';
 
 const IN_PROGRESS = SNAPSHOTS['api-in-progress-with-live-report'];
 const DELIVERED = SNAPSHOTS['api-delivered'];
@@ -9,10 +9,10 @@ const IN_REVIEW = SNAPSHOTS['api-in-review-owned-by-other'];
 const zh = { language: 'zh-CN', readState: 'ready' } as const;
 
 describe('deriveWorkState: next step', () => {
-  it('shows the next action the reporter wrote in the checkpoint, verbatim, and keeps the service\'s operation and note out of the text but verbatim in the technical layer', () => {
+  it('shows the next action the reporter wrote in the checkpoint with long identifiers abbreviated, the sentence as written beside it, and keeps the service\'s operation and note out of the text but verbatim in the technical layer', () => {
     for (const snapshot of [DELIVERED, IN_REVIEW]) {
       const state = deriveWorkState({ ...zh, snapshot });
-      expect(state.next).toMatchObject({ kind: 'reported', text: snapshot.observation.progress.next_action });
+      expect(state.next).toMatchObject({ kind: 'reported', text: abbreviateIds(snapshot.observation.progress.next_action), fullText: snapshot.observation.progress.next_action });
       expect(state.next.technical).toEqual({
         nextAction: snapshot.observation.progress.next_action,
         nextStep: null,
@@ -21,6 +21,18 @@ describe('deriveWorkState: next step', () => {
       });
       expect(state.next.text).not.toContain(String(snapshot.guidance.action.op));
       expect(state.next.text).not.toBe(snapshot.guidance.action.note);
+    }
+  });
+
+  it('cuts the long ids of the reporter\'s sentence in the text, in the checkpoint\'s and in the row\'s alike, and keeps the sentence as written', () => {
+    const review = deriveWorkState({ ...zh, snapshot: IN_REVIEW }).next;
+    expect(review.text).toBe('Wait for independent review of round 01M6AVQ8…. Do not self-approve or merge to main.');
+    expect(review.fullText).toBe('Wait for independent review of round 01M6AVQ870N7MBRJ5MPCN79T55. Do not self-approve or merge to main.');
+    expect(review.technical.nextAction).toBe(review.fullText);
+    const row = deriveWorkState({ ...zh, snapshot: { observation: {} }, workNextStep: 'Merge 5f7eb2fe9c563e4d355aa64a527e0aef754116c1 first' }).next;
+    expect(row).toMatchObject({ kind: 'reported', text: 'Merge 5f7eb2fe… first', fullText: 'Merge 5f7eb2fe9c563e4d355aa64a527e0aef754116c1 first' });
+    for (const state of [deriveWorkState({ ...zh, snapshot: IN_PROGRESS }).next, deriveWorkState({ language: 'zh-CN', readState: 'loading' }).next]) {
+      expect(state.fullText).toBeNull();
     }
   });
 

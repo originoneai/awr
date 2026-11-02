@@ -80,7 +80,7 @@ function NextStep({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
   return (
     <Typography.Text
       data-testid={`project-next-${work.key}`}
-      title={state.next.kind === 'reported' ? state.next.text : undefined}
+      title={state.next.fullText ?? undefined}
       style={{ display: 'block' }}
     >
       {/* antd's Typography overwrites a line clamp set on itself, so the clamp sits on a plain span. */}

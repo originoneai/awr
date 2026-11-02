@@ -175,6 +175,19 @@ describe('project workstream progress', () => {
     expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('project-progress-table')))).toEqual([]);
   });
 
+  it('cuts the long ids of a reporter\'s sentence in the row and keeps the sentence as written in its title', async () => {
+    setupOverview({
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as { result: { data: { observation: { progress: Record<string, unknown> | null } } } };
+        response.result.data.observation.progress = { next_action: 'Wait for independent review of round 01M6AVQ870N7MBRJ5MPCN79T55.' };
+        return response;
+      },
+    });
+    await waitFor(() => expect(screen.getByTestId('project-next-W1').textContent).toBe('Wait for independent review of round 01M6AVQ8….'));
+    expect(screen.getByTestId('project-next-W1').getAttribute('title')).toBe('Wait for independent review of round 01M6AVQ870N7MBRJ5MPCN79T55.');
+    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('project-progress-table')))).toEqual([]);
+  });
+
   it('shows the next action the work\'s reporter wrote in the checkpoint, the overview row as the fallback, and never the service\'s own hint', async () => {
     const works = [
       { ...DEMO_PROJECT_WORKS[0], next_step: 'Row text for the first work' },
