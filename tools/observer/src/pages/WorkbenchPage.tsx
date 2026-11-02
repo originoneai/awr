@@ -18,13 +18,15 @@ import type { TFunction } from 'i18next';
 import { Link as LinkIcon } from 'lucide-react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { deriveWorkState } from '../core/observation';
 import { Link, useSearchParams } from 'react-router';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { ObservationValue } from '../components/ObservationValue';
+import { TechnicalDetails } from '../components/TechnicalDetails';
 import { isAuthError } from '../lib/api';
-import { freshnessWord } from '../lib/freshness';
-import { formatUnixMs } from '../lib/format';
+import { readStateOf } from '../lib/read-state';
+import { workStateTechnicalItems } from '../lib/work-state-technical';
 import {
   projectsQueryOptions,
   workInboxQueryOptions,
@@ -96,17 +98,9 @@ function nextActionText(query: WorkQuery, t: TFunction) {
 }
 
 function LastReport({ workId, query }: { workId: string; query?: SnapshotQuery }) {
-  const { t, i18n } = useTranslation();
-  const observation = query?.data?.result.data.observation;
-  const clientReportedAt = observation?.reporting?.client_reported_at_unix_ms;
-  let text = t('common.loading');
-  if (query?.isError) text = freshnessWord(t, 'not_measured');
-  else if (query && !query.isPending) {
-    text = clientReportedAt == null
-      ? freshnessWord(t, 'not_measured')
-      : formatUnixMs(clientReportedAt, i18n.language);
-  }
-  return <span data-testid={`last-report-${workId}`}>{text}</span>;
+  const { i18n } = useTranslation();
+  const state = deriveWorkState({ language: i18n.language, readState: readStateOf(query), snapshot: query?.data?.result.data });
+  return <span data-testid={`last-report-${workId}`}>{state.lastReport.text}</span>;
 }
 
 function DetailAbsent() {
@@ -156,7 +150,7 @@ function WorkDetail({
   row?: WorkbenchRow;
   snapshot?: SnapshotQuery;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   if (!row) {
     return (
       <Card data-testid="workbench-detail">
@@ -171,8 +165,7 @@ function WorkDetail({
   const acceptance = contract?.acceptance;
   const dependencies = contract?.required_dependencies;
   const progress = data?.observation?.progress;
-  const guidance = data?.guidance?.action;
-  const nextStep = data?.next_step ?? guidance?.note ?? guidance?.op;
+  const state = deriveWorkState({ language: i18n.language, readState: readStateOf(snapshot), snapshot: data });
 
   return (
     <Card data-testid="workbench-detail">
@@ -217,8 +210,9 @@ function WorkDetail({
               {dependencies ? <ContractValues values={dependencies} /> : <DetailAbsent />}
             </DetailSection>
             <DetailSection title={t('workbench.detail.nextStep')}>
-              {nextStep ? <Typography.Paragraph>{nextStep}</Typography.Paragraph> : <DetailAbsent />}
+              {state.next.kind === 'reported' ? <Typography.Paragraph>{state.next.text}</Typography.Paragraph> : <DetailAbsent />}
             </DetailSection>
+            <TechnicalDetails items={workStateTechnicalItems(state)} />
           </>
         )}
         <Link to={taskPath(project, row.work_id)}>{t('workbench.detail.openFull')}</Link>

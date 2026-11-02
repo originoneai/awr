@@ -39,6 +39,8 @@ export const HUMAN_VOCABULARY = {
     operatorMissing: '未提供操作者',
     workNone: '无关联工作',
     workUnnamed: '某项工作',
+    loading: '加载中…',
+    nextStepMissing: '未报告下一步',
   },
   'en-US': {
     technicalDetails: 'Technical details',
@@ -79,6 +81,8 @@ export const HUMAN_VOCABULARY = {
     operatorMissing: 'Operator not provided',
     workNone: 'No related work',
     workUnnamed: 'A work item',
+    loading: 'Loading…',
+    nextStepMissing: 'No next step reported',
   },
 } as const;
 

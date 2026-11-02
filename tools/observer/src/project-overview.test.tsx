@@ -69,11 +69,14 @@ function setupOverview({
   overview = DEMO_PROJECT_OVERVIEW,
   activity = DEMO_ACTIVITY,
   snapshot = demoWorkSnapshot,
+  snapshotGate,
 }: {
   path?: string;
   overview?: unknown;
   activity?: unknown;
   snapshot?: (workId: string) => unknown;
+  /** Holds every work snapshot read back until it resolves. */
+  snapshotGate?: Promise<void>;
 } = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -82,7 +85,10 @@ function setupOverview({
     if (url.includes('/api/team/activity')) return json(activity);
     if (url.includes('/api/team/read')) {
       const request = JSON.parse(String(init?.body)) as { query: { op: string; work_id?: string } };
-      if (request.query.op === 'work.snapshot') return json(snapshot(request.query.work_id ?? ''));
+      if (request.query.op === 'work.snapshot') {
+        await snapshotGate;
+        return json(snapshot(request.query.work_id ?? ''));
+      }
     }
     return json({ ok: false, error: { code: 'NoRoute', message: url } });
   });
@@ -100,14 +106,14 @@ afterEach(async () => {
 });
 
 describe('project workstream progress', () => {
-  it('renders real groups and fields, honest unknowns, and snapshot next step/report time', async () => {
+  it('renders real groups and fields, honest unknowns, a plain missing next step and the report time', async () => {
     setupOverview();
     expect(await screen.findByRole('link', { name: 'Build the filter API' })).toBeTruthy();
     expect(screen.getByTestId('workstream-group-WS1').textContent).toContain('Backend workstream');
     expect(screen.getByTestId('workstream-group-WS2').textContent).toContain('Frontend workstream');
     expect(screen.getByTestId('project-status-W1').textContent).toBe('未知');
     expect(screen.getByTestId('project-owner-W1').textContent).toBe('未提供');
-    expect(screen.getByTestId('project-next-W1').textContent).toBe('session.checkpoint');
+    expect(screen.getByTestId('project-next-W1').textContent).toBe('未报告下一步');
     expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
     expect(screen.getByTestId('last-report-W1').textContent).not.toBe(formatUnixMs(1761839900000, 'zh-CN'));
     expect(screen.getByTestId('last-report-W1').style.whiteSpace).toBe('nowrap');
@@ -147,7 +153,7 @@ describe('project workstream progress', () => {
     expect(screen.queryByRole('link', { name: 'Observed project task 102' })).toBeNull();
   }, 20_000);
 
-  it('shows a compact guidance op and keeps the long note out of the cell text', async () => {
+  it('never puts the service\'s agent-addressed operation or its long note into the row, not even on hover', async () => {
     const longNote = 'Batch progress with next_action/open_loops. Stop and report workspace execution before repository push or publication. '.repeat(4);
     setupOverview({
       snapshot: (workId) => {
@@ -157,14 +163,64 @@ describe('project workstream progress', () => {
       },
     });
     const cell = await screen.findByTestId('project-next-W1');
-    await waitFor(() => expect(cell.textContent).toBe('session.checkpoint'));
-    expect(cell.textContent.length).toBeLessThan(80);
+    await waitFor(() => expect(cell.textContent).toBe('未报告下一步'));
+    expect(cell.textContent).not.toContain('session.checkpoint');
     expect(cell.textContent).not.toContain('Batch progress');
-    // The full agent-facing note stays available behind an always-on
-    // tooltip (ellipsis.tooltip would never fire on the short op).
+    // The row used to carry the note in an always-on tooltip; a person gets no engineering text there now.
     const user = userEvent.setup();
     await user.hover(cell);
-    expect(await screen.findByText(/Batch progress with next_action/)).toBeTruthy();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+    expect(document.querySelector('.ant-tooltip')).toBeNull();
+    expect(screen.queryByText(/Batch progress with next_action/)).toBeNull();
+    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('project-progress-table')))).toEqual([]);
+  });
+
+  it('shows the next step the work\'s reporter gave, its own snapshot first and the overview row as the fallback', async () => {
+    const works = [
+      { ...DEMO_PROJECT_WORKS[0], next_step: 'Row text for the first work' },
+      { ...DEMO_PROJECT_WORKS[1], next_step: 'Row text for the second work' },
+    ];
+    setupOverview({
+      overview: makeProjectOverview(works),
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as { result: { data: { next_step: string | null } } };
+        response.result.data.next_step = workId === 'W1' ? 'Review the contract first' : null;
+        return response;
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('project-next-W1').textContent).toBe('Review the contract first');
+      expect(screen.getByTestId('project-next-W2').textContent).toBe('Row text for the second work');
+    });
+  });
+
+  it('says loading, not not-read-yet, while a work\'s own read is still pending', async () => {
+    let release: () => void = () => undefined;
+    setupOverview({ snapshotGate: new Promise<void>((resolve) => { release = resolve; }) });
+    await waitFor(() => {
+      expect(screen.getByTestId('project-next-W1').textContent).toBe('加载中…');
+      expect(screen.getByTestId('last-report-W1').textContent).toBe('加载中…');
+    });
+    await act(async () => { release(); });
+    await waitFor(() => expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN')));
+    expect(screen.getByTestId('project-next-W1').textContent).toBe('未报告下一步');
+  });
+
+  it('marks a report the service itself declared stale, and only that one', async () => {
+    setupOverview({
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as {
+          result: { data: { observation: { reporting: Record<string, unknown> } } };
+        };
+        response.result.data.observation.reporting.client_stale = workId === 'W1';
+        return response;
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('last-report-W1').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}（可能已过期）`);
+      expect(screen.getByTestId('last-report-W2').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
+    });
+    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('project-progress-table')))).toEqual([]);
   });
 
   it('uses not measured for missing or failed report times, never the current clock', async () => {
@@ -189,7 +245,7 @@ describe('project workstream progress', () => {
     expect(screen.getByTestId('last-report-W2').textContent).not.toBe(currentTime);
   });
 
-  it('falls back to the overview next step or not measured when snapshots fail', async () => {
+  it('falls back to the overview row\'s next step, or says none was reported, when snapshots fail', async () => {
     const works = [
       { ...DEMO_PROJECT_WORKS[0], next_step: 'Review the contract' },
       { ...DEMO_PROJECT_WORKS[1], next_step: null },
@@ -200,7 +256,7 @@ describe('project workstream progress', () => {
     });
     await waitFor(() => {
       expect(screen.getByTestId('project-next-W1').textContent).toBe('Review the contract');
-      expect(screen.getByTestId('project-next-W2').textContent).toBe('未提供');
+      expect(screen.getByTestId('project-next-W2').textContent).toBe('未报告下一步');
     });
   });
 

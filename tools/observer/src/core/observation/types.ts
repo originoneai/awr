@@ -115,3 +115,39 @@ export interface GroupWorksResult<W extends WorkGroupWork = WorkGroupWork> {
   /** Title of each known workstream by id; an unknown id has no entry (callers fall back to the id). */
   titles: Record<string, string>;
 }
+
+export interface WorkStateSnapshot {
+  next_step?: unknown;
+  guidance?: { action?: { op?: unknown; note?: unknown } | null } | null;
+  observation?: { reporting?: { client_reported_at_unix_ms?: unknown; client_stale?: unknown } | null } | null;
+}
+
+/** State of a read the derivation depends on: it never invents what it did not read. */
+export type ReadState = 'loading' | 'ready' | 'failed';
+
+export interface WorkStateInput {
+  language: string;
+  /** State of the work's own detail read. */
+  readState: ReadState;
+  /** The next step the overview row carries, used when the detail read has none or failed. */
+  workNextStep?: unknown;
+  snapshot?: WorkStateSnapshot | null;
+}
+
+export interface WorkStateResult {
+  next: {
+    kind: 'loading' | 'reported' | 'missing';
+    /** What the work's reporter said the next step is, or a plain statement that none was reported. */
+    text: string;
+    /** The service's own guidance is addressed to the agent and stays out of the default view. */
+    technical: { nextStep: string | null; guidanceOp: string | null; guidanceNote: string | null };
+  };
+  lastReport: {
+    kind: 'loading' | 'measured' | 'not_measured';
+    text: string;
+    atUnixMs: number | null;
+    /** True or false as the service declared it; null when it said nothing. */
+    stale: boolean | null;
+    technical: { atUnixMs: number | null };
+  };
+}
