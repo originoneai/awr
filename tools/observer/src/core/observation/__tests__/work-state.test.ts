@@ -122,3 +122,58 @@ describe('deriveWorkState: last report', () => {
     expect(deriveWorkState({ language: 'en-US', readState: 'ready', snapshot: { observation: {} } }).lastReport.text).toBe('Not read yet');
   });
 });
+
+describe('deriveWorkState: progress word', () => {
+  it('says the reporter\'s phase in plain words with the tone it carries, and the runtime state when the reporter gave no phase', () => {
+    expect(deriveWorkState({ ...zh, snapshot: IN_REVIEW }).progress)
+      .toMatchObject({ kind: 'phase', text: '待评审', tone: 'warning', technical: { phase: 'ready_for_review', runtimeState: 'claimed', rowStatus: null } });
+    expect(deriveWorkState({ ...zh, snapshot: DELIVERED }).progress).toMatchObject({ kind: 'phase', text: '已交付', tone: 'positive' });
+    expect(deriveWorkState({ ...zh, snapshot: IN_PROGRESS }).progress).toMatchObject({ kind: 'runtime', text: '已认领', tone: 'warning', technical: { phase: null, runtimeState: 'claimed' } });
+    expect(deriveWorkState({ language: 'en-US', readState: 'ready', snapshot: IN_REVIEW }).progress.text).toBe('Ready for review');
+  });
+
+  it('has a word and a tone for each of the eleven phases the service defines, in both languages', () => {
+    const phases: Record<string, [string, string, string]> = {
+      starting: ['刚开始', 'Just started', 'neutral'],
+      implementing: ['开发中', 'In development', 'neutral'],
+      testing: ['测试中', 'Testing', 'neutral'],
+      waiting_user: ['等待确认', 'Waiting for a decision', 'warning'],
+      blocked: ['受阻', 'Blocked', 'negative'],
+      ready_for_review: ['待评审', 'Ready for review', 'warning'],
+      waiting_dependency: ['等待前置工作', 'Waiting on other work', 'warning'],
+      reviewing: ['评审中', 'In review', 'warning'],
+      reworking: ['返工中', 'Being reworked', 'warning'],
+      integrating: ['合入中', 'Being integrated', 'neutral'],
+      delivered: ['已交付', 'Delivered', 'positive'],
+    };
+    expect(Object.keys(phases)).toHaveLength(11);
+    for (const [phase, [zhText, enText, tone]] of Object.entries(phases)) {
+      const snapshot = { observation: { progress: { phase } } };
+      expect(deriveWorkState({ ...zh, snapshot }).progress, phase).toMatchObject({ kind: 'phase', text: zhText, tone });
+      expect(deriveWorkState({ language: 'en-US', readState: 'ready', snapshot }).progress.text, phase).toBe(enText);
+      expect(findForbiddenVisibleText(zhText), phase).toEqual([]);
+    }
+  });
+
+  it('takes the runtime state before a phase it does not know, and calls that phase unrecognized only when nothing else is known', () => {
+    const odd = { ...IN_REVIEW, observation: { ...IN_REVIEW.observation, progress: { phase: 'brand_new_phase', next_action: 'x' } } };
+    expect(deriveWorkState({ ...zh, snapshot: odd }).progress).toMatchObject({ kind: 'runtime', text: '已认领', technical: { phase: 'brand_new_phase', runtimeState: 'claimed' } });
+    expect(deriveWorkState({ ...zh, snapshot: { observation: { progress: { phase: 'brand_new_phase' } } } }).progress)
+      .toMatchObject({ kind: 'phase', text: '未识别状态', tone: 'neutral', technical: { phase: 'brand_new_phase' } });
+  });
+
+  it('falls back to the overview row\'s status when the read failed or says nothing, then to unknown, and never reads a failed snapshot', () => {
+    expect(deriveWorkState({ language: 'zh-CN', readState: 'failed', snapshot: IN_REVIEW, workStatus: 'open' }).progress)
+      .toMatchObject({ kind: 'row', text: '进行中', technical: { phase: null, runtimeState: null, rowStatus: 'open' } });
+    expect(deriveWorkState({ ...zh, snapshot: { observation: {} }, workStatus: 'completed' }).progress).toMatchObject({ kind: 'row', text: '已完成', tone: 'positive' });
+    expect(deriveWorkState({ ...zh, snapshot: { observation: {} }, workStatus: 'free text from somewhere' }).progress).toMatchObject({ kind: 'row', text: '未识别状态' });
+    expect(deriveWorkState({ language: 'zh-CN', readState: 'failed', snapshot: IN_REVIEW }).progress).toMatchObject({ kind: 'unknown', text: '未知', tone: 'neutral' });
+    expect(deriveWorkState({ ...zh, snapshot: IN_REVIEW, workStatus: 'open' }).progress.kind).toBe('phase');
+    expect(deriveWorkState({ ...zh, snapshot: IN_PROGRESS, workStatus: 'open' }).progress.kind).toBe('runtime');
+  });
+
+  it('says loading while the read is pending, and nothing else', () => {
+    expect(deriveWorkState({ language: 'zh-CN', readState: 'loading', snapshot: IN_REVIEW, workStatus: 'open' }).progress)
+      .toEqual({ kind: 'loading', text: '加载中…', tone: 'neutral', technical: { phase: null, runtimeState: null, rowStatus: null } });
+  });
+});

@@ -106,12 +106,12 @@ afterEach(async () => {
 });
 
 describe('project workstream progress', () => {
-  it('renders real groups and fields, honest unknowns, a plain missing next step and the report time', async () => {
+  it('renders real groups and fields, honest unknowns, the work\'s own state, a plain missing next step and the report time', async () => {
     setupOverview();
     expect(await screen.findByRole('link', { name: 'Build the filter API' })).toBeTruthy();
     expect(screen.getByTestId('workstream-group-WS1').textContent).toContain('Backend workstream');
     expect(screen.getByTestId('workstream-group-WS2').textContent).toContain('Frontend workstream');
-    expect(screen.getByTestId('project-status-W1').textContent).toBe('未知');
+    expect(screen.getByTestId('project-status-W1').textContent).toBe('已认领');
     expect(screen.getByTestId('project-owner-W1').textContent).toBe('未提供');
     expect(screen.getByTestId('project-next-W1').textContent).toBe('未报告下一步');
     expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
@@ -209,6 +209,7 @@ describe('project workstream progress', () => {
     await waitFor(() => {
       expect(screen.getByTestId('project-next-W1').textContent).toBe('加载中…');
       expect(screen.getByTestId('last-report-W1').textContent).toBe('加载中…');
+      expect(screen.getByTestId('project-status-W1').textContent).toBe('加载中…');
     });
     await act(async () => { release(); });
     await waitFor(() => expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN')));
@@ -230,6 +231,36 @@ describe('project workstream progress', () => {
       expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
       expect(screen.getByTestId('last-report-W2').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}可能已过期`);
     });
+  });
+
+  it('says how far each work has come: the reporter\'s phase, else the runtime state, else the row\'s status, else unknown', async () => {
+    const works = [
+      DEMO_PROJECT_WORKS[0],
+      DEMO_PROJECT_WORKS[1],
+      { ...DEMO_PROJECT_WORKS[1], key: 'W3', title: 'Third work', status: 'open' },
+      { ...DEMO_PROJECT_WORKS[1], key: 'W4', title: 'Fourth work', status: null },
+    ];
+    setupOverview({
+      overview: makeProjectOverview(works),
+      snapshot: (workId) => {
+        if (workId === 'W3' || workId === 'W4') return { ok: false, error: { code: 'ReadTimeout', message: 'slow' } };
+        const response = demoWorkSnapshot(workId) as {
+          result: { data: { observation: { progress: Record<string, unknown> | null } } };
+        };
+        response.result.data.observation.progress = workId === 'W1' ? { phase: 'ready_for_review' } : null;
+        return response;
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('project-status-W1').textContent).toBe('待评审');
+      expect(screen.getByTestId('project-status-W2').textContent).toBe('已认领');
+      expect(screen.getByTestId('project-status-W3').textContent).toBe('进行中');
+      expect(screen.getByTestId('project-status-W4').textContent).toBe('未知');
+    });
+    // the tone is one of the semantic colours: waiting for review is a warning, an unknown state is calm
+    expect(screen.getByTestId('project-status-W1').querySelector('.ant-badge-status-dot')?.className).toContain('ant-badge-status-warning');
+    expect(screen.getByTestId('project-status-W4').querySelector('.ant-badge-status-dot')?.className).toContain('ant-badge-status-default');
+    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('project-progress-table')))).toEqual([]);
   });
 
   it('marks a report the service itself declared stale, and only that one', async () => {

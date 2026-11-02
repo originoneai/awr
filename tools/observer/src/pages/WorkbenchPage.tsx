@@ -20,6 +20,7 @@ import type { KeyboardEvent, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { deriveWorkState } from '../core/observation';
 import { Link, useSearchParams } from 'react-router';
+import { ClaimTag } from '../components/ClaimTag';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { LastReportText } from '../components/LastReportText';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
@@ -174,11 +175,7 @@ function WorkDetail({
         <div>
           <Typography.Title level={3} style={{ marginTop: 0 }}>{row.title}</Typography.Title>
           <Space wrap>
-            {row.state !== undefined
-              ? <Tag color={row.state === 'claimed' ? 'processing' : 'default'}>
-                  {t(row.state === 'claimed' ? 'workbench.state.claimed' : 'workbench.state.unclaimed')}
-                </Tag>
-              : <Tag>{t('common.notProvided')}</Tag>}
+            <ClaimTag value={row.state} />
             {navigationText(row.navigation, t) ? <Tag>{navigationText(row.navigation, t)}</Tag> : null}
           </Space>
         </div>
@@ -321,11 +318,7 @@ export function WorkbenchPage() {
       width: 150,
       render: (_, row) => (
         <Space wrap>
-          {row.state !== undefined
-            ? <Tag color={row.state === 'claimed' ? 'processing' : 'default'}>
-                {t(row.state === 'claimed' ? 'workbench.state.claimed' : 'workbench.state.unclaimed')}
-              </Tag>
-            : <Tag>{t('common.notProvided')}</Tag>}
+          <ClaimTag value={row.state} />
           {navigationText(row.navigation, t) ? <Tag>{navigationText(row.navigation, t)}</Tag> : null}
         </Space>
       ),

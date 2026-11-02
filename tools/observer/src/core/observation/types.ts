@@ -99,6 +99,13 @@ export interface WorkLabelResult {
   technical: { raw: string | null };
 }
 
+export interface ClaimStateResult {
+  /** 'unknown' when the read did not say (the field is missing) or said something that is not a claim state. */
+  kind: 'claimed' | 'unclaimed' | 'unknown';
+  text: string;
+  technical: { raw: string | null };
+}
+
 export type WorkGroupWork = { workstream_id: string };
 export type WorkstreamRef = { id: string; external_key?: unknown; title?: unknown };
 
@@ -138,10 +145,19 @@ export interface WorkStateInput {
   readState: ReadState;
   /** The next step the overview row carries, used when the reporter's checkpoint has none or the read failed. */
   workNextStep?: unknown;
+  /** The status the overview row carries, used when neither the reporter's phase nor the runtime state is read. */
+  workStatus?: unknown;
   snapshot?: WorkStateSnapshot | null;
 }
 
 export interface WorkStateResult {
+  progress: {
+    /** Where the word comes from: the reporter's phase, the runtime state, the overview row, or nothing known. */
+    kind: 'loading' | 'phase' | 'runtime' | 'row' | 'unknown';
+    text: string;
+    tone: SemanticTone;
+    technical: { phase: string | null; runtimeState: string | null; rowStatus: string | null };
+  };
   next: {
     kind: 'loading' | 'reported' | 'missing';
     /** What the work's reporter said comes next, or a plain statement that none was reported. */

@@ -4,6 +4,7 @@ export { foldOperations, operationWord } from './operations';
 export { actorAliases, workLabel } from './labels';
 export { groupWorks } from './groups';
 export { deriveWorkState } from './work-state';
+export { claimState } from './claim';
 export {
   PLANE_STATES,
   OBSERVATION_STALE_AFTER_MS,
@@ -17,6 +18,7 @@ export type {
   ActorAliasResult,
   AgeTextKind,
   AgeTextResult,
+  ClaimStateResult,
   DescribeUnknownResult,
   FoldOperationsResult,
   GroupWorksResult,

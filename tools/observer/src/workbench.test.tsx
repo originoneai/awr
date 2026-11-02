@@ -114,6 +114,25 @@ describe('My work sourced rows and navigation', () => {
     expect(screen.queryByRole('button', { name: /认领|claim/i })).toBeNull();
   });
 
+  it('colours a claimed work as in progress, leaves an unclaimed one calm, and never says unclaimed for rows that carry no claim state', async () => {
+    const user = userEvent.setup();
+    setupWorkbench();
+    await screen.findAllByText('Build the filter API');
+    expect(screen.getAllByText('已认领')[0].closest('.ant-tag')?.className).toContain('ant-tag-processing');
+    expect(screen.getByText('未认领').closest('.ant-tag')?.className).not.toContain('ant-tag-processing');
+    await user.click(screen.getByRole('tab', { name: '需要我处理' }));
+    await screen.findAllByText('Review the API handoff');
+    expect(screen.queryByText('已认领')).toBeNull();
+    expect(screen.queryByText('未认领')).toBeNull();
+    expect(screen.getAllByText('未提供').length).toBeGreaterThan(0);
+    // the detail of such a row says the same
+    await user.click(screen.getAllByRole('link', { name: 'Review the API handoff' })[0].closest('tr')!);
+    const detail = await screen.findByTestId('workbench-detail');
+    await waitFor(() => expect(detail.textContent).toContain('Review the API handoff'));
+    expect(within(detail).getByText('未提供')).toBeTruthy();
+    expect(within(detail).queryByText('未认领')).toBeNull();
+  }, 20_000);
+
   it('switches sourced and later-slice tabs through the URL', async () => {
     const user = userEvent.setup();
     const { router } = setupWorkbench();

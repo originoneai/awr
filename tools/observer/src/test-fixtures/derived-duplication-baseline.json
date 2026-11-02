@@ -1,9 +1,9 @@
 {
-  "total": 36,
+  "total": 30,
   "target": 0,
   "slices": {
     "fold-operations": 0,
-    "work-state": 6,
+    "work-state": 0,
     "page-adoption": 30
   },
   "rules": {
@@ -12,7 +12,7 @@
     "next-guidance": 0,
     "workstream-grouping": 0,
     "activity-ordering": 0,
-    "claimed-status": 6,
+    "claimed-status": 0,
     "time-wrapper": 3,
     "knowledge-digest": 17,
     "digest-label": 5
