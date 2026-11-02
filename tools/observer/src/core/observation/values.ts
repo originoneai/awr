@@ -23,6 +23,13 @@ function rawText(value: unknown): string | null {
   return JSON.stringify(value) ?? null;
 }
 
+/** A reporter's statement is a non-empty sentence, trimmed; anything else is not shown as one. */
+export function statementText(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  return text.length > 0 ? text : null;
+}
+
 /** Serialize a business scalar or an exact technical value without numeric coercion. */
 export function rawObservationText(value: unknown): RawObservationTextResult {
   const raw = rawText(value);

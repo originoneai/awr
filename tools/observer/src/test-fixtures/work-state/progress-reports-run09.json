@@ -1,0 +1,79 @@
+{
+  "_note": "Trimmed from real work.snapshot replies of a rehearsal run: the checkpoint (observation.progress) of two works, values verbatim; only the actor ids, client id and session id of the origin are left out (the display name stays).",
+  "api-delivered": {
+    "artifacts": [],
+    "blockers": [],
+    "checkpoint_id": "01M6B1HVTK2E0BE2BFPHM3BGNG",
+    "client_observed_at_unix_ms": null,
+    "completed": [
+      "delivery.integration.prepare 01M6B0NNN221D857AA1YTBR66A confirmed applied",
+      "delivery.finalize receipt 01M6B189DXC1A21ZD5YQ6V7EG5",
+      "origin/main is 5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+    ],
+    "contract_matches_current": true,
+    "next_action": "Leave issue-filter-page available for self-claim. Eligible assignees are lin and mei. The page has no implementation, review, or delivery.",
+    "origin": {
+      "actor_name": "Project manager Agent"
+    },
+    "phase": "delivered",
+    "provenance": "caller_declared",
+    "recorded_project_revision": "75",
+    "report_order_basis": "recorded_project_revision",
+    "reported_at_unix_ms": 1793519578964,
+    "reported_contract_hash": "295b63612f58425c516a25c6e4d5d777d1da6661cc11cce9fb93ffc3c9597c4d",
+    "stale": false,
+    "summary": "Fast-forwarded refs/heads/main from a516342436e434d0072ef9c138f419f2f128caac to 5f7eb2fe9c563e4d355aa64a527e0aef754116c1 and finalized issue-filter-api. Completion receipt 01M6B189DXC1A21ZD5YQ6V7EG5. Source publication 01M6B189X92RXS899KPVW7W9WQ is confirmed.",
+    "tests": [
+      {
+        "name": "local_git.manifest",
+        "outcome": "passed",
+        "reference": "local-git-ff31e289f03bf92c0fc63be37b3db7f3f1c14c01cd621742e77bd6489ed2169d"
+      }
+    ]
+  },
+  "api-in-review-owned-by-other": {
+    "artifacts": [
+      {
+        "label": "development branch",
+        "reference": "refs/heads/issue-filter-api@5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+      },
+      {
+        "label": "review round",
+        "reference": "01M6AVQ870N7MBRJ5MPCN79T55"
+      }
+    ],
+    "blockers": [],
+    "checkpoint_id": "01M6AVV25TR88DZ0GPNQ6F9X3Y",
+    "client_observed_at_unix_ms": null,
+    "completed": [
+      "filterIssues combines status and keyword without writing issue records.",
+      "Checks cover an empty list, no match, and combined filters.",
+      "Published refs/heads/issue-filter-api and submitted the report plus both manifest files."
+    ],
+    "contract_matches_current": true,
+    "next_action": "Wait for independent review of round 01M6AVQ870N7MBRJ5MPCN79T55. Do not self-approve or merge to main.",
+    "origin": {
+      "actor_name": "Lin Agent"
+    },
+    "phase": "ready_for_review",
+    "provenance": "caller_declared",
+    "recorded_project_revision": "41",
+    "report_order_basis": "recorded_project_revision",
+    "reported_at_unix_ms": 1793513588923,
+    "reported_contract_hash": "295b63612f58425c516a25c6e4d5d777d1da6661cc11cce9fb93ffc3c9597c4d",
+    "stale": false,
+    "summary": "Status and keyword filters are on branch issue-filter-api at 5f7eb2fe9c563e4d355aa64a527e0aef754116c1. npm test passed 5 of 5. local_git.manifest passed. Review is open.",
+    "tests": [
+      {
+        "name": "npm test",
+        "outcome": "passed",
+        "reference": "node --test test/*.test.js: 5 passed, 0 failed"
+      },
+      {
+        "name": "local_git.manifest",
+        "outcome": "passed",
+        "reference": "adapter observation on 5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
+      }
+    ]
+  }
+}

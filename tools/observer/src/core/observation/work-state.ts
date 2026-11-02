@@ -1,17 +1,10 @@
 import { humanText } from '../../i18n/human-language';
-import { rawObservationText, statusWord } from './values';
+import { rawObservationText, statementText, statusWord } from './values';
 import { absoluteTimeText } from './time';
 import type { WorkStateInput, WorkStateResult } from './types';
 
 function finiteTime(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-/** A reporter's statement is a non-empty sentence; anything else is not shown as one. */
-function statementText(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const text = value.trim();
-  return text.length > 0 ? text : null;
 }
 
 /**

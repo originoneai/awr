@@ -15,9 +15,10 @@ import {
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { LastReportText } from './LastReportText';
+import { ProgressReport } from './ProgressReport';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from './states';
 import { FieldLabel, ObservationValue } from './ObservationValue';
-import { deriveWorkState, rawObservationText } from '../core/observation';
+import { deriveWorkState, describeProgressReport, rawObservationText } from '../core/observation';
 import { workStateTechnicalItems } from '../lib/work-state-technical';
 import { RecentChanges } from './RecentChanges';
 import { TechnicalDetails } from './TechnicalDetails';
@@ -70,6 +71,7 @@ function Requirements({ query }: { query: SnapshotQuery }) {
   }
   const contract = data?.visible_contract ?? data?.published_contract;
   const state = deriveWorkState({ language: i18n.language, readState: 'ready', snapshot: data });
+  const report = describeProgressReport(data?.observation?.progress, { language: i18n.language, finished: state.lastReport.finished });
   const runtimeState = data?.runtime?.state ?? data?.observation?.runtime?.state;
   return (
     <Flex vertical gap={16}>
@@ -123,8 +125,8 @@ function Requirements({ query }: { query: SnapshotQuery }) {
       </section>
       <section>
         <Typography.Title level={5}>{t('workbench.detail.currentOutcome')}</Typography.Title>
-        {data?.observation?.progress
-          ? <pre className="workbench-progress">{rawObservationText(data.observation.progress).text}</pre>
+        {report.kind === 'reported'
+          ? <ProgressReport report={report} />
           : data?.observation ? <NotReportedYet /> : <Measured value={null} />}
       </section>
     </Flex>

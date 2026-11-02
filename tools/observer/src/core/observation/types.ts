@@ -99,6 +99,38 @@ export interface WorkLabelResult {
   technical: { raw: string | null };
 }
 
+/** A list cut to what a person can take in; `more` says how many entries are not shown. */
+export interface CappedList<T> {
+  shown: T[];
+  more: number;
+}
+
+export interface ProgressReportTest {
+  name: string;
+  outcome: string;
+  tone: SemanticTone;
+}
+
+export interface ProgressReportResult {
+  /** 'missing' when there is no checkpoint object at all. */
+  kind: 'missing' | 'reported';
+  /** The reporter's summary sentence, verbatim; null when none was given. */
+  summary: string | null;
+  /** What the reporter says is done, verbatim and in order. */
+  completed: CappedList<string>;
+  /** `reported` is true when the reporter gave the list at all, so an empty list can say "none reported". */
+  blockers: CappedList<string> & { reported: boolean };
+  tests: CappedList<ProgressReportTest>;
+  /** The plain labels of what the reporter produced; references go to the technical layer. */
+  artifacts: CappedList<string>;
+  /** Who reported, when, and that nobody checked it, in short plain parts. */
+  declaration: string[];
+  /** A warning when the task requirements changed after the report was written; null otherwise. */
+  contractNote: string | null;
+  /** Every raw field of the report, label and value, for the collapsed technical details. */
+  technical: { items: Array<{ label: string; value: string | null }> };
+}
+
 export interface ClaimStateResult {
   /** 'unknown' when the read did not say (the field is missing) or said something that is not a claim state. */
   kind: 'claimed' | 'unclaimed' | 'unknown';
