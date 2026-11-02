@@ -286,6 +286,7 @@ describe('work detail requirements and source state', () => {
     expect(screen.getByTestId('technical-client-stale').textContent).toContain('true');
     expect(screen.getByTestId('technical-runtime-state').textContent).toContain('claimed');
     expect(screen.getByTestId('technical-completion-id').textContent).toContain('未提供');
+    expect(screen.getByTestId('technical-observed-at').textContent).toContain('1761839999000');
   });
 
   it('shows the checkpoint in plain words instead of a JSON dump and keeps every raw field in the technical details', async () => {

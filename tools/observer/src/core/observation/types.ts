@@ -168,6 +168,8 @@ export interface WorkStateSnapshot {
   guidance?: { action?: { op?: unknown; note?: unknown } | null } | null;
   runtime?: { state?: unknown; selected_completion_id?: unknown } | null;
   observation?: {
+    /** When the service measured this snapshot: the as-of of every fact in it. */
+    observed_at_unix_ms?: unknown;
     reporting?: { client_reported_at_unix_ms?: unknown; client_stale?: unknown } | null;
     runtime?: { state?: unknown; selected_completion_id?: unknown } | null;
     /** The reporter's own checkpoint; `next_action` is what the reporter says comes next. */
@@ -195,6 +197,8 @@ export interface WorkStateResult {
     kind: 'loading' | 'phase' | 'runtime' | 'row' | 'unknown';
     text: string;
     tone: SemanticTone;
+    /** When the service measured the facts behind the word; null when the read did not happen or gave no time. */
+    asOfUnixMs: number | null;
     technical: { phase: string | null; runtimeState: string | null; rowStatus: string | null; completionId: string | null };
   };
   next: {

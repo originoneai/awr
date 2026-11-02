@@ -13,5 +13,6 @@ export function workStateTechnicalItems(state: WorkStateResult): TechnicalDetail
     { label: 'runtime.state', value: state.lastReport.technical.runtimeState, testId: 'technical-runtime-state' },
     { label: 'progress.phase', value: state.lastReport.technical.phase, testId: 'technical-phase' },
     { label: 'runtime.selected_completion_id', value: state.progress.technical.completionId, testId: 'technical-completion-id' },
+    { label: 'observation.observed_at_unix_ms', value: state.progress.asOfUnixMs, testId: 'technical-observed-at' },
   ];
 }
