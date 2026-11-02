@@ -82,6 +82,49 @@ describe('responsive navigation below lg', () => {
     expect(document.querySelector('.ant-layout-sider')).not.toBeNull();
   });
 
+  it('shows the drawer entry at 991px, one pixel below the lg breakpoint', async () => {
+    narrowViewport = mockViewport(991);
+    stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
+    renderApp('/workbench');
+    expect(await screen.findByRole('button', { name: '打开导航' })).toBeTruthy();
+    expect(document.querySelector('.ant-layout-sider')).toBeNull();
+  });
+
+  it('keeps the sider at 992px, the first lg width', async () => {
+    narrowViewport = mockViewport(992);
+    stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
+    renderApp('/workbench');
+    await screen.findByAltText('AWR');
+    expect(screen.queryByRole('button', { name: '打开导航' })).toBeNull();
+    expect(document.querySelector('.ant-layout-sider')).not.toBeNull();
+  });
+
+  it('marks the current page in the drawer menu', async () => {
+    const user = userEvent.setup();
+    setupNarrow('/account');
+    await user.click(await screen.findByRole('button', { name: '打开导航' }));
+    const dialog = await screen.findByRole('dialog');
+    const selected = dialog.querySelectorAll('.ant-menu-item-selected');
+    expect(selected).toHaveLength(1);
+    expect(selected[0]?.textContent).toContain('账户与连接');
+  });
+
+  it('closes the drawer when the mask is tapped', async () => {
+    const user = userEvent.setup();
+    setupNarrow();
+    await user.click(await screen.findByRole('button', { name: '打开导航' }));
+    await screen.findByRole('dialog');
+    const mask = document.querySelector('.ant-drawer-mask');
+    expect(mask).not.toBeNull();
+    await user.click(mask as HTMLElement);
+    await waitFor(() => {
+      expect(document.querySelector('.ant-drawer-open')).toBeNull();
+    });
+    await waitFor(() => {
+      expect(document.activeElement?.getAttribute('data-testid')).toBe('nav-toggle');
+    });
+  });
+
   it('closes an open drawer when the viewport grows past lg and does not reopen it when shrinking', async () => {
     const user = userEvent.setup();
     narrowViewport = mockViewport(375);

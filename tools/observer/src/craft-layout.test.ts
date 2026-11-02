@@ -143,5 +143,6 @@ describe('narrow viewport guard', () => {
     expect(theme).toMatch(/touchTarget:\s*40/);
     expect(shell).toMatch(/width: craftTokens\.touchTarget, height: craftTokens\.touchTarget/);
     expect(css).toMatch(/\.shell-drawer \.shell-nav \.ant-menu-item\s*\{[^}]*height: 40px;/s);
+    expect(css).toMatch(/\.shell-drawer \.ant-drawer-close\s*\{[^}]*width: 40px;[^}]*height: 40px;/s);
   });
 });

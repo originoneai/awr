@@ -93,6 +93,10 @@ try {
       await entry.click();
       const drawer = page.getByRole('dialog');
       await drawer.waitFor();
+      const close = page.locator('.shell-drawer .ant-drawer-close');
+      const closeBox = await close.boundingBox();
+      assert.ok(closeBox && closeBox.width >= 40 && closeBox.height >= 40,
+        `${name} ${width}: the drawer close button must keep a 40px tap area, got ${JSON.stringify(closeBox)}`);
       const itemLabels = await drawer.getByRole('menuitem').allTextContents();
       assert.ok(itemLabels.length >= 9, `${name} ${width}: the drawer must hold every navigation item, saw ${JSON.stringify(itemLabels)}`);
       await drawer.getByRole('menuitem', { name: '活动与审计' }).click();

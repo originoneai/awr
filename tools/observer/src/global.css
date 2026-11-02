@@ -117,6 +117,13 @@ body,
   line-height: 40px;
 }
 
+/* Phones have no Escape key, so the close button keeps antd's own button, raised to the same
+   40px touch target as the entry. */
+.shell-drawer .ant-drawer-close {
+  width: 40px;
+  height: 40px;
+}
+
 .shell-drawer .shell-brand {
   padding: 0;
 }
