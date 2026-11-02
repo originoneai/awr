@@ -29,6 +29,11 @@ export const HUMAN_VOCABULARY = {
     minuteAgo: '{{count}} 分钟前',
     minutesAgo: '{{count}} 分钟前',
     todayAt: '今天 {{time}}',
+    duplicateActivity: '发现重复记录，原始事件已全部保留',
+    missingActivityId: '部分记录缺少标识，已全部保留',
+    missingActivityTime: '部分记录没有时间，未生成时间分隔',
+    activityTimeGap: '相邻记录间隔较长',
+    unmappedActivityAction: '未收录的操作已归为其他操作',
   },
   'en-US': {
     technicalDetails: 'Technical details',
@@ -59,6 +64,11 @@ export const HUMAN_VOCABULARY = {
     minuteAgo: '{{count}} minute ago',
     minutesAgo: '{{count}} minutes ago',
     todayAt: 'Today at {{time}}',
+    duplicateActivity: 'Duplicate records found; every original event was retained',
+    missingActivityId: 'Some records have no identifier; all were retained',
+    missingActivityTime: 'Some records have no timestamp; no time separator was inferred',
+    activityTimeGap: 'A long pause separates these records',
+    unmappedActivityAction: 'Unlisted operations are grouped as other operations',
   },
 } as const;
 
@@ -111,6 +121,88 @@ export const STATUS_LABELS: Record<string, readonly [string, string]> = {
   responsibility_pending: ['责任待确认', 'Responsibility pending'],
   pool: ['待接手指派', 'Pool'],
 };
+
+export type OperationKind = 'read' | 'execute' | 'evidence' | 'handoff' | 'acceptance' | 'recovery' | 'access' | 'other';
+
+/** The only operation vocabulary, shared by folded steps and individual activity rows. */
+export const OPERATION_VOCABULARY: Record<string, { kind: OperationKind; zh: string; en: string }> = {
+  capabilities: { kind: 'read', zh: '查看权限', en: 'View permissions' },
+  'audit.development': { kind: 'read', zh: '读取开发记录', en: 'Read development activity' },
+  'audit.requests': { kind: 'read', zh: '读取访问记录', en: 'Read request activity' },
+  'work.next': { kind: 'read', zh: '查看下一步', en: 'View next work' },
+  'work.inbox': { kind: 'read', zh: '查看待办', en: 'View inbox' },
+  'work.observe': { kind: 'read', zh: '观察工作', en: 'Observe work' },
+  'work.snapshot': { kind: 'read', zh: '查看工作现状', en: 'View work status' },
+  'work.prepare': { kind: 'execute', zh: '准备工作', en: 'Prepare work' },
+  'work.recovery': { kind: 'recovery', zh: '恢复工作', en: 'Recover work' },
+  'work.admission': { kind: 'read', zh: '查看开工条件', en: 'View start conditions' },
+  'artifact.content': { kind: 'read', zh: '读取成果内容', en: 'Read outcome content' },
+  'artifact.segment': { kind: 'read', zh: '读取成果内容', en: 'Read outcome content' },
+  'execution.inspect': { kind: 'read', zh: '查看执行详情', en: 'View execution details' },
+  'claim.inspect': { kind: 'read', zh: '查看负责状态', en: 'View responsibility' },
+  'completion.inspect': { kind: 'read', zh: '查看完成记录', en: 'View record of finished work' },
+  'evidence.inspect': { kind: 'read', zh: '查看证据', en: 'View evidence' },
+  'review.inspect': { kind: 'read', zh: '查看复核详情', en: 'View review details' },
+  'delivery.inspect': { kind: 'read', zh: '查看交付状态', en: 'View delivery status' },
+  'delivery.neutral.inspect': { kind: 'read', zh: '查看交付方式', en: 'View delivery method' },
+  'delivery.integration.inspect': { kind: 'read', zh: '查看集成状态', en: 'View integration status' },
+  'delivery.source.status': { kind: 'read', zh: '查看来源状态', en: 'View source status' },
+  'delivery.submission.describe': { kind: 'read', zh: '查看提交方式', en: 'View submission method' },
+  'delivery.exports': { kind: 'read', zh: '查看可复用成果', en: 'View reusable outcomes' },
+  'session.inspect': { kind: 'read', zh: '查看会话', en: 'View session' },
+  'session.start': { kind: 'other', zh: '开始工作', en: 'Start work' },
+  'session.end': { kind: 'other', zh: '结束工作', en: 'End work' },
+  'session.checkpoint': { kind: 'handoff', zh: '保存交接', en: 'Save handoff' },
+  'delivery.source.prepare': { kind: 'execute', zh: '系统同步交付状态', en: 'System syncs delivery status' },
+  'delivery.source.write': { kind: 'execute', zh: '系统同步交付状态', en: 'System syncs delivery status' },
+  'delivery.source.confirm': { kind: 'execute', zh: '系统同步交付状态', en: 'System syncs delivery status' },
+  'delivery.pump.claim': { kind: 'execute', zh: '系统同步交付状态', en: 'System syncs delivery status' },
+  'delivery.pump.refresh': { kind: 'execute', zh: '系统同步交付状态', en: 'System syncs delivery status' },
+  'delivery.facts.ingest': { kind: 'execute', zh: '系统同步交付状态', en: 'System syncs delivery status' },
+  'delivery.inspection.reserve': { kind: 'execute', zh: '系统同步交付状态', en: 'System syncs delivery status' },
+  'delivery.integration.inspection.reserve': { kind: 'execute', zh: '系统同步交付状态', en: 'System syncs delivery status' },
+  'delivery.integration.prepare': { kind: 'acceptance', zh: '准备并入主线', en: 'Prepare mainline integration' },
+  'delivery.integration.dispatch': { kind: 'acceptance', zh: '系统同步交付状态', en: 'System syncs delivery status' },
+  'delivery.integration.lease': { kind: 'acceptance', zh: '系统同步交付状态', en: 'System syncs delivery status' },
+  'delivery.integration.confirm': { kind: 'acceptance', zh: '确认并入主线', en: 'Confirm mainline integration' },
+  'review.decide': { kind: 'acceptance', zh: '记录复核决定', en: 'Record review decision' },
+  'review.decided': { kind: 'acceptance', zh: '记录复核决定', en: 'Record review decision' },
+  'delivery.submit_and_request_review': { kind: 'acceptance', zh: '提交成果并请求复核', en: 'Submit outcome for review' },
+  'review.opened': { kind: 'acceptance', zh: '发起复核', en: 'Open review' },
+  'delivery.candidate.select': { kind: 'evidence', zh: '选择成果版本', en: 'Select outcome version' },
+  'delivery.evidence.submit': { kind: 'evidence', zh: '提交成果', en: 'Submit outcome' },
+  'evidence.recorded': { kind: 'evidence', zh: '记录成果', en: 'Record outcome' },
+  'execution.prepare': { kind: 'execute', zh: '准备执行', en: 'Prepare execution' },
+  'execution.start': { kind: 'execute', zh: '开始执行', en: 'Start execution' },
+  'execution.report': { kind: 'execute', zh: '报告执行结果', en: 'Report execution result' },
+  'claim.expired': { kind: 'other', zh: '负责已到期', en: 'Responsibility expired' },
+  'claim.acquire': { kind: 'other', zh: '接手工作', en: 'Take over work' },
+  'task.claim_available': { kind: 'other', zh: '自行接手工作', en: 'Take an open task' },
+  'task.accept_assignment': { kind: 'other', zh: '接受指派', en: 'Accept assignment' },
+  'task.assign': { kind: 'other', zh: '指派工作', en: 'Assign work' },
+  'delivery.connector.configure': { kind: 'other', zh: '配置交付方式', en: 'Configure delivery' },
+  'access.changed': { kind: 'access', zh: '变更授权', en: 'Change access' },
+  'agent.authorization.issued': { kind: 'access', zh: '签发 Agent 授权', en: 'Issue agent access' },
+  'source.activated': { kind: 'other', zh: '启用来源', en: 'Activate source' },
+  'delivery.finalize': { kind: 'acceptance', zh: '完成交付', en: 'Finalize delivery' },
+  'work.completed': { kind: 'acceptance', zh: '完成工作', en: 'Complete work' },
+};
+
+export const OPERATION_KIND_LABELS: Record<OperationKind, { zh: string; en: string; enPlural: string }> = {
+  read: { zh: '读取', en: 'read operation', enPlural: 'read operations' },
+  execute: { zh: '执行操作', en: 'execution operation', enPlural: 'execution operations' },
+  evidence: { zh: '证据操作', en: 'evidence operation', enPlural: 'evidence operations' },
+  handoff: { zh: '交接操作', en: 'handoff operation', enPlural: 'handoff operations' },
+  acceptance: { zh: '验收操作', en: 'acceptance operation', enPlural: 'acceptance operations' },
+  recovery: { zh: '恢复操作', en: 'recovery operation', enPlural: 'recovery operations' },
+  access: { zh: '授权操作', en: 'access operation', enPlural: 'access operations' },
+  other: { zh: '其他操作', en: 'other operation', enPlural: 'other operations' },
+};
+
+export const OPERATION_COUNT_TEXT = {
+  zh: '{{count}} 次{{kind}}',
+  en: '{{count}} {{kind}}',
+} as const;
 
 export type HumanLanguage = keyof typeof HUMAN_VOCABULARY;
 export type HumanVocabularyKey = keyof (typeof HUMAN_VOCABULARY)['en-US'];

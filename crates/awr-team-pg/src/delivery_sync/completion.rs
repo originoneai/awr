@@ -75,6 +75,23 @@ pub(crate) async fn bind_new_receipt(
     Ok(Some(selected))
 }
 
+/// The legacy completion path: a work that delivers into a repository waits for the confirmed
+/// integration of its selected candidate, as on the command path; any other work completes as
+/// before.
+pub(crate) async fn require_confirmed_integration_of_selection(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    work: &str,
+    policy: &str,
+) -> PgResult<()> {
+    if !DeliverySyncStore::delivers_into_repository_in_tx(tx, tenant, project, work, policy).await?
+    {
+        return Ok(());
+    }
+    DeliverySyncStore::require_confirmed_integration_in_tx(tx, tenant, project, work).await
+}
+
 /// Recompute both exact definitions; an old source identifier alone is no proof.
 pub(super) async fn require_contracts(
     tx: &Transaction<'_>,

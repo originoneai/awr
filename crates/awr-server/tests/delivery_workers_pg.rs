@@ -123,6 +123,14 @@ async fn configured_source_worker_confirms_actual_acceptance_without_repository_
     for simulated in [false, true] {
         let f = acceptance_fixture::SourceFixture::new(simulated).await;
         let completed = f.finalize("worker-acceptance").await;
+        // Finalization waited for the confirmed integration, whose observations sit in the
+        // inbox. The source worker adds no repository facts of its own.
+        let observed: i64 =
+            f.f.admin
+                .query_one("SELECT count(*) FROM awr_team.delivery_inbox", &[])
+                .await
+                .unwrap()
+                .get(0);
         let runtime = DeliveryWorkers::start(
             &service(),
             Some(source()),
@@ -134,17 +142,17 @@ async fn configured_source_worker_confirms_actual_acceptance_without_repository_
         .unwrap();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         loop {
-            let count: i64 = f
-                .f
-                .admin
-                .query_one(
-                    "SELECT count(*) FROM awr_team.delivery_sync_intents WHERE state='succeeded'",
-                    &[],
-                )
-                .await
-                .unwrap()
-                .get(0);
-            if count == 2 && runtime.source_monitor().snapshots()[0].synchronized == 2 {
+            let count: i64 =
+                f.f.admin
+                    .query_one(
+                        "SELECT count(*) FROM awr_team.delivery_sync_intents
+                     WHERE state='succeeded' AND origin='domain_acceptance'",
+                        &[],
+                    )
+                    .await
+                    .unwrap()
+                    .get(0);
+            if count == 2 {
                 break;
             }
             assert!(
@@ -157,6 +165,16 @@ async fn configured_source_worker_confirms_actual_acceptance_without_repository_
         let git_monitor = runtime.git_monitor();
         let github_monitor = runtime.github_monitor();
         runtime.shutdown().await;
+        // The worker also serves the intents that the integration's observations scheduled.
+        let succeeded: i64 =
+            f.f.admin
+                .query_one(
+                    "SELECT count(*) FROM awr_team.delivery_sync_intents WHERE state='succeeded'",
+                    &[],
+                )
+                .await
+                .unwrap()
+                .get(0);
         let rows = f.queue().await;
         assert!(
             rows["intents"]
@@ -169,7 +187,10 @@ async fn configured_source_worker_confirms_actual_acceptance_without_repository_
         assert!(git_monitor.snapshots().is_empty());
         assert!(github_monitor.snapshots().is_empty());
         let snapshots = source_monitor.snapshots();
-        assert_eq!(snapshots[0].synchronized, 2);
+        assert_eq!(
+            snapshots[0].synchronized as i64, succeeded,
+            "The monitor counts exactly what the worker confirmed"
+        );
         no_secret(&snapshots);
         let text = std::fs::read_to_string(f.root.0.join("ledger.yaml")).unwrap();
         assert!(text.contains(completed["receipt_id"].as_str().unwrap()));
@@ -180,7 +201,7 @@ async fn configured_source_worker_confirms_actual_acceptance_without_repository_
                 .await
                 .unwrap()
                 .get::<_, i64>(0),
-            0
+            observed
         );
     }
 }

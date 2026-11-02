@@ -204,14 +204,30 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   reauthorizes the caller's own cookie session on every forwarded read. The `awr_team_command` MCP description now
   matches the fixed delivery capability it declares.
 
+## Changed
+
+- A work that delivers a selected candidate into a repository (a connector is configured for it, a
+  candidate is selected and its completion policy can be integrated) can no longer be completed before
+  that candidate's integration is confirmed. `delivery.finalize` and `work.complete` (and the library
+  `ReviewStore::complete`) are refused with HTTP 409 `IntegrationNotConfirmed` unless an integration of
+  the selected candidate is `confirmed` for the current binding, and the `reason` names the missing
+  step: `integration_not_prepared`, `integration_prepared`, `integration_dispatched`,
+  `integration_unknown`, `integration_rejected`, `integration_target_changed` (rebuild on the new
+  target) or `integration_confirmation_not_current`. `work.prepare` and `work.inbox` show an
+  `integration` step instead of `finalization` until then. All other works behave as before,
+  completion receipts that already exist are not changed, and an integration confirmation
+  still never creates a completion receipt by itself. See
+  [delivery integration](../integrations/delivery-integration.md#finalize-only-after-the-integration-is-confirmed).
+
 ## Fixed
 
-- The next-action guidance for a rejected integration whose repository target moved (the
-  integration inspection and the work inbox of the developer who owns the work) no longer
-  tells the developer to update against the current target "in a new admitted execution"
-  (AWR-TF-014AN). An admitted execution scope checks every observed workspace effect, imported
-  baseline paths included, so that update failed with a scope violation whenever the new target
-  touched files outside the work's scope. The guidance now says to update the workspace as a
-  separate baseline step before the next coding execution begins, then retest in a new admitted
-  execution and publish a new candidate. Wording only: no rule, schema or protocol changes.
-
+- The next-action guidance after a repository target moved no longer tells the developer to
+  update against the current target, or to rebuild, "in a new admitted execution"
+  (AWR-TF-014AN). It appeared in the integration inspection of a rejected integration, in the work
+  inbox of the developer who owns the rejected work and in the `IntegrationNotConfirmed` refusal
+  for `integration_target_changed`. An admitted execution scope checks every observed workspace
+  effect, imported baseline paths included, so that update failed with a scope violation whenever
+  the new target touched files outside the work's scope. The guidance now says to update the
+  workspace as a separate baseline step before the next coding execution begins, then retest in a
+  new admitted execution and publish a new candidate; all three places build the text from one
+  module. Wording only: no rule, schema or protocol changes.

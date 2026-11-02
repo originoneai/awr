@@ -137,6 +137,29 @@ pub(super) async fn facts(
                 "metadata_revision":p.get::<_,i64>(2).to_string(),"basis":"recorded_publication_phase"});
         }
     }
+    // Completion of work that delivers a selected candidate waits for its confirmed integration.
+    data["integration_required"] = json!(false);
+    if delivery_required && !data["candidate"].is_null() {
+        let policy: Option<String> = tx
+            .query_opt(
+                "SELECT contract_json->>'completion_policy' FROM awr_team.work_contracts
+                 WHERE tenant_id=$1 AND project_id=$2 AND scope_id='main' AND work_id=$3
+                   AND snapshot_id=$4",
+                &[&tenant, &project, &work, &auth.snapshot],
+            )
+            .await?
+            .and_then(|row| row.get(0));
+        data["integration_required"] = json!(
+            crate::DeliverySyncStore::delivers_into_repository_in_tx(
+                tx,
+                tenant,
+                project,
+                work,
+                policy.as_deref().unwrap_or("trusted_execution_and_review"),
+            )
+            .await?
+        );
+    }
     // Historical unsettled effects must remain visible even after reselection.
     data["integration"] =
         crate::DeliverySyncStore::integration_summary_in_tx(tx, tenant, project, auth, work, None)
@@ -381,6 +404,33 @@ fn select(
             "review.inspect",
             "Inspect the exact round; use a currently authorized independent reviewer for its decision.",
         )
+    } else if !closed
+        && c["review"]["state"] == "approved"
+        && c["review"]["current_candidate"] != false
+        && c["integration_required"] == true
+        && !(c["integration"]["state"] == "confirmed"
+            && c["integration"]["current_binding"] == true)
+        && (deliverer || supervisor)
+    {
+        // A work that delivers a selected candidate is finalized only after its integration was
+        // confirmed, so approval alone does not make finalization the next step.
+        if c["integration"]["current_binding"] == true {
+            (
+                "integration",
+                "the approved version's repository integration is not confirmed yet",
+                "finalization waits for the confirmed integration of the selected candidate",
+                "delivery.integration.inspect",
+                "Await the configured integrator and follow the original integration request; finalize only after it is confirmed.",
+            )
+        } else {
+            (
+                "integration",
+                "the approved version has no repository integration",
+                "finalization waits for the confirmed integration of the selected candidate",
+                "delivery.neutral.inspect",
+                "Prepare the integration with delivery.integration.prepare from the selected candidate and the approving decision, then finalize after the integration is confirmed.",
+            )
+        }
     } else if !closed
         && c["review"]["state"] == "approved"
         && c["review"]["current_candidate"] != false

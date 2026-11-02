@@ -2,6 +2,20 @@
 use super::*;
 use std::collections::BTreeSet;
 
+/// Policies whose approved round can authorize a repository integration. Ordinary human
+/// confirmation keeps its own completion workflow and can never be integrated.
+pub(crate) fn supports_integration(policy: &str) -> bool {
+    policy == crate::review::AGENT_REVIEW_POLICY
+        || policy == crate::review::simulated_member::POLICY
+        || matches!(
+            policy,
+            "review"
+                | "trusted_execution_and_review"
+                | "trusted_execution_and_author_self_review"
+                | "independent_review"
+        )
+}
+
 pub(super) async fn resolve(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -142,15 +156,7 @@ pub(super) async fn resolve(
     let agent_policy = policy == crate::review::AGENT_REVIEW_POLICY || simulated_policy;
     // Integration always requires an explicit approved round. Ordinary human
     // confirmation remains available through its existing completion workflow.
-    if !agent_policy
-        && !matches!(
-            policy,
-            "review"
-                | "trusted_execution_and_review"
-                | "trusted_execution_and_author_self_review"
-                | "independent_review"
-        )
-    {
+    if !supports_integration(policy) {
         return Err(PgError::ReviewRequired);
     }
     if ev.get::<_, String>("trust_basis")

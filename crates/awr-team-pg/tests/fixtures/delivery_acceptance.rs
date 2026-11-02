@@ -147,7 +147,9 @@ work_items:
         Self { f, root }
     }
 
+    /// Finalization of delivering work waits for the confirmed integration of its candidate.
     pub async fn finalize(&self, key: &str) -> Value {
+        self.f.integrate().await;
         self.try_finalize(key).await.unwrap()["receipt"]["data"].clone()
     }
 
@@ -242,7 +244,12 @@ work_items:
             assert_eq!(
                 self.f
                     .admin
-                    .query_one(&format!("SELECT count(*) FROM awr_team.{table}"), &[])
+                    .query_one(
+                        &format!(
+                            "SELECT count(*) FROM awr_team.{table} WHERE origin='domain_acceptance'"
+                        ),
+                        &[]
+                    )
                     .await
                     .unwrap()
                     .get::<_, i64>(0),
@@ -252,6 +259,7 @@ work_items:
         }
     }
 
+    /// The author lets go of the work, then a successor source is activated.
     pub async fn publish_successor(&self, changed_work: Option<&str>) -> CurrentWorkstreamSource {
         integration_fixture::run(
             &self.f.reads,
@@ -263,6 +271,11 @@ work_items:
                 "expected_lease_version":self.f.selection.lease_version}),
         )
         .await;
+        self.activate_successor(changed_work).await
+    }
+
+    /// Publish and activate a successor source; claims stay as they are.
+    pub async fn activate_successor(&self, changed_work: Option<&str>) -> CurrentWorkstreamSource {
         let path = self.root.0.join("ledger.yaml");
         let text = std::fs::read_to_string(&path).unwrap();
         let changed = match changed_work {
@@ -325,12 +338,25 @@ work_items:
             .unwrap()
     }
 
+    /// The intents that actual acceptance schedules. The repository observations that confirmed
+    /// the integration before finalization schedule intents of their own; they are not the
+    /// subject of these checks.
     pub async fn queue(&self) -> Value {
-        self.f
+        let mut queue = self
+            .f
             .store
             .sync_intents(TENANT, PROJECT, WORKER, awr_core::Id::from(1), 64, None)
             .await
+            .unwrap();
+        let acceptance: Vec<Value> = queue["intents"]
+            .as_array()
             .unwrap()
+            .iter()
+            .filter(|i| i["origin"] == "domain_acceptance")
+            .cloned()
+            .collect();
+        queue["intents"] = Value::Array(acceptance);
+        queue
     }
 
     pub async fn take(&self, key: &str, kind: &str) -> DeliverySyncLease {

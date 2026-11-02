@@ -28,6 +28,7 @@ async fn receipt_count(f: &Fixture) -> i64 {
 #[tokio::test]
 async fn authorized_agent_finalizes_once_with_original_basis_and_exact_replay() {
     let f = setup_simulated_member_integration().await;
+    f.integrate().await;
     let p = prepare(&f.reads, SUPERVISOR, "a").await;
     let first = command(
         &p,
@@ -111,6 +112,7 @@ async fn authorized_agent_finalizes_once_with_original_basis_and_exact_replay() 
 #[tokio::test]
 async fn review_permission_and_revoked_finalize_delegation_cannot_complete_work() {
     let f = setup_simulated_member_integration().await;
+    f.integrate().await;
     let p = prepare(&f.reads, REVIEWER, "a").await;
     let mut args = finalization_args(&f);
     args["session_id"] = json!("session-reviewer");
@@ -418,6 +420,8 @@ async fn publish_source_successor(f: &Fixture, changed_work: &str) -> CurrentWor
 #[tokio::test]
 async fn unrelated_source_publication_preserves_the_exact_original_simulated_review() {
     let f = setup_simulated_member_integration().await;
+    // The integration belongs to the selected candidate; an unrelated activation keeps it valid.
+    f.integrate().await;
     let original = prepare(&f.reads, SUPERVISOR, "a").await;
     let published = publish_source_successor(&f, "c").await;
     assert_ne!(published.snapshot_id, original["source_snapshot_id"]);

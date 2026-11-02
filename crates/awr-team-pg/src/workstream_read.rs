@@ -1333,7 +1333,7 @@ pub(crate) async fn read(
             "completion_supported":true,"repository_integration_supported":true,
             "finalization_action":"delivery.finalize","finalizer_requires":"current_explicit_delivery_authority",
             "integration_operation":"fast_forward","preparation_executes_repository":false,
-            "completion_requires":["artifact_bytes","successful_execution","workspace_settlement","exact_immutable_review_basis"],
+            "completion_requires":["artifact_bytes","successful_execution","workspace_settlement","exact_immutable_review_basis","confirmed_integration_when_a_candidate_is_selected"],
             "details":"review.inspect","default_receipt":"member_summary_and_basis_digest",
             "shared_controller_allowed":true,
             "dependency_acceptance_mode":"simulated_member_independent",

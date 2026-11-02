@@ -760,6 +760,59 @@ impl Fixture {
             DeliveryRecord::IntegrationContentProof(proof),
         ]
     }
+    /// The repository chain of the fixture's candidate up to its confirmed integration: prepare,
+    /// lease, dispatch, record the applied observation and confirm it. Synthetic adapter facts
+    /// stand in for the repository. Completing work that delivers a candidate waits for this;
+    /// once an integration is confirmed the call returns its ID and does nothing.
+    pub async fn integrate(&self) -> String {
+        if let Some(row) = self
+            .admin
+            .query_opt(
+                "SELECT id FROM awr_team.delivery_integration_intents
+                 WHERE work_id='a' AND state='confirmed'",
+                &[],
+            )
+            .await
+            .unwrap()
+        {
+            return row.get(0);
+        }
+        // A source-activated fixture records no verification fact at setup: until the real
+        // observer reports the required check, the first preparation finds none.
+        let prepared = match self
+            .store
+            .prepare_integration(TENANT, PROJECT, SUPERVISOR, self.request.clone())
+            .await
+        {
+            Ok(done) => done["data"].clone(),
+            Err(PgError::EvidenceInvalid) => {
+                self.check("integrate-check", VerificationOutcome::Passed)
+                    .await;
+                self.prepared().await
+            }
+            Err(error) => panic!("The integration was refused: {error:?}"),
+        };
+        let id = prepared["integration_id"].as_str().unwrap().to_owned();
+        let lease = self.leased(&id).await;
+        self.dispatched(&id, lease["lease_id"].as_str().unwrap())
+            .await;
+        let fact = self
+            .ingest_record(
+                &format!("integrated-{id}"),
+                self.observation(&id, IntegrationOutcome::Applied),
+            )
+            .await;
+        self.store
+            .confirm_integration(
+                TENANT,
+                PROJECT,
+                WORKER,
+                self.confirm_request(&format!("confirmed-{id}"), &id, &fact),
+            )
+            .await
+            .unwrap();
+        id
+    }
     pub async fn guards(&self) -> i64 {
         self.admin
             .query_one(

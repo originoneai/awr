@@ -421,6 +421,10 @@ an explicit live `finalize_delivery` delegation and current delivery scope; Revi
 and development permissions alone cannot finalize. On an unknown result, inspect
 the original command before an exact retry. Exact replay retains the receipt;
 concurrent different requests cannot accept the same simulated decision twice.
+When a delivery candidate is selected, the integration of that candidate must be
+confirmed first; otherwise the command is refused with `IntegrationNotConfirmed`,
+whose `reason` names the missing step (see
+[delivery integration](delivery-integration.md#finalize-only-after-the-integration-is-confirmed)).
 **Recheck:** permission, source, contract, artifact, settlement or review changes.
 Missing historical origins and mismatched original decisions remain blocked.
 
