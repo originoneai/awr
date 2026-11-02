@@ -4,6 +4,7 @@ import { apiGet, apiPost, isAuthError } from './api';
 import type {
   ReviewData,
   TeamActivityResponse,
+  TeamIdentity,
   TeamOverviewResponse,
   TeamProjectsResponse,
   TeamReadResponse,
@@ -34,6 +35,7 @@ export const readQueryDefaults = {
 export const queryKeys = {
   projects: ['team', 'projects'] as const,
   overview: (project: string | null) => ['team', 'overview', project] as const,
+  capabilities: (project: string | null) => ['team', 'capabilities', project] as const,
   activity: (project: string | null, workId?: string) =>
     ['team', 'activity', 'development', project, workId ?? null] as const,
   review: (project: string | null, workId: string | null, roundId?: string | null) =>
@@ -64,6 +66,25 @@ export function overviewQueryOptions(project: string | null, revoked = false) {
     ...readQueryDefaults,
     refetchInterval: SHELL_POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamOverviewResponse>;
+}
+
+interface CapabilitiesResponse {
+  result: { data: { identity?: TeamIdentity } };
+}
+
+export function capabilitiesQueryOptions(project: string, revoked = false) {
+  return {
+    queryKey: queryKeys.capabilities(project),
+    queryFn: () => apiPost<CapabilitiesResponse>(
+      '/api/team/read',
+      { project, query: { protocol_version: 1, op: 'capabilities' } },
+    ),
+    enabled: Boolean(project) && !revoked,
+    ...readQueryDefaults,
+    staleTime: Infinity,
+    refetchInterval: false as const,
+    refetchOnWindowFocus: false as const,
+  } satisfies UseQueryOptions<CapabilitiesResponse>;
 }
 
 export function activityQueryOptions(project: string | null, revoked = false, workId?: string) {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ApiError } from './api';
 import {
   createAppQueryClient,
+  capabilitiesQueryOptions,
   overviewQueryOptions,
   POLL_INTERVAL_MS,
   projectsQueryOptions,
@@ -36,6 +37,15 @@ describe('TanStack Query read configuration (observation contract bounds)', () =
     expect(projectsQueryOptions().refetchOnWindowFocus).toBe(true);
     expect(workSnapshotQueryOptions('demo', 'W1', 'WS1').refetchOnWindowFocus).toBe(true);
     expect('placeholderData' in options).toBe(false);
+  });
+
+  it('shares the non-polling capabilities options', () => {
+    const options = capabilitiesQueryOptions('demo');
+    expect(options.queryKey).toEqual(['team', 'capabilities', 'demo']);
+    expect(options.staleTime).toBe(Infinity);
+    expect(options.refetchInterval).toBe(false);
+    expect(options.refetchOnWindowFocus).toBe(false);
+    expect(capabilitiesQueryOptions('demo', true).enabled).toBe(false);
   });
 
   it('does not fetch the overview without a selected project or after revocation', () => {
