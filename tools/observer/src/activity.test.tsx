@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { act, screen } from '@testing-library/react';
+import { act, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { formatUnixMs } from './lib/format';
+import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
 import { revokeObservationReads } from './lib/queries';
 import { DEMO_PROJECTS, renderApp } from './test-utils';
 
@@ -108,32 +109,31 @@ afterEach(async () => {
 });
 
 describe('object activity page (AWR-OBS-006 PR-A)', () => {
-  it('serves development and requests as separate bounded kinds with full disclosures', async () => {
+  it('serves development and requests as separate bounded kinds and explains the records in plain words', async () => {
     const { calls } = setupActivity();
     renderApp('/activity?project=demo');
     expect(await screen.findByTestId('page-activity')).toBeTruthy();
-    expect((await screen.findAllByText('access.changed')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('变更授权')).length).toBeGreaterThan(0);
     expect(calls.filter((call) => call.params.get('kind') === 'development')).toHaveLength(1);
     expect(calls.filter((call) => call.params.get('kind') === 'requests')).toHaveLength(0);
-    expect(screen.getByTestId('activity-scope').textContent).toContain('self');
-    expect(screen.getByTestId('activity-development-source').textContent).toContain('committed_events_with_operation_attribution');
-    expect(screen.getByTestId('activity-retention').textContent).toContain('oldest_pruned_soft_capacity');
-    expect(screen.getByTestId('activity-retention').textContent).toContain('10000');
-    expect(screen.getByTestId('activity-collection-limits').textContent).toContain('chat_text_collected: false');
-    expect(screen.getByTestId('activity-unknown-means').textContent).toContain(UNKNOWN_MEANS);
-    expect(screen.getByTestId('activity-collection-limits').textContent).toContain('tool_io_collected: false');
+    expect(screen.getByTestId('activity-scope').textContent).toBe('当前只显示你自己的记录');
+    expect(screen.getByTestId('activity-collection-limits').textContent).toBe('这里不包含聊天文字，也不包含工具的输入输出');
+    expect(screen.queryByTestId('activity-retention')).toBeNull();
+    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('page-activity')))).toEqual([]);
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('tab', { name: '访问记录' }));
-    expect((await screen.findAllByText('audit.requests')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('读取访问记录')).length).toBeGreaterThan(0);
     expect(calls.filter((call) => call.params.get('kind') === 'requests')).toHaveLength(1);
+    expect(screen.getByTestId('activity-retention').textContent).toBe('访问记录最多保留 10000 条，更早的记录会被清理');
+    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('page-activity')))).toEqual([]);
     expect(calls.filter((call) => ['audit.history', 'audit.export', 'audit.count'].includes(call.params.get('kind') ?? ''))).toHaveLength(0);
   });
 
   it.each([
-    ['zh-CN', '已提交', '未提供'],
-    ['en-US', 'Committed', 'Not provided'],
-  ])('uses shared status and missing-value vocabulary in %s', async (language, status, missing) => {
+    ['zh-CN', '已提交', '显示范围未提供', '未提供'],
+    ['en-US', 'Committed', 'The scope of these records was not provided', 'Not provided'],
+  ])('uses shared status and missing-value vocabulary in %s', async (language, status, scopeMissing, missing) => {
     const base = fixture('observer-activity-development.json');
     setupActivity({
       development: {
@@ -152,18 +152,18 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     renderApp('/activity?project=demo');
     const row = await screen.findByTestId('activity-row');
     expect(row.textContent).toContain(status);
-    for (const testId of [
-      'activity-scope',
-      'activity-retention',
-      'activity-development-source',
-      'activity-collection-limits',
-      'activity-unknown-means',
-    ]) {
-      expect(screen.getByTestId(testId).textContent).toContain(missing);
-    }
+    expect(screen.getByTestId('activity-scope').textContent).toBe(scopeMissing);
+    // Nothing is claimed about chat text, tool input or retention when the service did not say.
+    expect(screen.queryByTestId('activity-collection-limits')).toBeNull();
+    expect(screen.queryByTestId('activity-retention')).toBeNull();
     const user = userEvent.setup();
     await user.click(row);
     expect(screen.getByTestId('activity-event-result').textContent).toBe(status);
+    const technical = screen.getAllByTestId('technical-details').at(-1)!;
+    await user.click(within(technical).getByRole('button'));
+    for (const label of ['scope', 'request_retention', 'development_source', 'chat_text_collected', 'tool_io_collected', 'unknown_means']) {
+      expect((await screen.findByTestId(`technical-detail-${label}`)).textContent).toContain(missing);
+    }
   });
 
   it('loads older keyset pages without duplicates and keeps limit at or below 100', async () => {
@@ -179,6 +179,9 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     const user = userEvent.setup();
     await user.click(screen.getByTestId('activity-load-earlier'));
     expect((await screen.findAllByTestId('activity-row')).length).toBe(212);
+    // The second page repeats the first fifty rows: each audit id is counted once and the repeat is said in plain words.
+    expect(screen.getByTestId('activity-note-duplicate-id').textContent).toBe('发现重复记录，原始事件已全部保留');
+    expect(screen.getByTestId('activity-count').textContent).toBe('已显示 212 条记录');
     await user.click(screen.getByTestId('activity-load-earlier'));
     expect((await screen.findAllByTestId('activity-row')).length).toBe(212);
     const cursors = calls.map((call) => call.params.get('cursor'));
@@ -287,7 +290,7 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect(calls.some((call) => call.params.get('member_actor_id') === actor)).toBe(true);
   });
 
-  it('selects one audit row by event id and never treats it as a business request id', async () => {
+  it('selects one audit row by event id, shows it in plain words and never treats it as a business request id', async () => {
     const { calls } = setupActivity();
     const event = '01M6A0PZ0CB6PZ6X8JQ4TSFQWN';
     const { router } = renderApp('/activity?project=demo&kind=requests');
@@ -295,35 +298,45 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     await user.click((await screen.findAllByTestId('activity-row'))[0]);
     expect(router.state.location.search).toContain(`event=${event}`);
     const detail = await screen.findByTestId('activity-event-detail');
-    expect(detail.textContent).toContain(event);
-    expect(detail.textContent).toContain(SELF_ACTOR);
-    expect(detail.textContent).toContain('audit.requests');
+    expect(detail.textContent).toContain('你');
+    expect(detail.textContent).toContain('读取访问记录');
     expect(detail.textContent).toContain('未知');
-    expect(screen.getByTestId('activity-event-not-request').textContent).toContain('不是业务 request_id');
+    for (const hidden of [event, SELF_ACTOR, 'audit.requests']) expect(defaultVisibleText(detail)).not.toContain(hidden);
+    expect(findForbiddenVisibleText(defaultVisibleText(detail))).toEqual([]);
+
+    await user.click(within(detail).getByRole('button', { name: /技术细节/ }));
+    expect((await screen.findByTestId('activity-event-id')).textContent).toContain(event);
+    expect(screen.getByTestId('activity-event-actor-id').textContent).toContain(SELF_ACTOR);
+    expect(screen.getByTestId('technical-detail-action').textContent).toContain('audit.requests');
+    expect(screen.getByTestId('activity-event-not-request').textContent).toContain('不是业务请求号');
     expect(router.state.location.search).toContain(`event=${event}`);
     expect(calls.some((call) => call.url.includes('command.inspect'))).toBe(false);
   });
 
-  it('keeps unknown results unknown with verbatim unknown_means and no retry or reconciliation control', async () => {
+  it('keeps unknown results unknown in plain words, keeps unknown_means verbatim in the technical details, and offers no retry or reconciliation control', async () => {
     const { calls } = setupActivity();
     const event = '01M6A0PZ0CB6PZ6X8JQ4TSFQWN';
     renderApp(`/activity?project=demo&kind=requests&event=${event}`);
-    expect((await screen.findByTestId('activity-unknown-result')).textContent).toContain(UNKNOWN_MEANS);
+    const alert = await screen.findByTestId('activity-unknown-result');
+    expect(alert.textContent).toBe('还没有完成记录；请先核对原业务请求，再决定是否重试');
+    expect(alert.textContent).not.toContain('completion_not_recorded');
     expect(screen.queryByRole('button', { name: /重试|对账|Retry|Reconcile/i })).toBeNull();
+    const user = userEvent.setup();
+    await user.click(within(screen.getAllByTestId('technical-details').at(-1)!).getByRole('button'));
+    expect((await screen.findByTestId('technical-detail-unknown_means')).textContent).toContain(UNKNOWN_MEANS);
     expect(calls.some((call) => call.url.includes('command.inspect'))).toBe(false);
   });
 
-  it('filters access.changed only within loaded development and labels the limitation', async () => {
+  it('filters access changes only within the loaded development records and says so', async () => {
     const all = fixture('derived-audit-development-project-scope-all-run09.json').data.items as Array<Record<string, unknown>>;
     const { calls } = setupActivity({ projectAudit: true, development: pagedDevelopment(all, null) });
     renderApp('/activity?project=demo');
     const user = userEvent.setup();
     const accessTab = await screen.findByText('授权变更');
     await user.click(accessTab);
-    expect((await screen.findByTestId('activity-access-note')).textContent).toContain('已加载 development');
-    expect(screen.getByTestId('activity-access-note').textContent).toContain('action=access.changed');
-    expect((await screen.findAllByText('access.changed')).length).toBeGreaterThan(0);
-    expect(screen.queryByText('session.end')).toBeNull();
+    expect((await screen.findByTestId('activity-access-note')).textContent).toBe('这里只列出已加载的开发记录里的授权变更，不是完整的授权历史');
+    expect((await screen.findAllByText('变更授权')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('结束工作')).toBeNull();
     expect(calls.filter((call) => call.params.get('kind') === 'requests')).toHaveLength(0);
     expect(calls.some((call) => ['audit.history', 'audit.export', 'audit.count'].includes(call.params.get('kind') ?? ''))).toBe(false);
   });
@@ -409,6 +422,72 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     setupActivity();
     renderApp('/activity?project=demo&actor=OTHER');
     expect((await screen.findByTestId('activity-self-filter-note')).textContent).toContain('仅能查看本人活动，已忽略筛选');
+  });
+
+  it('shows operators as numbered stand-ins and never as raw identifiers', async () => {
+    const all = fixture('derived-audit-development-project-scope-all-run09.json').data.items as Array<Record<string, unknown>>;
+    setupActivity({ projectAudit: true, development: pagedDevelopment(all.slice(0, 60), null) });
+    renderApp('/activity?project=demo');
+    const rows = await screen.findAllByTestId('activity-row');
+    expect(rows.length).toBe(60);
+    const text = rows.map((row) => row.textContent ?? '').join(' ');
+    expect(text).toMatch(/操作者 1/);
+    expect(text).not.toContain('manager-agent-native');
+    expect(text).not.toContain('-ee9ddb44e6e7-');
+    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('page-activity')))).toEqual([]);
+    expect(screen.getByTestId('activity-operators-note').textContent).toContain('真实标识在每条记录的技术细节里');
+  });
+
+  it('names a work by its readable key, an opaque id by a neutral phrase, and keeps the real id for the link and the technical details', async () => {
+    const base = fixture('observer-activity-development.json');
+    const opaque = '01M6A0PZ0CB6PZ6X8JQ4TSFQWN';
+    const development = { data: { ...base.data, items: [
+      { ...base.data.items[0], id: 'named-row', work_id: 'issue-filter-api' },
+      { ...base.data.items[0], id: 'opaque-row', work_id: opaque, created_at_unix_ms: base.data.items[0].created_at_unix_ms - 1 },
+    ] } };
+    setupActivity({ development });
+    renderApp('/activity?project=demo&event=opaque-row');
+    expect((await screen.findByTestId('activity-work-link-issue-filter-api')).textContent).toBe('issue-filter-api');
+    const opaqueLink = screen.getByTestId(`activity-work-link-${opaque}`);
+    expect(opaqueLink.textContent).toBe('某项工作');
+    expect(opaqueLink.getAttribute('href')).toBe(`/projects/demo?tab=acceptance&work=${opaque}`);
+    const detail = screen.getByTestId('activity-event-detail');
+    expect(defaultVisibleText(detail)).not.toContain(opaque);
+    const user = userEvent.setup();
+    await user.click(within(detail).getByRole('button', { name: /技术细节/ }));
+    expect((await screen.findByTestId('technical-detail-work_id')).textContent).toContain(opaque);
+  });
+
+  it('groups an unlisted operation as other operation, says so once, and keeps the raw name in the technical details', async () => {
+    const base = fixture('observer-activity-development.json');
+    const items = [
+      { ...base.data.items[0], id: 'odd-1', action: 'invalid.query' },
+      { ...base.data.items[0], id: 'odd-2', action: 'another.unlisted', created_at_unix_ms: base.data.items[0].created_at_unix_ms - 1 },
+    ];
+    setupActivity({ development: { data: { ...base.data, items } } });
+    renderApp('/activity?project=demo&event=odd-1');
+    const rows = await screen.findAllByTestId('activity-row');
+    expect(rows.map((row) => row.textContent)).toEqual([expect.stringContaining('其他操作'), expect.stringContaining('其他操作')]);
+    expect(screen.getAllByTestId('activity-note-unmapped-action')).toHaveLength(1);
+    expect(screen.getByTestId('activity-note-unmapped-action').textContent).toBe('未收录的操作已归为其他操作');
+    for (const row of rows) expect(row.textContent).not.toMatch(/invalid\.query|another\.unlisted/);
+    const user = userEvent.setup();
+    await user.click(within(screen.getByTestId('activity-event-detail')).getByRole('button', { name: /技术细节/ }));
+    expect((await screen.findByTestId('technical-detail-action')).textContent).toContain('invalid.query');
+  });
+
+  it('shows a readable "all" entry in each filter when nothing is filtered, and the chosen work when one is', async () => {
+    setupActivity({ projectAudit: true, development: fixture('derived-audit-development-project-scope-run09.json') });
+    const { unmount } = renderApp('/activity?project=demo');
+    await screen.findAllByTestId('activity-row');
+    expect(within(screen.getByTestId('activity-work-filter')).getByText('全部工作')).toBeTruthy();
+    expect(within(screen.getByTestId('activity-actor-filter')).getByText('全部操作者')).toBeTruthy();
+    unmount();
+    setupActivity({ projectAudit: true, development: fixture('derived-audit-development-project-scope-run09.json') });
+    renderApp('/activity?project=demo&work=issue-filter-page');
+    await screen.findAllByTestId('activity-row');
+    expect(within(screen.getByTestId('activity-work-filter')).getByText('issue-filter-page')).toBeTruthy();
+    expect(within(screen.getByTestId('activity-work-filter')).queryByText('全部工作')).toBeNull();
   });
 
   it('clears activity details and silences reads after revocation', async () => {

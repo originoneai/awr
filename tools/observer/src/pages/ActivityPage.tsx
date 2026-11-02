@@ -1,25 +1,35 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { Alert, Button, Card, Col, Descriptions, Row, Select, Space, Table, Tabs, Typography } from 'antd';
-import { useMemo } from 'react';
+import { Alert, Badge, Button, Card, Col, Descriptions, Row, Select, Space, Table, Tabs, Typography, theme } from 'antd';
+import { useMemo, type HTMLAttributes } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
+import { TechnicalDetails } from '../components/TechnicalDetails';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
-import { formatObservationValue } from '../i18n/craft';
+import {
+  absoluteTimeText,
+  actorAliases,
+  ageText,
+  describeUnknown,
+  foldOperations,
+  operationWord,
+  statusWord,
+  workLabel,
+  type OperationEvent,
+  type SemanticTone,
+} from '../core/observation';
 import { activityListQueryOptions, capabilitiesQueryOptions, type ActivityKind } from '../lib/activity';
+import { eventTechnicalItems, pageTechnicalItems } from '../lib/activity-technical';
 import { isAuthError } from '../lib/api';
-import { formatUnixMs } from '../lib/format';
 import { projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
-import type { TeamActivityItem } from '../lib/types';
+import { craftSelectionStyle } from '../theme';
 
 type ActivityTab = ActivityKind | 'access';
 
-function raw(value: unknown): string | null {
-  if (value == null) return null;
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return JSON.stringify(value) ?? null;
-}
+/** The pause after which two records no longer read as one stretch of work (owner decision). */
+const PAUSE_THRESHOLD_MS = 30 * 60 * 1000;
+/** Stand-in value of the first entry of a filter list: no filter. */
+const ALL = '__all__';
 
 function tabOf(value: string | null): ActivityTab {
   return value === 'requests' || value === 'access' ? value : 'development';
@@ -31,9 +41,17 @@ function limitOf(value: string | null) {
   return Number.isSafeInteger(parsed) ? Math.min(parsed, 100) : 50;
 }
 
+function badgeStatus(tone: SemanticTone): 'success' | 'error' | 'warning' | 'default' {
+  if (tone === 'positive') return 'success';
+  if (tone === 'negative') return 'error';
+  if (tone === 'warning') return 'warning';
+  return 'default';
+}
+
 /** Bounded object activity, not the deferred full ops-audit/export surface. */
 export function ActivityPage() {
   const { t, i18n } = useTranslation();
+  const { token } = theme.useToken();
   const { revoked } = useRevocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const projects = useQuery(projectsQueryOptions(revoked));
@@ -55,26 +73,32 @@ export function ActivityPage() {
     ...activityOptions,
     enabled: activityOptions.enabled && !waitingForActorIdentity,
   });
-  const items = useMemo(() => {
-    const unique = new Map<string, TeamActivityItem>();
-    for (const page of activity.data?.pages ?? []) {
-      for (const item of page.data.items) {
-        if (!unique.has(item.id)) unique.set(item.id, item);
-      }
-    }
-    return Array.from(unique.values());
-  }, [activity.data]);
-  const visibleItems = tab === 'access' ? items.filter((item) => item.action === 'access.changed') : items;
+  const language = i18n.language;
+  const folded = useMemo(() => foldOperations(
+    (activity.data?.pages ?? []).flatMap((page) => page.data.items),
+    { language, gapThresholdMs: PAUSE_THRESHOLD_MS },
+  ), [activity.data, language]);
+  const rows = tab === 'access' ? folded.uniqueEvents.filter((item) => item.action === 'access.changed') : folded.uniqueEvents;
   const firstPage = activity.data?.pages[0]?.data;
-  const workOptions = useMemo(() => Array.from(new Set(
-    items.map((item) => item.work_id).filter((id): id is string => Boolean(id)),
-  )).map((value) => ({ value, label: value })), [items]);
+  const aliases = useMemo(() => actorAliases(
+    folded.uniqueEvents.map((item) => item.actor_id),
+    { language, selfActorId: identity?.actor_id },
+  ), [folded, language, identity?.actor_id]);
+  const workOptions = useMemo(() => {
+    let unnamed = 0;
+    return Array.from(new Set(folded.uniqueEvents.map((item) => item.work_id).filter((id): id is string => Boolean(id))))
+      .map((value) => {
+        const label = workLabel(value, { language });
+        if (label.kind === 'unnamed') unnamed += 1;
+        return { value, label: label.kind === 'unnamed' ? `${label.text} ${unnamed}` : label.text };
+      });
+  }, [folded, language]);
   const actorOptions = useMemo(() => {
-    const values = projectAudit
-      ? Array.from(new Set(items.map((item) => item.actor_id)))
-      : identity?.actor_id ? [identity.actor_id] : [];
-    return values.map((value) => ({ value, label: value }));
-  }, [items, projectAudit, identity?.actor_id]);
+    const entries = projectAudit
+      ? aliases.entries
+      : aliases.entries.filter((entry) => entry.actorId === identity?.actor_id);
+    return entries.map((entry) => ({ value: entry.actorId, label: entry.label }));
+  }, [aliases, projectAudit, identity?.actor_id]);
 
   function updateFilter(key: 'work' | 'actor', value?: string) {
     const next = new URLSearchParams(searchParams);
@@ -84,8 +108,9 @@ export function ActivityPage() {
     setSearchParams(next);
   }
 
-  const selectedEvent = visibleItems.find((item) => item.id === searchParams.get('event'));
-  function selectEvent(id: string) {
+  const selectedEvent = rows.find((item) => item.id === searchParams.get('event'));
+  function selectEvent(id: string | undefined) {
+    if (!id) return;
     const next = new URLSearchParams(searchParams);
     next.set('event', id);
     setSearchParams(next);
@@ -112,50 +137,73 @@ export function ActivityPage() {
   if (projects.isError) return <PartialFailure errorCode="ActivityProjectsError">{null}</PartialFailure>;
   if (activity.isError) return <PartialFailure errorCode="ActivityReadError">{null}</PartialFailure>;
 
+  const nowUnixMs = Date.now();
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const workLink = (workId: string) => `/projects/${encodeURIComponent(project)}?tab=acceptance&work=${encodeURIComponent(workId)}`;
+  const scopeNote = firstPage?.scope === 'project' ? t('activity.scopeProject')
+    : firstPage?.scope === 'self' ? t('activity.scopeSelf')
+      : t('activity.scopeUnknown');
+  const noChatOrToolIo = firstPage?.chat_text_collected === false && firstPage?.tool_io_collected === false;
+  const retentionCount = firstPage?.request_retention === 'oldest_pruned_soft_capacity' && typeof firstPage?.request_retention_capacity === 'number'
+    ? firstPage.request_retention_capacity : null;
+  const foldNotes = Array.from(new Map(
+    folded.disclosures.filter((item) => item.code !== 'time-gap').map((item) => [item.code, item]),
+  ).values());
+  const pageFacts = pageTechnicalItems(firstPage);
+
+  function renderResult(value: unknown) {
+    const word = statusWord(value, { language, field: 'result' });
+    const tone: SemanticTone = value === 'unknown' ? 'warning' : word.tone;
+    return <Badge status={badgeStatus(tone)} text={word.text} />;
+  }
+
+  function renderDetail(event: OperationEvent) {
+    const action = operationWord(event.action, { language });
+    const when = ageText(event.created_at_unix_ms, { language, nowUnixMs, timeZone });
+    const exact = absoluteTimeText(event.created_at_unix_ms, { language });
+    const work = workLabel(event.work_id, { language });
+    const unknown = describeUnknown({ result: event.result, unknown_means: firstPage?.unknown_means, language });
+    return (
+      <Space direction="vertical" size={12} style={{ width: '100%' }} data-testid="activity-event-detail">
+        <Typography.Title level={5} style={{ margin: 0 }} data-testid="activity-event-action">{action.text}</Typography.Title>
+        <Descriptions
+          size="small"
+          column={1}
+          items={[
+            { key: 'actor', label: t('activity.detailActor'), children: <span data-testid="activity-event-actor">{aliases.labelOf(event.actor_id)}</span> },
+            {
+              key: 'work',
+              label: t('activity.detailWork'),
+              children: <span data-testid="activity-event-work">{work.text}</span>,
+            },
+            { key: 'result', label: t('activity.detailResult'), children: <span data-testid="activity-event-result">{renderResult(event.result)}</span> },
+            { key: 'time', label: t('activity.detailTime'), children: <span data-testid="activity-event-time" title={exact.text}>{when.text}</span> },
+          ]}
+        />
+        {unknown.isUnknown ? (
+          <Alert
+            type="warning"
+            showIcon
+            message={t('activity.unknownResult')}
+            description={<span data-testid="activity-unknown-result">{unknown.disclosure}</span>}
+          />
+        ) : null}
+        {event.work_id ? (
+          <Link data-testid="activity-event-outcome-link" to={workLink(event.work_id)}>{t('activity.openOutcome')} →</Link>
+        ) : null}
+        <TechnicalDetails items={eventTechnicalItems(event)}>
+          <Typography.Text type="secondary" data-testid="activity-event-not-request">{t('activity.auditRowNote')}</Typography.Text>
+        </TechnicalDetails>
+      </Space>
+    );
+  }
+
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }} data-testid="page-activity">
-      <Card size="small">
-        <Space size={16} wrap>
-          <Typography.Title level={4} style={{ margin: 0 }}>{t('activity.title')}</Typography.Title>
-          <Typography.Text type="secondary" data-testid="activity-scope">scope: {raw(firstPage?.scope) ?? t('common.notProvided')}</Typography.Text>
-          {capabilities.isSuccess && actorParam && !actorFilter && !projectAudit ? (
-            <Typography.Text type="warning" data-testid="activity-self-filter-note">{t('activity.selfFilterNote')}</Typography.Text>
-          ) : null}
-          <Select
-            aria-label={t('activity.limit')}
-            data-testid="activity-limit"
-            value={limit}
-            style={{ width: 96 }}
-            onChange={(value) => {
-              const next = new URLSearchParams(searchParams);
-              next.set('limit', String(value));
-              next.delete('event');
-              setSearchParams(next);
-            }}
-            options={[50, 100].map((value) => ({ value, label: String(value) }))}
-          />
-          <Select
-            aria-label={t('activity.workFilter')}
-            data-testid="activity-work-filter"
-            value={workFilter}
-            allowClear
-            placeholder={t('activity.workFilter')}
-            style={{ minWidth: 190, maxWidth: 320 }}
-            onChange={(value) => updateFilter('work', value)}
-            options={workOptions}
-          />
-          <Select
-            aria-label={t('activity.actorFilter')}
-            data-testid="activity-actor-filter"
-            value={actorFilter}
-            allowClear
-            placeholder={t('activity.actorFilter')}
-            style={{ minWidth: 220, maxWidth: 360 }}
-            onChange={(value) => updateFilter('actor', value)}
-            options={actorOptions}
-          />
-        </Space>
-      </Card>
+      <div>
+        <Typography.Title level={4} style={{ margin: 0 }}>{t('activity.title')}</Typography.Title>
+        <Typography.Text type="secondary">{t('activity.subtitle')}</Typography.Text>
+      </div>
       <Card size="small">
         <Tabs
           activeKey={tab}
@@ -171,109 +219,113 @@ export function ActivityPage() {
             { key: 'access', label: t('activity.access') },
           ]}
         />
+        <Space size={12} wrap style={{ marginBottom: 12 }}>
+          <Select
+            aria-label={t('activity.workFilter')}
+            data-testid="activity-work-filter"
+            value={workFilter ?? ALL}
+            style={{ minWidth: 190, maxWidth: 320 }}
+            onChange={(value) => updateFilter('work', value === ALL ? undefined : value)}
+            options={[{ value: ALL, label: t('activity.workFilter') }, ...workOptions]}
+          />
+          <Select
+            aria-label={t('activity.actorFilter')}
+            data-testid="activity-actor-filter"
+            value={actorFilter ?? ALL}
+            style={{ minWidth: 190, maxWidth: 320 }}
+            onChange={(value) => updateFilter('actor', value === ALL ? undefined : value)}
+            options={[{ value: ALL, label: t('activity.actorFilter') }, ...actorOptions]}
+          />
+          {capabilities.isSuccess && actorParam && !actorFilter && !projectAudit ? (
+            <Typography.Text type="warning" data-testid="activity-self-filter-note">{t('activity.selfFilterNote')}</Typography.Text>
+          ) : null}
+        </Space>
         {tab === 'access' ? (
-          <Typography.Text type="secondary" data-testid="activity-access-note">{t('activity.accessNote')}</Typography.Text>
+          <Typography.Paragraph type="secondary" data-testid="activity-access-note">{t('activity.accessNote')}</Typography.Paragraph>
         ) : null}
-        {visibleItems.length === 0 ? <ObservationEmpty /> : (
+        {rows.length === 0 ? <ObservationEmpty /> : (
           <Row gutter={[16, 16]}>
             <Col xs={24} xl={16}>
-              <Table<TeamActivityItem>
+              <Table<OperationEvent>
                 size="small"
-                rowKey="id"
+                rowKey={(record, index) => record.id ?? `row-${index}`}
                 pagination={false}
-                scroll={{ x: 720 }}
-                dataSource={visibleItems}
+                scroll={{ x: 640 }}
+                dataSource={rows}
                 onRow={(record) => ({
-                  className: 'activity-row', 'data-testid': 'activity-row', onClick: () => selectEvent(record.id),
-                } as { className: string; 'data-testid': string; onClick: () => void })}
+                  'data-testid': 'activity-row',
+                  onClick: () => selectEvent(record.id),
+                  style: craftSelectionStyle(token, Boolean(record.id) && record.id === selectedEvent?.id),
+                } as HTMLAttributes<HTMLElement>)}
                 columns={[
-                  { title: t('activity.time'), dataIndex: 'created_at_unix_ms', width: 160, render: (value) => formatUnixMs(value, i18n.language) },
                   {
-                    title: t('activity.actor'), dataIndex: 'actor_id', width: 230,
-                    render: (value) => projectAudit || value === identity?.actor_id ? (
-                      <Button type="link" style={{ padding: 0 }} data-testid={`activity-actor-${value}`} onClick={() => updateFilter('actor', value)}>
-                        <Typography.Text style={{ overflowWrap: 'anywhere' }}>{value}</Typography.Text>
-                      </Button>
-                    ) : <Typography.Text style={{ overflowWrap: 'anywhere' }}>{value}</Typography.Text>,
+                    title: t('activity.time'), dataIndex: 'created_at_unix_ms', width: 150,
+                    render: (value) => ageText(value, { language, nowUnixMs, timeZone }).text,
                   },
-                  { title: t('activity.action'), dataIndex: 'action', width: 190 },
+                  {
+                    title: t('activity.actor'), dataIndex: 'actor_id', width: 120,
+                    render: (value: string) => projectAudit || value === identity?.actor_id ? (
+                      <Button
+                        type="link"
+                        style={{ padding: 0 }}
+                        data-testid={`activity-actor-${value}`}
+                        onClick={(event) => { event.stopPropagation(); updateFilter('actor', value); }}
+                      >
+                        {aliases.labelOf(value)}
+                      </Button>
+                    ) : <Typography.Text>{aliases.labelOf(value)}</Typography.Text>,
+                  },
+                  { title: t('activity.action'), dataIndex: 'action', width: 170, render: (value) => operationWord(value, { language }).text },
                   {
                     title: t('activity.work'), dataIndex: 'work_id', width: 170,
-                    render: (value, record) => value ? (
-                      <Link data-testid={`activity-work-link-${value}`} to={`/projects/${encodeURIComponent(project)}?tab=acceptance&work=${encodeURIComponent(value)}`}>
-                        {value}
-                      </Link>
-                    ) : <span data-testid={`activity-work-empty-${record.id}`}>{t('activity.noWork')}</span>,
+                    render: (value: string | null | undefined, record) => {
+                      const label = workLabel(value, { language });
+                      return value ? (
+                        <Link data-testid={`activity-work-link-${value}`} to={workLink(value)} onClick={(event) => event.stopPropagation()}>
+                          {label.text}
+                        </Link>
+                      ) : <span data-testid={`activity-work-empty-${record.id}`}>{label.text}</span>;
+                    },
                   },
-                  { title: t('activity.result'), dataIndex: 'result', width: 120, render: (value) => formatObservationValue(value, i18n.language, 'result') },
+                  { title: t('activity.result'), dataIndex: 'result', width: 110, render: (value) => renderResult(value) },
                 ]}
               />
             </Col>
             <Col xs={24} xl={8}>
-              <Card size="small" title={t('activity.detail')}>
-                {selectedEvent ? (
-                  <Space direction="vertical" size={12} style={{ width: '100%' }} data-testid="activity-event-detail">
-                    <Descriptions
-                      size="small"
-                      column={1}
-                      items={([
-                        ['id', 'activity-event-id', selectedEvent.id],
-                        ['actor_id', 'activity-event-actor', selectedEvent.actor_id],
-                        ['client_id', 'activity-event-client', selectedEvent.client_id],
-                        ['credential_id', 'activity-event-credential', selectedEvent.credential_id],
-                        ['action', 'activity-event-action', selectedEvent.action],
-                        ['work_id', 'activity-event-work', selectedEvent.work_id],
-                        ['result', 'activity-event-result', selectedEvent.result],
-                        ['created_at_unix_ms', 'activity-event-time', formatUnixMs(selectedEvent.created_at_unix_ms, i18n.language)],
-                      ] as const).map(([label, testId, field]) => ({
-                        key: label,
-                        label,
-                        children: <span data-testid={testId}>{formatObservationValue(field, i18n.language, label)}</span>,
-                      }))}
-                    />
-                    <Typography.Text type="secondary" data-testid="activity-event-not-request">
-                      {t('activity.auditRowId')}
-                    </Typography.Text>
-                    {selectedEvent.result === 'unknown' ? (
-                      <Alert
-                        type="warning"
-                        showIcon
-                        message={t('activity.unknownResult')}
-                        description={<span data-testid="activity-unknown-result">{raw(firstPage?.unknown_means) ?? t('common.notProvided')}</span>}
-                      />
-                    ) : null}
-                  </Space>
-                ) : <Typography.Text type="secondary">{t('activity.selectEvent')}</Typography.Text>}
-              </Card>
+              <div style={{ position: 'sticky', top: 16 }}>
+                <Card size="small" title={t('activity.detail')}>
+                  {selectedEvent ? renderDetail(selectedEvent) : <Typography.Text type="secondary">{t('activity.selectEvent')}</Typography.Text>}
+                </Card>
+              </div>
             </Col>
           </Row>
         )}
-        {activity.hasNextPage ? (
-          <Button
-            data-testid="activity-load-earlier"
-            loading={activity.isFetchingNextPage}
-            onClick={() => activity.fetchNextPage()}
-          >
-            {t('activity.loadEarlier')}
-          </Button>
-        ) : null}
+        <Space direction="vertical" size={4} style={{ marginTop: 12, width: '100%' }}>
+          <Typography.Text type="secondary" data-testid="activity-count">{t('activity.shown', { count: rows.length })}</Typography.Text>
+          {activity.hasNextPage ? (
+            <Button
+              data-testid="activity-load-earlier"
+              loading={activity.isFetchingNextPage}
+              onClick={() => activity.fetchNextPage()}
+              style={{ alignSelf: 'flex-start' }}
+            >
+              {t('activity.loadEarlier')}
+            </Button>
+          ) : null}
+        </Space>
       </Card>
       <Card size="small">
-        <Space direction="vertical" size={4}>
-          <Typography.Text type="secondary" data-testid="activity-retention">
-            request_retention: {raw(firstPage?.request_retention) ?? t('common.notProvided')}
-            {firstPage?.request_retention_capacity != null ? ` (${firstPage.request_retention_capacity})` : ''}
-          </Typography.Text>
-          <Typography.Text type="secondary" data-testid="activity-development-source">
-            development_source: {raw(firstPage?.development_source) ?? t('common.notProvided')}
-          </Typography.Text>
-          <Typography.Text type="secondary" data-testid="activity-collection-limits">
-            chat_text_collected: {raw(firstPage?.chat_text_collected) ?? t('common.notProvided')}
-            {' · '}tool_io_collected: {raw(firstPage?.tool_io_collected) ?? t('common.notProvided')}
-          </Typography.Text>
-          <Typography.Text type="secondary" data-testid="activity-unknown-means">
-            unknown_means: {raw(firstPage?.unknown_means) ?? t('common.notProvided')}
-          </Typography.Text>
+        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+          <Typography.Text type="secondary" data-testid="activity-scope">{scopeNote}</Typography.Text>
+          {noChatOrToolIo ? <Typography.Text type="secondary" data-testid="activity-collection-limits">{t('activity.noChatOrToolIo')}</Typography.Text> : null}
+          {tab === 'requests' && retentionCount != null ? (
+            <Typography.Text type="secondary" data-testid="activity-retention">{t('activity.retention', { count: retentionCount })}</Typography.Text>
+          ) : null}
+          <Typography.Text type="secondary" data-testid="activity-operators-note">{t('activity.operatorsNote')}</Typography.Text>
+          {foldNotes.map((note) => (
+            <Typography.Text key={note.code} type="secondary" data-testid={`activity-note-${note.code}`}>{note.text}</Typography.Text>
+          ))}
+          <TechnicalDetails items={pageFacts} />
         </Space>
       </Card>
     </Space>
