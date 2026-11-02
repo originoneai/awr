@@ -29,29 +29,34 @@ export function TechnicalDetails({ items, children }: { items: TechnicalDetailIt
           children: (
             <Space direction="vertical" size={8} style={{ width: '100%' }}>
               {items.map((item) => {
-                const value = isValidElement(item.value)
-                  ? item.value
-                  : rawObservationValue(item.value) ?? humanText('notProvided', i18n.language);
+                const element = isValidElement(item.value);
+                const raw = element ? null : rawObservationValue(item.value);
+                const value = element ? item.value as ReactNode : raw ?? humanText('notProvided', i18n.language);
+                // What the button copies: the raw value as the service gave it, or the copy text a value shown as an element declares.
+                // A value that is missing has nothing to copy, so it offers no button (it used to copy the words "not provided").
+                const copyText = element ? item.copyValue ?? null : raw;
                 return (
                   <Space key={item.label} size={8} wrap data-testid={item.testId ?? `technical-detail-${item.label}`}>
                     <Typography.Text type="secondary" style={craftValueStyle}>{item.label}:</Typography.Text>
                     <Typography.Text code style={{ overflowWrap: 'anywhere' }}>{value}</Typography.Text>
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<Copy size={16} strokeWidth={1.5} aria-hidden />}
-                      aria-label={`${humanText('copy', i18n.language)} ${item.label}`}
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(typeof value === 'string' ? value : item.copyValue ?? '');
-                          setCopiedLabel(item.label);
-                        } catch {
-                          setCopiedLabel(null);
-                        }
-                      }}
-                    >
-                      {copiedLabel === item.label ? humanText('copied', i18n.language) : humanText('copy', i18n.language)}
-                    </Button>
+                    {copyText == null ? null : (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<Copy size={16} strokeWidth={1.5} aria-hidden />}
+                        aria-label={`${humanText('copy', i18n.language)} ${item.label}`}
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(copyText);
+                            setCopiedLabel(item.label);
+                          } catch {
+                            setCopiedLabel(null);
+                          }
+                        }}
+                      >
+                        {copiedLabel === item.label ? humanText('copied', i18n.language) : humanText('copy', i18n.language)}
+                      </Button>
+                    )}
                   </Space>
                 );
               })}
