@@ -1,9 +1,11 @@
 import { createHash, webcrypto } from 'node:crypto';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import i18n from './i18n';
+import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
 import { RevocationProvider } from './lib/revocation';
 import { createAppQueryClient, queryKeys, revokeObservationReads } from './lib/queries';
 import { ProjectKnowledge } from './pages/ProjectKnowledge';
@@ -190,12 +192,12 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     const { calls } = setupKnowledge({ works, snapshots });
     const snapshotReads = () => calls.filter(({ init }) => String(init?.body ?? '').includes('"work.snapshot"'));
     const { router } = renderApp('/projects/demo?tab=knowledge');
-    await waitFor(() => expect(screen.getByRole('link', { name: '打开 Knowledge work 1' })).toBeTruthy(), { timeout: 10000 });
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Knowledge work 1' })).toBeTruthy(), { timeout: 10000 });
     await waitFor(() => expect(snapshotReads()).toHaveLength(60), { timeout: 10000 });
-    expect(screen.queryByRole('link', { name: '打开 Knowledge work 61' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Knowledge work 61' })).toBeNull();
 
     await user.click(screen.getByRole('listitem', { name: '下一页' }));
-    await screen.findByRole('link', { name: '打开 Knowledge work 61' });
+    await screen.findByRole('link', { name: 'Knowledge work 61' });
     await waitFor(() => expect(snapshotReads()).toHaveLength(61));
     expect(new URLSearchParams(router.state.location.search).get('page')).toBe('2');
   }, 20000);
@@ -212,8 +214,8 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     const snapshotReads = () => calls.filter(({ init }) => String(init?.body ?? '').includes('"work.snapshot"'));
     renderApp('/projects/demo?tab=knowledge&page=99');
 
-    expect(await screen.findByRole('link', { name: '打开 Knowledge work 61' })).toBeTruthy();
-    expect(screen.queryByRole('link', { name: '打开 Knowledge work 1' })).toBeNull();
+    expect(await screen.findByRole('link', { name: 'Knowledge work 61' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Knowledge work 1' })).toBeNull();
     await waitFor(() => expect(snapshotReads()).toHaveLength(1));
     expect(String(snapshotReads()[0].init?.body)).toContain('"work_id":"W61"');
   });
@@ -228,8 +230,8 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
       snapshots: { 'W/1 ?': snapshotFor('W/1 ?'), 'W/2 ?': snapshotFor('W/2 ?') },
     });
     renderApp('/projects/demo?tab=knowledge');
-    expect(await screen.findByTestId('knowledge-citing-works')).toHaveProperty('textContent', '引用它的工作项: Support filter, Support filter');
-    const links = screen.getAllByRole('link', { name: '打开 Support filter' });
+    expect(await screen.findByTestId('knowledge-citing-works')).toHaveProperty('textContent', '引用它的工作项: Support filter · Support filter');
+    const links = screen.getAllByRole('link', { name: 'Support filter' });
     expect(links.map((link) => link.getAttribute('href'))).toEqual([
       '/projects/demo?tab=plan&work=W%2F1%20%3F',
       '/projects/demo?tab=plan&work=W%2F2%20%3F',
@@ -243,17 +245,24 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
       element?.classList.contains('ant-typography') === true && element.textContent === SPEC_TEXT
     ));
     expect((paragraph as HTMLElement).style.whiteSpace).toBe('pre-wrap');
-    expect(screen.getByText(/[a-f0-9]{12}…/)).toBeTruthy();
+    // the document is named by its file name; neither its path nor a hash is in the default view
+    expect(screen.getAllByText('support')).toHaveLength(2);
+    expect(screen.queryByText(/[a-f0-9]{12}…/)).toBeNull();
   });
 
-  it('shows the full digest in a tooltip', async () => {
+  it('keeps the path, the full digest and the size in the technical details and none of them in the default view', async () => {
     const spec = specFor();
     setupKnowledge({ snapshots: { W1: snapshotFor('W1'), W2: snapshotFor('W2') } });
     renderApp('/projects/demo?tab=knowledge');
     await screen.findByTestId(sourceTestId(spec));
-    const user = userEvent.setup();
-    await user.hover(screen.getByText(`${spec.sha256.slice(0, 12)}…`));
-    expect(await screen.findByText(spec.sha256)).toBeTruthy();
+    const page = screen.getByTestId('page-knowledge');
+    expect(findForbiddenVisibleText(defaultVisibleText(page))).toEqual([]);
+    expect(defaultVisibleText(page)).not.toContain(spec.sha256.slice(0, 12));
+    expect(defaultVisibleText(page)).not.toContain('docs/support.md');
+    await userEvent.setup().click(within(page).getByRole('button', { name: /技术细节/ }));
+    expect((await screen.findByTestId('technical-detail-sha256')).textContent).toContain(spec.sha256);
+    expect(screen.getByTestId('technical-detail-path').textContent).toContain('docs/support.md');
+    expect(screen.getByTestId('technical-detail-byte_length').textContent).toContain(String(spec.byte_length));
   });
 
   it('shows only metadata when content_included is false', async () => {
@@ -263,7 +272,7 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     renderApp('/projects/demo?tab=knowledge');
     await screen.findByTestId(sourceTestId(spec));
     expect(screen.queryByText(/Build a useful filterable queue/)).toBeNull();
-    expect((await screen.findAllByText(/正文未随响应提供/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/没有收到正文/)).length).toBeGreaterThan(0);
   });
 
   it('treats a missing content_included flag as included when text is present', async () => {
@@ -283,7 +292,7 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     expect(await screen.findByText((_, element) => (
       element?.classList.contains('ant-typography') === true && element.textContent === text
     ))).toBeTruthy();
-    expect(screen.queryByText(/部分（长度/)).toBeNull();
+    expect(screen.queryByText(/内容不完整/)).toBeNull();
   });
 
   it('still marks truncated ASCII text partial using UTF-8 byte length', async () => {
@@ -291,7 +300,7 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     const snapshot = snapshotWithSpec('W1', spec);
     setupKnowledge({ snapshots: { W1: snapshot, W2: snapshot } });
     renderApp('/projects/demo?tab=knowledge');
-    expect(await screen.findByText(/部分（长度/)).toBeTruthy();
+    expect(await screen.findByText(/内容不完整/)).toBeTruthy();
   });
 
   it('discloses a failed work read instead of silently dropping it', async () => {
@@ -317,7 +326,7 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     const secondRow = screen.getByTestId(sourceTestId(second));
     expect(firstRow).not.toBe(secondRow);
     expect(await screen.findByText('FIRST DOCUMENT')).toBeTruthy();
-    expect(screen.getByTestId('path-digest-notice').textContent).toContain('2 个摘要');
+    expect(screen.getByTestId('path-digest-notice').textContent).toContain('2 个不同版本');
     expect(screen.getByTestId('path-digest-notice').textContent).not.toContain('旧文本');
 
     const user = userEvent.setup();
@@ -369,8 +378,8 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     renderApp('/projects/demo?tab=knowledge');
     expect(await screen.findByText('GOAL OF issue-filter-api')).toBeTruthy();
     expect(screen.getByText('GOAL OF issue-filter-page')).toBeTruthy();
-    expect(screen.getByText('合同目标与验收（issue-filter-api）')).toBeTruthy();
-    expect(screen.getByText('合同目标与验收（issue-filter-page）')).toBeTruthy();
+    expect(screen.getByText('目标与验收（issue-filter-api）')).toBeTruthy();
+    expect(screen.getByText('目标与验收（issue-filter-page）')).toBeTruthy();
     expect(screen.getByText('ACCEPT API')).toBeTruthy();
     expect(screen.getByText('ACCEPT PAGE')).toBeTruthy();
   });
@@ -379,8 +388,8 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     vi.stubGlobal('crypto', webcrypto);
     setupKnowledge({ snapshots: { W1: snapshotFor('W1'), W2: snapshotFor('W2') } });
     renderApp('/projects/demo?tab=knowledge');
-    expect(await screen.findByText('摘要已校验')).toBeTruthy();
-    expect(screen.queryByText('摘要不匹配，正文不可信')).toBeNull();
+    expect(await screen.findByText('内容未被改动')).toBeTruthy();
+    expect(screen.queryByText('内容对不上，请勿采信')).toBeNull();
   });
 
   it('flags a text that does not hash to its declared digest', async () => {
@@ -389,23 +398,23 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     const snapshot = snapshotWithSpec('W1', spec);
     setupKnowledge({ snapshots: { W1: snapshot, W2: snapshot } });
     renderApp('/projects/demo?tab=knowledge');
-    expect(await screen.findByText('摘要不匹配，正文不可信')).toBeTruthy();
-    expect(screen.queryByText('摘要已校验')).toBeNull();
+    expect(await screen.findByText('内容对不上，请勿采信')).toBeTruthy();
+    expect(screen.queryByText('内容未被改动')).toBeNull();
   });
 
   it('says not verified when crypto.subtle is unavailable', async () => {
     vi.stubGlobal('crypto', {});
     setupKnowledge({ snapshots: { W1: snapshotFor('W1'), W2: snapshotFor('W2') } });
     renderApp('/projects/demo?tab=knowledge');
-    expect(await screen.findByText('未校验')).toBeTruthy();
-    expect(screen.queryByText('摘要已校验')).toBeNull();
+    expect(await screen.findByText('尚未核对内容')).toBeTruthy();
+    expect(screen.queryByText('内容未被改动')).toBeNull();
   });
 
   it('filters loaded sources case-insensitively and only within loaded content', async () => {
     const spec = specFor();
     setupKnowledge({ snapshots: { W1: snapshotFor('W1'), W2: snapshotFor('W2') } });
     renderApp('/projects/demo?tab=knowledge');
-    const input = await screen.findByPlaceholderText(/筛选当前页/);
+    const input = await screen.findByPlaceholderText(/按名称筛选/);
     const user = userEvent.setup();
     await user.type(input, 'SUPPORT.MD');
     expect(screen.getByTestId(sourceTestId(spec))).toBeTruthy();
@@ -414,6 +423,78 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     expect(screen.queryByTestId(sourceTestId(spec))).toBeNull();
     await user.clear(input);
     expect(screen.getByTestId(sourceTestId(spec))).toBeTruthy();
+  });
+
+  it('names two works that cite the same document by what they agree on, once, under both names', async () => {
+    const spec = specFor();
+    setupKnowledge({ snapshots: { W1: snapshotFor('W1'), W2: snapshotFor('W2') } });
+    renderApp('/projects/demo?tab=knowledge');
+    expect(await screen.findByText('目标与验收（issue-filter-api、issue-filter-page）')).toBeTruthy();
+    expect(screen.getAllByText('Filter issues by label')).toHaveLength(1);
+    expect(screen.queryByTestId(sourceTestId(spec))).toBeTruthy();
+  });
+
+  it('groups the documents the works must follow apart from the references they may read', async () => {
+    const spec = specFor();
+    const reference = { path: 'docs/notes/team_glossary.md', sha256: sha256('glossary'), byte_length: 8 };
+    const snapshot = snapshotFor('W1', { required_specs: [spec], authorized_readable_refs: [refFor(spec), { kind: 'source', ...reference }] });
+    setupKnowledge({ snapshots: { W1: snapshot, W2: snapshot } });
+    renderApp('/projects/demo?tab=knowledge');
+    await screen.findByTestId(sourceTestId(spec));
+    expect(screen.getByText('要遵守的文档')).toBeTruthy();
+    expect(screen.getByText('可读的参考')).toBeTruthy();
+    expect(screen.getByText('team glossary')).toBeTruthy();
+    expect(screen.getAllByText('引用它的工作项：2')).toHaveLength(2);
+    await userEvent.setup().click(screen.getByTestId(`knowledge-source-${reference.path}-${reference.sha256.slice(0, 12)}`));
+    expect(await screen.findAllByText('没有收到正文')).not.toHaveLength(0);
+    // the filter finds a document by the name it is shown under as well as by its path
+    const user = userEvent.setup();
+    await user.type(screen.getByPlaceholderText(/按名称筛选/), 'team glossary');
+    expect(screen.getByTestId(`knowledge-source-${reference.path}-${reference.sha256.slice(0, 12)}`)).toBeTruthy();
+    expect(screen.queryByTestId(sourceTestId(spec))).toBeNull();
+  });
+
+  it('numbers a document whose file name the guard would flag, and still finds it by its path', async () => {
+    const spec = specFor('FLAGGED', { path: 'docs/a.b.c.md' });
+    const snapshot = snapshotWithSpec('W1', spec);
+    setupKnowledge({ snapshots: { W1: snapshot, W2: snapshot } });
+    renderApp('/projects/demo?tab=knowledge');
+    await screen.findByTestId(sourceTestId(spec));
+    expect(screen.getAllByText('文档 1')).toHaveLength(2);
+    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('page-knowledge')))).toEqual([]);
+    const user = userEvent.setup();
+    await user.type(screen.getByPlaceholderText(/按名称筛选/), 'a.b.c');
+    expect(screen.getByTestId(sourceTestId(spec))).toBeTruthy();
+  });
+
+  it.each([
+    ['a missing digest', { sha256: undefined }, '尚未核对内容', 'support'],
+    ['a missing path', { path: undefined }, '内容未被改动', '文档 1'],
+    ['a missing size', { byte_length: undefined }, '内容未被改动', 'support'],
+    ['no digest, path or size at all', { sha256: undefined, path: undefined, byte_length: undefined }, '尚未核对内容', '文档 1'],
+  ])('does not throw on a document with %s', async (_name, missing, verdict, name) => {
+    vi.stubGlobal('crypto', webcrypto);
+    const spec = { ...specFor(), ...missing };
+    const snapshot = snapshotFor('W1', { required_specs: [spec], authorized_readable_refs: [] });
+    setupKnowledge({ snapshots: { W1: snapshot, W2: snapshot } });
+    renderApp('/projects/demo?tab=knowledge');
+    await waitFor(() => expect(screen.getByTestId('digest-check').textContent).toBe(verdict));
+    expect(screen.queryByText(/Unexpected Application Error/)).toBeNull();
+    expect(screen.getAllByText(name).length).toBeGreaterThan(0);
+    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('page-knowledge')))).toEqual([]);
+  });
+
+  it('reads in English: documents to follow, content unchanged, no engineering word', async () => {
+    vi.stubGlobal('crypto', webcrypto);
+    setupKnowledge({ snapshots: { W1: snapshotFor('W1'), W2: snapshotFor('W2') } });
+    renderApp('/projects/demo?tab=knowledge');
+    await screen.findByTestId('digest-check');
+    await act(() => i18n.changeLanguage('en-US'));
+    expect(await screen.findByText('Documents to follow')).toBeTruthy();
+    expect(await screen.findByText('Content unchanged')).toBeTruthy();
+    expect(screen.getAllByText('Work items citing it: 2')).toHaveLength(1);
+    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('page-knowledge')))).toEqual([]);
+    await act(() => i18n.changeLanguage('zh-CN'));
   });
 
   it('shows the empty state when no readable reference exists', async () => {

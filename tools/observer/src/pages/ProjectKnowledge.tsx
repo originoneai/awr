@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { Card, Col, Input, List, Pagination, Row, Space, Tag, Tooltip, Typography, theme } from 'antd';
+import { Card, Col, Input, List, Pagination, Row, Space, Tag, Typography, theme } from 'antd';
 import { useState } from 'react';
 import { Stamp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
-import { rawObservationText, utf8ByteLength } from '../core/observation';
+import { TechnicalDetails } from '../components/TechnicalDetails';
+import { documentLabel, rawObservationText, utf8ByteLength } from '../core/observation';
 import { isAuthError } from '../lib/api';
 import { OBSERVATION_PAGE_SIZE, validObservationPage } from '../lib/pagination';
 import { overviewQueryOptions } from '../lib/queries';
@@ -22,20 +23,20 @@ interface CitingWork {
   acceptance?: WorkContractValue[];
 }
 
+/** One version of one document, as the works that cite it name it. Every field the service may leave out is optional. */
 interface SourceEntry {
-  path: string;
-  sha256: string;
+  key: string;
+  path: string | null;
+  sha256: string | null;
   byteLength?: number;
   contentIncluded: boolean;
+  /** A document the works must follow (it carries text), rather than a reference they may read. */
+  isSpec: boolean;
   text?: string;
   citingWorks: CitingWork[];
 }
 
-function shortSha(sha: string) {
-  return sha.length > 12 ? `${sha.slice(0, 12)}…` : sha;
-}
-
-/** The words of the digest check; a check that has not finished reads as not verified. */
+/** The words of the digest check; a check that has not finished reads as not checked. */
 const DIGEST_LABEL = {
   verified: 'knowledge.digestVerified',
   mismatch: 'knowledge.digestMismatch',
@@ -43,9 +44,22 @@ const DIGEST_LABEL = {
   pending: 'knowledge.digestUnverified',
 } as const satisfies Record<DigestCheck, string>;
 
+/** Works that agreed on their goals and acceptance are shown once, under all their names. */
+function contractGroups(works: CitingWork[]) {
+  const groups = new Map<string, { titles: string[]; goals?: WorkContractValue[]; acceptance?: WorkContractValue[] }>();
+  for (const work of works) {
+    if (!work.goals?.length && !work.acceptance?.length) continue;
+    const key = JSON.stringify([work.goals ?? null, work.acceptance ?? null]);
+    const group = groups.get(key);
+    if (group) group.titles.push(work.title);
+    else groups.set(key, { titles: [work.title], goals: work.goals, acceptance: work.acceptance });
+  }
+  return Array.from(groups.values());
+}
+
 /** Assemble the knowledge list from per-work reads, never a project-level read. */
 export function ProjectKnowledge({ project }: { project: string }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { token } = theme.useToken();
   const { revoked } = useRevocation();
   const overview = useQuery(overviewQueryOptions(project, revoked));
@@ -67,28 +81,31 @@ export function ProjectKnowledge({ project }: { project: string }) {
     const work = visibleWorks[index];
     if (!data || !work) return;
     const sources: Array<{
-      path: string;
-      sha256: string;
+      path: string | null;
+      sha256: string | null;
       byte_length?: number;
       text?: string;
       contentIncluded: boolean;
+      isSpec: boolean;
     }> = [
       ...(data.required_specs ?? []).map((spec) => ({
-        path: spec.path,
-        sha256: spec.sha256,
+        path: spec.path ?? null,
+        sha256: spec.sha256 ?? null,
         byte_length: spec.byte_length,
         text: spec.text,
         contentIncluded: spec.content_included !== false,
+        isSpec: true,
       })),
       ...(data.authorized_readable_refs ?? []).map((ref) => ({
-        path: ref.path,
-        sha256: ref.sha256,
+        path: ref.path ?? null,
+        sha256: ref.sha256 ?? null,
         byte_length: ref.byte_length,
         contentIncluded: false,
+        isSpec: false,
       })),
     ];
     for (const source of sources) {
-      const key = `${source.path}::${source.sha256}`;
+      const key = `${source.path ?? ''}::${source.sha256 ?? ''}`;
       const existing = entries.get(key);
       const citing: CitingWork = {
         key: work.key,
@@ -106,12 +123,15 @@ export function ProjectKnowledge({ project }: { project: string }) {
           existing.contentIncluded = true;
           existing.byteLength = source.byte_length;
         }
+        if (source.isSpec) existing.isSpec = true;
       } else {
         entries.set(key, {
+          key,
           path: source.path,
           sha256: source.sha256,
           byteLength: source.byte_length,
           contentIncluded: source.contentIncluded,
+          isSpec: source.isSpec,
           text: source.text,
           citingWorks: [citing],
         });
@@ -119,16 +139,21 @@ export function ProjectKnowledge({ project }: { project: string }) {
     }
   });
   const allEntries = Array.from(entries.values());
-  function allEntriesForPath(map: Map<string, SourceEntry>, path: string) {
-    return Array.from(map.values()).filter((entry) => entry.path === path);
-  }
-  const visibleEntries = allEntries.filter((entry) => entry.path.toLowerCase().includes(filter.toLowerCase()));
-  const selected = visibleEntries.find((entry) => `${entry.path}::${entry.sha256}` === selectedKey) ?? visibleEntries[0];
+  const names = new Map(allEntries.map((entry, index) => [entry.key, documentLabel(entry.path, { language: i18n.language, position: index + 1 }).text]));
+  const needle = filter.toLowerCase();
+  const visibleEntries = allEntries.filter((entry) => (
+    (entry.path ?? '').toLowerCase().includes(needle) || (names.get(entry.key) ?? '').toLowerCase().includes(needle)
+  ));
+  const selected = visibleEntries.find((entry) => entry.key === selectedKey) ?? visibleEntries[0];
   const loadedCount = snapshots.filter((query) => query.data).length;
-  const selectedDigests = selected ? allEntriesForPath(entries, selected.path).length : 0;
+  const otherVersions = selected ? allEntries.filter((entry) => entry.path === selected.path) : [];
+  const groups = [
+    { id: 'specs', title: t('knowledge.groupSpecs'), entries: visibleEntries.filter((entry) => entry.isSpec) },
+    { id: 'refs', title: t('knowledge.groupRefs'), entries: visibleEntries.filter((entry) => !entry.isSpec) },
+  ].filter((group) => group.entries.length > 0);
 
   // The displayed text is verified against its declared digest; without Web Crypto the badge reads
-  // not verified, never verified.
+  // not checked, never verified.
   const digestCheck = useTextDigest(selected?.contentIncluded ? selected.text : null, selected?.sha256);
 
   if (revoked || isAuthError(overview.error)) return <ObservationForbidden />;
@@ -170,30 +195,34 @@ export function ProjectKnowledge({ project }: { project: string }) {
         <Row gutter={[16, 16]} style={{ width: '100%' }}>
           <Col xs={24} lg={8}>
             <Card size="small" style={{ width: '100%' }} title={t('knowledge.sources')}>
-              <List
-                size="small"
-                dataSource={visibleEntries}
-                rowKey={(entry) => `${entry.path}::${entry.sha256}`}
-                renderItem={(entry) => (
-                  <List.Item
-                    data-testid={`knowledge-source-${entry.path}-${entry.sha256.slice(0, 12)}`}
-                    onClick={() => setSelectedKey(`${entry.path}::${entry.sha256}`)}
-                    style={craftSelectionStyle(token, Boolean(selected && `${selected.path}::${selected.sha256}` === `${entry.path}::${entry.sha256}`))}
-                  >
-                    <Space direction="vertical" size={2} style={{ minWidth: 0 }}>
-                      <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{entry.path}</Typography.Text>
-                      <Tooltip title={entry.sha256}>
-                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>{shortSha(entry.sha256)}</Typography.Text>
-                      </Tooltip>
-                    </Space>
-                  </List.Item>
-                )}
-              />
+              {groups.map((group) => (
+                <List
+                  key={group.id}
+                  size="small"
+                  header={<Typography.Text type="secondary">{group.title}</Typography.Text>}
+                  dataSource={group.entries}
+                  rowKey={(entry) => entry.key}
+                  renderItem={(entry) => (
+                    <List.Item
+                      data-testid={`knowledge-source-${entry.path ?? ''}-${(entry.sha256 ?? '').slice(0, 12)}`}
+                      onClick={() => setSelectedKey(entry.key)}
+                      style={craftSelectionStyle(token, Boolean(selected && selected.key === entry.key))}
+                    >
+                      <Space direction="vertical" size={2} style={{ minWidth: 0 }}>
+                        <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{names.get(entry.key)}</Typography.Text>
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          {t('knowledge.citedBy', { count: entry.citingWorks.length })}
+                        </Typography.Text>
+                      </Space>
+                    </List.Item>
+                  )}
+                />
+              ))}
             </Card>
           </Col>
           {selected ? (
             <Col xs={24} lg={16}>
-              <Card size="small" style={{ width: '100%', minWidth: 0 }} title={<Typography.Text style={{ overflowWrap: 'anywhere' }}>{selected.path}</Typography.Text>}>
+              <Card size="small" style={{ width: '100%', minWidth: 0 }} title={<Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{names.get(selected.key)}</Typography.Text>}>
                 <Space direction="vertical" size={12} style={{ width: '100%' }}>
                   <Space size={8} wrap>
                     <Tag color={selected.contentIncluded ? 'success' : 'default'}>
@@ -212,39 +241,44 @@ export function ProjectKnowledge({ project }: { project: string }) {
                       </Tag>
                     ) : null}
                   </Space>
-                  {selectedDigests > 1 ? (
+                  {otherVersions.length > 1 ? (
                     <Typography.Text type="warning" data-testid="path-digest-notice">
-                      {t('knowledge.multipleDigests', { count: selectedDigests })}
+                      {t('knowledge.multipleVersions', { count: otherVersions.length })}
                     </Typography.Text>
                   ) : null}
                   <Typography.Text type="secondary" data-testid="knowledge-citing-works">
-                    {t('knowledge.citingWorks')}: {selected.citingWorks.map((work) => work.title).join(', ')}
+                    {t('knowledge.citingWorks')}:{' '}
+                    {selected.citingWorks.map((work, index) => (
+                      <span key={work.key}>
+                        {index > 0 ? ' · ' : ''}
+                        <Link to={`/projects/${project}?tab=plan&work=${encodeURIComponent(work.key)}`}>{work.title}</Link>
+                      </span>
+                    ))}
                   </Typography.Text>
                   {selected.text && selected.contentIncluded ? (
                     <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{selected.text}</Typography.Paragraph>
-                  ) : (
-                    <Typography.Text type="secondary">{t('knowledge.contentMissing')}</Typography.Text>
-                  )}
-                  {selected.citingWorks.map((work) => {
-                    if (!work.goals?.length && !work.acceptance?.length) return null;
-                    return (
-                      <Card key={work.key} size="small" type="inner" title={t('knowledge.contractFor', { title: work.title })}>
-                        {work.goals?.length ? (
-                          <List size="small" header={t('workbench.detail.goals')} dataSource={work.goals} renderItem={(goal) => <List.Item>{rawObservationText(goal).text}</List.Item>} />
-                        ) : null}
-                        {work.acceptance?.length ? (
-                          <List size="small" header={t('workbench.detail.acceptance')} dataSource={work.acceptance} renderItem={(item) => <List.Item>{rawObservationText(item).text}</List.Item>} />
-                        ) : null}
-                      </Card>
-                    );
-                  })}
-                  <Space size={8} wrap>
-                    {selected.citingWorks.map((work) => (
-                      <Link key={work.key} to={`/projects/${project}?tab=plan&work=${encodeURIComponent(work.key)}`}>
-                        {t('knowledge.openWork', { title: work.title })}
-                      </Link>
-                    ))}
-                  </Space>
+                  ) : null}
+                  {contractGroups(selected.citingWorks).map((group) => (
+                    <Card key={group.titles.join('\u0000')} size="small" type="inner" title={t('knowledge.contractFor', { title: group.titles.join(t('knowledge.titleSeparator')) })}>
+                      {group.goals?.length ? (
+                        <List size="small" header={t('workbench.detail.goals')} dataSource={group.goals} renderItem={(goal) => <List.Item>{rawObservationText(goal).text}</List.Item>} />
+                      ) : null}
+                      {group.acceptance?.length ? (
+                        <List size="small" header={t('workbench.detail.acceptance')} dataSource={group.acceptance} renderItem={(item) => <List.Item>{rawObservationText(item).text}</List.Item>} />
+                      ) : null}
+                    </Card>
+                  ))}
+                  <TechnicalDetails
+                    items={[
+                      { label: 'path', value: selected.path },
+                      { label: 'sha256', value: selected.sha256 },
+                      { label: 'byte_length', value: selected.byteLength },
+                      { label: 'content_included', value: selected.contentIncluded },
+                      { label: 'digest_check', value: digestCheck },
+                      { label: 'citing_works', value: selected.citingWorks.map((work) => work.key) },
+                      ...(otherVersions.length > 1 ? [{ label: 'versions_of_this_path', value: otherVersions.map((entry) => entry.sha256) }] : []),
+                    ]}
+                  />
                 </Space>
               </Card>
             </Col>
