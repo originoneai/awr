@@ -188,7 +188,49 @@ describe('deriveWorkState: progress word', () => {
 
   it('says loading while the read is pending, and nothing else', () => {
     expect(deriveWorkState({ language: 'zh-CN', readState: 'loading', snapshot: IN_REVIEW, workStatus: 'open' }).progress)
-      .toEqual({ kind: 'loading', text: '加载中…', tone: 'neutral', technical: { phase: null, runtimeState: null, rowStatus: null, completionId: null } });
+      .toEqual({ kind: 'loading', text: '加载中…', tone: 'neutral', asOfUnixMs: null, technical: { phase: null, runtimeState: null, rowStatus: null, completionId: null } });
+  });
+
+  it('keeps the time at which the service measured the facts behind the word, and none when nothing was read or the time is not a time', () => {
+    const AS_OF = 1793519600000;
+    const measured = (snapshot: typeof DELIVERED | typeof IN_PROGRESS | typeof IN_REVIEW) => ({ ...snapshot, observation: { ...snapshot.observation, observed_at_unix_ms: AS_OF } });
+    for (const snapshot of [IN_PROGRESS, DELIVERED, IN_REVIEW]) {
+      expect(deriveWorkState({ ...zh, snapshot: measured(snapshot) }).progress.asOfUnixMs).toBe(AS_OF);
+    }
+    expect(deriveWorkState({ language: 'zh-CN', readState: 'failed', snapshot: measured(DELIVERED), workStatus: 'open' }).progress.asOfUnixMs).toBeNull();
+    expect(deriveWorkState({ language: 'zh-CN', readState: 'loading', snapshot: measured(DELIVERED) }).progress.asOfUnixMs).toBeNull();
+    expect(deriveWorkState({ ...zh, snapshot: DELIVERED }).progress.asOfUnixMs).toBeNull();
+    for (const bad of [null, undefined, 'yesterday', Number.NaN, Number.POSITIVE_INFINITY]) {
+      const snapshot = { ...DELIVERED, observation: { ...DELIVERED.observation, observed_at_unix_ms: bad } };
+      expect(deriveWorkState({ ...zh, snapshot }).progress.asOfUnixMs, String(bad)).toBeNull();
+    }
+    // an unknown word keeps its as-of too
+    expect(deriveWorkState({ ...zh, snapshot: { observation: { observed_at_unix_ms: 1793513588923 } } }).progress)
+      .toMatchObject({ kind: 'unknown', asOfUnixMs: 1793513588923 });
+  });
+
+  it('never words a work as active, completed or accepted from a claim, an execution or a review state', () => {
+    const sample = {
+      ...IN_PROGRESS,
+      observation: {
+        ...IN_PROGRESS.observation,
+        claim: { state: 'active', lease_live: false },
+        execution: { state: 'succeeded', effects_settled: true },
+        collaboration: { review: { state: 'open' }, candidate: { current: true } },
+      },
+    };
+    for (const language of ['zh-CN', 'en-US']) {
+      const state = deriveWorkState({ language, readState: 'ready', snapshot: sample });
+      const words = [state.progress.text, state.next.text, state.lastReport.text].join('\n');
+      for (const claim of ['活跃', '已完成', '已验收', '已通过', 'active', 'completed', 'accepted', 'approved']) {
+        expect(words.toLowerCase(), `${language}: ${claim}`).not.toContain(claim.toLowerCase());
+      }
+      expect(state.progress.kind).toBe('runtime');
+    }
+    // the completion is stated only for the delivered snapshot that holds the exact selected completion, with its as-of
+    const stamped = { ...DELIVERED, observation: { ...DELIVERED.observation, observed_at_unix_ms: 1793519600000 } };
+    const delivered = deriveWorkState({ ...zh, snapshot: stamped }).progress;
+    expect(delivered).toMatchObject({ text: '已交付', asOfUnixMs: 1793519600000, technical: { completionId: DELIVERED.runtime.selected_completion_id } });
   });
 
   it('reads a reporter\'s "delivered" as delivered only when the system holds the completion, otherwise as reported', () => {

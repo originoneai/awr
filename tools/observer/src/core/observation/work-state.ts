@@ -52,6 +52,7 @@ export function deriveWorkState(input: WorkStateInput): WorkStateResult {
     rowStatus: rawObservationText(input.workStatus).text,
     completionId,
     completionConfirmed: runtimeState === 'completed' && completionId != null,
+    asOfUnixMs: readState === 'ready' ? finiteTime(snapshot?.observation?.observed_at_unix_ms) : null,
   });
   let lastReport: WorkStateResult['lastReport'];
   if (readState === 'loading') {
@@ -72,7 +73,10 @@ export function deriveWorkState(input: WorkStateInput): WorkStateResult {
  * overview row's status; a word the vocabulary does not know is said to be unrecognized, never
  * guessed, and a read that did not happen contributes nothing. A reporter's "delivered" is a
  * declaration: it reads as delivered only when the system holds a selected completion for a work
- * whose runtime state is completed, otherwise as "reported as delivered".
+ * whose runtime state is completed, otherwise as "reported as delivered". The word keeps the time at
+ * which the service measured the facts behind it (`asOfUnixMs`), and it is never worded from a
+ * claim, an execution or a review state: those say nothing about the work being active, completed or
+ * accepted.
  */
 function deriveProgress(input: {
   language: string;
@@ -82,10 +86,11 @@ function deriveProgress(input: {
   rowStatus: string | null;
   completionId: string | null;
   completionConfirmed: boolean;
+  asOfUnixMs: number | null;
 }): WorkStateResult['progress'] {
-  const { language, readState, phase, runtimeState, rowStatus, completionId, completionConfirmed } = input;
+  const { language, readState, phase, runtimeState, rowStatus, completionId, completionConfirmed, asOfUnixMs } = input;
   if (readState === 'loading') {
-    return { kind: 'loading', text: humanText('loading', language), tone: 'neutral', technical: { phase: null, runtimeState: null, rowStatus: null, completionId: null } };
+    return { kind: 'loading', text: humanText('loading', language), tone: 'neutral', asOfUnixMs: null, technical: { phase: null, runtimeState: null, rowStatus: null, completionId: null } };
   }
   const technical = { phase, runtimeState, rowStatus, completionId };
   const phaseWord = phase === 'delivered' && !completionConfirmed
@@ -99,7 +104,7 @@ function deriveProgress(input: {
   const chosen = candidates.find((candidate) => candidate.word.known) ?? candidates[0];
   if (chosen == null) {
     const unknown = statusWord('unknown', { language, field: 'state' });
-    return { kind: 'unknown', text: unknown.text, tone: unknown.tone, technical };
+    return { kind: 'unknown', text: unknown.text, tone: unknown.tone, asOfUnixMs, technical };
   }
-  return { kind: chosen.kind, text: chosen.word.text, tone: chosen.word.tone, technical };
+  return { kind: chosen.kind, text: chosen.word.text, tone: chosen.word.tone, asOfUnixMs, technical };
 }
