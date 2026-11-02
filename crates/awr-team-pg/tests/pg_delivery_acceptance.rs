@@ -137,12 +137,16 @@ async fn actual_acceptance_atomically_schedules_receipt_backed_source_sync_witho
     for simulated in [false, true] {
         let f = SourceFixture::new(simulated).await;
         let before = std::fs::read(f.root.0.join("ledger.yaml")).unwrap();
-        let completed = f.finalize("domain-acceptance").await;
-        let queue =
-            f.f.store
-                .sync_intents(TENANT, PROJECT, WORKER, awr_core::Id::from(1), 64, None)
+        // The confirmed integration comes first; its observations are the only inbox rows.
+        f.f.integrate().await;
+        let observed: i64 =
+            f.f.admin
+                .query_one("SELECT count(*) FROM awr_team.delivery_inbox", &[])
                 .await
-                .unwrap();
+                .unwrap()
+                .get(0);
+        let completed = f.finalize("domain-acceptance").await;
+        let queue = f.queue().await;
         let rows = queue["intents"].as_array().unwrap();
         assert_eq!(
             rows.len(),
@@ -160,7 +164,8 @@ async fn actual_acceptance_atomically_schedules_receipt_backed_source_sync_witho
                 .await
                 .unwrap()
                 .get::<_, i64>(0),
-            0
+            observed,
+            "Finalization itself records no external event"
         );
     }
 }
@@ -168,6 +173,7 @@ async fn actual_acceptance_atomically_schedules_receipt_backed_source_sync_witho
 #[tokio::test]
 async fn concurrent_exact_finalization_replays_one_receipt_and_one_domain_queue() {
     let f = SourceFixture::new(true).await;
+    f.f.integrate().await;
     let p = prepare(&f.f.reads, SUPERVISOR, "a").await;
     let request = command(
         &p,
@@ -190,9 +196,18 @@ async fn concurrent_exact_finalization_replays_one_receipt_and_one_domain_queue(
         ("delivery_notifications", 1),
         ("delivery_sync_intents", 2),
     ] {
+        // The integration's own observations schedule intents of another origin.
+        let scope = if table == "completion_receipts" {
+            ""
+        } else {
+            " WHERE origin='domain_acceptance'"
+        };
         assert_eq!(
             f.f.admin
-                .query_one(&format!("SELECT count(*) FROM awr_team.{table}"), &[])
+                .query_one(
+                    &format!("SELECT count(*) FROM awr_team.{table}{scope}"),
+                    &[]
+                )
                 .await
                 .unwrap()
                 .get::<_, i64>(0),
@@ -313,6 +328,7 @@ async fn completion_rejects_transition_tampering_and_malformed_original_metadata
 #[tokio::test]
 async fn failed_domain_enqueue_rolls_back_actual_acceptance_and_all_queue_records() {
     let f = SourceFixture::new(false).await;
+    f.f.integrate().await;
     let before = std::fs::read(f.root.0.join("ledger.yaml")).unwrap();
     f.f.admin
         .batch_execute(
@@ -411,6 +427,9 @@ async fn original_domain_receipt_reaches_source_after_reconstruction_and_lost_co
 async fn only_exact_pending_domain_work_continues_across_unrelated_source_activation() {
     for before_acceptance in [false, true] {
         let f = SourceFixture::new(true).await;
+        // The candidate is integrated while its binding is current; an unrelated activation
+        // later neither redoes nor invalidates that integration.
+        f.f.integrate().await;
         let completed = if before_acceptance {
             f.publish_successor(Some("c")).await;
             f.finalize("after-unrelated-source").await
@@ -795,6 +814,13 @@ async fn actual_agent_and_simulated_acceptance_publish_exact_stored_artifact_ref
         let f = SourceFixture::new(simulated).await;
         let before = std::fs::read(f.root.0.join("ledger.yaml")).unwrap();
         let completed = f.finalize("finalize").await;
+        // The confirmed integration left its fact heads; publishing adds none.
+        let heads: i64 =
+            f.f.admin
+                .query_one("SELECT count(*) FROM awr_team.delivery_fact_heads", &[])
+                .await
+                .unwrap()
+                .get(0);
         assert_eq!(completed["task_complete"], true);
         assert_eq!(completed["human_approval"], false);
         assert_eq!(
@@ -868,7 +894,7 @@ async fn actual_agent_and_simulated_acceptance_publish_exact_stored_artifact_ref
                 .await
                 .unwrap()
                 .get::<_, i64>(0),
-            0
+            heads
         );
         assert_eq!(
             f.f.admin
@@ -943,7 +969,8 @@ async fn real_acceptance_keeps_no_candidate_compatibility_without_reconstructing
     f.resubmit_reviewed_evidence(json!({"passed":true}))
         .await
         .unwrap();
-    let receipt = f.finalize("without-delivery").await;
+    // Nothing is selected or mapped, so no integration is awaited.
+    let receipt = f.try_finalize("without-delivery").await.unwrap()["receipt"]["data"].clone();
     assert!(receipt["delivery_candidate_digest"].is_null());
     assert_eq!(receipt["task_complete"], true);
     assert!(receipt.get("source_sync").is_none());

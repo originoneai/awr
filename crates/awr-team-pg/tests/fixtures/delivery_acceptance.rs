@@ -147,7 +147,9 @@ work_items:
         Self { f, root }
     }
 
+    /// Finalization of delivering work waits for the confirmed integration of its candidate.
     pub async fn finalize(&self, key: &str) -> Value {
+        self.f.integrate().await;
         self.try_finalize(key).await.unwrap()["receipt"]["data"].clone()
     }
 
@@ -242,7 +244,12 @@ work_items:
             assert_eq!(
                 self.f
                     .admin
-                    .query_one(&format!("SELECT count(*) FROM awr_team.{table}"), &[])
+                    .query_one(
+                        &format!(
+                            "SELECT count(*) FROM awr_team.{table} WHERE origin='domain_acceptance'"
+                        ),
+                        &[]
+                    )
                     .await
                     .unwrap()
                     .get::<_, i64>(0),
@@ -325,12 +332,25 @@ work_items:
             .unwrap()
     }
 
+    /// The intents that actual acceptance schedules. The repository observations that confirmed
+    /// the integration before finalization schedule intents of their own; they are not the
+    /// subject of these checks.
     pub async fn queue(&self) -> Value {
-        self.f
+        let mut queue = self
+            .f
             .store
             .sync_intents(TENANT, PROJECT, WORKER, awr_core::Id::from(1), 64, None)
             .await
+            .unwrap();
+        let acceptance: Vec<Value> = queue["intents"]
+            .as_array()
             .unwrap()
+            .iter()
+            .filter(|i| i["origin"] == "domain_acceptance")
+            .cloned()
+            .collect();
+        queue["intents"] = Value::Array(acceptance);
+        queue
     }
 
     pub async fn take(&self, key: &str, kind: &str) -> DeliverySyncLease {

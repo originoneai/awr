@@ -79,6 +79,12 @@ An Agent additionally needs explicit live `finalize_delivery` delegation and a
 supported current completion contract. Otherwise an authorized human/system
 maintainer or project administrator finalizes through the same completion gates.
 
+A work with a selected delivery candidate is finalized only after that candidate's
+repository integration is confirmed for the current selection. Otherwise
+`work.complete` and `delivery.finalize` return HTTP 409 `IntegrationNotConfirmed`
+with a `reason` that names the missing step, and record nothing. See
+[delivery integration](delivery-integration.md#finalize-only-after-the-integration-is-confirmed).
+
 ## Review command discovery and returned work
 
 `awr_team_command` publishes a closed argument schema for each review action.

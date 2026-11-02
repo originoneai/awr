@@ -422,8 +422,13 @@ any review decision, one returned review with its rework, a fast-forward
 delivery, a second item whose declared base is no longer the target (accepted
 as a request, rejected by the connector, with the changed target or base
 reported), the rebuilt follow-up, and the refusals that every route to
-follow-up work gives after finalization. Two shorter tests show the cost of a
-wrong order: delivering the first version closes the item to refinement, and a
-refinement after an approval withdraws that approval. The tests pin the service
-state machine and the order of commands; they say nothing about what a model or
+follow-up work gives after finalization. Completing an item is refused at every
+step before its integration is confirmed (nothing prepared, prepared, dispatched,
+refused by the repository), for `delivery.finalize` and `work.complete` alike.
+The confirmed integration of an earlier version does not complete the next
+version, and a work with no repository delivery channel is finalized without an
+integration. Two shorter tests show the cost of a wrong order: delivering the
+first version closes the item to refinement, and a refinement after an approval
+withdraws that approval. The tests pin the service state machine and the order
+of commands; they say nothing about what a model or
 operator decides and carry no native business, approval or deployment credit.

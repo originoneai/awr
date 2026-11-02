@@ -10,7 +10,9 @@ Supervisor preparation, inspection and withdrawal are available through the
 existing authenticated Team HTTP/MCP command and query entry points. These
 operations do not execute Git or complete a task. Repository effects require an
 explicitly configured integrator; worker lease and dispatch are library-only.
-Final acceptance and source publication remain separate operations.
+Final acceptance and source publication remain separate operations. Acceptance of
+a work that delivers a selected candidate waits for the confirmed integration of
+that candidate, as [described below](#finalize-only-after-the-integration-is-confirmed).
 
 ## Supervisor workflow over HTTP or MCP
 
@@ -138,6 +140,9 @@ Starting the HTTP/MCP service alone does not enable a Git execution loop.
 | `confirmed` | Bound adapter fact establishes application | Retain historical evidence; release the guard. |
 | `rejected` | Cancelled before dispatch or a bound adapter rejection | Retain the original receipt; release the guard. |
 
+Only `confirmed`, for the current binding, lets a work that delivers a selected
+candidate be finalized.
+
 `confirm_integration` resolves an intent using an already-ingested, authenticated
 neutral adapter fact bound to its original request and candidate. A verification
 record, observation for another request, or inspection begun before dispatch
@@ -153,8 +158,9 @@ cannot cancel dispatched or unknown work.
 
 Changes after an actual effect do not erase that fact. A still-authorized current
 connector can record a historical result when the original issuer or eligibility
-changed. The confirmation's `current` describes eligibility at that confirmation;
-it is not a finalization grant and must be rechecked before acceptance.
+changed. The confirmation's `current` describes eligibility at that confirmation. It is
+necessary for finalization but not sufficient: finalization also needs a
+confirmation that was current when it was recorded and repeats every other check.
 `inspect_integration` exposes descriptions without private authority references.
 It includes the immutable original candidate, read set and connector description
 so recovery does not accidentally query a replacement selection.
@@ -179,6 +185,47 @@ inspection retains the original proof envelopes separately from eligibility.
 Integration confirmations never create completion receipts, mark work complete,
 or silently update authoritative source status.
 
+## Finalize only after the integration is confirmed
+
+A work delivers into a repository when the project declared a delivery channel
+for it (a connector mapping, enabled or not), a candidate is selected, and its
+completion policy can be integrated at all. `delivery.finalize` and
+`work.complete` complete such a work only after the integration of that
+candidate was confirmed for the selection: an intent in state `confirmed` that
+was prepared for the selected candidate digest and selection version, the
+selection's source snapshot and ownership, and the candidate's workstream and
+contract, and whose confirmation was current when it was recorded. A review
+approval, a prepared integration and a dispatched one are not enough. The
+integration of an earlier version is history, and an unrelated source
+activation neither undoes nor requires redoing a confirmed integration. The
+check runs after the review, evidence and candidate checks, on both operations
+and on the library `ReviewStore::complete`. There is no per-call override.
+
+Otherwise the command is refused with HTTP 409 `IntegrationNotConfirmed`, nothing
+is recorded, and `reason` names the missing step:
+
+| `reason` | The integration is | Next action |
+| --- | --- | --- |
+| `integration_not_prepared` | never prepared for the selected version; integrations of earlier versions do not count | Prepare it with `delivery.integration.prepare`. |
+| `integration_prepared` | prepared or leased; the repository change has not been made | Wait for the integrator. `delivery.integration.reject_prepared` withdraws it before dispatch. |
+| `integration_dispatched` | dispatched; the outcome is not recorded | Wait for the original attempt to be reconciled; never dispatch again. |
+| `integration_unknown` | of unknown outcome | Do not retry; the integrator resolves the original attempt by query. |
+| `integration_rejected` | rejected by the repository, or withdrawn before dispatch | Inspect the reason. Prepare a new integration once it is resolved, or change the candidate. |
+| `integration_target_changed` | rejected because the repository target changed | The developer rebuilds on the new target, the new candidate gets a fresh independent review, then it is integrated. |
+| `integration_confirmation_not_current` | confirmed, but not current when it was recorded | Prepare a new integration of the current candidate. |
+
+Each refusal carries the same condition, basis, next action and recheck guidance
+as other definite rejections. `work.prepare` and `work.inbox` show an
+`integration` step instead of `finalization` for an approved version until its
+integration is confirmed.
+
+Other works are not affected and keep their existing gates: report-only
+completion, a candidate that is delivered through source publication alone (no
+connector mapping), and ordinary human confirmation, which cannot prepare an
+integration. Receipts that were already recorded are not changed or
+re-examined. A confirmation still never creates a completion receipt;
+finalization stays a separate command with its own gates.
+
 ## Bind acceptance to a source reference
 
 When a delivery candidate is selected, authenticated `work.complete` and
@@ -187,7 +234,8 @@ When a delivery candidate is selected, authenticated `work.complete` and
 declaration must match the actual current selection, work, scope, contract and
 required check set. Artifact bytes, hash and length must match the candidate's
 manifest. Selecting a different version cannot retrofit the earlier evidence
-or receipt. Completion without an optional delivery selection retains its
+or receipt. The same selected candidate must also have its integration confirmed
+(see above). Completion without an optional delivery selection retains its
 existing policy, execution and review gates; it does not create a candidate
 binding. Legacy unbound receipts remain unbound.
 

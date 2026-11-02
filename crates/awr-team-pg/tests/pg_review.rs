@@ -591,6 +591,98 @@ async fn ordinary_confirm_works_for_humans_and_dirty_tree_needs_bytes() {
         .unwrap();
 }
 
+/// Declare a repository delivery channel for the work and select a candidate, without the
+/// delivery chain that normally builds them: only the rows the completion gate reads.
+async fn declare_delivery(admin: &Client, work: &str) {
+    admin
+        .batch_execute(&format!(
+            "SET session_replication_role = replica;
+             INSERT INTO awr_team.delivery_connectors(tenant_id,project_id,id,scope_id,workstream_id,
+                work_id,provider,resource,principal_actor_id,principal_client_id,fact_source,version,
+                coordinator_epoch,enabled,configured_by_actor_id)
+             VALUES ('tenant-a','project-a','connector-1','main','1','{work}','local-git','repository',
+                'runner-a','client-runner','adapter_observation',1,'epoch-1',true,'actor-a');
+             INSERT INTO awr_team.delivery_selections(tenant_id,project_id,scope_id,work_id,binding_digest,
+                selection_version,source_snapshot_id,ownership_version,actor_id,client_id,claim_id,fence)
+             VALUES ('tenant-a','project-a','main','{work}','{digest}',1,'snap-1',1,'actor-a',
+                'client-a','claim-1',1);
+             SET session_replication_role = DEFAULT;",
+            digest = "d".repeat(64),
+        ))
+        .await
+        .unwrap();
+}
+
+async fn receipt_count(admin: &Client) -> i64 {
+    admin
+        .query_one("SELECT count(*) FROM awr_team.completion_receipts", &[])
+        .await
+        .unwrap()
+        .get(0)
+}
+
+#[tokio::test]
+async fn work_that_delivers_a_selected_candidate_waits_for_its_integration_on_the_library_path_too()
+{
+    let (_lock, admin, store) = setup("trusted_execution_and_review").await;
+    let ev = evidence(
+        &store,
+        "hash-a",
+        json!({"log": "ok"}),
+        Some(b"good-bytes"),
+        Some("exec-1"),
+    )
+    .await;
+    succeeded_execution(&admin, "exec-1", "hash-a").await;
+    approve(&store, &ev.id).await;
+    declare_delivery(&admin, "work-a").await;
+    let refused = complete(&store, &ev.id, "c-before-integration").await;
+    assert!(
+        matches!(
+            refused,
+            Err(PgError::IntegrationNotConfirmed {
+                reason: "integration_not_prepared"
+            })
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(receipt_count(&admin).await, 0);
+    // Work for which the project declared no delivery channel completes as before.
+    admin
+        .batch_execute("DELETE FROM awr_team.delivery_connectors")
+        .await
+        .unwrap();
+    complete(&store, &ev.id, "c-without-channel").await.unwrap();
+    assert_eq!(receipt_count(&admin).await, 1);
+}
+
+#[tokio::test]
+async fn ordinary_confirmation_completes_although_a_candidate_is_selected() {
+    // It can never prepare an integration, so it would wait forever.
+    let (_lock, admin, store) = setup("ordinary_confirm").await;
+    let evidence = store
+        .record_evidence(
+            TENANT,
+            PROJECT,
+            REVIEWER,
+            "work-a",
+            "hash-a",
+            None,
+            &json!({"confirmed": true}),
+            Some(b"checklist"),
+            Some("tree-digest"),
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+    declare_delivery(&admin, "work-a").await;
+    complete(&store, &evidence.id, "c-ordinary-selected")
+        .await
+        .unwrap();
+    assert_eq!(receipt_count(&admin).await, 1);
+}
+
 #[tokio::test]
 async fn completed_state_cannot_be_forged_without_a_receipt() {
     let (_lock, admin, _store) = setup("trusted_execution_and_review").await;

@@ -213,8 +213,10 @@ Old approvals bound to a prior head/contract invalidate.
 
 Independent reviewer calls `review.accept` / `review.decide` under
 `independent_review`. Maintainer finalizes with `delivery.finalize` /
-`work.complete`. Green CI, admin role, or GitHub merge **never** skip AWR
-acceptance.
+`work.complete`, after the integration of the selected candidate is confirmed
+(otherwise `IntegrationNotConfirmed` names the missing step; see
+[delivery integration](delivery-integration.md#finalize-only-after-the-integration-is-confirmed)).
+Green CI, admin role, or GitHub merge **never** skip AWR acceptance.
 
 ## Host adapter note
 

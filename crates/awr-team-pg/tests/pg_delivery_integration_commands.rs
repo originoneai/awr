@@ -292,9 +292,10 @@ async fn rejected_integration(f: &Fixture) -> String {
 #[tokio::test]
 async fn rejected_integration_routes_owner_revision_and_never_reuses_old_approval() {
     let mut f = setup_integration().await;
+    // Approval alone no longer makes finalization the next step: the integration comes first.
     assert_eq!(
         inbox_item(&f, SUPERVISOR).await["guidance"]["code"],
-        "finalization"
+        "integration"
     );
     let id = rejected_integration(&f).await;
     let before = counts(&f).await;

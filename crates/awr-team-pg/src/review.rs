@@ -778,6 +778,12 @@ impl ReviewStore {
         if view != CompletionView::CurrentlyVerified {
             return Err(PgError::CompletionRejected);
         }
+        // A work that delivers a selected candidate into a repository is complete only after the
+        // integration of that candidate was confirmed, on this path as on the command path.
+        crate::delivery_sync::completion::require_confirmed_integration_of_selection(
+            &tx, tenant_id, project_id, work_id, policy,
+        )
+        .await?;
         // The receipt records the ACTUAL approver (from the pinned round's
         // decision) separately from the submitter (CR #42 audit note).
         // The approver comes from the SAME pinned round the gate consumed;
