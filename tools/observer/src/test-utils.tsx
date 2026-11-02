@@ -269,8 +269,11 @@ export function demoWorkSnapshot(workId = 'W1') {
           required_dependencies: ['upstream-contract-v1'],
         },
         published_contract: null,
+        // The shape of a real snapshot's spec: the service always gives the digest and the byte length of the file.
         required_specs: [{
           path: 'docs/support.md',
+          sha256: 'f317e7214dca98e71843ae57825a25962914c47614d40b497ef0d4bb1316ae89',
+          byte_length: 28,
           text: 'Keep the support API stable.',
           content_included: true,
         }],
