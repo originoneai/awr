@@ -292,9 +292,10 @@ async fn rejected_integration(f: &Fixture) -> String {
 #[tokio::test]
 async fn rejected_integration_routes_owner_revision_and_never_reuses_old_approval() {
     let mut f = setup_integration().await;
+    // Approval alone no longer makes finalization the next step: the integration comes first.
     assert_eq!(
         inbox_item(&f, SUPERVISOR).await["guidance"]["code"],
-        "finalization"
+        "integration"
     );
     let id = rejected_integration(&f).await;
     let before = counts(&f).await;
@@ -438,6 +439,65 @@ async fn rejected_integration_routes_owner_revision_and_never_reuses_old_approva
         "approved",
         "history is preserved, not silently rewritten"
     );
+}
+
+#[tokio::test]
+async fn an_approved_work_is_sent_to_the_integration_step_until_the_integration_is_confirmed() {
+    let f = setup_integration().await;
+    // Nothing prepared for the current binding: inspect the delivery, then prepare.
+    let item = inbox_item(&f, SUPERVISOR).await;
+    assert_eq!(item["guidance"]["code"], "integration");
+    assert_eq!(item["guidance"]["action"]["op"], "delivery.neutral.inspect");
+    assert_eq!(item["next_query"]["op"], "delivery.neutral.inspect");
+    assert!(
+        item["guidance"]["action"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("delivery.integration.prepare")
+    );
+    // Prepared, then leased, for the current binding: follow that request.
+    let id = f.prepared().await["integration_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut lease = String::new();
+    for step in ["prepared", "leased"] {
+        let item = inbox_item(&f, SUPERVISOR).await;
+        assert_eq!(item["guidance"]["code"], "integration", "{step}");
+        assert_eq!(
+            item["guidance"]["action"]["op"], "delivery.integration.inspect",
+            "{step}"
+        );
+        assert_eq!(item["next_query"]["op"], "delivery.integration.inspect");
+        assert_eq!(item["next_query"]["request_id"], id, "{step}");
+        if step == "prepared" {
+            lease = f.leased(&id).await["lease_id"].as_str().unwrap().to_owned();
+        }
+    }
+    // Dispatched: the original attempt is followed, never repeated.
+    f.dispatched(&id, &lease).await;
+    let item = inbox_item(&f, SUPERVISOR).await;
+    assert_eq!(item["guidance"]["code"], "integration_unknown");
+    assert_eq!(
+        item["guidance"]["action"]["op"],
+        "delivery.integration.inspect"
+    );
+    // Confirmed: finalization is the next step again.
+    let fact = f
+        .ingest_record("applied", f.observation(&id, IntegrationOutcome::Applied))
+        .await;
+    f.store
+        .confirm_integration(
+            TENANT,
+            PROJECT,
+            WORKER,
+            f.confirm_request("confirm-applied", &id, &fact),
+        )
+        .await
+        .unwrap();
+    let item = inbox_item(&f, SUPERVISOR).await;
+    assert_eq!(item["guidance"]["code"], "finalization");
+    assert_eq!(item["guidance"]["action"]["op"], "review.inspect");
 }
 
 #[tokio::test]

@@ -8,8 +8,15 @@
 //! implement and refine their items twice before any review decision, an independent reviewer
 //! decides (and returns one item once), the manager delivers the first item, the second item's
 //! stale base is rejected by the repository connector, its author rebuilds on the new target and
-//! the follow-up is delivered. Afterwards the finalized items accept no follow-up work. Two
-//! shorter tests show the cost of a wrong order: delivering the first version closes the item
+//! the follow-up is delivered. Afterwards the finalized items accept no follow-up work.
+//!
+//! An item that delivers into the repository is complete only after the integration of its
+//! selected candidate is confirmed. Until then `delivery.finalize` and `work.complete` are both
+//! refused, and the refusal names the missing step: nothing prepared, prepared, dispatched,
+//! refused by the repository (the target changed or not). The confirmed integration of an earlier
+//! version does not count. An item without a repository delivery channel completes without one.
+//!
+//! Further tests show the cost of a wrong order: delivering the first version closes the item
 //! to refinement, and a refinement after an approval withdraws that approval.
 //!
 //! This pins the service state machine and the order of commands. It does not pin what a model
@@ -129,6 +136,14 @@ const PAGE: Work = Work {
     workspace: "workspace-page",
     connector: "repository-page",
 };
+/// A work with no repository delivery channel: its deliverable is a reviewed report.
+const NOTES: Work = Work {
+    id: "issue-notes",
+    path: "docs/notes.md",
+    scope: "docs",
+    workspace: "workspace-notes",
+    connector: "",
+};
 
 fn sha(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
@@ -186,7 +201,7 @@ fn contract(work: Work, delivery: bool) -> WorkContract {
         required_dependencies: vec![],
         completion_policy: if delivery { POLICY } else { "review" }.into(),
         verification_requirements: vec![
-            if delivery {
+            if delivery && !work.connector.is_empty() {
                 "local_git.manifest"
             } else {
                 "report"
@@ -206,7 +221,8 @@ fn read_set(prepared: &Value) -> DeliveryReadSet {
 }
 
 impl Team {
-    /// Project, members, activated source with two works, connectors and a synthetic repository.
+    /// Project, members, activated source with three works (two deliver into the repository),
+    /// connectors for those two and a synthetic repository.
     #[expect(
         clippy::await_holding_lock,
         reason = "The guard serializes the shared PostgreSQL fixture for the whole scenario."
@@ -267,7 +283,7 @@ impl Team {
                     acceptance_contracts: vec![],
                 }],
             },
-            contracts: [API, PAGE]
+            contracts: [API, PAGE, NOTES]
                 .into_iter()
                 .map(|work| WorkstreamContract {
                     workstream_id: Id::from(1),
@@ -315,7 +331,7 @@ impl Team {
             .await
             .unwrap();
         // The bootstrap codec carries no settlement fields; install the delivery contracts.
-        for work in [API, PAGE] {
+        for work in [API, PAGE, NOTES] {
             let delivery = contract(work, true);
             admin
                 .execute(
@@ -656,47 +672,15 @@ impl Team {
         let input = sha(&format!("{}-input-{number}", work.id));
         let output = sha(content);
         let claim = self.claim_header(work);
-        let args = self
-            .with_session(
+        let execution = self
+            .settled_execution(
                 author,
                 work,
-                json!({"claim_id":claim["claim_id"],"expected_fence":claim["expected_fence"],
-                    "expected_lease_version":claim["expected_lease_version"],
-                    "expected_work_version":prepared["data"]["runtime"]["work_version"],
-                    "input_digest":input,"declared_scope":[work.scope]}),
+                &input,
+                &output,
+                &format!("version {number} is built and tested"),
             )
             .await;
-        let execution = self.run(author, work, "execution.prepare", args).await;
-        let prepared = prepare(&self.reads, author.token, work.id).await;
-        let args = self
-            .with_session(
-                author,
-                work,
-                json!({"execution_id":execution["execution_id"],
-                    "expected_execution_version":execution["execution_version"],
-                    "claim_id":claim["claim_id"],"expected_fence":claim["expected_fence"],
-                    "expected_lease_version":claim["expected_lease_version"],
-                    "expected_work_version":prepared["data"]["runtime"]["work_version"],
-                    "execution_mode":"caller_managed"}),
-            )
-            .await;
-        let started = self.run(author, work, "execution.start", args).await;
-        let args = self
-            .with_session(
-                author,
-                work,
-                json!({"execution_id":execution["execution_id"],
-                    "expected_execution_version":started["execution_version"],
-                    "outcome":"succeeded","output_digest":output,
-                    "observed_paths":[work.path],"note":format!("version {number} is built and tested"),
-                    "workspace_settlement":{"workspace_id":work.workspace,"input_digest":input,
-                        "environment_digest":"c".repeat(64),"claim_id":claim["claim_id"],
-                        "expected_fence":claim["expected_fence"],
-                        "expected_lease_version":claim["expected_lease_version"],
-                        "executor_stopped":true,"no_external_effects":true}}),
-            )
-            .await;
-        self.run(author, work, "execution.report", args).await;
         let previous = self
             .admin
             .query_opt(
@@ -742,6 +726,93 @@ impl Team {
             source,
             digest,
             selection: selected["selection_version"].as_str().unwrap().into(),
+            evidence_id: evidence["evidence_id"].as_str().unwrap().into(),
+            round_id: round["round_id"].as_str().unwrap().into(),
+        }
+    }
+
+    /// Prepare, start and report one caller-managed execution in the work's own workspace.
+    async fn settled_execution(
+        &mut self,
+        author: Member,
+        work: Work,
+        input: &str,
+        output: &str,
+        note: &str,
+    ) -> Value {
+        let prepared = prepare(&self.reads, author.token, work.id).await;
+        let claim = self.claim_header(work);
+        let args = self
+            .with_session(
+                author,
+                work,
+                json!({"claim_id":claim["claim_id"],"expected_fence":claim["expected_fence"],
+                    "expected_lease_version":claim["expected_lease_version"],
+                    "expected_work_version":prepared["data"]["runtime"]["work_version"],
+                    "input_digest":input,"declared_scope":[work.scope]}),
+            )
+            .await;
+        let execution = self.run(author, work, "execution.prepare", args).await;
+        let prepared = prepare(&self.reads, author.token, work.id).await;
+        let args = self
+            .with_session(
+                author,
+                work,
+                json!({"execution_id":execution["execution_id"],
+                    "expected_execution_version":execution["execution_version"],
+                    "claim_id":claim["claim_id"],"expected_fence":claim["expected_fence"],
+                    "expected_lease_version":claim["expected_lease_version"],
+                    "expected_work_version":prepared["data"]["runtime"]["work_version"],
+                    "execution_mode":"caller_managed"}),
+            )
+            .await;
+        let started = self.run(author, work, "execution.start", args).await;
+        let args = self
+            .with_session(
+                author,
+                work,
+                json!({"execution_id":execution["execution_id"],
+                    "expected_execution_version":started["execution_version"],
+                    "outcome":"succeeded","output_digest":output,
+                    "observed_paths":[work.path],"note":note,
+                    "workspace_settlement":{"workspace_id":work.workspace,"input_digest":input,
+                        "environment_digest":"c".repeat(64),"claim_id":claim["claim_id"],
+                        "expected_fence":claim["expected_fence"],
+                        "expected_lease_version":claim["expected_lease_version"],
+                        "executor_stopped":true,"no_external_effects":true}}),
+            )
+            .await;
+        self.run(author, work, "execution.report", args).await;
+        execution
+    }
+
+    /// One author cycle for a work without a repository delivery channel: settle a run, submit
+    /// the report as evidence and open a review round for it. No candidate is selected.
+    async fn report(&mut self, author: Member, work: Work, text: &str) -> Version {
+        let input = sha(&format!("{}-input", work.id));
+        let output = sha(text);
+        let execution = self
+            .settled_execution(author, work, &input, &output, "the report is written")
+            .await;
+        let args = self
+            .with_session(
+                author,
+                work,
+                json!({"artifact_text":text,"input_digest":input,
+                    "execution_id":execution["execution_id"],"dirty_tree":false,
+                    "payload":{"passed":true,"output_digest":output}}),
+            )
+            .await;
+        let evidence = self.run(author, work, "evidence.submit", args).await;
+        let args = self
+            .with_session(author, work, json!({"evidence_id":evidence["evidence_id"]}))
+            .await;
+        let round = self.run(author, work, "review.open", args).await;
+        Version {
+            number: 1,
+            source: String::new(),
+            digest: String::new(),
+            selection: String::new(),
             evidence_id: evidence["evidence_id"].as_str().unwrap().into(),
             round_id: round["round_id"].as_str().unwrap().into(),
         }
@@ -959,6 +1030,18 @@ impl Team {
         let id = prepared["integration_id"].as_str().unwrap().to_owned();
         let snapshot = self.dispatch(work, &id).await;
         (id, snapshot)
+    }
+
+    /// `delivery.finalize` or `work.complete` of one version by the manager; refusals are returned.
+    async fn try_complete(&mut self, op: &str, work: Work, version: &Version) -> PgResult<Value> {
+        let args = self
+            .with_session(
+                MANAGER,
+                work,
+                json!({"evidence_id":version.evidence_id,"context_complete":true}),
+            )
+            .await;
+        self.try_run(MANAGER, work, op, args).await
     }
 
     async fn finalize(&mut self, work: Work, version: &Version) -> Value {
@@ -1198,10 +1281,61 @@ async fn review(team: &mut Team, order: &mut Order) -> (String, String) {
     )
 }
 
-/// The manager integrates the API item with a fast-forward and finalizes it.
+/// Neither completion operation accepts the version, because its integration is not confirmed.
+/// The refusal names the missing step and the next action, and nothing is recorded.
+async fn assert_cannot_complete(team: &mut Team, work: Work, version: &Version, reason: &str) {
+    for op in ["delivery.finalize", "work.complete"] {
+        let Err(error) = team.try_complete(op, work, version).await else {
+            panic!("{op} of {} was accepted, expected {reason}", work.id);
+        };
+        let PgError::IntegrationNotConfirmed { reason: given } = &error else {
+            panic!("{op} of {}: expected {reason}, got {error:?}", work.id);
+        };
+        assert_eq!(*given, reason, "{op} of {}", work.id);
+        let advice = error
+            .integration_not_confirmed_diagnostic()
+            .expect("a refusal for a closed reason carries guidance");
+        assert!(
+            advice["action_guidance"]["next_action"]
+                .as_str()
+                .is_some_and(|action| !action.is_empty()),
+            "{advice}"
+        );
+        assert_ne!(
+            team.runtime_state(work).await,
+            "completed",
+            "{op} completed {}",
+            work.id
+        );
+    }
+    let receipts: i64 = team
+        .admin
+        .query_one(
+            "SELECT count(*) FROM awr_team.completion_receipts WHERE work_id=$1",
+            &[&work.id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        receipts, 0,
+        "a refused completion leaves no receipt for {}",
+        work.id
+    );
+}
+
+/// The manager integrates the API item with a fast-forward and finalizes it. Until the
+/// integration is confirmed the service refuses to complete the item at every step.
 async fn deliver_api(team: &mut Team, order: &Order, decision: &str) {
     let api = order.api.last().unwrap();
-    let (id, snapshot) = team.deliver(API, api, decision).await;
+    assert_cannot_complete(team, API, api, "integration_not_prepared").await;
+    let prepared = team
+        .prepare_integration(MANAGER, API, api, decision)
+        .await
+        .unwrap_or_else(|error| panic!("integration of {} was refused: {error:?}", API.id));
+    let id = prepared["integration_id"].as_str().unwrap().to_owned();
+    assert_cannot_complete(team, API, api, "integration_prepared").await;
+    let snapshot = team.dispatch(API, &id).await;
     assert_eq!(snapshot.report.outcome, IntegrationOutcome::Applied);
     assert_eq!(
         snapshot.report.content_witness,
@@ -1212,6 +1346,8 @@ async fn deliver_api(team: &mut Team, order: &Order, decision: &str) {
         api.source,
         "main fast-forwards to the approved candidate"
     );
+    // The repository applied it, but the service has not recorded the outcome yet.
+    assert_cannot_complete(team, API, api, "integration_dispatched").await;
     let confirmed = team.confirm(API, &id).await;
     assert_eq!(confirmed["integration"]["data"]["state"], "confirmed");
     let completed = team.finalize(API, api).await;
@@ -1258,9 +1394,9 @@ async fn page_on_the_old_target(team: &mut Team, order: &Order, decision: &str, 
         "{}",
         rejected["guidance"]
     );
-    // The page is not finalized here: the guidance tells the deliverer not to finalize a
-    // rejected version, and the service would not stop them.
-    assert_ne!(team.runtime_state(PAGE).await, "completed");
+    // The service does not complete a version whose integration the repository refused, and it
+    // says that the target changed.
+    assert_cannot_complete(team, PAGE, stale, "integration_target_changed").await;
 }
 
 /// A republication that declares the new target but was not rebuilt on it passes review,
@@ -1287,6 +1423,7 @@ async fn page_declaring_the_new_target(team: &mut Team, new_target: &str) -> Ver
     );
     assert_eq!(team.main_revision(), new_target);
     team.confirm(PAGE, &id).await;
+    assert_cannot_complete(team, PAGE, &declared, "integration_rejected").await;
     declared
 }
 
@@ -1310,6 +1447,7 @@ async fn page_rebuilt_on_the_new_target(team: &mut Team, new_target: &str) -> Ve
         API_VERSIONS[2].trim_end(),
         "the page lands on top of the delivered api"
     );
+    assert_cannot_complete(team, PAGE, &rebuilt, "integration_dispatched").await;
     team.confirm(PAGE, &id).await;
     team.finalize(PAGE, &rebuilt).await;
     assert_eq!(team.runtime_state(PAGE).await, "completed");
@@ -1510,5 +1648,142 @@ fn a_refinement_after_approval_withdraws_the_approval() {
             PgError::ReviewRequired,
             "finalizing the superseded version"
         );
+    });
+}
+
+/// An integration belongs to the version it was prepared for: the confirmed integration of an
+/// earlier version does not let a later version complete.
+#[test]
+fn the_confirmed_integration_of_an_earlier_version_does_not_complete_the_next_version() {
+    on_large_stack(|| async {
+        let mut team = Team::start().await;
+        arrange(&mut team).await;
+        let base = team.repo.base.clone();
+        let first = team.implement(LIN, API, 1, API_VERSIONS[0], &base).await;
+        team.observe(API).await;
+        let approved = team
+            .decide(CHEN, API, &first.round_id, "approve")
+            .await
+            .unwrap();
+        let (id, snapshot) = team
+            .deliver(API, &first, approved["decision_id"].as_str().unwrap())
+            .await;
+        assert_eq!(snapshot.report.outcome, IntegrationOutcome::Applied);
+        team.confirm(API, &id).await;
+        // The author refines the delivered version on top of the new target.
+        let target = team.main_revision();
+        let second = team.implement(LIN, API, 2, API_VERSIONS[1], &target).await;
+        team.observe(API).await;
+        let approved = team
+            .decide(CHEN, API, &second.round_id, "approve")
+            .await
+            .unwrap();
+        assert_cannot_complete(&mut team, API, &second, "integration_not_prepared").await;
+        let (id, snapshot) = team
+            .deliver(API, &second, approved["decision_id"].as_str().unwrap())
+            .await;
+        assert_eq!(snapshot.report.outcome, IntegrationOutcome::Applied);
+        team.confirm(API, &id).await;
+        let completed = team.finalize(API, &second).await;
+        assert_eq!(completed["task_complete"], true);
+        assert_eq!(team.runtime_state(API).await, "completed");
+    });
+}
+
+/// Refreshing the binding of an item that is already integrated is not a dead end. Selecting the
+/// same candidate again makes a new selection, so its earlier integration no longer counts; the
+/// manager prepares one more integration, the repository reports the change as already applied,
+/// and the item completes.
+#[test]
+fn selecting_an_integrated_candidate_again_needs_one_more_integration_that_the_repository_accepts()
+{
+    on_large_stack(|| async {
+        let mut team = Team::start().await;
+        arrange(&mut team).await;
+        let base = team.repo.base.clone();
+        let first = team.implement(LIN, API, 1, API_VERSIONS[0], &base).await;
+        team.observe(API).await;
+        let approved = team
+            .decide(CHEN, API, &first.round_id, "approve")
+            .await
+            .unwrap();
+        let decision = approved["decision_id"].as_str().unwrap().to_owned();
+        let (id, snapshot) = team.deliver(API, &first, &decision).await;
+        assert_eq!(snapshot.report.outcome, IntegrationOutcome::Applied);
+        team.confirm(API, &id).await;
+        let landed = team.main_revision();
+        // The author selects the identical candidate again, as guidance for a changed binding says.
+        let candidate: Value = team
+            .admin
+            .query_one(
+                "SELECT body_json FROM awr_team.delivery_candidates WHERE binding_digest=$1",
+                &[&first.digest],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        let prepared = prepare(&team.reads, LIN.token, API.id).await;
+        let session = team.session(LIN, API).await;
+        let claim = team.claim_header(API);
+        let selected = team
+            .run(
+                LIN,
+                API,
+                "delivery.candidate.select",
+                json!({"source_snapshot_id":prepared["source_snapshot_id"],
+                    "session_id":session["session_id"],
+                    "claim_id":claim["claim_id"],"fence":claim["expected_fence"],
+                    "lease_version":claim["expected_lease_version"],
+                    "expected_selected_digest":first.digest,"candidate":candidate}),
+            )
+            .await;
+        assert_eq!(selected["selection_version"], "2");
+        assert_cannot_complete(&mut team, API, &first, "integration_not_prepared").await;
+        // One more integration of the same candidate: the target already holds it.
+        team.observe(API).await;
+        let again = Version {
+            selection: "2".into(),
+            ..first.clone()
+        };
+        let (id, snapshot) = team.deliver(API, &again, &decision).await;
+        assert_eq!(snapshot.report.outcome, IntegrationOutcome::Applied);
+        assert_eq!(team.main_revision(), landed, "the target is left as it was");
+        team.confirm(API, &id).await;
+        let completed = team.finalize(API, &again).await;
+        assert_eq!(completed["task_complete"], true);
+        assert_eq!(team.runtime_state(API).await, "completed");
+    });
+}
+
+/// A work with no repository delivery channel has nothing to integrate: once its report is
+/// reviewed and approved, the manager finalizes it.
+#[test]
+fn a_work_without_repository_delivery_finalizes_without_an_integration() {
+    on_large_stack(|| async {
+        let mut team = Team::start().await;
+        let assign = json!({"assignee_person_id":"lin","expected_responsibility_version":"0"});
+        team.run(MANAGER, NOTES, "task.assign", assign).await;
+        team.take(LIN, NOTES, true).await.unwrap();
+        let report = team
+            .report(LIN, NOTES, "release notes for the filter work\n")
+            .await;
+        let approved = team
+            .decide(CHEN, NOTES, &report.round_id, "approve")
+            .await
+            .unwrap();
+        assert_eq!(approved["state"], "approved");
+        let completed = team.finalize(NOTES, &report).await;
+        assert_eq!(completed["task_complete"], true);
+        assert_eq!(team.runtime_state(NOTES).await, "completed");
+        let integrations: i64 = team
+            .admin
+            .query_one(
+                "SELECT count(*) FROM awr_team.delivery_integration_intents WHERE work_id=$1",
+                &[&NOTES.id],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(integrations, 0, "no integration was ever prepared for it");
     });
 }

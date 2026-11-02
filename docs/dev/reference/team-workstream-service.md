@@ -683,7 +683,7 @@ projects; do not route enabled traffic through them.
 | `review.open` | Open a review round bound to exact `contract_hash`, artifact digest, execution result digest and round index. |
 | `review.accept` / `review.return` | Human reviewer decision. Independence is by responsible **person**, not by a second agent of the same person. Personal self-review is allowed only when `completion_policy` is `trusted_execution_and_author_self_review`, and is labeled `personal_self_review` — never `team_independent`. |
 | `work.rework` | Acknowledge a returned/rejected round. History is retained. |
-| `work.complete` | Atomically validate runtime state, evidence↔execution binding, selected completion receipt and actual approver person. Distinguishes execution success, author self-report, human approval and task completion. |
+| `work.complete` | Atomically validate runtime state, evidence↔execution binding, selected completion receipt and actual approver person. Distinguishes execution success, author self-report, human approval and task completion. When a delivery candidate is selected, the integration of that candidate must be confirmed for the current selection first (`IntegrationNotConfirmed` otherwise, with a `reason` naming the missing step). |
 
 Queries: `evidence.inspect`, `review.inspect`, `completion.inspect`.
 

@@ -93,6 +93,11 @@ pub enum PgError {
     AuthorCannotReview,
     #[error("completion rejected")]
     CompletionRejected,
+    /// A work that delivers a selected candidate into a repository is complete only after the
+    /// integration of that candidate was confirmed for its current binding. `reason` is one of
+    /// the closed `integration_*` labels of [`PgError::integration_not_confirmed_diagnostic`].
+    #[error("integration not confirmed ({reason})")]
+    IntegrationNotConfirmed { reason: &'static str },
     #[error("policy downgrade")]
     PolicyDowngrade,
     /// Governed work needs a current admission decision. `code` is one of the closed `admission_*`
@@ -534,6 +539,58 @@ impl PgError {
                 "basis":basis,
                 "next_action":next_action,
                 "recheck":"After the stated correction. Candidate, contract, selection, artifact and authority checks still apply; this advice does not authorize execution or command replay."
+            }
+        }))
+    }
+
+    /// Bounded refusal shared by HTTP and MCP when completion needs a confirmed integration. It
+    /// names the missing step and the next action; the reason is a closed label, so no caller
+    /// value is ever echoed.
+    pub fn integration_not_confirmed_diagnostic(&self) -> Option<serde_json::Value> {
+        let Self::IntegrationNotConfirmed { reason } = self else {
+            return None;
+        };
+        let (condition, next_action) = match *reason {
+            "integration_not_prepared" => (
+                "The selected candidate has no repository integration for its current selection.",
+                "Prepare it with delivery.integration.prepare, using the candidate_digest and selection_version from delivery.neutral.inspect and the evidence, review round and approving decision from review.inspect. Wait until delivery.integration.inspect shows it confirmed, then finalize again. Integrations of earlier versions and of earlier selections do not count. If preparing is refused because the selection changed (for example after an unrelated source activation), the author selects the same candidate again with delivery.candidate.select, then prepare.",
+            ),
+            "integration_prepared" => (
+                "An integration of the selected candidate is prepared, but the repository change has not been made.",
+                "Wait for the configured integrator to make and confirm the change, and follow it with delivery.integration.inspect. Finalize again only when it shows confirmed. delivery.integration.reject_prepared withdraws it before it is dispatched.",
+            ),
+            "integration_dispatched" => (
+                "The repository change was dispatched, but its outcome is not recorded yet.",
+                "Wait for the original attempt to be reconciled and follow it with delivery.integration.inspect. Do not dispatch again. Finalize again only when it shows confirmed.",
+            ),
+            "integration_unknown" => (
+                "The outcome of the repository change is unknown.",
+                "Do not retry and do not finalize. The integrator resolves the original attempt by query; follow it with delivery.integration.inspect and finalize again only when it shows confirmed.",
+            ),
+            "integration_rejected" => (
+                "The integration of the selected candidate was rejected: refused by the repository or withdrawn before dispatch.",
+                "Inspect the recorded reason with delivery.integration.inspect and resolve it with the responsible member. Prepare a new integration once it is resolved, or change the candidate and obtain a fresh independent review. Do not finalize the rejected version.",
+            ),
+            "integration_target_changed" => (
+                "The repository target changed after the candidate was built, so its integration was refused.",
+                "The responsible developer rebuilds on the current target in a new admitted execution, publishes a new candidate with its actual target precondition and obtains a fresh independent review. Then prepare that candidate's integration, wait until it is confirmed and finalize. Do not finalize the rejected version.",
+            ),
+            "integration_confirmation_not_current" => (
+                "The integration was confirmed, but that confirmation is no longer current for the selected candidate.",
+                "Inspect it with delivery.integration.inspect: a historical confirmation cannot complete the work. Prepare a new integration of the current candidate and wait until it is confirmed.",
+            ),
+            _ => return None,
+        };
+        Some(serde_json::json!({
+            "code":"IntegrationNotConfirmed",
+            "reason":reason,
+            "message":"this work delivers a selected candidate into a repository, and the integration of that candidate is not confirmed",
+            "next_step":next_action,
+            "action_guidance":{
+                "condition":condition,
+                "basis":"A work that delivers a selected candidate is complete only after the integration of that candidate was confirmed for the current selection. A review approval or a prepared integration is not a confirmation.",
+                "next_action":next_action,
+                "recheck":"After the integration is confirmed (delivery.integration.inspect shows state confirmed with current_binding true) or the candidate changes. Review, evidence and authority checks still apply; this advice does not authorize execution or command replay."
             }
         }))
     }

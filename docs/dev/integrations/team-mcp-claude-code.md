@@ -190,8 +190,10 @@ Retained history keeps failed/rejected rounds.
 ### 7. Complete
 
 Eligible independent person: `review.accept` / `review.decide`. Maintainer:
-`delivery.finalize` / `work.complete`. Agents of the same person are not
-team-independent reviewers.
+`delivery.finalize` / `work.complete`, after the integration of the selected
+candidate is confirmed (otherwise `IntegrationNotConfirmed` names the missing
+step; see [delivery integration](delivery-integration.md#finalize-only-after-the-integration-is-confirmed)).
+Agents of the same person are not team-independent reviewers.
 
 ## Host adapter note
 

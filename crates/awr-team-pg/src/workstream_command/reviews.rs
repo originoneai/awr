@@ -2001,6 +2001,26 @@ async fn complete(
         },
     )
     .await?;
+    // A work that delivers a selected candidate into a repository is complete only after the
+    // integration of that candidate was confirmed for the current binding.
+    if delivery_candidate_digest.is_some()
+        && crate::DeliverySyncStore::delivers_into_repository_in_tx(
+            tx,
+            tenant,
+            project,
+            &command.work_id,
+            policy,
+        )
+        .await?
+    {
+        crate::DeliverySyncStore::require_confirmed_integration_in_tx(
+            tx,
+            tenant,
+            project,
+            &command.work_id,
+        )
+        .await?;
+    }
     let team_independent_acceptance = independence_kind == "team_independent";
     let approval_basis = crate::review::approval_basis(&independence_kind);
     let execution_basis = if agent_policy {
