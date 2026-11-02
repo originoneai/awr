@@ -13,7 +13,7 @@ export function findForbiddenVisibleText(text: string): VisibleTextViolation[] {
 }
 
 /** The patterns that are shapes of identifiers; a reporter's own words are scanned for these and nothing else. */
-const IDENTIFIER_PATTERN_IDS: ReadonlySet<string> = new Set(['snake_case', 'operation_name', 'long_hex', 'ulid', 'uuid', 'sha256', 'error_class']);
+export const IDENTIFIER_PATTERN_IDS: ReadonlySet<string> = new Set(['snake_case', 'operation_name', 'long_hex', 'ulid', 'uuid', 'sha256', 'error_class']);
 
 export function findIdentifierText(text: string): VisibleTextViolation[] {
   return findForbiddenVisibleText(text).filter((violation) => IDENTIFIER_PATTERN_IDS.has(violation.id));

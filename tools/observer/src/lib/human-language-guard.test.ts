@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { defaultVisibleText, findForbiddenVisibleText, findHumanLanguageViolations, findIdentifierText, visibleTextParts } from './human-language-guard';
+import { FORBIDDEN_VISIBLE_PATTERNS } from '../i18n/human-language';
+import { defaultVisibleText, findForbiddenVisibleText, findHumanLanguageViolations, findIdentifierText, IDENTIFIER_PATTERN_IDS, visibleTextParts } from './human-language-guard';
 
 function page(html: string): HTMLElement {
   const root = document.createElement('div');
@@ -64,6 +65,12 @@ describe('findIdentifierText', () => {
     ['an error class', 'failed with ReadTimeoutError', ['error_class']],
   ])('finds %s', (_name, text, ids) => {
     expect(findIdentifierText(text).map((violation) => violation.id)).toEqual(ids);
+  });
+
+  it('knows, for every forbidden pattern, whether it is an identifier shape or a word list, so a new pattern cannot be silently exempt in a reporter\'s words', () => {
+    const wordLists = FORBIDDEN_VISIBLE_PATTERNS.map((entry) => entry.id).filter((id) => !IDENTIFIER_PATTERN_IDS.has(id));
+    expect(wordLists.sort()).toEqual(['engineering_copy', 'engineering_word', 'not_measured']);
+    expect([...IDENTIFIER_PATTERN_IDS].every((id) => FORBIDDEN_VISIBLE_PATTERNS.some((entry) => entry.id === id))).toBe(true);
   });
 
   it('does not look for engineering or process words', () => {

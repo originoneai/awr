@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { act } from '@testing-library/react';
+import { act, waitFor } from '@testing-library/react';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import BASELINE from './test-fixtures/human-language-baseline.json';
@@ -210,7 +210,7 @@ describe('the real-shaped pages show a reporter as written, with long identifier
     await act(async () => { await i18n.changeLanguage('en-US'); });
     installRealShapeMock('data', MOMENTS[page] ?? 'in-review');
     renderApp(PAGES[page]);
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)); });
-    expect(visibleTextParts(document.body).reporter.split('\n').sort()).toEqual([...REPORTER_SENTENCES[page]].sort());
+    // the page answers a few queries one after another: wait for its sentences rather than for a fixed time
+    await waitFor(() => expect(visibleTextParts(document.body).reporter.split('\n').sort()).toEqual([...REPORTER_SENTENCES[page]].sort()));
   });
 });
