@@ -559,15 +559,18 @@ function createTeamBridge(opts) {
   const OVERVIEW_CACHE_TTL_MS = 60000;
   const overviewCache = new Map();
 
+  function overviewEntryExpired(entry) {
+    return now() - entry.readAt >= OVERVIEW_CACHE_TTL_MS || now() < entry.readAt
+      || (entry.expiresAtMs != null && entry.expiresAtMs <= now());
+  }
+
   function cachedOverviewValue(req, kind, project) {
     const sessionId = parseTeamCookie(req);
     if (!sessionId) return null;
     const key = `${sessionId}:${kind}:${project}`;
     const entry = overviewCache.get(key);
     if (!entry) return null;
-    const expired = now() - entry.readAt >= OVERVIEW_CACHE_TTL_MS || now() < entry.readAt
-      || (entry.expiresAtMs != null && entry.expiresAtMs <= now());
-    if (expired) {
+    if (overviewEntryExpired(entry)) {
       overviewCache.delete(key);
       return null;
     }
@@ -577,6 +580,10 @@ function createTeamBridge(opts) {
   function storeOverviewValue(req, kind, project, value, expiresAtMs = null) {
     const sessionId = parseTeamCookie(req);
     if (!sessionId) return;
+    // Sweep on every write so sessions that never return cannot accumulate.
+    for (const [key, entry] of overviewCache.entries()) {
+      if (overviewEntryExpired(entry)) overviewCache.delete(key);
+    }
     overviewCache.set(`${sessionId}:${kind}:${project}`, {
       value: structuredClone(value), readAt: now(), expiresAtMs,
     });
@@ -1382,6 +1389,7 @@ function createTeamBridge(opts) {
   return {
     TEAM,
     routes,
+    cacheSize: () => overviewCache.size,
     readFixture,
     teamAuth,
     rewriteOwnedCookiePath,

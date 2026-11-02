@@ -73,7 +73,7 @@ function startLiveBridge(teamUrl, opts = {}) {
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address();
-      resolve({ base: `http://127.0.0.1:${port}`, close: () => new Promise((r) => server.close(r)) });
+      resolve({ base: `http://127.0.0.1:${port}`, cacheSize: bridge.cacheSize, close: () => new Promise((r) => server.close(r)) });
     });
   });
 }
@@ -1489,6 +1489,26 @@ test('cached list and identity reads cannot bypass the composition deadline', as
     assert.equal(timedOut.json.ok, false);
     assert.equal(timedOut.json.error.code, 'ReadTimeout');
     assert.equal(timedOut.json.works, undefined);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('storing a session sweeps expired entries from other sessions', async () => {
+  const calls = [];
+  let fakeNow = 1_000_000;
+  const upstream = await overviewUpstream(overviewCachePages(calls));
+  const bridge = await startLiveBridge(upstream.base, { now: () => fakeNow });
+  try {
+    const first = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie: 'awr_web_session=ws_obs2' });
+    assert.equal(first.json.ok, true);
+    assert.equal(bridge.cacheSize(), 2);
+    fakeNow += 60001;
+    const second = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie: 'awr_web_session=ws_other' });
+    assert.equal(second.json.ok, true);
+    // Only the new session's workstreams and capabilities remain live.
+    assert.equal(bridge.cacheSize(), 2);
   } finally {
     await bridge.close();
     await upstream.close();
