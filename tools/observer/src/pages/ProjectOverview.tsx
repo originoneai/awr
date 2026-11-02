@@ -3,7 +3,6 @@ import {
   Alert,
   Card,
   Col,
-  Descriptions,
   Empty,
   Flex,
   Pagination,
@@ -24,6 +23,7 @@ import { WorkProgress, useWorkState } from '../components/WorkProgress';
 import { groupWorks, rawObservationText } from '../core/observation';
 import { RecentChanges } from '../components/RecentChanges';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
+import { TechnicalDetails } from '../components/TechnicalDetails';
 import { pageTechnicalItems } from '../lib/activity-technical';
 import { isAuthError } from '../lib/api';
 import { freshnessWord } from '../lib/freshness';
@@ -100,6 +100,9 @@ function Coverage({ data }: { data: TeamOverviewResponse }) {
     || coverage.scope.truncated
     || coverage.streams.some((stream) => stream.truncated)
     || cursors.length > 0;
+  const enumerated = coverage.works_enumerated;
+  const total = coverage.works_total;
+  const names = groupWorks(data.works, data.workstreams).titles;
 
   return (
     <Card size="small" data-testid="project-coverage">
@@ -108,59 +111,21 @@ function Coverage({ data }: { data: TeamOverviewResponse }) {
           {t('projectOverview.coverage.title')}
         </Typography.Title>
         <FreshnessBadge freshness={data.freshness} />
-        <Descriptions
-          bordered
-          size="small"
-          column={{ xs: 1, sm: 2, lg: 4 }}
-          items={[
-            {
-              key: 'scope',
-              label: t('projectOverview.coverage.scope'),
-              children: <Tag>{t(`coverage.scope.${coverage.scope.status}`)}</Tag>,
-            },
-            {
-              key: 'enumerated',
-              label: t('projectOverview.coverage.enumerated'),
-              children: <span data-testid="coverage-enumerated">{coverage.scope.enumerated ?? coverage.works_enumerated}</span>,
-            },
-            {
-              key: 'succeeded',
-              label: t('projectOverview.coverage.succeeded'),
-              children: coverage.succeeded,
-            },
-            {
-              key: 'failed',
-              label: t('projectOverview.coverage.failed'),
-              children: coverage.failed,
-            },
-            {
-              key: 'truncated',
-              label: t('projectOverview.coverage.truncated'),
-              children: t(coverage.truncated ? 'projectOverview.coverage.yes' : 'projectOverview.coverage.no'),
-            },
-            {
-              key: 'cursor',
-              label: t('projectOverview.coverage.nextCursor'),
-              children: rawObservationText(coverage.scope.next_cursor).text ?? '—',
-            },
-            {
-              key: 'works-enumerated',
-              label: t('projectOverview.coverage.worksEnumerated'),
-              children: coverage.works_enumerated,
-            },
-            {
-              key: 'works-total',
-              label: t('projectOverview.coverage.worksTotal'),
-              children: <span data-testid="coverage-works-total">{coverage.works_total ?? t('coverage.totalUnknown')}</span>,
-            },
-          ]}
-        />
+        <Typography.Text data-testid="coverage-summary">
+          {total == null
+            ? t('projectOverview.coverage.readUnknownTotal', { enumerated })
+            : t('projectOverview.coverage.readOfTotal', { enumerated, total })}
+        </Typography.Text>
+        {failedStreams.length > 0 ? (
+          <Typography.Text type="warning" data-testid="coverage-failed-summary">
+            {t('projectOverview.coverage.failedSummary', { count: failedStreams.length })}
+          </Typography.Text>
+        ) : null}
         {failedStreams.map((stream) => (
           <div key={stream.workstream_id} data-testid={`coverage-stream-${stream.workstream_id}`}>
             <Space wrap>
-              <Typography.Text strong>{stream.workstream_id}</Typography.Text>
+              <Typography.Text strong>{(stream.workstream_id ? names[stream.workstream_id] : undefined) ?? t('projectOverview.coverage.someWorkstream')}</Typography.Text>
               <Tag color="error">{t('coverage.scope.failed')}</Tag>
-              {stream.error_code ? <Typography.Text code>{stream.error_code}</Typography.Text> : null}
               <Typography.Text type="secondary">
                 {stream.read_at_unix_ms == null
                   ? freshnessWord(t, 'not_measured')
@@ -175,9 +140,21 @@ function Coverage({ data }: { data: TeamOverviewResponse }) {
             showIcon
             data-testid="project-coverage-unread"
             message={t('projectOverview.coverage.unread')}
-            description={cursors.length > 0 ? cursors.join(' · ') : undefined}
           />
         ) : null}
+        <TechnicalDetails
+          items={[
+            { label: 'coverage.scope.status', value: coverage.scope.status },
+            { label: 'coverage.scope.enumerated', value: coverage.scope.enumerated },
+            { label: 'coverage.succeeded', value: coverage.succeeded },
+            { label: 'coverage.failed', value: coverage.failed },
+            { label: 'coverage.truncated', value: coverage.truncated },
+            { label: 'coverage.scope.next_cursor', value: coverage.scope.next_cursor },
+            { label: 'coverage.works_enumerated', value: coverage.works_enumerated },
+            { label: 'coverage.works_total', value: coverage.works_total, testId: 'coverage-works-total' },
+            ...coverage.streams.map((stream) => ({ label: `coverage.streams.${stream.workstream_id}`, value: stream })),
+          ]}
+        />
       </Flex>
     </Card>
   );
