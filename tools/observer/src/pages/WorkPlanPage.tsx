@@ -58,7 +58,7 @@ export function WorkPlanPage({ project }: { project: string }) {
     Math.max(1, Math.ceil(grouped.works.length / PAGE_SIZE)),
   );
   const visibleWorks = grouped.works.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const snapshots = useWorkSnapshots(project, visibleWorks, revoked);
+  const snapshots = useWorkSnapshots(project, visibleWorks, revoked, 'slow');
   const selectedWorkId = searchParams.get('work');
   const selectedWork = (data?.works ?? []).find((work) => work.key === selectedWorkId);
 

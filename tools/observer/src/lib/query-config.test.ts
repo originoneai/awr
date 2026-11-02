@@ -35,6 +35,7 @@ describe('TanStack Query read configuration (observation contract bounds)', () =
     expect(projectsQueryOptions().refetchInterval).toBe(30000);
     expect(workSnapshotQueryOptions('demo', 'W1', 'WS1').refetchInterval).toBe(POLL_INTERVAL_MS);
     expect(workSnapshotQueryOptions('demo', 'W1', 'WS1', false, 'list').refetchInterval).toBe(60000);
+    expect(workSnapshotQueryOptions('demo', 'W1', 'WS1', false, 'slow').refetchInterval).toBe(600000);
     expect(options.refetchOnWindowFocus).toBe(true);
     expect(projectsQueryOptions().refetchOnWindowFocus).toBe(true);
     expect(workSnapshotQueryOptions('demo', 'W1', 'WS1').refetchOnWindowFocus).toBe(true);
