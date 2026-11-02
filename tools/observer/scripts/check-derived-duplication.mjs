@@ -35,15 +35,6 @@ export const RULES = [
     range('src/pages/WorkbenchPage.tsx', '? <Tag color={row.state', '</Tag>', 'work-state', 'function WorkDetail('),
     range('src/pages/WorkbenchPage.tsx', '? <Tag color={row.state', '</Tag>', 'work-state', 'export function WorkbenchPage'),
   ] },
-  { id: 'activity-raw', ranges: [
-    range('src/pages/ActivityPage.tsx', 'description={<span data-testid="activity-unknown-result">', undefined, 'fold-operations'),
-    range('src/pages/ActivityPage.tsx', 'request_retention:', undefined, 'fold-operations'),
-    range('src/pages/ActivityPage.tsx', '{firstPage?.request_retention_capacity', undefined, 'fold-operations'),
-    range('src/pages/ActivityPage.tsx', 'development_source:', undefined, 'fold-operations'),
-    range('src/pages/ActivityPage.tsx', 'chat_text_collected:', undefined, 'fold-operations'),
-    range('src/pages/ActivityPage.tsx', "{' · '}tool_io_collected:", undefined, 'fold-operations'),
-    range('src/pages/ActivityPage.tsx', 'unknown_means:', undefined, 'fold-operations'),
-  ] },
   { id: 'time-wrapper', ranges: [
     range('src/pages/ProjectAcceptance.tsx', 'const timeValue =', 'if (raw == null', 'page-adoption'),
   ] },

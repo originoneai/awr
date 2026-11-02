@@ -1,19 +1,18 @@
 {
-  "total": 115,
+  "total": 93,
   "target": 0,
   "slices": {
-    "fold-operations": 25,
+    "fold-operations": 3,
     "work-state": 60,
     "page-adoption": 30
   },
   "rules": {
-    "raw-scalar": 29,
+    "raw-scalar": 23,
     "last-report": 18,
     "next-guidance": 5,
     "workstream-grouping": 13,
-    "activity-ordering": 12,
+    "activity-ordering": 3,
     "claimed-status": 6,
-    "activity-raw": 7,
     "time-wrapper": 3,
     "knowledge-digest": 17,
     "digest-label": 5

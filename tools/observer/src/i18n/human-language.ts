@@ -34,6 +34,11 @@ export const HUMAN_VOCABULARY = {
     missingActivityTime: '部分记录没有时间，未生成时间分隔',
     activityTimeGap: '相邻记录间隔较长',
     unmappedActivityAction: '未收录的操作已归为其他操作',
+    operatorN: '操作者 {{count}}',
+    operatorSelf: '你',
+    operatorMissing: '未提供操作者',
+    workNone: '无关联工作',
+    workUnnamed: '某项工作',
   },
   'en-US': {
     technicalDetails: 'Technical details',
@@ -69,6 +74,11 @@ export const HUMAN_VOCABULARY = {
     missingActivityTime: 'Some records have no timestamp; no time separator was inferred',
     activityTimeGap: 'A long pause separates these records',
     unmappedActivityAction: 'Unlisted operations are grouped as other operations',
+    operatorN: 'Operator {{count}}',
+    operatorSelf: 'You',
+    operatorMissing: 'Operator not provided',
+    workNone: 'No related work',
+    workUnnamed: 'A work item',
   },
 } as const;
 
