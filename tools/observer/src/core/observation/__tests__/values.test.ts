@@ -11,6 +11,13 @@ describe('rawObservationText', () => {
     expect(rawObservationText(42).technical.raw).toBe('42');
   });
 
+  it('serializes numbers exactly, never rounded or reformatted', () => {
+    for (const [value, text] of [[0, '0'], [0.1, '0.1'], [-3.75, '-3.75'], [1e21, '1e+21'], [Number.MAX_SAFE_INTEGER, '9007199254740991']] as const) {
+      expect(rawObservationText(value).text, String(value)).toBe(text);
+      expect(rawObservationText(value).technical.raw, String(value)).toBe(text);
+    }
+  });
+
   it('does not coerce numeric-looking strings', () => {
     for (const value of ['0042', '1.10', '9007199254740993']) {
       expect(rawObservationText(value).text).toBe(value);
@@ -69,6 +76,13 @@ describe('describeUnknown', () => {
     expect(result.disclosure).not.toContain('completion_not_recorded');
     expect(result.technical).toEqual({ result: 'unknown', means: UNKNOWN_REQUEST.unknown_means });
     expect(findForbiddenVisibleText(`${result.text}${result.disclosure}`)).toEqual([]);
+  });
+
+  it('words the unknown outcome in English with the English status word and the English disclosures', () => {
+    const notRecorded = describeUnknown({ ...UNKNOWN_REQUEST, language: 'en-US' });
+    expect(notRecorded.text).toBe('Unknown');
+    expect(notRecorded.disclosure).toBe('No completion is recorded. Check the original request before retrying');
+    expect(describeUnknown({ result: 'unknown', unknown_means: null, language: 'en-US' }).disclosure).toBe('The outcome is uncertain; no reason was provided');
   });
 
   it('does not warn for a non-unknown real result', () => {

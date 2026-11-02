@@ -99,6 +99,13 @@ export interface WorkLabelResult {
   technical: { raw: string | null };
 }
 
+export type DigestVerdict = 'verified' | 'mismatch' | 'unverified';
+
+/** The part of Web Crypto the digest check needs; the core never reaches for `crypto` itself. */
+export interface DigestSubtle {
+  digest(algorithm: string, data: Uint8Array<ArrayBuffer>): Promise<ArrayBuffer>;
+}
+
 /** A list cut to what a person can take in; `more` says how many entries are not shown. */
 export interface CappedList<T> {
   shown: T[];

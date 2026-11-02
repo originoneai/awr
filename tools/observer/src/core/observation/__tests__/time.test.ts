@@ -16,6 +16,12 @@ describe('absoluteTimeText', () => {
     );
   });
 
+  it('reads the clock in 24 hours for an afternoon time, in both languages', () => {
+    const afternoon = Date.UTC(2026, 10, 2, 17, 5, 9);
+    expect(absoluteTimeText(afternoon, { language: 'en-US', timeZone: 'UTC' }).text).toBe('11/02/2026, 17:05:09');
+    expect(absoluteTimeText(afternoon, { language: 'zh-CN', timeZone: 'UTC' }).text).toBe('2026/11/02 17:05:09');
+  });
+
   it('honors the caller time zone', () => {
     const utc = absoluteTimeText(0, { language: 'en-US', timeZone: 'UTC' }).text;
     const pacific = absoluteTimeText(0, { language: 'en-US', timeZone: 'America/Los_Angeles' }).text;
@@ -47,6 +53,13 @@ describe('ageText', () => {
     const result = ageText(at, { language: 'zh-CN', nowUnixMs: at + 60 * 60 * 1000, timeZone: 'UTC' });
     expect(result.kind).toBe('today');
     expect(result.text).toMatch(/^今天 /);
+  });
+
+  it('says today with the 24-hour time of an afternoon event, in both languages', () => {
+    const afternoon = Date.UTC(2026, 10, 2, 17, 5, 9);
+    const now = Date.UTC(2026, 10, 2, 20, 0, 0);
+    expect(ageText(afternoon, { language: 'zh-CN', nowUnixMs: now, timeZone: 'UTC' }).text).toBe('今天 17:05');
+    expect(ageText(afternoon, { language: 'en-US', nowUnixMs: now, timeZone: 'UTC' }).text).toBe('Today at 17:05');
   });
 
   it('uses the caller time zone for day boundaries', () => {
