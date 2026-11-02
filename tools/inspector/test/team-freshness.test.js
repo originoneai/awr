@@ -1586,14 +1586,20 @@ async function seedOverviewCache(state = {}, now) {
   const upstream = await overviewUpstream(overviewCachePages(calls, state), 'ws_obs2', state);
   const bridge = await startLiveBridge(upstream.base, now ? { now } : {});
   const cookie = 'awr_web_session=ws_obs2';
-  const first = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
-  assert.equal(first.json.ok, true, JSON.stringify(first.json));
-  assert.equal(bridge.cacheSize(), 2);
-  return { calls, state, upstream, bridge, cookie };
+  try {
+    const first = await req(bridge.base, 'GET', '/api/team/overview?project=demo', { cookie });
+    assert.equal(first.json.ok, true, JSON.stringify(first.json));
+    assert.equal(bridge.cacheSize(), 2);
+    return { calls, state, upstream, bridge, cookie };
+  } catch (error) {
+    // A failed seed must not leak both servers before the caller's finally.
+    await Promise.all([bridge.close(), upstream.close()]);
+    throw error;
+  }
 }
 
 for (const action of ['revoke', 'logout']) {
-  test(`${action} empties the cookie session cache immediately`, async () => {
+  test(`${action} empties the cookie session cache immediately`, { timeout: 10000 }, async () => {
     const { upstream, bridge, cookie } = await seedOverviewCache();
     try {
       const path = action === 'revoke' ? '/api/team/session/revoke' : '/api/team/logout';
@@ -1607,7 +1613,7 @@ for (const action of ['revoke', 'logout']) {
   });
 }
 
-test('a failed session refresh empties the cookie session cache', async () => {
+test('a failed session refresh empties the cookie session cache', { timeout: 10000 }, async () => {
   const { state, upstream, bridge, cookie } = await seedOverviewCache();
   try {
     state.failSession = true;
@@ -1621,7 +1627,7 @@ test('a failed session refresh empties the cookie session cache', async () => {
   }
 });
 
-test('a failed capabilities refresh empties the cookie session cache', async () => {
+test('a failed capabilities refresh empties the cookie session cache', { timeout: 10000 }, async () => {
   let fakeNow = 1_000_000;
   const { state, upstream, bridge, cookie } = await seedOverviewCache({}, () => fakeNow);
   try {
