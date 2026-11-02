@@ -89,6 +89,11 @@ const zhCN = {
     identityReadFailed: '身份信息暂时读取不到，请重试',
     identityRetry: '重试',
   },
+  recentChanges: {
+    unknown: '结果未知',
+    more: '更早的变化请在“活动与审计”里查看',
+    viewAll: '查看全部活动',
+  },
   acceptance: {
     title: '成果与验收',
     fromWorks: '来自 {{count}}／{{total}} 个工作项',

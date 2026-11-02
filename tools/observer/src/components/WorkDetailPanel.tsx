@@ -17,15 +17,16 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from './states';
 import { FieldLabel, ObservationValue } from './ObservationValue';
+import { RecentChanges } from './RecentChanges';
+import { TechnicalDetails } from './TechnicalDetails';
+import { pageTechnicalItems } from '../lib/activity-technical';
 import { isAuthError } from '../lib/api';
-import { formatObservationValue } from '../i18n/craft';
 import { freshnessWord } from '../lib/freshness';
 import { formatUnixMs } from '../lib/format';
 import { activityQueryOptions, reviewQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import type {
   ReviewData,
-  TeamActivityItem,
   TeamActivityResponse,
   TeamReadResponse,
   TeamWork,
@@ -199,61 +200,28 @@ function ReviewOutcomes({ query, roundId }: { query: ReviewQuery; roundId: strin
   );
 }
 
-function ActivityItems({ items }: { items: TeamActivityItem[] }) {
-  const { i18n } = useTranslation();
-  const latest = [...items]
-    .sort((left, right) => right.created_at_unix_ms - left.created_at_unix_ms)
-    .slice(0, 20);
-  return (
-    <List
-      size="small"
-      dataSource={latest}
-      rowKey="id"
-      renderItem={(item) => (
-        <List.Item>
-          <div data-testid={`activity-item-${item.id}`}>
-            <Space wrap size={[12, 4]}>
-              <Typography.Text code data-testid="activity-action">{item.action}</Typography.Text>
-              <Typography.Text data-testid="activity-actor">{item.actor_id}</Typography.Text>
-              <Typography.Text data-testid="activity-result">
-                {formatObservationValue(item.result, i18n.language, 'result')}
-              </Typography.Text>
-              <Typography.Text type="secondary" data-testid="activity-time">
-                {formatUnixMs(item.created_at_unix_ms, i18n.language)}
-              </Typography.Text>
-            </Space>
-          </div>
-        </List.Item>
-      )}
-    />
-  );
-}
-
-function History({ query }: { query: ActivityQuery }) {
+function History({ query, project, workId }: { query: ActivityQuery; project: string; workId: string | null }) {
   const { t } = useTranslation();
   const data = query.data?.data;
   const errorCode = (query.error as { code?: string } | null)?.code;
+  const viewAllHref = `/activity?project=${encodeURIComponent(project)}${workId ? `&work=${encodeURIComponent(workId)}` : ''}`;
   let content: ReactNode = <Spin />;
   if (errorCode === 'Unsupported') {
     content = <Empty data-testid="activity-unavailable" description={t('projectOverview.activity.unavailable')} />;
   } else if (query.error) {
     content = <PartialFailure errorCode={errorCode}><div /></PartialFailure>;
   } else if (data) {
-    content = data.items.length === 0 ? <ObservationEmpty /> : <ActivityItems items={data.items} />;
+    content = data.items.length === 0
+      ? <ObservationEmpty />
+      : <RecentChanges items={data.items} maxSteps={10} viewAllHref={viewAllHref} testId="plan-recent-changes" />;
   }
   return (
     <div data-testid="plan-history">
-      {data ? (
-        <Typography.Paragraph type="secondary">
-          <FieldLabel field="development_source" />: <ObservationValue value={data.development_source} />
-          <br />
-          <FieldLabel field="unknown_means" />: <ObservationValue value={data.unknown_means} />
-        </Typography.Paragraph>
-      ) : null}
       {content}
       {data?.next_cursor != null
         ? <Alert type="info" showIcon message={t('projectOverview.activity.earlier')} />
         : null}
+      {data ? <TechnicalDetails items={pageTechnicalItems(data)} /> : null}
     </div>
   );
 }
@@ -359,7 +327,7 @@ export function WorkDetailPanel({
               {
                 key: 'history',
                 label: t('plan.detail.history'),
-                children: <History query={activity} />,
+                children: <History query={activity} project={project} workId={workId} />,
               },
             ]}
           />

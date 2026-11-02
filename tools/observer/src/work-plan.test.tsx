@@ -4,6 +4,7 @@ import { axe, toHaveNoViolations } from 'jest-axe';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { formatUnixMs } from './lib/format';
+import { defaultVisibleText } from './lib/human-language-guard';
 import { isObservationReadRevoked } from './lib/queries';
 import type { TeamWork } from './lib/types';
 import {
@@ -270,19 +271,22 @@ describe('work detail review outcomes', () => {
 });
 
 describe('work detail history', () => {
-  it('filters development history by work_id and renders raw fields and notes', async () => {
+  it('filters development history by work_id and shows it in plain words with the raw records in the technical details', async () => {
     const user = userEvent.setup();
     const { fetchMock } = setupPlan();
     await user.click(await screen.findByRole('tab', { name: '历史' }));
     const history = await screen.findByTestId('plan-history');
-    const item = await within(history).findByTestId('activity-item-activity-1');
-    expect(within(item).getByTestId('activity-action').textContent).toBe('access.changed');
-    expect(within(item).getByTestId('activity-actor').textContent).toBe('actor-raw-17');
-    expect(within(item).getByTestId('activity-result').textContent).toBe('granted');
-    expect(within(item).getByTestId('activity-time').textContent)
-      .toBe(formatUnixMs(1761839700000, 'zh-CN'));
-    expect(history.textContent).toContain('audit.development');
-    expect(history.textContent).toContain('not_observed');
+    const step = await within(history).findByTestId('recent-step-0');
+    expect(within(step).getByTestId('recent-step-text').textContent).toBe('变更授权');
+    expect(within(step).getByTestId('recent-step-time').textContent).toBe(formatUnixMs(1761839700000, 'zh-CN'));
+    for (const hidden of ['access.changed', 'actor-raw-17', 'audit.development', 'not_observed']) {
+      expect(defaultVisibleText(history)).not.toContain(hidden);
+    }
+    expect(within(history).getByTestId('recent-changes-all').getAttribute('href')).toBe('/activity?project=demo&work=W1');
+    for (const toggle of within(history).getAllByRole('button', { name: /技术细节/ })) await user.click(toggle);
+    expect((await within(history).findByTestId('recent-step-technical-0')).textContent).toContain('access.changed');
+    expect(within(history).getByTestId('technical-detail-development_source').textContent).toContain('audit.development');
+    expect(within(history).getByTestId('technical-detail-unknown_means').textContent).toContain('not_observed');
     const urls = fetchMock.mock.calls.map(([input]) => String(input))
       .filter((url) => url.includes('/api/team/activity'));
     expect(urls).toHaveLength(1);
@@ -323,22 +327,23 @@ describe('work detail history', () => {
     expect(await within(history).findByText('ReadTimeout')).toBeTruthy();
   });
 
-  it('discloses earlier records and caps the newest history at twenty', async () => {
+  it('discloses earlier records and caps the newest history at ten steps', async () => {
     const user = userEvent.setup();
     const items = Array.from({ length: 22 }, (_, index) => ({
       ...DEMO_ACTIVITY.data.items[0],
       id: `activity-${index + 1}`,
-      action: `action-${index + 1}`,
+      action: index % 2 === 0 ? 'work.snapshot' : 'execution.start',
       created_at_unix_ms: 1761839700000 + index * 1000,
     }));
     setupPlan({ activity: makeActivity(items, { next_cursor: 'older-2' }) });
     await user.click(await screen.findByRole('tab', { name: '历史' }));
     const history = await screen.findByTestId('plan-history');
-    await waitFor(() => expect(history.querySelectorAll('[data-testid^="activity-item-"]')).toHaveLength(20));
-    expect(history.querySelectorAll('[data-testid^="activity-item-"]')[0].getAttribute('data-testid'))
-      .toBe('activity-item-activity-22');
+    await waitFor(() => expect(history.querySelectorAll('li[data-testid^="recent-step-"]')).toHaveLength(10));
+    expect(within(history.querySelector('li[data-testid="recent-step-0"]') as HTMLElement).getByTestId('recent-step-text').textContent).toBe('开始执行');
+    expect(within(history).getByTestId('recent-changes-more')).toBeTruthy();
     expect(history.textContent).toContain('还有更早的记录');
   });
+
 });
 
 describe('work plan localization and accessibility', () => {
