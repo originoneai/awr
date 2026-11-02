@@ -132,6 +132,27 @@ describe('My work sourced rows and navigation', () => {
     expect(screen.queryByRole('button', { name: /认领|claim/i })).toBeNull();
   });
 
+  it('does not show an operation name or a navigation code the page has no words for', async () => {
+    const user = userEvent.setup();
+    const items = [{
+      ...makeItems(1)[0],
+      navigation: 'brand_new_state',
+      next_query: { op: 'work.recover', protocol_version: 1, work_id: 'W1', workstream_id: 'WS1' },
+    }];
+    setupWorkbench({ path: '/workbench?scope=demo&work=W1', next: makeNext(items) });
+
+    const table = await screen.findByRole('table');
+    expect(within(table).getByText('其他状态')).toBeTruthy();
+    expect(within(table).getByText('建议的下一步')).toBeTruthy();
+    expect(defaultVisibleText(table)).not.toMatch(/brand_new_state|work\.recover/);
+    expect(findForbiddenVisibleText(defaultVisibleText(table))).toEqual([]);
+    // the exact codes are still there for whoever checks them
+    const detail = await screen.findByTestId('workbench-detail');
+    await user.click(within(detail).getAllByRole('button', { name: /技术细节/ }).at(-1) as HTMLElement);
+    expect(within(detail).getByTestId('technical-navigation').textContent).toContain('brand_new_state');
+    expect(within(detail).getByTestId('technical-next-query-op').textContent).toContain('work.recover');
+  });
+
   it('colours a claimed work as in progress, leaves an unclaimed one calm, and never says unclaimed for rows that carry no claim state', async () => {
     const user = userEvent.setup();
     setupWorkbench();
@@ -191,10 +212,11 @@ describe('My work sourced rows and navigation', () => {
   });
 
   it('renders real resume entries without turning them into claim controls', async () => {
+    const user = userEvent.setup();
     setupWorkbench({
       next: makeNext([], [{
         work_id: 'W-resume',
-        session_id: 'session-1',
+        session_id: '01M69PHCX2R0Y5M588J945JDEH',
         session_version: '3',
         next_query: { op: 'work.observe', protocol_version: 1, work_id: 'W-resume', workstream_id: 'WS1' },
       }]),
@@ -203,8 +225,69 @@ describe('My work sourced rows and navigation', () => {
     const resume = await screen.findByTestId('workbench-resume');
     expect(within(resume).getByRole('link', { name: 'W-resume' }).getAttribute('href'))
       .toBe('/projects/demo?tab=plan&work=W-resume');
-    expect(resume.textContent).toContain('session-1');
+    expect(within(resume).getByText('上次的进度还在，可以接着做')).toBeTruthy();
+    // the session's id and version are for whoever checks the session: behind the technical details, not in the card
+    expect(defaultVisibleText(resume)).not.toContain('01M69PHCX2R0Y5M588J945JDEH');
+    expect(defaultVisibleText(resume)).not.toMatch(/版本|会话/);
+    expect(findForbiddenVisibleText(defaultVisibleText(resume))).toEqual([]);
+    await user.click(within(resume).getByRole('button', { name: /技术细节/ }));
+    expect(within(resume).getByTestId('technical-session-id').textContent).toContain('01M69PHCX2R0Y5M588J945JDEH');
+    expect(within(resume).getByTestId('technical-detail-session_version').textContent).toContain('3');
     expect(screen.queryByTestId('state-empty')).toBeNull();
+  });
+
+  it('names a resumed work by the title the same reply gives it', async () => {
+    setupWorkbench({
+      next: makeNext(makeItems(1), [{
+        work_id: 'W1',
+        session_id: '01M69PHCX2R0Y5M588J945JDEH',
+        session_version: '1',
+        next_query: { op: 'work.observe', protocol_version: 1, work_id: 'W1', workstream_id: 'WS1' },
+      }]),
+    });
+
+    const resume = await screen.findByTestId('workbench-resume');
+    expect(within(resume).getByRole('link', { name: 'Observed task 1' }).getAttribute('href')).toBe('/projects/demo?tab=plan&work=W1');
+    expect(defaultVisibleText(resume)).not.toContain('W1');
+  });
+
+  it('says the same words in English', async () => {
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    setupWorkbench({
+      next: makeNext([], [{
+        work_id: 'W-resume',
+        session_id: '01M69PHCX2R0Y5M588J945JDEH',
+        session_version: '3',
+        next_query: { op: 'work.observe', protocol_version: 1, work_id: 'W-resume', workstream_id: 'WS1' },
+      }]),
+    });
+
+    const resume = await screen.findByTestId('workbench-resume');
+    expect(within(resume).getByText('Your earlier progress is still here; you can pick it up')).toBeTruthy();
+    expect(defaultVisibleText(resume)).not.toMatch(/01M69PHCX2R0Y5M588J945JDEH|ersion|ession/);
+    expect(findForbiddenVisibleText(defaultVisibleText(resume))).toEqual([]);
+  });
+
+  it('shows a task by its title and keeps the work key out of the default view, in the table and in the detail', async () => {
+    const user = userEvent.setup();
+    setupWorkbench({ path: '/workbench?scope=demo&work=W1', next: makeNext(makeItems(2)) });
+
+    const detail = await screen.findByTestId('workbench-detail');
+    const table = await screen.findByRole('table');
+    expect(within(table).getAllByRole('link', { name: /Observed task/ })).toHaveLength(2);
+    expect(defaultVisibleText(table)).not.toMatch(/\bW[12]\b/);
+    expect(defaultVisibleText(detail)).not.toMatch(/\bW1\b/);
+    await user.click(within(detail).getAllByRole('button', { name: /技术细节/ }).at(-1) as HTMLElement);
+    expect(within(detail).getByTestId('technical-work-id').textContent).toContain('W1');
+  });
+
+  it('names a task without a title by what the work label makes of its key', async () => {
+    const items = [{ ...makeItems(1)[0], work_id: '01M6AVQ870N7MBRJ5MPCN79T55', title: ' ' }];
+    setupWorkbench({ path: '/workbench?scope=demo', next: makeNext(items) });
+
+    const table = await screen.findByRole('table');
+    await within(table).findByRole('link', { name: '某项工作' });
+    expect(defaultVisibleText(table)).not.toContain('01M6AVQ870N7MBRJ5MPCN79T55');
   });
 });
 

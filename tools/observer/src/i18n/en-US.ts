@@ -30,9 +30,10 @@ const enUS: Messages = {
     capabilities: 'What this connection can do',
     project: 'Project',
     businessRoles: 'Business roles',
-    actionCeiling: 'Allowed action ceiling',
-    canManageMembers: 'Can manage members',
-    canReadProjectAudit: 'Can read project audit',
+    allowedActions: 'Allowed operations',
+    notIncluded: 'Not included',
+    noActions: 'No operations are allowed',
+    revocationNote: 'A single agent connection cannot be revoked on its own yet; contact an administrator if you need that.',
     existing: 'Existing connections',
     existingLater: 'Existing connections cannot be loaded right now.',
     records: 'Connection records',
@@ -349,15 +350,16 @@ const enUS: Messages = {
       waiting_dependency: 'Waiting on dependency',
       observe: 'Observe',
       prepare: 'Prepare',
+      other: 'Another state',
     },
     nextAction: {
       observe: 'Observe task (read only)',
       prepare: 'Prepare task (agent executes)',
-      advisory: 'Advisory action: {{op}}',
+      advisory: 'A suggested next step',
     },
     resume: {
       title: 'Resume previous work',
-      session: 'Session {{id}} · version {{version}}',
+      continue: 'Your earlier progress is still here; you can pick it up',
     },
     agents: 'My agents',
     handoffs: 'Recent handoffs',
@@ -413,6 +415,7 @@ const enUS: Messages = {
   common: {
     loading: 'Loading…',
     notProvided: 'Not provided',
+    listSeparator: ', ',
   },
 };
 
