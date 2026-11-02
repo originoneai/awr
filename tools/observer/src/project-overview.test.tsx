@@ -197,11 +197,10 @@ describe('project workstream progress', () => {
       overview: makeProjectOverview(works),
       snapshot: () => ({ ok: false, error: { code: 'ReadTimeout', message: 'slow' } }),
     });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1200));
+    await waitFor(() => {
+      expect(screen.getByTestId('project-next-W1').textContent).toBe('Review the contract');
+      expect(screen.getByTestId('project-next-W2').textContent).toBe('未提供');
     });
-    expect(screen.getByTestId('project-next-W1').textContent).toBe('Review the contract');
-    expect(screen.getByTestId('project-next-W2').textContent).toBe('未提供');
   });
 
   it('groups shared workstreams once and uses an unlisted workstream id as its header', async () => {
