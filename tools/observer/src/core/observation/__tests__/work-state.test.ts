@@ -76,6 +76,35 @@ describe('deriveWorkState: last report', () => {
     expect(english.text).toBe(`${english.timeText} (May be outdated)`);
   });
 
+  it('never puts a stale note on a finished work, by the runtime or by the reporter\'s phase, but keeps the service\'s flag verbatim', () => {
+    const at = DELIVERED.observation.reporting.client_reported_at_unix_ms;
+    const time = absoluteTimeText(at, { language: 'zh-CN' }).text;
+    expect(DELIVERED.observation.reporting.client_stale).toBe(true);
+    const finishedByRuntime = deriveWorkState({ ...zh, snapshot: DELIVERED }).lastReport;
+    expect(finishedByRuntime).toMatchObject({ kind: 'measured', stale: true, finished: true, staleText: null, text: time, timeText: time });
+    expect(finishedByRuntime.technical).toMatchObject({ atUnixMs: at, runtimeState: 'completed', phase: 'delivered' });
+    // the reporter's own phase is enough when the runtime state is not final (or absent)
+    const byPhase = { ...DELIVERED, runtime: { state: 'claimed' }, observation: { ...DELIVERED.observation, runtime: { state: 'claimed' } } };
+    expect(deriveWorkState({ ...zh, snapshot: byPhase }).lastReport).toMatchObject({ finished: true, staleText: null, text: time });
+    // the runtime state is enough when there is no checkpoint at all
+    const byRuntime = { ...DELIVERED, observation: { ...DELIVERED.observation, progress: null } };
+    expect(deriveWorkState({ ...zh, snapshot: byRuntime }).lastReport).toMatchObject({ finished: true, staleText: null, text: time });
+    // a report on open work stays marked; the observation block's runtime state is read when the top level has none
+    const open = { ...IN_PROGRESS, runtime: undefined, observation: { ...IN_PROGRESS.observation, runtime: { state: 'claimed' } } };
+    expect(deriveWorkState({ ...zh, snapshot: open }).lastReport).toMatchObject({ finished: false, staleText: '可能已过期' });
+    const closedByObservation = { ...IN_PROGRESS, runtime: undefined, observation: { ...IN_PROGRESS.observation, runtime: { state: 'completed' } } };
+    expect(deriveWorkState({ ...zh, snapshot: closedByObservation }).lastReport).toMatchObject({ finished: true, staleText: null });
+  });
+
+  it('does not mark a report stale when the service said nothing about it, or said something that is not a yes or no', () => {
+    const at = IN_REVIEW.observation.reporting.client_reported_at_unix_ms;
+    const time = absoluteTimeText(at, { language: 'zh-CN' }).text;
+    for (const reporting of [{ client_reported_at_unix_ms: at }, { client_reported_at_unix_ms: at, client_stale: null }, { client_reported_at_unix_ms: at, client_stale: 'yes' }]) {
+      const report = deriveWorkState({ ...zh, snapshot: { observation: { reporting } } }).lastReport;
+      expect(report, JSON.stringify(reporting)).toMatchObject({ kind: 'measured', stale: null, staleText: null, text: time });
+    }
+  });
+
   it('says not read, with the freshness word, when no report time exists or the read failed, and never uses the snapshot of a failed read', () => {
     for (const reporting of [undefined, null, {}, { client_reported_at_unix_ms: null }, { client_reported_at_unix_ms: 'soon' }, { client_reported_at_unix_ms: Number.NaN }]) {
       const result = deriveWorkState({ ...zh, snapshot: { observation: { reporting } } }).lastReport;

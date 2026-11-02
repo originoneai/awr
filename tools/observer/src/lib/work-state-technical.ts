@@ -9,5 +9,8 @@ export function workStateTechnicalItems(state: WorkStateResult): TechnicalDetail
     { label: 'guidance.op', value: state.next.technical.guidanceOp, testId: 'technical-guidance-op' },
     { label: 'guidance.note', value: state.next.technical.guidanceNote, testId: 'technical-guidance-note' },
     { label: 'client_reported_at_unix_ms', value: state.lastReport.technical.atUnixMs },
+    { label: 'client_stale', value: state.lastReport.stale, testId: 'technical-client-stale' },
+    { label: 'runtime.state', value: state.lastReport.technical.runtimeState, testId: 'technical-runtime-state' },
+    { label: 'progress.phase', value: state.lastReport.technical.phase, testId: 'technical-phase' },
   ];
 }

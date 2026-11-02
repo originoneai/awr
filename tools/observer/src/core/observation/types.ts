@@ -120,10 +120,12 @@ export interface WorkStateSnapshot {
   /** The service's own hint addressed to the calling agent, not the reporter's statement. */
   next_step?: unknown;
   guidance?: { action?: { op?: unknown; note?: unknown } | null } | null;
+  runtime?: { state?: unknown } | null;
   observation?: {
     reporting?: { client_reported_at_unix_ms?: unknown; client_stale?: unknown } | null;
+    runtime?: { state?: unknown } | null;
     /** The reporter's own checkpoint; `next_action` is what the reporter says comes next. */
-    progress?: { next_action?: unknown } | null;
+    progress?: { next_action?: unknown; phase?: unknown } | null;
   } | null;
 }
 
@@ -153,11 +155,13 @@ export interface WorkStateResult {
     text: string;
     /** The reported time alone; null unless a time was reported. */
     timeText: string | null;
-    /** The stale note alone ("may be outdated"); null unless the service declared the report stale. */
+    /** The stale note alone ("may be outdated"); null unless the service declared the report stale and the work is still open. */
     staleText: string | null;
     atUnixMs: number | null;
     /** True or false as the service declared it; null when it said nothing. */
     stale: boolean | null;
-    technical: { atUnixMs: number | null };
+    /** The work is finished (runtime completed, or the reporter's phase is delivered): nothing more is expected from its reporter, so it never carries a stale note. */
+    finished: boolean;
+    technical: { atUnixMs: number | null; runtimeState: string | null; phase: string | null };
   };
 }

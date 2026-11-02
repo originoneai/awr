@@ -190,6 +190,9 @@ describe('work detail requirements and source state', () => {
     expect(screen.getByTestId('last-report-W1').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}可能已过期`);
     await userEvent.setup().click(within(screen.getByTestId('plan-detail')).getByText('技术细节'));
     expect((await screen.findByTestId('technical-next-action')).textContent).toContain('Review the contract first');
+    // why the note is (not) there stays checkable: the service's flag and the work's own state, verbatim
+    expect(screen.getByTestId('technical-client-stale').textContent).toContain('true');
+    expect(screen.getByTestId('technical-runtime-state').textContent).toContain('claimed');
   });
 
   it('constrains long required-spec text with ellipsis and a zero-min-width flex child', async () => {

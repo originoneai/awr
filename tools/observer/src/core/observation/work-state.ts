@@ -17,8 +17,9 @@ function statementText(value: unknown): string | null {
 /**
  * What a person needs to know about one work's current report: the next step its reporter wrote in
  * the checkpoint (never the service's agent-addressed hint or operation name), and when it last
- * reported, flagged when the service itself says that report is stale. Nothing is inferred from a
- * read that did not happen.
+ * reported, flagged when the service itself says that report is stale and the work is still open (a
+ * finished work's reporter is no longer expected to report, so the clock alone says nothing about
+ * it). Nothing is inferred from a read that did not happen.
  */
 export function deriveWorkState(input: WorkStateInput): WorkStateResult {
   const { language, readState, snapshot } = input;
@@ -42,16 +43,20 @@ export function deriveWorkState(input: WorkStateInput): WorkStateResult {
   const reporting = readState === 'ready' ? snapshot?.observation?.reporting : null;
   const at = finiteTime(reporting?.client_reported_at_unix_ms);
   const stale = typeof reporting?.client_stale === 'boolean' ? reporting.client_stale : null;
+  const runtimeState = readState === 'ready' ? rawObservationText(snapshot?.runtime?.state ?? snapshot?.observation?.runtime?.state).text : null;
+  const phase = rawObservationText(progress?.phase).text;
+  const finished = runtimeState === 'completed' || phase === 'delivered';
+  const reportTechnical = { runtimeState, phase };
   let lastReport: WorkStateResult['lastReport'];
   if (readState === 'loading') {
-    lastReport = { kind: 'loading', text: humanText('loading', language), timeText: null, staleText: null, atUnixMs: null, stale: null, technical: { atUnixMs: null } };
+    lastReport = { kind: 'loading', text: humanText('loading', language), timeText: null, staleText: null, atUnixMs: null, stale: null, finished: false, technical: { atUnixMs: null, ...reportTechnical } };
   } else if (at == null) {
-    lastReport = { kind: 'not_measured', text: humanText('notMeasured', language), timeText: null, staleText: null, atUnixMs: null, stale, technical: { atUnixMs: null } };
+    lastReport = { kind: 'not_measured', text: humanText('notMeasured', language), timeText: null, staleText: null, atUnixMs: null, stale, finished, technical: { atUnixMs: null, ...reportTechnical } };
   } else {
     const timeText = absoluteTimeText(at, { language }).text;
-    const staleText = stale === true ? humanText('stale', language) : null;
+    const staleText = stale === true && !finished ? humanText('stale', language) : null;
     const suffix = staleText == null ? '' : language.toLowerCase().startsWith('zh') ? `（${staleText}）` : ` (${staleText})`;
-    lastReport = { kind: 'measured', text: `${timeText}${suffix}`, timeText, staleText, atUnixMs: at, stale, technical: { atUnixMs: at } };
+    lastReport = { kind: 'measured', text: `${timeText}${suffix}`, timeText, staleText, atUnixMs: at, stale, finished, technical: { atUnixMs: at, ...reportTechnical } };
   }
   return { next, lastReport };
 }

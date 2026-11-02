@@ -215,6 +215,23 @@ describe('project workstream progress', () => {
     expect(screen.getByTestId('project-next-W1').textContent).toBe('未报告下一步');
   });
 
+  it('puts no stale note on a finished work, whatever the clock says, and keeps the note on an open one', async () => {
+    setupOverview({
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as {
+          result: { data: { runtime: { state: string }; observation: { reporting: Record<string, unknown> } } };
+        };
+        response.result.data.observation.reporting.client_stale = true;
+        if (workId === 'W1') response.result.data.runtime.state = 'completed';
+        return response;
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
+      expect(screen.getByTestId('last-report-W2').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}可能已过期`);
+    });
+  });
+
   it('marks a report the service itself declared stale, and only that one', async () => {
     setupOverview({
       snapshot: (workId) => {

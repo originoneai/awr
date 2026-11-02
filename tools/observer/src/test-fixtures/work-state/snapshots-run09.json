@@ -1,49 +1,23 @@
 {
-  "_note": "Trimmed from real work.snapshot replies of a rehearsal run: only the fields the work-state derivation reads.",
+  "_note": "Trimmed from real work.snapshot replies of a rehearsal run: only the fields the work-state derivation reads, values verbatim.",
   "api-in-progress-with-live-report": {
     "next_step": null,
     "guidance": {
       "action": {
-        "note": "Batch progress with next_action/open_loops. Stop and report workspace execution before repository push/publication, external review, merge or deployment; use separate delivery operations. Follow execution.terminal_reporting with measured environment digest and truthful workspace_settlement, even with a live V2 lease. Prior or unknown external effects from this run require recovery; never declare no_external_effects=true for them. Omission preserves recovery; tests do not prove settlement.",
-        "op": "session.checkpoint"
-      },
-      "because": [
-        "session is active and no higher-priority condition was found"
-      ],
-      "code": "report_at_boundary",
-      "recheck_on": "material work change or lease expiry",
-      "when": "phase, tests, blocker, user wait or delivery changes"
+        "op": "session.checkpoint",
+        "note": "Batch progress with next_action/open_loops. Stop and report workspace execution before repository push/publication, external review, merge or deployment; use separate delivery operations. Follow execution.terminal_reporting with measured environment digest and truthful workspace_settlement, even with a live V2 lease. Prior or unknown external effects from this run require recovery; never declare no_external_effects=true for them. Omission preserves recovery; tests do not prove settlement."
+      }
     },
     "runtime": {
-      "last_fence": "1",
-      "recovery_blocked": false,
-      "selected_completion_id": null,
-      "state": "claimed",
-      "work_version": "3"
+      "state": "claimed"
     },
     "observation": {
       "reporting": {
-        "billing_collected": false,
-        "client_origin": {
-          "actor_id": "lin-agent-native-20261031T175807Z-2b5158073339-e95217",
-          "actor_name": "Lin Agent",
-          "client_id": "lin-grok-native-20261031T175807Z-2b5158073339-e95217",
-          "session_id": "01M69PHCX2R0Y5M588J945JDEH"
-        },
         "client_reported_at_unix_ms": 1793474474920,
-        "client_stale": true,
-        "model_basis": "latest_session_declaration; not execution-time attribution",
-        "provenance": "caller_declared",
-        "stale_after_ms": 900000,
-        "usage_aggregation": "none",
-        "version": 1
+        "client_stale": true
       },
       "runtime": {
-        "last_fence": "1",
-        "recovery_blocked": false,
-        "selected_completion_id": null,
-        "state": "claimed",
-        "work_version": "3"
+        "state": "claimed"
       },
       "progress": null
     }
@@ -52,80 +26,24 @@
     "next_step": null,
     "guidance": {
       "action": {
-        "note": "Inspect the completion and select further work through work.next.",
-        "op": "completion.inspect"
-      },
-      "because": [
-        "current work runtime has a completion"
-      ],
-      "code": "inspect_completion",
-      "recheck_on": "completion invalidation or new work",
-      "when": "a completion is recorded"
+        "op": "completion.inspect",
+        "note": "Inspect the completion and select further work through work.next."
+      }
     },
     "runtime": {
-      "last_fence": "1",
-      "recovery_blocked": false,
-      "selected_completion_id": "01M6B189DXC1A21ZD5YQ6V7EG5",
-      "state": "completed",
-      "work_version": "5"
+      "state": "completed"
     },
     "observation": {
       "reporting": {
-        "billing_collected": false,
-        "client_origin": {
-          "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
-          "actor_name": "Lin Agent",
-          "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
-          "session_id": "01M6ARESNB6TC8FMRNFX6HP7M3"
-        },
         "client_reported_at_unix_ms": 1793513588923,
-        "client_stale": true,
-        "model_basis": "latest_session_declaration; not execution-time attribution",
-        "provenance": "caller_declared",
-        "stale_after_ms": 900000,
-        "usage_aggregation": "none",
-        "version": 1
+        "client_stale": true
       },
       "runtime": {
-        "last_fence": "1",
-        "recovery_blocked": false,
-        "selected_completion_id": "01M6B189DXC1A21ZD5YQ6V7EG5",
-        "state": "completed",
-        "work_version": "5"
+        "state": "completed"
       },
       "progress": {
-        "artifacts": [],
-        "blockers": [],
-        "checkpoint_id": "01M6B1HVTK2E0BE2BFPHM3BGNG",
-        "client_observed_at_unix_ms": null,
-        "completed": [
-          "delivery.integration.prepare 01M6B0NNN221D857AA1YTBR66A confirmed applied",
-          "delivery.finalize receipt 01M6B189DXC1A21ZD5YQ6V7EG5",
-          "origin/main is 5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
-        ],
-        "contract_matches_current": true,
         "next_action": "Leave issue-filter-page available for self-claim. Eligible assignees are lin and mei. The page has no implementation, review, or delivery.",
-        "origin": {
-          "actor_id": "manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
-          "actor_name": "Project manager Agent",
-          "client_id": "manager-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
-          "session_id": "01M6B1044TS61EM6MF6QG9TAC8"
-        },
-        "phase": "delivered",
-        "provenance": "caller_declared",
-        "recorded_project_revision": "75",
-        "report_order_basis": "recorded_project_revision",
-        "reported_at_unix_ms": 1793519578964,
-        "reported_contract_hash": "295b63612f58425c516a25c6e4d5d777d1da6661cc11cce9fb93ffc3c9597c4d",
-        "stale": false,
-        "summary": "Fast-forwarded refs/heads/main from a516342436e434d0072ef9c138f419f2f128caac to 5f7eb2fe9c563e4d355aa64a527e0aef754116c1 and finalized issue-filter-api. Completion receipt 01M6B189DXC1A21ZD5YQ6V7EG5. Source publication 01M6B189X92RXS899KPVW7W9WQ is confirmed.",
-        "tests": [
-          {
-            "name": "local_git.manifest",
-            "outcome": "passed",
-            "reference": "local-git-ff31e289f03bf92c0fc63be37b3db7f3f1c14c01cd621742e77bd6489ed2169d"
-          }
-        ]
+        "phase": "delivered"
       }
     }
   },
@@ -133,94 +51,24 @@
     "next_step": null,
     "guidance": {
       "action": {
-        "note": "This task belongs to another member. Select your assignment or an available task.",
-        "op": "work.next"
-      },
-      "because": [
-        "current responsibility version 3"
-      ],
-      "code": "task_intake",
-      "recheck_on": "responsibility, dependency, lease or permission changes",
-      "when": "owned_by_other"
+        "op": "work.next",
+        "note": "This task belongs to another member. Select your assignment or an available task."
+      }
     },
     "runtime": {
-      "last_fence": "1",
-      "recovery_blocked": false,
-      "selected_completion_id": null,
-      "state": "claimed",
-      "work_version": "4"
+      "state": "claimed"
     },
     "observation": {
       "reporting": {
-        "billing_collected": false,
-        "client_origin": {
-          "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
-          "actor_name": "Lin Agent",
-          "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
-          "session_id": "01M6ARESNB6TC8FMRNFX6HP7M3"
-        },
         "client_reported_at_unix_ms": 1793513588923,
-        "client_stale": false,
-        "model_basis": "latest_session_declaration; not execution-time attribution",
-        "provenance": "caller_declared",
-        "stale_after_ms": 900000,
-        "usage_aggregation": "none",
-        "version": 1
+        "client_stale": false
       },
       "runtime": {
-        "last_fence": "1",
-        "recovery_blocked": false,
-        "selected_completion_id": null,
-        "state": "claimed",
-        "work_version": "4"
+        "state": "claimed"
       },
       "progress": {
-        "artifacts": [
-          {
-            "label": "development branch",
-            "reference": "refs/heads/issue-filter-api@5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
-          },
-          {
-            "label": "review round",
-            "reference": "01M6AVQ870N7MBRJ5MPCN79T55"
-          }
-        ],
-        "blockers": [],
-        "checkpoint_id": "01M6AVV25TR88DZ0GPNQ6F9X3Y",
-        "client_observed_at_unix_ms": null,
-        "completed": [
-          "filterIssues combines status and keyword without writing issue records.",
-          "Checks cover an empty list, no match, and combined filters.",
-          "Published refs/heads/issue-filter-api and submitted the report plus both manifest files."
-        ],
-        "contract_matches_current": true,
         "next_action": "Wait for independent review of round 01M6AVQ870N7MBRJ5MPCN79T55. Do not self-approve or merge to main.",
-        "origin": {
-          "actor_id": "lin-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
-          "actor_name": "Lin Agent",
-          "client_id": "lin-grok-native-20261101T045929Z-ee9ddb44e6e7-4856fa",
-          "session_id": "01M6ARESNB6TC8FMRNFX6HP7M3"
-        },
-        "phase": "ready_for_review",
-        "provenance": "caller_declared",
-        "recorded_project_revision": "41",
-        "report_order_basis": "recorded_project_revision",
-        "reported_at_unix_ms": 1793513588923,
-        "reported_contract_hash": "295b63612f58425c516a25c6e4d5d777d1da6661cc11cce9fb93ffc3c9597c4d",
-        "stale": false,
-        "summary": "Status and keyword filters are on branch issue-filter-api at 5f7eb2fe9c563e4d355aa64a527e0aef754116c1. npm test passed 5 of 5. local_git.manifest passed. Review is open.",
-        "tests": [
-          {
-            "name": "npm test",
-            "outcome": "passed",
-            "reference": "node --test test/*.test.js: 5 passed, 0 failed"
-          },
-          {
-            "name": "local_git.manifest",
-            "outcome": "passed",
-            "reference": "adapter observation on 5f7eb2fe9c563e4d355aa64a527e0aef754116c1"
-          }
-        ]
+        "phase": "ready_for_review"
       }
     }
   }
