@@ -4,7 +4,7 @@ import { axe, toHaveNoViolations } from 'jest-axe';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { formatUnixMs } from './lib/format';
-import { defaultVisibleText } from './lib/human-language-guard';
+import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
 import { isObservationReadRevoked } from './lib/queries';
 import type { TeamWork } from './lib/types';
 import {
@@ -18,6 +18,23 @@ import {
 } from './test-utils';
 
 expect.extend(toHaveNoViolations);
+
+/** A checkpoint in the shape the service returns, with plain sentences so the default text can be checked. */
+const CHECKPOINT = {
+  phase: 'ready_for_review',
+  summary: 'The status and keyword filters are finished and waiting for review.',
+  completed: ['Filters combine status and keyword.', 'Checks cover an empty list.'],
+  blockers: [],
+  tests: [{ name: 'npm test', outcome: 'passed', reference: 'node --test: 5 passed' }, { name: 'smoke run', outcome: 'failed', reference: 'exit 1' }],
+  artifacts: [{ label: 'development branch', reference: 'refs/heads/issue-filter-api@abc123' }],
+  next_action: 'Wait for the independent review.',
+  provenance: 'caller_declared',
+  stale: false,
+  contract_matches_current: true,
+  checkpoint_id: 'checkpoint-1',
+  reported_at_unix_ms: 1761839700000,
+  origin: { actor_name: 'Lin Agent' },
+};
 
 function json(payload: unknown) {
   return new Response(JSON.stringify(payload), {
@@ -193,6 +210,67 @@ describe('work detail requirements and source state', () => {
     // why the note is (not) there stays checkable: the service's flag and the work's own state, verbatim
     expect(screen.getByTestId('technical-client-stale').textContent).toContain('true');
     expect(screen.getByTestId('technical-runtime-state').textContent).toContain('claimed');
+  });
+
+  it('shows the checkpoint in plain words instead of a JSON dump and keeps every raw field in the technical details', async () => {
+    setupPlan({
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as { result: { data: { observation: { progress: Record<string, unknown> | null } } } };
+        response.result.data.observation.progress = { ...CHECKPOINT };
+        return response;
+      },
+    });
+    const block = await screen.findByTestId('progress-report');
+    expect(within(block).getByTestId('progress-report-summary').textContent).toBe(CHECKPOINT.summary);
+    expect(within(block).getByTestId('progress-report-completed').textContent).toContain('Checks cover an empty list.');
+    expect(within(block).getByTestId('progress-report-blockers').textContent).toBe('未报告阻塞');
+    expect(within(block).getByTestId('progress-report-tests').textContent).toContain('npm test');
+    expect(within(block).getByTestId('progress-report-tests').textContent).toContain('已通过');
+    expect(within(block).getByTestId('progress-report-tests').textContent).toContain('失败');
+    expect(within(block).getByTestId('progress-report-artifacts').textContent).toContain('development branch');
+    expect(within(block).getByTestId('progress-report-declaration').textContent).toContain('Lin Agent');
+    expect(within(block).getByTestId('progress-report-declaration').textContent).toContain('系统未核验');
+    expect(block.textContent).not.toContain('{');
+    expect(block.textContent).not.toContain('refs/heads');
+    expect(findForbiddenVisibleText(defaultVisibleText(block))).toEqual([]);
+    expect(within(block).queryByTestId('progress-report-contract')).toBeNull();
+    const user = userEvent.setup();
+    await user.click(within(block).getByText('技术细节'));
+    expect((await within(block).findByTestId('technical-detail-progress.checkpoint_id')).textContent).toContain('checkpoint-1');
+    expect(within(block).getByTestId('technical-detail-progress.artifacts').textContent).toContain('refs/heads/issue-filter-api@abc123');
+  });
+
+  it('wires the work being finished into the checkpoint: a stale checkpoint is marked on an open work and not on a finished one', async () => {
+    const { unmount } = setupPlan({
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as { result: { data: { observation: { progress: Record<string, unknown> | null } } } };
+        response.result.data.observation.progress = { ...CHECKPOINT, stale: true };
+        return response;
+      },
+    });
+    expect((await screen.findByTestId('progress-report-declaration')).textContent).toContain('可能已过期');
+    unmount();
+    setupPlan({
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as { result: { data: { runtime: { state: string }; observation: { progress: Record<string, unknown> | null } } } };
+        response.result.data.runtime.state = 'completed';
+        response.result.data.observation.progress = { ...CHECKPOINT, stale: true };
+        return response;
+      },
+    });
+    expect((await screen.findByTestId('progress-report-declaration')).textContent).not.toContain('可能已过期');
+  });
+
+  it('warns on the checkpoint when the task changed after it was written', async () => {
+    setupPlan({
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as { result: { data: { observation: { progress: Record<string, unknown> | null } } } };
+        response.result.data.observation.progress = { ...CHECKPOINT, contract_matches_current: false };
+        return response;
+      },
+    });
+    const note = await screen.findByTestId('progress-report-contract');
+    expect(note.textContent).toBe('这份汇报写成之后，任务要求有变化，内容可能已不适用');
   });
 
   it('constrains long required-spec text with ellipsis and a zero-min-width flex child', async () => {

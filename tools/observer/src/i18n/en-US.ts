@@ -93,6 +93,12 @@ const enUS: Messages = {
     identityReadFailed: 'Your identity could not be loaded. Try again.',
     identityRetry: 'Try again',
   },
+  progressReport: {
+    completed: 'Done',
+    blockers: 'Blockers',
+    tests: 'Tests',
+    artifacts: 'Produced',
+  },
   recentChanges: {
     unknown: 'Result unknown',
     more: 'Earlier changes are in Activity and audit',

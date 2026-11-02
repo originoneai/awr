@@ -89,6 +89,12 @@ const zhCN = {
     identityReadFailed: '身份信息暂时读取不到，请重试',
     identityRetry: '重试',
   },
+  progressReport: {
+    completed: '已完成',
+    blockers: '阻塞',
+    tests: '测试',
+    artifacts: '产出',
+  },
   recentChanges: {
     unknown: '结果未知',
     more: '更早的变化请在“活动与审计”里查看',

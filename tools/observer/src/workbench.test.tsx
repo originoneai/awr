@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { formatUnixMs } from './lib/format';
+import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
 import { queryKeys } from './lib/queries';
 import {
   DEMO_PROJECTS,
@@ -12,6 +13,23 @@ import {
   demoWorkSnapshot,
   renderApp,
 } from './test-utils';
+
+/** A checkpoint in the shape the service returns, with plain sentences so the default text can be checked. */
+const CHECKPOINT = {
+  phase: 'ready_for_review',
+  summary: 'The status and keyword filters are finished and waiting for review.',
+  completed: ['Filters combine status and keyword.', 'Checks cover an empty list.'],
+  blockers: [],
+  tests: [{ name: 'npm test', outcome: 'passed', reference: 'node --test: 5 passed' }, { name: 'smoke run', outcome: 'failed', reference: 'exit 1' }],
+  artifacts: [{ label: 'development branch', reference: 'refs/heads/issue-filter-api@abc123' }],
+  next_action: 'Wait for the independent review.',
+  provenance: 'caller_declared',
+  stale: false,
+  contract_matches_current: true,
+  checkpoint_id: 'checkpoint-1',
+  reported_at_unix_ms: 1761839700000,
+  origin: { actor_name: 'Lin Agent' },
+};
 
 function json(payload: unknown) {
   return new Response(JSON.stringify(payload), {
@@ -507,6 +525,46 @@ describe('My work states, detail, and localization', () => {
     // The current-outcome block still dumps the whole report as JSON; only the sentence itself is the next step.
     expect(await within(detail).findByText('Review the contract first')).toBeTruthy();
     expect(detail.textContent).not.toContain('work.prepare');
+  });
+
+  it('shows the checkpoint in the detail in plain words instead of a JSON dump', async () => {
+    setupWorkbench({
+      path: '/workbench?scope=demo&work=W1',
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as { result: { data: { observation: { progress: Record<string, unknown> | null } } } };
+        response.result.data.observation.progress = { ...CHECKPOINT };
+        return response;
+      },
+    });
+    const detail = await screen.findByTestId('workbench-detail');
+    const block = await within(detail).findByTestId('progress-report');
+    expect(within(block).getByTestId('progress-report-summary').textContent).toBe(CHECKPOINT.summary);
+    expect(within(block).getByTestId('progress-report-tests').textContent).toContain('smoke run');
+    expect(detail.textContent).not.toContain('"summary"');
+    expect(findForbiddenVisibleText(defaultVisibleText(block))).toEqual([]);
+  });
+
+  it('wires the work being finished into the checkpoint in the detail as well', async () => {
+    const { unmount } = setupWorkbench({
+      path: '/workbench?scope=demo&work=W1',
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as { result: { data: { observation: { progress: Record<string, unknown> | null } } } };
+        response.result.data.observation.progress = { ...CHECKPOINT, stale: true };
+        return response;
+      },
+    });
+    expect((await screen.findByTestId('progress-report-declaration')).textContent).toContain('可能已过期');
+    unmount();
+    setupWorkbench({
+      path: '/workbench?scope=demo&work=W1',
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as { result: { data: { runtime: { state: string }; observation: { progress: Record<string, unknown> | null } } } };
+        response.result.data.runtime.state = 'completed';
+        response.result.data.observation.progress = { ...CHECKPOINT, stale: true };
+        return response;
+      },
+    });
+    expect((await screen.findByTestId('progress-report-declaration')).textContent).not.toContain('可能已过期');
   });
 
   it('does not invent detail sections when snapshot fields are absent', async () => {

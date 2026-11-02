@@ -18,11 +18,12 @@ import type { TFunction } from 'i18next';
 import { Link as LinkIcon } from 'lucide-react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { deriveWorkState } from '../core/observation';
+import { deriveWorkState, describeProgressReport } from '../core/observation';
 import { Link, useSearchParams } from 'react-router';
 import { ClaimTag } from '../components/ClaimTag';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { LastReportText } from '../components/LastReportText';
+import { ProgressReport } from '../components/ProgressReport';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { ObservationValue } from '../components/ObservationValue';
 import { TechnicalDetails } from '../components/TechnicalDetails';
@@ -166,8 +167,8 @@ function WorkDetail({
   const goals = contract?.goals;
   const acceptance = contract?.acceptance;
   const dependencies = contract?.required_dependencies;
-  const progress = data?.observation?.progress;
   const state = deriveWorkState({ language: i18n.language, readState: readStateOf(snapshot), snapshot: data });
+  const report = describeProgressReport(data?.observation?.progress, { language: i18n.language, finished: state.lastReport.finished });
 
   return (
     <Card data-testid="workbench-detail">
@@ -200,8 +201,8 @@ function WorkDetail({
               ) : <DetailAbsent />}
             </DetailSection>
             <DetailSection title={t('workbench.detail.currentOutcome')}>
-              {progress
-                ? <pre className="workbench-progress">{JSON.stringify(progress, null, 2)}</pre>
+              {report.kind === 'reported'
+                ? <ProgressReport report={report} />
                 : data?.observation ? <NotReportedYet /> : <DetailAbsent />}
             </DetailSection>
             <DetailSection title={t('workbench.detail.dependencies')}>

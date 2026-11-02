@@ -5,6 +5,7 @@ export { actorAliases, workLabel } from './labels';
 export { groupWorks } from './groups';
 export { deriveWorkState } from './work-state';
 export { claimState } from './claim';
+export { describeProgressReport, moreLinesText, REPORT_LIST_LIMIT } from './report';
 export {
   PLANE_STATES,
   OBSERVATION_STALE_AFTER_MS,
@@ -18,6 +19,7 @@ export type {
   ActorAliasResult,
   AgeTextKind,
   AgeTextResult,
+  CappedList,
   ClaimStateResult,
   DescribeUnknownResult,
   FoldOperationsResult,
@@ -26,6 +28,8 @@ export type {
   OperationEvent,
   OperationStep,
   OperationWordResult,
+  ProgressReportResult,
+  ProgressReportTest,
   RawObservationTextResult,
   ReadState,
   SemanticTone,
