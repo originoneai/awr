@@ -79,6 +79,8 @@ const enUS: Messages = {
     unknownResult: 'Unknown result; inspect the original business request first. No retry or reconciliation control',
     noWork: 'no work',
     selfFilterNote: 'You can only view your own activity; the actor filter was ignored',
+    identityReadFailed: 'Your identity could not be loaded. Try again.',
+    identityRetry: 'Try again',
   },
   acceptance: {
     title: 'Outcomes and acceptance',

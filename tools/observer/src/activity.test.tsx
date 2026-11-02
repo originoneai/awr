@@ -35,6 +35,7 @@ type SetupOptions = {
   developmentPages?: ActivityPayload[];
   requestsPages?: ActivityPayload[];
   capabilitiesGate?: Promise<void>;
+  capabilitiesError?: { code: string; message: string; recover?: { value: boolean } };
 };
 
 function setupActivity({
@@ -44,6 +45,7 @@ function setupActivity({
   developmentPages,
   requestsPages,
   capabilitiesGate,
+  capabilitiesError,
 }: SetupOptions = {}) {
   const calls: Array<{ url: string; params: URLSearchParams }> = [];
   const capabilityCalls: string[] = [];
@@ -72,6 +74,10 @@ function setupActivity({
       if (query.op === 'capabilities') {
         capabilityCalls.push(url);
         if (capabilitiesGate) await capabilitiesGate;
+        if (capabilitiesError && !capabilitiesError.recover?.value) {
+          const { code, message } = capabilitiesError;
+          return json({ ok: false, error: { code, message } });
+        }
         return json({
           ok: true,
           result: {
@@ -248,6 +254,29 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].params.get('member_actor_id')).toBe(actor);
     expect(screen.queryByTestId('activity-self-filter-note')).toBeNull();
+  });
+
+  it('shows a useful identity failure and retries without an unfiltered read', async () => {
+    const actor = 'manager-agent-native-20261101T045929Z-ee9ddb44e6e7-4856fa';
+    const recovery = { value: false };
+    const { calls } = setupActivity({
+      projectAudit: true,
+      development: fixture('derived-audit-development-project-scope-run09.json'),
+      capabilitiesError: { code: 'ReadTimeout', message: 'slow', recover: recovery },
+    });
+    renderApp(`/activity?project=demo&actor=${actor}`);
+    const failure = await screen.findByTestId('activity-identity-error');
+    expect(failure.textContent).toContain('身份信息暂时读取不到，请重试');
+    expect(failure.textContent).not.toContain('CapabilitiesReadError');
+    expect(failure.textContent).not.toContain('ReadTimeout');
+    expect(calls).toHaveLength(0);
+
+    const user = userEvent.setup();
+    recovery.value = true;
+    await user.click(screen.getByTestId('activity-identity-retry'));
+    expect(await screen.findByTestId('page-activity')).toBeTruthy();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].params.get('member_actor_id')).toBe(actor);
   });
 
   it('uses member_actor_id for an authorized project-scope actor filter', async () => {

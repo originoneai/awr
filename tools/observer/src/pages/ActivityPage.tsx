@@ -47,7 +47,7 @@ export function ActivityPage() {
   const actorParam = searchParams.get('actor') ?? undefined;
   const projectAudit = identity?.can_read_project_audit === true;
   const actorFilter = actorParam && (projectAudit || actorParam === identity?.actor_id) ? actorParam : undefined;
-  const waitingForActorIdentity = Boolean(actorParam) && !capabilities.isSuccess;
+  const waitingForActorIdentity = Boolean(actorParam) && (capabilities.isPending || capabilities.isError);
   const activityOptions = activityListQueryOptions(project, kind, {
     workId: workFilter, actorId: actorFilter, limit,
   }, revoked);
@@ -93,6 +93,20 @@ export function ActivityPage() {
 
   if (revoked || isAuthError(projects.error) || isAuthError(activity.error) || isAuthError(capabilities.error)) {
     return <ObservationForbidden />;
+  }
+  if (actorParam && capabilities.isError) {
+    return (
+      <Card>
+        <div data-testid="activity-identity-error">
+          <Alert
+            type="error"
+            showIcon
+            message={t('activity.identityReadFailed')}
+            action={<Button data-testid="activity-identity-retry" onClick={() => void capabilities.refetch()}>{t('activity.identityRetry')}</Button>}
+          />
+        </div>
+      </Card>
+    );
   }
   if (projects.isPending || (project && activity.isPending)) return <Card>{t('common.loading')}</Card>;
   if (projects.isError) return <PartialFailure errorCode="ActivityProjectsError">{null}</PartialFailure>;
