@@ -20,6 +20,7 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { FreshnessBadge } from '../components/FreshnessBadge';
+import { groupWorks, rawObservationText } from '../core/observation';
 import { RecentChanges } from '../components/RecentChanges';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { ObservationValue } from '../components/ObservationValue';
@@ -46,13 +47,6 @@ type DisplayRow =
   | { kind: 'group'; key: string; id: string; title: string }
   | { kind: 'work'; key: string; work: TeamWork; index: number };
 
-function rawText(value: unknown): string | null {
-  if (value == null) return null;
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return JSON.stringify(value) ?? null;
-}
-
 function validPage(value: string | null) {
   if (!value || !/^[1-9]\d*$/.test(value)) return 1;
   const page = Number(value);
@@ -63,29 +57,15 @@ function taskPath(project: string, workId: string) {
   return `/projects/${encodeURIComponent(project)}?tab=plan&work=${encodeURIComponent(workId)}`;
 }
 
-function groupedWorks(works: TeamWork[], workstreams: TeamOverviewResponse['workstreams']) {
-  const groups = workstreams.map((workstream) => ({
-    id: workstream.id,
-    title: rawText(workstream.title) ?? rawText(workstream.external_key) ?? workstream.id,
-    works: works.filter((work) => work.workstream_id === workstream.id),
-  }));
-  const known = new Set(workstreams.map((workstream) => workstream.id));
-  const remaining = works.filter((work) => !known.has(work.workstream_id));
-  return {
-    works: [...groups.flatMap((group) => group.works), ...remaining],
-    title: (id: string) => groups.find((group) => group.id === id)?.title ?? id,
-  };
-}
-
 function NextStep({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
   const { t } = useTranslation();
   const data = query?.data?.result.data;
   const snapshotNext = data?.next_step ?? data?.guidance?.action?.op;
   const fullNote = data?.guidance?.action?.note;
   let text = t('common.loading');
-  if (query?.isError) text = rawText(work.next_step) ?? t('common.notProvided');
+  if (query?.isError) text = rawObservationText(work.next_step).text ?? t('common.notProvided');
   else if (query && !query.isPending) {
-    text = rawText(snapshotNext ?? work.next_step) ?? t('common.notProvided');
+    text = rawObservationText(snapshotNext ?? work.next_step).text ?? t('common.notProvided');
   }
   // The compact op never truncates, so ellipsis.tooltip would never fire:
   // the full agent-facing note gets an always-on Tooltip instead.
@@ -127,7 +107,7 @@ function Coverage({ data }: { data: TeamOverviewResponse }) {
   const { coverage } = data;
   const failedStreams = coverage.streams.filter((stream) => stream.status === 'failed');
   const cursors = [coverage.scope, ...coverage.streams]
-    .map((part) => rawText(part.next_cursor))
+    .map((part) => rawObservationText(part.next_cursor).text)
     .filter((cursor): cursor is string => cursor !== null);
   const truncated = coverage.truncated
     || coverage.scope.truncated
@@ -174,7 +154,7 @@ function Coverage({ data }: { data: TeamOverviewResponse }) {
             {
               key: 'cursor',
               label: t('projectOverview.coverage.nextCursor'),
-              children: rawText(coverage.scope.next_cursor) ?? '—',
+              children: rawObservationText(coverage.scope.next_cursor).text ?? '—',
             },
             {
               key: 'works-enumerated',
@@ -260,7 +240,7 @@ export function ProjectOverview({ project }: { project: string }) {
   const overview = useQuery(overviewQueryOptions(project, revoked));
   const activity = useQuery(activityQueryOptions(project, revoked));
   const data = overview.data;
-  const grouped = groupedWorks(data?.works ?? [], data?.workstreams ?? []);
+  const grouped = groupWorks(data?.works ?? [], data?.workstreams ?? []);
   const page = Math.min(
     validPage(searchParams.get('page')),
     Math.max(1, Math.ceil(grouped.works.length / PAGE_SIZE)),
@@ -291,7 +271,7 @@ export function ProjectOverview({ project }: { project: string }) {
         kind: 'group',
         key: `group-${currentWorkstream}`,
         id: currentWorkstream,
-        title: grouped.title(currentWorkstream),
+        title: (grouped.titles[currentWorkstream] ?? currentWorkstream),
       });
     }
     displayRows.push({ kind: 'work', key: work.key, work, index });
@@ -314,7 +294,7 @@ export function ProjectOverview({ project }: { project: string }) {
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 0 : 1 }),
       render: (_, row) => row.kind === 'work' ? (
         <span data-testid={`project-owner-${row.work.key}`}>
-          {rawText(row.work.owner_person ?? row.work.agent) ?? t('common.notProvided')}
+          {rawObservationText(row.work.owner_person ?? row.work.agent).text ?? t('common.notProvided')}
         </span>
       ) : null,
     },

@@ -1,0 +1,22 @@
+{
+  "_note": "Trimmed from a real overview reply of a rehearsal run: only the works and workstreams fields the grouping reads.",
+  "works": [
+    {
+      "key": "issue-filter-api",
+      "title": "issue-filter-api",
+      "workstream_id": "0121E42AF137882D640D53F0D3"
+    },
+    {
+      "key": "issue-filter-page",
+      "title": "issue-filter-page",
+      "workstream_id": "0121E42AF137882D640D53F0D3"
+    }
+  ],
+  "workstreams": [
+    {
+      "id": "0121E42AF137882D640D53F0D3",
+      "external_key": "support",
+      "title": "Customer support queue"
+    }
+  ]
+}
