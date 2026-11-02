@@ -146,6 +146,57 @@ async fn completion_refuses_a_withdrawn_integration() {
 }
 
 #[tokio::test]
+async fn completion_explains_the_newest_attempt_of_the_selection() {
+    let f = setup_simulated_member_integration().await;
+    let first = f.prepared().await["integration_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    f.store
+        .reject_prepared_integration(
+            TENANT,
+            PROJECT,
+            SUPERVISOR,
+            RejectPreparedDeliveryIntegration {
+                request_id: "withdraw".into(),
+                read_set: f.set.clone(),
+                integration_id: first.clone(),
+                reason: "The target is being reorganized.".into(),
+            },
+        )
+        .await
+        .unwrap();
+    refused_until_confirmed!(&f, "integration_rejected");
+
+    // A new attempt for the same selection is what the refusal names, not the withdrawn one.
+    let mut again = f.request.clone();
+    again.request_id = "prepare-after-withdrawal".into();
+    let second = f
+        .store
+        .prepare_integration(TENANT, PROJECT, SUPERVISOR, again)
+        .await
+        .unwrap()["data"]["integration_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(second, first, "the second attempt is a new integration");
+    refused_until_confirmed!(&f, "integration_prepared");
+    let lease = f.leased(&second).await;
+    refused_until_confirmed!(&f, "integration_prepared");
+    f.dispatched(&second, lease["lease_id"].as_str().unwrap())
+        .await;
+    refused_until_confirmed!(&f, "integration_dispatched");
+
+    // Once the new attempt is confirmed, the withdrawn one does not stand in the way.
+    confirm(&f, &second, "applied-effect", IntegrationOutcome::Applied).await;
+    let done = complete(&f, "complete-after-second-attempt", "work.complete")
+        .await
+        .unwrap();
+    assert_eq!(done["receipt"]["data"]["task_complete"], true);
+    assert_eq!(receipts(&f).await, 1);
+}
+
+#[tokio::test]
 async fn completion_names_a_changed_target_only_when_the_repository_refused_for_it() {
     // The repository refused and reports a target other than the one the candidate expected.
     let f = setup_simulated_member_integration().await;
@@ -213,6 +264,82 @@ async fn a_confirmation_that_was_not_current_when_recorded_does_not_complete() {
         .await
         .unwrap();
     refused_until_confirmed!(&f, "integration_confirmation_not_current");
+}
+
+#[tokio::test]
+async fn a_new_attempt_follows_a_confirmation_that_was_not_current() {
+    let f = setup_simulated_member_integration().await;
+    let first = dispatched(&f).await;
+    let fact = f
+        .ingest_record(
+            "applied",
+            f.observation(&first, IntegrationOutcome::Applied),
+        )
+        .await;
+    // The issuer's authority lapses while the effect is recorded, then returns.
+    f.admin
+        .batch_execute("UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='integration-supervisor'")
+        .await
+        .unwrap();
+    f.store
+        .confirm_integration(
+            TENANT,
+            PROJECT,
+            WORKER,
+            f.confirm_request("historical", &first, &fact),
+        )
+        .await
+        .unwrap();
+    f.admin
+        .batch_execute(
+            "UPDATE awr_team.credentials SET revoked_at=NULL WHERE id='integration-supervisor'",
+        )
+        .await
+        .unwrap();
+    refused_until_confirmed!(&f, "integration_confirmation_not_current");
+
+    // A new attempt for the same selection is what the refusal names from then on.
+    let mut again = f.request.clone();
+    again.request_id = "prepare-after-stale-confirmation".into();
+    let second = f
+        .store
+        .prepare_integration(TENANT, PROJECT, SUPERVISOR, again)
+        .await
+        .unwrap()["data"]["integration_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(second, first, "the second attempt is a new integration");
+    refused_until_confirmed!(&f, "integration_prepared");
+    let lease = f
+        .store
+        .lease_integration(
+            TENANT,
+            PROJECT,
+            WORKER,
+            f.lease_request("lease-second", &second),
+        )
+        .await
+        .unwrap()["data"]["lease_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    f.store
+        .dispatch_integration(
+            TENANT,
+            PROJECT,
+            WORKER,
+            f.dispatch_request("dispatch-second", &second, &lease),
+        )
+        .await
+        .unwrap();
+    refused_until_confirmed!(&f, "integration_dispatched");
+    confirm(&f, &second, "applied-again", IntegrationOutcome::Applied).await;
+    let done = complete(&f, "complete-after-fresh-confirmation", "delivery.finalize")
+        .await
+        .unwrap();
+    assert_eq!(done["receipt"]["data"]["task_complete"], true);
+    assert_eq!(receipts(&f).await, 1);
 }
 
 #[tokio::test]
