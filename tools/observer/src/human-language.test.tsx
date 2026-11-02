@@ -48,7 +48,9 @@ describe('human-language visible-text guard', () => {
   it.each(['/knowledge', '/members', '/settings', '/advanced'])('uses human language on the %s placeholder', async (path) => {
     stubFetch({ '/api/team/projects': DEMO_PROJECTS });
     renderApp(path);
-    expect(await screen.findByTestId('state-empty')).toBeTruthy();
+    expect(await screen.findByTestId('state-not-open')).toBeTruthy();
+    expect(defaultVisibleText(document.body)).toContain('该功能尚未开放');
+    expect(defaultVisibleText(document.body)).not.toContain('未观察到相关记录');
     expect(findForbiddenVisibleText(defaultVisibleText(document.body))).toEqual([]);
   });
 });

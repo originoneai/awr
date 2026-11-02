@@ -3,6 +3,10 @@ const zhCN = {
     wordmark: 'AWR',
     title: '观测台',
   },
+  inbox: {
+    pointerBefore: '需要你处理的事项，现在请在工作台的“',
+    pointerAfter: '”里查看',
+  },
   nav: {
     workbench: '工作台',
     projects: '项目',
@@ -45,8 +49,6 @@ const zhCN = {
   },
   project: {
     settings: '项目设置',
-    metaKey: '项目键',
-    metaRole: '角色',
     tabs: {
       overview: '概览',
       plan: '工作计划',

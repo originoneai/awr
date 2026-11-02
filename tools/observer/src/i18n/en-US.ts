@@ -7,6 +7,10 @@ const enUS: Messages = {
     wordmark: 'AWR',
     title: 'Observer',
   },
+  inbox: {
+    pointerBefore: 'For now, find what needs you on the workbench, under "',
+    pointerAfter: '"',
+  },
   nav: {
     workbench: 'Workbench',
     projects: 'Projects',
@@ -49,8 +53,6 @@ const enUS: Messages = {
   },
   project: {
     settings: 'Project settings',
-    metaKey: 'Project key',
-    metaRole: 'Role',
     tabs: {
       overview: 'Overview',
       plan: 'Work plan',
