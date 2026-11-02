@@ -18,6 +18,8 @@ import type {
 export const POLL_INTERVAL_MS = 5000;
 export const SHELL_POLL_INTERVAL_MS = 30000;
 export const SNAPSHOT_POLL_INTERVAL_MS = 60000;
+/** For lists that only give context (the plan list's progress words): the selected work's own read keeps the fast cadence. */
+export const SNAPSHOT_SLOW_POLL_INTERVAL_MS = 600000;
 
 const snapshotReadLimit = pLimit(4);
 
@@ -157,7 +159,7 @@ export function workSnapshotQueryOptions(
   workId: string,
   workstreamId: string,
   revoked = false,
-  cadence: 'detail' | 'list' = 'detail',
+  cadence: 'detail' | 'list' | 'slow' = 'detail',
 ) {
   return {
     queryKey: queryKeys.workSnapshot(project, workId, workstreamId),
@@ -172,7 +174,9 @@ export function workSnapshotQueryOptions(
     }),
     enabled: Boolean(project && workId && workstreamId) && !revoked,
     ...readQueryDefaults,
-    refetchInterval: cadence === 'list' ? SNAPSHOT_POLL_INTERVAL_MS : POLL_INTERVAL_MS,
+    refetchInterval: cadence === 'list'
+      ? SNAPSHOT_POLL_INTERVAL_MS
+      : cadence === 'slow' ? SNAPSHOT_SLOW_POLL_INTERVAL_MS : POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamReadResponse<WorkSnapshotData>>;
 }
 

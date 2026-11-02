@@ -147,6 +147,20 @@ describe('effective plan table', () => {
     await waitFor(() => expect(screen.getByTestId('plan-status-W1').textContent).toBe('已认领'));
   });
 
+  it('refreshes the progress words of the list slowly, ten minutes, and the selected work\'s own detail fast', async () => {
+    const { queryClient } = setupPlan({ path: '/projects/demo?tab=plan' });
+    await waitFor(() => expect(screen.getByTestId('plan-status-W2').textContent).toBe('已认领'));
+    // every observer of every listed work's read, by work: the cadence each observer asks for
+    const cadences = () => Object.fromEntries(queryClient.getQueryCache().getAll()
+      .filter((query) => query.queryKey[0] === 'team' && query.queryKey[1] === 'work.snapshot' && query.queryKey[2] === 'demo')
+      .map((query) => [String(query.queryKey[3]), query.observers.map((observer) => observer.options.refetchInterval).sort()]));
+    expect(cadences()).toEqual({ W1: [600000], W2: [600000] });
+    // selecting a work adds the detail's own fast observer for that work only
+    await userEvent.setup().click(screen.getByRole('link', { name: 'Build the filter API' }));
+    await screen.findByTestId('plan-detail');
+    await waitFor(() => expect(cadences()).toEqual({ W1: [5000, 600000], W2: [600000] }));
+  });
+
   it('reads snapshots only for the works on the visible page', async () => {
     const { fetchMock } = setupPlan({ path: '/projects/demo?tab=plan', overview: makePlanOverview(makeTwoStreamWorks(61)) });
     await waitFor(() => expect(screen.getAllByRole('link', { name: /Observed plan task/ })).toHaveLength(60));

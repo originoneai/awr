@@ -10,7 +10,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function setup(revoked: boolean, works = DEMO_PROJECT_WORKS) {
+function setup(revoked: boolean, works = DEMO_PROJECT_WORKS, cadence: 'list' | 'slow' = 'list') {
   const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
     const request = JSON.parse(String(init?.body)) as { query: { work_id?: string } };
     return new Response(JSON.stringify(demoWorkSnapshot(request.query.work_id)), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -18,7 +18,7 @@ function setup(revoked: boolean, works = DEMO_PROJECT_WORKS) {
   vi.stubGlobal('fetch', fetchMock);
   const client = createAppQueryClient();
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-  const hook = renderHook(() => useWorkSnapshots('demo', works, revoked), { wrapper });
+  const hook = renderHook(() => useWorkSnapshots('demo', works, revoked, cadence), { wrapper });
   return { fetchMock, hook, client };
 }
 
@@ -32,6 +32,13 @@ describe('useWorkSnapshots', () => {
     expect(hook.result.current.map((snapshot) => snapshot.data?.result.data.work_id)).toEqual(DEMO_PROJECT_WORKS.map((work) => work.key));
     const intervals = client.getQueryCache().getAll().map((query) => ('refetchInterval' in query.options ? query.options.refetchInterval : undefined));
     expect(intervals).toEqual(DEMO_PROJECT_WORKS.map(() => 60000));
+  });
+
+  it('polls a context-only list on the slow cadence, ten minutes', async () => {
+    const { hook, client } = setup(false, DEMO_PROJECT_WORKS, 'slow');
+    await waitFor(() => expect(hook.result.current.every((snapshot) => !snapshot.isPending)).toBe(true));
+    const intervals = client.getQueryCache().getAll().map((query) => ('refetchInterval' in query.options ? query.options.refetchInterval : undefined));
+    expect(intervals).toEqual(DEMO_PROJECT_WORKS.map(() => 600000));
   });
 
   it('reads nothing at all while the observation is revoked', async () => {
