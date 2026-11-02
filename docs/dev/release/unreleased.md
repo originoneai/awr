@@ -203,3 +203,15 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   cursors come back as explainable errors. The bridge adds no identity and grants no authority: the upstream service
   reauthorizes the caller's own cookie session on every forwarded read. The `awr_team_command` MCP description now
   matches the fixed delivery capability it declares.
+
+## Fixed
+
+- The next-action guidance for a rejected integration whose repository target moved (the
+  integration inspection and the work inbox of the developer who owns the work) no longer
+  tells the developer to update against the current target "in a new admitted execution"
+  (AWR-TF-014AN). An admitted execution scope checks every observed workspace effect, imported
+  baseline paths included, so that update failed with a scope violation whenever the new target
+  touched files outside the work's scope. The guidance now says to update the workspace as a
+  separate baseline step before the next coding execution begins, then retest in a new admitted
+  execution and publish a new candidate. Wording only: no rule, schema or protocol changes.
+

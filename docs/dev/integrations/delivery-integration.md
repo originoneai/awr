@@ -146,6 +146,17 @@ observations retain the guard. A rejected observation must come from an adapter
 that can establish the original attempt's rejection; absence of a reference
 change is not such proof.
 
+A rejection because the repository target moved (`target_changed` in the inspection)
+is repaired with a new candidate, never by retrying the rejected one. The guidance
+for it says the responsible developer updates the workspace to the current target as
+a separate baseline step before the next coding execution begins, then retests in a
+new admitted execution, publishes a new candidate with its actual target precondition
+and obtains fresh independent review. The update is not part of the admitted
+execution: that execution observes imported baseline paths like any other workspace
+effect and fails with a scope violation when they lie outside its declared scope. If
+the project requires a source-reviewed baseline task for such paths, the supervisor
+creates it first.
+
 After dispatch, lease expiry, reconnect, restart and a missing repository change
 cannot authorize another effect. If the response was lost, inspection preserves
 the original intent, fence and dispatch receipt. `reject_prepared_integration`

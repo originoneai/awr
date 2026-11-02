@@ -6,6 +6,7 @@ mod cross_workstream_adoption;
 mod cross_workstream_exports;
 mod delegation_auth;
 mod delivery_adoption;
+mod delivery_guidance;
 mod delivery_sync;
 mod error;
 mod execution;

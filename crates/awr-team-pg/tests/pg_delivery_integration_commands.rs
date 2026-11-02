@@ -444,11 +444,31 @@ async fn rejected_integration_routes_owner_revision_and_never_reuses_old_approva
 async fn rejected_integration_is_version_bound_and_does_not_grant_execution_permission() {
     let f = setup_content_integration().await;
     let id = rejected_integration(&f).await;
-    assert_eq!(
-        read(&f, A, "delivery.integration.inspect", Some(&id))
-            .await
-            .unwrap()["data"]["target_changed"],
-        true
+    let inspected = read(&f, A, "delivery.integration.inspect", Some(&id))
+        .await
+        .unwrap();
+    assert_eq!(inspected["data"]["target_changed"], true);
+    // A moved target is imported before the next coding execution begins: an admitted execution
+    // scope checks imported baseline paths, so guidance must not send the update into one.
+    let action = inspected["data"]["guidance"]["action"].as_str().unwrap();
+    assert!(
+        action.contains("before the next coding execution begins"),
+        "{action}"
+    );
+    assert!(
+        !action.contains("update against the current target"),
+        "{action}"
+    );
+    let own = inbox_item(&f, A).await;
+    assert_eq!(own["guidance"]["code"], "integration_rejected");
+    let note = own["guidance"]["action"]["note"].as_str().unwrap();
+    assert!(
+        note.contains("before the next coding execution begins"),
+        "{note}"
+    );
+    assert!(
+        !note.contains("revise in a new admitted execution"),
+        "{note}"
     );
     for field in [
         "candidate_digest",
