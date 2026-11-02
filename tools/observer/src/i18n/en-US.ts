@@ -30,9 +30,10 @@ const enUS: Messages = {
     capabilities: 'What this connection can do',
     project: 'Project',
     businessRoles: 'Business roles',
-    actionCeiling: 'Allowed action ceiling',
-    canManageMembers: 'Can manage members',
-    canReadProjectAudit: 'Can read project audit',
+    allowedActions: 'Allowed operations',
+    notIncluded: 'Not included',
+    noActions: 'No operations are allowed',
+    revocationNote: 'A single agent connection cannot be revoked on its own yet; contact an administrator if you need that.',
     existing: 'Existing connections',
     existingLater: 'Existing connections cannot be loaded right now.',
     records: 'Connection records',
@@ -411,6 +412,7 @@ const enUS: Messages = {
   common: {
     loading: 'Loading…',
     notProvided: 'Not provided',
+    listSeparator: ', ',
   },
 };
 

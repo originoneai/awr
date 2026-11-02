@@ -1,7 +1,8 @@
-import { screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import { describe, expect, it, vi } from 'vitest';
+import i18n from './i18n';
 import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
 import {
   DEMO_OVERVIEW,
@@ -68,16 +69,18 @@ function jsonResponse(payload: unknown) {
 }
 
 describe('agent-connect page (AWR-OBS-008)', () => {
-  it('shows the identity and effective permissions from the overview identity, with no extra identity read', async () => {
+  it('says in words what the connection may do, from the overview identity only, and keeps the ids behind the technical details', async () => {
     const { calls } = setupAccount();
     renderApp('/agent-connect?scope=demo');
-    expect(await screen.findByText('lin-agent-x')).toBeTruthy();
-    expect(screen.getByText('lin-grok-x')).toBeTruthy();
+    const card = await screen.findByTestId('connect-capabilities');
+    await waitFor(() => expect(screen.getByTestId('connect-allowed').textContent).toBe('查看授权的任务'));
     expect(screen.getByText('开发者')).toBeTruthy();
-    // Effective permissions use localized display; exact service values remain in tooltips.
     expect(screen.getByText('观察者')).toBeTruthy();
-    expect(screen.getByText('work.read')).toBeTruthy();
-    expect(screen.getAllByText('否').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByTestId('connect-not-included').textContent).toBe('批准计划、做出评审结论、管理项目成员与权限、查看项目活动与审计记录');
+    expect(findForbiddenVisibleText(defaultVisibleText(card))).toEqual([]);
+    for (const hidden of ['lin-agent-x', 'lin-grok-x', 'work.read']) expect(defaultVisibleText(card)).not.toContain(hidden);
+    await userEvent.setup().click(within(card).getByText('技术细节'));
+    for (const exact of ['lin-agent-x', 'lin-grok-x', 'work.read']) expect(card.textContent).toContain(exact);
     // Identity comes from the overview only: no work.next read for it.
     expect(calls.filter((call) => String(call.init?.body ?? '').includes('work.next')).length).toBe(0);
   });
@@ -124,8 +127,8 @@ describe('agent-connect page (AWR-OBS-008)', () => {
     setupAccount();
     renderApp('/agent-connect?scope=demo');
     await screen.findByTestId('page-agent-connect');
-    expect(document.body.textContent).toContain('当前不可用');
-    expect(screen.queryByRole('button', { name: /撤销独立连接|撤销代理连接/ })).toBeNull();
+    expect((await screen.findByTestId('connect-revocation-note')).textContent).toBe('暂时不能单独让某个 Agent 的连接失效；需要时请联系管理员。');
+    expect(screen.queryByRole('button', { name: /撤销独立连接|撤销代理连接|失效/ })).toBeNull();
   });
 
   it('passes axe on the agent-connect page', async () => {
@@ -226,7 +229,7 @@ describe('account page (AWR-OBS-008)', () => {
 });
 
 describe('agent-connect and account review round 2', () => {
-  it('shows manage-members and read-audit as distinct rows with their own values', async () => {
+  it('lists what the member may and may not do from the two flags as well as from the ceiling', async () => {
     const custom = {
       ...OVERVIEW,
       identity: { ...OVERVIEW.identity, can_manage_members: true, can_read_project_audit: false },
@@ -239,13 +242,40 @@ describe('agent-connect and account review round 2', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     renderApp('/agent-connect?scope=demo');
-    const card = await screen.findByTestId('connect-capabilities');
-    const rows = card.querySelectorAll('.ant-descriptions-item');
-    const textOf = (label: string) => Array.from(rows).find((row) => row.textContent?.includes(label))?.textContent;
-    await waitFor(() => expect(textOf('可管理成员')).toContain('是'));
-    expect(textOf('可管理成员')).not.toContain('否');
-    expect(textOf('可读项目审计')).toContain('否');
-    expect(textOf('可读项目审计')).not.toContain('是');
+    await screen.findByTestId('connect-capabilities');
+    await waitFor(() => expect(screen.getByTestId('connect-allowed').textContent).toBe('查看授权的任务、管理项目成员与权限'));
+    expect(screen.getByTestId('connect-not-included').textContent).toBe('批准计划、做出评审结论、查看项目活动与审计记录');
+  });
+
+  it.each([
+    ['an operation nobody has words for is counted, never shown', { membership_action_ceiling: ['work.read', 'future.thing'] }, '查看授权的任务、另有 1 项其他操作'],
+    ['an empty ceiling says nothing is allowed', { membership_action_ceiling: [] }, '没有授权任何操作'],
+    ['the read-audit flag adds its operation', { can_read_project_audit: true }, '查看授权的任务、查看项目活动与审计记录'],
+    ['a missing ceiling and flags say not provided', { membership_action_ceiling: undefined, can_manage_members: undefined, can_read_project_audit: undefined }, '未提供'],
+  ])('%s', async (_name, identity, expected) => {
+    const custom = { ...OVERVIEW, identity: { ...OVERVIEW.identity, ...identity } };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/team/projects')) return jsonResponse(PROJECTS);
+      if (url.includes('/api/team/overview')) return jsonResponse(custom);
+      return jsonResponse({ ok: false, error: { code: 'NoRoute' } });
+    }));
+    renderApp('/agent-connect?scope=demo');
+    await waitFor(() => expect(screen.getByTestId('connect-allowed').textContent).toBe(expected));
+    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('connect-capabilities')))).toEqual([]);
+    if (expected === '未提供') expect(screen.queryByTestId('connect-not-included')).toBeNull();
+  });
+
+  it('reads in English with nothing for the guard to flag', async () => {
+    setupAccount();
+    renderApp('/agent-connect?scope=demo');
+    await screen.findByTestId('connect-capabilities');
+    await act(() => i18n.changeLanguage('en-US'));
+    await waitFor(() => expect(screen.getByTestId('connect-allowed').textContent).toBe('View authorized work'));
+    expect(screen.getByTestId('connect-not-included').textContent).toBe('Approve plans, Decide reviews, Manage project members and access, Read project activity and audit');
+    expect(screen.getByTestId('connect-revocation-note').textContent).toContain('cannot be revoked on its own yet');
+    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('page-agent-connect')))).toEqual([]);
+    await act(() => i18n.changeLanguage('zh-CN'));
   });
 
   it('the first copy button copies exactly the MCP address too', async () => {

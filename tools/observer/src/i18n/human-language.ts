@@ -50,6 +50,7 @@ export const HUMAN_VOCABULARY = {
     moreLines: '还有 {{count}} 条',
     checkNumbered: '检查 {{count}}',
     documentNumbered: '文档 {{count}}',
+    actionsOther: '另有 {{count}} 项其他操作',
     deliveredUnconfirmed: '汇报称已交付',
   },
   'en-US': {
@@ -102,6 +103,7 @@ export const HUMAN_VOCABULARY = {
     moreLines: '{{count}} more',
     checkNumbered: 'Check {{count}}',
     documentNumbered: 'Document {{count}}',
+    actionsOther: '{{count}} more operations',
     deliveredUnconfirmed: 'Reported as delivered',
   },
 } as const;
@@ -171,6 +173,24 @@ export const STATUS_LABELS: Record<string, readonly [string, string]> = {
 /** Checks a reporter or the service names by a machine name that has a plain-words equivalent: [zh-CN, en-US]. */
 export const CHECK_VOCABULARY: Record<string, readonly [string, string]> = {
   'local_git.manifest': ['本地内容与测试', 'Local content and tests'],
+};
+
+/** What a member or an agent may be allowed to do, in plain words: [zh-CN, en-US]. */
+export const ACTION_VOCABULARY: Record<string, readonly [string, string]> = {
+  'work.read': ['查看授权的任务', 'View authorized work'],
+  'work.assign': ['指派任务', 'Assign work'],
+  'session.maintain_own': ['保持自己的工作会话', 'Keep its own work sessions going'],
+  'claim.manage_own': ['认领并管理自己的任务', 'Take on and manage its own work'],
+  'execution.request_and_report_own': ['申请执行并汇报自己的进展', 'Request execution and report its own progress'],
+  'planning.propose': ['提出计划', 'Propose plans'],
+  'planning.edit_draft': ['修改计划草稿', 'Edit plan drafts'],
+  'planning.approve': ['批准计划', 'Approve plans'],
+  'planning.publish': ['发布计划', 'Publish plans'],
+  'delivery.submit_and_request_review': ['提交成果并请求评审', 'Submit results and request review'],
+  'review.decide': ['做出评审结论', 'Decide reviews'],
+  'delivery.finalize': ['完成交付', 'Finalize delivery'],
+  'access.manage_project': ['管理项目成员与权限', 'Manage project members and access'],
+  'audit.read_project': ['查看项目活动与审计记录', 'Read project activity and audit'],
 };
 
 export type OperationKind = 'read' | 'execute' | 'evidence' | 'handoff' | 'acceptance' | 'recovery' | 'access' | 'other';

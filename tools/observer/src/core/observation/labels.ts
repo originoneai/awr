@@ -1,6 +1,6 @@
-import { CHECK_VOCABULARY, FORBIDDEN_VISIBLE_PATTERNS, humanText } from '../../i18n/human-language';
+import { ACTION_VOCABULARY, CHECK_VOCABULARY, FORBIDDEN_VISIBLE_PATTERNS, humanText } from '../../i18n/human-language';
 import { statementText } from './values';
-import type { ActorAliasEntry, ActorAliasResult, CheckLabelResult, DocumentLabelResult, WorkLabelResult } from './types';
+import type { ActionWordsResult, ActorAliasEntry, ActorAliasResult, CheckLabelResult, DocumentLabelResult, WorkLabelResult } from './types';
 
 function present(value: string | null | undefined): value is string {
   return typeof value === 'string' && value.length > 0;
@@ -77,4 +77,24 @@ export function documentLabel(path: unknown, options: { language: string; positi
     return { kind: 'numbered', text: numbered, technical: { raw } };
   }
   return { kind: 'named', text: name, technical: { raw } };
+}
+
+/**
+ * The operations a member or an agent may be allowed to do, in plain words, each once and in the order
+ * the service listed them. A name the vocabulary has no words for is counted, never shown; the exact
+ * names come back for the technical details. Anything that is not a list of names reads as none.
+ */
+export function actionWords(actions: unknown, options: { language: string }): ActionWordsResult {
+  const names = Array.isArray(actions) ? Array.from(new Set(actions.flatMap((action) => {
+    const name = statementText(action);
+    return name == null ? [] : [name];
+  }))) : [];
+  const zh = options.language.toLowerCase().startsWith('zh');
+  const shown: string[] = [];
+  let other = 0;
+  for (const name of names) {
+    if (Object.prototype.hasOwnProperty.call(ACTION_VOCABULARY, name)) shown.push(ACTION_VOCABULARY[name][zh ? 0 : 1]);
+    else other += 1;
+  }
+  return { shown, other, technical: { raw: names } };
 }
