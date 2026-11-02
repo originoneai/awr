@@ -160,7 +160,8 @@ describe('deriveWorkState: progress word', () => {
     };
     expect(Object.keys(phases)).toHaveLength(11);
     for (const [phase, [zhText, enText, tone]] of Object.entries(phases)) {
-      const snapshot = { observation: { progress: { phase } } };
+      // 'delivered' reads as delivered only with the system's completion behind it (see the next test)
+      const snapshot = { runtime: { state: 'completed', selected_completion_id: 'completion-1' }, observation: { progress: { phase } } };
       expect(deriveWorkState({ ...zh, snapshot }).progress, phase).toMatchObject({ kind: 'phase', text: zhText, tone });
       expect(deriveWorkState({ language: 'en-US', readState: 'ready', snapshot }).progress.text, phase).toBe(enText);
       expect(findForbiddenVisibleText(zhText), phase).toEqual([]);
@@ -180,12 +181,43 @@ describe('deriveWorkState: progress word', () => {
     expect(deriveWorkState({ ...zh, snapshot: { observation: {} }, workStatus: 'completed' }).progress).toMatchObject({ kind: 'row', text: '已完成', tone: 'positive' });
     expect(deriveWorkState({ ...zh, snapshot: { observation: {} }, workStatus: 'free text from somewhere' }).progress).toMatchObject({ kind: 'row', text: '未识别状态' });
     expect(deriveWorkState({ language: 'zh-CN', readState: 'failed', snapshot: IN_REVIEW }).progress).toMatchObject({ kind: 'unknown', text: '未知', tone: 'neutral' });
+    expect(deriveWorkState({ language: 'zh-CN', readState: 'failed', snapshot: DELIVERED }).progress.technical).toEqual({ phase: null, runtimeState: null, rowStatus: null, completionId: null });
     expect(deriveWorkState({ ...zh, snapshot: IN_REVIEW, workStatus: 'open' }).progress.kind).toBe('phase');
     expect(deriveWorkState({ ...zh, snapshot: IN_PROGRESS, workStatus: 'open' }).progress.kind).toBe('runtime');
   });
 
   it('says loading while the read is pending, and nothing else', () => {
     expect(deriveWorkState({ language: 'zh-CN', readState: 'loading', snapshot: IN_REVIEW, workStatus: 'open' }).progress)
-      .toEqual({ kind: 'loading', text: '加载中…', tone: 'neutral', technical: { phase: null, runtimeState: null, rowStatus: null } });
+      .toEqual({ kind: 'loading', text: '加载中…', tone: 'neutral', technical: { phase: null, runtimeState: null, rowStatus: null, completionId: null } });
+  });
+
+  it('reads a reporter\'s "delivered" as delivered only when the system holds the completion, otherwise as reported', () => {
+    const completion = DELIVERED.runtime.selected_completion_id;
+    expect(completion).toBeTruthy();
+    expect(deriveWorkState({ ...zh, snapshot: DELIVERED }).progress)
+      .toMatchObject({ kind: 'phase', text: '已交付', tone: 'positive', technical: { phase: 'delivered', runtimeState: 'completed', completionId: completion } });
+    const withRuntime = (state: string, selected: unknown) => ({
+      ...DELIVERED,
+      runtime: { state, selected_completion_id: selected },
+      observation: { ...DELIVERED.observation, runtime: { state, selected_completion_id: selected } },
+    });
+    // the reporter says delivered, the system has no completion and the work is still claimed
+    expect(deriveWorkState({ ...zh, snapshot: withRuntime('claimed', null) }).progress)
+      .toMatchObject({ kind: 'phase', text: '汇报称已交付', tone: 'warning', technical: { completionId: null } });
+    // the runtime state says completed but no completion is selected, or a blank one
+    for (const selected of [null, undefined, '', '   ', 7]) {
+      expect(deriveWorkState({ ...zh, snapshot: withRuntime('completed', selected) }).progress, String(selected))
+        .toMatchObject({ text: '汇报称已交付', tone: 'warning' });
+    }
+    // a completion without the completed state is not a confirmation either
+    expect(deriveWorkState({ ...zh, snapshot: withRuntime('claimed', completion) }).progress.text).toBe('汇报称已交付');
+    // the observation block's runtime is read when the top level has none
+    const observationOnly = { ...DELIVERED, runtime: undefined };
+    expect(deriveWorkState({ ...zh, snapshot: observationOnly }).progress.text).toBe('已交付');
+    // no reporter phase: the system's own completed state, with its completion, is the word
+    const noPhase = { ...DELIVERED, observation: { ...DELIVERED.observation, progress: null } };
+    expect(deriveWorkState({ ...zh, snapshot: noPhase }).progress).toMatchObject({ kind: 'runtime', text: '已完成', tone: 'positive' });
+    expect(deriveWorkState({ language: 'en-US', readState: 'ready', snapshot: withRuntime('claimed', null) }).progress.text).toBe('Reported as delivered');
+    expect(deriveWorkState({ language: 'en-US', readState: 'ready', snapshot: DELIVERED }).progress.text).toBe('Delivered');
   });
 });

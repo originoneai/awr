@@ -271,6 +271,7 @@ describe('work detail requirements and source state', () => {
     // why the note is (not) there stays checkable: the service's flag and the work's own state, verbatim
     expect(screen.getByTestId('technical-client-stale').textContent).toContain('true');
     expect(screen.getByTestId('technical-runtime-state').textContent).toContain('claimed');
+    expect(screen.getByTestId('technical-completion-id').textContent).toContain('未提供');
   });
 
   it('shows the checkpoint in plain words instead of a JSON dump and keeps every raw field in the technical details', async () => {

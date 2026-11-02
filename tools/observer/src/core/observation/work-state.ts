@@ -41,7 +41,18 @@ export function deriveWorkState(input: WorkStateInput): WorkStateResult {
   const phase = rawObservationText(progress?.phase).text;
   const finished = runtimeState === 'completed' || phase === 'delivered';
   const reportTechnical = { runtimeState, phase };
-  const progressWord = deriveProgress({ language, readState, phase, runtimeState, rowStatus: rawObservationText(input.workStatus).text });
+  const completionId = readState === 'ready'
+    ? statementText(snapshot?.runtime?.selected_completion_id ?? snapshot?.observation?.runtime?.selected_completion_id)
+    : null;
+  const progressWord = deriveProgress({
+    language,
+    readState,
+    phase,
+    runtimeState,
+    rowStatus: rawObservationText(input.workStatus).text,
+    completionId,
+    completionConfirmed: runtimeState === 'completed' && completionId != null,
+  });
   let lastReport: WorkStateResult['lastReport'];
   if (readState === 'loading') {
     lastReport = { kind: 'loading', text: humanText('loading', language), timeText: null, staleText: null, atUnixMs: null, stale: null, finished: false, technical: { atUnixMs: null, ...reportTechnical } };
@@ -59,7 +70,9 @@ export function deriveWorkState(input: WorkStateInput): WorkStateResult {
 /**
  * One word for how far a work has come: the reporter's own phase, else the runtime state, else the
  * overview row's status; a word the vocabulary does not know is said to be unrecognized, never
- * guessed, and a read that did not happen contributes nothing.
+ * guessed, and a read that did not happen contributes nothing. A reporter's "delivered" is a
+ * declaration: it reads as delivered only when the system holds a selected completion for a work
+ * whose runtime state is completed, otherwise as "reported as delivered".
  */
 function deriveProgress(input: {
   language: string;
@@ -67,14 +80,19 @@ function deriveProgress(input: {
   phase: string | null;
   runtimeState: string | null;
   rowStatus: string | null;
+  completionId: string | null;
+  completionConfirmed: boolean;
 }): WorkStateResult['progress'] {
-  const { language, readState, phase, runtimeState, rowStatus } = input;
+  const { language, readState, phase, runtimeState, rowStatus, completionId, completionConfirmed } = input;
   if (readState === 'loading') {
-    return { kind: 'loading', text: humanText('loading', language), tone: 'neutral', technical: { phase: null, runtimeState: null, rowStatus: null } };
+    return { kind: 'loading', text: humanText('loading', language), tone: 'neutral', technical: { phase: null, runtimeState: null, rowStatus: null, completionId: null } };
   }
-  const technical = { phase, runtimeState, rowStatus };
+  const technical = { phase, runtimeState, rowStatus, completionId };
+  const phaseWord = phase === 'delivered' && !completionConfirmed
+    ? { text: humanText('deliveredUnconfirmed', language), known: true, tone: 'warning' as const }
+    : phase == null ? null : statusWord(phase, { language, field: 'phase' });
   const candidates = [
-    phase == null ? null : { kind: 'phase' as const, word: statusWord(phase, { language, field: 'phase' }) },
+    phaseWord == null ? null : { kind: 'phase' as const, word: phaseWord },
     runtimeState == null ? null : { kind: 'runtime' as const, word: statusWord(runtimeState, { language, field: 'runtime_state' }) },
     rowStatus == null ? null : { kind: 'row' as const, word: statusWord(rowStatus, { language, field: 'state' }) },
   ].filter((candidate) => candidate != null);

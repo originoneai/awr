@@ -276,6 +276,25 @@ describe('project workstream progress', () => {
     expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('project-progress-table')))).toEqual([]);
   });
 
+  it('says "reported as delivered" for a reporter\'s delivered that the system has not confirmed, and delivered once it holds the completion', async () => {
+    setupOverview({
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as {
+          result: { data: { runtime: { state: string; selected_completion_id?: string | null }; observation: { progress: Record<string, unknown> | null } } };
+        };
+        response.result.data.observation.progress = { phase: 'delivered' };
+        if (workId === 'W2') response.result.data.runtime = { state: 'completed', selected_completion_id: 'completion-1' };
+        return response;
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('project-status-W1').textContent).toBe('汇报称已交付');
+      expect(screen.getByTestId('project-status-W2').textContent).toBe('已交付');
+    });
+    expect(screen.getByTestId('project-status-W1').querySelector('.ant-badge-status-dot')?.className).toContain('ant-badge-status-warning');
+    expect(screen.getByTestId('project-status-W2').querySelector('.ant-badge-status-dot')?.className).toContain('ant-badge-status-success');
+  });
+
   it('marks a report the service itself declared stale, and only that one', async () => {
     setupOverview({
       snapshot: (workId) => {
