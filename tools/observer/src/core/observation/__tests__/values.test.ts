@@ -34,6 +34,14 @@ describe('statusWord', () => {
     expect(statusWord(DEVELOPMENT_ACTIVITY.result, { language: 'zh-CN', field: 'result' }).text).toBe('已提交');
   });
 
+  it('colours each class of status word by its meaning', () => {
+    const tone = (value: string) => statusWord(value, { language: 'zh-CN', field: 'state' }).tone;
+    for (const value of ['approved', 'confirmed', 'succeeded']) expect(tone(value), value).toBe('positive');
+    for (const value of ['failed', 'rejected', 'invalidated', 'blocking']) expect(tone(value), value).toBe('negative');
+    for (const value of ['pending', 'open', 'claimed', 'dispatched']) expect(tone(value), value).toBe('warning');
+    for (const value of ['current', 'disabled', 'unknown']) expect(tone(value), value).toBe('neutral');
+  });
+
   it('never translates a title that happens to look like a status', () => {
     expect(statusWord('open', { language: 'zh-CN', field: 'title' })).toMatchObject({ text: 'open', known: false, technical: { raw: 'open' } });
   });
