@@ -298,6 +298,16 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     expect(step?.textContent).toContain('结果未知');
   });
 
+  it('marks the repository integration step unknown, not pending, when the integration read fails', async () => {
+    setupAcceptance({ failOps: ['delivery.integration.inspect'] });
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+    await screen.findByTestId('acceptance-evidence-chain');
+    const step = screen.getByText('仓库集成').closest('.ant-steps-item');
+    expect(step?.textContent).toContain('结果未知');
+    expect(step?.textContent).not.toContain('待并入主线');
+    expect(step?.textContent).not.toContain('还没准备');
+  });
+
   it('localizes review states in the outcome source list (review r1.4)', async () => {
     setupAcceptance();
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
