@@ -114,6 +114,16 @@ describe('project workstream progress', () => {
     expect(timeColumn?.style.width || timeColumn?.getAttribute('width')).toBe('220px');
   });
 
+  it('uses the 60-second list cadence for every visible work snapshot', async () => {
+    const { fetchMock, queryClient } = setupOverview();
+    await waitFor(() => expect(snapshotCalls(fetchMock)).toHaveLength(2));
+    const snapshots = queryClient.getQueryCache().getAll().filter((query) => (
+      query.queryKey[0] === 'team' && query.queryKey[1] === 'work.snapshot'
+    ));
+    expect(snapshots).toHaveLength(2);
+    expect(snapshots.map((query) => query.options.refetchInterval)).toEqual([60000, 60000]);
+  });
+
   it.each([59, 60])('renders every work on page one across two workstreams: %i', async (count) => {
     setupOverview({ overview: makeProjectOverview(makeTwoStreamWorks(count)) });
     await waitFor(() => expect(screen.getAllByRole('link', { name: /Observed project task/ })).toHaveLength(count));

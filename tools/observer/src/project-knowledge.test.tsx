@@ -159,6 +159,18 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     expect(screen.getByTestId('knowledge-from-works').textContent).toBe('来自 2／2 个工作项');
   });
 
+  it('uses the 60-second list cadence for every visible work snapshot', async () => {
+    const { calls } = setupKnowledge({ snapshots: { W1: snapshotFor('W1'), W2: snapshotFor('W2') } });
+    const snapshotReads = () => calls.filter(({ init }) => String(init?.body ?? '').includes('"work.snapshot"'));
+    const { queryClient } = renderApp('/projects/demo?tab=knowledge');
+    await waitFor(() => expect(snapshotReads()).toHaveLength(2));
+    const snapshots = queryClient.getQueryCache().getAll().filter((query) => (
+      query.queryKey[0] === 'team' && query.queryKey[1] === 'work.snapshot'
+    ));
+    expect(snapshots).toHaveLength(2);
+    expect(snapshots.map((query) => query.options.refetchInterval)).toEqual([60000, 60000]);
+  });
+
   it('hydrates only the visible 60-work page and reads the next work on demand', async () => {
     const user = userEvent.setup();
     const works = Array.from({ length: 61 }, (_, index) => ({
