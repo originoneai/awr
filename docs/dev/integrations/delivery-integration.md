@@ -206,7 +206,7 @@ is recorded, and `reason` names the missing step:
 
 | `reason` | The integration is | Next action |
 | --- | --- | --- |
-| `integration_not_prepared` | never prepared for the selected version; integrations of earlier versions do not count | Prepare it with `delivery.integration.prepare`. |
+| `integration_not_prepared` | never prepared for the selected version; integrations of earlier versions and selections do not count | Prepare it with `delivery.integration.prepare`. If that is refused because the selection changed, the author selects the same candidate again first (see below). |
 | `integration_prepared` | prepared or leased; the repository change has not been made | Wait for the integrator. `delivery.integration.reject_prepared` withdraws it before dispatch. |
 | `integration_dispatched` | dispatched; the outcome is not recorded | Wait for the original attempt to be reconciled; never dispatch again. |
 | `integration_unknown` | of unknown outcome | Do not retry; the integrator resolves the original attempt by query. |
@@ -225,6 +225,24 @@ connector mapping), and ordinary human confirmation, which cannot prepare an
 integration. Receipts that were already recorded are not changed or
 re-examined. A confirmation still never creates a completion receipt;
 finalization stays a separate command with its own gates.
+
+### When the selection changes before the integration
+
+A source activation that does not touch the work still leaves its selection
+naming the earlier source. Until the author selects the same candidate again
+(`delivery.candidate.select` with `expected_selected_digest`), preparing its
+integration is refused as changed preconditions and completion is refused as
+`integration_not_prepared`. The new selection keeps the candidate and its
+approval. After the connector has observed it, the integration is prepared,
+confirmed and the work finalized. An integration that was confirmed before the
+activation still counts as long as the selection is left alone. Selecting an
+already integrated candidate again starts a new selection, so its earlier
+integration no longer counts; the one more integration then needed ends as
+already applied in the repository (checked with the local Git integrator). The tests
+`an_approved_work_is_integrated_after_an_unrelated_activation_once_its_binding_is_refreshed`
+and
+`selecting_an_integrated_candidate_again_needs_one_more_integration_that_the_repository_accepts`
+pin both cases.
 
 ## Bind acceptance to a source reference
 

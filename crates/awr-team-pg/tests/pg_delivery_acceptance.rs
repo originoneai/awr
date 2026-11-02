@@ -513,6 +513,107 @@ async fn domain_source_queue_refuses_changed_contracts_and_retains_original_bind
     );
 }
 
+/// An approved work whose integration was not prepared before an unrelated source activation is
+/// not stranded. The selection still names the old source, so nothing can be integrated and
+/// nothing completes until the author refreshes the binding by selecting the same candidate
+/// again; the integration and the completion then go through on the original approval.
+#[tokio::test]
+async fn an_approved_work_is_integrated_after_an_unrelated_activation_once_its_binding_is_refreshed()
+ {
+    for (simulated, author_lets_go) in [(false, false), (true, false), (true, true)] {
+        let mut f = SourceFixture::new(simulated).await;
+        let approval = f.f.request.review_decision_id.clone();
+        let digest = f.f.request.candidate_digest.clone();
+        if author_lets_go {
+            f.publish_successor(Some("c")).await;
+        } else {
+            f.activate_successor(Some("c")).await;
+        }
+        // Nothing was prepared, and the selection names the source before the activation.
+        let stale = prepare(&f.f.reads, SUPERVISOR, "a").await;
+        let mut request = f.f.request.clone();
+        request.request_id = "stale-prepare".into();
+        request.read_set = set(&stale);
+        assert!(matches!(
+            f.f.store
+                .prepare_integration(TENANT, PROJECT, SUPERVISOR, request)
+                .await,
+            Err(PgError::PreconditionsChanged)
+        ));
+        assert!(matches!(
+            f.try_finalize("stale-finalize").await,
+            Err(PgError::IntegrationNotConfirmed {
+                reason: "integration_not_prepared"
+            })
+        ));
+        f.assert_no_completion().await;
+        // The author takes the work again if they let go of it, then selects the same candidate.
+        let mut reselect = f.f.selection.clone();
+        if author_lets_go {
+            let p = prepare(&f.f.reads, A, "a").await;
+            let version: i64 =
+                f.f.admin
+                    .query_one(
+                        "SELECT session_version FROM awr_team.sessions WHERE id='session-a'",
+                        &[],
+                    )
+                    .await
+                    .unwrap()
+                    .get(0);
+            let claim = integration_fixture::run(
+                &f.f.reads,
+                A,
+                "take-again",
+                "claim.acquire",
+                json!({"session_id":"session-a","expected_session_version":version.to_string(),
+                    "expected_work_version":p["data"]["runtime"]["work_version"],"ttl_seconds":3600}),
+            )
+            .await;
+            reselect.claim_id = claim["claim_id"].as_str().unwrap().into();
+            reselect.fence = claim["fence"].as_str().unwrap().into();
+            reselect.lease_version = claim["lease_version"].as_str().unwrap().into();
+        }
+        reselect.request_id = "refresh-binding".into();
+        reselect.read_set = set(&prepare(&f.f.reads, A, "a").await);
+        reselect.expected_selected_digest = Some(digest.clone());
+        let selected =
+            f.f.store
+                .select_candidate(TENANT, PROJECT, A, reselect)
+                .await
+                .unwrap();
+        assert_eq!(selected["data"]["selection_version"], "2");
+        assert_eq!(selected["data"]["candidate_digest"], digest);
+        // The connector observes the refreshed selection; the manager then prepares and the
+        // worker confirms the integration.
+        let current = set(&prepare(&f.f.reads, SUPERVISOR, "a").await);
+        f.f.set = current.clone();
+        f.f.request.read_set = current;
+        f.f.request.selection_version = "2".into();
+        f.f.check(
+            "refreshed-check",
+            awr_team::delivery::VerificationOutcome::Passed,
+        )
+        .await;
+        f.f.integrate().await;
+        let completed = f.finalize("after-refresh").await;
+        assert_eq!(completed["task_complete"], true);
+        assert_eq!(completed["delivery_candidate_digest"], digest);
+        let stored: Value =
+            f.f.admin
+                .query_one(
+                    "SELECT approved_by_json FROM awr_team.completion_receipts",
+                    &[],
+                )
+                .await
+                .unwrap()
+                .get(0);
+        assert_eq!(
+            stored["review_decision_id"], approval,
+            "The original approval completes the work; no new review is needed"
+        );
+    }
+}
+
 #[tokio::test]
 async fn existing_domain_publication_is_never_rebound_after_an_unrelated_activation() {
     let f = SourceFixture::new(false).await;

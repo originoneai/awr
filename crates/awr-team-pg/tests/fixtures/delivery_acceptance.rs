@@ -259,6 +259,7 @@ work_items:
         }
     }
 
+    /// The author lets go of the work, then a successor source is activated.
     pub async fn publish_successor(&self, changed_work: Option<&str>) -> CurrentWorkstreamSource {
         integration_fixture::run(
             &self.f.reads,
@@ -270,6 +271,11 @@ work_items:
                 "expected_lease_version":self.f.selection.lease_version}),
         )
         .await;
+        self.activate_successor(changed_work).await
+    }
+
+    /// Publish and activate a successor source; claims stay as they are.
+    pub async fn activate_successor(&self, changed_work: Option<&str>) -> CurrentWorkstreamSource {
         let path = self.root.0.join("ledger.yaml");
         let text = std::fs::read_to_string(&path).unwrap();
         let changed = match changed_work {

@@ -553,7 +553,7 @@ impl PgError {
         let (condition, next_action) = match *reason {
             "integration_not_prepared" => (
                 "The selected candidate has no repository integration for its current selection.",
-                "Prepare it with delivery.integration.prepare, using the candidate_digest and selection_version from delivery.neutral.inspect and the evidence, review round and approving decision from review.inspect. Wait until delivery.integration.inspect shows it confirmed, then finalize again. Integrations of earlier versions do not count.",
+                "Prepare it with delivery.integration.prepare, using the candidate_digest and selection_version from delivery.neutral.inspect and the evidence, review round and approving decision from review.inspect. Wait until delivery.integration.inspect shows it confirmed, then finalize again. Integrations of earlier versions and of earlier selections do not count. If preparing is refused because the selection changed (for example after an unrelated source activation), the author selects the same candidate again with delivery.candidate.select, then prepare.",
             ),
             "integration_prepared" => (
                 "An integration of the selected candidate is prepared, but the repository change has not been made.",

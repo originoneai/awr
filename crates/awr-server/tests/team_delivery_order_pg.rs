@@ -1690,6 +1690,71 @@ fn the_confirmed_integration_of_an_earlier_version_does_not_complete_the_next_ve
     });
 }
 
+/// Refreshing the binding of an item that is already integrated is not a dead end. Selecting the
+/// same candidate again makes a new selection, so its earlier integration no longer counts; the
+/// manager prepares one more integration, the repository reports the change as already applied,
+/// and the item completes.
+#[test]
+fn selecting_an_integrated_candidate_again_needs_one_more_integration_that_the_repository_accepts()
+{
+    on_large_stack(|| async {
+        let mut team = Team::start().await;
+        arrange(&mut team).await;
+        let base = team.repo.base.clone();
+        let first = team.implement(LIN, API, 1, API_VERSIONS[0], &base).await;
+        team.observe(API).await;
+        let approved = team
+            .decide(CHEN, API, &first.round_id, "approve")
+            .await
+            .unwrap();
+        let decision = approved["decision_id"].as_str().unwrap().to_owned();
+        let (id, snapshot) = team.deliver(API, &first, &decision).await;
+        assert_eq!(snapshot.report.outcome, IntegrationOutcome::Applied);
+        team.confirm(API, &id).await;
+        let landed = team.main_revision();
+        // The author selects the identical candidate again, as guidance for a changed binding says.
+        let candidate: Value = team
+            .admin
+            .query_one(
+                "SELECT body_json FROM awr_team.delivery_candidates WHERE binding_digest=$1",
+                &[&first.digest],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        let prepared = prepare(&team.reads, LIN.token, API.id).await;
+        let session = team.session(LIN, API).await;
+        let claim = team.claim_header(API);
+        let selected = team
+            .run(
+                LIN,
+                API,
+                "delivery.candidate.select",
+                json!({"source_snapshot_id":prepared["source_snapshot_id"],
+                    "session_id":session["session_id"],
+                    "claim_id":claim["claim_id"],"fence":claim["expected_fence"],
+                    "lease_version":claim["expected_lease_version"],
+                    "expected_selected_digest":first.digest,"candidate":candidate}),
+            )
+            .await;
+        assert_eq!(selected["selection_version"], "2");
+        assert_cannot_complete(&mut team, API, &first, "integration_not_prepared").await;
+        // One more integration of the same candidate: the target already holds it.
+        team.observe(API).await;
+        let again = Version {
+            selection: "2".into(),
+            ..first.clone()
+        };
+        let (id, snapshot) = team.deliver(API, &again, &decision).await;
+        assert_eq!(snapshot.report.outcome, IntegrationOutcome::Applied);
+        assert_eq!(team.main_revision(), landed, "the target is left as it was");
+        team.confirm(API, &id).await;
+        let completed = team.finalize(API, &again).await;
+        assert_eq!(completed["task_complete"], true);
+        assert_eq!(team.runtime_state(API).await, "completed");
+    });
+}
+
 /// A work with no repository delivery channel has nothing to integrate: once its report is
 /// reviewed and approved, the manager finalizes it.
 #[test]

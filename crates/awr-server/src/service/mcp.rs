@@ -3208,7 +3208,7 @@ mod tests {
                 "{reason}"
             );
             assert_eq!(body["next_step"], body["action_guidance"]["next_action"]);
-            assert!(bytes.len() < 2000, "guidance must stay bounded: {reason}");
+            assert!(bytes.len() < 2400, "guidance must stay bounded: {reason}");
             let mcp = CallToolResult::structured_error(body.clone());
             assert_eq!(mcp.is_error, Some(true));
             assert_eq!(mcp.structured_content, Some(body));
