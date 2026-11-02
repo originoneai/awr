@@ -209,7 +209,7 @@ function WorkDetail({
               {dependencies ? <ContractValues values={dependencies} /> : <DetailAbsent />}
             </DetailSection>
             <DetailSection title={t('workbench.detail.nextStep')}>
-              {state.next.kind === 'reported' ? <Typography.Paragraph>{state.next.text}</Typography.Paragraph> : <DetailAbsent />}
+              {state.next.kind === 'reported' ? <Typography.Paragraph data-reporter-text>{state.next.text}</Typography.Paragraph> : <DetailAbsent />}
             </DetailSection>
             <TechnicalDetails items={workStateTechnicalItems(state)} />
           </>

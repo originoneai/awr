@@ -64,7 +64,10 @@ function NextStep({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
       style={{ display: 'block' }}
     >
       {/* antd's Typography overwrites a line clamp set on itself, so the clamp sits on a plain span. */}
-      <span style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+      <span
+        data-reporter-text={state.next.kind === 'reported' ? '' : undefined}
+        style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+      >
         {state.next.text}
       </span>
     </Typography.Text>
