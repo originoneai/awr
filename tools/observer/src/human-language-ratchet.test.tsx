@@ -128,13 +128,14 @@ afterAll(() => {
 });
 
 describe('human-language violation ratchet', () => {
-  it('rejects an increase over a recorded baseline', () => {
+  it('requires the exact recorded baseline in both directions', () => {
     expect(withinHumanLanguageBaseline(1, 0)).toBe(false);
+    expect(withinHumanLanguageBaseline(0, 1)).toBe(false);
     expect(withinHumanLanguageBaseline(0, 0)).toBe(true);
   });
 
   it.each(Object.entries(PAGES).flatMap(([page, path]) => STATES.map((state) => [page, path, state] as const)))(
-    '%s / %s / %s does not exceed its recorded debt',
+    '%s / %s / %s matches its recorded debt exactly',
     async (page, path, state) => {
       installRealShapeMock(state);
       renderApp(path);
@@ -142,7 +143,11 @@ describe('human-language violation ratchet', () => {
       const count = findForbiddenVisibleText(defaultVisibleText(document.body)).length;
       const key = `${page}/${state}`;
       generatedBaseline[key] = count;
-      expect(count).toBeLessThanOrEqual(BASELINE[key as keyof typeof BASELINE] ?? Number.MAX_SAFE_INTEGER);
+      const baseline = BASELINE[key as keyof typeof BASELINE] ?? 0;
+      expect(
+        withinHumanLanguageBaseline(count, baseline),
+        `${key}: actual violations (${count}) differ from baseline (${baseline}); regenerate the baseline after an intentional change`,
+      ).toBe(true);
     },
   );
 });

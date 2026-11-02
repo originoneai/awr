@@ -269,7 +269,9 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     setupAcceptance();
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api', { expand: false });
     await waitFor(() => expect(screen.getByTestId('acceptance-from-works').textContent).toContain('2／2'));
-    expect(screen.getAllByTestId('technical-details')).toHaveLength(1);
+    const outcomeDetails = screen.getAllByTestId('technical-details')
+      .filter((element) => !screen.getByTestId('freshness-badge').contains(element));
+    expect(outcomeDetails).toHaveLength(1);
     const visible = screen.getByTestId('acceptance-page').textContent ?? '';
     expect(visible).not.toContain(EVIDENCE);
     expect(visible).not.toContain(CLAIM);
@@ -286,6 +288,14 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     expect(chain.textContent).toContain('完成记录待核对');
     expect(chain.textContent).not.toContain('已并入主线');
     expect(chain.textContent).not.toContain('已完成');
+  });
+
+  it('marks business acceptance unknown when the integration read fails', async () => {
+    setupAcceptance({ failOps: ['delivery.integration.inspect'] });
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+    await screen.findByTestId('acceptance-evidence-chain');
+    const step = screen.getByText('业务验收').closest('.ant-steps-item');
+    expect(step?.textContent).toContain('结果未知');
   });
 
   it('localizes review states in the outcome source list (review r1.4)', async () => {

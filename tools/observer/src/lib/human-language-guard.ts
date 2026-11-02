@@ -20,5 +20,5 @@ export function defaultVisibleText(root: ParentNode): string {
 }
 
 export function withinHumanLanguageBaseline(current: number, baseline: number): boolean {
-  return current <= baseline;
+  return current === baseline;
 }
