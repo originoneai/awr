@@ -292,7 +292,7 @@ export function ProjectOverview({ project }: { project: string }) {
   );
   const visibleWorks = grouped.works.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const snapshots = useQueries({
-    queries: visibleWorks.map((work) => workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked)),
+    queries: visibleWorks.map((work) => workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked, 'list')),
   });
 
   if (revoked || isAuthError(overview.error) || isAuthError(activity.error)) {

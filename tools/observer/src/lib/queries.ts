@@ -154,6 +154,7 @@ export function workSnapshotQueryOptions(
   workId: string,
   workstreamId: string,
   revoked = false,
+  cadence: 'detail' | 'list' = 'detail',
 ) {
   return {
     queryKey: queryKeys.workSnapshot(project, workId, workstreamId),
@@ -168,7 +169,7 @@ export function workSnapshotQueryOptions(
     }),
     enabled: Boolean(project && workId && workstreamId) && !revoked,
     ...readQueryDefaults,
-    refetchInterval: SNAPSHOT_POLL_INTERVAL_MS,
+    refetchInterval: cadence === 'list' ? SNAPSHOT_POLL_INTERVAL_MS : POLL_INTERVAL_MS,
   } satisfies UseQueryOptions<TeamReadResponse<WorkSnapshotData>>;
 }
 

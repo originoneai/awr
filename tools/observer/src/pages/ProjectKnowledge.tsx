@@ -56,7 +56,7 @@ export function ProjectKnowledge({ project }: { project: string }) {
   );
   const visibleWorks = works.slice((page - 1) * OBSERVATION_PAGE_SIZE, page * OBSERVATION_PAGE_SIZE);
   const snapshots = useQueries({
-    queries: visibleWorks.map((work) => workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked)),
+    queries: visibleWorks.map((work) => workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked, 'list')),
   });
   const [filter, setFilter] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);

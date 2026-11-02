@@ -28,11 +28,12 @@ describe('TanStack Query read configuration (observation contract bounds)', () =
     expect(overviewQueryOptions('demo').queryKey).toEqual(['team', 'overview', 'demo']);
   });
 
-  it('uses slow shell and snapshot cadences while retaining focus refreshes', () => {
+  it('uses detail and list snapshot cadences while retaining focus refreshes', () => {
     const options = overviewQueryOptions('demo');
     expect(options.refetchInterval).toBe(60000);
     expect(projectsQueryOptions().refetchInterval).toBe(60000);
-    expect(workSnapshotQueryOptions('demo', 'W1', 'WS1').refetchInterval).toBe(60000);
+    expect(workSnapshotQueryOptions('demo', 'W1', 'WS1').refetchInterval).toBe(POLL_INTERVAL_MS);
+    expect(workSnapshotQueryOptions('demo', 'W1', 'WS1', false, 'list').refetchInterval).toBe(60000);
     expect(options.refetchOnWindowFocus).toBe(true);
     expect(projectsQueryOptions().refetchOnWindowFocus).toBe(true);
     expect(workSnapshotQueryOptions('demo', 'W1', 'WS1').refetchOnWindowFocus).toBe(true);
