@@ -7,8 +7,20 @@ import { apiPost, ApiError } from '../lib/api';
 import { formatUnixMs } from '../lib/format';
 import { projectsQueryOptions } from '../lib/queries';
 import { ObservationForbidden } from '../components/states';
+import { TechnicalDetails } from '../components/TechnicalDetails';
+import { humanText } from '../i18n/human-language';
 import { useRevocation } from '../lib/revocation';
 
+function ActionError({ error }: { error: unknown }) {
+  const { t } = useTranslation();
+  const raw = error instanceof ApiError ? `${error.code}: ${error.message}` : String(error);
+  return (
+    <Space direction="vertical" size={4}>
+      <Typography.Text>{t('account.failed')}</Typography.Text>
+      <TechnicalDetails items={[{ label: 'Error', value: raw }]} />
+    </Space>
+  );
+}
 
 /** Read-only observation cards for the account area (AWR-OBS-008). */
 function AccountObservationCards() {
@@ -59,15 +71,13 @@ function AccountObservationCards() {
         <Card title={t('account.revokeAllMineTitle')} data-testid="account-revoke-all-mine">
           <Space direction="vertical" size={12}>
             <RevokeAllMineButton />
-            <Alert
-              type="info"
-              showIcon
-              data-testid="independent-revoke-unavailable"
-              title={t('account.independentUnavailable')}
-            />
-            <Typography.Text type="secondary" data-testid="revocation-boundary">
-              {t('account.boundary')}
-            </Typography.Text>
+            <Alert type="info" showIcon title={humanText('revokeLocal', i18n.language)} />
+            <div data-testid="independent-revoke-unavailable">
+              <TechnicalDetails items={[
+                { label: 'Independent revocation', value: t('account.independentUnavailable') },
+                { label: 'Revocation boundary', value: t('account.boundary') },
+              ]} />
+            </div>
           </Space>
         </Card>
       </Col>
@@ -94,7 +104,7 @@ function RevokeAllMineButton() {
       message.success(t('account.done'));
     },
     onError: (error: unknown) => {
-      message.error(`${t('account.failed')}: ${error instanceof ApiError ? `${error.code} — ${error.message}` : String(error)}`);
+      message.error({ content: <ActionError error={error} /> });
     },
   });
   return (
@@ -113,9 +123,7 @@ export function AccountPage() {
   const [bearer, setBearer] = useState('');
 
   function showError(error: unknown) {
-    message.error(
-      `${t('account.failed')}: ${error instanceof ApiError ? `${error.code} — ${error.message}` : String(error)}`,
-    );
+    message.error({ content: <ActionError error={error} /> });
   }
 
   const login = useMutation({

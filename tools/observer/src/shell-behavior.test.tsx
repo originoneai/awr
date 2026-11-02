@@ -84,7 +84,7 @@ describe('prototype shell behavior', () => {
       expect(control).toHaveProperty('disabled', true);
     }
     await user.hover(search);
-    expect(await screen.findByText('此功能将在后续切片交付')).toBeTruthy();
+    expect((await screen.findAllByText('该功能尚未开放')).length).toBeGreaterThan(0);
   });
 
   it('keeps the selected language key and persists the choice', async () => {

@@ -2,6 +2,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import { describe, expect, it, vi } from 'vitest';
+import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
 import {
   DEMO_OVERVIEW,
   DEMO_PROJECTS,
@@ -150,9 +151,9 @@ describe('account page (AWR-OBS-008)', () => {
     const times = card.textContent.match(/\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}/g) ?? [];
     expect(times.length).toBeGreaterThanOrEqual(3);
     expect(new Set(times).size).toBe(times.length);
-    expect(card.textContent).toContain('创建时间');
-    expect(card.textContent).toContain('过期时间');
-    expect(card.textContent).toContain('最近活动');
+    expect(card.textContent).toContain('登录时间');
+    expect(card.textContent).toContain('到期时间');
+    expect(card.textContent).toContain('最近使用');
   });
 
   it('offers no "all connections" wording or duplicate revoke-connections button', async () => {
@@ -170,7 +171,7 @@ describe('account page (AWR-OBS-008)', () => {
     const user = userEvent.setup();
     renderApp('/account?scope=demo');
     await screen.findByTestId('account-session-card');
-    await user.click(screen.getByRole('button', { name: '撤销本凭据的全部 Web 会话' }));
+    await user.click(screen.getByRole('button', { name: '退出本设备上的所有登录' }));
     await waitFor(() => {
       const call = calls.find((entry) => entry.url === '/api/team/session/revoke' && entry.init?.method === 'POST');
       expect(call).toBeTruthy();
@@ -185,8 +186,10 @@ describe('account page (AWR-OBS-008)', () => {
 
   it('states the revocation boundary without claiming restart or multi-instance revocation', async () => {
     setupAccount();
+    const user = userEvent.setup();
     renderApp('/account?scope=demo');
-    const boundary = await screen.findByTestId('revocation-boundary');
+    await user.click(await screen.findByText('技术细节'));
+    const boundary = await screen.findByTestId('technical-detail-Revocation boundary');
     expect(boundary.textContent).toContain('进程');
     expect(boundary.textContent).toContain('重启即失');
     expect(boundary.textContent).toContain('多实例不共享');
@@ -197,7 +200,7 @@ describe('account page (AWR-OBS-008)', () => {
     const { calls } = setupAccount();
     const user = userEvent.setup();
     renderApp('/account?scope=demo');
-    const resumeLink = await screen.findByRole('link', { name: /恢复我的工作|只读恢复/ });
+    const resumeLink = await screen.findByRole('link', { name: '继续查看我的工作' });
     expect(resumeLink.getAttribute('href')).toContain('/workbench');
     await user.click(resumeLink);
     expect(calls.filter((call) => String(call.init?.body ?? '').includes('"claim')).length).toBe(0);
@@ -289,5 +292,18 @@ describe('agent-connect and account review round 2', () => {
     renderApp('/account?scope=demo');
     await screen.findByTestId('independent-revoke-unavailable');
     expect(screen.queryByRole('button', { name: /撤销独立连接|撤销代理连接|撤销单个连接/ })).toBeNull();
+  });
+
+  it('keeps account defaults human while preserving technical boundaries on demand', async () => {
+    setupAccount();
+    renderApp('/account?scope=demo');
+    await screen.findAllByText(/2025/);
+    expect(findForbiddenVisibleText(defaultVisibleText(document.body))).toEqual([]);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText('技术细节'));
+    expect(document.body.textContent).toContain('OAuth');
+    expect(document.body.textContent).toContain('client_id');
+    expect(findForbiddenVisibleText(defaultVisibleText(document.body))).toEqual([]);
   });
 });
