@@ -19,18 +19,19 @@ import { useTranslation } from 'react-i18next';
 import { groupWorks, rawObservationText } from '../core/observation';
 import { Link, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
-import { ObservationValue } from '../components/ObservationValue';
+import { WorkProgress } from '../components/WorkProgress';
 import { WorkDetailPanel } from '../components/WorkDetailPanel';
 import { isAuthError } from '../lib/api';
 import { overviewQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
+import { useWorkSnapshots } from '../lib/work-snapshots';
 import type { TeamWork } from '../lib/types';
 
 const PAGE_SIZE = 60;
 
 type DisplayRow =
   | { kind: 'group'; key: string; id: string; title: string }
-  | { kind: 'work'; key: string; work: TeamWork };
+  | { kind: 'work'; key: string; work: TeamWork; index: number };
 
 function validPage(value: string | null) {
   if (!value || !/^[1-9]\d*$/.test(value)) return 1;
@@ -57,6 +58,7 @@ export function WorkPlanPage({ project }: { project: string }) {
     Math.max(1, Math.ceil(grouped.works.length / PAGE_SIZE)),
   );
   const visibleWorks = grouped.works.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const snapshots = useWorkSnapshots(project, visibleWorks, revoked);
   const selectedWorkId = searchParams.get('work');
   const selectedWork = (data?.works ?? []).find((work) => work.key === selectedWorkId);
 
@@ -91,7 +93,7 @@ export function WorkPlanPage({ project }: { project: string }) {
 
   const displayRows: DisplayRow[] = [];
   let currentWorkstream: string | null = null;
-  for (const work of visibleWorks) {
+  for (const [index, work] of visibleWorks.entries()) {
     if (work.workstream_id !== currentWorkstream) {
       currentWorkstream = work.workstream_id;
       displayRows.push({
@@ -101,7 +103,7 @@ export function WorkPlanPage({ project }: { project: string }) {
         title: (grouped.titles[currentWorkstream] ?? currentWorkstream),
       });
     }
-    displayRows.push({ kind: 'work', key: work.key, work });
+    displayRows.push({ kind: 'work', key: work.key, work, index });
   }
 
   const columns: TableProps<DisplayRow>['columns'] = [
@@ -119,9 +121,9 @@ export function WorkPlanPage({ project }: { project: string }) {
       key: 'status',
       width: 160,
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 0 : 1 }),
-      render: (_, row) => row.kind === 'work' ? (
-        <ObservationValue testId={`plan-status-${row.work.key}`} value={row.work.status} field="state" />
-      ) : null,
+      render: (_, row) => row.kind === 'work'
+        ? <WorkProgress work={row.work} query={snapshots[row.index]} testId={`plan-status-${row.work.key}`} />
+        : null,
     },
     {
       title: t('plan.columns.owner'),
