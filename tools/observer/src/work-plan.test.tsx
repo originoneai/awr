@@ -104,12 +104,73 @@ afterEach(async () => {
 });
 
 describe('effective plan table', () => {
+  it('says how far each work has come from its own read, in the list and in the detail header, with the same fallbacks as the overview', async () => {
+    const works = [
+      DEMO_PROJECT_WORKS[0],
+      DEMO_PROJECT_WORKS[1],
+      { ...DEMO_PROJECT_WORKS[1], key: 'W3', title: 'Third task', status: 'open' },
+      { ...DEMO_PROJECT_WORKS[1], key: 'W4', title: 'Fourth task', status: null },
+    ];
+    setupPlan({
+      path: '/projects/demo?tab=plan&work=W1',
+      overview: makePlanOverview(works),
+      snapshot: (workId) => {
+        if (workId === 'W3' || workId === 'W4') return { ok: false, error: { code: 'ReadTimeout', message: 'slow' } };
+        const response = demoWorkSnapshot(workId) as { result: { data: { observation: { progress: Record<string, unknown> | null } } } };
+        response.result.data.observation.progress = workId === 'W1' ? { phase: 'ready_for_review' } : null;
+        return response;
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('plan-status-W1').textContent).toBe('待评审');
+      expect(screen.getByTestId('plan-status-W2').textContent).toBe('已认领');
+      expect(screen.getByTestId('plan-status-W3').textContent).toBe('进行中');
+      expect(screen.getByTestId('plan-status-W4').textContent).toBe('未知');
+    });
+    expect(screen.getByTestId('plan-detail-status').textContent).toBe('待评审');
+    expect(screen.getByTestId('plan-status-W1').querySelector('.ant-badge-status-dot')?.className).toContain('ant-badge-status-warning');
+    expect(screen.getByTestId('plan-status-W4').querySelector('.ant-badge-status-dot')?.className).toContain('ant-badge-status-default');
+  });
+
+  it('says loading in the list while a work\'s own read is pending', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const original = demoWorkSnapshot;
+    const { fetchMock } = setupPlan({ path: '/projects/demo?tab=plan', snapshot: (workId) => original(workId) });
+    const impl = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(init?.body ?? '').includes('"work.snapshot"')) await gate;
+      return impl(input, init);
+    });
+    await waitFor(() => expect(screen.getByTestId('plan-status-W1').textContent).toBe('加载中…'));
+    await act(async () => { release(); });
+    await waitFor(() => expect(screen.getByTestId('plan-status-W1').textContent).toBe('已认领'));
+  });
+
+  it('reads snapshots only for the works on the visible page', async () => {
+    const { fetchMock } = setupPlan({ path: '/projects/demo?tab=plan', overview: makePlanOverview(makeTwoStreamWorks(61)) });
+    await waitFor(() => expect(screen.getAllByRole('link', { name: /Observed plan task/ })).toHaveLength(60));
+    const reads = () => fetchMock.mock.calls
+      .filter(([, init]) => String(init?.body ?? '').includes('"work.snapshot"'))
+      .map(([, init]) => (JSON.parse(String(init?.body)) as { query: { work_id: string } }).query.work_id);
+    await waitFor(() => expect(new Set(reads()).size).toBe(60));
+    expect(reads()).toHaveLength(60);
+    expect(reads()).not.toContain('W60');
+  }, 20_000);
+
+  it('reads each listed work once, shared with the selected work\'s detail', async () => {
+    const { fetchMock } = setupPlan();
+    await waitFor(() => expect(screen.getByTestId('plan-status-W2').textContent).toBe('已认领'));
+    const snapshotReads = fetchMock.mock.calls.filter(([, init]) => String(init?.body ?? '').includes('"work.snapshot"'));
+    expect(snapshotReads.map(([, init]) => (JSON.parse(String(init?.body)) as { query: { work_id: string } }).query.work_id).sort()).toEqual(['W1', 'W2']);
+  });
+
   it('renders real groups and fields, filters by workstream, and disables board view', async () => {
     const { router } = setupPlan({ path: '/projects/demo?tab=plan' });
     expect(await screen.findByRole('link', { name: 'Build the filter API' })).toBeTruthy();
     expect(screen.getByTestId('workstream-group-WS1').textContent).toContain('Backend workstream');
     expect(screen.getByTestId('workstream-group-WS2').textContent).toContain('Frontend workstream');
-    expect(screen.getByTestId('plan-status-W1').textContent).toBe('未知');
+    await waitFor(() => expect(screen.getByTestId('plan-status-W1').textContent).toBe('已认领'));
     expect(screen.getByTestId('plan-owner-W1').textContent).toBe('未提供');
     expect(screen.getByRole('radio', { name: '看板' })).toHaveProperty('disabled', true);
     expect(screen.queryByRole('button', { name: '提出需求' })).toBeNull();
@@ -304,17 +365,19 @@ describe('work detail requirements and source state', () => {
     expect(text.parentElement?.style.minWidth).toBe('0px');
   });
 
-  it('shows factual source fields and an honest not-measured takeover note', async () => {
+  it('keeps the source facts and an honest not-measured takeover note behind the technical details only', async () => {
     setupPlan();
     const card = await screen.findByTestId('source-state-card');
-    expect(card.textContent).toContain('snapshot-1');
+    // collapsed by default: a person sees one words-only entry, no ids, no versions
+    expect(card.textContent).toBe('技术细节');
+    await userEvent.setup().click(within(card).getByText('技术细节'));
+    expect((await within(card).findByTestId('source-snapshot-id')).textContent).toContain('snapshot-1');
     expect(card.textContent).toContain('epoch-1');
     expect(card.textContent).toContain('contract-1');
-    expect(card.textContent).toContain('已启用');
-    expect(card.textContent).toContain('work');
-    expect(card.textContent).toContain('项目版本');
-    expect(card.textContent).toContain('权威版本');
-    expect(card.textContent).toContain('选择依据');
+    expect(card.textContent).toContain('enabled');
+    expect(card.textContent).toContain('project_revision');
+    expect(card.textContent).toContain('authority_version');
+    expect(card.textContent).toContain('selection_basis');
     expect(card.textContent).toContain('尚未读取');
     expect(card.textContent).not.toContain('已同步');
     expect(card.textContent).not.toContain('takeover complete');
@@ -337,9 +400,10 @@ describe('work detail requirements and source state', () => {
       },
     });
     const card = await screen.findByTestId('source-state-card');
-    expect(within(card).getByTestId('source-snapshot-id').textContent).toBe('未提供');
-    expect(within(card).getByTestId('source-project-revision').textContent).toBe('未提供');
-    expect(within(card).getByTestId('source-coordinator-epoch').textContent).toBe('未提供');
+    await userEvent.setup().click(within(card).getByText('技术细节'));
+    expect((await within(card).findByTestId('source-snapshot-id')).textContent).toContain('未提供');
+    expect(within(card).getByTestId('source-project-revision').textContent).toContain('未提供');
+    expect(within(card).getByTestId('source-coordinator-epoch').textContent).toContain('未提供');
     expect(card.textContent).not.toContain('已同步');
   });
 
@@ -477,7 +541,8 @@ describe('work plan localization and accessibility', () => {
     expect(screen.getByRole('tab', { name: 'Requirements & progress' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'Outcomes' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'History' })).toBeTruthy();
-    expect(screen.getByText('Source state')).toBeTruthy();
+    expect(within(screen.getByTestId('source-state-card')).getByText('Technical details')).toBeTruthy();
+    expect(screen.queryByText('Source state')).toBeNull();
   });
 
   it('has no axe violations', async () => {

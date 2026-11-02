@@ -9,16 +9,17 @@ import {
   Space,
   Spin,
   Tabs,
-  Tag,
   Typography,
 } from 'antd';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { LastReportText } from './LastReportText';
+import { WorkProgress } from './WorkProgress';
 import { ProgressReport } from './ProgressReport';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from './states';
 import { FieldLabel, ObservationValue } from './ObservationValue';
 import { deriveWorkState, describeProgressReport, rawObservationText } from '../core/observation';
+import { sourceStateTechnicalItems } from '../lib/source-technical';
 import { workStateTechnicalItems } from '../lib/work-state-technical';
 import { RecentChanges } from './RecentChanges';
 import { TechnicalDetails } from './TechnicalDetails';
@@ -208,42 +209,15 @@ function History({ query, project, workId }: { query: ActivityQuery; project: st
   );
 }
 
+/** Which read this page shows: engineering facts, so they live behind the technical details only. */
 function SourceState({ query }: { query: SnapshotQuery }) {
   const { t } = useTranslation();
-  const result = query.data?.result;
-  const data = result?.data;
   return (
-    <Card size="small" data-testid="source-state-card">
-      <Flex vertical gap={12}>
-        <Typography.Title level={5} style={{ margin: 0 }}>{t('plan.detail.sourceState')}</Typography.Title>
-        <Descriptions
-          size="small"
-          column={1}
-          items={[
-            {
-              key: 'snapshot',
-              label: <FieldLabel field="source_snapshot_id" />,
-              children: <Measured testId="source-snapshot-id" value={result?.source_snapshot_id} />,
-            },
-            {
-              key: 'revision',
-              label: <FieldLabel field="project_revision" />,
-              children: <Measured testId="source-project-revision" value={result?.project_revision} field="project_revision" />,
-            },
-            {
-              key: 'epoch',
-              label: <FieldLabel field="coordinator_epoch" />,
-              children: <Measured testId="source-coordinator-epoch" value={result?.coordinator_epoch} />,
-            },
-            { key: 'contract', label: <FieldLabel field="contract_hash" />, children: <Measured value={data?.contract_hash} /> },
-            { key: 'definition', label: <FieldLabel field="definition_state" />, children: <Measured value={data?.definition_state} field="definition_state" /> },
-            { key: 'authority', label: <FieldLabel field="authority_version" />, children: <Measured value={result?.authority_version} field="authority_version" /> },
-            { key: 'selection', label: <FieldLabel field="selection_basis" />, children: <Measured value={result?.selection_basis} field="selection_basis" /> },
-          ]}
-        />
+    <div data-testid="source-state-card">
+      <TechnicalDetails items={sourceStateTechnicalItems(query.data?.result)}>
         <Typography.Text type="secondary">{t('plan.detail.takeoverNote')}</Typography.Text>
-      </Flex>
-    </Card>
+      </TechnicalDetails>
+    </div>
   );
 }
 
@@ -289,7 +263,7 @@ export function WorkDetailPanel({
           <div>
             <Typography.Title level={3} style={{ marginTop: 0 }}>{work.title}</Typography.Title>
             <Space wrap>
-              <Tag><ObservationValue value={work.status} field="state" /></Tag>
+              <WorkProgress work={work} query={snapshot} testId="plan-detail-status" />
               <Typography.Text type="secondary">{work.key}</Typography.Text>
             </Space>
           </div>

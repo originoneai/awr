@@ -184,3 +184,28 @@ describe('revokeObservationReads cancels in-flight reads', () => {
     expect(queryClient.getQueryData(['team', 'overview', 'demo'])).toBeUndefined();
   });
 });
+
+describe.each([
+  { path: '/projects/demo?tab=overview', name: 'overview' },
+  { path: '/projects/demo?tab=plan&work=W1', name: 'plan' },
+])('the per-work snapshot reads of the $name list after revocation', ({ path }) => {
+  it('stay silent for two list cadences once the observation was revoked', async () => {
+    vi.useFakeTimers();
+    const calls = { count: 0 };
+    const revoked = { value: false };
+    const fetchMock = revocationFetch(calls, revoked);
+    renderApp(path);
+
+    await advance(0);
+    expect(screen.getAllByText(/Build the filter API/)).not.toHaveLength(0);
+    const snapshotsBefore = fetchMock.mock.calls.filter(([, init]) => String(init?.body ?? '').includes('"work.snapshot"')).length;
+    expect(snapshotsBefore).toBeGreaterThan(0);
+    revoked.value = true;
+    await advance(31_000);
+    expect(screen.getByTestId('state-forbidden')).toBeTruthy();
+
+    const callsAfterForbidden = calls.count;
+    await advance(130_000);
+    expect(calls.count).toBe(callsAfterForbidden);
+  }, 30_000);
+});

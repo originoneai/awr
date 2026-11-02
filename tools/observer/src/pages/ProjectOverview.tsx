@@ -1,4 +1,4 @@
-import { useQueries, useQuery, type UseQueryResult } from '@tanstack/react-query';
+import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import {
   Alert,
   Card,
@@ -20,29 +20,26 @@ import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { LastReportText } from '../components/LastReportText';
-import { ToneBadge } from '../components/ToneBadge';
-import { deriveWorkState, groupWorks, rawObservationText } from '../core/observation';
+import { WorkProgress, useWorkState } from '../components/WorkProgress';
+import { groupWorks, rawObservationText } from '../core/observation';
 import { RecentChanges } from '../components/RecentChanges';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { pageTechnicalItems } from '../lib/activity-technical';
 import { isAuthError } from '../lib/api';
-import { readStateOf } from '../lib/read-state';
 import { freshnessWord } from '../lib/freshness';
 import { formatUnixMs } from '../lib/format';
-import { activityQueryOptions, overviewQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
+import { activityQueryOptions, overviewQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
+import { useWorkSnapshots, type SnapshotQuery } from '../lib/work-snapshots';
 import type {
   TeamActivityItem,
   TeamActivityResponse,
   TeamOverviewResponse,
-  TeamReadResponse,
   TeamWork,
-  WorkSnapshotData,
 } from '../lib/types';
 
 const PAGE_SIZE = 60;
 
-type SnapshotQuery = UseQueryResult<TeamReadResponse<WorkSnapshotData>>;
 type ActivityQuery = UseQueryResult<TeamActivityResponse, unknown>;
 type DisplayRow =
   | { kind: 'group'; key: string; id: string; title: string }
@@ -56,23 +53,6 @@ function validPage(value: string | null) {
 
 function taskPath(project: string, workId: string) {
   return `/projects/${encodeURIComponent(project)}?tab=plan&work=${encodeURIComponent(workId)}`;
-}
-
-/** What the overview row and the work's own read together say about one work. */
-function useWorkState(work: TeamWork, query?: SnapshotQuery) {
-  const { i18n } = useTranslation();
-  return deriveWorkState({
-    language: i18n.language,
-    readState: readStateOf(query),
-    workNextStep: work.next_step,
-    workStatus: work.status,
-    snapshot: query?.data?.result.data,
-  });
-}
-
-function Progress({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
-  const { progress } = useWorkState(work, query);
-  return <ToneBadge tone={progress.tone} text={progress.text} testId={`project-status-${work.key}`} />;
 }
 
 function NextStep({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
@@ -253,9 +233,7 @@ export function ProjectOverview({ project }: { project: string }) {
     Math.max(1, Math.ceil(grouped.works.length / PAGE_SIZE)),
   );
   const visibleWorks = grouped.works.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const snapshots = useQueries({
-    queries: visibleWorks.map((work) => workSnapshotQueryOptions(project, work.key, work.workstream_id, revoked, 'list')),
-  });
+  const snapshots = useWorkSnapshots(project, visibleWorks, revoked);
 
   if (revoked || isAuthError(overview.error) || isAuthError(activity.error)) {
     return <ObservationForbidden />;
@@ -311,7 +289,7 @@ export function ProjectOverview({ project }: { project: string }) {
       width: 170,
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 0 : 1 }),
       render: (_, row) => row.kind === 'work'
-        ? <Progress work={row.work} query={snapshots[row.index]} />
+        ? <WorkProgress work={row.work} query={snapshots[row.index]} testId={`project-status-${row.work.key}`} />
         : null,
     },
     {
