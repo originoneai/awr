@@ -1,4 +1,5 @@
 import { humanText } from '../../i18n/human-language';
+import { checkLabel } from './labels';
 import { abbreviateIds } from './readable';
 import { absoluteTimeText } from './time';
 import { rawObservationText, statementText, statusWord } from './values';
@@ -55,11 +56,11 @@ export function describeProgressReport(progress: unknown, options: { language: s
   const completed = capped(sentences(report.completed));
   const blockers = { ...capped(sentences(report.blockers)), reported: Array.isArray(report.blockers) };
   const tests = capped(
-    (Array.isArray(report.tests) ? report.tests : []).flatMap((entry): ProgressReportTest[] => {
+    (Array.isArray(report.tests) ? report.tests : []).flatMap((entry, index): ProgressReportTest[] => {
       const test = asRecord(entry);
       if (test == null) return [];
       const word = statusWord(test.outcome, { language, field: 'result' });
-      return [{ name: statementText(test.name) ?? humanText('testUnnamed', language), outcome: word.text, tone: word.tone }];
+      return [{ name: checkLabel(test.name, { language, position: index + 1 }).text, outcome: word.text, tone: word.tone }];
     }),
   );
   const artifacts = capped(

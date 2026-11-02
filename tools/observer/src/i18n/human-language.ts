@@ -48,7 +48,7 @@ export const HUMAN_VOCABULARY = {
     contractChanged: '这份汇报写成之后，任务要求有变化，内容可能已不适用',
     blockersNone: '未报告阻塞',
     moreLines: '还有 {{count}} 条',
-    testUnnamed: '未命名的测试',
+    checkNumbered: '检查 {{count}}',
     deliveredUnconfirmed: '汇报称已交付',
   },
   'en-US': {
@@ -99,7 +99,7 @@ export const HUMAN_VOCABULARY = {
     contractChanged: 'The task requirements changed after this report was written; it may no longer apply',
     blockersNone: 'No blockers reported',
     moreLines: '{{count}} more',
-    testUnnamed: 'An unnamed test',
+    checkNumbered: 'Check {{count}}',
     deliveredUnconfirmed: 'Reported as delivered',
   },
 } as const;
@@ -164,6 +164,11 @@ export const STATUS_LABELS: Record<string, readonly [string, string]> = {
   handoff_required: ['需要转交', 'Handoff required'],
   responsibility_pending: ['责任待确认', 'Responsibility pending'],
   pool: ['待接手指派', 'Pool'],
+};
+
+/** Checks a reporter or the service names by a machine name that has a plain-words equivalent: [zh-CN, en-US]. */
+export const CHECK_VOCABULARY: Record<string, readonly [string, string]> = {
+  'local_git.manifest': ['本地内容与测试', 'Local content and tests'],
 };
 
 export type OperationKind = 'read' | 'execute' | 'evidence' | 'handoff' | 'acceptance' | 'recovery' | 'access' | 'other';

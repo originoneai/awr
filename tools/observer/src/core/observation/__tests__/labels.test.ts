@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import DERIVED_RUN09 from '../../../test-fixtures/activity/derived-audit-development-project-scope-all-run09.json';
 import { findForbiddenVisibleText } from '../../../lib/human-language-guard';
-import { actorAliases, workLabel } from '../index';
+import REPORTS from '../../../test-fixtures/work-state/progress-reports-run09.json';
+import { actorAliases, checkLabel, workLabel } from '../index';
 
 const ITEMS = DERIVED_RUN09.data.items as Array<{ actor_id: string; work_id: string | null }>;
 const ACTORS = ITEMS.map((item) => item.actor_id);
@@ -67,5 +68,49 @@ describe('workLabel', () => {
       expect(result.text).not.toBe('尚未读取');
     }
     expect(workLabel(null, { language: 'en-US' }).text).toBe('No related work');
+  });
+});
+
+describe('checkLabel', () => {
+  const zh = { language: 'zh-CN' } as const;
+  const en = { language: 'en-US' } as const;
+
+  it('words the machine name of the real local check in plain words, in both languages, and keeps the name', () => {
+    expect(checkLabel('local_git.manifest', { ...zh, position: 2 })).toEqual({ kind: 'known', text: '本地内容与测试', technical: { raw: 'local_git.manifest' } });
+    expect(checkLabel('local_git.manifest', { ...en, position: 2 }).text).toBe('Local content and tests');
+  });
+
+  it('shows a name that is plain words exactly as the reporter wrote it', () => {
+    for (const name of ['npm test', 'Unit tests', '单元测试', 'build and lint']) {
+      expect(checkLabel(name, { ...zh, position: 1 }), name).toEqual({ kind: 'named', text: name, technical: { raw: name } });
+    }
+    expect(checkLabel('  npm test  ', { ...zh, position: 1 }).text).toBe('npm test');
+  });
+
+  it('numbers every other name the human-language guard would flag by its place in the list and keeps the name for the technical details', () => {
+    for (const name of ['unit_tests', 'ci.build.lint', 'api.contract_check', 'Snapshot test']) {
+      const result = checkLabel(name, { ...zh, position: 3 });
+      expect(result, name).toEqual({ kind: 'numbered', text: '检查 3', technical: { raw: name } });
+      expect(findForbiddenVisibleText(result.text)).toEqual([]);
+    }
+    expect(checkLabel('unit_tests', { ...en, position: 3 }).text).toBe('Check 3');
+  });
+
+  it('numbers a check that has no usable name and has nothing to keep', () => {
+    for (const missing of [undefined, null, '', '   ', 7, true, {}, ['x']]) {
+      expect(checkLabel(missing, { ...zh, position: 4 }), JSON.stringify(missing)).toEqual({ kind: 'numbered', text: '检查 4', technical: { raw: null } });
+    }
+    expect(checkLabel(undefined, { ...en, position: 1 }).text).toBe('Check 1');
+  });
+
+  it('never gives the guard anything to flag across every check of the real checkpoints, in both languages', () => {
+    const names = Object.values(REPORTS).flatMap((report) => ((report as { tests?: Array<{ name?: unknown }> }).tests ?? []).map((test) => test.name));
+    expect(names).toContain('local_git.manifest');
+    expect(names).toContain('npm test');
+    names.forEach((name, index) => {
+      for (const language of ['zh-CN', 'en-US']) {
+        expect(findForbiddenVisibleText(checkLabel(name, { language, position: index + 1 }).text), `${String(name)} ${language}`).toEqual([]);
+      }
+    });
   });
 });

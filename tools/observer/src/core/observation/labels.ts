@@ -1,5 +1,6 @@
-import { FORBIDDEN_VISIBLE_PATTERNS, humanText } from '../../i18n/human-language';
-import type { ActorAliasEntry, ActorAliasResult, WorkLabelResult } from './types';
+import { CHECK_VOCABULARY, FORBIDDEN_VISIBLE_PATTERNS, humanText } from '../../i18n/human-language';
+import { statementText } from './values';
+import type { ActorAliasEntry, ActorAliasResult, CheckLabelResult, WorkLabelResult } from './types';
 
 function present(value: string | null | undefined): value is string {
   return typeof value === 'string' && value.length > 0;
@@ -38,4 +39,22 @@ export function workLabel(workId: string | null | undefined, options: { language
   const opaque = FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(workId));
   if (opaque) return { kind: 'unnamed', text: humanText('workUnnamed', options.language), technical: { raw: workId } };
   return { kind: 'named', text: workId, technical: { raw: workId } };
+}
+
+/**
+ * The name to show for a check or test a reporter listed: a name that is plain words, as written; the
+ * shared words for a machine name the vocabulary knows ("local_git.manifest"); and "Check N", N being
+ * its place in the reporter's list, for any other name that reads as a machine name or when there is
+ * no name. The raw name is always returned for technical details.
+ */
+export function checkLabel(name: unknown, options: { language: string; position: number }): CheckLabelResult {
+  const raw = statementText(name);
+  const numbered = humanText('checkNumbered', options.language).replace('{{count}}', String(options.position));
+  if (raw == null) return { kind: 'numbered', text: numbered, technical: { raw: null } };
+  if (Object.prototype.hasOwnProperty.call(CHECK_VOCABULARY, raw)) {
+    const [zh, en] = CHECK_VOCABULARY[raw];
+    return { kind: 'known', text: options.language.toLowerCase().startsWith('zh') ? zh : en, technical: { raw } };
+  }
+  if (FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(raw))) return { kind: 'numbered', text: numbered, technical: { raw } };
+  return { kind: 'named', text: raw, technical: { raw } };
 }
