@@ -1,4 +1,5 @@
 import { humanText } from '../../i18n/human-language';
+import { abbreviateIds } from './readable';
 import { absoluteTimeText } from './time';
 import { rawObservationText, statementText, statusWord } from './values';
 import type { CappedList, ProgressReportResult, ProgressReportTest } from './types';
@@ -18,7 +19,7 @@ function sentences(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
     const text = statementText(entry);
-    return text == null ? [] : [text];
+    return text == null ? [] : [abbreviateIds(text)];
   });
 }
 
@@ -49,7 +50,8 @@ export function describeProgressReport(progress: unknown, options: { language: s
   const report = asRecord(progress);
   if (report == null) return MISSING;
 
-  const summary = statementText(report.summary);
+  const summaryText = statementText(report.summary);
+  const summary = summaryText == null ? null : abbreviateIds(summaryText);
   const completed = capped(sentences(report.completed));
   const blockers = { ...capped(sentences(report.blockers)), reported: Array.isArray(report.blockers) };
   const tests = capped(

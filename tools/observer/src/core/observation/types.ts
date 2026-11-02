@@ -192,8 +192,10 @@ export interface WorkStateResult {
   };
   next: {
     kind: 'loading' | 'reported' | 'missing';
-    /** What the work's reporter said comes next, or a plain statement that none was reported. */
+    /** What the work's reporter said comes next, with long identifiers abbreviated, or a plain statement that none was reported. */
     text: string;
+    /** The sentence exactly as the reporter wrote it (trimmed); null unless `text` is one. */
+    fullText: string | null;
     /** The service's own hint and guidance are addressed to the agent and stay out of the default view. */
     technical: { nextAction: string | null; nextStep: string | null; guidanceOp: string | null; guidanceNote: string | null };
   };

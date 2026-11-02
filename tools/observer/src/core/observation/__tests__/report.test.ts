@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import REPORTS from '../../../test-fixtures/work-state/progress-reports-run09.json';
 import { findForbiddenVisibleText } from '../../../lib/human-language-guard';
-import { absoluteTimeText, describeProgressReport, moreLinesText, REPORT_LIST_LIMIT } from '../index';
+import { abbreviateIds, absoluteTimeText, describeProgressReport, moreLinesText, REPORT_LIST_LIMIT } from '../index';
 
 const DELIVERED = REPORTS['api-delivered'];
 const IN_REVIEW = REPORTS['api-in-review-owned-by-other'];
@@ -17,11 +17,16 @@ function deepFreeze<T>(value: T): T {
 }
 
 describe('describeProgressReport: the real checkpoints', () => {
-  it('shows the delivered work\'s own sentences verbatim, its test in words, and who said it and when', () => {
+  it('shows the delivered work\'s own sentences with long ids abbreviated, its test in words, and who said it and when', () => {
     const report = describeProgressReport(DELIVERED, zh);
     expect(report.kind).toBe('reported');
-    expect(report.summary).toBe(DELIVERED.summary);
-    expect(report.completed).toEqual({ shown: DELIVERED.completed, more: 0 });
+    expect(report.summary).toBe(abbreviateIds(DELIVERED.summary));
+    expect(report.summary).toContain('from a5163424… to 5f7eb2fe… and finalized issue-filter-api');
+    expect(report.completed).toEqual({ shown: DELIVERED.completed.map(abbreviateIds), more: 0 });
+    expect(report.completed.shown[0]).toBe('delivery.integration.prepare 01M6B0NN… confirmed applied');
+    const { technical, ...visible } = report;
+    expect(JSON.stringify(visible)).not.toContain('5f7eb2fe9c563e4d355aa64a527e0aef754116c1');
+    expect(JSON.stringify(technical)).toContain('5f7eb2fe9c563e4d355aa64a527e0aef754116c1');
     expect(report.blockers).toEqual({ shown: [], more: 0, reported: true });
     expect(report.tests).toEqual({ shown: [{ name: 'local_git.manifest', outcome: '已通过', tone: 'positive' }], more: 0 });
     expect(report.artifacts).toEqual({ shown: [], more: 0 });
@@ -49,6 +54,8 @@ describe('describeProgressReport: the real checkpoints', () => {
       expect(items.map((item) => item.label)).toEqual(Object.keys(checkpoint).map((key) => `progress.${key}`));
       const byLabel = Object.fromEntries(items.map((item) => [item.label, item.value]));
       expect(byLabel['progress.checkpoint_id']).toBe(checkpoint.checkpoint_id);
+      expect(byLabel['progress.summary']).toBe(checkpoint.summary);
+      expect(JSON.parse(byLabel['progress.completed'] as string)).toEqual(checkpoint.completed);
       expect(byLabel['progress.reported_contract_hash']).toBe(checkpoint.reported_contract_hash);
       expect(byLabel['progress.stale']).toBe('false');
       expect(byLabel['progress.reported_at_unix_ms']).toBe(String(checkpoint.reported_at_unix_ms));

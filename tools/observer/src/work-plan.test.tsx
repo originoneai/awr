@@ -261,6 +261,23 @@ describe('work detail requirements and source state', () => {
     expect((await screen.findByTestId('progress-report-declaration')).textContent).not.toContain('可能已过期');
   });
 
+  it('cuts the long ids of the reporter\'s sentences in the checkpoint block and keeps them as written in the technical details', async () => {
+    const hash = '5f7eb2fe9c563e4d355aa64a527e0aef754116c1';
+    setupPlan({
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as { result: { data: { observation: { progress: Record<string, unknown> | null } } } };
+        response.result.data.observation.progress = { ...CHECKPOINT, summary: `Merged ${hash} into main.`, completed: [`Published ${hash}.`] };
+        return response;
+      },
+    });
+    const block = await screen.findByTestId('progress-report');
+    expect(within(block).getByTestId('progress-report-summary').textContent).toBe('Merged 5f7eb2fe… into main.');
+    expect(within(block).getByTestId('progress-report-completed').textContent).toContain('Published 5f7eb2fe….');
+    expect(block.textContent).not.toContain(hash);
+    await userEvent.setup().click(within(block).getByText('技术细节'));
+    expect((await within(block).findByTestId('technical-detail-progress.summary')).textContent).toContain(hash);
+  });
+
   it('warns on the checkpoint when the task changed after it was written', async () => {
     setupPlan({
       snapshot: (workId) => {

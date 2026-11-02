@@ -1,5 +1,6 @@
 import { humanText } from '../../i18n/human-language';
 import { rawObservationText, statementText, statusWord } from './values';
+import { abbreviateIds } from './readable';
 import { absoluteTimeText } from './time';
 import type { WorkStateInput, WorkStateResult } from './types';
 
@@ -28,10 +29,10 @@ export function deriveWorkState(input: WorkStateInput): WorkStateResult {
     guidanceNote: readState === 'ready' ? rawObservationText(guidance?.note).text : null,
   };
   const next: WorkStateResult['next'] = readState === 'loading'
-    ? { kind: 'loading', text: humanText('loading', language), technical }
+    ? { kind: 'loading', text: humanText('loading', language), fullText: null, technical }
     : reportedNext != null
-      ? { kind: 'reported', text: reportedNext, technical }
-      : { kind: 'missing', text: humanText('nextStepMissing', language), technical };
+      ? { kind: 'reported', text: abbreviateIds(reportedNext), fullText: reportedNext, technical }
+      : { kind: 'missing', text: humanText('nextStepMissing', language), fullText: null, technical };
 
   const reporting = readState === 'ready' ? snapshot?.observation?.reporting : null;
   const at = finiteTime(reporting?.client_reported_at_unix_ms);
