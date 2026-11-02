@@ -77,3 +77,24 @@ export interface FoldOperationsResult {
   disclosures: OperationDisclosure[];
   technical: { gapThresholdMs: number; order: 'oldest-first' | 'newest-first' };
 }
+
+export interface ActorAliasEntry {
+  actorId: string;
+  label: string;
+  isSelf: boolean;
+}
+
+export interface ActorAliasResult {
+  /** Aliases in label order; the viewer's own id (when present) comes first as "You". */
+  entries: ActorAliasEntry[];
+  /** Plain label for one actor id; a missing id says so instead of inventing a name. */
+  labelOf: (actorId: string | null | undefined) => string;
+}
+
+export type WorkLabelKind = 'none' | 'named' | 'unnamed';
+
+export interface WorkLabelResult {
+  kind: WorkLabelKind;
+  text: string;
+  technical: { raw: string | null };
+}
