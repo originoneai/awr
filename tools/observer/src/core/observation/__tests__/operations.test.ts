@@ -80,6 +80,24 @@ describe('foldOperations boundaries', () => {
     expect(foldOperations(input, { language: 'zh-CN', gapThresholdMs: THIRTY_MINUTES, order: 'oldest-first' }).events.map((item) => item.id)).toEqual(['a', 'b', 'new', 'missing']);
   });
 
+  it('keeps the input order for events that share a time and cannot be told apart by id', () => {
+    const at = 5000;
+    const marked = (id: string | undefined, mark: string) => event(id, 'work.snapshot', at, { actor_id: mark });
+    const options = { language: 'zh-CN', gapThresholdMs: THIRTY_MINUTES };
+    const noIds = [marked(undefined, 'first'), marked(undefined, 'second'), marked(undefined, 'third')];
+    for (const order of ['newest-first', 'oldest-first'] as const) {
+      expect(foldOperations(noIds, { ...options, order }).events.map((item) => item.actor_id)).toEqual(['first', 'second', 'third']);
+    }
+    const sameId = [marked('dup', 'first'), marked('dup', 'second'), marked('dup', 'third')];
+    const folded = foldOperations(sameId, options);
+    expect(folded.events.map((item) => item.actor_id)).toEqual(['first', 'second', 'third']);
+    expect(folded.uniqueEvents.map((item) => item.actor_id)).toEqual(['first']);
+    const mixed = [marked('b', 'b'), marked(undefined, 'no id'), marked('a', 'a')];
+    for (const input of [mixed, [...mixed].reverse()]) {
+      expect(foldOperations(input, { ...options, order: 'oldest-first' }).events.map((item) => item.actor_id)).toEqual(['a', 'b', 'no id']);
+    }
+  });
+
   it('folds consecutive kinds into operation counts, not object counts', () => {
     const result = foldOperations([
       event('r1', 'work.snapshot', 1000),

@@ -60,9 +60,12 @@ export function foldOperations(
     if (leftTime != null && rightTime != null) {
       const byTime = order === 'oldest-first' ? leftTime - rightTime : rightTime - leftTime;
       if (byTime !== 0) return byTime;
+      // A total order for ties: events with an id first (by id), then by input position.
       const leftId = left.event.id;
       const rightId = right.event.id;
-      if (leftId && rightId && leftId !== rightId) return leftId.localeCompare(rightId);
+      if (leftId && rightId && leftId !== rightId) return leftId < rightId ? -1 : 1;
+      if (Boolean(leftId) !== Boolean(rightId)) return leftId ? -1 : 1;
+      return left.index - right.index;
     }
     if (leftTime != null || rightTime != null) return leftTime == null ? 1 : -1;
     return left.index - right.index;
