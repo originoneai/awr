@@ -117,9 +117,14 @@ export interface GroupWorksResult<W extends WorkGroupWork = WorkGroupWork> {
 }
 
 export interface WorkStateSnapshot {
+  /** The service's own hint addressed to the calling agent, not the reporter's statement. */
   next_step?: unknown;
   guidance?: { action?: { op?: unknown; note?: unknown } | null } | null;
-  observation?: { reporting?: { client_reported_at_unix_ms?: unknown; client_stale?: unknown } | null } | null;
+  observation?: {
+    reporting?: { client_reported_at_unix_ms?: unknown; client_stale?: unknown } | null;
+    /** The reporter's own checkpoint; `next_action` is what the reporter says comes next. */
+    progress?: { next_action?: unknown } | null;
+  } | null;
 }
 
 /** State of a read the derivation depends on: it never invents what it did not read. */
@@ -129,7 +134,7 @@ export interface WorkStateInput {
   language: string;
   /** State of the work's own detail read. */
   readState: ReadState;
-  /** The next step the overview row carries, used when the detail read has none or failed. */
+  /** The next step the overview row carries, used when the reporter's checkpoint has none or the read failed. */
   workNextStep?: unknown;
   snapshot?: WorkStateSnapshot | null;
 }
@@ -137,14 +142,19 @@ export interface WorkStateInput {
 export interface WorkStateResult {
   next: {
     kind: 'loading' | 'reported' | 'missing';
-    /** What the work's reporter said the next step is, or a plain statement that none was reported. */
+    /** What the work's reporter said comes next, or a plain statement that none was reported. */
     text: string;
-    /** The service's own guidance is addressed to the agent and stays out of the default view. */
-    technical: { nextStep: string | null; guidanceOp: string | null; guidanceNote: string | null };
+    /** The service's own hint and guidance are addressed to the agent and stay out of the default view. */
+    technical: { nextAction: string | null; nextStep: string | null; guidanceOp: string | null; guidanceNote: string | null };
   };
   lastReport: {
     kind: 'loading' | 'measured' | 'not_measured';
+    /** The whole statement in one string: the time and, when the service declared it stale, the note after it. */
     text: string;
+    /** The reported time alone; null unless a time was reported. */
+    timeText: string | null;
+    /** The stale note alone ("may be outdated"); null unless the service declared the report stale. */
+    staleText: string | null;
     atUnixMs: number | null;
     /** True or false as the service declared it; null when it said nothing. */
     stale: boolean | null;

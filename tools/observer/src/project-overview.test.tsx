@@ -175,23 +175,32 @@ describe('project workstream progress', () => {
     expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('project-progress-table')))).toEqual([]);
   });
 
-  it('shows the next step the work\'s reporter gave, its own snapshot first and the overview row as the fallback', async () => {
+  it('shows the next action the work\'s reporter wrote in the checkpoint, the overview row as the fallback, and never the service\'s own hint', async () => {
     const works = [
       { ...DEMO_PROJECT_WORKS[0], next_step: 'Row text for the first work' },
       { ...DEMO_PROJECT_WORKS[1], next_step: 'Row text for the second work' },
+      { ...DEMO_PROJECT_WORKS[1], key: 'W3', title: 'Third work', next_step: null },
     ];
     setupOverview({
       overview: makeProjectOverview(works),
       snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId) as { result: { data: { next_step: string | null } } };
-        response.result.data.next_step = workId === 'W1' ? 'Review the contract first' : null;
+        const response = demoWorkSnapshot(workId) as {
+          result: { data: { next_step: string | null; observation: { progress: Record<string, unknown> | null } } };
+        };
+        response.result.data.observation.progress = workId === 'W1' ? { next_action: 'Wait for the independent review.' } : null;
+        response.result.data.next_step = 'Call work.prepare to restore the context.';
         return response;
       },
     });
     await waitFor(() => {
-      expect(screen.getByTestId('project-next-W1').textContent).toBe('Review the contract first');
+      expect(screen.getByTestId('project-next-W1').textContent).toBe('Wait for the independent review.');
       expect(screen.getByTestId('project-next-W2').textContent).toBe('Row text for the second work');
+      expect(screen.getByTestId('project-next-W3').textContent).toBe('未报告下一步');
     });
+    expect(screen.getByTestId('project-progress-table').textContent).not.toContain('work.prepare');
+    // A long sentence is clamped in the row; the whole of it stays in the title and the work's own page.
+    expect(screen.getByTestId('project-next-W1').getAttribute('title')).toBe('Wait for the independent review.');
+    expect(screen.getByTestId('project-next-W3').hasAttribute('title')).toBe(false);
   });
 
   it('says loading, not not-read-yet, while a work\'s own read is still pending', async () => {
@@ -217,7 +226,7 @@ describe('project workstream progress', () => {
       },
     });
     await waitFor(() => {
-      expect(screen.getByTestId('last-report-W1').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}（可能已过期）`);
+      expect(screen.getByTestId('last-report-W1').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}可能已过期`);
       expect(screen.getByTestId('last-report-W2').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
     });
     expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('project-progress-table')))).toEqual([]);

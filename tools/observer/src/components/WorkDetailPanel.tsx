@@ -14,6 +14,7 @@ import {
 } from 'antd';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { LastReportText } from './LastReportText';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from './states';
 import { FieldLabel, ObservationValue } from './ObservationValue';
 import { deriveWorkState, rawObservationText } from '../core/observation';
@@ -89,9 +90,7 @@ function Requirements({ query }: { query: SnapshotQuery }) {
           {
             key: 'report',
             label: t('plan.detail.lastReport'),
-            children: (
-              <span data-testid={`last-report-${data?.work_id ?? ''}`}>{state.lastReport.text}</span>
-            ),
+            children: <LastReportText report={state.lastReport} testId={`last-report-${data?.work_id ?? ''}`} />,
           },
         ]}
       />

@@ -1,9 +1,10 @@
 import type { TechnicalDetailItem } from '../components/TechnicalDetails';
 import type { WorkStateResult } from '../core/observation';
 
-/** The service's agent-addressed guidance and the raw next step, for the collapsed technical details only. */
+/** The reporter's raw next action, the service's agent-addressed hint and guidance, for the collapsed technical details only. */
 export function workStateTechnicalItems(state: WorkStateResult): TechnicalDetailItem[] {
   return [
+    { label: 'progress.next_action', value: state.next.technical.nextAction, testId: 'technical-next-action' },
     { label: 'next_step', value: state.next.technical.nextStep, testId: 'technical-next-step' },
     { label: 'guidance.op', value: state.next.technical.guidanceOp, testId: 'technical-guidance-op' },
     { label: 'guidance.note', value: state.next.technical.guidanceNote, testId: 'technical-guidance-note' },

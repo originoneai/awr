@@ -175,19 +175,21 @@ describe('work detail requirements and source state', () => {
     expect(screen.getByTestId('technical-next-step').textContent).toContain('未提供');
   });
 
-  it('shows the reporter\'s own next step in the detail and marks a report the service declared stale', async () => {
+  it('shows the reporter\'s own next action in the detail, keeps the raw value in the technical details, and marks a report the service declared stale', async () => {
     setupPlan({
       snapshot: (workId) => {
         const response = demoWorkSnapshot(workId) as {
-          result: { data: { next_step: string | null; observation: { reporting: Record<string, unknown> } } };
+          result: { data: { observation: { progress: Record<string, unknown> | null; reporting: Record<string, unknown> } } };
         };
-        response.result.data.next_step = 'Review the contract first';
+        response.result.data.observation.progress = { next_action: 'Review the contract first' };
         response.result.data.observation.reporting.client_stale = true;
         return response;
       },
     });
     await waitFor(() => expect(screen.getByTestId('plan-guidance').textContent).toBe('Review the contract first'));
-    expect(screen.getByTestId('last-report-W1').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}（可能已过期）`);
+    expect(screen.getByTestId('last-report-W1').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}可能已过期`);
+    await userEvent.setup().click(within(screen.getByTestId('plan-detail')).getByText('技术细节'));
+    expect((await screen.findByTestId('technical-next-action')).textContent).toContain('Review the contract first');
   });
 
   it('constrains long required-spec text with ellipsis and a zero-min-width flex child', async () => {

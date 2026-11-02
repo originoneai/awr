@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next';
 import { deriveWorkState } from '../core/observation';
 import { Link, useSearchParams } from 'react-router';
 import { FreshnessBadge } from '../components/FreshnessBadge';
+import { LastReportText } from '../components/LastReportText';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { ObservationValue } from '../components/ObservationValue';
 import { TechnicalDetails } from '../components/TechnicalDetails';
@@ -100,7 +101,7 @@ function nextActionText(query: WorkQuery, t: TFunction) {
 function LastReport({ workId, query }: { workId: string; query?: SnapshotQuery }) {
   const { i18n } = useTranslation();
   const state = deriveWorkState({ language: i18n.language, readState: readStateOf(query), snapshot: query?.data?.result.data });
-  return <span data-testid={`last-report-${workId}`}>{state.lastReport.text}</span>;
+  return <LastReportText report={state.lastReport} testId={`last-report-${workId}`} />;
 }
 
 function DetailAbsent() {

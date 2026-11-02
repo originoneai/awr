@@ -410,7 +410,7 @@ describe('visible-row snapshot hydration', () => {
       },
     });
     await waitFor(() => {
-      expect(screen.getByTestId('last-report-W1').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}（可能已过期）`);
+      expect(screen.getByTestId('last-report-W1').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}可能已过期`);
       expect(screen.getByTestId('last-report-W2').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
     });
   });
@@ -472,17 +472,22 @@ describe('My work states, detail, and localization', () => {
       .toBe('/projects/demo?tab=plan&work=W1');
   });
 
-  it('shows the next step the work\'s reporter gave in the detail', async () => {
+  it('shows the next action the work\'s reporter wrote in the detail, not the service\'s own hint', async () => {
     setupWorkbench({
       path: '/workbench?scope=demo&work=W1',
       snapshot: (workId) => {
-        const response = demoWorkSnapshot(workId) as { result: { data: { next_step: string | null } } };
-        response.result.data.next_step = 'Review the contract first';
+        const response = demoWorkSnapshot(workId) as {
+          result: { data: { next_step: string | null; observation: { progress: Record<string, unknown> | null } } };
+        };
+        response.result.data.observation.progress = { next_action: 'Review the contract first' };
+        response.result.data.next_step = 'Call work.prepare to restore the context.';
         return response;
       },
     });
     const detail = await screen.findByTestId('workbench-detail');
-    await waitFor(() => expect(detail.textContent).toContain('Review the contract first'));
+    // The current-outcome block still dumps the whole report as JSON; only the sentence itself is the next step.
+    expect(await within(detail).findByText('Review the contract first')).toBeTruthy();
+    expect(detail.textContent).not.toContain('work.prepare');
   });
 
   it('does not invent detail sections when snapshot fields are absent', async () => {

@@ -19,6 +19,7 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { FreshnessBadge } from '../components/FreshnessBadge';
+import { LastReportText } from '../components/LastReportText';
 import { deriveWorkState, groupWorks, rawObservationText } from '../core/observation';
 import { RecentChanges } from '../components/RecentChanges';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
@@ -66,8 +67,15 @@ function NextStep({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
     snapshot: query?.data?.result.data,
   });
   return (
-    <Typography.Text data-testid={`project-next-${work.key}`} style={{ display: 'block' }}>
-      {state.next.text}
+    <Typography.Text
+      data-testid={`project-next-${work.key}`}
+      title={state.next.kind === 'reported' ? state.next.text : undefined}
+      style={{ display: 'block' }}
+    >
+      {/* antd's Typography overwrites a line clamp set on itself, so the clamp sits on a plain span. */}
+      <span style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+        {state.next.text}
+      </span>
     </Typography.Text>
   );
 }
@@ -75,7 +83,7 @@ function NextStep({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
 function LastReport({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
   const { i18n } = useTranslation();
   const state = deriveWorkState({ language: i18n.language, readState: readStateOf(query), snapshot: query?.data?.result.data });
-  return <span data-testid={`last-report-${work.key}`} style={{ whiteSpace: 'nowrap' }}>{state.lastReport.text}</span>;
+  return <LastReportText report={state.lastReport} testId={`last-report-${work.key}`} />;
 }
 
 function LaterBlock({ title, testId }: { title: string; testId: string }) {
