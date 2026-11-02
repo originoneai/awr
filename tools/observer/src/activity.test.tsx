@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { act, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import i18n from './i18n';
 import { formatUnixMs } from './lib/format';
 import { revokeObservationReads } from './lib/queries';
 import { DEMO_PROJECTS, renderApp } from './test-utils';
@@ -95,7 +96,10 @@ function pagedDevelopment(items: Array<Record<string, unknown>>, nextCursor: unk
   return { data: { ...base.data, items, next_cursor: nextCursor } };
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  await i18n.changeLanguage('zh-CN');
+});
 
 describe('object activity page (AWR-OBS-006 PR-A)', () => {
   it('serves development and requests as separate bounded kinds with full disclosures', async () => {
@@ -118,6 +122,42 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect((await screen.findAllByText('audit.requests')).length).toBeGreaterThan(0);
     expect(calls.filter((call) => call.params.get('kind') === 'requests')).toHaveLength(1);
     expect(calls.filter((call) => ['audit.history', 'audit.export', 'audit.count'].includes(call.params.get('kind') ?? ''))).toHaveLength(0);
+  });
+
+  it.each([
+    ['zh-CN', '已提交', '未提供'],
+    ['en-US', 'Committed', 'Not provided'],
+  ])('uses shared status and missing-value vocabulary in %s', async (language, status, missing) => {
+    const base = fixture('observer-activity-development.json');
+    setupActivity({
+      development: {
+        data: {
+          ...base.data,
+          scope: null,
+          request_retention: null,
+          development_source: null,
+          unknown_means: null,
+          chat_text_collected: null,
+          tool_io_collected: null,
+        },
+      },
+    });
+    await i18n.changeLanguage(language);
+    renderApp('/activity?project=demo');
+    const row = await screen.findByTestId('activity-row');
+    expect(row.textContent).toContain(status);
+    for (const testId of [
+      'activity-scope',
+      'activity-retention',
+      'activity-development-source',
+      'activity-collection-limits',
+      'activity-unknown-means',
+    ]) {
+      expect(screen.getByTestId(testId).textContent).toContain(missing);
+    }
+    const user = userEvent.setup();
+    await user.click(row);
+    expect(screen.getByTestId('activity-event-result').textContent).toBe(status);
   });
 
   it('loads older keyset pages without duplicates and keeps limit at or below 100', async () => {
@@ -229,7 +269,7 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect(detail.textContent).toContain(event);
     expect(detail.textContent).toContain(SELF_ACTOR);
     expect(detail.textContent).toContain('audit.requests');
-    expect(detail.textContent).toContain('unknown');
+    expect(detail.textContent).toContain('未知');
     expect(screen.getByTestId('activity-event-not-request').textContent).toContain('不是业务 request_id');
     expect(router.state.location.search).toContain(`event=${event}`);
     expect(calls.some((call) => call.url.includes('command.inspect'))).toBe(false);
