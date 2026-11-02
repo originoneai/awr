@@ -16,7 +16,7 @@ describe('ProjectShell', () => {
     await screen.findByText('Team mainline');
     const header = screen.getByTestId('project-header');
     expect(header.textContent).toContain('Team mainline');
-    expect(header.textContent).toContain('project_admin');
+    expect(header.textContent).toContain('项目管理员');
     expect(screen.getByRole('button', { name: /项目设置/ })).toBeTruthy();
   });
 

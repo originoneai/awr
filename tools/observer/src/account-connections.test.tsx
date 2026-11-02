@@ -72,11 +72,11 @@ describe('agent-connect page (AWR-OBS-008)', () => {
     renderApp('/agent-connect?scope=demo');
     expect(await screen.findByText('lin-agent-x')).toBeTruthy();
     expect(screen.getByText('lin-grok-x')).toBeTruthy();
-    expect(screen.getByText('developer')).toBeTruthy();
-    // Effective permissions, raw service values (acceptance 2).
-    expect(screen.getByText('observer')).toBeTruthy();
+    expect(screen.getByText('开发者')).toBeTruthy();
+    // Effective permissions use localized display; exact service values remain in tooltips.
+    expect(screen.getByText('观察者')).toBeTruthy();
     expect(screen.getByText('work.read')).toBeTruthy();
-    expect(screen.getAllByText('false').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText('否').length).toBeGreaterThanOrEqual(2);
     // Identity comes from the overview only: no work.next read for it.
     expect(calls.filter((call) => String(call.init?.body ?? '').includes('work.next')).length).toBe(0);
   });
@@ -239,10 +239,10 @@ describe('agent-connect and account review round 2', () => {
     const card = await screen.findByTestId('connect-capabilities');
     const rows = card.querySelectorAll('.ant-descriptions-item');
     const textOf = (label: string) => Array.from(rows).find((row) => row.textContent?.includes(label))?.textContent;
-    await waitFor(() => expect(textOf('可管理成员')).toContain('true'));
-    expect(textOf('可管理成员')).not.toContain('false');
-    expect(textOf('可读项目审计')).toContain('false');
-    expect(textOf('可读项目审计')).not.toContain('true');
+    await waitFor(() => expect(textOf('可管理成员')).toContain('是'));
+    expect(textOf('可管理成员')).not.toContain('否');
+    expect(textOf('可读项目审计')).toContain('否');
+    expect(textOf('可读项目审计')).not.toContain('是');
   });
 
   it('the first copy button copies exactly the MCP address too', async () => {

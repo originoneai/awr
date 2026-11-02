@@ -1,12 +1,16 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { Card, Col, Descriptions, List, Pagination, Row, Space, Tag, Tooltip, Typography } from 'antd';
+import { Card, Col, Descriptions, List, Pagination, Row, Space, Tag, Tooltip, Typography, theme } from 'antd';
 import { isValidElement } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import { ArtifactReader } from '../components/ArtifactReader';
+import { EvidenceChain } from '../components/EvidenceChain';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
+import { FieldLabel, ObservationValue } from '../components/ObservationValue';
 import { ApiError, isAuthError } from '../lib/api';
+import { formatObservationValue, notProvided } from '../i18n/craft';
+import { craftSelectionStyle, craftValueStyle } from '../theme';
 import { formatUnixMs } from '../lib/format';
 import { asArray, asObject, asText, at } from '../lib/json';
 import { outcomeQueryOptions } from '../lib/outcome';
@@ -28,6 +32,7 @@ function errorCode(error: unknown) {
 /** Exact outcome evidence; no status is inferred from CI, merge or artifact readability. */
 export function ProjectAcceptance({ project }: { project: string }) {
   const { t, i18n } = useTranslation();
+  const { token } = theme.useToken();
   const { revoked } = useRevocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const overview = useQuery(overviewQueryOptions(project, revoked));
@@ -83,23 +88,21 @@ export function ProjectAcceptance({ project }: { project: string }) {
     work_id: workId, limit: 20,
   }, revoked, enabled));
 
-  const notMeasured = t('freshness.state.not_measured');
-  const value = (input: unknown) => asText(input) ?? notMeasured;
+  const missing = notProvided(i18n.language);
+  const value = (input: unknown, field?: string) => formatObservationValue(input, i18n.language, field);
   const timeValue = (input: unknown) => {
     const raw = asText(input);
-    if (raw == null || !Number.isFinite(Number(raw))) return notMeasured;
+    if (raw == null || !Number.isFinite(Number(raw))) return missing;
     return (
       <Tooltip title={raw}>
-        <Typography.Text>{formatUnixMs(Number(raw), i18n.language)}</Typography.Text>
+        <Typography.Text className="craft-value" style={craftValueStyle}>{formatUnixMs(Number(raw), i18n.language)}</Typography.Text>
       </Tooltip>
     );
   };
-  const fields = (input: Array<[string, unknown]>) => input.map(([label, child]) => ({
-    key: label,
-    label,
-    children: isValidElement(child)
-      ? child
-      : <Typography.Text style={{ overflowWrap: 'anywhere' }}>{value(child)}</Typography.Text>,
+  const fields = (input: Array<[string, unknown]>) => input.map(([field, child]) => ({
+    key: field,
+    label: <FieldLabel field={field} />,
+    children: isValidElement(child) ? child : <ObservationValue value={child} field={field} />,
   }));
   const readError = (query: { error: unknown }, testId: string) => (
     <Typography.Text type="warning" data-testid={testId}>
@@ -180,11 +183,11 @@ export function ProjectAcceptance({ project }: { project: string }) {
                   <List.Item
                     data-testid={`acceptance-work-${work.key}`}
                     onClick={() => selectWork(work.key)}
-                    style={{ cursor: 'pointer', background: selectedWork?.key === work.key ? '#EFF6FF' : undefined }}
+                    style={craftSelectionStyle(token, selectedWork?.key === work.key)}
                   >
                     <Space direction="vertical" size={2}>
                       <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{work.title}</Typography.Text>
-                      <Typography.Text type="secondary">{state ?? t('acceptance.notObserved')}</Typography.Text>
+                      <Typography.Text type="secondary">{state ? <ObservationValue value={state} field="state" /> : t('acceptance.notObserved')}</Typography.Text>
                     </Space>
                   </List.Item>
                 );
@@ -222,16 +225,27 @@ export function ProjectAcceptance({ project }: { project: string }) {
               )}
             </Card>
 
+            <Card size="small" title={t('acceptance.evidenceChain')} data-testid="acceptance-evidence-chain">
+              <EvidenceChain
+                candidateCurrent={collaboration?.candidate?.current}
+                reviewState={reviewObject?.state}
+                reviewCurrent={reviewIsCurrent}
+                integrationState={integrationData?.state ?? collaboration?.integration?.state}
+                completionState={completionData?.runtime_state ?? snapshotData?.observation?.runtime?.state}
+                completionReceipt={completionSelected ?? selectedCompletionId}
+              />
+            </Card>
+
             <Card size="small" title={t('acceptance.review')}>
               {!selectedRound ? empty : review.isPending ? loading : review.isError ? readError(review, 'acceptance-review-error') : (
                 <Space direction="vertical" size={12} style={{ width: '100%' }} data-testid={`acceptance-review-${selectedRound}`}>
                   <Space size={8} wrap>
-                    <Tag>{value(reviewObject?.state)}</Tag>
+                    <Tag>{value(reviewObject?.state, 'state')}</Tag>
                     {reviewIsCurrent && reviewObject?.state === 'approved' ? (
                       <Tag color="success" data-testid="acceptance-current-approval">{t('acceptance.currentApproval')}</Tag>
                     ) : null}
                     {!reviewIsCurrent ? <Tag color="warning" data-testid="acceptance-review-history">{t('acceptance.historical')}</Tag> : null}
-                    {reviewCandidateCurrent == null ? <Tag data-testid="acceptance-review-currentness">{notMeasured}</Tag> : null}
+                    {reviewCandidateCurrent == null ? <Tag data-testid="acceptance-review-currentness">{missing}</Tag> : null}
                     {at(reviewObject, ['evidence_provenance', 'author_self_report']) === true ? <Tag>{t('acceptance.selfReport')}</Tag> : null}
                     {at(reviewObject, ['evidence_provenance', 'execution_consistency', 'independent_verification']) === false ? <Tag>{t('acceptance.nonIndependent')}</Tag> : null}
                   </Space>
@@ -256,7 +270,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                             ['team_independent_acceptance', at(decision, ['team_independent_acceptance'])],
                             ['reason', at(decision, ['reason'])],
                           ]),
-                          { key: 'human_approval', label: 'human_approval', children: <span data-testid="decision-human-approval">{value(at(decision, ['human_approval']))}</span> },
+                          { key: 'human_approval', label: <FieldLabel field="human_approval" />, children: <span data-testid="decision-human-approval">{value(at(decision, ['human_approval']))}</span> },
                         ]}
                       />
                     </Card>
@@ -280,7 +294,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
             </Card>
 
             <Row gutter={[16, 16]}>
-              <Col xs={24} xl={8}>
+              <Col xs={24} xl={10}>
                 <Card size="small" title={t('acceptance.evidence')}>
                   {!evidenceId ? empty : evidence.isPending ? loading : evidence.isError ? readError(evidence, 'acceptance-evidence-error') : (
                     <div data-testid="acceptance-evidence">
@@ -313,7 +327,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                   )}
                 </Card>
               </Col>
-              <Col xs={24} xl={8}>
+              <Col xs={24} xl={6}>
                 <Card size="small" title={t('acceptance.claim')}>
                   {!claimId ? empty : claim.isPending ? loading : claim.isError ? readError(claim, 'acceptance-claim-error') : (
                     <div data-testid="acceptance-claim">
@@ -354,9 +368,9 @@ export function ProjectAcceptance({ project }: { project: string }) {
                           ['human_approval', at(completionObject, ['approved_by', 'human_approval'])],
                           ['team_independent_acceptance', at(completionObject, ['approved_by', 'team_independent_acceptance'])],
                         ]),
-                        { key: 'review_round_id', label: 'review_round_id', children: <span data-testid="completion-review-round">{value(completionReviewRound)}</span> },
-                        { key: 'review_decision_id', label: 'review_decision_id', children: <span data-testid="completion-review-decision">{value(completionReviewDecision)}</span> },
-                        { key: 'independence_kind', label: 'independence_kind', children: <span data-testid="completion-independence">{value(completionIndependence)}</span> },
+                        { key: 'review_round_id', label: <FieldLabel field="review_round_id" />, children: <span data-testid="completion-review-round">{value(completionReviewRound)}</span> },
+                        { key: 'review_decision_id', label: <FieldLabel field="review_decision_id" />, children: <span data-testid="completion-review-decision">{value(completionReviewDecision)}</span> },
+                        { key: 'independence_kind', label: <FieldLabel field="independence_kind" />, children: <span data-testid="completion-independence">{value(completionIndependence, 'independence_kind')}</span> },
                       ]}
                     />
                   </div>
@@ -398,9 +412,9 @@ export function ProjectAcceptance({ project }: { project: string }) {
                           ['precondition', at(integrationData, ['integration_request', 'binding', 'target', 'precondition', 'revision', 'value'])],
                           ['result_revision', at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'result_revision', 'value'])],
                         ]),
-                        { key: 'outcome', label: 'outcome', children: <span data-testid="acceptance-integration-outcome">{value(at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'outcome']))}</span> },
-                        { key: 'state', label: 'state', children: <span data-testid="acceptance-integration-state">{value(integrationData?.state)}</span> },
-                        { key: 'dispatch_state', label: 'dispatch_state', children: <span data-testid="acceptance-dispatch-state">{value(at(integrationData, ['dispatch_receipt', 'data', 'state']))}</span> },
+                        { key: 'outcome', label: <FieldLabel field="outcome" />, children: <span data-testid="acceptance-integration-outcome">{value(at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'outcome']), 'outcome')}</span> },
+                        { key: 'state', label: <FieldLabel field="state" />, children: <span data-testid="acceptance-integration-state">{value(integrationData?.state, 'state')}</span> },
+                        { key: 'dispatch_state', label: <FieldLabel field="dispatch_state" />, children: <span data-testid="acceptance-dispatch-state">{value(at(integrationData, ['dispatch_receipt', 'data', 'state']), 'dispatch_state')}</span> },
                         ...fields([
                           ['current_binding', integrationData?.current_binding],
                           ['target_changed', integrationData?.target_changed],
@@ -441,7 +455,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                     size="small"
                     column={{ xs: 1, sm: 2 }}
                     items={[
-                      { key: 'complete', label: 'complete', children: <span data-testid="acceptance-delivery-complete">{completionConflict ? t('acceptance.conflict') : value(at(deliveryObject, ['awr_acceptance', 'complete']))}</span> },
+                      { key: 'complete', label: <FieldLabel field="complete" />, children: <span data-testid="acceptance-delivery-complete">{completionConflict ? t('acceptance.conflict') : value(at(deliveryObject, ['awr_acceptance', 'complete']))}</span> },
                       ...fields([
                         ['runtime_state', at(deliveryObject, ['awr_acceptance', 'runtime_state'])],
                         ['selected_completion_id', deliverySelected],

@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
-import { Button, Card, Descriptions, Space, Tabs, Typography } from 'antd';
+import { Button, Card, Col, Descriptions, Row, Space, Tabs, Typography } from 'antd';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ObservationForbidden } from '../components/states';
+import { ObservationValue } from '../components/ObservationValue';
 import { overviewQueryOptions, projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import { useScope } from '../lib/scope';
@@ -37,11 +38,12 @@ export function AgentConnectPage() {
             key: 'mine',
             label: t('agentConnect.myConnections'),
             children: (
-              <Space direction="vertical" size={16} style={{ width: '100%' }}>
+              <Row gutter={[16, 16]}>
+                <Col xs={24} lg={14}>
                 <Card title={t('agentConnect.instructions')} data-testid="connect-instructions">
                   <Space direction="vertical" size={12}>
                     <Typography.Text strong>{t('agentConnect.serviceAddress')}</Typography.Text>
-                    <Typography.Text code>{mcpUrl ?? t('freshness.state.not_measured')}</Typography.Text>
+                    <Typography.Text code>{mcpUrl ?? t('common.notProvided')}</Typography.Text>
                     <Space>
                       <Button size="small" onClick={async () => {
                         if (!mcpUrl) return;
@@ -72,49 +74,50 @@ export function AgentConnectPage() {
                     </Typography.Text>
                   </Space>
                 </Card>
-
+                </Col>
+                <Col xs={24} lg={10}>
                 <Card title={t('agentConnect.capabilities')} data-testid="connect-capabilities">
                   <Descriptions
                     size="small"
                     column={1}
                     items={[
-                      { key: 'actor', label: t('account.actorId'), children: identity?.actor_id ?? t('freshness.state.not_measured') },
-                      { key: 'client', label: t('account.clientId'), children: identity?.client_id ?? t('freshness.state.not_measured') },
-                      { key: 'role', label: t('account.role'), children: identity?.role ?? t('freshness.state.not_measured') },
-                      { key: 'project', label: t('agentConnect.project'), children: project ?? t('freshness.state.not_measured') },
+                      { key: 'actor', label: t('account.actorId'), children: <ObservationValue value={identity?.actor_id} /> },
+                      { key: 'client', label: t('account.clientId'), children: <ObservationValue value={identity?.client_id} /> },
+                      { key: 'role', label: t('account.role'), children: <ObservationValue value={identity?.role} field="role" /> },
+                      { key: 'project', label: t('agentConnect.project'), children: <ObservationValue value={project} /> },
                       {
                         key: 'roles',
                         label: t('agentConnect.businessRoles'),
-                        children: identity?.business_roles?.join(', ') ?? t('freshness.state.not_measured'),
+                        children: <ObservationValue value={identity?.business_roles} field="business_roles" />,
                       },
                       {
                         key: 'ceiling',
                         label: t('agentConnect.actionCeiling'),
-                        children: identity?.membership_action_ceiling?.join(', ') ?? t('freshness.state.not_measured'),
+                        children: <ObservationValue value={identity?.membership_action_ceiling} />,
                       },
                       {
                         key: 'manageMembers',
                         label: t('agentConnect.canManageMembers'),
-                        children: identity?.can_manage_members == null
-                          ? t('freshness.state.not_measured')
-                          : String(identity.can_manage_members),
+                        children: <ObservationValue value={identity?.can_manage_members} />,
                       },
                       {
                         key: 'readAudit',
                         label: t('agentConnect.canReadProjectAudit'),
-                        children: identity?.can_read_project_audit == null
-                          ? t('freshness.state.not_measured')
-                          : String(identity.can_read_project_audit),
+                        children: <ObservationValue value={identity?.can_read_project_audit} />,
                       },
                     ]}
                   />
                 </Card>
-
+                </Col>
+                <Col span={24}>
                 <Card title={t('agentConnect.existing')} data-testid="connect-existing">
                   <Typography.Text type="secondary">{t('agentConnect.existingLater')}</Typography.Text>
                 </Card>
-                <Typography.Text type="secondary">{t('account.independentUnavailable')}</Typography.Text>
-              </Space>
+                </Col>
+                <Col span={24}>
+                  <Typography.Text type="secondary">{t('account.independentUnavailable')}</Typography.Text>
+                </Col>
+              </Row>
             ),
           },
           {

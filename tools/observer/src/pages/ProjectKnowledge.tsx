@@ -1,12 +1,14 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { Card, Col, Input, List, Row, Space, Tag, Tooltip, Typography } from 'antd';
+import { Card, Col, Input, List, Row, Space, Tag, Tooltip, Typography, theme } from 'antd';
 import { useEffect, useState } from 'react';
+import { Stamp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
 import { isAuthError } from '../lib/api';
 import { overviewQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
+import { craftSelectionStyle } from '../theme';
 import type { WorkContractValue } from '../lib/types';
 
 interface CitingWork {
@@ -45,6 +47,7 @@ type DigestCheck = 'pending' | 'verified' | 'mismatch' | 'unverified';
 /** Assemble the knowledge list from per-work reads, never a project-level read. */
 export function ProjectKnowledge({ project }: { project: string }) {
   const { t } = useTranslation();
+  const { token } = theme.useToken();
   const { revoked } = useRevocation();
   const overview = useQuery(overviewQueryOptions(project, revoked));
   const works = overview.data?.works ?? [];
@@ -184,7 +187,7 @@ export function ProjectKnowledge({ project }: { project: string }) {
                   <List.Item
                     data-testid={`knowledge-source-${entry.path}-${entry.sha256.slice(0, 12)}`}
                     onClick={() => setSelectedKey(`${entry.path}::${entry.sha256}`)}
-                    style={{ cursor: 'pointer', background: selected && `${selected.path}::${selected.sha256}` === `${entry.path}::${entry.sha256}` ? '#EFF6FF' : undefined }}
+                    style={craftSelectionStyle(token, Boolean(selected && `${selected.path}::${selected.sha256}` === `${entry.path}::${entry.sha256}`))}
                   >
                     <Space direction="vertical" size={2} style={{ minWidth: 0 }}>
                       <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{entry.path}</Typography.Text>
@@ -213,6 +216,7 @@ export function ProjectKnowledge({ project }: { project: string }) {
                         data-testid="digest-check"
                         color={digestCheck === 'verified' ? 'success' : digestCheck === 'mismatch' ? 'error' : 'default'}
                       >
+                        {digestCheck === 'verified' ? <Stamp size={16} strokeWidth={1.5} aria-label={t('knowledge.digestVerified')} /> : null}
                         {digestCheck === 'verified'
                           ? t('knowledge.digestVerified')
                           : digestCheck === 'mismatch'
