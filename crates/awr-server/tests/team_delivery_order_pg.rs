@@ -8,7 +8,9 @@
 //! implement and refine their items twice before any review decision, an independent reviewer
 //! decides (and returns one item once), the manager delivers the first item, the second item's
 //! stale base is rejected by the repository connector, its author rebuilds on the new target and
-//! the follow-up is delivered. Afterwards the finalized items accept no follow-up work.
+//! the follow-up is delivered. Afterwards the finalized items accept no follow-up work. Two
+//! shorter tests show the cost of a wrong order: delivering the first version closes the item
+//! to refinement, and a refinement after an approval withdraws that approval.
 //!
 //! This pins the service state machine and the order of commands. It does not pin what a model
 //! or an operator does: whether a developer fetches the current target before building, which
@@ -1458,5 +1460,55 @@ fn delivering_the_first_version_leaves_no_way_to_refine_the_item() {
         team.confirm(API, &id).await;
         team.finalize(API, &api).await;
         assert_closed_to_follow_up(&mut team, LIN, API, &api).await;
+    });
+}
+
+/// Reviewing before the refinements is a sequencing mistake the service makes visible: an
+/// approval belongs to the version it was given for, and a refinement withdraws it.
+#[test]
+fn a_refinement_after_approval_withdraws_the_approval() {
+    on_large_stack(|| async {
+        let mut team = Team::start().await;
+        arrange(&mut team).await;
+        let base = team.repo.base.clone();
+        let first = team.implement(LIN, API, 1, API_VERSIONS[0], &base).await;
+        team.observe(API).await;
+        let approved = team
+            .decide(CHEN, API, &first.round_id, "approve")
+            .await
+            .unwrap();
+        let decision = approved["decision_id"].as_str().unwrap().to_owned();
+        assert_eq!(team.round_state(&first.round_id).await, "approved");
+        let second = team.implement(LIN, API, 2, API_VERSIONS[1], &base).await;
+        assert_eq!(
+            team.round_state(&first.round_id).await,
+            "invalidated",
+            "the refinement withdraws the approval it follows"
+        );
+        refused!(
+            team.prepare_integration(MANAGER, API, &first, &decision)
+                .await,
+            PgError::PreconditionsChanged,
+            "integrating the superseded version"
+        );
+        refused!(
+            team.prepare_integration(MANAGER, API, &second, &decision)
+                .await,
+            PgError::ReviewRequired,
+            "integrating the refinement with the earlier approval"
+        );
+        let finalize = team
+            .with_session(
+                MANAGER,
+                API,
+                json!({"evidence_id":first.evidence_id,"context_complete":true}),
+            )
+            .await;
+        refused!(
+            team.try_run(MANAGER, API, "delivery.finalize", finalize)
+                .await,
+            PgError::ReviewRequired,
+            "finalizing the superseded version"
+        );
     });
 }

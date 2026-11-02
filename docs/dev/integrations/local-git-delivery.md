@@ -422,7 +422,8 @@ any review decision, one returned review with its rework, a fast-forward
 delivery, a second item whose declared base is no longer the target (accepted
 as a request, rejected by the connector, with the changed target or base
 reported), the rebuilt follow-up, and the refusals that every route to
-follow-up work gives after finalization. A second test shows that delivering the
-first version closes the item to refinement. The tests pin the service state
-machine and the order of commands; they say nothing about what a model or
+follow-up work gives after finalization. Two shorter tests show the cost of a
+wrong order: delivering the first version closes the item to refinement, and a
+refinement after an approval withdraws that approval. The tests pin the service
+state machine and the order of commands; they say nothing about what a model or
 operator decides and carry no native business, approval or deployment credit.
