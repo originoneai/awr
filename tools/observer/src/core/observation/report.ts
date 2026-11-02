@@ -1,6 +1,6 @@
 import { humanText } from '../../i18n/human-language';
 import { checkLabel } from './labels';
-import { abbreviateIds } from './readable';
+import { readableSentence } from './readable';
 import { absoluteTimeText } from './time';
 import { rawObservationText, statementText, statusWord } from './values';
 import type { CappedList, ProgressReportResult, ProgressReportTest } from './types';
@@ -16,11 +16,11 @@ function capped<T>(items: T[]): CappedList<T> {
   return { shown: items.slice(0, REPORT_LIST_LIMIT), more: Math.max(0, items.length - REPORT_LIST_LIMIT) };
 }
 
-function sentences(value: unknown): string[] {
+function sentences(value: unknown, language: string): string[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
     const text = statementText(entry);
-    return text == null ? [] : [abbreviateIds(text)];
+    return text == null ? [] : [readableSentence(text, language)];
   });
 }
 
@@ -52,9 +52,9 @@ export function describeProgressReport(progress: unknown, options: { language: s
   if (report == null) return MISSING;
 
   const summaryText = statementText(report.summary);
-  const summary = summaryText == null ? null : abbreviateIds(summaryText);
-  const completed = capped(sentences(report.completed));
-  const blockers = { ...capped(sentences(report.blockers)), reported: Array.isArray(report.blockers) };
+  const summary = summaryText == null ? null : readableSentence(summaryText, language);
+  const completed = capped(sentences(report.completed, language));
+  const blockers = { ...capped(sentences(report.blockers, language)), reported: Array.isArray(report.blockers) };
   const tests = capped(
     (Array.isArray(report.tests) ? report.tests : []).flatMap((entry, index): ProgressReportTest[] => {
       const test = asRecord(entry);

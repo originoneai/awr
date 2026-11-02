@@ -36,6 +36,14 @@ describe('deriveWorkState: next step', () => {
     }
   });
 
+  it('says the operation names the shared vocabulary knows inside the reporter\'s sentence in words, in both languages, and keeps the sentence as written', () => {
+    const sentence = 'Run delivery.finalize for round 01M6AVQ870N7MBRJ5MPCN79T55';
+    const snapshot = { observation: { progress: { next_action: sentence } } };
+    expect(deriveWorkState({ ...zh, snapshot }).next).toMatchObject({ kind: 'reported', text: 'Run 完成交付 for round 01M6AVQ8…', fullText: sentence });
+    expect(deriveWorkState({ language: 'en-US', readState: 'ready', snapshot }).next.text).toBe('Run Finalize delivery for round 01M6AVQ8…');
+    expect(deriveWorkState({ ...zh, snapshot: { observation: {} }, workNextStep: 'Wait for delivery.integration.confirm' }).next.text).toBe('Wait for 确认并入主线');
+  });
+
   it('says plainly that no next step was reported when the checkpoint gave none, never the operation name or the service\'s own hint', () => {
     const state = deriveWorkState({ ...zh, snapshot: IN_PROGRESS });
     expect(state.next).toMatchObject({ kind: 'missing', text: '未报告下一步' });

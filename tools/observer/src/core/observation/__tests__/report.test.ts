@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import REPORTS from '../../../test-fixtures/work-state/progress-reports-run09.json';
 import { findForbiddenVisibleText } from '../../../lib/human-language-guard';
-import { abbreviateIds, absoluteTimeText, describeProgressReport, moreLinesText, REPORT_LIST_LIMIT } from '../index';
+import { absoluteTimeText, describeProgressReport, moreLinesText, readableSentence, REPORT_LIST_LIMIT } from '../index';
 
 const DELIVERED = REPORTS['api-delivered'];
 const IN_REVIEW = REPORTS['api-in-review-owned-by-other'];
@@ -20,10 +20,11 @@ describe('describeProgressReport: the real checkpoints', () => {
   it('shows the delivered work\'s own sentences with long ids abbreviated, its test in words, and who said it and when', () => {
     const report = describeProgressReport(DELIVERED, zh);
     expect(report.kind).toBe('reported');
-    expect(report.summary).toBe(abbreviateIds(DELIVERED.summary));
+    expect(report.summary).toBe(readableSentence(DELIVERED.summary, 'zh-CN'));
     expect(report.summary).toContain('from a5163424… to 5f7eb2fe… and finalized issue-filter-api');
-    expect(report.completed).toEqual({ shown: DELIVERED.completed.map(abbreviateIds), more: 0 });
-    expect(report.completed.shown[0]).toBe('delivery.integration.prepare 01M6B0NN… confirmed applied');
+    expect(report.completed).toEqual({ shown: DELIVERED.completed.map((sentence) => readableSentence(sentence, 'zh-CN')), more: 0 });
+    expect(report.completed.shown).toEqual(['准备并入主线 01M6B0NN… confirmed applied', '完成交付 receipt 01M6B189…', 'origin/main is 5f7eb2fe…']);
+    expect(describeProgressReport(DELIVERED, en).completed.shown[0]).toBe('Prepare mainline integration 01M6B0NN… confirmed applied');
     const { technical, ...visible } = report;
     expect(JSON.stringify(visible)).not.toContain('5f7eb2fe9c563e4d355aa64a527e0aef754116c1');
     expect(JSON.stringify(technical)).toContain('5f7eb2fe9c563e4d355aa64a527e0aef754116c1');
