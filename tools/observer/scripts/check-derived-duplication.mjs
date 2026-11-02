@@ -17,7 +17,7 @@ export const RULES = [
   { id: 'last-report', ranges: [
     range('src/pages/WorkbenchPage.tsx', 'const { t, i18n } = useTranslation();', ': formatUnixMs(clientReportedAt, i18n.language);', 'work-state', 'function LastReport'),
     range('src/components/WorkDetailPanel.tsx', 'const reportedAt =', undefined, 'work-state'),
-    range('src/components/WorkDetailPanel.tsx', "key: 'report'", '</span>', 'work-state'),
+    range('src/components/WorkDetailPanel.tsx', "key: 'report'", 'formatUnixMs(reportedAt', 'work-state'),
   ] },
   { id: 'next-guidance', ranges: [
     range('src/pages/WorkbenchPage.tsx', 'const progress =', 'const nextStep =', 'work-state'),

@@ -12,7 +12,6 @@ import {
   Spin,
   Table,
   Tag,
-  Tooltip,
   Typography,
   type TableProps,
 } from 'antd';
@@ -20,12 +19,14 @@ import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { FreshnessBadge } from '../components/FreshnessBadge';
-import { groupWorks, rawObservationText } from '../core/observation';
+import { LastReportText } from '../components/LastReportText';
+import { deriveWorkState, groupWorks, rawObservationText } from '../core/observation';
 import { RecentChanges } from '../components/RecentChanges';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { ObservationValue } from '../components/ObservationValue';
 import { pageTechnicalItems } from '../lib/activity-technical';
 import { isAuthError } from '../lib/api';
+import { readStateOf } from '../lib/read-state';
 import { freshnessWord } from '../lib/freshness';
 import { formatUnixMs } from '../lib/format';
 import { activityQueryOptions, overviewQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
@@ -58,35 +59,31 @@ function taskPath(project: string, workId: string) {
 }
 
 function NextStep({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
-  const { t } = useTranslation();
-  const data = query?.data?.result.data;
-  const snapshotNext = data?.next_step ?? data?.guidance?.action?.op;
-  const fullNote = data?.guidance?.action?.note;
-  let text = t('common.loading');
-  if (query?.isError) text = rawObservationText(work.next_step).text ?? t('common.notProvided');
-  else if (query && !query.isPending) {
-    text = rawObservationText(snapshotNext ?? work.next_step).text ?? t('common.notProvided');
-  }
-  // The compact op never truncates, so ellipsis.tooltip would never fire:
-  // the full agent-facing note gets an always-on Tooltip instead.
+  const { i18n } = useTranslation();
+  const state = deriveWorkState({
+    language: i18n.language,
+    readState: readStateOf(query),
+    workNextStep: work.next_step,
+    snapshot: query?.data?.result.data,
+  });
   return (
-    <Tooltip title={fullNote ?? undefined}>
-      <Typography.Text data-testid={`project-next-${work.key}`} style={{ display: 'block' }}>
-        {text}
-      </Typography.Text>
-    </Tooltip>
+    <Typography.Text
+      data-testid={`project-next-${work.key}`}
+      title={state.next.kind === 'reported' ? state.next.text : undefined}
+      style={{ display: 'block' }}
+    >
+      {/* antd's Typography overwrites a line clamp set on itself, so the clamp sits on a plain span. */}
+      <span style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+        {state.next.text}
+      </span>
+    </Typography.Text>
   );
 }
 
 function LastReport({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
-  const { t, i18n } = useTranslation();
-  const reportedAt = query?.data?.result.data.observation?.reporting?.client_reported_at_unix_ms;
-  let text = t('common.loading');
-  if (query?.isError) text = freshnessWord(t, 'not_measured');
-  else if (query && !query.isPending) {
-    text = reportedAt == null ? freshnessWord(t, 'not_measured') : formatUnixMs(reportedAt, i18n.language);
-  }
-  return <span data-testid={`last-report-${work.key}`} style={{ whiteSpace: 'nowrap' }}>{text}</span>;
+  const { i18n } = useTranslation();
+  const state = deriveWorkState({ language: i18n.language, readState: readStateOf(query), snapshot: query?.data?.result.data });
+  return <LastReportText report={state.lastReport} testId={`last-report-${work.key}`} />;
 }
 
 function LaterBlock({ title, testId }: { title: string; testId: string }) {

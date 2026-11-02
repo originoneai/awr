@@ -49,11 +49,14 @@ function setupWorkbench({
   next = DEMO_WORK_NEXT,
   inbox = DEMO_WORK_INBOX,
   snapshot = demoWorkSnapshot,
+  snapshotGate,
 }: {
   path?: string;
   next?: unknown;
   inbox?: unknown;
   snapshot?: (workId: string) => unknown;
+  /** Holds every work snapshot read back until it resolves. */
+  snapshotGate?: Promise<void>;
 } = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -65,6 +68,7 @@ function setupWorkbench({
       if (request.query.op === 'work.next') return json(next);
       if (request.query.op === 'work.inbox') return json(inbox);
       if (request.query.op === 'work.snapshot') {
+        await snapshotGate;
         return json(snapshot(request.query.work_id ?? ''));
       }
     }
@@ -387,6 +391,30 @@ describe('visible-row snapshot hydration', () => {
     expect(cell.textContent).not.toBe(formatUnixMs(1761839999000, 'zh-CN'));
   });
 
+  it('says loading while a work\'s own read is pending and the time once it arrives', async () => {
+    let release: () => void = () => undefined;
+    setupWorkbench({ snapshotGate: new Promise<void>((resolve) => { release = resolve; }) });
+    await waitFor(() => expect(screen.getByTestId('last-report-W1').textContent).toBe('加载中…'));
+    await act(async () => { release(); });
+    await waitFor(() => expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN')));
+  });
+
+  it('marks a client report the service itself declared stale, and leaves a current one unmarked', async () => {
+    setupWorkbench({
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as {
+          result: { data: { observation: { reporting: Record<string, unknown> } } };
+        };
+        response.result.data.observation.reporting.client_stale = workId === 'W1';
+        return response;
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('last-report-W1').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}可能已过期`);
+      expect(screen.getByTestId('last-report-W2').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
+    });
+  });
+
   it('shows partial failure when every visible snapshot read fails', async () => {
     setupWorkbench({
       snapshot: () => ({ ok: false, error: { code: 'ReadTimeout', message: 'slow' } }),
@@ -428,16 +456,38 @@ describe('My work states, detail, and localization', () => {
     expect(await screen.findByTestId('state-empty')).toBeTruthy();
   });
 
-  it('shows real contract, dependency and guidance fields plus honest absent progress', async () => {
+  it('shows real contract and dependency fields, keeps the agent guidance in the technical details, plus honest absent progress', async () => {
     setupWorkbench({ path: '/workbench?scope=demo&work=W1' });
     const detail = await screen.findByTestId('workbench-detail');
     await waitFor(() => expect(detail.textContent).toContain('Keep support filters useful'));
     expect(detail.textContent).toContain('Do not mutate input records');
     expect(detail.textContent).toContain('upstream-contract-v1');
-    expect(detail.textContent).toContain('Record the verified outcome.');
+    expect(detail.textContent).not.toContain('Record the verified outcome.');
+    expect(detail.textContent).not.toContain('session.checkpoint');
+    await userEvent.setup().click(within(detail).getByText('技术细节'));
+    expect((await within(detail).findByTestId('technical-guidance-note')).textContent).toContain('Record the verified outcome.');
+    expect(within(detail).getByTestId('technical-guidance-op').textContent).toContain('session.checkpoint');
     expect(within(detail).getByTestId('state-not-reported')).toBeTruthy();
     expect(within(detail).getByRole('link', { name: '打开完整任务 →' }).getAttribute('href'))
       .toBe('/projects/demo?tab=plan&work=W1');
+  });
+
+  it('shows the next action the work\'s reporter wrote in the detail, not the service\'s own hint', async () => {
+    setupWorkbench({
+      path: '/workbench?scope=demo&work=W1',
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as {
+          result: { data: { next_step: string | null; observation: { progress: Record<string, unknown> | null } } };
+        };
+        response.result.data.observation.progress = { next_action: 'Review the contract first' };
+        response.result.data.next_step = 'Call work.prepare to restore the context.';
+        return response;
+      },
+    });
+    const detail = await screen.findByTestId('workbench-detail');
+    // The current-outcome block still dumps the whole report as JSON; only the sentence itself is the next step.
+    expect(await within(detail).findByText('Review the contract first')).toBeTruthy();
+    expect(detail.textContent).not.toContain('work.prepare');
   });
 
   it('does not invent detail sections when snapshot fields are absent', async () => {

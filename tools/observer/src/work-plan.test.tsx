@@ -147,7 +147,7 @@ describe('effective plan table', () => {
 });
 
 describe('work detail requirements and source state', () => {
-  it('renders real contract, required specs, runtime, compact guidance, and report time', async () => {
+  it('renders real contract, required specs, runtime, a plain next step with the agent guidance kept in the technical details, and the report time', async () => {
     const longNote = 'Batch progress with next_action/open_loops. Stop and report workspace execution before publication. '.repeat(4);
     setupPlan({
       snapshot: (workId) => {
@@ -162,10 +162,37 @@ describe('work detail requirements and source state', () => {
     expect(screen.getByTestId('plan-detail').textContent).toContain('docs/support.md');
     expect(screen.getByTestId('plan-detail').textContent).toContain('Keep the support API stable.');
     expect(screen.getByTestId('plan-runtime-state').textContent).toBe('已认领');
-    expect(screen.getByTestId('plan-guidance').textContent).toBe('session.checkpoint');
-    expect(screen.getByTestId('plan-guidance').textContent).not.toContain('Batch progress');
+    expect(screen.getByTestId('plan-guidance').textContent).toBe('未报告下一步');
+    expect(screen.getByTestId('plan-detail').textContent).not.toContain('session.checkpoint');
+    expect(screen.getByTestId('plan-detail').textContent).not.toContain('Batch progress');
     expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
     expect(screen.getByTestId('last-report-W1').textContent).not.toBe(formatUnixMs(1761839900000, 'zh-CN'));
+    // The service's own guidance is addressed to the agent: verbatim, but only behind the technical details.
+    const user = userEvent.setup();
+    await user.click(within(screen.getByTestId('plan-detail')).getByText('技术细节'));
+    expect((await screen.findByTestId('technical-guidance-op')).textContent).toContain('session.checkpoint');
+    expect(screen.getByTestId('technical-guidance-note').textContent).toContain(longNote);
+    expect(screen.getByTestId('technical-next-step').textContent).toContain('未提供');
+  });
+
+  it('shows the reporter\'s own next action in the detail, keeps the raw value in the technical details, and marks a report the service declared stale', async () => {
+    setupPlan({
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId) as {
+          result: { data: { observation: { progress: Record<string, unknown> | null; reporting: Record<string, unknown> } } };
+        };
+        response.result.data.observation.progress = { next_action: 'Review the contract first' };
+        response.result.data.observation.reporting.client_stale = true;
+        return response;
+      },
+    });
+    await waitFor(() => expect(screen.getByTestId('plan-guidance').textContent).toBe('Review the contract first'));
+    expect(screen.getByTestId('last-report-W1').textContent).toBe(`${formatUnixMs(1761839800000, 'zh-CN')}可能已过期`);
+    await userEvent.setup().click(within(screen.getByTestId('plan-detail')).getByText('技术细节'));
+    expect((await screen.findByTestId('technical-next-action')).textContent).toContain('Review the contract first');
+    // why the note is (not) there stays checkable: the service's flag and the work's own state, verbatim
+    expect(screen.getByTestId('technical-client-stale').textContent).toContain('true');
+    expect(screen.getByTestId('technical-runtime-state').textContent).toContain('claimed');
   });
 
   it('constrains long required-spec text with ellipsis and a zero-min-width flex child', async () => {

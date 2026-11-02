@@ -1,0 +1,75 @@
+{
+  "_note": "Trimmed from real work.snapshot replies of a rehearsal run: only the fields the work-state derivation reads, values verbatim.",
+  "api-in-progress-with-live-report": {
+    "next_step": null,
+    "guidance": {
+      "action": {
+        "op": "session.checkpoint",
+        "note": "Batch progress with next_action/open_loops. Stop and report workspace execution before repository push/publication, external review, merge or deployment; use separate delivery operations. Follow execution.terminal_reporting with measured environment digest and truthful workspace_settlement, even with a live V2 lease. Prior or unknown external effects from this run require recovery; never declare no_external_effects=true for them. Omission preserves recovery; tests do not prove settlement."
+      }
+    },
+    "runtime": {
+      "state": "claimed"
+    },
+    "observation": {
+      "reporting": {
+        "client_reported_at_unix_ms": 1793474474920,
+        "client_stale": true
+      },
+      "runtime": {
+        "state": "claimed"
+      },
+      "progress": null
+    }
+  },
+  "api-delivered": {
+    "next_step": null,
+    "guidance": {
+      "action": {
+        "op": "completion.inspect",
+        "note": "Inspect the completion and select further work through work.next."
+      }
+    },
+    "runtime": {
+      "state": "completed"
+    },
+    "observation": {
+      "reporting": {
+        "client_reported_at_unix_ms": 1793513588923,
+        "client_stale": true
+      },
+      "runtime": {
+        "state": "completed"
+      },
+      "progress": {
+        "next_action": "Leave issue-filter-page available for self-claim. Eligible assignees are lin and mei. The page has no implementation, review, or delivery.",
+        "phase": "delivered"
+      }
+    }
+  },
+  "api-in-review-owned-by-other": {
+    "next_step": null,
+    "guidance": {
+      "action": {
+        "op": "work.next",
+        "note": "This task belongs to another member. Select your assignment or an available task."
+      }
+    },
+    "runtime": {
+      "state": "claimed"
+    },
+    "observation": {
+      "reporting": {
+        "client_reported_at_unix_ms": 1793513588923,
+        "client_stale": false
+      },
+      "runtime": {
+        "state": "claimed"
+      },
+      "progress": {
+        "next_action": "Wait for independent review of round 01M6AVQ870N7MBRJ5MPCN79T55. Do not self-approve or merge to main.",
+        "phase": "ready_for_review"
+      }
+    }
+  }
+}

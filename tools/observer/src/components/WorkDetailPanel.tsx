@@ -10,19 +10,19 @@ import {
   Spin,
   Tabs,
   Tag,
-  Tooltip,
   Typography,
 } from 'antd';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { LastReportText } from './LastReportText';
 import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure } from './states';
 import { FieldLabel, ObservationValue } from './ObservationValue';
-import { rawObservationText } from '../core/observation';
+import { deriveWorkState, rawObservationText } from '../core/observation';
+import { workStateTechnicalItems } from '../lib/work-state-technical';
 import { RecentChanges } from './RecentChanges';
+import { TechnicalDetails } from './TechnicalDetails';
 import { pageTechnicalItems } from '../lib/activity-technical';
 import { isAuthError } from '../lib/api';
-import { freshnessWord } from '../lib/freshness';
-import { formatUnixMs } from '../lib/format';
 import { activityQueryOptions, reviewQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import type {
@@ -69,8 +69,7 @@ function Requirements({ query }: { query: SnapshotQuery }) {
     return <PartialFailure errorCode={(query.error as { code?: string }).code}><div /></PartialFailure>;
   }
   const contract = data?.visible_contract ?? data?.published_contract;
-  const guidance = data?.guidance?.action;
-  const reportedAt = data?.observation?.reporting?.client_reported_at_unix_ms;
+  const state = deriveWorkState({ language: i18n.language, readState: 'ready', snapshot: data });
   const runtimeState = data?.runtime?.state ?? data?.observation?.runtime?.state;
   return (
     <Flex vertical gap={16}>
@@ -86,27 +85,16 @@ function Requirements({ query }: { query: SnapshotQuery }) {
           {
             key: 'guidance',
             label: t('plan.detail.guidance'),
-            children: (
-              <Tooltip title={guidance?.note ?? undefined}>
-                <Typography.Text data-testid="plan-guidance">
-                  {guidance?.op ?? t('common.notProvided')}
-                </Typography.Text>
-              </Tooltip>
-            ),
+            children: <Typography.Text data-testid="plan-guidance">{state.next.text}</Typography.Text>,
           },
           {
             key: 'report',
             label: t('plan.detail.lastReport'),
-            children: (
-              <span data-testid={`last-report-${data?.work_id ?? ''}`}>
-                {reportedAt == null
-                  ? freshnessWord(t, 'not_measured')
-                  : formatUnixMs(reportedAt, i18n.language)}
-              </span>
-            ),
+            children: <LastReportText report={state.lastReport} testId={`last-report-${data?.work_id ?? ''}`} />,
           },
         ]}
       />
+      <TechnicalDetails items={workStateTechnicalItems(state)} />
       <section>
         <Typography.Title level={5}>{t('workbench.detail.goalsAcceptance')}</Typography.Title>
         <Typography.Text strong>{t('workbench.detail.goals')}</Typography.Text>
