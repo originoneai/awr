@@ -34,7 +34,7 @@ export function activityListQueryOptions(
     },
     enabled: Boolean(project) && !revoked,
     ...readQueryDefaults,
-    // Only the first page refreshes on the normal cadence; loaded history is stable.
+    // Poll only while one page is loaded; loading older history stops all polling.
     refetchInterval: (query: { state: { data?: { pages: TeamActivityResponse[] } } }) =>
       (query.state.data?.pages.length ?? 0) <= 1 ? POLL_INTERVAL_MS : false,
   };

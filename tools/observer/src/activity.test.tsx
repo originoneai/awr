@@ -178,6 +178,7 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     renderApp(`/activity?project=demo&actor=${SELF_ACTOR}`);
     await screen.findByTestId('page-activity');
     expect(ownCalls.some((call) => call.params.get('member_actor_id') === SELF_ACTOR)).toBe(true);
+    expect(screen.queryByTestId('activity-self-filter-note')).toBeNull();
 
     const { calls: otherCalls } = setupActivity();
     renderApp('/activity?project=demo&actor=OTHER');
@@ -257,6 +258,15 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect(calls.filter((call) => call.params.get('kind') === 'requests')).toHaveLength(0);
     expect(calls.some((call) => ['audit.history', 'audit.export', 'audit.count'].includes(call.params.get('kind') ?? ''))).toBe(false);
   });
+
+  it('keeps polling a single loaded activity page', async () => {
+    const { calls } = setupActivity();
+    renderApp('/activity?project=demo');
+    await screen.findByTestId('activity-row');
+    const initialCalls = calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 6500));
+    expect(calls.length).toBeGreaterThan(initialCalls);
+  }, 10000);
 
   it('stops polling activity pages and capabilities after the second page is loaded', async () => {
     const all = fixture('derived-audit-development-project-scope-all-run09.json').data.items as Array<Record<string, unknown>>;
@@ -340,7 +350,7 @@ describe('object activity page (AWR-OBS-006 PR-A)', () => {
     expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
     expect(screen.queryByTestId('activity-row')).toBeNull();
     const settled = calls.length;
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    await new Promise((resolve) => setTimeout(resolve, 6500));
     expect(calls.length).toBe(settled);
-  });
+  }, 10000);
 });
