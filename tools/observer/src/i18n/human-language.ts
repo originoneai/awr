@@ -49,6 +49,7 @@ export const HUMAN_VOCABULARY = {
     blockersNone: '未报告阻塞',
     moreLines: '还有 {{count}} 条',
     checkNumbered: '检查 {{count}}',
+    documentNumbered: '文档 {{count}}',
     deliveredUnconfirmed: '汇报称已交付',
   },
   'en-US': {
@@ -100,6 +101,7 @@ export const HUMAN_VOCABULARY = {
     blockersNone: 'No blockers reported',
     moreLines: '{{count}} more',
     checkNumbered: 'Check {{count}}',
+    documentNumbered: 'Document {{count}}',
     deliveredUnconfirmed: 'Reported as delivered',
   },
 } as const;
