@@ -448,14 +448,29 @@ describe('project workstream progress', () => {
   });
 });
 
+async function openTechnicalDetails(block: HTMLElement) {
+  const user = userEvent.setup();
+  for (const toggle of within(block).getAllByRole('button', { name: /技术细节/ })) await user.click(toggle);
+}
+
 describe('project coverage and freshness', () => {
-  it('shows real coverage with an unknown total rather than zero', async () => {
+  it('says in words how much was read, with an unknown total rather than zero, and keeps the raw rows behind the technical details', async () => {
     setupOverview();
     const coverage = await screen.findByTestId('project-coverage');
-    expect(within(coverage).getByTestId('coverage-works-total').textContent).toBe('未知');
-    expect(within(coverage).getByTestId('coverage-works-total').textContent).not.toBe('0');
-    expect(within(coverage).getByTestId('coverage-enumerated').textContent).toBe('2');
+    expect(within(coverage).getByTestId('coverage-summary').textContent).toBe('已读取 2 个工作项，总数暂时未知');
     expect(within(coverage).getByTestId('freshness-badge')).toBeTruthy();
+    expect(findForbiddenVisibleText(defaultVisibleText(coverage))).toEqual([]);
+    expect(within(coverage).queryByTestId('coverage-works-total')).toBeNull();
+    await openTechnicalDetails(coverage);
+    expect(within(coverage).getByTestId('coverage-works-total').textContent).toContain('未提供');
+    expect(within(coverage).getByTestId('technical-detail-coverage.works_enumerated').textContent).toContain('2');
+    expect(within(coverage).getByTestId('technical-detail-coverage.scope.next_cursor').textContent).toContain('未提供');
+  });
+
+  it('says all of it was read when the total is known, and counts a partial batch against the total', async () => {
+    setupOverview({ overview: { ...DEMO_PROJECT_OVERVIEW, works: DEMO_PROJECT_WORKS, coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_enumerated: 2, works_total: 2, scope: { ...DEMO_PROJECT_OVERVIEW.coverage.scope, enumerated: 7 } } } });
+    expect((await screen.findByTestId('coverage-summary')).textContent).toBe('已读取 2 / 2 个工作项');
+    expect(screen.queryByTestId('coverage-failed-summary')).toBeNull();
   });
 
   it.each(['failed', 'succeeded'])('does not call zero enumerated empty with failed streams: %s scope', async (status) => {
@@ -466,6 +481,7 @@ describe('project coverage and freshness', () => {
         coverage: {
           ...DEMO_PROJECT_OVERVIEW.coverage,
           failed: 1,
+          works_enumerated: 0,
           scope: { ...DEMO_PROJECT_OVERVIEW.coverage.scope, status, enumerated: 0 },
           streams: [{
             workstream_id: 'WS1',
@@ -478,6 +494,7 @@ describe('project coverage and freshness', () => {
     });
     expect(await screen.findByTestId('state-partial')).toBeTruthy();
     expect(screen.queryByTestId('state-empty')).toBeNull();
+    expect(screen.getByTestId('coverage-summary').textContent).toBe('已读取 0 个工作项，总数暂时未知');
   });
 
   it('retains a failed stream with its read time and confirmed rows', async () => {
@@ -504,8 +521,14 @@ describe('project coverage and freshness', () => {
     expect(await screen.findByTestId('state-partial')).toBeTruthy();
     const failed = screen.getByTestId('coverage-stream-WS1');
     expect(failed.textContent).toContain('读取失败');
-    expect(failed.textContent).toContain('ReadTimeout');
     expect(failed.textContent).toContain(formatUnixMs(failedAt, 'zh-CN'));
+    expect(failed.textContent).not.toContain('ReadTimeout');
+    expect(failed.textContent).not.toContain('WS1');
+    expect(screen.getByTestId('coverage-failed-summary').textContent).toBe('有 1 条工作线读取失败，列表可能不完整');
+    const coverage = screen.getByTestId('project-coverage');
+    expect(findForbiddenVisibleText(defaultVisibleText(coverage))).toEqual([]);
+    await openTechnicalDetails(coverage);
+    expect(within(coverage).getByTestId('technical-detail-coverage.streams.WS1').textContent).toContain('ReadTimeout');
     expect(screen.getByRole('link', { name: 'Build the filter API' })).toBeTruthy();
   });
 
@@ -522,7 +545,10 @@ describe('project coverage and freshness', () => {
     });
     const unread = await screen.findByTestId('project-coverage-unread');
     expect(unread.textContent).toContain('还有未读部分');
-    expect(unread.textContent).toContain('cursor-next-2');
+    expect(unread.textContent).not.toContain('cursor-next-2');
+    const coverage = screen.getByTestId('project-coverage');
+    await openTechnicalDetails(coverage);
+    expect(within(coverage).getByTestId('technical-detail-coverage.scope.next_cursor').textContent).toContain('cursor-next-2');
   });
 });
 
@@ -654,8 +680,8 @@ describe('project overview placeholders, localization, and accessibility', () =>
     await act(() => i18n.changeLanguage('en-US'));
     expect(await screen.findByText('Workstream progress')).toBeTruthy();
     expect(screen.getByText('Recent changes')).toBeTruthy();
-    expect(screen.getByText('Coverage & freshness')).toBeTruthy();
-    expect(screen.getByTestId('coverage-works-total').textContent).toBe('unknown');
+    expect(screen.getByText('How much was read')).toBeTruthy();
+    expect(screen.getByTestId('coverage-summary').textContent).toBe('Read 2 work items; the total is not known yet');
   });
 
   it('has no axe violations', async () => {
