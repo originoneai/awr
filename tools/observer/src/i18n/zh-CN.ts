@@ -185,6 +185,7 @@ const zhCN = {
   },
   freshness: {
     title: '新鲜度',
+    recentRead: '最近一次读取：{{time}}',
     plane: {
       report_received: '上报接收',
       authoritative: '权威测量',

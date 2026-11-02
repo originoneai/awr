@@ -189,6 +189,7 @@ const enUS: Messages = {
   },
   freshness: {
     title: 'Freshness',
+    recentRead: 'Latest read: {{time}}',
     plane: {
       report_received: 'Report received',
       authoritative: 'Authoritative',

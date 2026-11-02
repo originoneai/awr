@@ -4,6 +4,7 @@ import { PLANE_STATES, type PlaneState } from '../lib/contract';
 import { freshnessWord } from '../lib/freshness';
 import { formatUnixMs } from '../lib/format';
 import type { PlaneFreshness, TeamFreshness } from '../lib/types';
+import { TechnicalDetails } from './TechnicalDetails';
 
 const PLANE_KEYS = ['report_received', 'authoritative', 'page_read'] as const;
 
@@ -22,40 +23,43 @@ function planeStatus(plane: PlaneFreshness | undefined): PlaneState {
 }
 
 function PlaneView({ planeKey, plane }: { planeKey: (typeof PLANE_KEYS)[number]; plane?: PlaneFreshness }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const status = planeStatus(plane);
-  let detail = '—';
-  if (status === 'failed' && plane?.error_code) {
-    detail = String(plane.error_code);
-  } else if ((status === 'measured' || status === 'stale') && plane?.at_unix_ms != null) {
-    detail = formatUnixMs(plane.at_unix_ms, i18n.language);
-  }
   return (
     <span data-testid={`freshness-${planeKey}`}>
-      <Typography.Text type="secondary" style={{ marginRight: 4 }}>
-        {t(`freshness.plane.${planeKey}`)}
-      </Typography.Text>
       <Tag color={STATE_COLORS[status]} style={{ marginInlineEnd: 4 }}>
         {freshnessWord(t, status)}
       </Tag>
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        {detail}
-      </Typography.Text>
     </span>
   );
 }
 
 /**
- * The three freshness planes (report received / authoritative / page read),
- * each exactly one of the contract's four states. Vocabulary and states come
- * from observation-contract.js; this component never invents a measurement.
+ * The three freshness planes keep their contractual states. Their engineering
+ * names and raw replies stay in disclosure; the default names only the latest read.
  */
 export function FreshnessBadge({ freshness }: { freshness?: TeamFreshness }) {
+  const { t, i18n } = useTranslation();
+  const latestAt = PLANE_KEYS.reduce<number | null>((latest, key) => {
+    const plane = freshness?.[key];
+    const status = planeStatus(plane);
+    const at = plane?.at_unix_ms;
+    if ((status === 'measured' || status === 'stale') && typeof at === 'number' && Number.isFinite(at)) {
+      return latest == null ? at : Math.max(latest, at);
+    }
+    return latest;
+  }, null);
+  const time = latestAt == null ? freshnessWord(t, 'not_measured') : formatUnixMs(latestAt, i18n.language);
   return (
     <Space size={[16, 4]} wrap data-testid="freshness-badge">
+      <Typography.Text type="secondary">{t('freshness.recentRead', { time })}</Typography.Text>
       {PLANE_KEYS.map((key) => (
         <PlaneView key={key} planeKey={key} plane={freshness?.[key]} />
       ))}
+      <TechnicalDetails items={PLANE_KEYS.map((key) => ({
+        label: t(`freshness.plane.${key}`),
+        value: freshness?.[key] ?? null,
+      }))} />
     </Space>
   );
 }

@@ -38,7 +38,7 @@ describe('freshness behavior contract', () => {
 
   it('shows the measured time for a stale plane', () => {
     render(<FreshnessBadge freshness={freshnessWith('stale')} />);
-    expect(screen.getByTestId('freshness-report_received').textContent).toContain(
+    expect(screen.getByTestId('freshness-badge').textContent).toContain(
       String(new Date(1761840000000).getFullYear()),
     );
   });
