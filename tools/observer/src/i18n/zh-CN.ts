@@ -41,6 +41,8 @@ const zhCN = {
     language: '语言',
     identity: '范围身份',
     later: '该功能尚未开放',
+    openNav: '打开导航',
+    closeNav: '关闭导航',
   },
   project: {
     settings: '项目设置',

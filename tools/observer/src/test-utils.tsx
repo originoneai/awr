@@ -4,6 +4,23 @@ import { createMemoryRouter, RouterProvider } from 'react-router';
 import { vi } from 'vitest';
 import { createAppQueryClient } from './lib/queries';
 import { routes } from './router';
+import { createMatchMedia } from './test-media';
+
+/**
+ * Render the app at a specific viewport width for responsive behaviour tests. Returns a handle
+ * to move the viewport later (as a resize) and to restore the default desktop matchMedia.
+ */
+export function mockViewport(width: number) {
+  const original = window.matchMedia;
+  const { matchMedia, setWidth } = createMatchMedia(width);
+  window.matchMedia = matchMedia as unknown as typeof window.matchMedia;
+  return {
+    setWidth,
+    restore: () => {
+      window.matchMedia = original;
+    },
+  };
+}
 
 export const DEMO_PROJECTS = {
   ok: true,

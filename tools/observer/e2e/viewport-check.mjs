@@ -167,7 +167,7 @@ try {
   );
 
   await page.setViewportSize({ width: 375, height: 812 });
-  await page.waitForFunction(() => document.querySelector('.ant-layout-sider-zero-width')
+  await page.waitForFunction(() => document.querySelector('[data-testid="nav-toggle"]')
     && document.documentElement.scrollWidth <= 375);
   const narrow = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,

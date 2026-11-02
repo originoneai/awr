@@ -13,6 +13,8 @@ export const craftTokens = {
   controlHeight: 36,
   headerHeight: 64,
   siderWidth: 240,
+  // Smallest touch target the mobile acceptance allows (drawer rows, header entry).
+  touchTarget: 40,
   contentMaxWidth: 1600,
   color: {
     page: '#F5F7FA',

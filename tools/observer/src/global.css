@@ -103,6 +103,24 @@ body,
   flex: 0 0 auto;
 }
 
+/* Below lg the sider is replaced by the header entry (.shell-nav-toggle); its 40px box comes
+   from craftTokens.touchTarget as an inline style, because antd's icon-only button width would
+   otherwise win over a plain class rule. */
+.shell-nav-toggle {
+  flex: 0 0 auto;
+}
+
+/* The drawer shows the same menus with 40px rows: at touch widths the acceptance requires a
+   40px tap area, taller than the 36px desktop navigation rows. */
+.shell-drawer .shell-nav .ant-menu-item {
+  height: 40px;
+  line-height: 40px;
+}
+
+.shell-drawer .shell-brand {
+  padding: 0;
+}
+
 @media (max-width: 768px) {
   .shell-header {
     padding-inline: 16px;

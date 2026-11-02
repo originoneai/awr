@@ -45,6 +45,8 @@ const enUS: Messages = {
     language: 'Language',
     identity: 'Scope identity',
     later: 'This feature is not available yet',
+    openNav: 'Open navigation',
+    closeNav: 'Close navigation',
   },
   project: {
     settings: 'Project settings',

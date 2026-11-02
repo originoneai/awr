@@ -2,7 +2,9 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Avatar,
   Button,
+  Drawer,
   Dropdown,
+  Grid,
   Input,
   Layout,
   Menu,
@@ -19,20 +21,23 @@ import {
   KeyRound,
   Languages,
   LayoutDashboard,
+  Menu as MenuIcon,
   Search,
   Settings,
   SquareCheckBig,
   Users,
   Wrench,
+  X as CloseIcon,
   type LucideIcon,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { matchPath, NavLink, useLocation } from 'react-router';
 import i18n from '../i18n';
 import { projectsQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import { useScope } from '../lib/scope';
+import { craftTokens } from '../theme';
 
 const { Header, Sider, Content } = Layout;
 
@@ -57,15 +62,8 @@ function NavigationIcon({ icon: Icon }: { icon: LucideIcon }) {
   return <Icon size={16} strokeWidth={1.5} aria-hidden />;
 }
 
-export function AppShell({ children }: { children: ReactNode }) {
+function useShellMenuItems() {
   const { t } = useTranslation();
-  const location = useLocation();
-  const { token } = theme.useToken();
-  const { projectKey, setProjectKey } = useScope();
-  const { revoked } = useRevocation();
-  const projects = useQuery(projectsQueryOptions(revoked));
-  const selectedKey = selectedNavigation(location.pathname);
-
   const menuItems: MenuProps['items'] = [];
   for (const [index, item] of NAVIGATION.entries()) {
     if (index === 5) menuItems.push({ type: 'divider' });
@@ -75,6 +73,68 @@ export function AppShell({ children }: { children: ReactNode }) {
       label: <NavLink to={item.path}>{t(`nav.${item.label}`)}</NavLink>,
     });
   }
+  const advancedItems: MenuProps['items'] = [{
+    key: '/advanced',
+    icon: <NavigationIcon icon={Wrench} />,
+    label: <NavLink to="/advanced">{t('nav.advanced')}</NavLink>,
+  }];
+  return { menuItems, advancedItems };
+}
+
+/** The single navigation source: the same menus render in the desktop sider and the mobile drawer. */
+function ShellNavigationMenus({
+  menuItems,
+  advancedItems,
+  selectedKey,
+  onNavigate,
+}: {
+  menuItems: MenuProps['items'];
+  advancedItems: MenuProps['items'];
+  selectedKey: string;
+  onNavigate?: MenuProps['onClick'];
+}) {
+  return (
+    <>
+      <Menu
+        mode="inline"
+        className="shell-nav"
+        items={menuItems}
+        selectedKeys={[selectedKey]}
+        onClick={onNavigate}
+        style={{ flex: 1, borderInlineEnd: 'none', paddingTop: 8 }}
+      />
+      <Menu
+        mode="inline"
+        className="shell-nav"
+        selectable={false}
+        items={advancedItems}
+        onClick={onNavigate}
+        style={{ borderInlineEnd: 'none' }}
+      />
+    </>
+  );
+}
+
+export function AppShell({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
+  const location = useLocation();
+  const { token } = theme.useToken();
+  const { projectKey, setProjectKey } = useScope();
+  const { revoked } = useRevocation();
+  const projects = useQuery(projectsQueryOptions(revoked));
+  const selectedKey = selectedNavigation(location.pathname);
+  const { menuItems, advancedItems } = useShellMenuItems();
+
+  // Below lg the sider is replaced by a drawer behind a header entry; until the media queries
+  // resolve (and whenever matchMedia is unavailable) the desktop shell stays up.
+  const wideNavigation = Grid.useBreakpoint().lg ?? true;
+  const [navigationOpen, setNavigationOpen] = useState(false);
+
+  // A drawer left open while the viewport grows would sit on top of the sider navigation:
+  // growing to the desktop layout closes it, shrinking back never reopens it on its own.
+  useEffect(() => {
+    if (wideNavigation) setNavigationOpen(false);
+  }, [wideNavigation]);
 
   const projectItems = revoked ? [] : (projects.data?.projects ?? []);
   const selectedProject = projectItems.find((project) => project.key === projectKey);
@@ -90,39 +150,30 @@ export function AppShell({ children }: { children: ReactNode }) {
     onClick: ({ key }) => setProjectKey(key === '__org__' ? null : key),
   };
 
+  const brand = (
+    <div className="shell-brand" data-testid="awr-brand">
+      <img src="/awr-placeholder-logo.png" alt={t('app.wordmark')} />
+    </div>
+  );
+
   return (
     <Layout hasSider style={{ minHeight: '100vh' }}>
-      <Sider
-        width={240}
-        breakpoint="lg"
-        collapsedWidth={0}
-        className="shell-sider"
-        style={{ borderRight: `1px solid ${token.colorSplit}` }}
-      >
-        <div className="shell-sider-inner">
-          <div className="shell-brand" data-testid="awr-brand">
-            <img src="/awr-placeholder-logo.png" alt={t('app.wordmark')} />
+      {wideNavigation && (
+        <Sider
+          width={240}
+          className="shell-sider"
+          style={{ borderRight: `1px solid ${token.colorSplit}` }}
+        >
+          <div className="shell-sider-inner">
+            {brand}
+            <ShellNavigationMenus
+              menuItems={menuItems}
+              advancedItems={advancedItems}
+              selectedKey={selectedKey}
+            />
           </div>
-          <Menu
-            mode="inline"
-            className="shell-nav"
-            items={menuItems}
-            selectedKeys={[selectedKey]}
-            style={{ flex: 1, borderInlineEnd: 'none', paddingTop: 8 }}
-          />
-          <Menu
-            mode="inline"
-            className="shell-nav"
-            selectable={false}
-            items={[{
-              key: '/advanced',
-              icon: <Wrench size={16} strokeWidth={1.5} aria-hidden />,
-              label: <NavLink to="/advanced">{t('nav.advanced')}</NavLink>,
-            }]}
-            style={{ borderInlineEnd: 'none' }}
-          />
-        </div>
-      </Sider>
+        </Sider>
+      )}
       <Layout>
         <Header
           className="shell-header"
@@ -133,6 +184,17 @@ export function AppShell({ children }: { children: ReactNode }) {
             borderBottom: `1px solid ${token.colorSplit}`,
           }}
         >
+          {!wideNavigation && (
+            <Button
+              type="text"
+              className="shell-nav-toggle"
+              data-testid="nav-toggle"
+              aria-label={t('shell.openNav')}
+              onClick={() => setNavigationOpen(true)}
+              style={{ width: craftTokens.touchTarget, height: craftTokens.touchTarget, padding: 0 }}
+              icon={<MenuIcon size={16} strokeWidth={1.5} aria-hidden />}
+            />
+          )}
           <Dropdown menu={scopeMenu} trigger={['click']}>
             <Button data-testid="scope-switcher" className="shell-scope">
               <span className="shell-scope-label">{scopeLabel}</span>
@@ -190,6 +252,26 @@ export function AppShell({ children }: { children: ReactNode }) {
         </Header>
         <Content className="shell-content">{children}</Content>
       </Layout>
+      <Drawer
+        className="shell-drawer"
+        placement="left"
+        width={craftTokens.siderWidth}
+        open={navigationOpen}
+        onClose={() => setNavigationOpen(false)}
+        title={brand}
+        closable={{
+          closeIcon: <CloseIcon size={16} strokeWidth={1.5} aria-hidden />,
+          'aria-label': t('shell.closeNav'),
+        }}
+        styles={{ body: { padding: 0 } }}
+      >
+        <ShellNavigationMenus
+          menuItems={menuItems}
+          advancedItems={advancedItems}
+          selectedKey={selectedKey}
+          onNavigate={() => setNavigationOpen(false)}
+        />
+      </Drawer>
     </Layout>
   );
 }
