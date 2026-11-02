@@ -181,8 +181,8 @@ describe('project workstream progress', () => {
     // Wait for hydration to finish instead of a fixed sleep: on a slow
     // runner the cells can still read 加载中 at the 1200ms mark.
     await waitFor(() => {
-      expect(screen.getByTestId('last-report-W1').textContent).toBe('未测量');
-      expect(screen.getByTestId('last-report-W2').textContent).toBe('未测量');
+      expect(screen.getByTestId('last-report-W1').textContent).toBe('尚未读取');
+      expect(screen.getByTestId('last-report-W2').textContent).toBe('尚未读取');
     }, { timeout: 4000 });
     expect(screen.getByTestId('last-report-W1').textContent).not.toBe(currentTime);
     expect(screen.getByTestId('last-report-W2').textContent).not.toBe(currentTime);
@@ -454,7 +454,7 @@ describe('project overview placeholders, localization, and accessibility', () =>
   it('keeps unsourced blocks as later-slice placeholders', async () => {
     setupOverview();
     for (const id of ['project-goals-placeholder', 'project-delivery-placeholder', 'project-deps-placeholder']) {
-      expect((await screen.findByTestId(id)).textContent).toContain('后续切片');
+      expect((await screen.findByTestId(id)).textContent).toContain('尚未开放');
     }
   });
 

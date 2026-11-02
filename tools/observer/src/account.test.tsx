@@ -34,7 +34,7 @@ describe('Account mutations and connection entry', () => {
     await screen.findByText(/Team mainline/);
     const projectsBefore = calls.filter((call) => call.url === '/api/team/projects').length;
 
-    await user.type(screen.getByLabelText('访问令牌'), 'secret-token');
+    await user.type(screen.getByLabelText('访问口令'), 'secret-token');
     await user.click(screen.getByRole('button', { name: /^登\s*录$/ }));
 
     await waitFor(() => {
@@ -51,7 +51,7 @@ describe('Account mutations and connection entry', () => {
 
   it.each([
     { button: '退出登录', path: '/api/team/logout' },
-    { button: '撤销本凭据的全部 Web 会话', path: '/api/team/session/revoke' },
+    { button: '退出本设备上的所有登录', path: '/api/team/session/revoke' },
   ])('clears and stops restricted reads after $button succeeds', async ({ button, path }) => {
     const { calls } = accountFetch();
     const user = userEvent.setup();
@@ -84,7 +84,7 @@ describe('Account mutations and connection entry', () => {
     await act(() => router.navigate('/projects'));
     expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
     await act(() => router.navigate('/account?scope=demo'));
-    await user.type(screen.getByLabelText('访问令牌'), 'new-token');
+    await user.type(screen.getByLabelText('访问口令'), 'new-token');
     const readsBeforeLogin = calls.filter((call) => call.url === '/api/team/projects').length;
     await user.click(screen.getByRole('button', { name: /^登\s*录$/ }));
 

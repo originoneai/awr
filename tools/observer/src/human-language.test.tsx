@@ -1,10 +1,13 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import './i18n';
 import { TechnicalDetails } from './components/TechnicalDetails';
 import { humanText } from './i18n/human-language';
 import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
+import { DEMO_PROJECTS, renderApp, stubFetch } from './test-utils';
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('human-language visible-text guard', () => {
   it.each([
@@ -39,6 +42,13 @@ describe('human-language visible-text guard', () => {
     expect(document.body.textContent).toContain(digest);
     expect(defaultVisibleText(document.body)).not.toContain('TW-201');
     expect(defaultVisibleText(document.body)).not.toContain(digest);
+    expect(findForbiddenVisibleText(defaultVisibleText(document.body))).toEqual([]);
+  });
+
+  it.each(['/knowledge', '/members', '/settings', '/advanced'])('uses human language on the %s placeholder', async (path) => {
+    stubFetch({ '/api/team/projects': DEMO_PROJECTS });
+    renderApp(path);
+    expect(await screen.findByTestId('state-empty')).toBeTruthy();
     expect(findForbiddenVisibleText(defaultVisibleText(document.body))).toEqual([]);
   });
 });
