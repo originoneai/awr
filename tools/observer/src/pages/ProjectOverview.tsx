@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
+import { FieldLabel, ObservationValue } from '../components/ObservationValue';
 import { isAuthError } from '../lib/api';
 import { formatUnixMs } from '../lib/format';
 import { activityQueryOptions, overviewQueryOptions, workSnapshotQueryOptions } from '../lib/queries';
@@ -80,9 +81,9 @@ function NextStep({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
   const snapshotNext = data?.next_step ?? data?.guidance?.action?.op;
   const fullNote = data?.guidance?.action?.note;
   let text = t('common.loading');
-  if (query?.isError) text = rawText(work.next_step) ?? t('freshness.state.not_measured');
+  if (query?.isError) text = rawText(work.next_step) ?? t('common.notProvided');
   else if (query && !query.isPending) {
-    text = rawText(snapshotNext ?? work.next_step) ?? t('freshness.state.not_measured');
+    text = rawText(snapshotNext ?? work.next_step) ?? t('common.notProvided');
   }
   // The compact op never truncates, so ellipsis.tooltip would never fire:
   // the full agent-facing note gets an always-on Tooltip instead.
@@ -103,7 +104,7 @@ function LastReport({ work, query }: { work: TeamWork; query?: SnapshotQuery }) 
   else if (query && !query.isPending) {
     text = reportedAt == null ? t('freshness.state.not_measured') : formatUnixMs(reportedAt, i18n.language);
   }
-  return <span data-testid={`last-report-${work.key}`}>{text}</span>;
+  return <span data-testid={`last-report-${work.key}`} style={{ whiteSpace: 'nowrap' }}>{text}</span>;
 }
 
 function LaterBlock({ title, testId }: { title: string; testId: string }) {
@@ -214,7 +215,7 @@ function Coverage({ data }: { data: TeamOverviewResponse }) {
 }
 
 function ActivityItems({ items }: { items: TeamActivityItem[] }) {
-  const { t, i18n } = useTranslation();
+  const { i18n } = useTranslation();
   const latest = [...items]
     .sort((left, right) => right.created_at_unix_ms - left.created_at_unix_ms)
     .slice(0, 20);
@@ -229,9 +230,7 @@ function ActivityItems({ items }: { items: TeamActivityItem[] }) {
             <Space wrap size={[12, 4]}>
               <Typography.Text code data-testid="activity-action">{item.action}</Typography.Text>
               <Typography.Text data-testid="activity-actor">{item.actor_id}</Typography.Text>
-              <Typography.Text data-testid="activity-result">
-                {rawText(item.result) ?? t('freshness.state.not_measured')}
-              </Typography.Text>
+              <ObservationValue testId="activity-result" value={item.result} field="result" />
               <Typography.Text type="secondary" data-testid="activity-time">
                 {formatUnixMs(item.created_at_unix_ms, i18n.language)}
               </Typography.Text>
@@ -265,9 +264,9 @@ function RecentActivity({ query }: { query: ActivityQuery }) {
       <Typography.Title level={5}>{t('projectOverview.activity.title')}</Typography.Title>
       {data ? (
         <Typography.Paragraph type="secondary">
-          development_source: {rawText(data.development_source) ?? t('freshness.state.not_measured')}
+          <FieldLabel field="development_source" />: <ObservationValue value={data.development_source} />
           <br />
-          unknown_means: {rawText(data.unknown_means) ?? t('freshness.state.not_measured')}
+          <FieldLabel field="unknown_means" />: <ObservationValue value={data.unknown_means} />
         </Typography.Paragraph>
       ) : null}
       {content}
@@ -339,7 +338,7 @@ export function ProjectOverview({ project }: { project: string }) {
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 0 : 1 }),
       render: (_, row) => row.kind === 'work' ? (
         <span data-testid={`project-owner-${row.work.key}`}>
-          {rawText(row.work.owner_person ?? row.work.agent) ?? t('freshness.state.not_measured')}
+          {rawText(row.work.owner_person ?? row.work.agent) ?? t('common.notProvided')}
         </span>
       ) : null,
     },
@@ -349,11 +348,7 @@ export function ProjectOverview({ project }: { project: string }) {
       width: 170,
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 0 : 1 }),
       render: (_, row) => row.kind === 'work' ? (
-        <span data-testid={`project-status-${row.work.key}`}>
-          {row.work.status === 'unknown' || row.work.status == null
-            ? t('freshness.state.not_measured')
-            : row.work.status}
-        </span>
+        <ObservationValue testId={`project-status-${row.work.key}`} value={row.work.status} field="state" />
       ) : null,
     },
     {
@@ -368,7 +363,7 @@ export function ProjectOverview({ project }: { project: string }) {
     {
       title: t('projectOverview.columns.lastReport'),
       key: 'lastReport',
-      width: 160,
+      width: 220,
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 0 : 1 }),
       render: (_, row) => row.kind === 'work'
         ? <LastReport work={row.work} query={snapshots[row.index]} />
@@ -446,10 +441,10 @@ export function ProjectOverview({ project }: { project: string }) {
         {progress}
       </section>
       <Row gutter={[16, 16]}>
-        <Col xs={24} lg={12} style={{ minWidth: 0 }}>
+        <Col xs={24} lg={16} style={{ minWidth: 0 }}>
           <RecentActivity query={activity} />
         </Col>
-        <Col xs={24} lg={12}>
+        <Col xs={24} lg={8}>
           <LaterBlock title={t('projectOverview.dependencies')} testId="project-deps-placeholder" />
         </Col>
       </Row>

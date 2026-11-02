@@ -99,7 +99,7 @@ describe('My work sourced rows and navigation', () => {
 
     expect(await screen.findAllByText('Build the filter API')).toBeTruthy();
     expect(screen.getByRole('heading', { name: '我的工作' })).toBeTruthy();
-    expect(screen.getByTestId('workbench-role').textContent).toBe('developer');
+    expect(screen.getByTestId('workbench-role').textContent).toBe('开发者');
     expect(screen.getAllByText('已认领')).not.toHaveLength(0);
     expect(screen.getByText('未认领')).toBeTruthy();
     expect(screen.queryByText('未知')).toBeNull();
