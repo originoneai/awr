@@ -3190,7 +3190,7 @@ mod tests {
             ("integration_rejected", "delivery.integration.inspect"),
             (
                 "integration_target_changed",
-                "rebuilds on the current target",
+                "before the next coding execution begins",
             ),
             (
                 "integration_confirmation_not_current",

@@ -339,7 +339,7 @@ fn select(
             "the rejection matches the current candidate, selection and source binding",
             "delivery.integration.inspect",
             if developer && own {
-                "Inspect the rejection. If the target changed, use work.prepare to resume your own session/claim, revise in a new admitted execution, retest and request independent review of a new candidate. Otherwise resolve the recorded refusal before retrying; old approval cannot authorize changed content."
+                crate::delivery_guidance::TARGET_CHANGED_OWN_REJECTION_ACTION
             } else {
                 "Inspect the refusal and coordinate its resolution with the responsible member. Target changes require a revised candidate, checks and independent review before integration; do not finalize the rejected version."
             },

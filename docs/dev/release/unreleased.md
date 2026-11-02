@@ -218,3 +218,16 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   completion receipts that already exist are not changed, and an integration confirmation
   still never creates a completion receipt by itself. See
   [delivery integration](../integrations/delivery-integration.md#finalize-only-after-the-integration-is-confirmed).
+
+## Fixed
+
+- The next-action guidance after a repository target moved no longer tells the developer to
+  update against the current target, or to rebuild, "in a new admitted execution"
+  (AWR-TF-014AN). It appeared in the integration inspection of a rejected integration, in the work
+  inbox of the developer who owns the rejected work and in the `IntegrationNotConfirmed` refusal
+  for `integration_target_changed`. An admitted execution scope checks every observed workspace
+  effect, imported baseline paths included, so that update failed with a scope violation whenever
+  the new target touched files outside the work's scope. The guidance now says to update the
+  workspace as a separate baseline step before the next coding execution begins, then retest in a
+  new admitted execution and publish a new candidate; all three places build the text from one
+  module. Wording only: no rule, schema or protocol changes.

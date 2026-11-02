@@ -970,7 +970,7 @@ impl DeliverySyncStore {
             "rejected"
                 if current["current_binding"] == true && current["target_changed"] == true =>
             {
-                "The repository target changed. Use work.prepare to inspect responsibility and blockers. The responsible developer must update against the current target in a new admitted execution, retest, publish a new candidate with its actual target precondition and obtain fresh independent review. Supervisors coordinate that revision; do not retry or finalize the rejected version."
+                crate::delivery_guidance::TARGET_CHANGED_INSPECT_ACTION
             }
             "rejected" if current["current_binding"] == true => {
                 "Inspect the refusal and current neutral facts with the responsible member or supervisor. No changed target was confirmed; do not infer that code revision is required or retry before resolving the refusal."
