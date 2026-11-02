@@ -269,8 +269,9 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     setupAcceptance();
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api', { expand: false });
     await waitFor(() => expect(screen.getByTestId('acceptance-from-works').textContent).toContain('2／2'));
+    // the freshness badge and the project header each have their own technical details; this is about the outcome's groups
     const outcomeDetails = screen.getAllByTestId('technical-details')
-      .filter((element) => !screen.getByTestId('freshness-badge').contains(element));
+      .filter((element) => !screen.getByTestId('freshness-badge').contains(element) && !screen.getByTestId('project-header').contains(element));
     expect(outcomeDetails).toHaveLength(1);
     const visible = screen.getByTestId('acceptance-page').textContent ?? '';
     expect(visible).not.toContain(EVIDENCE);

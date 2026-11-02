@@ -2,8 +2,9 @@ import { useQuery } from '@tanstack/react-query';
 import { Button, Card, Space, Tabs, Tag, Tooltip, Typography } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams } from 'react-router';
-import { ObservationEmpty, ObservationForbidden } from '../components/states';
+import { NotOpenYet, ObservationForbidden } from '../components/states';
 import { ObservationValue } from '../components/ObservationValue';
+import { TechnicalDetails } from '../components/TechnicalDetails';
 import { isAuthError } from '../lib/api';
 import { ProjectAcceptance } from './ProjectAcceptance';
 import { ProjectKnowledge } from './ProjectKnowledge';
@@ -42,12 +43,7 @@ export function ProjectShell() {
               </Typography.Title>
               {meta?.role ? <Tag><ObservationValue value={meta.role} field="role" /></Tag> : null}
             </Space>
-            <div>
-              <Typography.Text type="secondary">
-                {t('project.metaKey')} {project}
-                {meta?.role ? <> · {t('project.metaRole')} <ObservationValue value={meta.role} field="role" /></> : null}
-              </Typography.Text>
-            </div>
+            <TechnicalDetails items={[{ label: 'project', value: project, testId: 'technical-project-key' }]} />
           </div>
           <Tooltip title={t('shell.later')}>
             <Button disabled>{t('project.settings')}</Button>
@@ -75,7 +71,7 @@ export function ProjectShell() {
                   ? <ProjectKnowledge project={project} />
                   : key === 'acceptance'
                     ? <ProjectAcceptance project={project} />
-                    : <ObservationEmpty />,
+                    : <NotOpenYet testId="project-deps-not-open" />,
           }))}
         />
       </Card>

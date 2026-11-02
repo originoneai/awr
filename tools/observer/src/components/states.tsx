@@ -45,6 +45,22 @@ export function ObservationForbidden() {
   );
 }
 
+/**
+ * A page or tab whose feature has not been built: it says so once. It is not an empty read ("no records were
+ * observed" would read as "nothing is waiting for you"), so it never shows the empty-state block or a read time.
+ */
+export function NotOpenYet({ testId }: { testId?: string }) {
+  const { t } = useTranslation();
+  return (
+    <div data-testid={testId ?? 'state-not-open'}>
+      <Typography.Text strong>{t('state.placeholder.title')}</Typography.Text>
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+        {t('state.placeholder.description')}
+      </Typography.Paragraph>
+    </div>
+  );
+}
+
 /** The report plane is not_measured: distinct from both empty and failed. */
 export function NotReportedYet() {
   const { t } = useTranslation();

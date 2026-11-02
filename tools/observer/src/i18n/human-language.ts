@@ -160,6 +160,7 @@ export const STATUS_LABELS: Record<string, readonly [string, string]> = {
   project_admin: ['项目管理员', 'Project admin'],
   observer: ['观察者', 'Observer'],
   reader: ['只读成员', 'Reader'],
+  reviewer: ['复核者', 'Reviewer'],
   developer: ['开发者', 'Developer'],
   owned_by_me: ['由我负责', 'Owned by me'],
   owned_by_other: ['由他人负责', 'Owned by other'],

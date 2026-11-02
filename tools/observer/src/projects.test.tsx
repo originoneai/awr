@@ -1,5 +1,6 @@
 import { screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
+import { defaultVisibleText } from './lib/human-language-guard';
 import { DEMO_OVERVIEW, DEMO_PROJECTS, renderApp, stubFetch } from './test-utils';
 
 describe('project navigation and reads', () => {
@@ -27,5 +28,16 @@ describe('project navigation and reads', () => {
       '成果与验收',
       '项目知识',
     ]);
+  });
+});
+
+describe('project list in words', () => {
+  it('names a project by its title and role and keeps its key out of the default view', async () => {
+    stubFetch({ '/api/team/projects': DEMO_PROJECTS, '/api/team/overview': DEMO_OVERVIEW });
+    renderApp('/projects');
+    await screen.findByRole('link', { name: 'Team mainline' });
+    const list = screen.getByTestId('page-projects');
+    expect(defaultVisibleText(list)).toBe('项目\nTeam mainline\n项目管理员\nDocs stream\n复核者');
+    expect(defaultVisibleText(list)).not.toMatch(/\bdemo\b|\bdocs\b/);
   });
 });

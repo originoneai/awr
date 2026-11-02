@@ -27,6 +27,8 @@ const PAGES = {
   knowledge: '/projects/demo?tab=knowledge',
   activity: '/activity?project=demo',
   agentConnect: '/agent-connect?scope=demo',
+  inbox: '/inbox?scope=demo',
+  dependencies: '/projects/demo?tab=deps',
   placeholders: '/members',
 } as const;
 const MOMENTS: Partial<Record<keyof typeof PAGES, RealMoment>> = { workbenchDelivered: 'delivered', planDelivered: 'delivered' };
