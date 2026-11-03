@@ -164,6 +164,13 @@ describe('judgeContentRead', () => {
     expect(judgeContentRead({ verdict: 'verified', byteLength: 96, declaredByteLength: 2753, more: true })).toBe('partial');
   });
 
+  it('says partial on the cursor alone when the held extent gives no second opinion', () => {
+    // The cursor rule stands by itself: unknown declared length, or a held length that equals it,
+    // must not let a partial assembly's digest check speak.
+    expect(judgeContentRead({ verdict: 'mismatch', byteLength: 2753, declaredByteLength: null, more: true })).toBe('partial');
+    expect(judgeContentRead({ verdict: 'mismatch', byteLength: 2753, declaredByteLength: 2753, more: true })).toBe('partial');
+  });
+
   it('says partial for a read the service cut short, whatever the digest then says', () => {
     // A cut-short read always disagrees with the declared digest; that is not proof of change.
     expect(judgeContentRead({ verdict: 'mismatch', byteLength: 96, declaredByteLength: 2753, more: false })).toBe('partial');
