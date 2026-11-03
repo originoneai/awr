@@ -775,7 +775,8 @@ describe('overview goals and delivery blocks (read from the page\'s own snapshot
     // Loading and unread works are named separately, never folded into a word.
     expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('加载中');
     expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('未知');
-    expect(screen.getByTestId('project-delivery-scope').textContent).toBe('本页 2 项工作，项目共 2 项');
+    // The demo coverage knows no total, so the scope sentence states no total either.
+    expect(screen.getByTestId('project-delivery-scope').textContent).toBe('本页 2 项工作，已读到 2 项');
     // No whole-project verdict: the prototype's judgement sentence is not ours to make.
     const visible = document.querySelector('[data-testid="project-overview"]')?.textContent ?? '';
     expect(visible).not.toContain('最终验收');
@@ -783,17 +784,25 @@ describe('overview goals and delivery blocks (read from the page\'s own snapshot
   });
 
   it('names a failed read, counts it nowhere, and drops it from the word counts', async () => {
-    const snapshot = (id: string) => {
-      if (id === 'W2') throw new Error('synthetic read failure');
-      return demoWorkSnapshot(id);
-    };
+    // A failed read is the bridge's error envelope (throwing inside the mock leaves the
+    // query pending forever under p-limit, which is a loading read, not a failed one).
+    const snapshot = (id: string) => (id === 'W2'
+      ? { ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } }
+      : demoWorkSnapshot(id));
     setupOverview({ snapshot });
-    expect(await screen.findByTestId('project-delivery-unread')).toBeTruthy();
+    // Wait for the read to actually fail (the table's word stops being the loading one);
+    // a query that never settles is a loading read, and this test is about a failed one.
+    await waitFor(() => expect(screen.getByTestId('project-status-W2').textContent).not.toBe('加载中…'));
+    expect(screen.getByTestId('project-status-W2').textContent).toBe('未知');
+    expect(screen.getByTestId('project-delivery-unread')).toBeTruthy();
     expect(screen.getByTestId('project-delivery-unread').textContent).toContain('1');
+    // One word bucket only — the failed work appears as no word at all, whatever the row says.
+    expect(screen.getByTestId('project-delivery-counts').querySelectorAll('.ant-typography-secondary')).toHaveLength(1);
     expect(screen.getByTestId('project-delivery-counts').textContent).toContain('× 1');
     expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('× 2');
     expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('未知');
     expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('加载中');
+    expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('未提供');
   });
 
   it('names the works that need attention with their word, and caps the list', async () => {
@@ -803,6 +812,107 @@ describe('overview goals and delivery blocks (read from the page\'s own snapshot
     expect(attention).toContain('Build the filter API');
     expect(attention).toContain('已认领');
     expect(screen.getByTestId('project-delivery-attention').querySelectorAll('a').length).toBe(2);
+  });
+
+  it('says it is reading while the reads are running, in both blocks', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    setupOverview({ snapshotGate: gate });
+    expect(await screen.findByTestId('project-goals-loading')).toBeTruthy();
+    expect(screen.getByTestId('project-goals-loading').textContent).toContain('加载中');
+    expect(await screen.findByTestId('project-delivery-loading')).toBeTruthy();
+    const goalsText = document.querySelector('[data-testid="project-goals"]')?.textContent ?? '';
+    const deliveryText = document.querySelector('[data-testid="project-delivery"]')?.textContent ?? '';
+    expect(goalsText).not.toContain('没有登记');
+    expect(deliveryText).not.toContain('读取不到');
+    release();
+  });
+
+  it('with one read of two failed, the page count and the read count each say their own thing', async () => {
+    const snapshot = (id: string) => {
+      if (id === 'W2') throw new Error('synthetic read failure');
+      return demoWorkSnapshot(id);
+    };
+    setupOverview({ snapshot });
+    expect(await screen.findByTestId('project-delivery-scope')).toBeTruthy();
+    expect(screen.getByTestId('project-delivery-scope').textContent).toBe('本页 2 项工作，已读到 1 项');
+    expect(screen.getByTestId('project-delivery-unread').textContent).toContain('1');
+  });
+
+  it('takes the project total from the coverage card, not from the length of the list', async () => {
+    const works = Array.from({ length: 2 }, (_, index) => ({
+      key: `W${index + 1}`, title: `Task ${index + 1}`, status: 'unknown', owner_person: null, agent: null,
+      next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: `c${index}`,
+    }));
+    setupOverview({
+      overview: {
+        ...DEMO_PROJECT_OVERVIEW,
+        works,
+        coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_total: 100, works_enumerated: 2 },
+      },
+    });
+    expect(await screen.findByTestId('project-delivery-scope')).toBeTruthy();
+    expect(screen.getByTestId('project-delivery-scope').textContent).toContain('项目共 100 项');
+    // One total on the page: the coverage card's own sentence matches.
+    expect(screen.getByTestId('coverage-summary').textContent).toContain('100');
+  });
+
+  it('keeps goals and acceptance apart under their own small headings', async () => {
+    setupOverview();
+    const group = await screen.findByTestId('project-goals-group');
+    expect(group.textContent).toContain('目标');
+    expect(group.textContent).toContain('验收');
+    expect(group.textContent?.indexOf('目标')).toBeLessThan(group.textContent?.indexOf('验收') ?? 0);
+  });
+
+  it('says how many more groups of agreements there are, in the block\'s own words', async () => {
+    const works = Array.from({ length: 7 }, (_, index) => ({
+      key: `W${index + 1}`, title: `Task ${index + 1}`, status: 'unknown', owner_person: null, agent: null,
+      next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: `c${index}`,
+    }));
+    let m = 0;
+    setupOverview({
+      overview: { ...DEMO_PROJECT_OVERVIEW, works, coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_enumerated: 7 } },
+      snapshot: (id: string) => {
+        const base = demoWorkSnapshot(id) as { result: { data: Record<string, unknown> } };
+        base.result.data.visible_contract = { goals: [`Goal ${++m}`], acceptance: [] };
+        return base;
+      },
+    });
+    expect(await screen.findByTestId('project-goals-more')).toBeTruthy();
+    expect(screen.getByTestId('project-goals-more').textContent).toContain('还有 2 组约定');
+  });
+
+  it('caps the attention list at five with the more line, and each link goes to its own work', async () => {
+    const works = Array.from({ length: 7 }, (_, index) => ({
+      key: `W${index + 1}`, title: `Task ${index + 1}`, status: 'unknown', owner_person: null, agent: null,
+      next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: `c${index}`,
+    }));
+    // The first work is finished (a positive word): it must stay out of the attention list,
+    // and the first link is the second work's own page.
+    const snapshot = (id: string) => {
+      if (id !== 'W1') return demoWorkSnapshot(id);
+      const base = demoWorkSnapshot(id) as { result: { data: Record<string, unknown> } };
+      const data = base.result.data as { runtime: Record<string, unknown>; observation: Record<string, unknown> };
+      data.runtime = { ...data.runtime, state: 'completed', selected_completion_id: '01M6COMPLETION000000000000000' };
+      data.observation = { ...data.observation, progress: { phase: 'delivered' } };
+      return base;
+    };
+    setupOverview({
+      overview: { ...DEMO_PROJECT_OVERVIEW, works, coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_enumerated: 7 } },
+      snapshot,
+    });
+    await screen.findByTestId('project-delivery-attention');
+    const attention = screen.getByTestId('project-delivery-attention');
+    const links = attention.querySelectorAll('a');
+    expect(links.length).toBe(5);
+    expect(attention.textContent).toContain('还有');
+    expect(links[0].getAttribute('href')).toContain('work=W2');
+    expect(links[4].getAttribute('href')).toContain('work=W6');
+    // The warning words own the list: every link carries one, the finished works never appear.
+    [...links].forEach((link) => expect(link.textContent).toContain('已认领'));
+    expect(attention.textContent).not.toContain('Task 1');
+    expect(screen.getByTestId('project-delivery-counts').textContent).toContain('已交付× 1');
   });
 
   it('keeps both blocks off the page after revocation', async () => {

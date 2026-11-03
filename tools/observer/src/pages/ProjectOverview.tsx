@@ -85,62 +85,78 @@ function LastReport({ work, query }: { work: TeamWork; query?: SnapshotQuery }) 
 
 /** The goals and acceptance the works on this page have declared, merged; only reads already made. */
 function GoalsBlock({ works, snapshots }: { project: string; works: TeamWork[]; snapshots: SnapshotQuery[] }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const GROUP_LIMIT = 5;
   const read = works.map((work, index) => {
     const query = snapshots[index];
     const contract = query?.data?.result.data?.visible_contract;
     return {
       title: work.title,
-      // A read that has not happened contributes nothing; it is counted, never guessed from.
-      ready: query != null && !query.isPending && !query.isError,
+      // A read that did not happen contributes nothing; it is counted, never guessed from.
+      state: readStateOf(query),
       goals: contract?.goals as WorkContractValue[] | undefined,
       acceptance: contract?.acceptance as WorkContractValue[] | undefined,
     };
   });
-  const groups = contractGroups(read.filter((entry) => entry.ready));
-  const unread = read.length - read.filter((entry) => entry.ready).length;
+  const finished = read.filter((entry) => entry.state === 'ready');
+  const groups = contractGroups(finished);
+  const loading = read.filter((entry) => entry.state === 'loading').length;
+  const failed = read.filter((entry) => entry.state === 'failed').length;
   const shown = groups.slice(0, GROUP_LIMIT);
   const more = groups.length - shown.length;
 
   return (
     <section data-testid="project-goals">
       <Typography.Title level={5}>{t('projectOverview.goals')}</Typography.Title>
-      {shown.length === 0
-        ? <Typography.Text type="secondary">{t('projectOverview.goalsEmpty')}</Typography.Text>
-        : (
-          <Flex vertical gap={12}>
-            {shown.map((group, index) => (
-              <div key={index} data-testid="project-goals-group">
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {t('projectOverview.goalsOf', { titles: group.titles.join(t('knowledge.titleSeparator')) })}
-                </Typography.Text>
-                {group.goals?.length ? (
-                  <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
-                    {group.goals.map((goal, goalIndex) => (
-                      <li key={goalIndex}>{rawObservationText(goal).text}</li>
-                    ))}
-                  </ul>
+      {/* Reading is not failing and it is not "nothing recorded": while no read has come
+          back the block says so; "none record agreements" needs a finished read to stand on. */}
+      {read.length > 0 && finished.length === 0 && loading > 0
+        ? <Typography.Text type="secondary" data-testid="project-goals-loading">{t('common.loading')}</Typography.Text>
+        : read.length > 0 && finished.length === 0
+          ? <Typography.Text type="secondary" data-testid="project-goals-failed">{t('projectOverview.deliveryFailed')}</Typography.Text>
+          : shown.length === 0
+            ? <Typography.Text type="secondary">{t('projectOverview.goalsEmpty')}</Typography.Text>
+            : (
+              <Flex vertical gap={12}>
+                {shown.map((group, index) => (
+                  <div key={index} data-testid="project-goals-group">
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {t('projectOverview.goalsOf', { titles: group.titles.join(t('knowledge.titleSeparator')) })}
+                    </Typography.Text>
+                    {group.goals?.length ? (
+                      <div>
+                        <Typography.Text strong style={{ fontSize: 12 }}>{t('workbench.detail.goals')}</Typography.Text>
+                        <ul style={{ margin: '2px 0', paddingLeft: 20 }}>
+                          {group.goals.map((goal, goalIndex) => (
+                            <li key={goalIndex}>{rawObservationText(goal).text}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {group.acceptance?.length ? (
+                      <div>
+                        <Typography.Text strong style={{ fontSize: 12 }}>{t('workbench.detail.acceptance')}</Typography.Text>
+                        <ul style={{ margin: '2px 0', paddingLeft: 20 }}>
+                          {/* No checkbox: nothing in this data says whether an acceptance item is met;
+                              that is the outcome page's question, and a box here would invent it. */}
+                          {group.acceptance.map((item, itemIndex) => (
+                            <li key={itemIndex}>{rawObservationText(item).text}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+                {more > 0 ? (
+                  <Typography.Text type="secondary" data-testid="project-goals-more">
+                    {t('projectOverview.goalsMoreGroups', { count: more })}
+                  </Typography.Text>
                 ) : null}
-                {group.acceptance?.length ? (
-                  <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
-                    {group.acceptance.map((item, itemIndex) => (
-                      // No checkbox: nothing in this data says whether an acceptance item is met;
-                      // that is the outcome page's question, and a box here would invent it.
-                      <li key={itemIndex}>{rawObservationText(item).text}</li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            ))}
-            {more > 0 ? (
-              <Typography.Text type="secondary">{moreLinesText(more, i18n.language)}</Typography.Text>
-            ) : null}
-          </Flex>
-        )}
-      {unread > 0 ? (
+              </Flex>
+            )}
+      {loading + failed > 0 ? (
         <Typography.Text type="warning" data-testid="project-goals-unread">
-          {t('projectOverview.goalsUnread', { count: unread })}
+          {t('projectOverview.goalsUnread', { count: loading + failed })}
         </Typography.Text>
       ) : null}
     </section>
@@ -148,11 +164,11 @@ function GoalsBlock({ works, snapshots }: { project: string; works: TeamWork[]; 
 }
 
 /** What the reads on this page actually say about delivery: counts per progress word and the works that need attention — never a whole-project verdict. */
-function DeliveryBlock({ project, works, totalWorks, snapshots }: {
+function DeliveryBlock({ project, works, snapshots, coverage }: {
   project: string;
   works: TeamWork[];
-  totalWorks: number;
   snapshots: SnapshotQuery[];
+  coverage: TeamOverviewResponse['coverage'] | undefined;
 }) {
   const { t, i18n } = useTranslation();
   const entries = works.map((work, index) => {
@@ -170,7 +186,7 @@ function DeliveryBlock({ project, works, totalWorks, snapshots }: {
   // Only a read that happened counts; loading and failed works are named separately and
   // counted nowhere, least of all as "in progress".
   const counted = entries.filter((entry) => entry.readState === 'ready');
-  const unread = entries.filter((entry) => entry.readState === 'loading').length;
+  const loading = entries.filter((entry) => entry.readState === 'loading').length;
   const failed = entries.filter((entry) => entry.readState === 'failed').length;
   const counts = new Map<string, { tone: string; works: TeamWork[] }>();
   for (const entry of counted) {
@@ -182,57 +198,69 @@ function DeliveryBlock({ project, works, totalWorks, snapshots }: {
   const attention = counted.filter((entry) => entry.progress.tone === 'warning');
   const attentionShown = attention.slice(0, ATTENTION_LIMIT);
   const attentionMore = attention.length - attentionShown.length;
+  // The project total is the coverage card's own number, never the length of this list:
+  // a cut-short list would put a second, smaller total on the page.
+  const total = coverage?.works_total ?? null;
+  const scopeText = total == null
+    ? t('projectOverview.deliveryScopeUnknownTotal', { page: works.length, read: counted.length })
+    : t('projectOverview.deliveryScope', { page: works.length, read: counted.length, total });
 
   return (
     <section data-testid="project-delivery">
       <Typography.Title level={5}>{t('projectOverview.delivery')}</Typography.Title>
-      {counted.length === 0
+      {loading > 0 && counted.length === 0
         ? (
-          <Typography.Text type="secondary" data-testid="project-delivery-failed">
-            {t('projectOverview.deliveryFailed')}
+          <Typography.Text type="secondary" data-testid="project-delivery-loading">
+            {t('common.loading')}
           </Typography.Text>
         )
-        : (
-          <Flex vertical gap={12}>
-            <Typography.Text type="secondary" data-testid="project-delivery-scope">
-              {t('projectOverview.deliveryScope', { page: counted.length, total: totalWorks })}
+        : counted.length === 0
+          ? (
+            <Typography.Text type="secondary" data-testid="project-delivery-failed">
+              {t('projectOverview.deliveryFailed')}
             </Typography.Text>
-            <Space wrap size={[16, 8]} data-testid="project-delivery-counts">
-              {[...counts.entries()].map(([text, bucket]) => (
-                <Space key={text} size={4}>
-                  <ToneBadge tone={bucket.tone as 'positive' | 'warning' | 'negative' | 'neutral'} text={text} />
-                  <Typography.Text type="secondary">× {bucket.works.length}</Typography.Text>
-                </Space>
-              ))}
-            </Space>
-            {attention.length > 0 ? (
-              <div data-testid="project-delivery-attention">
-                <Typography.Text strong>{t('projectOverview.deliveryAttention')}</Typography.Text>
-                <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
-                  {attentionShown.map(({ work, progress }) => (
-                    // The link text carries the progress word, so its accessible name stays
-                    // distinct from the same work's plain link in the table below.
-                    <li key={work.key}>
-                      <Link to={taskPath(project, work.key)}>
-                        {work.title}
-                        {t('knowledge.titleSeparator')}
-                        {progress.text}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-                {attentionMore > 0 ? (
-                  <Typography.Text type="secondary">{moreLinesText(attentionMore, i18n.language)}</Typography.Text>
-                ) : null}
-              </div>
-            ) : null}
-            {unread > 0 || failed > 0 ? (
-              <Typography.Text type="warning" data-testid="project-delivery-unread">
-                {t('projectOverview.deliveryUnread', { count: unread + failed })}
+          )
+          : (
+            <Flex vertical gap={12}>
+              <Typography.Text type="secondary" data-testid="project-delivery-scope">
+                {scopeText}
               </Typography.Text>
-            ) : null}
-          </Flex>
-        )}
+              <Space wrap size={[16, 8]} data-testid="project-delivery-counts">
+                {[...counts.entries()].map(([text, bucket]) => (
+                  <Space key={text} size={4}>
+                    <ToneBadge tone={bucket.tone as 'positive' | 'warning' | 'negative' | 'neutral'} text={text} />
+                    <Typography.Text type="secondary">× {bucket.works.length}</Typography.Text>
+                  </Space>
+                ))}
+              </Space>
+              {attention.length > 0 ? (
+                <div data-testid="project-delivery-attention">
+                  <Typography.Text strong>{t('projectOverview.deliveryAttention')}</Typography.Text>
+                  <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
+                    {attentionShown.map(({ work, progress }) => (
+                      // The link text carries the progress word, so its accessible name stays
+                      // distinct from the same work's plain link in the table below.
+                      <li key={work.key}>
+                        <Link to={taskPath(project, work.key)} data-testid={`project-delivery-attention-${work.key}`}>
+                          {work.title}
+                          {t('knowledge.titleSeparator')}
+                          {progress.text}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                  {attentionMore > 0 ? (
+                    <Typography.Text type="secondary">{moreLinesText(attentionMore, i18n.language)}</Typography.Text>
+                  ) : null}
+                </div>
+              ) : null}
+              {loading + failed > 0 ? (
+                <Typography.Text type="warning" data-testid="project-delivery-unread">
+                  {t('projectOverview.deliveryUnread', { count: loading + failed })}
+                </Typography.Text>
+              ) : null}
+            </Flex>
+          )}
     </section>
   );
 }
@@ -512,7 +540,7 @@ export function ProjectOverview({ project }: { project: string }) {
           <GoalsBlock project={project} works={visibleWorks} snapshots={snapshots} />
         </Col>
         <Col xs={24} lg={12}>
-          <DeliveryBlock project={project} works={visibleWorks} totalWorks={grouped.works.length} snapshots={snapshots} />
+          <DeliveryBlock project={project} works={visibleWorks} snapshots={snapshots} coverage={data?.coverage} />
         </Col>
       </Row>
       <section>
