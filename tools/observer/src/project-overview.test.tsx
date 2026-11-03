@@ -835,7 +835,12 @@ describe('overview goals and delivery blocks (read from the page\'s own snapshot
     };
     setupOverview({ snapshot });
     expect(await screen.findByTestId('project-delivery-scope')).toBeTruthy();
+    // The second number is the reads that happened (1), not the page count (2): swapping
+    // them changes the sentence, and the English line carries both numbers too.
     expect(screen.getByTestId('project-delivery-scope').textContent).toBe('本页 2 项工作，已读到 1 项');
+    await act(() => i18n.changeLanguage('en-US'));
+    expect(screen.getByTestId('project-delivery-scope').textContent).toBe('2 works on this page, 1 read');
+    await act(() => i18n.changeLanguage('zh-CN'));
     expect(screen.getByTestId('project-delivery-unread').textContent).toContain('1');
   });
 
@@ -844,15 +849,21 @@ describe('overview goals and delivery blocks (read from the page\'s own snapshot
       key: `W${index + 1}`, title: `Task ${index + 1}`, status: 'unknown', owner_person: null, agent: null,
       next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: `c${index}`,
     }));
+    // One read of two fails, so the sentence's three numbers are all different: page 2,
+    // read 1, total 100 — no two of them can stand in for each other.
+    const snapshot = (id: string) => (id === 'W2'
+      ? { ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } }
+      : demoWorkSnapshot(id));
     setupOverview({
       overview: {
         ...DEMO_PROJECT_OVERVIEW,
         works,
         coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_total: 100, works_enumerated: 2 },
       },
+      snapshot,
     });
     expect(await screen.findByTestId('project-delivery-scope')).toBeTruthy();
-    expect(screen.getByTestId('project-delivery-scope').textContent).toContain('项目共 100 项');
+    expect(screen.getByTestId('project-delivery-scope').textContent).toBe('本页 2 项工作，已读到 1 项，项目共 100 项');
     // One total on the page: the coverage card's own sentence matches.
     expect(screen.getByTestId('coverage-summary').textContent).toContain('100');
   });
@@ -884,18 +895,26 @@ describe('overview goals and delivery blocks (read from the page\'s own snapshot
   });
 
   it('caps the attention list at five with the more line, and each link goes to its own work', async () => {
-    const works = Array.from({ length: 7 }, (_, index) => ({
+    const works = Array.from({ length: 8 }, (_, index) => ({
       key: `W${index + 1}`, title: `Task ${index + 1}`, status: 'unknown', owner_person: null, agent: null,
       next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: `c${index}`,
     }));
-    // The first work is finished (a positive word): it must stay out of the attention list,
-    // and the first link is the second work's own page.
+    // W1 finished (positive) and W8 unrecognized (neutral) stay out of the attention list;
+    // W2 is blocked (negative) and must be named; six named works hit the cap of five.
     const snapshot = (id: string) => {
-      if (id !== 'W1') return demoWorkSnapshot(id);
       const base = demoWorkSnapshot(id) as { result: { data: Record<string, unknown> } };
       const data = base.result.data as { runtime: Record<string, unknown>; observation: Record<string, unknown> };
-      data.runtime = { ...data.runtime, state: 'completed', selected_completion_id: '01M6COMPLETION000000000000000' };
-      data.observation = { ...data.observation, progress: { phase: 'delivered' } };
+      if (id === 'W1') {
+        data.runtime = { ...data.runtime, state: 'completed', selected_completion_id: '01M6COMPLETION000000000000000' };
+        data.observation = { ...data.observation, progress: { phase: 'delivered' } };
+      }
+      if (id === 'W2') {
+        data.runtime = { ...data.runtime, state: 'blocked' };
+        data.observation = { ...data.observation, progress: { phase: 'blocked' } };
+      }
+      if (id === 'W3') {
+        data.runtime = { ...data.runtime, state: 'made-up-state' };
+      }
       return base;
     };
     setupOverview({
@@ -908,11 +927,37 @@ describe('overview goals and delivery blocks (read from the page\'s own snapshot
     expect(links.length).toBe(5);
     expect(attention.textContent).toContain('还有');
     expect(links[0].getAttribute('href')).toContain('work=W2');
-    expect(links[4].getAttribute('href')).toContain('work=W6');
-    // The warning words own the list: every link carries one, the finished works never appear.
-    [...links].forEach((link) => expect(link.textContent).toContain('已认领'));
+    expect(links[0].textContent).toContain('受阻');
+    expect(links[4].getAttribute('href')).toContain('work=W7');
+    // Waiting and blocked words own the list; the finished and unrecognized ones never appear.
     expect(attention.textContent).not.toContain('Task 1');
+    expect(attention.textContent).not.toContain('Task 3');
     expect(screen.getByTestId('project-delivery-counts').textContent).toContain('已交付× 1');
+    expect(screen.getByTestId('project-delivery-counts').textContent).toContain('受阻× 1');
+    // A neutral word is counted as a word but never named in the list above.
+    expect(screen.getByTestId('project-delivery-counts').textContent).toContain('未知× 1');
+    expect(attention.textContent).not.toContain('Task 3');
+  });
+
+  it('says the agreements cannot be read when every read failed, in its own words', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
+      if (url.includes('/api/team/overview')) return json(DEMO_PROJECT_OVERVIEW);
+      if (url.includes('/api/team/activity')) return json(DEMO_ACTIVITY);
+      if (url.includes('/api/team/read')) {
+        const request = JSON.parse(String(init?.body)) as { query: { op: string } };
+        if (request.query.op === 'work.snapshot') {
+          return json({ ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } });
+        }
+      }
+      return json({ ok: false, error: { code: 'NoRoute', message: url } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderApp('/projects/demo?tab=overview');
+    const failed = await screen.findByTestId('project-goals-failed');
+    expect(failed.textContent).toContain('约定暂时读取不到');
+    expect(failed.textContent).not.toContain('进展');
   });
 
   it('keeps both blocks off the page after revocation', async () => {

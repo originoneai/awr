@@ -113,7 +113,7 @@ function GoalsBlock({ works, snapshots }: { project: string; works: TeamWork[]; 
       {read.length > 0 && finished.length === 0 && loading > 0
         ? <Typography.Text type="secondary" data-testid="project-goals-loading">{t('common.loading')}</Typography.Text>
         : read.length > 0 && finished.length === 0
-          ? <Typography.Text type="secondary" data-testid="project-goals-failed">{t('projectOverview.deliveryFailed')}</Typography.Text>
+          ? <Typography.Text type="secondary" data-testid="project-goals-failed">{t('projectOverview.goalsFailed')}</Typography.Text>
           : shown.length === 0
             ? <Typography.Text type="secondary">{t('projectOverview.goalsEmpty')}</Typography.Text>
             : (
@@ -195,7 +195,9 @@ function DeliveryBlock({ project, works, snapshots, coverage }: {
     counts.set(entry.progress.text, bucket);
   }
   const ATTENTION_LIMIT = 5;
-  const attention = counted.filter((entry) => entry.progress.tone === 'warning');
+  // The list exists to name the works a person must look at: the waiting words (warning)
+  // and the blocked, failed, rejected ones (negative) — never the positive or neutral words.
+  const attention = counted.filter((entry) => entry.progress.tone === 'warning' || entry.progress.tone === 'negative');
   const attentionShown = attention.slice(0, ATTENTION_LIMIT);
   const attentionMore = attention.length - attentionShown.length;
   // The project total is the coverage card's own number, never the length of this list:

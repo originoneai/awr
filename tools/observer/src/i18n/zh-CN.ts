@@ -307,6 +307,7 @@ const zhCN = {
     goalsMoreGroups: '还有 {{count}} 组约定',
     goalsOf: '来自：{{titles}}',
     goalsEmpty: '已读取的工作项都没有登记目标与验收',
+    goalsFailed: '这些工作项的约定暂时读取不到',
     deliveryScope: '本页 {{page}} 项工作，已读到 {{read}} 项，项目共 {{total}} 项',
     deliveryScopeUnknownTotal: '本页 {{page}} 项工作，已读到 {{read}} 项',
     deliveryUnread: '有 {{count}} 项尚未读取，未计入',

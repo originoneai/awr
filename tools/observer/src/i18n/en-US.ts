@@ -311,6 +311,7 @@ const enUS: Messages = {
     goalsMoreGroups: '{{count}} more groups of agreements',
     goalsOf: 'From: {{titles}}',
     goalsEmpty: 'None of the works read so far records goals and acceptance',
+    goalsFailed: 'The agreements of these works cannot be read right now',
     deliveryScope: '{{page}} works on this page, {{read}} read, {{total}} in the project',
     deliveryScopeUnknownTotal: '{{page}} works on this page, {{read}} read',
     deliveryUnread: '{{count}} not read yet, counted nowhere',
