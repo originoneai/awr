@@ -1,0 +1,13 @@
+{
+  "data": {
+    "byte_length": 433,
+    "history_bypass": false,
+    "kind": "source",
+    "next_step": null,
+    "path": "docs/support.md",
+    "sha256": "c101fd5c70986de856c0bd30d2da271b71074408acbec05fabc9fa095e1b80ac",
+    "snapshot": "active",
+    "text": "# Customer support queue\n\nBuild a useful filterable queue for support staff. Keep records immutable and do not expose private customer data.\nThe filtering API and web page are independent development responsibilities under one interface.\nProduct refinements must retain existing filters and tests.\n\nMembers: Lin handles backend work, Mei handles the page, Chen reviews delivery, and Project manager arranges work and final delivery.\n",
+    "url_bypass": false
+  }
+}

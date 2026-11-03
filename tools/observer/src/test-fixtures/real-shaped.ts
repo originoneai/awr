@@ -130,3 +130,28 @@ export function realShapedSnapshot(workId: string, moment: RealMoment = 'in-revi
   };
   return snapshot;
 }
+
+// Content reads (slice 2): real replies of the controlled content interfaces, trimmed to their
+// data envelope like the fixtures above. The documents and digests are the run's own; nothing is
+// invented. The wrong-digest reply is the 503 body the service answers when expected_sha256 does
+// not match — an error code, never proof that the source changed.
+import SOURCE_CONTENT_OK from './content/source-content-support-md-run07.json';
+import SOURCE_CONTENT_WRONG_DIGEST from './content/source-content-wrong-digest-run07.json';
+import ARTIFACT_SEGMENT from './content/artifact-segment-api-run09.json';
+
+export const REAL_SUPPORT_MD_SHA256 = SOURCE_CONTENT_OK.data.sha256;
+export const REAL_SUPPORT_MD_BYTES = SOURCE_CONTENT_OK.data.byte_length;
+export const REAL_ARTIFACT_SHA256 = ARTIFACT_SEGMENT.data.sha256;
+export const REAL_ARTIFACT_BYTES = ARTIFACT_SEGMENT.data.byte_length;
+
+export function realSourceContentReply() {
+  return { ok: true, result: { data: SOURCE_CONTENT_OK.data } };
+}
+
+export function realSourceContentWrongDigestReply() {
+  return { ok: false, error: SOURCE_CONTENT_WRONG_DIGEST };
+}
+
+export function realArtifactSegmentReply() {
+  return { ok: true, result: { data: ARTIFACT_SEGMENT.data } };
+}
