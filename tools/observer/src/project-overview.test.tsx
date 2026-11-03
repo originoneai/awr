@@ -1140,3 +1140,107 @@ describe('overview count sentences in English (plural forms)', () => {
     expect(screen.getByTestId('project-goals-unread').textContent).toBe('The agreement of 1 work has not been read yet');
   });
 });
+
+describe('trouble facts from the service\'s own record (review)', () => {
+  /** A synthetic snapshot of the recorded shape: the run's rejected integration on the current binding. */
+  function snapshotWithTrouble(workId: string, overrides: Record<string, unknown> = {}) {
+    const base = demoWorkSnapshot(workId) as { result: { data: Record<string, unknown> } };
+    const data = base.result.data as { observation: Record<string, unknown> };
+    data.observation = {
+      ...data.observation,
+      collaboration: {
+        integration: {
+          current_binding: true,
+          id: '01M6SYNTHETICINTEGRATION000000A',
+          state: 'rejected',
+          target_changed: true,
+        },
+      },
+      ...overrides,
+    };
+    return base;
+  }
+
+  it('names a rejected integration whatever the reporter\'s word says, with the target-moved sentence', async () => {
+    setupOverview({ snapshot: (id) => snapshotWithTrouble(id) });
+    await screen.findByTestId('project-delivery-attention-W1');
+    const trouble = screen.getByTestId('project-delivery-trouble-W1');
+    expect(trouble.textContent).toContain('并入主线被退回，主线已变化');
+    // The word itself is untouched and still counted.
+    expect(screen.getByTestId('project-delivery-attention-W1').textContent).toContain('已认领');
+    expect(screen.getByTestId('project-delivery-counts').textContent).toContain('已认领× 2');
+  });
+
+  it('names a delivered work whose integration was rejected — the positive word never hides the fact', async () => {
+    const snapshot = (id: string) => {
+      const base = snapshotWithTrouble(id);
+      const data = base.result.data as { runtime: Record<string, unknown>; observation: Record<string, unknown> };
+      data.runtime = { ...data.runtime, state: 'completed', selected_completion_id: '01M6SYNTHETICCOMPLETION00000A' };
+      data.observation = { ...data.observation, progress: { phase: 'delivered' } };
+      return base;
+    };
+    setupOverview({ snapshot });
+    await screen.findByTestId('project-delivery-attention-W1');
+    // The word stays 已交付 and its count stays; the fact rides beside it.
+    expect(screen.getByTestId('project-delivery-attention-W1').textContent).toContain('已交付');
+    expect(screen.getByTestId('project-delivery-trouble-W1').textContent).toContain('并入主线被退回');
+    expect(screen.getByTestId('project-delivery-counts').textContent).toContain('已交付× 2');
+  });
+
+  it('says the plainer sentence when the target has not moved, and nothing for a confirmed integration', async () => {
+    const snapshot = (id: string) => {
+      if (id === 'W2') {
+        const confirmed = demoWorkSnapshot(id) as { result: { data: Record<string, unknown> } };
+        const data = confirmed.result.data as { observation: Record<string, unknown> };
+        data.observation = {
+          ...data.observation,
+          collaboration: { integration: { current_binding: true, state: 'confirmed', target_changed: false } },
+        };
+        return confirmed;
+      }
+      const base = snapshotWithTrouble(id);
+      const data = base.result.data as { observation: Record<string, unknown> };
+      const collab = data.observation.collaboration as { integration: Record<string, unknown> };
+      collab.integration = { ...collab.integration, target_changed: false };
+      return base;
+    };
+    setupOverview({ snapshot });
+    await screen.findAllByTestId('project-status-W2');
+    expect(screen.getByTestId('project-delivery-trouble-W1').textContent).toBe('并入主线被退回');
+    expect(screen.queryByTestId('project-delivery-trouble-W2')).toBeNull();
+  });
+
+  it('names a failed last execution with its own sentence, beside the word', async () => {
+    const snapshot = (id: string) => {
+      const base = demoWorkSnapshot(id) as { result: { data: Record<string, unknown> } };
+      const data = base.result.data as { observation: Record<string, unknown> };
+      data.observation = { ...data.observation, execution: { state: 'failed', execution_id: '01M6SYNTHETICEXECUTION00000A' } };
+      return base;
+    };
+    setupOverview({ snapshot });
+    await screen.findByTestId('project-delivery-trouble-W1');
+    expect(screen.getByTestId('project-delivery-trouble-W1').textContent).toContain('上一次尝试没有成功');
+  });
+
+  it('keeps the cap of five with trouble works in the list', async () => {
+    const works = Array.from({ length: 7 }, (_, index) => ({
+      key: `W${index + 1}`, title: `Task ${index + 1}`, status: 'unknown', owner_person: null, agent: null,
+      next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: `c${index}`,
+    }));
+    setupOverview({
+      overview: { ...DEMO_PROJECT_OVERVIEW, works, coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_enumerated: 7 } },
+      snapshot: (id) => snapshotWithTrouble(id),
+    });
+    await screen.findByTestId('project-delivery-attention');
+    expect(screen.getByTestId('project-delivery-attention').querySelectorAll('a').length).toBe(5);
+    expect(screen.getByTestId('project-delivery-attention').textContent).toContain('还有');
+  });
+
+  it('keeps the raw facts in the technical details, never in the visible sentence', async () => {
+    setupOverview({ snapshot: (id) => snapshotWithTrouble(id) });
+    await screen.findByTestId('project-delivery-trouble-W1');
+    const visible = document.querySelector('[data-testid="project-overview"]')?.textContent ?? '';
+    expect(visible).not.toContain('01M6SYNTHETICINTEGRATION000000A');
+    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('project-overview')))).toEqual([]);
+  });
+});

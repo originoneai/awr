@@ -210,6 +210,10 @@ export interface WorkStateSnapshot {
     progress?: { next_action?: unknown; phase?: unknown } | null;
     /** Who the service holds responsible for this work, when it says. */
     responsibility?: { owner_name?: unknown; owner?: unknown } | null;
+    /** What the service measured about this work's collaboration (integration, review). */
+    collaboration?: { integration?: unknown; review?: unknown } | null;
+    /** The service's own record of the last execution, when the observation carries one. */
+    execution?: { state?: unknown; execution_id?: unknown } | Record<string, unknown> | null;
   } | null;
 }
 

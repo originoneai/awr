@@ -9,6 +9,8 @@ export { abbreviateIds, readableSentence } from './readable';
 export { utf8ByteLength, verifyTextDigest } from './digest';
 export { assembleSegments, judgeContentRead } from './content';
 export { deriveOwner, ownerCellText, readsAsName } from './owner';
+export { deriveTrouble } from './trouble';
+export type { TroubleFact } from './trouble';
 export type { OwnerResult, OwnerReadState, OwnerSource } from './owner';
 export type { SegmentPageInput, SegmentInconsistency, SegmentAssembly, ContentReadStatus } from './content';
 export { describeProgressReport, moreLinesText, REPORT_LIST_LIMIT } from './report';
