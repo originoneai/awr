@@ -1,6 +1,6 @@
-import { ACTION_VOCABULARY, CHECK_VOCABULARY, FORBIDDEN_VISIBLE_PATTERNS, humanText } from '../../i18n/human-language';
+import { ACTION_VOCABULARY, ARTIFACT_VOCABULARY, CHECK_VOCABULARY, FORBIDDEN_VISIBLE_PATTERNS, humanText } from '../../i18n/human-language';
 import { statementText } from './values';
-import type { ActionWordsResult, ActorAliasEntry, ActorAliasResult, CheckLabelResult, DocumentLabelResult, WorkLabelResult } from './types';
+import type { ActionWordsResult, ActorAliasEntry, ActorAliasResult, ArtifactLabelResult, CheckLabelResult, DocumentLabelResult, WorkLabelResult } from './types';
 
 function present(value: string | null | undefined): value is string {
   return typeof value === 'string' && value.length > 0;
@@ -53,6 +53,25 @@ export function checkLabel(name: unknown, options: { language: string; position:
   if (raw == null) return { kind: 'numbered', text: numbered, technical: { raw: null } };
   if (Object.prototype.hasOwnProperty.call(CHECK_VOCABULARY, raw)) {
     const [zh, en] = CHECK_VOCABULARY[raw];
+    return { kind: 'known', text: options.language.toLowerCase().startsWith('zh') ? zh : en, technical: { raw } };
+  }
+  if (FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(raw))) return { kind: 'numbered', text: numbered, technical: { raw } };
+  return { kind: 'named', text: raw, technical: { raw } };
+}
+
+/**
+ * The name to show for a thing the reporter says was produced: the shared words for a label the
+ * vocabulary knows ("development branch" as 开发分支); any other plain label as written; and
+ * "Output N", N being its place in the reporter's list, for a label that reads as an identifier
+ * or when there is none. The raw label is always returned for technical details; the artifact's
+ * reference never reaches the default view.
+ */
+export function artifactLabel(label: unknown, options: { language: string; position: number }): ArtifactLabelResult {
+  const raw = statementText(label);
+  const numbered = humanText('artifactNumbered', options.language).replace('{{count}}', String(options.position));
+  if (raw == null) return { kind: 'numbered', text: numbered, technical: { raw: null } };
+  if (Object.prototype.hasOwnProperty.call(ARTIFACT_VOCABULARY, raw)) {
+    const [zh, en] = ARTIFACT_VOCABULARY[raw];
     return { kind: 'known', text: options.language.toLowerCase().startsWith('zh') ? zh : en, technical: { raw } };
   }
   if (FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(raw))) return { kind: 'numbered', text: numbered, technical: { raw } };

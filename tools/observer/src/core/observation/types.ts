@@ -95,6 +95,18 @@ export type WorkLabelKind = 'none' | 'named' | 'unnamed';
 
 export type CheckLabelKind = 'named' | 'known' | 'numbered';
 
+export interface ArtifactLabelResult {
+  kind: CheckLabelKind;
+  text: string;
+  technical: { raw: string | null };
+}
+
+/** What was produced, in the plain words of the artifact vocabulary; the raw label stays for the details. */
+export interface ProgressReportArtifact {
+  text: string;
+  raw: string | null;
+}
+
 export interface ActionWordsResult {
   shown: string[];
   other: number;
@@ -151,7 +163,7 @@ export interface ProgressReportResult {
   blockers: CappedList<string> & { reported: boolean };
   tests: CappedList<ProgressReportTest>;
   /** The plain labels of what the reporter produced; references go to the technical layer. */
-  artifacts: CappedList<string>;
+  artifacts: CappedList<ProgressReportArtifact>;
   /** Who reported, when, and that nobody checked it, in short plain parts. */
   declaration: string[];
   /** A warning when the task requirements changed after the report was written; null otherwise. */

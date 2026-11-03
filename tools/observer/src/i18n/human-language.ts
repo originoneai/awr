@@ -50,6 +50,7 @@ export const HUMAN_VOCABULARY = {
     moreLines: '还有 {{count}} 条',
     checkNumbered: '检查 {{count}}',
     documentNumbered: '文档 {{count}}',
+    artifactNumbered: '产出 {{count}}',
     actionsOther: '另有 {{count}} 项其他操作',
     deliveredUnconfirmed: '汇报称已交付',
   },
@@ -103,6 +104,7 @@ export const HUMAN_VOCABULARY = {
     moreLines: '{{count}} more',
     checkNumbered: 'Check {{count}}',
     documentNumbered: 'Document {{count}}',
+    artifactNumbered: 'Output {{count}}',
     actionsOther: '{{count}} more operations',
     deliveredUnconfirmed: 'Reported as delivered',
   },
@@ -174,6 +176,18 @@ export const STATUS_LABELS: Record<string, readonly [string, string]> = {
 /** Checks a reporter or the service names by a machine name that has a plain-words equivalent: [zh-CN, en-US]. */
 export const CHECK_VOCABULARY: Record<string, readonly [string, string]> = {
   'local_git.manifest': ['本地内容与测试', 'Local content and tests'],
+};
+
+/**
+ * Words for the labels a reporter writes on what was produced ("development branch"): [zh-CN, en-US].
+ * A label the vocabulary knows reads as its plain words; an unknown plain label stays as written;
+ * a label shaped like an identifier reads "Output N" and keeps the raw value for the technical details.
+ * Only labels seen in real reports belong here — do not invent words for shapes the service has not sent.
+ */
+export const ARTIFACT_VOCABULARY: Record<string, readonly [string, string]> = {
+  'review round': ['复核记录', 'review round'],
+  branch: ['开发分支', 'branch'],
+  'development branch': ['开发分支', 'development branch'],
 };
 
 /** What a member or an agent may be allowed to do, in plain words: [zh-CN, en-US]. */

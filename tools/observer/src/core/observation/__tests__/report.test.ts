@@ -44,7 +44,10 @@ describe('describeProgressReport: the real checkpoints', () => {
       ['npm test', '已通过', 'positive'],
       ['本地内容与测试', '已通过', 'positive'],
     ]);
-    expect(report.artifacts.shown).toEqual(['development branch', 'review round']);
+    expect(report.artifacts.shown).toEqual([
+      { text: '开发分支', raw: 'development branch' },
+      { text: '复核记录', raw: 'review round' },
+    ]);
     expect(JSON.stringify(report.artifacts)).not.toContain('refs/heads');
     expect(report.declaration[0]).toContain('Lin Agent');
   });
@@ -141,7 +144,28 @@ describe('describeProgressReport: lists', () => {
 
   it('shows only the labels of artifacts and skips entries that have none', () => {
     const report = describeProgressReport({ artifacts: [{ label: 'report', reference: 'sha-1' }, { reference: 'orphan' }, 'plain', { label: ' ' }] }, zh);
-    expect(report.artifacts.shown).toEqual(['report']);
+    expect(report.artifacts.shown).toEqual([{ text: 'report', raw: 'report' }]);
+  });
+
+  it('words the labels the vocabulary knows, numbers identifier-shaped ones, and keeps every raw label', () => {
+    const report = describeProgressReport({
+      artifacts: [
+        { label: 'development branch', reference: 'refs/heads/x@abc123' },
+        { label: 'artifact_digest', reference: 'sha256:aa' },
+      ],
+    }, zh);
+    expect(report.artifacts.shown).toEqual([
+      { text: '开发分支', raw: 'development branch' },
+      { text: '产出 2', raw: 'artifact_digest' },
+    ]);
+    const english = describeProgressReport({ artifacts: [{ label: 'development branch' }] }, en);
+    expect(english.artifacts.shown).toEqual([{ text: 'development branch', raw: 'development branch' }]);
+    // The references and the raw labels stay behind the disclosure, in the technical items.
+    const items = Object.fromEntries(describeProgressReport({
+      artifacts: [{ label: 'development branch', reference: 'refs/heads/x@abc123' }],
+    }, zh).technical.items.map((item) => [item.label, item.value]));
+    expect(items['progress.artifacts']).toContain('refs/heads/x@abc123');
+    expect(items['progress.artifacts']).toContain('development branch');
   });
 });
 

@@ -1,7 +1,7 @@
 export { rawObservationText, statusWord, describeUnknown, STATUS_FIELDS } from './values';
 export { absoluteTimeText, ageText } from './time';
 export { foldOperations, operationWord } from './operations';
-export { actionWords, actorAliases, checkLabel, documentLabel, workLabel } from './labels';
+export { actionWords, actorAliases, artifactLabel, checkLabel, documentLabel, workLabel } from './labels';
 export { groupWorks } from './groups';
 export { deriveWorkState } from './work-state';
 export { claimState } from './claim';
