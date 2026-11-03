@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import DERIVED_RUN09 from '../../../test-fixtures/activity/derived-audit-development-project-scope-all-run09.json';
 import { findForbiddenVisibleText } from '../../../lib/human-language-guard';
 import REPORTS from '../../../test-fixtures/work-state/progress-reports-run09.json';
-import { ACTION_VOCABULARY } from '../../../i18n/human-language';
-import { actionWords, actorAliases, checkLabel, documentLabel, workLabel } from '../index';
+import { ACTION_VOCABULARY, ARTIFACT_VOCABULARY } from '../../../i18n/human-language';
+import { actionWords, actorAliases, artifactLabel, checkLabel, documentLabel, workLabel } from '../index';
 
 const ITEMS = DERIVED_RUN09.data.items as Array<{ actor_id: string; work_id: string | null }>;
 const ACTORS = ITEMS.map((item) => item.actor_id);
@@ -111,6 +111,76 @@ describe('checkLabel', () => {
     names.forEach((name, index) => {
       for (const language of ['zh-CN', 'en-US']) {
         expect(findForbiddenVisibleText(checkLabel(name, { language, position: index + 1 }).text), `${String(name)} ${language}`).toEqual([]);
+      }
+    });
+  });
+});
+
+describe('artifactLabel', () => {
+  const zh = { language: 'zh-CN' } as const;
+  const en = { language: 'en-US' } as const;
+
+  it('words each label the vocabulary knows, in both languages, and keeps the label as written', () => {
+    expect(artifactLabel('review round', { ...zh, position: 1 })).toEqual({ kind: 'known', text: '复核记录', technical: { raw: 'review round' } });
+    expect(artifactLabel('development branch', { ...zh, position: 1 }).text).toBe('开发分支');
+    expect(artifactLabel('branch', { ...zh, position: 1 }).text).toBe('开发分支');
+    expect(artifactLabel('review round', { ...en, position: 1 }).text).toBe('review round');
+    expect(artifactLabel('branch', { ...en, position: 1 }).text).toBe('branch');
+  });
+
+  it('knows a label whatever its capitals and spacing, and keeps it as the reporter wrote it', () => {
+    for (const label of ['Review round', 'REVIEW ROUND', 'review   round', '  Review  round  ']) {
+      expect(artifactLabel(label, { ...zh, position: 1 }), label).toEqual({ kind: 'known', text: '复核记录', technical: { raw: label.trim() } });
+    }
+    expect(artifactLabel('Development branch', { ...zh, position: 1 }).text).toBe('开发分支');
+    expect(artifactLabel('Branch', { ...zh, position: 1 }).text).toBe('开发分支');
+    expect(artifactLabel('Development Branch', { ...en, position: 1 }).text).toBe('development branch');
+  });
+
+  it('keeps every key of the vocabulary in the form the lookup matches', () => {
+    for (const key of Object.keys(ARTIFACT_VOCABULARY)) expect(key).toBe(key.trim().replace(/\s+/g, ' ').toLowerCase());
+  });
+
+  it('numbers a label that reads as a machine name, a path, a branch, a URL or a hash, and keeps it for the technical details', () => {
+    const labels = [
+      'source_publication', 'src/filter.js', 'public/style.css', 'mei/issue-filter-page', 'origin/main', 'originoneai:main',
+      'refs/heads/glm/obs-020', 'https://example.com/x', 'notes\\team', 'a1b2c3d4e5f6', '3f2b8c1e-9a4d-4c3e-8f1a-2b7d6e5c4a39',
+    ];
+    for (const label of labels) {
+      const result = artifactLabel(label, { ...zh, position: 3 });
+      expect(result, label).toEqual({ kind: 'numbered', text: '产出 3', technical: { raw: label } });
+      expect(findForbiddenVisibleText(result.text)).toEqual([]);
+    }
+    expect(artifactLabel('origin/main', { ...en, position: 3 }).text).toBe('Output 3');
+  });
+
+  it('shows a label of plain words exactly as the reporter wrote it, a slash or a hyphen among spaced words included', () => {
+    for (const label of ['filter evidence', 'Page files', 'UI tests', '前端页面', 'UI / UX design', 'front-end tests', '登录：成功']) {
+      expect(artifactLabel(label, { ...zh, position: 1 }), label).toEqual({ kind: 'named', text: label, technical: { raw: label } });
+    }
+  });
+
+  it('numbers an entry that has no usable label and has nothing to keep', () => {
+    for (const missing of [undefined, null, '', '   ', 7, true, {}, ['x']]) {
+      expect(artifactLabel(missing, { ...zh, position: 2 }), JSON.stringify(missing)).toEqual({ kind: 'numbered', text: '产出 2', technical: { raw: null } });
+    }
+    expect(artifactLabel(undefined, { ...en, position: 1 }).text).toBe('Output 1');
+  });
+
+  it('gives the guard nothing to flag across the labels real reports carry, in both languages, and shows no path or branch name', () => {
+    // As counted in the progress reports of real team runs and live service reads: file names, the two
+    // spellings of each vocabulary label, branch names and the free labels reporters wrote.
+    const real = [
+      'src/filter.js', 'test/filter.test.js', 'public/app.js', 'public/style.css', 'test/ui.test.js',
+      'review round', 'Review round', 'Development branch', 'development branch', 'branch',
+      'filter evidence', 'test evidence', 'evidence', 'Page files', 'Filter page', 'Filter styles', 'UI tests',
+      'filter implementation', 'queue page', 'mei/issue-filter-page', 'origin/main', 'source_publication',
+    ];
+    real.forEach((label, index) => {
+      for (const language of ['zh-CN', 'en-US']) {
+        const text = artifactLabel(label, { language, position: index + 1 }).text;
+        expect(findForbiddenVisibleText(text), `${label} ${language}`).toEqual([]);
+        expect(text, `${label} ${language}`).not.toMatch(/[/:\\]/);
       }
     });
   });

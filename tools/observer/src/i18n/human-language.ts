@@ -180,6 +180,7 @@ export const CHECK_VOCABULARY: Record<string, readonly [string, string]> = {
 
 /**
  * Words for the labels a reporter writes on what was produced ("development branch"): [zh-CN, en-US].
+ * Keys are lower case with single spaces: a label is looked up ignoring its capitals and spacing.
  * A label the vocabulary knows reads as its plain words; an unknown plain label stays as written;
  * a label shaped like an identifier reads "Output N" and keeps the raw value for the technical details.
  * Only labels seen in real reports belong here — do not invent words for shapes the service has not sent.

@@ -167,6 +167,15 @@ describe('describeProgressReport: lists', () => {
     expect(items['progress.artifacts']).toContain('refs/heads/x@abc123');
     expect(items['progress.artifacts']).toContain('development branch');
   });
+
+  it('words the capitalised spellings real reports use and numbers a branch name by its place in the list', () => {
+    const report = describeProgressReport({ artifacts: [{ label: 'Review round' }, { label: 'mei/issue-filter-page' }, { label: 'Development branch' }] }, zh);
+    expect(report.artifacts.shown).toEqual([
+      { text: '复核记录', raw: 'Review round' },
+      { text: '产出 2', raw: 'mei/issue-filter-page' },
+      { text: '开发分支', raw: 'Development branch' },
+    ]);
+  });
 });
 
 describe('describeProgressReport: who said it, and whether it still holds', () => {

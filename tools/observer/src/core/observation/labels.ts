@@ -60,21 +60,31 @@ export function checkLabel(name: unknown, options: { language: string; position:
 }
 
 /**
+ * A label that is one word holding a slash, a colon or a backslash (a branch, a path, a URL), or a
+ * bare hash, names an engineering object. The patterns of the human-language guard do not see it:
+ * a branch name has no dot, no underscore and no engineering word.
+ */
+function readsAsReference(label: string): boolean {
+  return /^\S+$/.test(label) && (/[/:\\]/.test(label) || /^[0-9a-f]{12,}$/i.test(label));
+}
+
+/**
  * The name to show for a thing the reporter says was produced: the shared words for a label the
- * vocabulary knows ("development branch" as 开发分支); any other plain label as written; and
- * "Output N", N being its place in the reporter's list, for a label that reads as an identifier
- * or when there is none. The raw label is always returned for technical details; the artifact's
- * reference never reaches the default view.
+ * vocabulary knows ("development branch" as 开发分支, whatever its capitals and spacing); any other
+ * plain label as written; and "Output N", N being its place in the reporter's list, for a label that
+ * reads as an identifier or a reference, or when there is none. The raw label is always returned for
+ * technical details; the artifact's reference never reaches the default view.
  */
 export function artifactLabel(label: unknown, options: { language: string; position: number }): ArtifactLabelResult {
   const raw = statementText(label);
   const numbered = humanText('artifactNumbered', options.language).replace('{{count}}', String(options.position));
   if (raw == null) return { kind: 'numbered', text: numbered, technical: { raw: null } };
-  if (Object.prototype.hasOwnProperty.call(ARTIFACT_VOCABULARY, raw)) {
-    const [zh, en] = ARTIFACT_VOCABULARY[raw];
+  const key = raw.replace(/\s+/g, ' ').toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(ARTIFACT_VOCABULARY, key)) {
+    const [zh, en] = ARTIFACT_VOCABULARY[key];
     return { kind: 'known', text: options.language.toLowerCase().startsWith('zh') ? zh : en, technical: { raw } };
   }
-  if (FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(raw))) return { kind: 'numbered', text: numbered, technical: { raw } };
+  if (FORBIDDEN_VISIBLE_PATTERNS.some(({ pattern }) => pattern.test(raw)) || readsAsReference(raw)) return { kind: 'numbered', text: numbered, technical: { raw } };
   return { kind: 'named', text: raw, technical: { raw } };
 }
 
