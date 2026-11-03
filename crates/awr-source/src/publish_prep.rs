@@ -11,8 +11,9 @@ use awr_core::{
     Error, Id, Result, WORKSTREAM_CATALOG_VERSION, Workstream, WorkstreamCatalog, WorkstreamState,
 };
 use awr_team::{
-    DependencyAcceptanceMode, GOVERNANCE_FILE, GovernanceCandidate, WorkContract, WorkId,
-    WorkstreamBundle, WorkstreamContract,
+    DependencyAcceptanceMode, DraftDefinitionState, GOVERNANCE_FILE, GovernanceCandidate,
+    TASK_DEFINITIONS_FILE, TaskDefinition, TaskDefinitions, WorkContract, WorkId, WorkstreamBundle,
+    WorkstreamContract,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -266,7 +267,7 @@ pub fn prepare_publish_from_ledger_bytes(
     reject_role_invention(&document)?;
 
     let (catalog, key_to_id) = map_catalog(&document, project_id)?;
-    let (contracts, status_notes) = map_contracts(&document, &key_to_id, options)?;
+    let (contracts, status_notes, definitions) = map_contracts(&document, &key_to_id, options)?;
     let bundle = WorkstreamBundle {
         codec: if contracts
             .iter()
@@ -346,6 +347,11 @@ pub fn prepare_publish_from_ledger_bytes(
             bytes: ledger_bytes.to_vec(),
         },
     ];
+    files.push(PublishPackageFile {
+        path: TASK_DEFINITIONS_FILE.into(),
+        bytes: serde_json::to_vec_pretty(&definitions)
+            .map_err(|e| Error::InvalidInput(e.to_string()))?,
+    });
     for spec in &referenced {
         files.push(PublishPackageFile {
             path: spec.path.clone(),
@@ -529,11 +535,33 @@ fn map_catalog(
     Ok((catalog, key_to_id))
 }
 
+pub(crate) fn task_definition_state(item: &Value, pointer: &str) -> Result<DraftDefinitionState> {
+    match item.get("definition_state") {
+        Some(value) => serde_json::from_value(value.clone()).map_err(|_| {
+            Error::InvalidInput(format!(
+                "{pointer}/definition_state: expected draft, enabled, archived or cancelled"
+            ))
+        }),
+        None => Ok(match item.get("status").and_then(Value::as_str) {
+            Some("draft") => DraftDefinitionState::Draft,
+            Some("archived") => DraftDefinitionState::Archived,
+            Some("cancelled") => DraftDefinitionState::Cancelled,
+            // Legacy source progress, including completed/done, is never
+            // execution or acceptance proof. Planned remains enabled.
+            _ => DraftDefinitionState::Enabled,
+        }),
+    }
+}
+
 fn map_contracts(
     document: &Value,
     key_to_id: &BTreeMap<String, Id>,
     options: &PublishPrepOptions,
-) -> Result<(Vec<WorkstreamContract>, Vec<SourceStatusNote>)> {
+) -> Result<(
+    Vec<WorkstreamContract>,
+    Vec<SourceStatusNote>,
+    TaskDefinitions,
+)> {
     let items = document
         .get("work_items")
         .and_then(Value::as_array)
@@ -551,6 +579,9 @@ fn map_contracts(
 
     let mut contracts = Vec::new();
     let mut notes = Vec::new();
+    let mut definitions = TaskDefinitions {
+        works: BTreeMap::new(),
+    };
     let mut seen = BTreeSet::new();
     for (index, item) in items.iter().enumerate() {
         let pointer = format!("/work_items/{index}");
@@ -560,7 +591,8 @@ fn map_contracts(
                 "duplicate work id {external_key}"
             )));
         }
-        let _title = required_string(item, "title", &pointer)?;
+        let title = required_string(item, "title", &pointer)?;
+        let definition_state = task_definition_state(item, &pointer)?;
         let workstream_key = required_string(item, "workstream", &pointer)?;
         let workstream_id = *key_to_id.get(&workstream_key).ok_or_else(|| {
             Error::InvalidInput(format!(
@@ -658,12 +690,19 @@ fn map_contracts(
         contract
             .validate()
             .map_err(|e| Error::InvalidInput(format!("{pointer}: {e}")))?;
+        definitions.works.insert(
+            contract.work_id.as_str().into(),
+            TaskDefinition {
+                title,
+                definition_state,
+            },
+        );
         contracts.push(WorkstreamContract {
             workstream_id,
             contract,
         });
     }
-    Ok((contracts, notes))
+    Ok((contracts, notes, definitions))
 }
 
 fn load_referenced_specs(root: &Path, bundle: &WorkstreamBundle) -> Result<Vec<ReferencedSpec>> {

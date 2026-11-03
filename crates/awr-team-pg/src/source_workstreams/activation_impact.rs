@@ -68,7 +68,7 @@ async fn derive_inner(
     }
     let rows = tx.query(
         "SELECT c.work_id,c.contract_hash,c.contract_json,o.workstream_id,o.ownership_version,
-                current.workstream_id AS current_stream,current.ownership_version AS current_ownership
+                current.workstream_id AS current_stream,current.ownership_version AS current_ownership,c.definition_state
          FROM awr_team.work_contracts c
          LEFT JOIN awr_team.workstream_snapshot_ownership o
            ON o.tenant_id=c.tenant_id AND o.project_id=c.project_id AND o.snapshot_id=c.snapshot_id
@@ -119,6 +119,16 @@ async fn derive_inner(
         } else if candidate.bundle.is_some() {
             // First explicit ownership is a real context change, not attribution
             // of a historical legacy executor to today's catalog.
+            affected.insert(work.clone());
+        }
+        if candidate
+            .definitions
+            .as_ref()
+            .and_then(|d| d.works.get(&work))
+            .is_some_and(|d| {
+                d.definition_state.as_str() != row.get::<_, String>("definition_state")
+            })
+        {
             affected.insert(work.clone());
         }
         if candidate.hashes.get(&work) != Some(&hash) {

@@ -14,6 +14,7 @@ mod ids;
 mod permission;
 mod planning;
 mod snapshot;
+mod task_definitions;
 mod version;
 mod workstreams;
 
@@ -62,6 +63,7 @@ pub use snapshot::{
     ClaimPreconditions, LeaseProof, ProjectReadSnapshot, RequiredDependencyProof,
     SourceActivationPlan,
 };
+pub use task_definitions::{TASK_DEFINITIONS_FILE, TaskDefinition, TaskDefinitions};
 pub use version::{decode_u64, encode_u64};
 pub use workstreams::{WorkstreamBundle, WorkstreamContract};
 

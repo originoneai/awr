@@ -1,6 +1,8 @@
 //! AWR-TMCP-022: planning writeback activation gate and receipts on real PG.
 #![cfg(feature = "pg-tests")]
 mod common;
+#[path = "cases/planning_definition_lifecycle.rs"]
+mod definition_lifecycle;
 #[path = "fixtures/workstream_access.rs"]
 mod fixture;
 

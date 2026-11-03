@@ -33,6 +33,47 @@ history. Preview identifies domain, dependency and publication requirements.
 Definition states cannot forge runtime completion. Empty or incompatible values
 still fail domain validation; the schema does not replace those checks.
 
+Approved source writeback persists both `title` and an explicit `definition_state`
+in each YAML task. The states `draft` and `enabled` remain distinct even when the
+human progress note is `status: planned`. `status` is a source note, never an
+execution or acceptance receipt; `status: completed` cannot complete Team work.
+If a legacy YAML task omits `definition_state`, `status: draft`, `archived` and
+`cancelled` supply that definition state; other statuses (including `planned`,
+`done` and `completed`) default to `enabled`. An explicit definition state takes
+precedence over the progress note and must be one of the four supported values.
+
+Publish preparation includes complete title/state metadata in
+`task_definitions.json`, keyed by work ID alongside `workstreams.json`. The
+snapshot manifest binds this file; activation installs it atomically with the
+contracts. Re-preparing the authoritative YAML restores definitions without a
+previous database projection. Legacy raw packages that omit definition metadata
+retain existing definitions, defaulting new tasks to `enabled` with their external
+key as title. Do not remove this file from a package that already uses it.
+
+Definition-state changes participate in the same server-derived impact, settlement and
+pending-writeback admission gates as contract changes. An affected running or
+unsettled execution refuses activation before source bytes change. Pending
+writeback fences affected execution admission while unrelated work can continue;
+recovery rechecks the original intent and current baseline. Inactive definitions
+remain readable for history but cannot be claimed or started. Navigation exposes
+`definition_state` separately from runtime `state`.
+
+Source writeback checks the current definition state against the approved before
+state, using the same legacy status mapping as publish preparation. A mismatch
+refuses the writeback before source bytes change. Title-only updates preserve
+prepared and running executions and do not invalidate dependent work.
+
+PostgreSQL schema 59 adds `cancelled` through a forward migration from schema 58;
+existing definitions, runtime state and completion history are preserved. Upgrade
+the database using the normal migration procedure before using these binaries.
+Finish or explicitly close pending planning writebacks with the old binaries
+before upgrading: recovery binds the original byte fingerprints and candidate
+manifest, so this version refuses an older intent if re-preparation changes its
+package instead of rewriting that intent. Older binaries reject the newer schema. This upgrade cannot reconstruct definitions
+that older writers already omitted from source; repair those through reviewed
+planning changes backed by the authoritative source.
+
+
 | Optional task field | Present value | Omission | Null |
 | --- | --- | --- | --- |
 | `dependency_acceptance` | Map from required predecessors to acceptance modes | Retains source policy | Rejected |

@@ -82,6 +82,7 @@ pub enum WorkDefinitionState {
     Draft,
     Enabled,
     Archived,
+    Cancelled,
 }
 
 /// Semantic work definition used for Team contract hashing.
