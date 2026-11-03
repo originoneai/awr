@@ -20,7 +20,10 @@ import { Link, useSearchParams } from 'react-router';
 import { FreshnessBadge } from '../components/FreshnessBadge';
 import { LastReportText } from '../components/LastReportText';
 import { WorkProgress, useWorkState } from '../components/WorkProgress';
-import { groupWorks, rawObservationText } from '../core/observation';
+import { ToneBadge } from '../components/ToneBadge';
+import { contractGroups } from '../lib/contract-groups';
+import { deriveWorkState, groupWorks, moreLinesText, rawObservationText } from '../core/observation';
+import { readStateOf } from '../lib/read-state';
 import { RecentChanges } from '../components/RecentChanges';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { TechnicalDetails } from '../components/TechnicalDetails';
@@ -36,6 +39,7 @@ import type {
   TeamActivityResponse,
   TeamOverviewResponse,
   TeamWork,
+  WorkContractValue,
 } from '../lib/types';
 
 const PAGE_SIZE = 60;
@@ -77,6 +81,160 @@ function NextStep({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
 function LastReport({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
   const state = useWorkState(work, query);
   return <LastReportText report={state.lastReport} testId={`last-report-${work.key}`} />;
+}
+
+/** The goals and acceptance the works on this page have declared, merged; only reads already made. */
+function GoalsBlock({ works, snapshots }: { project: string; works: TeamWork[]; snapshots: SnapshotQuery[] }) {
+  const { t, i18n } = useTranslation();
+  const GROUP_LIMIT = 5;
+  const read = works.map((work, index) => {
+    const query = snapshots[index];
+    const contract = query?.data?.result.data?.visible_contract;
+    return {
+      title: work.title,
+      // A read that has not happened contributes nothing; it is counted, never guessed from.
+      ready: query != null && !query.isPending && !query.isError,
+      goals: contract?.goals as WorkContractValue[] | undefined,
+      acceptance: contract?.acceptance as WorkContractValue[] | undefined,
+    };
+  });
+  const groups = contractGroups(read.filter((entry) => entry.ready));
+  const unread = read.length - read.filter((entry) => entry.ready).length;
+  const shown = groups.slice(0, GROUP_LIMIT);
+  const more = groups.length - shown.length;
+
+  return (
+    <section data-testid="project-goals">
+      <Typography.Title level={5}>{t('projectOverview.goals')}</Typography.Title>
+      {shown.length === 0
+        ? <Typography.Text type="secondary">{t('projectOverview.goalsEmpty')}</Typography.Text>
+        : (
+          <Flex vertical gap={12}>
+            {shown.map((group, index) => (
+              <div key={index} data-testid="project-goals-group">
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('projectOverview.goalsOf', { titles: group.titles.join(t('knowledge.titleSeparator')) })}
+                </Typography.Text>
+                {group.goals?.length ? (
+                  <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
+                    {group.goals.map((goal, goalIndex) => (
+                      <li key={goalIndex}>{rawObservationText(goal).text}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {group.acceptance?.length ? (
+                  <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
+                    {group.acceptance.map((item, itemIndex) => (
+                      // No checkbox: nothing in this data says whether an acceptance item is met;
+                      // that is the outcome page's question, and a box here would invent it.
+                      <li key={itemIndex}>{rawObservationText(item).text}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ))}
+            {more > 0 ? (
+              <Typography.Text type="secondary">{moreLinesText(more, i18n.language)}</Typography.Text>
+            ) : null}
+          </Flex>
+        )}
+      {unread > 0 ? (
+        <Typography.Text type="warning" data-testid="project-goals-unread">
+          {t('projectOverview.goalsUnread', { count: unread })}
+        </Typography.Text>
+      ) : null}
+    </section>
+  );
+}
+
+/** What the reads on this page actually say about delivery: counts per progress word and the works that need attention — never a whole-project verdict. */
+function DeliveryBlock({ project, works, totalWorks, snapshots }: {
+  project: string;
+  works: TeamWork[];
+  totalWorks: number;
+  snapshots: SnapshotQuery[];
+}) {
+  const { t, i18n } = useTranslation();
+  const entries = works.map((work, index) => {
+    const query = snapshots[index];
+    const readState = readStateOf(query);
+    const state = deriveWorkState({
+      language: i18n.language,
+      readState,
+      workNextStep: work.next_step,
+      workStatus: work.status,
+      snapshot: query?.data?.result.data,
+    });
+    return { work, readState, progress: state.progress };
+  });
+  // Only a read that happened counts; loading and failed works are named separately and
+  // counted nowhere, least of all as "in progress".
+  const counted = entries.filter((entry) => entry.readState === 'ready');
+  const unread = entries.filter((entry) => entry.readState === 'loading').length;
+  const failed = entries.filter((entry) => entry.readState === 'failed').length;
+  const counts = new Map<string, { tone: string; works: TeamWork[] }>();
+  for (const entry of counted) {
+    const bucket = counts.get(entry.progress.text) ?? { tone: entry.progress.tone, works: [] };
+    bucket.works.push(entry.work);
+    counts.set(entry.progress.text, bucket);
+  }
+  const ATTENTION_LIMIT = 5;
+  const attention = counted.filter((entry) => entry.progress.tone === 'warning');
+  const attentionShown = attention.slice(0, ATTENTION_LIMIT);
+  const attentionMore = attention.length - attentionShown.length;
+
+  return (
+    <section data-testid="project-delivery">
+      <Typography.Title level={5}>{t('projectOverview.delivery')}</Typography.Title>
+      {counted.length === 0
+        ? (
+          <Typography.Text type="secondary" data-testid="project-delivery-failed">
+            {t('projectOverview.deliveryFailed')}
+          </Typography.Text>
+        )
+        : (
+          <Flex vertical gap={12}>
+            <Typography.Text type="secondary" data-testid="project-delivery-scope">
+              {t('projectOverview.deliveryScope', { page: counted.length, total: totalWorks })}
+            </Typography.Text>
+            <Space wrap size={[16, 8]} data-testid="project-delivery-counts">
+              {[...counts.entries()].map(([text, bucket]) => (
+                <Space key={text} size={4}>
+                  <ToneBadge tone={bucket.tone as 'positive' | 'warning' | 'negative' | 'neutral'} text={text} />
+                  <Typography.Text type="secondary">× {bucket.works.length}</Typography.Text>
+                </Space>
+              ))}
+            </Space>
+            {attention.length > 0 ? (
+              <div data-testid="project-delivery-attention">
+                <Typography.Text strong>{t('projectOverview.deliveryAttention')}</Typography.Text>
+                <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
+                  {attentionShown.map(({ work, progress }) => (
+                    // The link text carries the progress word, so its accessible name stays
+                    // distinct from the same work's plain link in the table below.
+                    <li key={work.key}>
+                      <Link to={taskPath(project, work.key)}>
+                        {work.title}
+                        {t('knowledge.titleSeparator')}
+                        {progress.text}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+                {attentionMore > 0 ? (
+                  <Typography.Text type="secondary">{moreLinesText(attentionMore, i18n.language)}</Typography.Text>
+                ) : null}
+              </div>
+            ) : null}
+            {unread > 0 || failed > 0 ? (
+              <Typography.Text type="warning" data-testid="project-delivery-unread">
+                {t('projectOverview.deliveryUnread', { count: unread + failed })}
+              </Typography.Text>
+            ) : null}
+          </Flex>
+        )}
+    </section>
+  );
 }
 
 function LaterBlock({ title, testId }: { title: string; testId: string }) {
@@ -351,10 +509,10 @@ export function ProjectOverview({ project }: { project: string }) {
     <Flex vertical gap={24} data-testid="project-overview" style={{ minWidth: 0 }}>
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={12}>
-          <LaterBlock title={t('projectOverview.goals')} testId="project-goals-placeholder" />
+          <GoalsBlock project={project} works={visibleWorks} snapshots={snapshots} />
         </Col>
         <Col xs={24} lg={12}>
-          <LaterBlock title={t('projectOverview.delivery')} testId="project-delivery-placeholder" />
+          <DeliveryBlock project={project} works={visibleWorks} totalWorks={grouped.works.length} snapshots={snapshots} />
         </Col>
       </Row>
       <section>

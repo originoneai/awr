@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { formatUnixMs } from './lib/format';
 import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
-import { queryKeys } from './lib/queries';
+import { queryKeys, revokeObservationReads } from './lib/queries';
 import type { TeamWork } from './lib/types';
 import {
   DEMO_ACTIVITY,
@@ -667,11 +667,12 @@ describe('project recent development activity', () => {
 });
 
 describe('project overview placeholders, localization, and accessibility', () => {
-  it('keeps unsourced blocks as later-slice placeholders', async () => {
+  it('keeps the dependencies block as a later-slice placeholder', async () => {
     setupOverview();
-    for (const id of ['project-goals-placeholder', 'project-delivery-placeholder', 'project-deps-placeholder']) {
-      expect((await screen.findByTestId(id)).textContent).toContain('尚未开放');
-    }
+    // Dependencies have no read yet; goals and delivery are filled from the reads the page makes.
+    expect((await screen.findByTestId('project-deps-placeholder')).textContent).toContain('尚未开放');
+    expect(screen.queryByTestId('project-goals-placeholder')).toBeNull();
+    expect(screen.queryByTestId('project-delivery-placeholder')).toBeNull();
   });
 
   it('renders new overview strings in English', async () => {
@@ -691,5 +692,134 @@ describe('project overview placeholders, localization, and accessibility', () =>
       rules: { 'color-contrast': { enabled: false } },
     });
     expect(results).toHaveNoViolations();
+  });
+});
+
+describe('overview goals and delivery blocks (read from the page\'s own snapshot reads)', () => {
+  function snapshotWithContract(workId: string, contract: Record<string, unknown> | null) {
+    const base = demoWorkSnapshot(workId) as { result: { data: Record<string, unknown> } };
+    if (contract === null) delete base.result.data.visible_contract;
+    else base.result.data.visible_contract = contract;
+    return base;
+  }
+
+  function opsOf(fetchMock: ReturnType<typeof vi.fn>) {
+    const ops = new Map<string, number>();
+    for (const [, init] of fetchMock.mock.calls as Array<[string, RequestInit | undefined]>) {
+      const body = String(init?.body ?? '');
+      if (!body.includes('"op"')) continue;
+      const op = (JSON.parse(body).query as { op: string }).op;
+      ops.set(op, (ops.get(op) ?? 0) + 1);
+    }
+    return ops;
+  }
+
+  it('sends no read the page did not already make: the same snapshot ops, nothing else new', async () => {
+    const { fetchMock } = setupOverview();
+    await screen.findAllByTestId('project-status-W2');
+    const ops = opsOf(fetchMock);
+    // The blocks read only the snapshot queries the table already drives, once per visible work.
+    expect(ops.get('work.snapshot')).toBe(2);
+    expect([...ops.keys()].filter((op) => op !== 'work.snapshot')).toEqual([]);
+  });
+
+  it('merges works that agreed on their goals into one group named by both', async () => {
+    const snapshot = (id: string) => snapshotWithContract(id, {
+      goals: ['Keep support filters useful'],
+      acceptance: ['Do not mutate input records'],
+    });
+    setupOverview({ snapshot });
+    const groups = await screen.findAllByTestId('project-goals-group');
+    expect(groups).toHaveLength(1);
+    const joined = groups[0].textContent ?? '';
+    expect(joined).toContain('Build the filter API');
+    expect(joined).toContain('Prepare the support page');
+    expect(joined).toContain('Keep support filters useful');
+  });
+
+  it('keeps different agreements as separate groups', async () => {
+    const snapshot = (id: string) => snapshotWithContract(id, id === 'W2'
+      ? { goals: ['A different goal'], acceptance: ['A different acceptance'] }
+      : { goals: ['Keep support filters useful'], acceptance: ['Do not mutate input records'] });
+    setupOverview({ snapshot });
+    await screen.findAllByTestId('project-goals-group');
+    expect(screen.getAllByTestId('project-goals-group')).toHaveLength(2);
+  });
+
+  it('shows the first five groups and says how many more there are', async () => {
+    const works = Array.from({ length: 7 }, (_, index) => ({
+      key: `W${index + 1}`, title: `Task ${index + 1}`, status: 'unknown', owner_person: null, agent: null,
+      next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: `c${index}`,
+    }));
+    let m = 0;
+    setupOverview({
+      overview: { ...DEMO_PROJECT_OVERVIEW, works, coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_enumerated: 7 } },
+      snapshot: (id: string) => snapshotWithContract(id, { goals: [`Goal ${++m}`], acceptance: [] }),
+    });
+    expect(await screen.findAllByTestId('project-goals-group')).toHaveLength(5);
+    expect(screen.getByTestId('project-goals').textContent).toContain('还有');
+  });
+
+  it('draws no checkbox: nothing in this data says whether an acceptance item is met', async () => {
+    setupOverview();
+    await screen.findAllByTestId('project-goals-group');
+    expect(document.querySelector('[data-testid="project-goals"] input[type="checkbox"]')).toBeNull();
+    expect(screen.getByTestId('project-goals').textContent).toContain('Do not mutate input records');
+  });
+
+  it('counts progress words only from reads that happened, and gives no project verdict', async () => {
+    setupOverview();
+    await screen.findAllByTestId('project-delivery-counts');
+    expect(screen.getByTestId('project-delivery-counts').textContent).toContain('已认领');
+    expect(screen.getByTestId('project-delivery-counts').textContent).toContain('× 2');
+    // Loading and unread works are named separately, never folded into a word.
+    expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('加载中');
+    expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('未知');
+    expect(screen.getByTestId('project-delivery-scope').textContent).toBe('本页 2 项工作，项目共 2 项');
+    // No whole-project verdict: the prototype's judgement sentence is not ours to make.
+    const visible = document.querySelector('[data-testid="project-overview"]')?.textContent ?? '';
+    expect(visible).not.toContain('最终验收');
+    expect(visible).not.toContain('不具备');
+  });
+
+  it('names a failed read, counts it nowhere, and drops it from the word counts', async () => {
+    const snapshot = (id: string) => {
+      if (id === 'W2') throw new Error('synthetic read failure');
+      return demoWorkSnapshot(id);
+    };
+    setupOverview({ snapshot });
+    expect(await screen.findByTestId('project-delivery-unread')).toBeTruthy();
+    expect(screen.getByTestId('project-delivery-unread').textContent).toContain('1');
+    expect(screen.getByTestId('project-delivery-counts').textContent).toContain('× 1');
+    expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('× 2');
+    expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('未知');
+    expect(screen.getByTestId('project-delivery-counts').textContent).not.toContain('加载中');
+  });
+
+  it('names the works that need attention with their word, and caps the list', async () => {
+    setupOverview();
+    await screen.findAllByTestId('project-delivery-attention');
+    const attention = screen.getByTestId('project-delivery-attention').textContent ?? '';
+    expect(attention).toContain('Build the filter API');
+    expect(attention).toContain('已认领');
+    expect(screen.getByTestId('project-delivery-attention').querySelectorAll('a').length).toBe(2);
+  });
+
+  it('keeps both blocks off the page after revocation', async () => {
+    const { queryClient } = setupOverview();
+    await screen.findAllByTestId('project-status-W2');
+    act(() => revokeObservationReads(queryClient));
+    expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
+    expect(screen.queryByTestId('project-goals')).toBeNull();
+    expect(screen.queryByTestId('project-delivery')).toBeNull();
+  });
+
+  it('says the works\' agreements have not been read while the reads are pending', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    setupOverview({ snapshotGate: gate });
+    expect(await screen.findByTestId('project-goals-unread')).toBeTruthy();
+    expect(screen.getByTestId('project-goals-unread').textContent).toContain('2');
+    release();
   });
 });

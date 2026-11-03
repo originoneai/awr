@@ -15,6 +15,7 @@ import {
 } from '../core/observation';
 import { isAuthError } from '../lib/api';
 import { OBSERVATION_PAGE_SIZE, validObservationPage } from '../lib/pagination';
+import { contractGroups } from '../lib/contract-groups';
 import { overviewQueryOptions, readableSourceRef, sourceContentQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import { useTextDigest, type DigestCheck } from '../lib/text-digest';
@@ -49,19 +50,6 @@ const DIGEST_LABEL = {
   unverified: 'knowledge.digestUnverified',
   pending: 'knowledge.digestUnverified',
 } as const satisfies Record<DigestCheck, string>;
-
-/** Works that agreed on their goals and acceptance are shown once, under all their names. */
-function contractGroups(works: CitingWork[]) {
-  const groups = new Map<string, { titles: string[]; goals?: WorkContractValue[]; acceptance?: WorkContractValue[] }>();
-  for (const work of works) {
-    if (!work.goals?.length && !work.acceptance?.length) continue;
-    const key = JSON.stringify([work.goals ?? null, work.acceptance ?? null]);
-    const group = groups.get(key);
-    if (group) group.titles.push(work.title);
-    else groups.set(key, { titles: [work.title], goals: work.goals, acceptance: work.acceptance });
-  }
-  return Array.from(groups.values());
-}
 
 /** Assemble the knowledge list from per-work reads, never a project-level read. */
 export function ProjectKnowledge({ project }: { project: string }) {
