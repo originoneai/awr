@@ -700,4 +700,21 @@ describe('workbench tab counts', () => {
     await screen.findAllByText('Build the filter API');
     expect(screen.getByRole('tab', { name: '进行中' }).textContent).not.toMatch(/\d/);
   });
+
+  it('keeps the count on the tab bar while another tab is open', async () => {
+    setupWorkbench({ path: '/workbench?scope=demo&tab=needs-me' });
+    expect(await screen.findByRole('tab', { name: '进行中 2' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '需要我处理' }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('says none when the complete read lists no in-progress work, so that no number means not known', async () => {
+    setupWorkbench({ next: makeNext([], []) });
+    expect(await screen.findByRole('tab', { name: '进行中 0' })).toBeTruthy();
+  });
+
+  it('counts in English too', async () => {
+    await act(async () => { await i18n.changeLanguage('en-US'); });
+    setupWorkbench();
+    expect(await screen.findByRole('tab', { name: 'In progress 2' })).toBeTruthy();
+  });
 });
