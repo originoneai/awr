@@ -1,4 +1,4 @@
-import { humanText } from '../../i18n/human-language';
+import { FORBIDDEN_VISIBLE_PATTERNS, humanText } from '../../i18n/human-language';
 import { statementText } from './values';
 import type { WorkStateInput } from './types';
 
@@ -12,6 +12,24 @@ export interface OwnerResult {
   /** Whether the only reason there is no name yet is that the read is still running. */
   loading: boolean;
   technical: { row: string | null; snapshotOwnerName: string | null; snapshotOwner: string | null };
+}
+
+const IDENTIFIER_PATTERN_IDS = new Set(['snake_case', 'operation_name', 'long_hex', 'ulid', 'uuid', 'sha256', 'error_class']);
+
+/**
+ * Does this raw value read as a person's name — short, letters (any script), spaces, dots,
+ * hyphens and apostrophes, no identifier shape the guard already knows and no long digit runs?
+ * A machine identifier in the owner field is not shown as a name; the raw value stays for the
+ * technical details.
+ */
+export function readsAsName(value: string): boolean {
+  if (value.length === 0 || value.length > 40) return false;
+  if (IDENTIFIER_PATTERN_IDS.size > 0 && FORBIDDEN_VISIBLE_PATTERNS.some(({ id, pattern }) => IDENTIFIER_PATTERN_IDS.has(id) && pattern.test(value))) {
+    return false;
+  }
+  if (/\d{4,}/.test(value)) return false;
+  // Letters of any script, spaces, dots, hyphens, apostrophes — nothing else reads as a name.
+  return /^[\p{L}][\p{L} .'-]*$/u.test(value);
 }
 
 /**
@@ -38,8 +56,14 @@ export function deriveOwner(input: {
     return { name: null, source: 'none', loading: true, technical };
   }
   if (input.readState === 'ready') {
-    const name = technical.snapshotOwnerName ?? technical.snapshotOwner;
-    if (name != null) return { name, source: 'snapshot', loading: false, technical };
+    // The recorded name is shown as written; the bare owner field only when it reads as a
+    // name — an id shape is not a name, whatever it says.
+    if (technical.snapshotOwnerName != null) {
+      return { name: technical.snapshotOwnerName, source: 'snapshot', loading: false, technical };
+    }
+    if (technical.snapshotOwner != null && readsAsName(technical.snapshotOwner)) {
+      return { name: technical.snapshotOwner, source: 'snapshot', loading: false, technical };
+    }
   }
   return { name: null, source: 'none', loading: false, technical };
 }

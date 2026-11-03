@@ -53,6 +53,9 @@ export const HUMAN_VOCABULARY = {
     artifactNumbered: '产出 {{count}}',
     actionsOther: '另有 {{count}} 项其他操作',
     deliveredUnconfirmed: '汇报称已交付',
+    troubleIntegrationRejected: '并入主线被退回',
+    troubleIntegrationRejectedTargetMoved: '并入主线被退回，主线已变化',
+    troubleExecutionFailed: '上一次尝试没有成功',
   },
   'en-US': {
     technicalDetails: 'Technical details',
@@ -107,6 +110,9 @@ export const HUMAN_VOCABULARY = {
     artifactNumbered: 'Output {{count}}',
     actionsOther: '{{count}} more operations',
     deliveredUnconfirmed: 'Reported as delivered',
+    troubleIntegrationRejected: 'The merge into the mainline was rejected',
+    troubleIntegrationRejectedTargetMoved: 'The merge into the mainline was rejected, and the mainline has moved',
+    troubleExecutionFailed: 'The last attempt did not succeed',
   },
 } as const;
 

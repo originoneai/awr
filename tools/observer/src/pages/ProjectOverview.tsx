@@ -22,7 +22,7 @@ import { LastReportText } from '../components/LastReportText';
 import { WorkProgress, useWorkState } from '../components/WorkProgress';
 import { ToneBadge } from '../components/ToneBadge';
 import { contractGroups } from '../lib/contract-groups';
-import { deriveOwner, deriveWorkState, groupWorks, moreLinesText, ownerCellText, rawObservationText } from '../core/observation';
+import { deriveOwner, deriveTrouble, deriveWorkState, groupWorks, moreLinesText, ownerCellText, rawObservationText } from '../core/observation';
 import { readStateOf } from '../lib/read-state';
 import { RecentChanges } from '../components/RecentChanges';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
@@ -89,7 +89,7 @@ function OwnerCell({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
   const owner = deriveOwner({
     rowOwner: work.owner_person ?? work.agent,
     snapshot: query?.data?.result.data,
-    readState: query == null ? 'failed' : query.isPending ? 'loading' : query.isError ? 'failed' : 'ready',
+    readState: readStateOf(query),
   });
   return (
     <span data-testid={`project-owner-${work.key}`} data-owner-source={owner.source}>
@@ -200,7 +200,10 @@ function DeliveryBlock({ project, works, snapshots, coverage }: {
       workStatus: work.status,
       snapshot: query?.data?.result.data,
     });
-    return { work, readState, progress: state.progress };
+    // What the service itself measured goes with the word, and outranks it: a work with such a
+    // fact is named whatever its reporter claims, and the word keeps its own count.
+    const trouble = deriveTrouble({ snapshot: query?.data?.result.data, readState, options: { language: i18n.language } });
+    return { work, readState, progress: state.progress, trouble };
   });
   // Only a read that happened counts; loading and failed works are named separately and
   // counted nowhere, least of all as "in progress".
@@ -216,15 +219,15 @@ function DeliveryBlock({ project, works, snapshots, coverage }: {
   const ATTENTION_LIMIT = 5;
   // The list exists to name the works a person must look at: the waiting words (warning)
   // and the blocked, failed, rejected ones (negative) — never the positive or neutral words.
-  const attention = counted.filter((entry) => entry.progress.tone === 'warning' || entry.progress.tone === 'negative');
+  const attention = counted.filter((entry) => entry.progress.tone === 'warning' || entry.progress.tone === 'negative' || entry.trouble.length > 0);
   const attentionShown = attention.slice(0, ATTENTION_LIMIT);
   const attentionMore = attention.length - attentionShown.length;
   // The project total is the coverage card's own number, never the length of this list:
   // a cut-short list would put a second, smaller total on the page.
   const total = coverage?.works_total ?? null;
   const scopeText = total == null
-    ? t('projectOverview.deliveryScopeUnknownTotal', { page: works.length, read: counted.length })
-    : t('projectOverview.deliveryScope', { page: works.length, read: counted.length, total });
+    ? t('projectOverview.deliveryScopeUnknownTotal', { page: works.length, read: counted.length, count: works.length })
+    : t('projectOverview.deliveryScope', { page: works.length, read: counted.length, total, count: works.length });
 
   return (
     <section data-testid="project-delivery">
@@ -258,15 +261,23 @@ function DeliveryBlock({ project, works, snapshots, coverage }: {
                 <div data-testid="project-delivery-attention">
                   <Typography.Text strong>{t('projectOverview.deliveryAttention')}</Typography.Text>
                   <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
-                    {attentionShown.map(({ work, progress }) => (
+                    {attentionShown.map(({ work, progress, trouble }) => (
                       // The link text carries the progress word, so its accessible name stays
-                      // distinct from the same work's plain link in the table below.
+                      // distinct from the same work's plain link in the table below; the
+                      // service's own trouble facts follow as plain sentences.
                       <li key={work.key}>
                         <Link to={taskPath(project, work.key)} data-testid={`project-delivery-attention-${work.key}`}>
                           {work.title}
                           {t('knowledge.titleSeparator')}
                           {progress.text}
                         </Link>
+                        {trouble.length > 0 ? (
+                          <div data-testid={`project-delivery-trouble-${work.key}`} style={{ marginTop: 2 }}>
+                            {trouble.map((fact) => (
+                              <Typography.Text key={fact.kind} type="warning" style={{ display: 'block' }}>{fact.text}</Typography.Text>
+                            ))}
+                          </div>
+                        ) : null}
                       </li>
                     ))}
                   </ul>
@@ -324,7 +335,7 @@ function Coverage({ data }: { data: TeamOverviewResponse }) {
         <Typography.Text data-testid="coverage-summary">
           {total == null
             ? t('projectOverview.coverage.readUnknownTotal', { enumerated })
-            : t('projectOverview.coverage.readOfTotal', { enumerated, total })}
+            : t('projectOverview.coverage.readOfTotal', { enumerated, total, count: enumerated })}
         </Typography.Text>
         {failedStreams.length > 0 ? (
           <Typography.Text type="warning" data-testid="coverage-failed-summary">

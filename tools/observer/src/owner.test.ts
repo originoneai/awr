@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveOwner, ownerCellText } from './core/observation';
+import { deriveOwner, ownerCellText, readsAsName } from './core/observation';
 
 /**
  * The shape of the responsibility the service records in a work snapshot, written from the
@@ -23,10 +23,42 @@ describe('deriveOwner', () => {
     expect(result.source).toBe('snapshot');
   });
 
-  it('falls back further to the owner id as written, a short person id reads as a name', () => {
+  it('falls back further to the owner id as written when it reads as a name', () => {
     const result = deriveOwner({ rowOwner: null, snapshot: snapshot(null, 'mei'), readState: 'ready' });
     expect(result.name).toBe('mei');
     expect(result.source).toBe('snapshot');
+  });
+
+  it('never shows a machine identifier from the owner field, whatever shape it takes', () => {
+    for (const owner of [
+      'person_01HXYZABCDEF0123456789', // underscore + ULID-like tail
+      '01M6ARNTMQCWJMWM5QQVEK51MC', // ULID
+      'b8a7f2c1-9d3e-4a5b-8c6d-0e1f2a3b4c5d', // UUID
+      '0123456789abcdef0123456789abcdef01234567', // 40 hex digits
+    ]) {
+      const result = deriveOwner({ rowOwner: null, snapshot: snapshot(null, owner), readState: 'ready' });
+      expect(result.name, owner).toBeNull();
+      expect(result.technical.snapshotOwner, owner).toBe(owner);
+      expect(ownerCellText(result, { language: 'zh-CN' }), owner).toBe('未提供');
+    }
+  });
+
+  it('shows owner values that read as names in any script', () => {
+    for (const owner of ['mei', 'Lin', '周宁', 'Zhou Ning', "O'Brien", 'Jean-Luc']) {
+      expect(readsAsName(owner), owner).toBe(true);
+      const result = deriveOwner({ rowOwner: null, snapshot: snapshot(null, owner), readState: 'ready' });
+      expect(result.name, owner).toBe(owner);
+    }
+  });
+
+  it('says not provided when the read failed, even if a snapshot from before is still held (F6)', () => {
+    // In the app a failed refetch keeps the last data; a failed read must not show it.
+    const result = deriveOwner({ rowOwner: null, snapshot: snapshot('Mei', 'mei'), readState: 'failed' });
+    expect(result.name).toBeNull();
+    expect(ownerCellText(result, { language: 'zh-CN' })).toBe('未提供');
+    // And the row's own owner is unaffected by the read state.
+    const fromRow = deriveOwner({ rowOwner: '周宁', snapshot: null, readState: 'failed' });
+    expect(fromRow.name).toBe('周宁');
   });
 
   it('says loading, not "not provided", while the read is still on its way', () => {
