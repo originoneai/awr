@@ -195,10 +195,33 @@
           : t(i18n, isLive() && !w.detail_loaded ? 'ui.network_unread' : 'ui.network_owner_unknown'));
     }
 
+    // task_intake is one code for several situations, each with its own note for the agent; the page words each one,
+    // so that the person and the agent are told the same thing.
+    function taskIntakeVariant(guidance) {
+      const op = guidance.action?.op;
+      const when = String(guidance.when || '');
+      if (op === 'work.recovery') return 'pending';
+      if (op === 'work.next') return when === 'owned_by_other' || when === 'assigned_to_other' ? 'other' : 'observe';
+      if (op === 'session.start') return 'session_start';
+      if (op === 'task.accept_assignment') return 'accept_assignment';
+      if (op === 'task.claim_available') return 'claim_available';
+      if (op === 'claim.acquire') return 'claim_acquire';
+      return null;
+    }
+
+    function guidanceKey(guidance) {
+      const variant = guidance.code === 'task_intake' ? taskIntakeVariant(guidance) : null;
+      return 'feedback.guidance_' + guidance.code + (variant ? '_' + variant : '');
+    }
+
     function nextStep(w) {
-      const key = 'feedback.guidance_' + w.guidance?.code;
+      if (!w.guidance) return w.next_step;
+      const key = guidanceKey(w.guidance);
       const translated = t(i18n, key);
-      return w.guidance ? (translated === key ? t(i18n, 'feedback.guidance_unknown') : translated) : w.next_step;
+      if (translated !== key) return translated;
+      // A situation this page has no phrase for shows the note the service gave the agent, never a generic
+      // request to refresh that says something else.
+      return w.guidance.action?.note || t(i18n, 'feedback.guidance_unknown');
     }
 
     function missing(w, field, fallback) {
