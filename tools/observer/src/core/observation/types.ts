@@ -208,6 +208,8 @@ export interface WorkStateSnapshot {
     runtime?: { state?: unknown; selected_completion_id?: unknown } | null;
     /** The reporter's own checkpoint; `next_action` is what the reporter says comes next. */
     progress?: { next_action?: unknown; phase?: unknown } | null;
+    /** Who the service holds responsible for this work, when it says. */
+    responsibility?: { owner_name?: unknown; owner?: unknown } | null;
   } | null;
 }
 
