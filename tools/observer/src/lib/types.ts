@@ -243,6 +243,17 @@ export interface WorkCollaboration {
   facts_truncated?: boolean;
 }
 
+/** The data of a source.content reply; text arrives as the service decoded it. */
+export interface SourceContentData {
+  path?: string;
+  sha256?: string;
+  byte_length?: number;
+  text?: string | null;
+  kind?: string;
+  snapshot?: string;
+  [key: string]: unknown;
+}
+
 export interface WorkSnapshotData {
   work_id?: string;
   contract_hash?: string;

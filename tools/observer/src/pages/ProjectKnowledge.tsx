@@ -1,15 +1,21 @@
 import { useQuery } from '@tanstack/react-query';
-import { Card, Col, Input, List, Pagination, Row, Space, Tag, Typography, theme } from 'antd';
+import { Button, Card, Col, Input, List, Pagination, Row, Space, Tag, Typography, theme } from 'antd';
 import { useState } from 'react';
 import { Stamp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden } from '../components/states';
 import { TechnicalDetails } from '../components/TechnicalDetails';
-import { documentLabel, rawObservationText, utf8ByteLength } from '../core/observation';
+import {
+  documentLabel,
+  judgeContentRead,
+  rawObservationText,
+  utf8ByteLength,
+  type ContentReadStatus,
+} from '../core/observation';
 import { isAuthError } from '../lib/api';
 import { OBSERVATION_PAGE_SIZE, validObservationPage } from '../lib/pagination';
-import { overviewQueryOptions } from '../lib/queries';
+import { overviewQueryOptions, readableSourceRef, sourceContentQueryOptions } from '../lib/queries';
 import { useRevocation } from '../lib/revocation';
 import { useTextDigest, type DigestCheck } from '../lib/text-digest';
 import { useWorkSnapshots } from '../lib/work-snapshots';
@@ -156,6 +162,41 @@ export function ProjectKnowledge({ project }: { project: string }) {
   // not checked, never verified.
   const digestCheck = useTextDigest(selected?.contentIncluded ? selected.text : null, selected?.sha256);
 
+  // Read the full text only after a person asks for it, only once per (project, path, digest),
+  // never polled, never refetched on focus, and silently gone once access is revoked.
+  const [requestedKeys, setRequestedKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const selectedTruncated = Boolean(
+    selected?.text && selected.byteLength != null && utf8ByteLength(selected.text) !== selected.byteLength,
+  );
+  const needsFullRead = Boolean(selected) && (!selected.contentIncluded || selectedTruncated);
+  const refReadable = readableSourceRef(selected?.path, selected?.sha256);
+  const readRequested = Boolean(selected) && requestedKeys.has(selected.key);
+  const contentRead = useQuery({
+    ...sourceContentQueryOptions(
+      project,
+      selected?.path ?? '',
+      selected?.sha256 ?? '',
+      revoked,
+    ),
+    enabled: readRequested && refReadable && !revoked,
+  });
+  const readData = contentRead.data?.result.data;
+  const readText = typeof readData?.text === 'string' ? readData.text : null;
+  const readVerdict = useTextDigest(readRequested && readText != null ? readText : null, selected?.sha256);
+  // A 503 is a failed read, never a confirmed change: only the two digests in hand can say changed,
+  // and only when the held extent does not already explain the difference.
+  const readStatus: ContentReadStatus | 'not-text' | null = contentRead.data
+    ? (readText == null
+        ? 'not-text'
+        : judgeContentRead({
+          verdict: readVerdict === 'pending' ? 'unverified' : readVerdict,
+          byteLength: utf8ByteLength(readText),
+          declaredByteLength: selected?.byteLength ?? null,
+          more: false,
+        }))
+    : null;
+  const showingReadResult = readRequested && (contentRead.data != null || contentRead.isError);
+
   if (revoked || isAuthError(overview.error)) return <ObservationForbidden />;
 
   return (
@@ -224,23 +265,72 @@ export function ProjectKnowledge({ project }: { project: string }) {
             <Col xs={24} lg={16}>
               <Card size="small" style={{ width: '100%', minWidth: 0 }} title={<Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{names.get(selected.key)}</Typography.Text>}>
                 <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                  <Space size={8} wrap>
-                    <Tag color={selected.contentIncluded ? 'success' : 'default'}>
-                      {selected.contentIncluded ? t('knowledge.contentIncluded') : t('knowledge.contentMissing')}
-                    </Tag>
-                    {selected.byteLength != null && selected.text != null && utf8ByteLength(selected.text) !== selected.byteLength ? (
-                      <Tag color="warning">{t('knowledge.partial')}</Tag>
-                    ) : null}
-                    {selected.contentIncluded && selected.text ? (
-                      <Tag
-                        data-testid="digest-check"
-                        color={digestCheck === 'verified' ? 'success' : digestCheck === 'mismatch' ? 'error' : 'default'}
-                      >
-                        {digestCheck === 'verified' ? <Stamp size={16} strokeWidth={1.5} aria-label={t('knowledge.digestVerified')} /> : null}
-                        {t(DIGEST_LABEL[digestCheck])}
+                  {showingReadResult ? (
+                    <Space size={8} wrap data-testid="read-result">
+                      {contentRead.isError ? (
+                        <>
+                          <Tag color="error" data-testid="read-failed">{t('knowledge.readFailed')}</Tag>
+                          <Button
+                            size="small"
+                            data-testid="read-retry"
+                            onClick={() => void contentRead.refetch()}
+                          >
+                            {t('knowledge.retry')}
+                          </Button>
+                        </>
+                      ) : readStatus === 'not-text' ? (
+                        <Tag>{t('knowledge.notPlainText')}</Tag>
+                      ) : readStatus === 'changed' ? (
+                        <Tag color="error">{t('knowledge.digestMismatch')}</Tag>
+                      ) : readStatus === 'partial' ? (
+                        // A partial read's digest check says nothing (the front part is not the
+                        // whole file), so only the honest extent note shows, never "do not rely".
+                        <Tag color="warning">{t('knowledge.partial')}</Tag>
+                      ) : (
+                        <Tag data-testid="read-digest" color={readVerdict === 'verified' ? 'success' : 'default'}>
+                          {readVerdict === 'verified' ? <Stamp size={16} strokeWidth={1.5} aria-label={t('knowledge.digestVerified')} /> : null}
+                          {t(DIGEST_LABEL[readVerdict === 'pending' ? 'pending' : readVerdict])}
+                        </Tag>
+                      )}
+                    </Space>
+                  ) : (
+                    <Space size={8} wrap>
+                      <Tag color={selected.contentIncluded ? 'success' : 'default'}>
+                        {selected.contentIncluded ? t('knowledge.contentIncluded') : t('knowledge.contentMissing')}
                       </Tag>
-                    ) : null}
-                  </Space>
+                      {selectedTruncated ? (
+                        <Tag color="warning">{t('knowledge.partial')}</Tag>
+                      ) : null}
+                      {selected.contentIncluded && selected.text ? (
+                        <Tag
+                          data-testid="digest-check"
+                          color={digestCheck === 'verified' ? 'success' : digestCheck === 'mismatch' ? 'error' : 'default'}
+                        >
+                          {digestCheck === 'verified' ? <Stamp size={16} strokeWidth={1.5} aria-label={t('knowledge.digestVerified')} /> : null}
+                          {t(DIGEST_LABEL[digestCheck])}
+                        </Tag>
+                      ) : null}
+                      {needsFullRead && !refReadable ? (
+                        <Typography.Text type="secondary" data-testid="read-unavailable">
+                          {t('knowledge.unreadableRef')}
+                        </Typography.Text>
+                      ) : null}
+                      {needsFullRead && refReadable ? (
+                        <Button
+                          size="small"
+                          data-testid="read-full"
+                          // A not-yet-requested read is also "pending" in the query cache;
+                          // only a request actually in flight shows as loading.
+                          loading={readRequested && contentRead.isPending}
+                          onClick={() => {
+                            setRequestedKeys((keys) => new Set(keys).add(selected.key));
+                          }}
+                        >
+                          {t('knowledge.readFull')}
+                        </Button>
+                      ) : null}
+                    </Space>
+                  )}
                   {otherVersions.length > 1 ? (
                     <Typography.Text type="warning" data-testid="path-digest-notice">
                       {t('knowledge.multipleVersions', { count: otherVersions.length })}
@@ -255,8 +345,14 @@ export function ProjectKnowledge({ project }: { project: string }) {
                       </span>
                     ))}
                   </Typography.Text>
-                  {selected.text && selected.contentIncluded ? (
+                  {showingReadResult && readText != null && (readStatus === 'complete' || readStatus === 'partial' || readStatus === 'unverified') ? (
+                    <Typography.Paragraph data-testid="read-text" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{readText}</Typography.Paragraph>
+                  ) : null}
+                  {!showingReadResult && selected.text && selected.contentIncluded ? (
                     <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{selected.text}</Typography.Paragraph>
+                  ) : null}
+                  {showingReadResult && contentRead.isPending ? (
+                    <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>
                   ) : null}
                   {contractGroups(selected.citingWorks).map((group) => (
                     <Card key={group.titles.join('\u0000')} size="small" type="inner" title={t('knowledge.contractFor', { title: group.titles.join(t('knowledge.titleSeparator')) })}>
@@ -277,6 +373,12 @@ export function ProjectKnowledge({ project }: { project: string }) {
                       { label: 'digest_check', value: digestCheck },
                       { label: 'citing_works', value: selected.citingWorks.map((work) => work.key) },
                       ...(otherVersions.length > 1 ? [{ label: 'versions_of_this_path', value: otherVersions.map((entry) => entry.sha256) }] : []),
+                      ...(readRequested ? [
+                        { label: 'read_status', value: contentRead.isError ? 'failed' : readStatus },
+                        { label: 'read_error_code', value: (contentRead.error as { code?: string } | null)?.code ?? null },
+                        { label: 'read_received_sha256', value: readData?.sha256 ?? null },
+                        { label: 'read_received_byte_length', value: readData?.byte_length ?? null },
+                      ] : []),
                     ]}
                   />
                 </Space>
