@@ -9,6 +9,7 @@ mod batch;
 mod branch;
 mod capabilities;
 mod catalog;
+mod cli_failure;
 mod client;
 mod compaction;
 mod context;
@@ -232,8 +233,8 @@ enum Command {
     Unsupported(Vec<String>),
 }
 
-fn run(cli: &Cli) -> Result<()> {
-    match &cli.command {
+fn run(cli: &Cli) -> cli_failure::CliResult<()> {
+    let result = match &cli.command {
         Some(Command::Host { command }) => host_save::run(&cli.project, command, cli.json),
         Some(Command::Runtime { command }) => {
             runtime_snapshot::run(&cli.project, command, cli.json)
@@ -269,14 +270,15 @@ fn run(cli: &Cli) -> Result<()> {
                 milestone: milestone.clone(),
             };
             if queue.is_some() && view != "action" {
-                return Err(awr_core::Error::InvalidInput(
-                    "--queue requires --view action".into(),
-                ));
+                return Err(
+                    awr_core::Error::InvalidInput("--queue requires --view action".into()).into(),
+                );
             }
             if view == "full" && !scope.is_empty() {
                 return Err(awr_core::Error::InvalidInput(
                     "scope selectors require --view action or summary".into(),
-                ));
+                )
+                .into());
             }
             query::status_with_scope(
                 &cli.project,
@@ -313,19 +315,20 @@ fn run(cli: &Cli) -> Result<()> {
         Some(Command::Workspace(args)) => workspace::run(&cli.project, args, cli.json),
         Some(Command::Team { command }) => {
             require_team(&cli.project)?;
-            team::run(&cli.project, command, cli.json)
+            return team::run(&cli.project, command, cli.json);
         }
         Some(Command::Remote { command }) => {
             require_team(&cli.project)?;
             remote::run(&cli.project, command, cli.json)
         }
         None => {
-            Cli::command().print_help()?;
+            Cli::command().print_help().map_err(Error::from)?;
             println!();
             Ok(())
         }
         Some(Command::Unsupported(args)) => Err(Error::Unsupported(args.join(" "))),
-    }
+    };
+    result.map_err(Into::into)
 }
 
 fn main() -> std::process::ExitCode {
@@ -366,20 +369,7 @@ fn main() -> std::process::ExitCode {
     match run(&cli) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
-            if cli.json {
-                eprintln!(
-                    "{}",
-                    serde_json::to_string(&error.report()).expect("error report serializes")
-                );
-            } else {
-                let report = error.report();
-                eprintln!(
-                    "{}: {}{}",
-                    report.code,
-                    report.message,
-                    awr_core::render_diagnostic_details(report.details.as_ref())
-                );
-            }
+            error.print(cli.json);
             std::process::ExitCode::from(1)
         }
     }

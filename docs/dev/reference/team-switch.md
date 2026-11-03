@@ -7,7 +7,7 @@ decides whether a personal installation offers Team surfaces.
 
 | Surface | Switch off | Switch on |
 |---|---|---|
-| `awr team ...`, `awr remote ...` | Exit 1 with `Unsupported`: "team features are disabled; enable them with ..." No state is created. | Unchanged behaviour. |
+| `awr team ...`, `awr remote ...` | Exit 1 with `Unsupported`: "team features are disabled; enable them with ..." No state is created. | Local capabilities and configured [Team CLI reads](team-cli.md) are available. Remote command submission remains unsupported. |
 | Local/shared `awr-mcp` tools `awr_team_handoff`, `awr_team_review` | Not advertised in `tools/list` or domain manifests; a direct call returns an "invalid request" error with the same message. | Advertised and callable as before. |
 
 `awr-server` and the Team PostgreSQL service are Team deployments and are not

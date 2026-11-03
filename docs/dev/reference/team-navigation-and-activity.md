@@ -18,6 +18,11 @@ recovery needs without exposing private dependency names. Follow the returned
 `next_query`; consume `work.prepare` before claiming or executing. Navigation
 grants no execution authority and does not certify dependency acceptance.
 
+The native [Team CLI](team-cli.md) exposes the same reads through
+`awr team capabilities --remote NAME` and `awr team work next --remote NAME`,
+with additional list, inbox, prepare, snapshot and observe commands. It uses the
+configured project's Team service and preserves the same authority boundaries.
+
 Own-session continuation links use `work.observe`. A single current, live run
 owned by this client is marked `resume`; expired leases, changed execution
 bindings and unresolved effects still require recovery. `session.inspect` and

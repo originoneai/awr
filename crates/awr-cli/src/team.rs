@@ -1,19 +1,34 @@
-use awr_core::{Error, Result};
+use awr_core::{Error, Id, Result};
 use awr_team::{AuthContext, authorize, execute, parse_envelope};
-use clap::Subcommand;
+use clap::{Args, Subcommand};
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::Path;
 
-use crate::remote::{load_profile, team_err};
+use crate::cli_failure::CliResult;
+use crate::remote::{load_profile, remote_name, team_err};
+
+mod client;
+mod output;
 
 #[derive(Debug, Subcommand)]
 pub enum TeamCommand {
-    /// Show Team protocol capabilities. Does not open the local SQLite store.
+    /// Show local capabilities, or authenticated service capabilities with --remote.
     Capabilities {
-        #[arg(long)]
+        #[arg(long, value_parser = remote_name)]
         remote: Option<String>,
     },
-    /// Check a Team envelope, then return Unsupported: remote submission is not implemented.
+    /// Discover workstreams visible to the authenticated caller.
+    Workstream {
+        #[command(subcommand)]
+        command: WorkstreamCommand,
+    },
+    /// Navigate and read authoritative Team work. Queries do not grant execution authority.
+    Work {
+        #[command(subcommand)]
+        command: WorkCommand,
+    },
+    /// Validate a Team envelope or show local capabilities; remote submission is not implemented.
     Command {
         #[arg(long)]
         remote: Option<String>,
@@ -24,30 +39,219 @@ pub enum TeamCommand {
     },
 }
 
-pub fn run(project: &Path, command: &TeamCommand, json: bool) -> Result<()> {
-    match command {
-        TeamCommand::Capabilities { remote } => {
-            let profile = remote
-                .as_deref()
-                .map(|name| load_profile(project, name))
-                .transpose()?;
-            let auth = auth_from_profile(profile.as_ref())?;
+#[derive(Debug, Subcommand)]
+pub enum WorkstreamCommand {
+    List(NavigationArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WorkCommand {
+    /// Suggest work and current-client sessions. Does not claim or reserve work.
+    Next(NavigationArgs),
+    /// Read one page of coordination items; an empty page may still have a cursor.
+    Inbox {
+        #[command(flatten)]
+        navigation: NavigationArgs,
+        #[command(flatten)]
+        budget: BudgetArgs,
+    },
+    /// List contracts in one workstream; runtime state is not included.
+    List(ListArgs),
+    /// Case-insensitive literal substring search of titles in one workstream.
+    Search {
+        #[arg(value_name = "TEXT", value_parser = search_text)]
+        text: String,
+        #[command(flatten)]
+        list: ListArgs,
+    },
+    /// Read required context. Exit 0 means read success; check context_complete separately.
+    Prepare(DetailArgs),
+    /// Read context and observations in one transaction; does not grant execution authority.
+    Snapshot(DetailArgs),
+    /// Read recorded progress; a running record does not prove a live process.
+    Observe(DetailArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RemoteArgs {
+    #[arg(long, value_name = "NAME", value_parser = remote_name)]
+    remote: String,
+}
+
+#[derive(Debug, Default, Args)]
+pub struct PageArgs {
+    /// Page size, 1..100. Omit to use the service default.
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1..=100))]
+    limit: Option<u16>,
+    /// Opaque service cursor; retain the same operation and filters when continuing.
+    #[arg(long, value_parser = cursor_text)]
+    cursor: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct NavigationArgs {
+    #[command(flatten)]
+    remote: RemoteArgs,
+    #[command(flatten)]
+    page: PageArgs,
+}
+
+#[derive(Debug, Args)]
+pub struct ListArgs {
+    #[command(flatten)]
+    navigation: NavigationArgs,
+    /// Workstream ULID, not its title or external key.
+    #[arg(long, value_name = "ID")]
+    workstream: Option<Id>,
+}
+
+#[derive(Debug, Args)]
+#[group(id = "work_selection", required = true, multiple = true)]
+pub struct WorkSelection {
+    #[arg(value_name = "WORK", value_parser = selector)]
+    work: Option<String>,
+    /// Select by session; may accompany WORK if both identify the same work.
+    #[arg(long, value_name = "ID", value_parser = selector)]
+    session: Option<String>,
+}
+
+#[derive(Debug, Default, Args)]
+pub struct BudgetArgs {
+    /// Context byte budget, 1..262144; not a token count. Service default: 65536.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..=262144))]
+    max_context_bytes: Option<u32>,
+}
+
+#[derive(Debug, Args)]
+pub struct DetailArgs {
+    #[command(flatten)]
+    remote: RemoteArgs,
+    #[command(flatten)]
+    selection: WorkSelection,
+    /// Optional confirming workstream ULID; alone it does not select a task.
+    #[arg(long, value_name = "ID")]
+    workstream: Option<Id>,
+    #[command(flatten)]
+    budget: BudgetArgs,
+}
+
+// Only the selected read operations need a CLI adapter. The service owns validation
+// of identity, selection consistency, permission and current business facts.
+#[derive(Serialize)]
+struct QueryRequest {
+    protocol_version: u32,
+    op: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workstream_id: Option<Id>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    work_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_context_bytes: Option<u32>,
+}
+
+impl QueryRequest {
+    fn new(op: &'static str) -> Self {
+        Self {
+            protocol_version: 1,
+            op,
+            workstream_id: None,
+            work_id: None,
+            session_id: None,
+            search: None,
+            limit: None,
+            cursor: None,
+            max_context_bytes: None,
+        }
+    }
+
+    fn page(mut self, args: &PageArgs) -> Self {
+        self.limit = args.limit;
+        self.cursor = args.cursor.clone();
+        self
+    }
+
+    fn list(self, args: &ListArgs) -> Self {
+        let mut query = self.page(&args.navigation.page);
+        query.workstream_id = args.workstream;
+        query
+    }
+
+    fn detail(mut self, args: &DetailArgs) -> Self {
+        self.work_id = args.selection.work.clone();
+        self.session_id = args.selection.session.clone();
+        self.workstream_id = args.workstream;
+        self.max_context_bytes = args.budget.max_context_bytes;
+        self
+    }
+}
+
+pub fn run(project: &Path, command: &TeamCommand, json: bool) -> CliResult<()> {
+    let (remote, query) = match command {
+        TeamCommand::Capabilities { remote: None } => {
+            let auth = auth_from_profile(None)?;
             let value = execute(
                 "cli",
                 parse_envelope(&json!({
-                    "protocol_version": 1,
-                    "request_id": "capabilities",
-                    "op": "capabilities"
+                    "protocol_version":1,"request_id":"capabilities","op":"capabilities"
                 }))
                 .map_err(team_err)?,
                 &auth,
-                profile.as_ref(),
+                None,
                 true,
             )
             .map_err(team_err)?;
             print_value(&value, json);
-            Ok(())
+            return Ok(());
         }
+        TeamCommand::Capabilities { remote: Some(name) } => {
+            (name.as_str(), QueryRequest::new("capabilities"))
+        }
+        TeamCommand::Workstream {
+            command: WorkstreamCommand::List(args),
+        } => (
+            args.remote.remote.as_str(),
+            QueryRequest::new("workstreams.list").page(&args.page),
+        ),
+        TeamCommand::Work { command } => match command {
+            WorkCommand::Next(args) => (
+                args.remote.remote.as_str(),
+                QueryRequest::new("work.next").page(&args.page),
+            ),
+            WorkCommand::Inbox { navigation, budget } => {
+                let mut query = QueryRequest::new("work.inbox").page(&navigation.page);
+                query.max_context_bytes = budget.max_context_bytes;
+                (navigation.remote.remote.as_str(), query)
+            }
+            WorkCommand::List(args) => (
+                args.navigation.remote.remote.as_str(),
+                QueryRequest::new("work.list").list(args),
+            ),
+            WorkCommand::Search { text, list } => {
+                let mut query = QueryRequest::new("work.search").list(list);
+                query.search = Some(text.clone());
+                (list.navigation.remote.remote.as_str(), query)
+            }
+            WorkCommand::Prepare(args) => (
+                args.remote.remote.as_str(),
+                QueryRequest::new("work.prepare").detail(args),
+            ),
+            WorkCommand::Snapshot(args) => (
+                args.remote.remote.as_str(),
+                QueryRequest::new("work.snapshot").detail(args),
+            ),
+            WorkCommand::Observe(args) => (
+                args.remote.remote.as_str(),
+                QueryRequest::new("work.observe").detail(args),
+            ),
+        },
         TeamCommand::Command {
             remote,
             body,
@@ -67,11 +271,38 @@ pub fn run(project: &Path, command: &TeamCommand, json: bool) -> Result<()> {
             let value =
                 execute("cli", envelope, &auth, profile.as_ref(), !offline).map_err(team_err)?;
             print_value(&value, json);
-            Ok(())
+            return Ok(());
         }
-    }
+    };
+    let profile = load_profile(project, remote)?;
+    let value = client::TeamClient::new(&profile)?.query(&query)?;
+    output::validate(query.op, &value)?;
+    output::print(query.op, remote, &value, json);
+    Ok(())
 }
 
+fn bounded_text(value: &str, max: usize, label: &str) -> std::result::Result<String, String> {
+    if value.is_empty() || value.len() > max || value.chars().any(char::is_control) {
+        Err(format!(
+            "{label} must be nonempty, at most {max} UTF-8 bytes, and contain no control characters"
+        ))
+    } else {
+        Ok(value.to_owned())
+    }
+}
+fn selector(value: &str) -> std::result::Result<String, String> {
+    bounded_text(value, 128, "selector")
+}
+fn search_text(value: &str) -> std::result::Result<String, String> {
+    bounded_text(value, 512, "search")
+}
+fn cursor_text(value: &str) -> std::result::Result<String, String> {
+    if value.len() > 4096 {
+        Err("cursor must be at most 4096 UTF-8 bytes".into())
+    } else {
+        Ok(value.to_owned())
+    }
+}
 fn auth_from_profile(profile: Option<&awr_team::RemoteProfile>) -> Result<AuthContext> {
     Ok(AuthContext {
         tenant_id: "local".into(),

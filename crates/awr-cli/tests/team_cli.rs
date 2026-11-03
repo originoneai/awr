@@ -52,6 +52,38 @@ fn remote_add_rejects_database_urls() {
     assert_eq!(error["code"], "RuleViolation");
 }
 
+#[test]
+fn remote_configuration_rejects_empty_names_without_creating_state() {
+    let dir = tempfile_dir();
+    let out = awr()
+        .args([
+            "--json",
+            "--project",
+            &dir,
+            "remote",
+            "add",
+            "",
+            "--endpoint",
+            "http://127.0.0.1:9",
+            "--project-key",
+            "demo",
+            "--credential-env",
+            "AWR_TEST_TEAM_TOKEN",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(error(out)["code"], "InvalidInput");
+    for operation in ["inspect", "remove"] {
+        let out = awr()
+            .args(["--json", "--project", &dir, "remote", operation, ""])
+            .output()
+            .unwrap();
+        assert_eq!(error(out)["code"], "InvalidInput");
+    }
+    assert!(!std::path::Path::new(&dir).join(".awr").exists());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 fn tempfile_dir() -> String {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let path = std::env::temp_dir().join(format!(
@@ -295,15 +327,26 @@ fn add_and_existing_profile_load_reject_secret_urls_without_echo() {
 #[test]
 fn capabilities_are_explicitly_local_and_create_no_runtime_state() {
     let dir = tempfile_dir();
-    let out = awr()
-        .args(["--json", "--project", &dir, "team", "capabilities"])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v["local"], true);
-    assert_eq!(v["submitted"], false);
-    assert_eq!(v["command_transport"], false);
+    for args in [
+        vec!["team", "capabilities"],
+        vec![
+            "team",
+            "command",
+            "--body",
+            r#"{"protocol_version":1,"request_id":"local-capabilities","op":"capabilities"}"#,
+        ],
+    ] {
+        let out = awr()
+            .args(["--json", "--project", &dir])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(v["local"], true);
+        assert_eq!(v["submitted"], false);
+        assert_eq!(v["command_transport"], false);
+    }
     assert!(!std::path::Path::new(&dir).join(".awr").exists());
     std::fs::remove_dir_all(dir).unwrap();
 }
