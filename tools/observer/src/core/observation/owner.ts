@@ -14,7 +14,8 @@ export interface OwnerResult {
   technical: { row: string | null; snapshotOwnerName: string | null; snapshotOwner: string | null };
 }
 
-const IDENTIFIER_PATTERN_IDS = new Set(['snake_case', 'operation_name', 'long_hex', 'ulid', 'uuid', 'sha256', 'error_class']);
+/** The pattern ids that mean "this text is an identifier"; shared with the human-language guard. */
+export const IDENTIFIER_PATTERN_IDS = new Set(['snake_case', 'operation_name', 'long_hex', 'ulid', 'uuid', 'sha256', 'error_class']);
 
 /**
  * Does this raw value read as a person's name — short, letters (any script), spaces, dots,
@@ -24,7 +25,7 @@ const IDENTIFIER_PATTERN_IDS = new Set(['snake_case', 'operation_name', 'long_he
  */
 export function readsAsName(value: string): boolean {
   if (value.length === 0 || value.length > 40) return false;
-  if (IDENTIFIER_PATTERN_IDS.size > 0 && FORBIDDEN_VISIBLE_PATTERNS.some(({ id, pattern }) => IDENTIFIER_PATTERN_IDS.has(id) && pattern.test(value))) {
+  if (FORBIDDEN_VISIBLE_PATTERNS.some(({ id, pattern }) => IDENTIFIER_PATTERN_IDS.has(id) && pattern.test(value))) {
     return false;
   }
   if (/\d{4,}/.test(value)) return false;

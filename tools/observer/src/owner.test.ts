@@ -43,6 +43,22 @@ describe('deriveOwner', () => {
     }
   });
 
+  it('refuses the shape gate\'s own edges: too long, wrong characters, digits (S2/S5/S7)', () => {
+    // q avoids the hex shapes: 40 a's would be a long hex string by the identifier rules.
+    expect(readsAsName('q'.repeat(41))).toBe(false); // S2: past the 40 bound
+    expect(readsAsName('q'.repeat(40))).toBe(true);
+    for (const value of ['docs/support', 'x<y', 'hey!', '👍thumbsup', 'name	tab']) { // S5
+      expect(readsAsName(value), value).toBe(false);
+      const result = deriveOwner({ rowOwner: null, snapshot: snapshot(null, value), readState: 'ready' });
+      expect(result.name, value).toBeNull();
+    }
+    for (const value of ['agent7', 'lin2', 'dev42']) { // S7: a digit anywhere refuses
+      expect(readsAsName(value), value).toBe(false);
+    }
+    // Long digit runs were already covered by the identifier shapes; a single digit is the rule.
+    expect(readsAsName('2026')).toBe(false);
+  });
+
   it('shows owner values that read as names in any script', () => {
     for (const owner of ['mei', 'Lin', '周宁', 'Zhou Ning', "O'Brien", 'Jean-Luc']) {
       expect(readsAsName(owner), owner).toBe(true);

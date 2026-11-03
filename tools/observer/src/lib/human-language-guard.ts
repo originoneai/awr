@@ -1,5 +1,7 @@
 import { FORBIDDEN_VISIBLE_PATTERNS } from '../i18n/human-language';
+import { IDENTIFIER_PATTERN_IDS } from '../core/observation/owner';
 
+export { IDENTIFIER_PATTERN_IDS };
 export interface VisibleTextViolation {
   id: string;
   match: string;
@@ -13,7 +15,7 @@ export function findForbiddenVisibleText(text: string): VisibleTextViolation[] {
 }
 
 /** The patterns that are shapes of identifiers; a reporter's own words are scanned for these and nothing else. */
-export const IDENTIFIER_PATTERN_IDS: ReadonlySet<string> = new Set(['snake_case', 'operation_name', 'long_hex', 'ulid', 'uuid', 'sha256', 'error_class']);
+// The one set lives in the core; the guard and the owner gate share it.
 
 export function findIdentifierText(text: string): VisibleTextViolation[] {
   return findForbiddenVisibleText(text).filter((violation) => IDENTIFIER_PATTERN_IDS.has(violation.id));
