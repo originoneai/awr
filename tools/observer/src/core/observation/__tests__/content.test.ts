@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { webcrypto } from 'node:crypto';
 import { assembleSegments, judgeContentRead } from '../content';
+import { verifyTextDigest } from '../digest';
 
 /**
  * Real-shape drivers, cut from the live samples of the TF-014AN rehearsal run-09
@@ -104,6 +106,56 @@ describe('assembleSegments', () => {
     ]);
     expect(assembly).toEqual({ kind: 'inconsistent', reason: 'no-progress', pageCount: 1 });
   });
+
+  it('refuses no pages at all: nothing was read', () => {
+    expect(assembleSegments([])).toEqual({ kind: 'inconsistent', reason: 'no-pages', pageCount: 0 });
+  });
+
+  it('assembles a zero-byte artifact as empty content', () => {
+    const assembly = assembleSegments([
+      { start: 0, endExclusive: 0, bytes: new Uint8Array(0), nextCursor: null },
+    ]);
+    expect(assembly).toEqual({ kind: 'assembled', bytes: new Uint8Array(0), text: '', pageCount: 1, more: false });
+  });
+
+  it('refuses a first page that starts before byte 0', () => {
+    const assembly = assembleSegments([
+      { start: -8, endExclusive: PAGE_A.length - 8, bytes: PAGE_A, nextCursor: null },
+    ]);
+    expect(assembly).toEqual({ kind: 'inconsistent', reason: 'not-from-zero', pageCount: 1 });
+  });
+
+  it('refuses a cursor loop that is not between neighbours (a, b, a)', () => {
+    const assembly = assembleSegments([
+      { start: 0, endExclusive: PAGE_A.length, bytes: PAGE_A, nextCursor: 'a' },
+      { start: PAGE_A.length, endExclusive: PAGE_A.length + PAGE_B.length, bytes: PAGE_B, nextCursor: 'b' },
+      { start: PAGE_A.length + PAGE_B.length, endExclusive: PAGE_A.length + 2 * PAGE_B.length, bytes: PAGE_B, nextCursor: 'a' },
+      { start: PAGE_A.length + 2 * PAGE_B.length, endExclusive: PAGE_A.length + 3 * PAGE_B.length, bytes: PAGE_B, nextCursor: null },
+    ]);
+    expect(assembly).toEqual({ kind: 'inconsistent', reason: 'cursor-loop', pageCount: 3 });
+  });
+
+  it('keeps a UTF-8 BOM in the text so the byte round trip is exact and the digest verifies', async () => {
+    const bom = new Uint8Array([0xEF, 0xBB, 0xBF, ...PAGE_A]);
+    const assembly = assembleSegments([{ start: 0, endExclusive: bom.length, bytes: bom, nextCursor: null }]);
+    expect(assembly.kind).toBe('assembled');
+    if (assembly.kind !== 'assembled') return;
+    expect(assembly.text.codePointAt(0)).toBe(0xFEFF);
+    expect(assembly.text.slice(1)).toContain('issue-filter-api first version');
+    const subtle = webcrypto.subtle;
+    const verdict = await verifyTextDigest({ text: assembly.text, declaredSha256: 'bom-not-declared', subtle });
+    // Against the digest of the real bytes (not of a BOM-stripped re-encode) the check verifies.
+    const digestOfBytes = Array.from(new Uint8Array(await subtle.digest('SHA-256', bom)))
+      .map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    expect(await verifyTextDigest({ text: assembly.text, declaredSha256: digestOfBytes, subtle })).toBe('verified');
+    expect(verdict).toBe('mismatch');
+  });
+
+  it('refuses bytes that are not valid UTF-8 instead of showing replacement characters', () => {
+    const binary = new Uint8Array([0x41, 0x80, 0x42]);
+    const assembly = assembleSegments([{ start: 0, endExclusive: 3, bytes: binary, nextCursor: null }]);
+    expect(assembly).toEqual({ kind: 'inconsistent', reason: 'not-text', pageCount: 1 });
+  });
 });
 
 describe('judgeContentRead', () => {
@@ -112,8 +164,15 @@ describe('judgeContentRead', () => {
     expect(judgeContentRead({ verdict: 'verified', byteLength: 96, declaredByteLength: 2753, more: true })).toBe('partial');
   });
 
-  it('says changed only when the digests in hand disagree, and the old text goes', () => {
+  it('says partial for a read the service cut short, whatever the digest then says', () => {
+    // A cut-short read always disagrees with the declared digest; that is not proof of change.
+    expect(judgeContentRead({ verdict: 'mismatch', byteLength: 96, declaredByteLength: 2753, more: false })).toBe('partial');
+    expect(judgeContentRead({ verdict: 'unverified', byteLength: 96, declaredByteLength: 2753, more: false })).toBe('partial');
+  });
+
+  it('says changed when the extents agree and the digests in hand disagree', () => {
     expect(judgeContentRead({ verdict: 'mismatch', byteLength: 2753, declaredByteLength: 2753, more: false })).toBe('changed');
+    expect(judgeContentRead({ verdict: 'mismatch', byteLength: 3000, declaredByteLength: 2753, more: false })).toBe('changed');
   });
 
   it('says unverified when the check could not run, never verified', () => {
@@ -126,7 +185,7 @@ describe('judgeContentRead', () => {
     expect(judgeContentRead({ verdict: 'verified', byteLength: 433, declaredByteLength: 433, more: false })).toBe('complete');
   });
 
-  it('says partial for a verified read shorter than the declared length (truncated)', () => {
+  it('stays partial for a verified read shorter than declared (contradicting metadata; the real service cannot produce this)', () => {
     expect(judgeContentRead({ verdict: 'verified', byteLength: 96, declaredByteLength: 2753, more: false })).toBe('partial');
     expect(judgeContentRead({ verdict: 'verified', byteLength: 433, declaredByteLength: 4330, more: false })).toBe('partial');
   });
