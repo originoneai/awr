@@ -7,6 +7,8 @@ export { deriveWorkState } from './work-state';
 export { claimState } from './claim';
 export { abbreviateIds, readableSentence } from './readable';
 export { utf8ByteLength, verifyTextDigest } from './digest';
+export { assembleSegments, judgeContentRead } from './content';
+export type { SegmentPageInput, SegmentInconsistency, SegmentAssembly, ContentReadStatus } from './content';
 export { describeProgressReport, moreLinesText, REPORT_LIST_LIMIT } from './report';
 export {
   PLANE_STATES,
