@@ -89,7 +89,7 @@ function OwnerCell({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
   const owner = deriveOwner({
     rowOwner: work.owner_person ?? work.agent,
     snapshot: query?.data?.result.data,
-    readState: query == null ? 'failed' : query.isPending ? 'loading' : query.isError ? 'failed' : 'ready',
+    readState: readStateOf(query),
   });
   return (
     <span data-testid={`project-owner-${work.key}`} data-owner-source={owner.source}>
@@ -223,8 +223,8 @@ function DeliveryBlock({ project, works, snapshots, coverage }: {
   // a cut-short list would put a second, smaller total on the page.
   const total = coverage?.works_total ?? null;
   const scopeText = total == null
-    ? t('projectOverview.deliveryScopeUnknownTotal', { page: works.length, read: counted.length })
-    : t('projectOverview.deliveryScope', { page: works.length, read: counted.length, total });
+    ? t('projectOverview.deliveryScopeUnknownTotal', { page: works.length, read: counted.length, count: works.length })
+    : t('projectOverview.deliveryScope', { page: works.length, read: counted.length, total, count: works.length });
 
   return (
     <section data-testid="project-delivery">
@@ -324,7 +324,7 @@ function Coverage({ data }: { data: TeamOverviewResponse }) {
         <Typography.Text data-testid="coverage-summary">
           {total == null
             ? t('projectOverview.coverage.readUnknownTotal', { enumerated })
-            : t('projectOverview.coverage.readOfTotal', { enumerated, total })}
+            : t('projectOverview.coverage.readOfTotal', { enumerated, total, count: enumerated })}
         </Typography.Text>
         {failedStreams.length > 0 ? (
           <Typography.Text type="warning" data-testid="coverage-failed-summary">
