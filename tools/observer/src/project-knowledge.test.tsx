@@ -6,10 +6,12 @@ import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
+import { focusManager, onlineManager } from '@tanstack/react-query';
 import { RevocationProvider } from './lib/revocation';
 import { createAppQueryClient, queryKeys, revokeObservationReads } from './lib/queries';
 import { ProjectKnowledge } from './pages/ProjectKnowledge';
 import { DEMO_OVERVIEW, DEMO_PROJECTS, renderApp } from './test-utils';
+import { realSourceContentReply, realSourceContentWrongDigestReply } from './test-fixtures/real-shaped';
 
 // Fixtures follow the real response shapes in live-samples/
 // lin-upstream-work-snapshot-api.json and service-work-prepare-*.json:
@@ -21,7 +23,8 @@ interface SpecFixture {
   byte_length: number;
   content_included?: boolean;
   next_step: null;
-  text: string;
+  /** Absent when the citing response carried no text (a readable reference). */
+  text?: string;
 }
 
 function sha256(text: string) {
@@ -109,9 +112,11 @@ const WORKS = [
 function setupKnowledge({
   snapshots,
   works = WORKS,
+  sourceContent,
 }: {
   snapshots: Record<string, unknown>;
   works?: typeof WORKS;
+  sourceContent?: (query: { source_path?: string; expected_sha256?: string }) => unknown;
 }) {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -130,6 +135,9 @@ function setupKnowledge({
       if (query.op === 'work.snapshot') {
         const response = snapshots[query.work_id];
         if (response) return json(response);
+      }
+      if (query.op === 'source.content' && sourceContent) {
+        return json(sourceContent(query));
       }
     }
     return json({ ok: false, error: { code: 'NoRoute', message: url } });
@@ -559,5 +567,289 @@ describe('project knowledge tab (AWR-OBS-009)', () => {
     });
     expect(calls.filter(({ url }) => url.includes('/api/team/read')).length).toBe(readsBeforeRevoke);
     expect(calls.length).toBe(settled);
+  });
+});
+
+describe('knowledge full-text read (OBS-009 slice 2)', () => {
+  // Real fixture replies: the run's own support.md (433 bytes) and the 503 body the
+  // service answers when expected_sha256 does not match.
+  const REAL_TEXT = realSourceContentReply().result.data.text as string;
+  const REAL_SHA = realSourceContentReply().result.data.sha256 as string;
+  const REAL_BYTES = realSourceContentReply().result.data.byte_length as number;
+
+  function refOnlySnapshots() {
+    // A work that cites the document as a readable reference (no text in the response).
+    const spec = specFor(REAL_TEXT, { sha256: REAL_SHA, byte_length: REAL_BYTES, content_included: false });
+    const withoutText = { ...spec, text: undefined } as typeof spec;
+    const snapshots = { W1: snapshotWithSpec('W1', withoutText), W2: snapshotWithSpec('W2', withoutText) };
+    return { spec, snapshots };
+  }
+
+  function countSourceReads(calls: Array<{ url: string; init?: RequestInit }>) {
+    return calls.filter(({ url, init }) => url.includes('/api/team/read')
+      && JSON.parse(String(init?.body)).query.op === 'source.content').length;
+  }
+
+  function sourceReadCall(calls: Array<{ url: string; init?: RequestInit }>) {
+    return calls
+      .filter(({ url, init }) => url.includes('/api/team/read') && init?.body != null)
+      .map(({ url, init }) => ({ url, body: JSON.parse(String(init?.body)) as { query?: { op?: string; source_path?: string; expected_sha256?: string } } }))
+      .find(({ body }) => body.query?.op === 'source.content');
+  }
+
+  it('sends no source read before the button is pressed, and asks correctly once it is', async () => {
+    const user = userEvent.setup();
+    const { snapshots } = refOnlySnapshots();
+    const { calls } = setupKnowledge({
+      snapshots,
+      sourceContent: () => realSourceContentReply(),
+    });
+    renderApp('/projects/demo?tab=knowledge');
+    const spec = specFor(REAL_TEXT, { sha256: REAL_SHA });
+    await screen.findAllByTestId(sourceTestId(spec));
+    await waitFor(() => expect(screen.getByTestId('read-full')).toBeTruthy());
+    expect(countSourceReads(calls)).toBe(0);
+
+    await user.click(screen.getByTestId('read-full'));
+    await waitFor(() => expect(screen.getByTestId('read-text')).toBeTruthy());
+    const call = sourceReadCall(calls);
+    expect(call?.body.query?.source_path).toBe('docs/support.md');
+    expect(call?.body.query?.expected_sha256).toBe(REAL_SHA);
+  });
+
+  it('shows the whole text with the verified stamp for a matching full read', async () => {
+    const user = userEvent.setup();
+    const { snapshots } = refOnlySnapshots();
+    setupKnowledge({ snapshots, sourceContent: () => realSourceContentReply() });
+    renderApp('/projects/demo?tab=knowledge');
+    await user.click(await screen.findByTestId('read-full'));
+    const text = await screen.findByTestId('read-text');
+    expect(text.textContent).toContain('# Customer support queue');
+    await waitFor(() => expect(screen.getByTestId('read-digest').textContent).toContain('内容未被改动'));
+    expect(screen.getByTestId('read-result').textContent).not.toContain('只显示');
+  });
+
+  it('says only the front part is shown when the service cut the read short', async () => {
+    const user = userEvent.setup();
+    const { snapshots } = refOnlySnapshots();
+    const cut = { ...realSourceContentReply() };
+    cut.result.data = { ...cut.result.data, text: REAL_TEXT.slice(0, 40) };
+    setupKnowledge({ snapshots, sourceContent: () => cut });
+    renderApp('/projects/demo?tab=knowledge');
+    await user.click(await screen.findByTestId('read-full'));
+    await screen.findByTestId('read-text');
+    expect(screen.getByTestId('read-result').textContent).toContain('只显示了前一部分');
+    expect(screen.getByTestId('read-text').textContent).not.toContain('Build a useful filterable queue');
+    expect(screen.getByTestId('read-result').textContent).not.toContain('内容对不上');
+  });
+
+  it('drops the text and says the content does not match when the digests disagree', async () => {
+    const user = userEvent.setup();
+    const withText = specFor(REAL_TEXT, { sha256: sha256('a different document'), byte_length: REAL_BYTES, content_included: false });
+    const spec = { ...withText, text: undefined } as typeof withText;
+    setupKnowledge({
+      snapshots: { W1: snapshotWithSpec('W1', spec), W2: snapshotWithSpec('W2', spec) },
+      sourceContent: () => realSourceContentReply(),
+    });
+    renderApp('/projects/demo?tab=knowledge');
+    await user.click(await screen.findByTestId('read-full'));
+    await waitFor(() => expect(screen.getByTestId('read-result').textContent).toContain('内容对不上，请勿采信'));
+    expect(screen.queryByTestId('read-text')).toBeNull();
+  });
+
+  it('says the read failed with a retry for a 503, never a confirmed change', async () => {
+    const user = userEvent.setup();
+    const { snapshots } = refOnlySnapshots();
+    setupKnowledge({ snapshots, sourceContent: () => realSourceContentWrongDigestReply() });
+    renderApp('/projects/demo?tab=knowledge');
+    await user.click(await screen.findByTestId('read-full'));
+    const failed = await screen.findByTestId('read-failed');
+    expect(failed.textContent).toContain('读取失败');
+    expect(screen.getByTestId('read-retry')).toBeTruthy();
+    const visible = defaultVisibleText(screen.getByTestId('page-knowledge'));
+    expect(visible).not.toContain('变化');
+    expect(visible).not.toContain('摘要');
+    expect(findForbiddenVisibleText(visible)).toEqual([]);
+  });
+
+  it('sends one more read when the person retries a failed one', async () => {
+    const user = userEvent.setup();
+    const { snapshots } = refOnlySnapshots();
+    let replies = 0;
+    const { calls } = setupKnowledge({
+      snapshots,
+      sourceContent: () => {
+        replies += 1;
+        return replies === 1 ? realSourceContentWrongDigestReply() : realSourceContentReply();
+      },
+    });
+    renderApp('/projects/demo?tab=knowledge');
+    await user.click(await screen.findByTestId('read-full'));
+    await screen.findByTestId('read-failed');
+    expect(countSourceReads(calls)).toBe(1);
+
+    await user.click(screen.getByTestId('read-retry'));
+    await waitFor(() => expect(screen.getByTestId('read-text')).toBeTruthy());
+    expect(countSourceReads(calls)).toBe(2);
+  });
+
+  it('offers the entry for a truncated embedded text as well', async () => {
+    const spec = specFor(REAL_TEXT.slice(0, 20), { sha256: REAL_SHA, byte_length: REAL_BYTES });
+    setupKnowledge({
+      snapshots: { W1: snapshotWithSpec('W1', spec), W2: snapshotWithSpec('W2', spec) },
+      sourceContent: () => realSourceContentReply(),
+    });
+    renderApp('/projects/demo?tab=knowledge');
+    expect(await screen.findByTestId('read-full')).toBeTruthy();
+  });
+
+  it('offers no entry when the embedded text is whole and checks out', async () => {
+    const spec = specFor(REAL_TEXT, { sha256: REAL_SHA, byte_length: REAL_BYTES });
+    setupKnowledge({ snapshots: { W1: snapshotWithSpec('W1', spec), W2: snapshotWithSpec('W2', spec) } });
+    renderApp('/projects/demo?tab=knowledge');
+    await screen.findAllByTestId(sourceTestId(spec));
+    await waitFor(() => expect(screen.getByTestId('digest-check').textContent).toContain('内容未被改动'));
+    expect(screen.queryByTestId('read-full')).toBeNull();
+  });
+
+  it('offers no entry and no request for a reference the bridge would refuse', async () => {
+    const withText = specFor(REAL_TEXT, { path: '/etc/passwd', sha256: REAL_SHA, byte_length: REAL_BYTES, content_included: false });
+    const spec = { ...withText, text: undefined } as typeof withText;
+    const { calls } = setupKnowledge({
+      snapshots: { W1: snapshotWithSpec('W1', spec), W2: snapshotWithSpec('W2', spec) },
+    });
+    renderApp('/projects/demo?tab=knowledge');
+    await screen.findAllByTestId(sourceTestId(spec)); // the list entry exists, the read entry does not
+    expect(screen.queryByTestId('read-full')).toBeNull();
+    expect(countSourceReads(calls)).toBe(0);
+    expect(screen.getByTestId('read-unavailable').textContent).toContain('暂时不能读取全文');
+  });
+
+  it('reads once and keeps the result when the same document is asked again', async () => {
+    const user = userEvent.setup();
+    const { snapshots } = refOnlySnapshots();
+    const { calls } = setupKnowledge({ snapshots, sourceContent: () => realSourceContentReply() });
+    renderApp('/projects/demo?tab=knowledge');
+    await user.click(await screen.findByTestId('read-full'));
+    await screen.findByTestId('read-text');
+    // Re-render (component remount shares the query cache) asks nothing again.
+    renderApp('/projects/demo?tab=knowledge');
+    await screen.findByTestId('read-text');
+    expect(countSourceReads(calls)).toBe(1);
+  });
+
+  it('silences the read and hides its result after revocation', async () => {
+    const user = userEvent.setup();
+    const { snapshots } = refOnlySnapshots();
+    const { calls } = setupKnowledge({ snapshots, sourceContent: () => realSourceContentReply() });
+    const queryClient = createAppQueryClient({ retry: false });
+    // Mounted without the shell, like the existing revocation test: the page's own
+    // enabled guard is what must keep the read silent.
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RevocationProvider>
+          <MemoryRouter>
+            <ProjectKnowledge project="demo" />
+          </MemoryRouter>
+        </RevocationProvider>
+      </QueryClientProvider>,
+    );
+    await user.click(await screen.findByTestId('read-full'));
+    await waitFor(() => expect(screen.getByTestId('read-text').textContent).toContain('# Customer support queue'));
+    const readsAtRevoke = countSourceReads(calls);
+
+    act(() => revokeObservationReads(queryClient));
+    expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
+    expect(screen.queryByText(/Customer support queue/)).toBeNull();
+    vi.useFakeTimers();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(61000);
+    });
+    vi.useRealTimers();
+    expect(countSourceReads(calls)).toBe(readsAtRevoke);
+  });
+
+  it('words the read in English after a language switch', async () => {
+    const user = userEvent.setup();
+    const { snapshots } = refOnlySnapshots();
+    setupKnowledge({ snapshots, sourceContent: () => realSourceContentWrongDigestReply() });
+    renderApp('/projects/demo?tab=knowledge');
+    await act(() => i18n.changeLanguage('en-US'));
+    expect(await screen.findByTestId('read-full')).toBeTruthy();
+    expect(screen.getByTestId('read-full').textContent).toContain('Read the full text');
+    await user.click(screen.getByTestId('read-full'));
+    const failed = await screen.findByTestId('read-failed');
+    expect(failed.textContent).toContain('The read failed');
+    expect(screen.getByTestId('read-retry').textContent).toContain('Retry');
+    const visible = defaultVisibleText(screen.getByTestId('page-knowledge'));
+    expect(visible).not.toMatch(/chang/i);
+    expect(visible).not.toMatch(/digest/i);
+  });
+});
+
+describe('knowledge read cadence and promises (review)', () => {
+  const REAL_TEXT2 = realSourceContentReply().result.data.text as string;
+  const REAL_SHA2 = realSourceContentReply().result.data.sha256 as string;
+  const REAL_BYTES2 = realSourceContentReply().result.data.byte_length as number;
+
+  function refSpec(overrides: Partial<SpecFixture> = {}) {
+    const base = specFor(REAL_TEXT2, { sha256: REAL_SHA2, byte_length: REAL_BYTES2, content_included: false });
+    return { ...base, text: undefined, ...overrides };
+  }
+
+  function countReads(calls: Array<{ url: string; init?: RequestInit }>) {
+    return calls.filter(({ url, init }) => url.includes('/api/team/read')
+      && JSON.parse(String(init?.body)).query.op === 'source.content').length;
+  }
+
+  afterEach(() => {
+    focusManager.setFocused(false);
+    onlineManager.setOnline(true);
+  });
+
+  it('never re-reads on its own after a successful read: time, focus and reconnect', async () => {
+    const user = userEvent.setup();
+    const { calls } = setupKnowledge({
+      snapshots: { W1: snapshotWithSpec('W1', refSpec()), W2: snapshotWithSpec('W2', refSpec()) },
+      sourceContent: () => realSourceContentReply(),
+    });
+    renderApp('/projects/demo?tab=knowledge');
+    await user.click(await screen.findByTestId('read-full'));
+    await screen.findByTestId('read-text');
+    expect(countReads(calls)).toBe(1);
+
+    vi.useFakeTimers();
+    await act(async () => { await vi.advanceTimersByTimeAsync(61000); });
+    act(() => { focusManager.setFocused(true); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(61000); });
+    act(() => { onlineManager.setOnline(false); onlineManager.setOnline(true); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(61000); });
+    vi.useRealTimers();
+    expect(countReads(calls)).toBe(1);
+  });
+
+  it('never re-reads on its own after a failed read: time, focus and reconnect; retry adds exactly one', async () => {
+    const user = userEvent.setup();
+    const { calls } = setupKnowledge({
+      snapshots: { W1: snapshotWithSpec('W1', refSpec()), W2: snapshotWithSpec('W2', refSpec()) },
+      sourceContent: () => realSourceContentWrongDigestReply(),
+    });
+    renderApp('/projects/demo?tab=knowledge');
+    await user.click(await screen.findByTestId('read-full'));
+    await screen.findByTestId('read-failed');
+    expect(countReads(calls)).toBe(1);
+
+    vi.useFakeTimers();
+    await act(async () => { await vi.advanceTimersByTimeAsync(61000); });
+    act(() => { focusManager.setFocused(true); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(61000); });
+    act(() => { onlineManager.setOnline(false); onlineManager.setOnline(true); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(61000); });
+    vi.useRealTimers();
+    expect(countReads(calls)).toBe(1);
+
+    await user.click(screen.getByTestId('read-retry'));
+    await waitFor(() => expect(screen.getByTestId('read-failed')).toBeTruthy());
+    expect(countReads(calls)).toBe(2);
   });
 });

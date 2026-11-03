@@ -10,6 +10,7 @@ import type {
   TeamReadResponse,
   WorkInboxData,
   WorkNextData,
+  SourceContentData,
   WorkSnapshotData,
 } from './types';
 
@@ -47,7 +48,21 @@ export const queryKeys = {
   workInbox: (project: string | null) => ['team', 'work.inbox', project] as const,
   workSnapshot: (project: string | null, workId: string, workstreamId: string) =>
     ['team', 'work.snapshot', project, workId, workstreamId] as const,
+  sourceContent: (project: string, sourcePath: string, expectedSha256: string) =>
+    ['team', 'source.content', project, sourcePath, expectedSha256] as const,
 };
+
+/**
+ * The bridge only accepts a source read for a controlled project-relative path with a 64-digit
+ * lowercase digest; anything else would be answered InvalidInput without reaching the service,
+ * so the page offers no entry (and sends nothing) for such a reference.
+ */
+export function readableSourceRef(path: string | null | undefined, sha256: string | null | undefined): boolean {
+  const forbiddenInPath = [/^\//, /\.\./, /\\/, /:/, /[\x00-\x1f\x7f]/];
+  return typeof path === 'string' && path.length > 0 && path.length <= 512
+    && !forbiddenInPath.some((pattern) => pattern.test(path))
+    && typeof sha256 === 'string' && /^[0-9a-f]{64}$/.test(sha256);
+}
 
 export function projectsQueryOptions(revoked = false) {
   return {
@@ -105,10 +120,12 @@ export function activityQueryOptions(project: string | null, revoked = false, wo
 
 interface TeamReadQuery {
   protocol_version: 1;
-  op: 'work.next' | 'work.inbox' | 'work.snapshot' | 'review.inspect';
+  op: 'work.next' | 'work.inbox' | 'work.snapshot' | 'review.inspect' | 'source.content';
   work_id?: string;
   workstream_id?: string;
   review_round_id?: string;
+  source_path?: string;
+  expected_sha256?: string;
 }
 
 function teamRead<T>(project: string, query: TeamReadQuery, signal?: AbortSignal) {
@@ -132,6 +149,36 @@ export function reviewQueryOptions(
     enabled: Boolean(roundId) && Boolean(workId) && !revoked,
     ...readQueryDefaults,
   } satisfies UseQueryOptions<TeamReadResponse<ReviewData>>;
+}
+
+/** A source.content read, asked for only after a person asks: one shot, no polling, no refetch on focus, cached per (project, path, digest). */
+export function sourceContentQueryOptions(
+  project: string,
+  sourcePath: string,
+  expectedSha256: string,
+  revoked = false,
+) {
+  return {
+    queryKey: queryKeys.sourceContent(project, sourcePath, expectedSha256),
+    queryFn: ({ signal }: { signal: AbortSignal }) => teamRead<SourceContentData>(project, {
+      protocol_version: 1,
+      op: 'source.content',
+      source_path: sourcePath,
+      expected_sha256: expectedSha256,
+    }, signal),
+    enabled: !revoked,
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    refetchOnWindowFocus: false,
+    // A read nobody asked for again is never re-sent: not when the window regains focus,
+    // not when the network reconnects (a failed read has no data, so react-query would
+    // otherwise count it stale and re-read it on reconnect), and not on a fresh mount
+    // of the same cached read.
+    refetchOnReconnect: false,
+    refetchOnMount: false,
+    refetchInterval: false,
+  } satisfies UseQueryOptions<TeamReadResponse<SourceContentData>>;
 }
 
 export function workNextQueryOptions(project: string | null, revoked = false) {

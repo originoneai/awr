@@ -8,10 +8,15 @@ export type DigestCheck = DigestVerdict | 'pending';
  * Web Crypto, without the text or without a declared digest.
  */
 export function useTextDigest(text: string | null | undefined, declaredSha256: string | null | undefined): DigestCheck {
-  const [check, setCheck] = useState<DigestCheck>('unverified');
+  // Starts as pending, not unverified: the first render must not show a text as "not checked"
+  // before the check has even begun — a text that turns out to mismatch must never appear.
+  const [check, setCheck] = useState<DigestCheck>('pending');
   useEffect(() => {
     if (!text || !declaredSha256) {
-      setCheck('unverified');
+      // Nothing to check yet (or the text has gone away again): stay pending rather than
+      // claiming unverified, so a text arriving in a later render is never shown under
+      // "not checked" before its check runs.
+      setCheck('pending');
       return;
     }
     const subtle = typeof crypto === 'undefined' ? null : crypto.subtle ?? null;
