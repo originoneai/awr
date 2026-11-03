@@ -171,6 +171,12 @@ export function sourceContentQueryOptions(
     gcTime: Infinity,
     retry: false,
     refetchOnWindowFocus: false,
+    // A read nobody asked for again is never re-sent: not when the window regains focus,
+    // not when the network reconnects (a failed read has no data, so react-query would
+    // otherwise count it stale and re-read it on reconnect), and not on a fresh mount
+    // of the same cached read.
+    refetchOnReconnect: false,
+    refetchOnMount: false,
     refetchInterval: false,
   } satisfies UseQueryOptions<TeamReadResponse<SourceContentData>>;
 }

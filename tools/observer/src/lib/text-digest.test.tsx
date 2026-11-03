@@ -39,11 +39,13 @@ describe('useTextDigest', () => {
     expect(result.current).toBe('unverified');
   });
 
-  it('says unverified without the text or the declared digest', () => {
+  it('stays pending without the text or the declared digest, never claiming unverified', () => {
     vi.stubGlobal('crypto', webcrypto);
     for (const [text, digest] of [[null, sha256('abc')], ['abc', null], [undefined, undefined], ['', sha256('')]] as const) {
       const { result } = renderHook(() => useTextDigest(text, digest));
-      expect(result.current, String(text)).toBe('unverified');
+      // Pending, not unverified: a text arriving in a later render must not inherit an
+      // "unverified" verdict from a render where there was nothing to check.
+      expect(result.current, String(text)).toBe('pending');
     }
   });
 

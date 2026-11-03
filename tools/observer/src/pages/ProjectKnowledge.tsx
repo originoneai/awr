@@ -180,20 +180,24 @@ export function ProjectKnowledge({ project }: { project: string }) {
     ),
     enabled: readRequested && refReadable && !revoked,
   });
-  const readData = contentRead.data?.result.data;
+  const readData = contentRead.data?.result?.data;
   const readText = typeof readData?.text === 'string' ? readData.text : null;
   const readVerdict = useTextDigest(readRequested && readText != null ? readText : null, selected?.sha256);
   // A 503 is a failed read, never a confirmed change: only the two digests in hand can say changed,
   // and only when the held extent does not already explain the difference.
-  const readStatus: ContentReadStatus | 'not-text' | null = contentRead.data
+  // While the digest check is still running the text is not shown at all: a text that turns
+  // out not to match must never be on the page, not even for one render.
+  const readStatus: ContentReadStatus | 'not-text' | 'checking' | null = contentRead.data
     ? (readText == null
         ? 'not-text'
-        : judgeContentRead({
-          verdict: readVerdict === 'pending' ? 'unverified' : readVerdict,
-          byteLength: utf8ByteLength(readText),
-          declaredByteLength: selected?.byteLength ?? null,
-          more: false,
-        }))
+        : readVerdict === 'pending'
+          ? 'checking'
+          : judgeContentRead({
+            verdict: readVerdict,
+            byteLength: utf8ByteLength(readText),
+            declaredByteLength: selected?.byteLength ?? null,
+            more: false,
+          }))
     : null;
   const showingReadResult = readRequested && (contentRead.data != null || contentRead.isError);
 
@@ -278,7 +282,8 @@ export function ProjectKnowledge({ project }: { project: string }) {
                             {t('knowledge.retry')}
                           </Button>
                         </>
-                      ) : readStatus === 'not-text' ? (
+                      ) : readStatus === 'checking' ? null
+                      : readStatus === 'not-text' ? (
                         <Tag>{t('knowledge.notPlainText')}</Tag>
                       ) : readStatus === 'changed' ? (
                         <Tag color="error">{t('knowledge.digestMismatch')}</Tag>
@@ -351,8 +356,8 @@ export function ProjectKnowledge({ project }: { project: string }) {
                   {!showingReadResult && selected.text && selected.contentIncluded ? (
                     <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{selected.text}</Typography.Paragraph>
                   ) : null}
-                  {showingReadResult && contentRead.isPending ? (
-                    <Typography.Text type="secondary">{t('common.loading')}</Typography.Text>
+                  {readStatus === 'checking' ? (
+                    <Typography.Text type="secondary" data-testid="read-checking">{t('common.loading')}</Typography.Text>
                   ) : null}
                   {contractGroups(selected.citingWorks).map((group) => (
                     <Card key={group.titles.join('\u0000')} size="small" type="inner" title={t('knowledge.contractFor', { title: group.titles.join(t('knowledge.titleSeparator')) })}>

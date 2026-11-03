@@ -6,6 +6,7 @@ import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
+import { focusManager, onlineManager } from '@tanstack/react-query';
 import { RevocationProvider } from './lib/revocation';
 import { createAppQueryClient, queryKeys, revokeObservationReads } from './lib/queries';
 import { ProjectKnowledge } from './pages/ProjectKnowledge';
@@ -783,5 +784,72 @@ describe('knowledge full-text read (OBS-009 slice 2)', () => {
     const visible = defaultVisibleText(screen.getByTestId('page-knowledge'));
     expect(visible).not.toMatch(/chang/i);
     expect(visible).not.toMatch(/digest/i);
+  });
+});
+
+describe('knowledge read cadence and promises (review)', () => {
+  const REAL_TEXT2 = realSourceContentReply().result.data.text as string;
+  const REAL_SHA2 = realSourceContentReply().result.data.sha256 as string;
+  const REAL_BYTES2 = realSourceContentReply().result.data.byte_length as number;
+
+  function refSpec(overrides: Partial<SpecFixture> = {}) {
+    const base = specFor(REAL_TEXT2, { sha256: REAL_SHA2, byte_length: REAL_BYTES2, content_included: false });
+    return { ...base, text: undefined, ...overrides };
+  }
+
+  function countReads(calls: Array<{ url: string; init?: RequestInit }>) {
+    return calls.filter(({ url, init }) => url.includes('/api/team/read')
+      && JSON.parse(String(init?.body)).query.op === 'source.content').length;
+  }
+
+  afterEach(() => {
+    focusManager.setFocused(false);
+    onlineManager.setOnline(true);
+  });
+
+  it('never re-reads on its own after a successful read: time, focus and reconnect', async () => {
+    const user = userEvent.setup();
+    const { calls } = setupKnowledge({
+      snapshots: { W1: snapshotWithSpec('W1', refSpec()), W2: snapshotWithSpec('W2', refSpec()) },
+      sourceContent: () => realSourceContentReply(),
+    });
+    renderApp('/projects/demo?tab=knowledge');
+    await user.click(await screen.findByTestId('read-full'));
+    await screen.findByTestId('read-text');
+    expect(countReads(calls)).toBe(1);
+
+    vi.useFakeTimers();
+    await act(async () => { await vi.advanceTimersByTimeAsync(61000); });
+    act(() => { focusManager.setFocused(true); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(61000); });
+    act(() => { onlineManager.setOnline(false); onlineManager.setOnline(true); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(61000); });
+    vi.useRealTimers();
+    expect(countReads(calls)).toBe(1);
+  });
+
+  it('never re-reads on its own after a failed read: time, focus and reconnect; retry adds exactly one', async () => {
+    const user = userEvent.setup();
+    const { calls } = setupKnowledge({
+      snapshots: { W1: snapshotWithSpec('W1', refSpec()), W2: snapshotWithSpec('W2', refSpec()) },
+      sourceContent: () => realSourceContentWrongDigestReply(),
+    });
+    renderApp('/projects/demo?tab=knowledge');
+    await user.click(await screen.findByTestId('read-full'));
+    await screen.findByTestId('read-failed');
+    expect(countReads(calls)).toBe(1);
+
+    vi.useFakeTimers();
+    await act(async () => { await vi.advanceTimersByTimeAsync(61000); });
+    act(() => { focusManager.setFocused(true); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(61000); });
+    act(() => { onlineManager.setOnline(false); onlineManager.setOnline(true); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(61000); });
+    vi.useRealTimers();
+    expect(countReads(calls)).toBe(1);
+
+    await user.click(screen.getByTestId('read-retry'));
+    await waitFor(() => expect(screen.getByTestId('read-failed')).toBeTruthy());
+    expect(countReads(calls)).toBe(2);
   });
 });
