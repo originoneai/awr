@@ -310,7 +310,7 @@ describe('work detail requirements and source state', () => {
     expect(within(block).getByTestId('progress-report-tests').textContent).toContain('npm test');
     expect(within(block).getByTestId('progress-report-tests').textContent).toContain('已通过');
     expect(within(block).getByTestId('progress-report-tests').textContent).toContain('失败');
-    expect(within(block).getByTestId('progress-report-artifacts').textContent).toContain('development branch');
+    expect(within(block).getByTestId('progress-report-artifacts').textContent).toContain('开发分支');
     expect(within(block).getByTestId('progress-report-declaration').textContent).toContain('Lin Agent');
     expect(within(block).getByTestId('progress-report-declaration').textContent).toContain('系统未核验');
     expect(block.textContent).not.toContain('{');

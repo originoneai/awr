@@ -49,7 +49,7 @@ export function ProgressReport({ report }: { report: ProgressReportResult }) {
           </Space>
         )}
       />
-      <ReportList title={t('progressReport.artifacts')} list={report.artifacts} testId="progress-report-artifacts" render={(label) => <Typography.Text>{label}</Typography.Text>} />
+      <ReportList title={t('progressReport.artifacts')} list={report.artifacts} testId="progress-report-artifacts" render={(artifact) => <Typography.Text>{artifact.text}</Typography.Text>} />
       {report.declaration.length > 0 ? (
         <Typography.Text type="secondary" data-testid="progress-report-declaration">{report.declaration.join(' · ')}</Typography.Text>
       ) : null}

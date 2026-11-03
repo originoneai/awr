@@ -1,9 +1,9 @@
 import { humanText } from '../../i18n/human-language';
-import { checkLabel } from './labels';
+import { artifactLabel, checkLabel } from './labels';
 import { readableSentence } from './readable';
 import { absoluteTimeText } from './time';
 import { rawObservationText, statementText, statusWord } from './values';
-import type { CappedList, ProgressReportResult, ProgressReportTest } from './types';
+import type { CappedList, ProgressReportArtifact, ProgressReportResult, ProgressReportTest } from './types';
 
 /** How many entries of one list a person is shown; every field stays in the technical details. */
 export const REPORT_LIST_LIMIT = 5;
@@ -64,9 +64,9 @@ export function describeProgressReport(progress: unknown, options: { language: s
     }),
   );
   const artifacts = capped(
-    (Array.isArray(report.artifacts) ? report.artifacts : []).flatMap((entry): string[] => {
-      const label = statementText(asRecord(entry)?.label);
-      return label == null ? [] : [label];
+    (Array.isArray(report.artifacts) ? report.artifacts : []).flatMap((entry, index): ProgressReportArtifact[] => {
+      const label = artifactLabel(asRecord(entry)?.label, { language, position: index + 1 });
+      return label.technical.raw == null ? [] : [{ text: label.text, raw: label.technical.raw }];
     }),
   );
   const hasContent = summary != null || completed.shown.length > 0 || blockers.reported || tests.shown.length > 0 || artifacts.shown.length > 0;
