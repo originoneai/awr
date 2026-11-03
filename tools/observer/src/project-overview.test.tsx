@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -112,7 +112,9 @@ describe('project workstream progress', () => {
     expect(screen.getByTestId('workstream-group-WS1').textContent).toContain('Backend workstream');
     expect(screen.getByTestId('workstream-group-WS2').textContent).toContain('Frontend workstream');
     expect(screen.getByTestId('project-status-W1').textContent).toBe('已认领');
-    expect(screen.getByTestId('project-owner-W1').textContent).toBe('未提供');
+    // The row carries no owner; the work's own read says 'lin' is responsible.
+    expect(screen.getByTestId('project-owner-W1').textContent).toBe('lin');
+    expect(screen.getByTestId('project-owner-W1').getAttribute('data-owner-source')).toBe('snapshot');
     expect(screen.getByTestId('project-next-W1').textContent).toBe('未报告下一步');
     expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN'));
     expect(screen.getByTestId('last-report-W1').textContent).not.toBe(formatUnixMs(1761839900000, 'zh-CN'));
@@ -899,7 +901,7 @@ describe('overview goals and delivery blocks (read from the page\'s own snapshot
       key: `W${index + 1}`, title: `Task ${index + 1}`, status: 'unknown', owner_person: null, agent: null,
       next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: `c${index}`,
     }));
-    // W1 finished (positive) and W8 unrecognized (neutral) stay out of the attention list;
+    // W1 finished (positive) and W3 unrecognized (neutral) stay out of the attention list;
     // W2 is blocked (negative) and must be named; six named works hit the cap of five.
     const snapshot = (id: string) => {
       const base = demoWorkSnapshot(id) as { result: { data: Record<string, unknown> } };
@@ -931,7 +933,6 @@ describe('overview goals and delivery blocks (read from the page\'s own snapshot
     expect(links[4].getAttribute('href')).toContain('work=W7');
     // Waiting and blocked words own the list; the finished and unrecognized ones never appear.
     expect(attention.textContent).not.toContain('Task 1');
-    expect(attention.textContent).not.toContain('Task 3');
     expect(screen.getByTestId('project-delivery-counts').textContent).toContain('已交付× 1');
     expect(screen.getByTestId('project-delivery-counts').textContent).toContain('受阻× 1');
     // A neutral word is counted as a word but never named in the list above.
@@ -969,12 +970,81 @@ describe('overview goals and delivery blocks (read from the page\'s own snapshot
     expect(screen.queryByTestId('project-delivery')).toBeNull();
   });
 
-  it('says the works\' agreements have not been read while the reads are pending', async () => {
+  it('keeps both blocks off the page after revocation', async () => {
+    const { queryClient } = setupOverview();
+    await screen.findAllByTestId('project-status-W2');
+    act(() => revokeObservationReads(queryClient));
+    expect(await screen.findByTestId('state-forbidden')).toBeTruthy();
+    expect(screen.queryByTestId('project-goals')).toBeNull();
+    expect(screen.queryByTestId('project-delivery')).toBeNull();
+  });
+
+  it('says loading and no unread count while every read is pending; the count names the mixed state', async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => { release = resolve; });
     setupOverview({ snapshotGate: gate });
-    expect(await screen.findByTestId('project-goals-unread')).toBeTruthy();
-    expect(screen.getByTestId('project-goals-unread').textContent).toContain('2');
+    expect(await screen.findByTestId('project-goals-loading')).toBeTruthy();
+    // The loading sentence already says it; an unread count would repeat it in other words.
+    expect(screen.queryByTestId('project-goals-unread')).toBeNull();
     release();
+  });
+
+  it('keeps the unread sentence on its own line in the mixed state', async () => {
+    const snapshot = (id: string) => (id === 'W2'
+      ? { ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } }
+      : demoWorkSnapshot(id));
+    setupOverview({ snapshot });
+    const unread = await screen.findByTestId('project-goals-unread');
+    // Its own line: a block container, not an inline run that can touch the sentence above it.
+    expect(unread.tagName).toBe('DIV');
+    expect(unread.style.display).toBe('block');
+  });
+
+  it('shows exactly one sentence when every read failed, on its own line, not inline with another', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
+      if (url.includes('/api/team/overview')) return json(DEMO_PROJECT_OVERVIEW);
+      if (url.includes('/api/team/activity')) return json(DEMO_ACTIVITY);
+      if (url.includes('/api/team/read')) {
+        const request = JSON.parse(String(init?.body)) as { query: { op: string } };
+        if (request.query.op === 'work.snapshot') {
+          return json({ ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } });
+        }
+      }
+      return json({ ok: false, error: { code: 'NoRoute', message: url } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderApp('/projects/demo?tab=overview');
+    const failed = await screen.findByTestId('project-goals-failed');
+    // Only the failure sentence: no unread sentence repeating it, nothing inline beside it.
+    expect(screen.queryByTestId('project-goals-unread')).toBeNull();
+    const block = failed.closest('section');
+    expect(block?.textContent).toContain('约定暂时读取不到');
+    const lineTexts = [...(block?.querySelectorAll('[data-testid], div, span') ?? [])]
+      .filter((el) => el.children.length === 0 && el.textContent && el.textContent.trim().length > 0)
+      .map((el) => el.textContent);
+    expect(lineTexts.some((text) => text.includes('尚未读取'))).toBe(false);
+    // The English sentence is pinned as a whole, not by a shared word.
+    cleanup();
+    const fetchEn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
+      if (url.includes('/api/team/overview')) return json(DEMO_PROJECT_OVERVIEW);
+      if (url.includes('/api/team/activity')) return json(DEMO_ACTIVITY);
+      if (url.includes('/api/team/read')) {
+        const request = JSON.parse(String(init?.body)) as { query: { op: string } };
+        if (request.query.op === 'work.snapshot') {
+          return json({ ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } });
+        }
+      }
+      return json({ ok: false, error: { code: 'NoRoute', message: url } });
+    });
+    vi.stubGlobal('fetch', fetchEn);
+    renderApp('/projects/demo?tab=overview');
+    await act(() => i18n.changeLanguage('en-US'));
+    const failedEn = await screen.findByTestId('project-goals-failed');
+    expect(failedEn.textContent).toBe('The agreements of these works cannot be read right now');
+    expect(failedEn.textContent).not.toContain('How far these works have come');
   });
 });

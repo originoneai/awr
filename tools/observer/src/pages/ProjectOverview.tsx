@@ -22,7 +22,7 @@ import { LastReportText } from '../components/LastReportText';
 import { WorkProgress, useWorkState } from '../components/WorkProgress';
 import { ToneBadge } from '../components/ToneBadge';
 import { contractGroups } from '../lib/contract-groups';
-import { deriveWorkState, groupWorks, moreLinesText, rawObservationText } from '../core/observation';
+import { deriveOwner, deriveWorkState, groupWorks, moreLinesText, ownerCellText, rawObservationText } from '../core/observation';
 import { readStateOf } from '../lib/read-state';
 import { RecentChanges } from '../components/RecentChanges';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
@@ -81,6 +81,21 @@ function NextStep({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
 function LastReport({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
   const state = useWorkState(work, query);
   return <LastReportText report={state.lastReport} testId={`last-report-${work.key}`} />;
+}
+
+/** Who is responsible, in the words the data holds: the row's own field, else the work's read. */
+function OwnerCell({ work, query }: { work: TeamWork; query?: SnapshotQuery }) {
+  const { i18n } = useTranslation();
+  const owner = deriveOwner({
+    rowOwner: work.owner_person ?? work.agent,
+    snapshot: query?.data?.result.data,
+    readState: query == null ? 'failed' : query.isPending ? 'loading' : query.isError ? 'failed' : 'ready',
+  });
+  return (
+    <span data-testid={`project-owner-${work.key}`} data-owner-source={owner.source}>
+      {ownerCellText(owner, { language: i18n.language })}
+    </span>
+  );
 }
 
 /** The goals and acceptance the works on this page have declared, merged; only reads already made. */
@@ -154,10 +169,14 @@ function GoalsBlock({ works, snapshots }: { project: string; works: TeamWork[]; 
                 ) : null}
               </Flex>
             )}
-      {loading + failed > 0 ? (
-        <Typography.Text type="warning" data-testid="project-goals-unread">
-          {t('projectOverview.goalsUnread', { count: loading + failed })}
-        </Typography.Text>
+      {/* A read still running or partly failed is named; when every read failed, the failure
+          sentence above already says it (the count would repeat it in other words). */}
+      {finished.length > 0 && loading + failed > 0 ? (
+        <div data-testid="project-goals-unread" style={{ display: 'block', marginTop: 8 }}>
+          <Typography.Text type="warning">
+            {t('projectOverview.goalsUnread', { count: loading + failed })}
+          </Typography.Text>
+        </div>
       ) : null}
     </section>
   );
@@ -445,11 +464,9 @@ export function ProjectOverview({ project }: { project: string }) {
       key: 'owner',
       width: 150,
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 0 : 1 }),
-      render: (_, row) => row.kind === 'work' ? (
-        <span data-testid={`project-owner-${row.work.key}`}>
-          {rawObservationText(row.work.owner_person ?? row.work.agent).text ?? t('common.notProvided')}
-        </span>
-      ) : null,
+      render: (_, row) => row.kind === 'work'
+        ? <OwnerCell work={row.work} query={snapshots[row.index]} />
+        : null,
     },
     {
       title: t('projectOverview.columns.status'),
