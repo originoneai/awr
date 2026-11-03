@@ -4,6 +4,7 @@ import { axe, toHaveNoViolations } from 'jest-axe';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import i18n from './i18n';
 import { formatUnixMs } from './lib/format';
+import { focusManager } from '@tanstack/react-query';
 import { defaultVisibleText, findForbiddenVisibleText } from './lib/human-language-guard';
 import { queryKeys, revokeObservationReads } from './lib/queries';
 import type { TeamWork } from './lib/types';
@@ -1130,6 +1131,35 @@ describe('overview count sentences in English (plural forms)', () => {
     expect(screen.getByTestId('project-goals-more').textContent).toBe('1 more group of agreements');
   });
 
+  it('says one workstream could not be read (L5)', async () => {
+    setupOverview({
+      overview: {
+        ...DEMO_PROJECT_OVERVIEW,
+        coverage: {
+          ...DEMO_PROJECT_OVERVIEW.coverage,
+          works_enumerated: 1,
+          streams: [{
+            workstream_id: 'WS1', status: 'failed', enumerated: 0, truncated: false,
+            next_cursor: null, read_at_unix_ms: 1761840000000,
+          }],
+        },
+      },
+    });
+    expect(await screen.findByTestId('coverage-failed-summary')).toBeTruthy();
+    await act(() => i18n.changeLanguage('en-US'));
+    expect(screen.getByTestId('coverage-failed-summary').textContent).toBe('1 workstream could not be read, so the list may be incomplete');
+  });
+
+  it('says one work on this page, 1 read, with no total known (L6)', async () => {
+    const works = [{ key: 'W1', title: 'Only task', status: 'unknown', owner_person: null, agent: null, next_step: null, detail_loaded: false, workstream_id: 'WS1', contract_hash: 'c1' }];
+    setupOverview({
+      overview: { ...DEMO_PROJECT_OVERVIEW, works, coverage: { ...DEMO_PROJECT_OVERVIEW.coverage, works_total: null, works_enumerated: 1 } },
+    });
+    await screen.findAllByTestId('project-status-W1');
+    await act(() => i18n.changeLanguage('en-US'));
+    expect(screen.getByTestId('project-delivery-scope').textContent).toBe('1 work on this page, 1 read');
+  });
+
   it('says the agreement of one work has not been read', async () => {
     const snapshot = (id: string) => (id === 'W2'
       ? { ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } }
@@ -1236,11 +1266,115 @@ describe('trouble facts from the service\'s own record (review)', () => {
     expect(screen.getByTestId('project-delivery-attention').textContent).toContain('还有');
   });
 
-  it('keeps the raw facts in the technical details, never in the visible sentence', async () => {
+  it('shows both sentences when a work has both facts (Q3)', async () => {
+    const snapshot = (id: string) => {
+      const base = snapshotWithTrouble(id);
+      const data = base.result.data as { observation: Record<string, unknown> };
+      data.observation = { ...data.observation, execution: { state: 'failed', execution_id: '01M6SYNTHETICEXECUTION00000A' } };
+      return base;
+    };
+    setupOverview({ snapshot });
+    await screen.findByTestId('project-delivery-trouble-W1');
+    const trouble = screen.getByTestId('project-delivery-trouble-W1');
+    expect(trouble.textContent).toContain('并入主线被退回，主线已变化');
+    expect(trouble.textContent).toContain('上一次尝试没有成功');
+  });
+
+  it('names an unknown outcome with its own sentence, and neither a stop nor in-progress words (page)', async () => {
+    const snapshot = (id: string) => {
+      const base = demoWorkSnapshot(id) as { result: { data: Record<string, unknown> } };
+      const data = base.result.data as { observation: Record<string, unknown> };
+      data.observation = { ...data.observation, execution: { state: 'unknown', execution_id: '01M6SYNTHETICEXECUTION00000A' } };
+      return base;
+    };
+    setupOverview({ snapshot });
+    await screen.findByTestId('project-delivery-trouble-W1');
+    expect(screen.getByTestId('project-delivery-trouble-W1').textContent).toContain('上一次尝试的结果不明，需要核对');
+  });
+
+  it('does not name a work whose refetch failed even though the earlier data is still held (Q4)', async () => {
+    // The app's real shape: the read succeeds once (the fact lands), then the refetch fails
+    // while the query keeps the last data. A failed read must not keep naming from stale data.
+    let failing = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/team/projects')) return json(DEMO_PROJECTS);
+      if (url.includes('/api/team/overview')) return json(DEMO_PROJECT_OVERVIEW);
+      if (url.includes('/api/team/activity')) return json(DEMO_ACTIVITY);
+      if (url.includes('/api/team/read')) {
+        const request = JSON.parse(String(init?.body)) as { query: { op: string; work_id?: string } };
+        if (request.query.op === 'work.snapshot') {
+          if (request.query.work_id === 'W1') return json(demoWorkSnapshot('W1')); // stays read
+          if (failing) return json({ ok: false, error: { code: 'ReadFailed', message: 'synthetic read failure' } });
+          return json(snapshotWithTrouble('W2')); // lands once, then the refetch fails
+        }
+      }
+      return json({ ok: false, error: { code: 'NoRoute', message: url } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderApp('/projects/demo?tab=overview');
+    // The read happened: the work is named with its sentence.
+    expect(await screen.findByTestId('project-delivery-trouble-W2')).toBeTruthy();
+    // Now every further read fails; the focus refetch keeps the earlier data in the query.
+    failing = true;
+    await act(async () => {
+      focusManager.setFocused(true);
+    });
+    // W2's refetch failed while its earlier fact data stayed in the query: the block still
+    // counts W1 (its read is fine), and W2 must not be named from the stale facts.
+    await waitFor(() => expect(screen.getByTestId('project-delivery-unread').textContent).toContain('1'));
+    expect(screen.getByTestId('project-delivery-attention').textContent).not.toContain('Prepare the support page');
+    expect(screen.queryByTestId('project-delivery-trouble-W2')).toBeNull();
+  });
+
+  it('keeps the raw facts behind the disclosure: clean visible text, values when expanded', async () => {
     setupOverview({ snapshot: (id) => snapshotWithTrouble(id) });
     await screen.findByTestId('project-delivery-trouble-W1');
-    const visible = document.querySelector('[data-testid="project-overview"]')?.textContent ?? '';
+    // This end: nothing raw in the default visible text.
+    const visible = defaultVisibleText(screen.getByTestId('project-overview'));
     expect(visible).not.toContain('01M6SYNTHETICINTEGRATION000000A');
-    expect(findForbiddenVisibleText(defaultVisibleText(screen.getByTestId('project-overview')))).toEqual([]);
+    expect(visible).not.toContain('rejected');
+    expect(findForbiddenVisibleText(visible)).toEqual([]);
+    // The other end: expanding the delivery block's disclosure shows every raw value.
+    const delivery = screen.getByTestId('project-delivery');
+    // The disclosure must be a real, displayed technical-details control (a display:none
+    // wrapper would keep the values reachable by query while hiding them from the person).
+    const controls = within(delivery).getAllByTestId('technical-details');
+    expect(controls.length).toBeGreaterThan(0);
+    for (const control of controls) {
+      for (let el: HTMLElement | null = control; el; el = el.parentElement) {
+        expect(getComputedStyle(el).display, 'no hidden ancestor').not.toBe('none');
+      }
+    }
+    const disclosure = within(delivery).getAllByText('技术细节')[0];
+    await userEvent.setup().click(disclosure);
+    expect((await screen.findByTestId('project-delivery-trouble-raw-W1-collaboration-integration-id')).textContent).toContain('01M6SYNTHETICINTEGRATION000000A');
+    expect(screen.getByTestId('project-delivery-trouble-raw-W1-collaboration-integration-state').textContent).toContain('rejected');
+    expect(screen.getByTestId('project-delivery-trouble-raw-W1-collaboration-integration-target_changed').textContent).toContain('true');
+  });
+
+  it('keeps the owner sources and raw values behind the disclosure, both ends', async () => {
+    setupOverview();
+    await screen.findAllByTestId('project-status-W2');
+    // Visible: the name only, never the id shapes.
+    const visible = defaultVisibleText(screen.getByTestId('project-overview'));
+    expect(visible).toContain('lin');
+    // Expanded: the row value (empty) and both snapshot fields (the disclosure sits under the
+    // table, beside the pagination, not inside the table element).
+    const page = screen.getByTestId('project-overview');
+    const disclosure = within(page).getAllByText('技术细节').find((el) => el.closest('[data-testid="project-owner-raw-name-W1"], [data-testid^="project-owner-raw-"]')?.textContent === undefined && el.textContent === '技术细节');
+    void disclosure;
+    const buttons = within(page).getAllByText('技术细节');
+    // The owner disclosure is the one whose following content holds the owner raw values.
+    let opened = false;
+    for (const label of buttons) {
+      await userEvent.setup().click(label);
+      if (screen.queryByTestId('project-owner-raw-name-W1')) { opened = true; break; }
+    }
+    expect(opened).toBe(true);
+    // The demo snapshot records owner 'lin' and no owner_name: both raw fields say so.
+    expect((await screen.findByTestId('project-owner-raw-owner-W1')).textContent).toContain('lin');
+    expect(screen.getByTestId('project-owner-raw-name-W1').textContent).toContain('未提供');
+    expect(screen.getByTestId('project-owner-raw-row-W1').textContent).toContain('未提供');
   });
 });

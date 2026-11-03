@@ -3,7 +3,7 @@ import type { WorkStateInput } from './types';
 
 /** One thing the service measured that a person must know about, whatever the reporter says. */
 export interface TroubleFact {
-  kind: 'integration-rejected' | 'execution-failed';
+  kind: 'integration-rejected' | 'execution-failed' | 'execution-unknown';
   /** One plain sentence, the words the page already uses. */
   text: string;
   technical: Record<string, unknown>;
@@ -60,6 +60,20 @@ export function deriveTrouble(input: {
     facts.push({
       kind: 'execution-failed',
       text: humanText('troubleExecutionFailed', input.options.language),
+      technical: {
+        'execution.state': executionState,
+        'execution.execution_id': execution.execution_id ?? null,
+      },
+    });
+  }
+
+  // `unknown` is the service's own "the outcome is not known": a person must reconcile it.
+  // `cancelled` is a deliberate stop and the in-progress words (prepared, queued, accepted,
+  // running) say nothing wrong happened; none of them is trouble.
+  if (execution != null && executionState === 'unknown') {
+    facts.push({
+      kind: 'execution-unknown',
+      text: humanText('troubleExecutionUnknown', input.options.language),
       technical: {
         'execution.state': executionState,
         'execution.execution_id': execution.execution_id ?? null,

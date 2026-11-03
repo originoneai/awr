@@ -284,6 +284,15 @@ function DeliveryBlock({ project, works, snapshots, coverage }: {
                   {attentionMore > 0 ? (
                     <Typography.Text type="secondary">{moreLinesText(attentionMore, i18n.language)}</Typography.Text>
                   ) : null}
+                  {/* Hidden is not discarded: the raw values behind each named work's word and
+                      sentences sit one disclosure away, never in the visible text. */}
+                  <TechnicalDetails
+                    items={attention.flatMap(({ work, trouble }) => trouble.flatMap((fact) => Object.entries(fact.technical).map(([label, value]) => ({
+                      label: `${work.title}: ${label}`,
+                      value,
+                      testId: `project-delivery-trouble-raw-${work.key}-${label.replace(/\./g, '-')}`,
+                    }))))}
+                  />
                 </div>
               ) : null}
               {loading + failed > 0 ? (
@@ -526,6 +535,23 @@ export function ProjectOverview({ project }: { project: string }) {
         showSizeChanger={false}
         onChange={selectPage}
         style={{ display: 'flex', justifyContent: 'flex-end' }}
+      />
+      {/* The owner column's hidden is not discarded either: each work's row value and the two
+          snapshot fields the name came from (or did not) sit behind one disclosure. */}
+      <TechnicalDetails
+        items={visibleWorks.flatMap((work, index) => {
+          const query = snapshots[index];
+          const owner = deriveOwner({
+            rowOwner: work.owner_person ?? work.agent,
+            snapshot: query?.data?.result.data,
+            readState: readStateOf(query),
+          });
+          return [
+            { label: `${work.title}: row owner`, value: owner.technical.row, testId: `project-owner-raw-row-${work.key}` },
+            { label: `${work.title}: snapshot owner_name`, value: owner.technical.snapshotOwnerName, testId: `project-owner-raw-name-${work.key}` },
+            { label: `${work.title}: snapshot owner`, value: owner.technical.snapshotOwner, testId: `project-owner-raw-owner-${work.key}` },
+          ];
+        })}
       />
     </Flex>
   );
