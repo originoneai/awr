@@ -30,6 +30,7 @@ export function RootLayout() {
       locale={locale}
       theme={themeConfig}
       csp={{ nonce: typeof window !== 'undefined' ? window.__CSP_NONCE__ : undefined }}
+      button={{ autoInsertSpace: false }}
     >
       <AntdApp>
         <RevocationProvider>
