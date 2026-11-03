@@ -83,9 +83,9 @@ function setupActivity({
           ok: true,
           result: {
             protocol: 'awr-team-workstream', protocol_version: 1,
-            data: { identity: { actor_id: SELF_ACTOR, client_id: 'observer-client', role: 'reader', business_roles: ['observer'], can_read_project_audit: projectAudit },
+            identity: { actor_id: SELF_ACTOR, client_id: 'observer-client', role: 'reader', business_roles: ['observer'], can_read_project_audit: projectAudit },
           },
-        } });
+        });
       }
     }
     return json({ ok: false, error: { code: 'NoRoute', message: url } });
@@ -109,6 +109,14 @@ afterEach(async () => {
 });
 
 describe('object activity page (AWR-OBS-006 PR-A)', () => {
+  it.each([undefined, SELF_ACTOR])('renders flat capabilities with actor filter %s', async (actor) => {
+    const { calls } = setupActivity();
+    renderApp(`/activity?project=demo${actor ? `&actor=${actor}` : ''}`);
+    expect(await screen.findByTestId('page-activity')).toBeTruthy();
+    expect(await screen.findByTestId('activity-row')).toBeTruthy();
+    expect(calls[0].params.get('member_actor_id')).toBe(actor ?? null);
+  });
+
   it('serves development and requests as separate bounded kinds and explains the records in plain words', async () => {
     const { calls } = setupActivity();
     renderApp('/activity?project=demo');

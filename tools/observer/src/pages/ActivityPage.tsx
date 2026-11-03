@@ -54,7 +54,7 @@ export function ActivityPage() {
   const kind: ActivityKind = tab === 'requests' ? 'requests' : 'development';
   const limit = limitOf(searchParams.get('limit'));
   const capabilities = useQuery(capabilitiesQueryOptions(project, revoked));
-  const identity = capabilities.data?.result.data.identity;
+  const identity = capabilities.data?.result.identity;
   const workFilter = searchParams.get('work') ?? undefined;
   const actorParam = searchParams.get('actor') ?? undefined;
   const projectAudit = identity?.can_read_project_audit === true;
