@@ -73,6 +73,12 @@ package instead of rewriting that intent. Older binaries reject the newer schema
 that older writers already omitted from source; repair those through reviewed
 planning changes backed by the authoritative source.
 
+`work_id` is the internal identity used by `required_dependencies`,
+`dependency_acceptance` keys and `split_from` / `split_children` references;
+`external_key` is the display identity. Both identities must remain unchanged on
+edits. The Team YAML writer stores the display key as `id` and adds `work_id`
+when the identities differ. YAML rows without `work_id` use `id` for both. See
+[work identity and dependency keys](workstreams.md#work-identity-and-dependency-keys).
 
 | Optional task field | Present value | Omission | Null |
 | --- | --- | --- | --- |

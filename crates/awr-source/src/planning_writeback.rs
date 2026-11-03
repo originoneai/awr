@@ -5,7 +5,9 @@
 //! bytes from this path; any compatible status note is derived only from a
 //! verified domain result and never becomes a completion receipt.
 use crate::locator::fingerprint;
-use crate::publish_prep::{source_status_notes_are_completion_receipts, task_definition_state};
+use crate::publish_prep::{
+    ledger_work_identities, source_status_notes_are_completion_receipts, task_definition_state,
+};
 use awr_core::{Error, Result};
 use awr_team::{DraftChange, DraftOpKind, TaskDraft};
 use serde::{Deserialize, Serialize};
@@ -159,7 +161,10 @@ pub fn apply_planning_changes_to_ledger(
     changes: &[DraftChange],
 ) -> Result<LedgerWritebackPatch> {
     let before_fingerprint = fingerprint(ledger_bytes);
-    let mut doc: Value = serde_yaml_ng::from_slice(ledger_bytes)
+    // Match publish prep: duplicate YAML keys must not overwrite an explicit
+    // identity before it can be validated.
+    let mut doc = serde_yaml_ng::from_slice::<serde_yaml_ng::Value>(ledger_bytes)
+        .and_then(Value::deserialize)
         .map_err(|e| Error::InvalidInput(format!("invalid YAML ledger for writeback: {e}")))?;
     let mut refused = Vec::new();
     let mut changed = BTreeSet::new();
@@ -168,6 +173,7 @@ pub fn apply_planning_changes_to_ledger(
         .get_mut("work_items")
         .and_then(|v| v.as_array_mut())
         .ok_or_else(|| Error::InvalidInput("ledger work_items required for writeback".into()))?;
+    let mut identities = ledger_work_identities(items)?;
 
     for change in changes {
         change
@@ -175,6 +181,16 @@ pub fn apply_planning_changes_to_ledger(
             .validate()
             .map_err(|e| Error::InvalidInput(e.to_string()))?;
         inspect_draft_for_runtime_fields(&change.after, &mut refused)?;
+        let work_id = awr_team::WorkId::new(change.after.work_id.clone())
+            .map_err(|e| Error::InvalidInput(e.to_string()))?;
+        if change.before.as_ref().is_some_and(|before| {
+            before.work_id != change.after.work_id
+                || before.external_key != change.after.external_key
+        }) {
+            return Err(Error::SourceConflict(
+                "draft edits must preserve work_id and external_key".into(),
+            ));
+        }
         match change.op {
             DraftOpKind::CreateTask => {
                 change
@@ -193,18 +209,17 @@ pub fn apply_planning_changes_to_ledger(
                         change.after.external_key
                     )));
                 }
-                if items.iter().any(|row| {
-                    row.get("id").and_then(|v| v.as_str())
-                        == Some(change.after.external_key.as_str())
-                        || row.get("id").and_then(|v| v.as_str())
-                            == Some(change.after.work_id.as_str())
-                }) {
+                if identities
+                    .iter()
+                    .any(|(key, id)| key == &change.after.external_key || id == &work_id)
+                {
                     return Err(Error::SourceConflict(format!(
                         "create would overwrite existing work {}",
                         change.after.external_key
                     )));
                 }
                 items.push(draft_to_ledger_row(&change.after));
+                identities.push((change.after.external_key.clone(), work_id));
                 changed.insert(change.after.external_key.clone());
             }
             DraftOpKind::EditFields
@@ -212,15 +227,16 @@ pub fn apply_planning_changes_to_ledger(
             | DraftOpKind::Cancel
             | DraftOpKind::Archive => {
                 let key = change.after.external_key.as_str();
-                let Some((index, row)) = items.iter_mut().enumerate().find(|(_, row)| {
-                    row.get("id").and_then(|v| v.as_str()) == Some(key)
-                        || row.get("id").and_then(|v| v.as_str())
-                            == Some(change.after.work_id.as_str())
-                }) else {
+                let Some(index) = identities
+                    .iter()
+                    .position(|(external_key, id)| external_key == key && id == &work_id)
+                else {
                     return Err(Error::SourceConflict(format!(
-                        "edit target {key} missing from authoritative ledger"
+                        "edit target {key} with work_id {} missing from authoritative ledger",
+                        work_id.as_str()
                     )));
                 };
+                let row = &mut items[index];
                 let state = task_definition_state(row, &format!("/work_items/{index}"))?;
                 if change
                     .before
@@ -392,6 +408,11 @@ fn draft_to_ledger_row(draft: &TaskDraft) -> Value {
         },
     });
     if let Some(obj) = row.as_object_mut() {
+        // Keep legacy equal-ID bytes stable for already-recorded writeback
+        // intents; only distinct identities require the optional field.
+        if draft.work_id != draft.external_key {
+            obj.insert("work_id".into(), json!(draft.work_id));
+        }
         if let Some(modes) = &draft.dependency_acceptance {
             obj.insert("dependency_acceptance".into(), json!(modes));
         }

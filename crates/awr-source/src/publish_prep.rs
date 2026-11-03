@@ -553,6 +553,40 @@ pub(crate) fn task_definition_state(item: &Value, pointer: &str) -> Result<Draft
     }
 }
 
+/// YAML `id` is the display key; an omitted `work_id` retains the legacy
+/// identity mapping. Validate both namespaces before publishing or writeback.
+pub(crate) fn ledger_work_identities(items: &[Value]) -> Result<Vec<(String, WorkId)>> {
+    let mut keys = BTreeSet::new();
+    let mut ids = BTreeSet::new();
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let pointer = format!("/work_items/{index}");
+            let external_key = required_string(item, "id", &pointer)?;
+            let field = if item.get("work_id").is_some() {
+                "work_id"
+            } else {
+                "id"
+            };
+            let work_id = WorkId::new(required_string(item, field, &pointer)?)
+                .map_err(|e| Error::InvalidInput(format!("{pointer}/{field}: {e}")))?;
+            if !keys.insert(external_key.clone()) {
+                return Err(Error::InvalidInput(format!(
+                    "duplicate work external key {external_key}"
+                )));
+            }
+            if !ids.insert(work_id.clone()) {
+                return Err(Error::InvalidInput(format!(
+                    "duplicate work_id {}",
+                    work_id.as_str()
+                )));
+            }
+            Ok((external_key, work_id))
+        })
+        .collect()
+}
+
 fn map_contracts(
     document: &Value,
     key_to_id: &BTreeMap<String, Id>,
@@ -582,15 +616,9 @@ fn map_contracts(
     let mut definitions = TaskDefinitions {
         works: BTreeMap::new(),
     };
-    let mut seen = BTreeSet::new();
-    for (index, item) in items.iter().enumerate() {
+    let identities = ledger_work_identities(items)?;
+    for (index, (item, (external_key, work_id))) in items.iter().zip(identities).enumerate() {
         let pointer = format!("/work_items/{index}");
-        let external_key = required_string(item, "id", &pointer)?;
-        if !seen.insert(external_key.clone()) {
-            return Err(Error::InvalidInput(format!(
-                "duplicate work id {external_key}"
-            )));
-        }
         let title = required_string(item, "title", &pointer)?;
         let definition_state = task_definition_state(item, &pointer)?;
         let workstream_key = required_string(item, "workstream", &pointer)?;
@@ -650,8 +678,6 @@ fn map_contracts(
             });
         }
 
-        let work_id = WorkId::new(&external_key)
-            .map_err(|e| Error::InvalidInput(format!("{pointer}/id: {e}")))?;
         let contract = WorkContract {
             codec: if dependency_acceptance
                 .values()

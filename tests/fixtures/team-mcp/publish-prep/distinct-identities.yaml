@@ -1,0 +1,40 @@
+workstreams:
+  version: 1
+  definitions:
+    - id: 01K00000000000000000000001
+      external_key: api
+      title: API
+      state: active
+      authority_version: 1
+      goal_keys: [delivery]
+      acceptance_contracts: [contracts/api-v1.json]
+    - id: 01K00000000000000000000002
+      external_key: client
+      title: Client
+      state: active
+      authority_version: 1
+      goal_keys: [delivery]
+      acceptance_contracts: [contracts/client-v1.md]
+goals:
+  - id: delivery
+    title: Deliver an API and client
+    status: active
+work_items:
+  - id: API-1
+    work_id: internal-api
+    title: Define the interface
+    status: completed
+    workstream: api
+    goals: [delivery]
+    acceptance: [OpenAPI is reviewed]
+    paths: [openapi.yaml]
+    depends_on: []
+  - id: CLIENT-1
+    work_id: internal-client
+    title: Implement the SDK
+    status: planned
+    workstream: client
+    goals: [delivery]
+    acceptance: [SDK smoke test passes]
+    paths: [sdk/]
+    depends_on: [internal-api]
