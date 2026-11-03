@@ -56,6 +56,7 @@ export const HUMAN_VOCABULARY = {
     troubleIntegrationRejected: '并入主线被退回',
     troubleIntegrationRejectedTargetMoved: '并入主线被退回，主线已变化',
     troubleExecutionFailed: '上一次尝试没有成功',
+    troubleExecutionUnknown: '上一次尝试的结果不明，需要核对',
   },
   'en-US': {
     technicalDetails: 'Technical details',
@@ -113,6 +114,7 @@ export const HUMAN_VOCABULARY = {
     troubleIntegrationRejected: 'The merge into the mainline was rejected',
     troubleIntegrationRejectedTargetMoved: 'The merge into the mainline was rejected, and the mainline has moved',
     troubleExecutionFailed: 'The last attempt did not succeed',
+    troubleExecutionUnknown: 'The result of the last attempt is not known',
   },
 } as const;
 

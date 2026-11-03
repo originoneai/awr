@@ -29,14 +29,32 @@ describe('deriveTrouble', () => {
     }
   });
 
-  it('reports a failed last execution, and only the word failed — no other terminal word is guessed', () => {
+  it('reports a failed last execution, and only the word failed of the failure words', () => {
     const failed = { observation: { execution: { state: 'failed', execution_id: '01M6SYNTHETICEXECUTION00000A' } } };
     const facts = deriveTrouble({ snapshot: failed, readState: 'ready', options: { language: 'zh-CN' } });
     expect(facts).toHaveLength(1);
     expect(facts[0].text).toBe('上一次尝试没有成功');
-    for (const state of ['succeeded', 'aborted', 'cancelled', 'timeout']) {
+  });
+
+  it('reports an unknown outcome as its own fact — a person must reconcile it — and never the in-progress words or a deliberate stop', () => {
+    const unknown = { observation: { execution: { state: 'unknown', execution_id: '01M6SYNTHETICEXECUTION00000A' } } };
+    const facts = deriveTrouble({ snapshot: unknown, readState: 'ready', options: { language: 'zh-CN' } });
+    expect(facts).toHaveLength(1);
+    expect(facts[0].kind).toBe('execution-unknown');
+    expect(facts[0].text).toBe('上一次尝试的结果不明，需要核对');
+    const en = deriveTrouble({ snapshot: unknown, readState: 'ready', options: { language: 'en-US' } });
+    expect(en[0].text).toBe('The result of the last attempt is not known');
+    // A deliberate stop and every in-progress word say nothing wrong happened.
+    for (const state of ['succeeded', 'cancelled', 'prepared', 'queued', 'accepted', 'running']) {
       const other = { observation: { execution: { state } } };
-      expect(deriveTrouble({ snapshot: other, readState: 'ready', options: { language: 'zh-CN' } })).toEqual([]);
+      expect(deriveTrouble({ snapshot: other, readState: 'ready', options: { language: 'zh-CN' } }), state).toEqual([]);
+    }
+  });
+
+  it('says nothing for a current-binding integration in any state other than rejected (K2)', () => {
+    for (const state of ['pending', 'open', 'applied', 'prepared', 'confirmed']) {
+      const other = { observation: { collaboration: { integration: { state, current_binding: true } } } };
+      expect(deriveTrouble({ snapshot: other, readState: 'ready', options: { language: 'zh-CN' } }), state).toEqual([]);
     }
   });
 
