@@ -104,3 +104,14 @@ describe('Account mutations and connection entry', () => {
     expect(calls.some((call) => call.init?.body?.toString().includes('demo'))).toBe(false);
   });
 });
+
+describe('button labels', () => {
+  it('shows two-character Chinese button labels without the inserted space', async () => {
+    accountFetch();
+    renderApp('/account');
+    // antd's autoInsertSpace would render 登 录 (and 复 制 on the connect page); the app turns it
+    // off for the whole tree in RootLayout, so the label reads as one word.
+    const login = await screen.findByRole('button', { name: '登录' });
+    expect(login.textContent).toBe('登录');
+  });
+});
