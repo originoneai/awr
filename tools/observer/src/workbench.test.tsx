@@ -295,7 +295,7 @@ describe('My work URL, source selection, and keyboard behavior', () => {
   it('falls back to in progress for an unknown tab', async () => {
     setupWorkbench({ path: '/workbench?scope=demo&tab=bogus' });
     await screen.findAllByText('Build the filter API');
-    expect(screen.getByRole('tab', { name: '进行中' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: /进行中/ }).getAttribute('aria-selected')).toBe('true');
     expect(screen.queryByTestId('workbench-tab-placeholder')).toBeNull();
   });
 
@@ -676,9 +676,28 @@ describe('My work states, detail, and localization', () => {
     await act(() => i18n.changeLanguage('en-US'));
 
     expect(await screen.findByRole('heading', { name: 'My work' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'In progress' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /In progress/ })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'Needs me' })).toBeTruthy();
     expect(screen.getByText('Unclaimed')).toBeTruthy();
     expect(screen.getByText('Open full task →')).toBeTruthy();
+  });
+});
+
+describe('workbench tab counts', () => {
+  it('counts the in-progress tab only when the list read is complete', async () => {
+    setupWorkbench({ path: '/workbench?scope=demo' });
+    await screen.findAllByText('Build the filter API');
+    expect(screen.getByRole('tab', { name: '进行中 2' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '需要我处理' }).textContent).not.toMatch(/\d/);
+    expect(screen.getByRole('tab', { name: '可参与' }).textContent).not.toMatch(/\d/);
+    expect(screen.getByRole('tab', { name: '最近交付' }).textContent).not.toMatch(/\d/);
+  });
+
+  it('shows no number while more pages remain unread', async () => {
+    const paged = structuredClone(DEMO_WORK_NEXT);
+    (paged.result.data as { next_cursor: string | null }).next_cursor = 'more';
+    setupWorkbench({ next: paged });
+    await screen.findAllByText('Build the filter API');
+    expect(screen.getByRole('tab', { name: '进行中' }).textContent).not.toMatch(/\d/);
   });
 });
