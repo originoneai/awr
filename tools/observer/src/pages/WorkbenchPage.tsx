@@ -288,6 +288,10 @@ export function WorkbenchPage() {
   const selectedRow = visibleRows[effectiveSelectedIndex];
   const selectedSnapshot = snapshots[effectiveSelectedIndex];
   const pageReadAt = activeQuery.data?.freshness.page_read.at_unix_ms;
+  // The count claims "this many in-progress tasks exist", so it is only honest when the list read
+  // is complete; while a cursor says more pages remain, the tab says no number. The other tabs
+  // stay uncounted: their reads run only when they are open, so a number would appear and vanish.
+  const inProgressCount = nextData && nextData.next_cursor == null ? nextData.items.length : null;
 
   if (revoked || isAuthError(projects.error) || isAuthError(workNext.error) || isAuthError(workInbox.error)) {
     return <ObservationForbidden />;
@@ -469,7 +473,12 @@ export function WorkbenchPage() {
           activeKey={activeTab}
           onChange={selectTab}
           items={[
-            { key: 'in-progress', label: t('workbench.tabs.inProgress') },
+            {
+              key: 'in-progress',
+              label: inProgressCount == null
+                ? t('workbench.tabs.inProgress')
+                : `${t('workbench.tabs.inProgress')} ${inProgressCount}`,
+            },
             { key: 'needs-me', label: t('workbench.tabs.needsMe') },
             { key: 'participate', label: t('workbench.tabs.participate') },
             { key: 'delivered', label: t('workbench.tabs.delivered') },
