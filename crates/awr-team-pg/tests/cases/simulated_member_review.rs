@@ -177,6 +177,47 @@ async fn open_simulated(
     run(store,token,key,"review.open",json!({"session_id":session,"expected_session_version":"1","evidence_id":evidence["evidence_id"]})).await
 }
 
+// Run 14's page: the author's evidence for a settled execution stored another artifact than the one the execution
+// reported. Under the simulated-member policy it must be refused when a round would be bound to it (AWR-TFQ-014),
+// while the evidence that binds, and auxiliary evidence nobody asks to review, are untouched.
+#[tokio::test]
+async fn simulated_review_open_refuses_the_authors_evidence_that_cannot_bind_to_the_settled_result() {
+    use sha2::Digest;
+    let (_g, admin, db, store) = setup().await;
+    seed_simulated_members(&admin, &db).await;
+    let evidence = simulated_evidence(&store).await;
+    let result = hex_encode(&sha2::Sha256::digest(b"simulated artifact"));
+    let submit_other = |label: &'static str, declared: bool| {
+        let store = &store;
+        let execution_id = evidence["execution_id"].clone();
+        let result = result.clone();
+        async move {
+            let mut payload = json!({"passed":true});
+            if declared {
+                payload["output_digest"] = json!(result);
+            }
+            run(store, A, label, "evidence.submit", json!({"session_id":"session-a","expected_session_version":"1",
+                "execution_id":execution_id,"input_digest":INPUT,"dirty_tree":false,
+                "artifact_text":"another artifact of the same execution","payload":payload})).await
+        }
+    };
+    // Auxiliary evidence is still accepted, and says how it relates to the reported result.
+    let auxiliary = submit_other("auxiliary-declared", true).await;
+    assert_eq!(auxiliary["execution_consistency"]["result_binding"]["status"], "differs");
+    let page_shaped = submit_other("page-shaped", false).await;
+    let error = run_err(&store, RUNNER, "refused-open", "review.open", json!({"session_id":"session-runner","expected_session_version":"1","evidence_id":page_shaped["evidence_id"]})).await;
+    let PgError::EvidenceResultBinding { reasons, .. } = error else { panic!("expected EvidenceResultBinding, got {error:?}") };
+    assert_eq!(reasons, vec!["evidence_declares_no_output_digest", "artifact_digest_differs_from_execution_result"]);
+    let declared_only = run_err(&store, RUNNER, "refused-open-declared", "review.open", json!({"session_id":"session-runner","expected_session_version":"1","evidence_id":auxiliary["evidence_id"]})).await;
+    let PgError::EvidenceResultBinding { reasons, .. } = declared_only else { panic!("expected EvidenceResultBinding, got {declared_only:?}") };
+    assert_eq!(reasons, vec!["artifact_digest_differs_from_execution_result"]);
+    let rounds: i64 = admin.query_one("SELECT count(*) FROM awr_team.review_rounds", &[]).await.unwrap().get(0);
+    assert_eq!(rounds, 0, "a refused open leaves no round behind");
+    // The evidence that binds opens as before.
+    let opened = open_simulated(&store, &evidence, RUNNER, "session-runner", "supervisor-open").await;
+    assert!(opened["round_id"].is_string());
+}
+
 #[tokio::test]
 async fn simulated_auxiliary_evidence_recovery_guidance_preserves_attribution_and_atomicity() {
     async fn state(admin: &Client) -> Vec<i64> {

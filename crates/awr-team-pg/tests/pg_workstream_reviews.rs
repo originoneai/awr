@@ -1603,6 +1603,7 @@ mod agent_review_tests {
     include!("cases/agent_completion.rs");
     include!("cases/review_provenance.rs");
     include!("cases/workspace_completion.rs");
+    include!("cases/evidence_result_binding.rs");
     mod simulated_member_tests {
         use super::*;
         include!("cases/simulated_member_review.rs");

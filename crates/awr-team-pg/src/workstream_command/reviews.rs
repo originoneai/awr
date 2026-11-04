@@ -2,6 +2,7 @@
 mod agent_completion;
 pub(crate) use agent_completion::verify_execution as verify_integration_execution;
 mod artifact_input;
+mod result_binding;
 
 use super::*;
 use crate::review::simulated_member;
@@ -1027,6 +1028,20 @@ async fn submit(
         return Err(PgError::EvidenceInvalid);
     }
     let output_digest = artifact_bytes.as_deref().map(sha256_hex);
+    // Reported, never refused here: one execution can have auxiliary evidence. The round bound to evidence is checked at open.
+    let result_binding = result_binding::evaluate(
+        tx,
+        tenant,
+        project,
+        &result_binding::Subject {
+            policy: &contract.completion_policy,
+            execution_id: a.execution_id.as_deref(),
+            submitter: &auth.actor_id,
+            declared: execution_result_digest.as_deref(),
+            artifact: output_digest.as_deref(),
+        },
+    )
+    .await?;
     let digest_v = evidence_digest(
         &command.work_id,
         &contract_hash,
@@ -1108,6 +1123,9 @@ async fn submit(
             }),
         )],
     };
+    if let Some(binding) = &result_binding {
+        applied.data["execution_consistency"]["result_binding"] = binding.report();
+    }
     if let Some(origins) = member_origins {
         let submitter = simulated_member::decode_origin(origins["submitter"].clone())?;
         simulated_member::add_summary(&mut applied.data, Some(&submitter));
@@ -1130,7 +1148,7 @@ async fn open(
     }
     let row = tx
         .query_opt(
-            "SELECT work_id, contract_hash, digest, execution_id, output_digest, execution_result_digest, member_origins_json
+            "SELECT work_id, contract_hash, digest, execution_id, output_digest, execution_result_digest, member_origins_json, created_by
              FROM awr_team.evidence WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
             &[&tenant, &project, &a.evidence_id],
         )
@@ -1145,6 +1163,22 @@ async fn open(
     if work_id != command.work_id {
         return Err(PgError::EvidenceInvalid);
     }
+    // Completion and integration refuse evidence whose digests differ from the settled execution's result; say so
+    // before a round is bound to it and before any other round is invalidated.
+    let submitter: String = row.get(7);
+    result_binding::require(
+        tx,
+        tenant,
+        project,
+        &result_binding::Subject {
+            policy: &contract.completion_policy,
+            execution_id: execution_id.as_deref(),
+            submitter: &submitter,
+            declared: execution_result_digest.as_deref(),
+            artifact: artifact_digest.as_deref(),
+        },
+    )
+    .await?;
     crate::delivery_sync::review_submission::require(
         tx,
         tenant,
@@ -1391,6 +1425,31 @@ async fn decide(
         .unwrap_or_else(|| "trusted_execution_and_review".into());
     let simulated_policy = live_policy == simulated_member::POLICY;
     let agent_policy = live_policy == crate::review::AGENT_REVIEW_POLICY || simulated_policy;
+    if decision == "approve" {
+        // A round opened before this check existed, or whose execution record has drifted, can still be returned.
+        if let Some(bound) = tx
+            .query_opt(
+                "SELECT execution_id, output_digest, execution_result_digest, created_by FROM awr_team.evidence
+                 WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+                &[&tenant, &project, &evidence_id],
+            )
+            .await?
+        {
+            result_binding::require(
+                tx,
+                tenant,
+                project,
+                &result_binding::Subject {
+                    policy: &live_policy,
+                    execution_id: bound.get::<_, Option<String>>(0).as_deref(),
+                    submitter: &bound.get::<_, String>(3),
+                    declared: bound.get::<_, Option<String>>(2).as_deref(),
+                    artifact: bound.get::<_, Option<String>>(1).as_deref(),
+                },
+            )
+            .await?;
+        }
+    }
     let mut member_review_basis = None;
     let reviewer_person = if simulated_policy {
         if reviewer_kind != "agent" || command.op != "review.decide" {

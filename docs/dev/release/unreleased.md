@@ -206,6 +206,14 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
 
 ## Changed
 
+- Evidence for a workspace-settled execution is checked against the execution's reported result when a review
+  round is bound to it, not only at completion and integration. `review.open` and an approving `review.decide`
+  refuse it with HTTP 409 `EvidenceInvalid` when the `payload.output_digest` it declares or the sha256 of its stored
+  artifact differs from the output the execution reported; the response lists every failing reason, shows 12-character
+  digest prefixes and names the repair (new evidence with matching digests, or a new execution that reports the
+  stored artifact's hash). `evidence.submit` still accepts such evidence (one execution can have auxiliary evidence)
+  and reports the relation in `execution_consistency.result_binding`. Works whose completion does not verify an exact
+  result, and executions that are not workspace-settled, are unchanged. No schema change.
 - A work that delivers a selected candidate into a repository (a connector is configured for it, a
   candidate is selected and its completion policy can be integrated) can no longer be completed before
   that candidate's integration is confirmed. `delivery.finalize` and `work.complete` (and the library

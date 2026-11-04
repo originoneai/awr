@@ -957,6 +957,9 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
                     "recheck_on":"manifest, contract, selection, claim or authority changes"}}),
         );
     }
+    if let Some(diagnostic) = error.evidence_result_binding_diagnostic() {
+        return (StatusCode::CONFLICT, diagnostic);
+    }
     if let Some(diagnostic) = error.integration_not_confirmed_diagnostic() {
         return (StatusCode::CONFLICT, diagnostic);
     }

@@ -1207,7 +1207,7 @@ fn catalog() -> Vec<Tool> {
             "x-identity-utf8":identity_runtime.clone(),
             "description":"Required for session lifecycle, claim, execution, handoff, evidence, review, rework and delivery actions except session.start. Use the owned session_id from work.next resume or session.inspect. JSON Schema maxLength counts characters; runtime also limits this identity to 128 UTF-8 bytes and rejects control characters."},
         "dirty_tree":{"type":"boolean","description":"Required for evidence.submit and delivery.evidence.submit. Report the actual workspace state; not a completion or trust assertion."},
-        "payload":{"description":"Required for evidence.submit; generic evidence accepts any JSON value. Agent completion requires an object with passed=true and output_digest (64 lowercase hex) matching the successful execution report."},
+        "payload":{"description":"Required for evidence.submit; generic evidence accepts any JSON value. Agent completion requires an object with passed=true and output_digest (64 lowercase hex) matching the successful execution report; review.open refuses evidence whose output_digest or stored artifact sha256 differs from the reported output."},
         "artifact_text":{"type":["string","null"],"maxLength":1048576,
             "description":"evidence.submit / delivery.evidence.submit: exact UTF-8 text, preserving whitespace and line endings. At most 1 MiB in bytes; the whole MCP request still must fit 64 KiB. Keep reports compact. Omit artifact_hex when using this field."},
         "artifact_hex":{"type":["string","null"],"maxLength":2097152,"pattern":"^([0-9a-fA-F]{2})*$",
@@ -3213,6 +3213,59 @@ mod tests {
             assert_eq!(mcp.is_error, Some(true));
             assert_eq!(mcp.structured_content, Some(body));
         }
+    }
+
+    #[tokio::test]
+    async fn evidence_that_cannot_bind_to_the_settled_result_is_a_bounded_http_conflict_naming_every_reason_and_the_repair()
+     {
+        let reasons = vec![
+            "evidence_declares_no_output_digest",
+            "artifact_digest_differs_from_execution_result",
+        ];
+        let http = error_response(PgError::EvidenceResultBinding {
+            reasons: reasons.clone(),
+            execution_result: "bbbbbbbbbbbb".into(),
+            declared: "none".into(),
+            artifact: "a7778cd982ea".into(),
+        });
+        assert_eq!(http.status(), StatusCode::CONFLICT);
+        let bytes = axum::body::to_bytes(http.into_body(), 4096).await.unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        // The code stays the one callers already handle; the reasons and the repair are new.
+        assert_eq!(body["code"], "EvidenceInvalid");
+        assert_eq!(body["reason"], reasons[0]);
+        assert_eq!(body["reasons"], json!(reasons));
+        assert_eq!(body["execution_result_digest"], "bbbbbbbbbbbb");
+        assert_eq!(body["declared_output_digest"], "none");
+        assert_eq!(body["artifact_digest"], "a7778cd982ea");
+        assert!(
+            body["next_step"]
+                .as_str()
+                .unwrap()
+                .contains("report a new execution"),
+        );
+        assert_eq!(body["next_step"], body["action_guidance"]["next_action"]);
+        assert_eq!(
+            body["action_guidance"]["condition"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(
+            bytes.len() < 3000,
+            "guidance must stay bounded: {}",
+            bytes.len()
+        );
+        let mcp = CallToolResult::structured_error(body.clone());
+        assert_eq!(mcp.is_error, Some(true));
+        assert_eq!(mcp.structured_content, Some(body));
+        // A refusal without reasons keeps the generic body.
+        let plain = error_response(PgError::EvidenceInvalid);
+        let bytes = axum::body::to_bytes(plain.into_body(), 4096).await.unwrap();
+        let plain: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(plain["code"], "EvidenceInvalid");
+        assert!(plain.get("reasons").is_none());
     }
 
     #[test]
