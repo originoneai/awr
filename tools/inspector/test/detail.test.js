@@ -35,6 +35,23 @@ function specPayload() {
   };
 }
 
+function preparePayload(key) {
+  return {
+    ok: true,
+    command: `awr work prepare ${key} --response-view action`,
+    data: {
+      work: { external_key: key },
+      guidance: {
+        when: 'Required context is complete and no higher-priority blocker is present',
+        basis: 'Current work, claims and management requirements',
+        next_action: 'Consume the rendered context',
+        recheck: 'Scope change',
+      },
+      response_view: { view: 'action' },
+    },
+  };
+}
+
 function assessPayload(key) {
   return {
     ok: true,
@@ -66,6 +83,9 @@ function stubFetch() {
     }
     if (String(url).includes('/api/assess')) {
       return { json: async () => assessPayload(key) };
+    }
+    if (String(url).includes('/api/prepare')) {
+      return { json: async () => preparePayload(key) };
     }
     calls.push(key);
     return {
@@ -104,6 +124,7 @@ beforeEach(() => {
   app.state.mode = 'live';
   app.state.workDetail = {};
   app.state.workAssess = {};
+  app.state.workPrepare = {};
   app.state.specCheck = {};
   app.state.raw = {};
   app.state.selectedWork = null;
@@ -174,6 +195,9 @@ test('late responses cannot replace the selection (end to end)', async () => {
     if (String(url).includes('/api/assess')) {
       return Promise.resolve({ json: async () => assessPayload(key) });
     }
+    if (String(url).includes('/api/prepare')) {
+      return Promise.resolve({ json: async () => preparePayload(key) });
+    }
     calls.push(key);
     return new Promise((resolve) => {
       resolvers[key] = () =>
@@ -219,6 +243,9 @@ test('late failure responses cannot replace the selection', async () => {
     }
     if (String(url).includes('/api/assess')) {
       return Promise.resolve({ json: async () => assessPayload(key) });
+    }
+    if (String(url).includes('/api/prepare')) {
+      return Promise.resolve({ json: async () => preparePayload(key) });
     }
     return new Promise((resolve) => {
       resolvers[key] = () =>
@@ -266,6 +293,9 @@ test('refresh invalidates older requests for the same key', async () => {
     if (String(url).includes('/api/assess')) {
       return Promise.resolve({ json: async () => assessPayload(key) });
     }
+    if (String(url).includes('/api/prepare')) {
+      return Promise.resolve({ json: async () => preparePayload(key) });
+    }
     return new Promise((resolve) => {
       resolvers[key] = (marker) =>
         resolve({
@@ -291,6 +321,7 @@ test('refresh invalidates older requests for the same key', async () => {
   app.detailGuard.invalidate();
   app.state.workDetail = {};
   app.state.workAssess = {};
+  app.state.workPrepare = {};
   app.state.specCheck = {};
 
   resolvers['EXAMPLE-A']('旧的-A');

@@ -687,6 +687,56 @@ test('work assess rejects a missing or invalid key before execution', async () =
   }
 });
 
+test('work prepare is forwarded with action view and no write flags', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awr-argv-'));
+  const argvLog = path.join(dir, 'argv.jsonl');
+  let b;
+  try {
+    b = await startBridge({ env: { STUB_ARGV_OUT: argvLog } });
+    const shown = await (await fetch(
+      `${b.base}/api/prepare?key=EXAMPLE-001&explain=1&session=abc&budget=1`,
+      { headers: GUARD }
+    )).json();
+    assert.equal(shown.ok, true, JSON.stringify(shown));
+    assert.equal(shown.data.guidance.when, 'Required context is complete and no higher-priority blocker is present');
+    assert.match(shown.command, /work prepare EXAMPLE-001 --response-view action/);
+    assert.doesNotMatch(shown.command, /explain|session|budget|manage/);
+    const calls = fs.readFileSync(argvLog, 'utf8').trim().split('\n').map(JSON.parse);
+    const args = calls.find((row) => row.includes('work') && row.includes('prepare'));
+    assert.ok(args);
+    assert.equal(args[args.indexOf('prepare') + 1], 'EXAMPLE-001');
+    assert.ok(args.includes('--response-view'));
+    assert.equal(args[args.indexOf('--response-view') + 1], 'action');
+    assert.ok(!args.includes('--explain'));
+    assert.ok(!args.includes('--session'));
+    assert.ok(!args.includes('manage'));
+  } finally {
+    if (b) await b.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('work prepare rejects a missing or invalid key before execution', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awr-argv-'));
+  const argvLog = path.join(dir, 'argv.jsonl');
+  let b;
+  try {
+    b = await startBridge({ env: { STUB_ARGV_OUT: argvLog } });
+    const before = fs.existsSync(argvLog) ? fs.readFileSync(argvLog, 'utf8') : '';
+    for (const pathName of ['/api/prepare', '/api/prepare?key=', '/api/prepare?key=bad%20id']) {
+      const invalid = await (await fetch(`${b.base}${pathName}`, { headers: GUARD })).json();
+      assert.equal(invalid.ok, false);
+      assert.equal(invalid.error.code, 'BadRequest');
+      assert.ok(!invalid.command, 'Do not spawn a child process');
+    }
+    const after = fs.existsSync(argvLog) ? fs.readFileSync(argvLog, 'utf8') : '';
+    assert.equal(after, before, 'Do not spawn a child process');
+  } finally {
+    if (b) await b.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('spec check is forwarded without write flags or a limit override', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'awr-argv-'));
   const argvLog = path.join(dir, 'argv.jsonl');

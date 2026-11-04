@@ -363,6 +363,31 @@
       },
     },
 
+    workPrepare(key) {
+      const incomplete = key === 'EXAMPLE-008';
+      return {
+        version: 1,
+        stage: 'prepared',
+        work: { external_key: key },
+        ready: !incomplete,
+        ok: !incomplete,
+        guidance: incomplete
+          ? {
+              when: 'Required context is incomplete',
+              basis: 'context.completeness.issues and source freshness',
+              next_action: 'Resolve the listed required gaps for this work, then prepare again',
+              recheck: 'Required sources, rules or work contract change',
+            }
+          : {
+              when: 'Required context is complete and no higher-priority blocker is present',
+              basis: 'Current work, claims and management requirements',
+              next_action: 'Consume the rendered context and follow this work\'s next_action using the existing session/claim rules',
+              recheck: 'Scope change, wait, uncertain result, completed compaction or handoff',
+            },
+        response_view: { version: 1, view: 'action' },
+      };
+    },
+
     workAssess(key) {
       const gaps = key === 'EXAMPLE-008' ? ['goal_context_missing'] : [];
       return {
