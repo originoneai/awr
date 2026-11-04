@@ -96,4 +96,8 @@ async fn review_decide_rechecks_the_result_binding_of_a_round_opened_earlier() {
     assert_eq!(reasons, vec![DECLARED_DIFFERS, ARTIFACT_DIFFERS]);
     let decisions: i64 = admin.query_one("SELECT count(*) FROM awr_team.review_decisions", &[]).await.unwrap().get(0);
     assert_eq!(decisions, 0, "an approval of a round that can never complete must not be recorded");
+    // The same round can still be returned: only an approval is refused.
+    let returned = run(&store, REVIEWER_TOKEN, "return-allowed", "review.decide",
+        json!({"session_id":"session-reviewer","expected_session_version":"1","round_id":opened["round_id"],"decision":"reject","reason":"The evidence cannot bind to the execution result"})).await;
+    assert_eq!(returned["state"], "rejected");
 }

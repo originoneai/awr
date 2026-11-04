@@ -1425,31 +1425,6 @@ async fn decide(
         .unwrap_or_else(|| "trusted_execution_and_review".into());
     let simulated_policy = live_policy == simulated_member::POLICY;
     let agent_policy = live_policy == crate::review::AGENT_REVIEW_POLICY || simulated_policy;
-    if decision == "approve" {
-        // A round opened before this check existed, or whose execution record has drifted, can still be returned.
-        if let Some(bound) = tx
-            .query_opt(
-                "SELECT execution_id, output_digest, execution_result_digest, created_by FROM awr_team.evidence
-                 WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
-                &[&tenant, &project, &evidence_id],
-            )
-            .await?
-        {
-            result_binding::require(
-                tx,
-                tenant,
-                project,
-                &result_binding::Subject {
-                    policy: &live_policy,
-                    execution_id: bound.get::<_, Option<String>>(0).as_deref(),
-                    submitter: &bound.get::<_, String>(3),
-                    declared: bound.get::<_, Option<String>>(2).as_deref(),
-                    artifact: bound.get::<_, Option<String>>(1).as_deref(),
-                },
-            )
-            .await?;
-        }
-    }
     let mut member_review_basis = None;
     let reviewer_person = if simulated_policy {
         if reviewer_kind != "agent" || command.op != "review.decide" {
@@ -1517,6 +1492,30 @@ async fn decide(
     };
     let approval_basis = crate::review::approval_basis(independence_kind);
     let next = if decision == "approve" {
+        // After the authority and independence checks, so a caller who may not review learns nothing about the digests.
+        // A round opened before the check existed, or whose execution record has drifted, can still be returned.
+        if let Some(bound) = tx
+            .query_opt(
+                "SELECT execution_id, output_digest, execution_result_digest, created_by FROM awr_team.evidence
+                 WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+                &[&tenant, &project, &evidence_id],
+            )
+            .await?
+        {
+            result_binding::require(
+                tx,
+                tenant,
+                project,
+                &result_binding::Subject {
+                    policy: &live_policy,
+                    execution_id: bound.get::<_, Option<String>>(0).as_deref(),
+                    submitter: &bound.get::<_, String>(3),
+                    declared: bound.get::<_, Option<String>>(2).as_deref(),
+                    artifact: bound.get::<_, Option<String>>(1).as_deref(),
+                },
+            )
+            .await?;
+        }
         crate::delivery_sync::review_submission::require(
             tx,
             tenant,

@@ -44,8 +44,8 @@ impl Evaluation {
             "status": if self.binds() { "matches" } else { "differs" },
             "reasons": self.reasons(),
             "execution_result_digest": prefix(Some(&self.execution_result)),
-            "declared_output_digest": self.declared.as_deref().map(|d| prefix(Some(d))),
-            "artifact_digest": self.artifact.as_deref().map(|d| prefix(Some(d))),
+            "declared_output_digest": prefix(self.declared.as_deref()),
+            "artifact_digest": prefix(self.artifact.as_deref()),
             "completion_needs": "evidence that a review round is bound to must declare a payload.output_digest and store an artifact whose sha256 both equal execution_result_digest; auxiliary evidence is not affected",
         })
     }
