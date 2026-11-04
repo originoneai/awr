@@ -98,6 +98,17 @@ pub enum PgError {
     /// the closed `integration_*` labels of [`PgError::integration_not_confirmed_diagnostic`].
     #[error("integration not confirmed ({reason})")]
     IntegrationNotConfirmed { reason: &'static str },
+    /// Evidence for a workspace-settled execution cannot satisfy the exact result binding that completion and
+    /// repository integration verify, so no review round may be bound to it or approve it. `reasons` are the
+    /// closed labels of [`PgError::evidence_result_binding_diagnostic`], in the order completion checks them; the
+    /// digests are validated 12-character prefixes or `none`.
+    #[error("evidence does not bind to the settled execution result ({})", .reasons.first().copied().unwrap_or("unknown"))]
+    EvidenceResultBinding {
+        reasons: Vec<&'static str>,
+        execution_result: String,
+        declared: String,
+        artifact: String,
+    },
     #[error("policy downgrade")]
     PolicyDowngrade,
     /// Governed work needs a current admission decision. `code` is one of the closed `admission_*`
@@ -539,6 +550,58 @@ impl PgError {
                 "basis":basis,
                 "next_action":next_action,
                 "recheck":"After the stated correction. Candidate, contract, selection, artifact and authority checks still apply; this advice does not authorize execution or command replay."
+            }
+        }))
+    }
+
+    /// Refusal shared by HTTP and MCP when evidence cannot satisfy the exact result binding of completion. It names every
+    /// failing relation and the repair; only closed labels and validated digest prefixes are echoed.
+    pub fn evidence_result_binding_diagnostic(&self) -> Option<serde_json::Value> {
+        let Self::EvidenceResultBinding {
+            reasons,
+            execution_result,
+            declared,
+            artifact,
+        } = self
+        else {
+            return None;
+        };
+        let primary = reasons.first().copied()?;
+        let conditions: Vec<&str> = reasons
+            .iter()
+            .filter_map(|reason| match *reason {
+                "evidence_declares_no_output_digest" => {
+                    Some("The evidence declares no output_digest in its payload.")
+                }
+                "declared_output_digest_differs_from_execution_result" => Some(
+                    "The output_digest the evidence declares is not the output the execution reported.",
+                ),
+                "evidence_has_no_stored_artifact" => {
+                    Some("The evidence stores no artifact, so there are no bytes to hash.")
+                }
+                "artifact_digest_differs_from_execution_result" => Some(
+                    "The sha256 of the stored artifact is not the output the execution reported.",
+                ),
+                _ => None,
+            })
+            .collect();
+        let next_action = "Submit new evidence for this execution whose payload.output_digest and stored artifact (artifact_text or artifact_hex) both have the sha256 shown as execution_result_digest, or report a new execution whose output_digest is the sha256 of the artifact you stored and submit evidence for that execution. Then open the review on the new evidence.";
+        Some(serde_json::json!({
+            "code":"EvidenceInvalid",
+            "reason":primary,
+            "reasons":reasons,
+            "message":"this evidence cannot complete the work: its digests do not match the output the settled execution reported",
+            "invalid_field":"/args/evidence_id",
+            "constraint":"exact_result_binding",
+            "execution_result_digest":execution_result,
+            "declared_output_digest":declared,
+            "artifact_digest":artifact,
+            "next_step":next_action,
+            "action_guidance":{
+                "condition":conditions,
+                "basis":"A work completed under an agent review policy is verified against the workspace-settled execution it names: the evidence's declared output digest and the sha256 of its stored artifact must both equal the output the execution reported. Completion and repository integration refuse otherwise, so a review of this evidence would be wasted.",
+                "next_action":next_action,
+                "recheck":"After new evidence exists. Review, authority and contract checks still apply; this advice does not authorize execution or command replay."
             }
         }))
     }

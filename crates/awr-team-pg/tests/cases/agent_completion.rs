@@ -8,6 +8,29 @@ async fn caller_chain_in_workspace(admin: &Client, db: &str, store: &WorkstreamR
 }
 
 async fn caller_chain_with_policy(admin: &Client, db: &str, store: &WorkstreamReadStore, workspace: Option<&str>, mode: awr_team::ExecutionSettlementMode, late: bool) -> Value {
+    caller_chain_shaped(admin, db, store, workspace, mode, late, ChainShape::Matching).await
+}
+
+/// How the evidence submitted for the reported execution relates to the digest the execution reported.
+/// `Matching` is the whole chain through `review.decide`; the other shapes stop right after
+/// `evidence.submit` and return the evidence, so a test can drive `review.open` itself.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ChainShape {
+    /// The stored artifact, the declared payload.output_digest and the reported digest are one value.
+    Matching,
+    /// Same digests as `Matching`, but the chain stops after `evidence.submit` so a test can drive open and decide.
+    MatchingStopAfterEvidence,
+    /// The stored artifact has another digest than the one the execution reported (declared digest is the reported one).
+    ArtifactDiffers,
+    /// The stored artifact is the reported one but the payload declares no output_digest.
+    DeclaresNothing,
+    /// The stored artifact is the reported one but the payload declares a different output_digest.
+    DeclaresOther,
+    /// Run 14 page shape: another artifact and no declared output_digest.
+    ArtifactDiffersAndDeclaresNothing,
+}
+
+async fn caller_chain_shaped(admin: &Client, db: &str, store: &WorkstreamReadStore, workspace: Option<&str>, mode: awr_team::ExecutionSettlementMode, late: bool, shape: ChainShape) -> Value {
     use sha2::Digest;
     seed_agent_reviewer(admin, db).await;
     admin.batch_execute("UPDATE awr_team.actors SET kind='agent' WHERE id='agent';
@@ -92,8 +115,16 @@ async fn caller_chain_with_policy(admin: &Client, db: &str, store: &WorkstreamRe
         "",
     );
     evidence_args.as_object_mut().unwrap().remove("artifact_hex");
-    evidence_args["artifact_text"] = json!("caller artifact");
-    evidence_args["payload"]["output_digest"] = json!(result);
+    let other_artifact = matches!(shape, ChainShape::ArtifactDiffers | ChainShape::ArtifactDiffersAndDeclaresNothing);
+    evidence_args["artifact_text"] = json!(if other_artifact { "page-shaped artifact" } else { "caller artifact" });
+    match shape {
+        ChainShape::DeclaresNothing | ChainShape::ArtifactDiffersAndDeclaresNothing => {
+            // submit_args declares a default output_digest; this shape declares none.
+            evidence_args["payload"].as_object_mut().unwrap().remove("output_digest");
+        }
+        ChainShape::DeclaresOther => evidence_args["payload"]["output_digest"] = json!("e".repeat(64)),
+        _ => evidence_args["payload"]["output_digest"] = json!(result),
+    }
     let evidence = run(
         store,
         A,
@@ -103,6 +134,10 @@ async fn caller_chain_with_policy(admin: &Client, db: &str, store: &WorkstreamRe
     )
     .await;
     assert_eq!(evidence["trust_basis"], "caller_asserted");
+    if shape != ChainShape::Matching {
+        return json!({"evidence_id":evidence["evidence_id"],"execution_id":execution["execution_id"],
+            "caller_receipt_id":reported["receipt_id"],"result_digest":result,"evidence":evidence});
+    }
     let opened=run(store,A,"caller-open","review.open",json!({"session_id":"session-a","expected_session_version":"1","evidence_id":evidence["evidence_id"]})).await;
     run(
         store,

@@ -122,6 +122,23 @@ server separately checks the submitted bytes; passing tests alone cannot supply
 the stopped/effect assertions. Other execution policies retain their distinct
 output and artifact digest semantics.
 
+Completion and repository integration need one digest in four places: the
+output the settled execution reported, the `payload.output_digest` the evidence
+declares, the receipt's, and the sha256 of the stored artifact. The service says
+so early, while a repair is cheap. `evidence.submit` only reports the relation
+(`execution_consistency.result_binding`: `matches` or `differs`, the failing
+reasons and 12-character digest prefixes) and never refuses it, because one
+execution can have auxiliary evidence. `review.open` and an approving
+`review.decide` refuse evidence for a succeeded workspace-settled execution when
+a relation fails, with `EvidenceInvalid` and the reasons
+`evidence_declares_no_output_digest`,
+`declared_output_digest_differs_from_execution_result`,
+`evidence_has_no_stored_artifact` and
+`artifact_digest_differs_from_execution_result`, all failing ones at once. The
+repair is new evidence whose declared digest and stored artifact both have the
+reported hash, or a new execution that reports the hash of the stored artifact;
+a review round opened on the new evidence then completes as before.
+
 Settlement requires a running caller-managed V3 execution, a current matching
 contract, the original current claim and fence, and the exact admitted path
 reservations. The `independent_workspace_v1` policy also requires a live lease.
