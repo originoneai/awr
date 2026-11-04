@@ -221,6 +221,13 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
 
 ## Fixed
 
+- CLI sensitive-argument refusals now retain the shared category and policy version,
+  identify the argument by its zero-based process `argv` index (executable at 0),
+  and provide safe repair guidance without echoing argument contents. Environment
+  assignment refusals and `execution run --help` explain how to pass variables through
+  the inherited process environment. Existing rejection rules, pre-parse checks,
+  `RuleViolation` message, stderr JSON and exit status are unchanged.
+
 - The next-action guidance after a repository target moved no longer tells the developer to
   update against the current target, or to rebuild, "in a new admitted execution"
   (AWR-TF-014AN). It appeared in the integration inspection of a rejected integration, in the work

@@ -15,6 +15,10 @@ use std::{
 #[derive(Debug, Subcommand)]
 pub enum ExecutionCommand {
     /// Persist intent, then dispatch an independently supervised local command at most once per key.
+    ///
+    /// Set required variables in the process environment before invoking awr; the supervisor and
+    /// managed child inherit it. Standalone environment assignments in recorded command arguments
+    /// remain subject to sensitive-content rejection, including arguments after `--`.
     Run {
         #[arg(long)]
         session: Id,
