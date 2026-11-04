@@ -6,6 +6,8 @@ mod common;
 mod source_activation_impact;
 #[path = "cases/source_completion_invalidation.rs"]
 mod source_completion_invalidation;
+#[path = "cases/source_definition_lifecycle.rs"]
+mod source_definition_lifecycle;
 use awr_core::{Id, Workstream, WorkstreamCatalog, WorkstreamState};
 use awr_team::{SourceActivationPlan, WorkContract, WorkId, WorkstreamBundle, WorkstreamContract};
 use awr_team_pg::{

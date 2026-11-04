@@ -200,7 +200,7 @@ pub(super) async fn next(
             "prepare"
         };
         items.push(json!({"work_id":work,"title":row.get::<_,String>(1),"workstream_id":stream,
-            "state":row.get::<_,Option<String>>(4),"navigation":status,"responsibility":responsibility,
+            "state":row.get::<_,Option<String>>(4),"definition_state":row.get::<_,String>(7),"navigation":status,"responsibility":responsibility,
             "next_query":{"protocol_version":1,"op":if status=="resume" {"work.observe"} else if matches!(status,"recovery_required"|"waiting_external") {"work.recovery"} else {"work.prepare"},"work_id":work,"workstream_id":stream}}));
     }
     let next = if rows.len() > limit as usize {

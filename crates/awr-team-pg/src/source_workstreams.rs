@@ -2,7 +2,10 @@
 use super::{PgError, PgResult, parse_contract};
 use crate::graph::{DependencyEdge, validate_required_graph};
 use awr_core::WorkstreamCatalog;
-use awr_team::{GOVERNANCE_FILE, GovernanceCandidate, WorkContract, WorkstreamBundle};
+use awr_team::{
+    GOVERNANCE_FILE, GovernanceCandidate, TASK_DEFINITIONS_FILE, TaskDefinitions, WorkContract,
+    WorkstreamBundle,
+};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use tokio_postgres::Transaction;
@@ -26,6 +29,7 @@ pub(crate) async fn require_work_settled(
 
 pub(super) struct SourceProjection {
     pub contracts: Vec<WorkContract>,
+    pub definitions: Option<TaskDefinitions>,
     pub bundle: Option<WorkstreamBundle>,
     pub hash: String,
     pub hashes: BTreeMap<String, String>,
@@ -73,6 +77,33 @@ impl SourceProjection {
                 vec![contract]
             }
         };
+        let definitions = files
+            .iter()
+            .find(|(p, _)| p == TASK_DEFINITIONS_FILE)
+            .map(|(_, bytes)| {
+                serde_json::from_slice::<TaskDefinitions>(bytes)
+                    .map_err(|e| PgError::Protocol(format!("invalid task_definitions.json: {e}")))
+            })
+            .transpose()?;
+        if let Some(definitions) = &definitions {
+            let known: BTreeSet<_> = contracts.iter().map(|c| c.work_id.as_str()).collect();
+            if definitions
+                .works
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>()
+                != known
+                || definitions
+                    .works
+                    .values()
+                    .any(|d| d.title.trim().is_empty() || d.title.contains('\0'))
+            {
+                return Err(PgError::Protocol(
+                    "task definitions must cover every contract exactly with a non-empty title"
+                        .into(),
+                ));
+            }
+        }
         let hashes = contracts
             .iter()
             .map(|c| {
@@ -109,6 +140,7 @@ impl SourceProjection {
         let governance = Self::parse_governance(files, bundle.is_some(), &contracts)?;
         Ok(Self {
             contracts,
+            definitions,
             bundle,
             hash,
             hashes,
@@ -157,6 +189,25 @@ impl SourceProjection {
         project: &str,
         previous_snapshot: Option<&str>,
     ) -> PgResult<()> {
+        if self.definitions.is_none() {
+            let had_definitions: bool = tx
+                .query_one(
+                    "SELECT EXISTS(SELECT 1 FROM awr_team.source_snapshots
+                 WHERE tenant_id=$1 AND project_id=$2 AND id=$3
+                   AND source_ref_json->'files' @> $4::jsonb)",
+                    &[
+                        &tenant,
+                        &project,
+                        &previous_snapshot,
+                        &serde_json::json!([{"path": TASK_DEFINITIONS_FILE}]),
+                    ],
+                )
+                .await?
+                .get(0);
+            if had_definitions {
+                return Err(PgError::Protocol("task_definitions.json cannot be dropped from a source that carries definitions".into()));
+            }
+        }
         if self.governance.is_none() {
             let governed: bool = tx
                 .query_one(
@@ -357,17 +408,41 @@ impl SourceProjection {
             if self.bundle.is_some() && old_key != *key {
                 return Err(PgError::Protocol("work external key is immutable".into()));
             }
+            // Old raw packages have no definition metadata. Retain their prior
+            // definition when available; newly prepared YAML packages are complete.
+            let previous = if self.definitions.is_none() {
+                tx.query_opt(
+                    "SELECT c.definition_state,c.title FROM awr_team.projects p
+                    JOIN awr_team.work_contracts c ON c.tenant_id=p.tenant_id AND c.project_id=p.id
+                      AND c.snapshot_id=p.active_snapshot_id AND c.scope_id='main'
+                    WHERE p.tenant_id=$1 AND p.id=$2 AND c.work_id=$3",
+                    &[&tenant, &project, &work],
+                )
+                .await?
+            } else {
+                None
+            };
+            let definition = self.definitions.as_ref().and_then(|d| d.works.get(work));
+            let state = definition
+                .map(|d| d.definition_state.as_str().to_owned())
+                .or_else(|| previous.as_ref().map(|r| r.get(0)))
+                .unwrap_or_else(|| "enabled".into());
+            let title = definition
+                .map(|d| d.title.clone())
+                .or_else(|| previous.as_ref().map(|r| r.get(1)))
+                .unwrap_or_else(|| key.clone());
             tx.execute(
                 "INSERT INTO awr_team.work_contracts(tenant_id,project_id,snapshot_id,scope_id,
                 work_id,contract_hash,definition_state,title,contract_json)
-                VALUES($1,$2,$3,'main',$4,$5,'enabled',$6,$7)",
+                VALUES($1,$2,$3,'main',$4,$5,$6,$7,$8)",
                 &[
                     &tenant,
                     &project,
                     &snapshot,
                     &work,
                     &self.hashes[work],
-                    &key,
+                    &state,
+                    &title,
                     &contract_json,
                 ],
             )

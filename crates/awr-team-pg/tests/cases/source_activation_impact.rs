@@ -20,7 +20,7 @@ async fn install_independent(store: &SourceStore) -> WorkstreamBundle {
     value
 }
 
-async fn fixture_execution(admin: &Client, work: &str, state: &str) {
+pub(super) async fn fixture_execution(admin: &Client, work: &str, state: &str) {
     admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
         SELECT $1,$2,'impact-session','main',$3,'author','impact-client','impact-conversation','active',workstream_id,ownership_version
         FROM awr_team.workstream_ownership WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3", &[&TENANT,&PROJECT,&work]).await.unwrap();

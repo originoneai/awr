@@ -1676,7 +1676,7 @@ pub(crate) async fn read(
                 .work_item_id
                 .as_ref()
                 .ok_or_else(|| PgError::Protocol("work required".into()))?;
-            let row=tx.query_one("SELECT contract_json,contract_hash,definition_state FROM awr_team.work_contracts
+            let row=tx.query_one("SELECT contract_json,contract_hash,definition_state,title FROM awr_team.work_contracts
                 WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND scope_id='main' AND work_id=$4",
                 &[&tenant,&project,&auth.snapshot,&work]).await?;
             let mut contract: WorkContract =
@@ -1745,6 +1745,7 @@ pub(crate) async fn read(
                 "work_id":work,
                 "contract_hash":contract_hash,
                 "definition_state":definition_state,
+                "title":row.get::<_,String>(3),
                 "visible_contract":contract,
                 "published_contract":contract,
                 "required_specs":required_specs,

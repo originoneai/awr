@@ -5,7 +5,7 @@
 //! bytes from this path; any compatible status note is derived only from a
 //! verified domain result and never becomes a completion receipt.
 use crate::locator::fingerprint;
-use crate::publish_prep::source_status_notes_are_completion_receipts;
+use crate::publish_prep::{source_status_notes_are_completion_receipts, task_definition_state};
 use awr_core::{Error, Result};
 use awr_team::{DraftChange, DraftOpKind, TaskDraft};
 use serde::{Deserialize, Serialize};
@@ -212,7 +212,7 @@ pub fn apply_planning_changes_to_ledger(
             | DraftOpKind::Cancel
             | DraftOpKind::Archive => {
                 let key = change.after.external_key.as_str();
-                let Some(row) = items.iter_mut().find(|row| {
+                let Some((index, row)) = items.iter_mut().enumerate().find(|(_, row)| {
                     row.get("id").and_then(|v| v.as_str()) == Some(key)
                         || row.get("id").and_then(|v| v.as_str())
                             == Some(change.after.work_id.as_str())
@@ -221,6 +221,16 @@ pub fn apply_planning_changes_to_ledger(
                         "edit target {key} missing from authoritative ledger"
                     )));
                 };
+                let state = task_definition_state(row, &format!("/work_items/{index}"))?;
+                if change
+                    .before
+                    .as_ref()
+                    .is_some_and(|before| before.definition_state != state)
+                {
+                    return Err(Error::SourceConflict(
+                        "draft definition_state does not match the authoritative source".into(),
+                    ));
+                }
                 // Preserve identity and any runtime-looking keys that already
                 // exist only if they are true source vocabulary (e.g. status).
                 for (field, before, after) in [
@@ -368,6 +378,7 @@ fn draft_to_ledger_row(draft: &TaskDraft) -> Value {
     let mut row = json!({
         "id": draft.external_key,
         "title": draft.title,
+        "definition_state": draft.definition_state,
         "goals": draft.goals,
         "acceptance": draft.acceptance,
         "paths": draft.scope_paths,
@@ -414,6 +425,7 @@ fn draft_to_ledger_row(draft: &TaskDraft) -> Value {
 fn apply_draft_fields(row: &mut Value, draft: &TaskDraft) {
     if let Some(obj) = row.as_object_mut() {
         obj.insert("title".into(), json!(draft.title));
+        obj.insert("definition_state".into(), json!(draft.definition_state));
         obj.insert("goals".into(), json!(draft.goals));
         obj.insert("acceptance".into(), json!(draft.acceptance));
         obj.insert("paths".into(), json!(draft.scope_paths));
