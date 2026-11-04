@@ -244,9 +244,11 @@ impl<'a> Runtime<'a> {
     ///
     /// The stored string is the canonical project-relative identity, so the same
     /// evidence row resolves against the same relative file on every node that
-    /// holds the checkout. A missing, escaping or ambiguous target is a typed
-    /// error at this point and never a guess at read time. `file://`, `git://`
-    /// and plain paths pass through untouched.
+    /// holds the checkout. When `[project] external_key` is set, new rows store
+    /// `project://<external_key>/<rel>`; legacy `project:///` rows are not
+    /// rewritten on read. A missing, escaping, mismatched or ambiguous target is
+    /// a typed error at this point and never a guess at read time. `file://`,
+    /// `git://` and plain paths pass through untouched.
     ///
     /// The bytes are bound at registration either way: a declared `sha256` must
     /// match the resolved content, and without one the resolved digest is stored
@@ -262,7 +264,8 @@ impl<'a> Runtime<'a> {
         let project = self.store.project(self.project)?;
         let root = project.root.canonicalize()?;
         let manifest = awr_source::Manifest::load(&root)?;
-        let locator = awr_source::Locator::parse(&root, &manifest, &draft.locator)?;
+        let locator = awr_source::Locator::parse(&root, &manifest, &draft.locator)?
+            .bind_authored_project_key(&manifest)?;
         let snapshot = locator.read(&root, REGISTERED_CONTENT_READ_CAP)?;
         let actual = snapshot
             .fingerprint

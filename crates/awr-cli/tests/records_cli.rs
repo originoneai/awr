@@ -10,6 +10,9 @@ use std::{
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
+        Self::with_external_key(Some("records"))
+    }
+    fn with_external_key(external_key: Option<&str>) -> Self {
         let root = std::env::temp_dir().join(format!("awr-records-cli-{}", Id::new()));
         fs::create_dir(&root).unwrap();
         fs::create_dir(root.join("decisions")).unwrap();
@@ -19,7 +22,16 @@ impl Fixture {
         )
         .unwrap();
         fs::write(root.join("decisions/ADR-1.md"),"# ADR-1: Keep reports external\n\nStatus: accepted\n\n## Decision\n\nKeep report metadata in SQLite.\n\n## Rationale\n\nPRIVATE_RATIONALE_SENTINEL\n").unwrap();
-        fs::write(root.join("sources.toml"),"[project]\nname='Records'\nexternal_key='records'\nauthority_mode='source_first'\nauthorized_roots=[]\n\n[[sources]]\ndomain='ledger'\nrole='primary'\npath='work.yaml'\nadapter='yaml-ledger-v1'\n\n[[sources]]\ndomain='decisions'\nrole='supporting'\npath='decisions'\nadapter='markdown-directory-v1'\n").unwrap();
+        let key_line = external_key
+            .map(|k| format!("external_key='{k}'\n"))
+            .unwrap_or_default();
+        fs::write(
+            root.join("sources.toml"),
+            format!(
+                "[project]\nname='Records'\n{key_line}authority_mode='source_first'\nauthorized_roots=[]\n\n[[sources]]\ndomain='ledger'\nrole='primary'\npath='work.yaml'\nadapter='yaml-ledger-v1'\n\n[[sources]]\ndomain='decisions'\nrole='supporting'\npath='decisions'\nadapter='markdown-directory-v1'\n"
+            ),
+        )
+        .unwrap();
         let f = Self(root);
         f.ok(&["init", "--manifest", "sources.toml", "--accept"]);
         f.ok(&["status"]);
@@ -207,10 +219,10 @@ fn project_locator_is_parsed_at_registration_and_read_back_by_show() {
         "--expected-revision",
         &f.revision(),
     ]);
-    // Registration stores the canonical project identity, not the input spelling.
+    // Registration stores the identity-bearing form when the authored key is set.
     assert_eq!(
         added["evidence"]["locator"],
-        "project:///evidence/check.json"
+        "project://records/evidence/check.json"
     );
     let shown = f.ok(&[
         "evidence",
@@ -245,8 +257,12 @@ fn project_locator_is_parsed_at_registration_and_read_back_by_show() {
     );
     assert_eq!(f.revision(), revision);
 
-    // The authority form and a traversal are refused before the file is touched.
-    for locator in ["project://evidence/check.json", "project:///../check.json"] {
+    // A mismatched identity-bearing key and a traversal are refused before the
+    // file is touched. `project://evidence/check.json` is now a key, not a syntax error.
+    for (locator, code) in [
+        ("project://evidence/check.json", "SourceConflict"),
+        ("project:///../check.json", "RuleViolation"),
+    ] {
         let mut draft = draft.clone();
         draft["locator"] = json!(locator);
         fs::write(
@@ -263,11 +279,7 @@ fn project_locator_is_parsed_at_registration_and_read_back_by_show() {
                 "--expected-revision",
                 &revision,
             ],
-            if locator.starts_with("project://e") {
-                "InvalidInput"
-            } else {
-                "RuleViolation"
-            },
+            code,
         );
     }
 
@@ -595,4 +607,91 @@ fn project_locator_registration_without_sha256_still_binds_the_bytes() {
         "SourceConflict",
     );
     assert_eq!(f.revision(), revision);
+}
+
+#[test]
+fn project_locator_without_authored_key_keeps_the_legacy_identity() {
+    let f = Fixture::with_external_key(None);
+    fs::create_dir(f.0.join("evidence")).unwrap();
+    let body = b"{\"project\":true}\n";
+    fs::write(f.0.join("evidence/check.json"), body).unwrap();
+    let digest = format!("{:x}", Sha256::digest(body));
+    let draft = json!({"external_key":"PROJECT-LEGACY","work_item_key":"W","evidence_type":"report","level":"locally_verified","summary":"Legacy project locator","locator":"project:///evidence/check.json","sha256":digest,"source_sha":"a".repeat(40),"command":"cargo test --test records_cli","scope":["W"],"branch_id":null,"verified_at":1});
+    fs::write(
+        f.0.join("evidence.json"),
+        serde_json::to_vec(&draft).unwrap(),
+    )
+    .unwrap();
+    let added = f.ok(&[
+        "evidence",
+        "add",
+        "--input",
+        "evidence.json",
+        "--expected-revision",
+        &f.revision(),
+    ]);
+    assert_eq!(
+        added["evidence"]["locator"],
+        "project:///evidence/check.json"
+    );
+}
+
+#[test]
+fn project_locator_with_a_foreign_key_fails_closed_on_a_second_project() {
+    let alpha = Fixture::with_external_key(Some("alpha"));
+    let beta = Fixture::with_external_key(Some("beta"));
+    let body = b"{\"project\":true}\n";
+    for f in [&alpha, &beta] {
+        fs::create_dir(f.0.join("evidence")).unwrap();
+        fs::write(f.0.join("evidence/check.json"), body).unwrap();
+    }
+    let digest = format!("{:x}", Sha256::digest(body));
+    let draft = json!({"external_key":"PROJECT-ALPHA","work_item_key":"W","evidence_type":"report","level":"locally_verified","summary":"Keyed project locator","locator":"project:///evidence/check.json","sha256":digest,"source_sha":"a".repeat(40),"command":"cargo test --test records_cli","scope":["W"],"branch_id":null,"verified_at":1});
+    fs::write(
+        alpha.0.join("evidence.json"),
+        serde_json::to_vec(&draft).unwrap(),
+    )
+    .unwrap();
+    let added = alpha.ok(&[
+        "evidence",
+        "add",
+        "--input",
+        "evidence.json",
+        "--expected-revision",
+        &alpha.revision(),
+    ]);
+    assert_eq!(
+        added["evidence"]["locator"],
+        "project://alpha/evidence/check.json"
+    );
+
+    let revision = beta.revision();
+    let mut foreign = draft.clone();
+    foreign["external_key"] = json!("PROJECT-BETA");
+    foreign["locator"] = json!("project://alpha/evidence/check.json");
+    fs::write(
+        beta.0.join("foreign.json"),
+        serde_json::to_vec(&foreign).unwrap(),
+    )
+    .unwrap();
+    let refused = beta.run(
+        &[
+            "evidence",
+            "add",
+            "--input",
+            "foreign.json",
+            "--expected-revision",
+            &revision,
+        ],
+        true,
+    );
+    assert!(!refused.status.success());
+    let report: Value = serde_json::from_slice(&refused.stderr).unwrap();
+    assert_eq!(report["code"], "SourceConflict");
+    let message = report["message"].as_str().unwrap();
+    assert!(message.contains("locator_key alpha"), "{message}");
+    assert!(message.contains("current_key beta"), "{message}");
+    assert_eq!(report["details"]["locator_key"], "alpha");
+    assert_eq!(report["details"]["current_key"], "beta");
+    assert_eq!(beta.revision(), revision);
 }

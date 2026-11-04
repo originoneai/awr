@@ -167,6 +167,15 @@ pub fn render_diagnostic_details(details: Option<&serde_json::Value>) -> String 
     crate::safe_diagnostic(&output)
 }
 
+fn project_locator_mismatch_details(message: &str) -> Option<serde_json::Value> {
+    let rest = message.strip_prefix("project locator identity mismatch: locator_key ")?;
+    let (locator_key, current_key) = rest.split_once(", current_key ")?;
+    Some(serde_json::json!({
+        "locator_key": locator_key,
+        "current_key": current_key
+    }))
+}
+
 impl Error {
     pub fn code(&self) -> &'static str {
         match self {
@@ -278,6 +287,7 @@ impl Error {
                 } => Some(
                     serde_json::json!({"proposal_id":proposal_id,"stage":stage,"reason":reason,"source_write_performed":null}),
                 ),
+                Self::SourceConflict(message) => project_locator_mismatch_details(message),
                 _ => None,
             }).map(crate::redact_sensitive_value),
         }

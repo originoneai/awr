@@ -225,6 +225,13 @@ impl Manifest {
         manifest.validate()?;
         Ok((manifest, value))
     }
+    /// Authored `[project] external_key` from `.awr/project.toml`.
+    ///
+    /// This is never the SQLite name fallback used by `register_project`.
+    /// Omitted stays `None`; present-but-blank is already rejected by `validate`.
+    pub fn authored_external_key(&self) -> Option<&str> {
+        self.project.external_key.as_deref()
+    }
     pub fn validate(&self) -> Result<()> {
         awr_core::ensure_public_data(self)?;
         if self.project.name.trim().is_empty() || self.sources.is_empty() {

@@ -22,9 +22,16 @@ fn project_root(tag: &str) -> PathBuf {
 }
 
 fn manifest() -> Manifest {
-    Manifest::parse(
-        "[project]\nname = 'P'\n\n[[sources]]\ndomain = 'decisions'\nrole = 'supporting'\npath = 'decisions'\nadapter = 'markdown-directory-v1'\n",
-    )
+    manifest_with_key(None)
+}
+
+fn manifest_with_key(key: Option<&str>) -> Manifest {
+    let key_line = key
+        .map(|k| format!("external_key = '{k}'\n"))
+        .unwrap_or_default();
+    Manifest::parse(&format!(
+        "[project]\nname = 'P'\n{key_line}\n[[sources]]\ndomain = 'decisions'\nrole = 'supporting'\npath = 'decisions'\nadapter = 'markdown-directory-v1'\n",
+    ))
     .unwrap()
 }
 
@@ -98,7 +105,16 @@ fn project_locator_keeps_identity_and_fingerprint_across_checkouts() {
 fn project_locator_rejects_an_authority_traversal_and_a_selector() {
     let root = project_root("reject");
     let manifest = manifest();
-    for spec in ["project://notes/a.md", "project:///../a.md", "project://"] {
+    // Without an authored key, the host form is identity-bearing and fails closed.
+    let error = Locator::parse(&root, &manifest, "project://notes/a.md").unwrap_err();
+    assert!(matches!(error, Error::InvalidInput(_)), "{error}");
+    assert!(
+        error
+            .to_string()
+            .contains("project locator identity is missing"),
+        "{error}"
+    );
+    for spec in ["project:///../a.md", "project://"] {
         let error = Locator::parse(&root, &manifest, spec).unwrap_err();
         assert!(
             matches!(error, Error::InvalidInput(_) | Error::RuleViolation(_)),
@@ -154,4 +170,114 @@ fn a_project_locator_stays_inside_the_project_root() {
         let error = Locator::parse(&root, &manifest, spec).unwrap_err();
         assert!(matches!(error, Error::RuleViolation(_)), "{spec}: {error}");
     }
+}
+
+#[test]
+fn identity_bearing_project_locator_round_trips_when_keys_match() {
+    let root = project_root("keyed");
+    let manifest = manifest_with_key(Some("alpha"));
+    let spec = "project://alpha/evidence/check.json";
+
+    let locator = Locator::parse(&root, &manifest, spec).unwrap();
+    match &locator {
+        Locator::Project { path, project_key } => {
+            assert_eq!(path.as_path(), Path::new("evidence/check.json"));
+            assert_eq!(project_key.as_deref(), Some("alpha"));
+        }
+        other => panic!("expected a project locator, got {other:?}"),
+    }
+    assert_eq!(locator.identity().unwrap(), spec);
+    let snapshot = locator.read(&root, 4096).unwrap();
+    assert_eq!(snapshot.locator, spec);
+    assert_eq!(snapshot.fingerprint, fingerprint(&snapshot.bytes));
+    assert!(snapshot.verify_fingerprint());
+}
+
+#[test]
+fn identity_bearing_project_locator_mismatch_does_not_read_bytes() {
+    let root = project_root("mismatch");
+    let manifest = manifest_with_key(Some("alpha"));
+    // Missing file would be SourceUnavailable if parse opened it.
+    let error =
+        Locator::parse(&root, &manifest, "project://beta/evidence/missing.json").unwrap_err();
+    assert!(matches!(error, Error::SourceConflict(_)), "{error}");
+    let text = error.to_string();
+    assert!(text.contains("locator_key beta"), "{error}");
+    assert!(text.contains("current_key alpha"), "{error}");
+}
+
+#[test]
+fn identity_bearing_project_locator_is_refused_when_the_authored_key_is_unset() {
+    let root = project_root("unset");
+    let error =
+        Locator::parse(&root, &manifest(), "project://alpha/evidence/check.json").unwrap_err();
+    assert!(matches!(error, Error::InvalidInput(_)), "{error}");
+    assert!(
+        error
+            .to_string()
+            .contains("project locator identity is missing: [project] external_key is unset"),
+        "{error}"
+    );
+}
+
+#[test]
+fn legacy_project_locator_is_not_rewritten_on_read_when_a_key_is_set() {
+    let root = project_root("legacy-read");
+    let manifest = manifest_with_key(Some("alpha"));
+    let spec = "project:///evidence/check.json";
+    let locator = Locator::parse(&root, &manifest, spec).unwrap();
+    match &locator {
+        Locator::Project { project_key, .. } => assert_eq!(project_key, &None),
+        other => panic!("expected a project locator, got {other:?}"),
+    }
+    let snapshot = locator.read(&root, 4096).unwrap();
+    assert_eq!(snapshot.locator, spec);
+}
+
+#[test]
+fn bind_authored_project_key_attaches_the_key_only_at_registration() {
+    let root = project_root("bind");
+    let manifest = manifest_with_key(Some("alpha"));
+    let locator = Locator::parse(&root, &manifest, "project:///evidence/check.json")
+        .unwrap()
+        .bind_authored_project_key(&manifest)
+        .unwrap();
+    assert_eq!(
+        locator.identity().unwrap(),
+        "project://alpha/evidence/check.json"
+    );
+    let snapshot = locator.read(&root, 4096).unwrap();
+    assert_eq!(snapshot.locator, "project://alpha/evidence/check.json");
+}
+
+#[test]
+fn project_locator_key_charset_is_closed() {
+    let root = project_root("charset");
+    let manifest = manifest_with_key(Some("alpha"));
+    for spec in [
+        "project://alpha:beta/evidence/check.json",
+        "project://alpha@beta/evidence/check.json",
+        "project:// /evidence/check.json",
+        &format!("project://{}/evidence/check.json", "a".repeat(201)),
+    ] {
+        let error = Locator::parse(&root, &manifest, spec).unwrap_err();
+        assert!(matches!(error, Error::InvalidInput(_)), "{spec}: {error}");
+    }
+}
+
+#[test]
+fn bind_authored_project_key_refuses_a_key_outside_the_locator_charset() {
+    let root = project_root("bind-charset");
+    let manifest = manifest_with_key(Some("alpha@beta"));
+    let error = Locator::parse(&root, &manifest, "project:///evidence/check.json")
+        .unwrap()
+        .bind_authored_project_key(&manifest)
+        .unwrap_err();
+    assert!(matches!(error, Error::InvalidInput(_)), "{error}");
+    assert!(
+        error
+            .to_string()
+            .contains("project locator key must match [A-Za-z0-9._-]{1,200}"),
+        "{error}"
+    );
 }

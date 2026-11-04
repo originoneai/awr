@@ -18,9 +18,15 @@ pub enum Locator {
         revision: String,
         path: PathBuf,
     },
-    /// Project-root-relative path; identity is `project:///<relative-path>`.
+    /// Project-root-relative path.
+    ///
+    /// `project_key` is the authored `[project] external_key`. `None` is the
+    /// legacy identity `project:///<relative-path>`. `Some` is
+    /// `project://<external_key>/<relative-path>`. The store's name fallback
+    /// is never used as this key.
     Project {
         path: PathBuf,
+        project_key: Option<String>,
     },
 }
 
@@ -157,6 +163,34 @@ pub fn fingerprint(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
+fn project_locator_key(value: &str) -> Result<&str> {
+    if (1..=200).contains(&value.len())
+        && value
+            .bytes()
+            .all(|b| matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-'))
+    {
+        Ok(value)
+    } else {
+        Err(Error::InvalidInput(
+            "project locator key must match [A-Za-z0-9._-]{1,200}".into(),
+        ))
+    }
+}
+
+/// Compare an identity-bearing locator key to the authored manifest key only.
+/// Never opens the file, never rewrites the locator, never falls back to name or root.
+fn check_authored_project_key(manifest: &Manifest, locator_key: &str) -> Result<()> {
+    match manifest.authored_external_key() {
+        None => Err(Error::InvalidInput(
+            "project locator identity is missing: [project] external_key is unset".into(),
+        )),
+        Some(current) if current == locator_key => Ok(()),
+        Some(current) => Err(Error::SourceConflict(format!(
+            "project locator identity mismatch: locator_key {locator_key}, current_key {current}"
+        ))),
+    }
+}
+
 fn relative(path: &Path) -> Result<()> {
     if path.as_os_str().is_empty()
         || path
@@ -191,7 +225,7 @@ impl Locator {
                         .join("/");
                 Ok(format!("git://{revision}:{path}"))
             }
-            Self::Project { path } => {
+            Self::Project { path, project_key } => {
                 relative(path)?;
                 let path = path
                     .components()
@@ -203,7 +237,10 @@ impl Locator {
                     })
                     .collect::<Result<Vec<_>>>()?
                     .join("/");
-                Ok(format!("project:///{path}"))
+                match project_key {
+                    Some(key) => Ok(format!("project://{key}/{path}")),
+                    None => Ok(format!("project:///{path}")),
+                }
             }
         }
     }
@@ -216,6 +253,26 @@ impl Locator {
             .as_deref()
             .ok_or_else(|| Error::InvalidInput("missing locator".into()))?;
         Self::parse(root, manifest, value)
+    }
+    /// Attach the authored `[project] external_key` to a legacy `project:///` locator
+    /// at registration. Stored `project:///` rows are parsed with `project_key: None`
+    /// and are not rewritten on read. A key outside the locator charset is refused
+    /// here so the store never writes a string `parse` cannot read back.
+    pub fn bind_authored_project_key(self, manifest: &Manifest) -> Result<Self> {
+        match self {
+            Self::Project {
+                path,
+                project_key: None,
+            } => Ok(Self::Project {
+                path,
+                project_key: manifest
+                    .authored_external_key()
+                    .map(project_locator_key)
+                    .transpose()?
+                    .map(str::to_owned),
+            }),
+            other => Ok(other),
+        }
     }
     /// Parse a locator string.
     ///
@@ -254,11 +311,16 @@ impl Locator {
                 path,
             });
         }
-        if let Some(value) = value.strip_prefix("project://") {
-            let Some(path) = value.strip_prefix('/') else {
-                return Err(Error::InvalidInput(
-                    "project locator syntax is project:///<project-relative-path>".into(),
-                ));
+        if let Some(rest) = value.strip_prefix("project://") {
+            let (project_key, path) = if let Some(path) = rest.strip_prefix('/') {
+                (None, path)
+            } else {
+                let (key, path) = rest.split_once('/').ok_or_else(|| {
+                    Error::InvalidInput(
+                        "project locator syntax is project:///<project-relative-path> or project://<external_key>/<project-relative-path>".into(),
+                    )
+                })?;
+                (Some(project_locator_key(key)?.to_owned()), path)
             };
             if path.contains('#') {
                 return Err(Error::InvalidInput(
@@ -274,7 +336,10 @@ impl Locator {
             relative(&path).map_err(|_| {
                 Error::RuleViolation("project locator must stay inside the project root".into())
             })?;
-            return Ok(Self::Project { path });
+            if let Some(key) = project_key.as_deref() {
+                check_authored_project_key(manifest, key)?;
+            }
+            return Ok(Self::Project { path, project_key });
         }
         Err(Error::Unsupported(
             "V1 supports file://, git:// and project:// sources".into(),
@@ -321,7 +386,10 @@ impl Locator {
                 snapshot.validate_content()?;
                 Ok(snapshot)
             }
-            Self::Project { path } => {
+            Self::Project {
+                path,
+                project_key: _,
+            } => {
                 let root = root.canonicalize()?;
                 let resolved = root
                     .join(path)
