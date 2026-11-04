@@ -98,6 +98,22 @@ CLI 普通输出面向人阅读：默认列出有界摘要，状态页最多显�
 
 `--json` 支持放在已知子命令前后。为了诊断未知顶层命令，放在命令前。`--` 之后的字面量 `--json` 和 `--field=--json` 不切换输出模式。
 
+### Remote Team reads
+
+The native [Team CLI reads](team-cli.md) use the authenticated Team HTTP query
+contract shared with `awr_team_query`. They preserve its original JSON shapes
+and remote error fields, including unknown codes and errors with no `message`.
+They do not add Personal `ok` or completeness wrappers to Team results.
+
+A valid HTTP 200 prepare/snapshot with `data.context_complete=false` exits 0:
+the read succeeded, while context is incomplete. JSON stderr stays empty and
+the flag, reasons and guidance remain in stdout. Consumers requiring complete
+context must check that flag. This is distinct from the Personal prepare
+partial-failure convention above. A Team HTTP error such as `ContextIncomplete`
+exits 1 with the error on stderr and no result on stdout. Successful reads do not
+authorize execution. Usage errors still exit 2, and Personal error reports and
+exit behavior remain unchanged.
+
 输入 JSON 语法或字段错误返回 `InvalidInput`，不冒充内部序列化错误。若同时存在多个错误，两端的参数解析与文件读取顺序可能不同；修正首个错误后再继续，不依赖多重故障的报错先后顺序。
 
 `WorkspaceConflict` 只来自 `awr workspace`：两端都改过同一个被跟踪文件，工具不自动合并，本地文件保持原样。`WorkspaceContended` 是另一种情形——一次 `publish` 或 `drop` 连续三次提交都被对端抢先，此时没有任何路径被改写，补救是再执行一次同一命令，不需要调解，也不需要读消息来区分。核心错误保留 `NotFound`、`SourceUnavailable`、`SourceStale`、`SourceConflict`、`RevisionConflict`、`DependencyBlocked`、`ClaimConflict`、`RuleViolation`、`EvidenceMissing`、`MutationUnsupported`、`MutationConflict`、`WorkspaceConflict`、`WorkspaceContended`、`ContextIncomplete`、`BudgetExceeded`、`InvalidTransition`。`InvalidInput`、`Unsupported`、`Storage`、`Io`、`Json` 表示输入、实现或底层错误。提案 / 恢复错误还可能包括 `proposal_required`、`MutationIncomplete`、`WorkActionIncomplete`、`CheckpointIncomplete`，其中附带的提案或尝试 ID 是恢复入口。

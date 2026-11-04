@@ -123,13 +123,23 @@ pub fn team_err(error: TeamError) -> Error {
     }
 }
 
-fn profile_path(project: &Path, name: &str) -> Result<PathBuf> {
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+pub(crate) fn remote_name(value: &str) -> std::result::Result<String, String> {
+    if value.is_empty()
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
     {
-        return Err(Error::InvalidInput("invalid remote name".into()));
+        Err(
+            "remote name must be nonempty and contain only ASCII letters, digits, '-' or '_'"
+                .into(),
+        )
+    } else {
+        Ok(value.to_owned())
     }
+}
+
+fn profile_path(project: &Path, name: &str) -> Result<PathBuf> {
+    remote_name(name).map_err(Error::InvalidInput)?;
     Ok(project
         .join(".awr/team-remotes")
         .join(format!("{name}.toml")))
