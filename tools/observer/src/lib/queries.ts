@@ -85,8 +85,9 @@ export function overviewQueryOptions(project: string | null, revoked = false) {
   } satisfies UseQueryOptions<TeamOverviewResponse>;
 }
 
+/** Capabilities is the flat discovery response; object reads carry a data envelope. */
 interface CapabilitiesResponse {
-  result: { data: { identity?: TeamIdentity } };
+  result: { identity?: TeamIdentity };
 }
 
 export function capabilitiesQueryOptions(project: string, revoked = false) {
