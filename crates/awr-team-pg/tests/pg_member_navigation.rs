@@ -81,21 +81,19 @@ async fn inactive_definitions_do_not_cycle_from_prepare_back_to_next() {
             let observed = store.query(TENANT, PROJECT, A, observe).await.unwrap();
             assert_eq!(observed["data"]["definition_state"], state);
             assert_eq!(observed["data"]["execution_authorized"], false);
-            // Existing own sessions remain discoverable for observation and
-            // recovery even though their inactive definitions are not choices.
-            let resume = &page["data"]["resume"][0];
-            assert_eq!(resume["work_id"], "a");
-            assert_eq!(resume["next_query"]["op"], "work.observe");
-            let resumed = store
-                .query(
-                    TENANT,
-                    PROJECT,
-                    A,
-                    serde_json::from_value(resume["next_query"].clone()).unwrap(),
-                )
-                .await
+            // Follow the historical session's actual guidance back to next.
+            // An inactive session without recovery must not regain priority.
+            let mut history = own_query("work.observe");
+            history.session_id = Some("session-a".into());
+            let historical = store.query(TENANT, PROJECT, A, history).await.unwrap();
+            assert_eq!(historical["data"]["definition_state"], state);
+            let op = historical["data"]["guidance"]["action"]["op"]
+                .as_str()
                 .unwrap();
-            assert_eq!(resumed["data"]["definition_state"], state);
+            assert_eq!(op, "work.next");
+            let redirected = store.query(TENANT, PROJECT, A, query(op)).await.unwrap();
+            assert_eq!(redirected["data"]["resume"], json!([]));
+            assert_eq!(redirected["data"]["resume_truncated"], false);
             // No candidate remains when all visible definitions are inactive.
             owner
                 .execute(
@@ -120,29 +118,69 @@ async fn enabled_read_only_candidates_point_to_observation() {
         .await
         .unwrap()
         .get(0);
-    let next = store
-        .query(TENANT, PROJECT, A, query("work.next"))
-        .await
-        .unwrap();
-    let item = &next["data"]["items"][0];
-    assert_eq!(item["work_id"], "a");
-    assert_eq!(item["navigation"], "observe");
-    assert_eq!(
-        item["next_query"],
-        json!({"protocol_version":1,"op":"work.observe",
-        "work_id":"a","workstream_id":item["workstream_id"]})
-    );
-    let observed = store
-        .query(
-            TENANT,
-            PROJECT,
-            A,
-            serde_json::from_value(item["next_query"].clone()).unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(observed["data"]["work_id"], "a");
-    assert_eq!(observed["data"]["execution_authorized"], false);
+    // Cover both an existing own session and a visible task with no session.
+    let mut contract: WorkContract = serde_json::from_value(
+        owner
+            .query_one(
+                "SELECT contract_json FROM awr_team.work_contracts WHERE work_id='c'",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0),
+    )
+    .unwrap();
+    contract.required_dependencies.clear();
+    owner.execute("UPDATE awr_team.work_contracts SET contract_json=$1,contract_hash=$2 WHERE work_id='c'",
+        &[&json!(contract), &contract.hash().unwrap()]).await.unwrap();
+    for work in ["a", "c"] {
+        let next = store
+            .query(TENANT, PROJECT, A, query("work.next"))
+            .await
+            .unwrap();
+        let item = next["data"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["work_id"] == work)
+            .unwrap();
+        assert_eq!(item["navigation"], "observe");
+        assert_eq!(
+            item["next_query"],
+            json!({"protocol_version":1,"op":"work.observe",
+            "work_id":work,"workstream_id":item["workstream_id"]})
+        );
+        let observed = store
+            .query(
+                TENANT,
+                PROJECT,
+                A,
+                serde_json::from_value(item["next_query"].clone()).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(observed["data"]["work_id"], work);
+        assert_eq!(observed["data"]["execution_authorized"], false);
+        let hint = &observed["data"]["guidance"];
+        assert_eq!(hint["code"], "inspect_only");
+        assert_eq!(hint["action"]["op"], "work.next");
+        assert!(
+            hint["action"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("Stop automatic navigation")
+        );
+        assert!(
+            hint["action"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("only after")
+        );
+        assert_eq!(
+            hint["recheck_on"],
+            "member, delegation, source or workstream permissions change"
+        );
+    }
     assert_eq!(
         owner
             .query_one("SELECT count(*) FROM awr_team.work_runtime", &[])
@@ -151,6 +189,174 @@ async fn enabled_read_only_candidates_point_to_observation() {
             .get::<_, i64>(0),
         before
     );
+}
+
+#[tokio::test]
+async fn mixed_definition_pages_keep_all_enabled_candidates_once() {
+    let (_g, owner, _db, store) = setup().await;
+    enable_writes(&owner).await;
+    let base: Value = owner
+        .query_one(
+            "SELECT contract_json FROM awr_team.work_contracts WHERE work_id='a'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let states = [
+        "archived",
+        "enabled",
+        "draft",
+        "enabled",
+        "cancelled",
+        "enabled",
+        "archived",
+    ];
+    let mut expected = vec!["a".to_owned(), "c".to_owned()];
+    for (index, state) in states.into_iter().enumerate() {
+        let work = format!("page-{index}");
+        let mut contract: WorkContract = serde_json::from_value(base.clone()).unwrap();
+        contract.work_id = awr_team::WorkId::new(&work).unwrap();
+        contract.external_key = work.clone();
+        owner.execute("INSERT INTO awr_team.work_items(tenant_id,project_id,id,external_key) VALUES($1,$2,$3,$3)",
+            &[&TENANT, &PROJECT, &work]).await.unwrap();
+        owner.execute("INSERT INTO awr_team.workstream_ownership(tenant_id,project_id,work_id,workstream_id)
+            SELECT tenant_id,project_id,$1,workstream_id FROM awr_team.workstream_ownership WHERE work_id='a'",
+            &[&work]).await.unwrap();
+        owner.execute("INSERT INTO awr_team.work_contracts(tenant_id,project_id,snapshot_id,scope_id,work_id,contract_hash,definition_state,title,contract_json)
+            SELECT tenant_id,project_id,snapshot_id,scope_id,$1,$2,$3,$1,$4 FROM awr_team.work_contracts WHERE work_id='a'",
+            &[&work, &contract.hash().unwrap(), &state, &json!(contract)]).await.unwrap();
+        owner.execute("INSERT INTO awr_team.workstream_snapshot_ownership(tenant_id,project_id,snapshot_id,scope_id,work_id,workstream_id,ownership_version)
+            SELECT tenant_id,project_id,snapshot_id,scope_id,$1,workstream_id,ownership_version FROM awr_team.workstream_snapshot_ownership WHERE work_id='a'",
+            &[&work]).await.unwrap();
+        if state == "enabled" {
+            expected.push(work);
+        }
+    }
+    let mut q = query("work.next");
+    q.limit = Some(2);
+    let mut actual = Vec::new();
+    for page_index in 0..3 {
+        let page = store.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+        let items = page["data"]["items"].as_array().unwrap();
+        assert_eq!(items.len(), if page_index < 2 { 2 } else { 1 });
+        for item in items {
+            assert_eq!(item["definition_state"], "enabled");
+            actual.push(item["work_id"].as_str().unwrap().to_owned());
+            let read = store
+                .query(
+                    TENANT,
+                    PROJECT,
+                    A,
+                    serde_json::from_value(item["next_query"].clone()).unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(read["data"]["work_id"], item["work_id"]);
+            assert_eq!(read["data"]["definition_state"], "enabled");
+        }
+        q.cursor = page["data"]["next_cursor"].as_str().map(str::to_owned);
+        assert_eq!(q.cursor.is_some(), page_index < 2);
+    }
+    assert_eq!(actual, expected);
+}
+
+#[tokio::test]
+async fn inactive_history_does_not_consume_the_resume_bound() {
+    let (_g, owner, _db, store) = setup().await;
+    owner.batch_execute("UPDATE awr_team.work_contracts SET definition_state='archived' WHERE work_id='a';
+        INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
+        SELECT s.tenant_id,s.project_id,'history-'||n,s.scope_id,s.work_id,s.actor_id,s.client_id,'history-'||n,s.state,s.workstream_id,s.ownership_version
+        FROM awr_team.sessions s CROSS JOIN generate_series(1,23) n WHERE s.id='session-a';
+        INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
+        SELECT s.tenant_id,s.project_id,'z-eligible-'||lpad(n::text,2,'0'),s.scope_id,'c',s.actor_id,s.client_id,'eligible-'||n,s.state,s.workstream_id,s.ownership_version
+        FROM awr_team.sessions s CROSS JOIN generate_series(0,20) n WHERE s.id='session-a'").await.unwrap();
+    for truncated in [true, false] {
+        let next = store
+            .query(TENANT, PROJECT, A, query("work.next"))
+            .await
+            .unwrap();
+        let resume = next["data"]["resume"].as_array().unwrap();
+        assert_eq!(resume.len(), 20);
+        assert_eq!(next["data"]["resume_truncated"], truncated);
+        for (index, item) in resume.iter().enumerate() {
+            assert_eq!(item["session_id"], format!("z-eligible-{index:02}"));
+            assert_eq!(item["work_id"], "c");
+        }
+        owner
+            .batch_execute("DELETE FROM awr_team.sessions WHERE id='z-eligible-20'")
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn inactive_sessions_with_recovery_retain_their_current_guidance() {
+    let (_g, owner, _db, store) = setup().await;
+    enable_writes(&owner).await;
+    start_owned_run(&store).await;
+    for state in ["archived", "draft", "cancelled"] {
+        owner
+            .execute(
+                "UPDATE awr_team.work_contracts SET definition_state=$1 WHERE work_id='a'",
+                &[&state],
+            )
+            .await
+            .unwrap();
+        for (setup_sql, expected_code, expected_op) in [
+            (
+                "UPDATE awr_team.work_runtime SET recovery_blocked=true WHERE work_id='a'",
+                "inspect_recovery",
+                "work.recovery",
+            ),
+            (
+                "UPDATE awr_team.work_runtime SET recovery_blocked=false WHERE work_id='a'; UPDATE awr_team.executions SET contract_hash=repeat('d',64) WHERE work_id='a'",
+                "refresh_execution",
+                "execution.inspect",
+            ),
+            (
+                "UPDATE awr_team.executions e SET contract_hash=c.contract_hash FROM awr_team.work_contracts c WHERE e.work_id=c.work_id; UPDATE awr_team.claims SET expires_at=clock_timestamp()-interval '1 minute' WHERE work_id='a'",
+                "inspect_expired_claim",
+                "execution.inspect",
+            ),
+            (
+                "UPDATE awr_team.executions SET state='unknown' WHERE work_id='a'",
+                "reconcile_execution",
+                "execution.inspect",
+            ),
+        ] {
+            owner.batch_execute(setup_sql).await.unwrap();
+            let before = execution_state(&owner).await;
+            let next = store
+                .query(TENANT, PROJECT, A, query("work.next"))
+                .await
+                .unwrap();
+            assert!(
+                next["data"]["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|item| item["work_id"] != "a")
+            );
+            let resume = &next["data"]["resume"][0];
+            assert_eq!(resume["session_id"], "session-a");
+            let observed = store
+                .query(
+                    TENANT,
+                    PROJECT,
+                    A,
+                    serde_json::from_value(resume["next_query"].clone()).unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(observed["data"]["definition_state"], state);
+            assert_eq!(observed["data"]["guidance"]["code"], expected_code);
+            assert_eq!(observed["data"]["guidance"]["action"]["op"], expected_op);
+            assert_eq!(observed["data"]["execution_authorized"], false);
+            assert_eq!(execution_state(&owner).await, before);
+        }
+        owner.batch_execute("UPDATE awr_team.executions SET state='running' WHERE work_id='a'; UPDATE awr_team.claims SET expires_at=clock_timestamp()+interval '1 hour' WHERE work_id='a'").await.unwrap();
+    }
 }
 
 #[tokio::test]
