@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - 'tools/observer/**'
+      - 'tools/inspector/team-bridge.js'
       - '.github/workflows/observer.yml'
   pull_request:
     paths:
       - 'tools/observer/**'
+      - 'tools/inspector/team-bridge.js'
       - '.github/workflows/observer.yml'
   workflow_dispatch:
 
