@@ -9,10 +9,17 @@ Use Kimi Code's terminal tool to call the AWR CLI. Optionally connect the same
 project through AWR's stdio MCP server. AWR keeps work identity, claims and
 checkpoints independently of Kimi's conversation history.
 
-This guide targets **Kimi Code 0.41.0**, inspected on **2026-09-08**. Its local
-help exposes `--continue` and `--session`, and links to the `kimi-code`
+This guide targets **Kimi Code 0.41.0**, inspected on **2026-09-08**. That check
+is kept as historical evidence. This is not a Kimi Code recheck. Its local help
+exposes `--continue` and `--session`, and links to the `kimi-code`
 documentation. Older `kimi-cli` releases use different configuration paths and
 flags; check `kimi --version` and `kimi --help` before applying an older recipe.
+
+This note describes published **AWR 0.6.0** and the current source tree. Both
+expose grouped `awr_query`. The **0.4.0** package does not. **0.5.1** already
+grouped the catalog; install 0.6.0 for schema 14 and
+`session start --client/--conversation`. Kimi owns its model, native
+conversation IDs and compaction. AWR owns project facts, claims and checkpoints.
 
 ## Team MCP over HTTP
 
@@ -38,11 +45,31 @@ for the command tool, accepted by the provider); every operation stays in `prope
 exact input of one operation is read with `awr_team_input_contract`, and every call is still
 checked against the full schema. Other clients keep the default full catalog.
 
+`?catalog=compact` is in the **current source tree**. Published **0.6.0** packages compile
+Team code but leave it off unless enabled; they do not ship this compact catalog. The
+personal CLI/MCP steps below are 0.6.0.
+
 ## Optional MCP connection
 
-Build `awr` and `awr-mcp` with the [repository instructions](../../../README.md),
-then initialize the target project from its reviewed source manifest. For an
-already initialized project, keep its existing database and mapping.
+Install published AWR 0.6.0, which includes the grouped MCP catalog, or build
+`awr` and `awr-mcp` from this repository using
+[the repository instructions](../../../README.md), then initialize the target
+project from its reviewed source manifest. For an already initialized project,
+keep its existing database and mapping.
+
+```sh
+npm install -g @originoneai/agent-work-runtime@0.6.0
+# or: python -m pip install agent-work-runtime==0.6.0
+# or from this tree:
+cargo build --locked -p awr-cli -p awr-mcp
+# binaries: target/debug/awr and target/debug/awr-mcp
+```
+
+0.5.1 projects use SQLite schema 7. 0.6.0 migrates **7 → 14** on the first
+explicit database write, normally `awr source reindex`. Back up `.awr/state.db`
+first. Older binaries refuse schema 14. See
+[AWR 0.6.0](../release/0.6.0.md) and
+[Upgrading from 0.5.x](../release/DISTRIBUTIONS.md#upgrading-from-05x-schema-7--14).
 
 Merge this server into `.kimi-code/mcp.json` in the target project, replacing
 the absolute paths and preserving other entries:
@@ -66,12 +93,23 @@ added by editing configuration join newly created sessions. This local release's
 help does not expose the older `kimi mcp` subcommand or `--mcp-config-file` flag.
 [Official MCP guide](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/mcp.html)
 
-Confirm the connected server's project identity using `awr_project_status`.
-Its [work/context tools](../../../crates/awr-mcp/README.md) include `awr_context_compile`.
-AWR 0.3.3 also provides MCP session start/checkpoint/resume and a
-[shared HTTP service](../reference/mcp-service.md).
-The CLI workflow below remains usable. A configuration file or a running Kimi
-conversation does not establish that these tools are connected.
+A configuration file or a running Kimi conversation does not establish that
+these tools are connected. Then follow L0 MCP discovery: default `tools/list`
+returns eight domain tools (`awr_query`, `awr_context`, `awr_work`,
+`awr_evidence`, `awr_session`, `awr_continuity`, `awr_change`,
+`awr_compaction`). Probe status through `awr_query`:
+
+```json
+{"child_tool": "awr_project_status", "arguments": {}}
+```
+
+Flat names remain callable but are not in the default catalog. Set
+`AWR_MCP_TOOL_EXPOSURE_MODE=flat` only if this Kimi Code build cannot route
+through domains. Confirm project identity before any mutation. See
+[the MCP reference](../../../crates/awr-mcp/README.md). AWR 0.6.0 still provides
+MCP session start/checkpoint/resume and a
+[shared HTTP service](../reference/mcp-service.md)
+(first shipped in 0.3.3). The CLI workflow below remains usable.
 
 ## Start or receive an AWR session
 
@@ -139,11 +177,13 @@ paths/tags. `BudgetExceeded` requires inspecting the required size and explicitl
 adjusting budget or scope. Do not truncate hard facts. Known missing completion
 evidence remains visible even when context completeness passes.
 
-With MCP, pass `{"session":"<awr-session-id>","budget":5000}` to
-`awr_context_compile`. If its read-only source check reports `SourceStale`,
-inspect the source change and run `awr source reindex` before reading again.
-Use the refreshed revision for every mutation and inspect durable receipts after
-a lost response. For the shared command and error semantics, see the [L0 session workflow](session-workflow.md).
+With MCP, call `awr_context` with
+`{"child_tool":"awr_context_compile","arguments":{"session":"<awr-session-id>","budget":5000}}`.
+If its read-only source check reports `SourceStale`, inspect the source change
+and run `awr source reindex` before reading again. Use the refreshed revision
+for every mutation and inspect durable receipts after a lost response. For the
+shared command and error semantics, see the
+[L0 session workflow](session-workflow.md).
 
 ## Manual checkpoint and compact recovery
 
@@ -187,11 +227,13 @@ awrj session end --session "$AWR_SESSION" --outcome incomplete \
 ```
 
 This releases the claim; a later receiver needs a fresh claim. Source work
-completion still requires AWR's evidence/acceptance checks.
+completion still requires AWR's evidence/acceptance checks. The `session end`
+path above is in published **0.6.0**.
 
 When the work is finished instead, complete it with `awr work complete ... --end-session` (or end the
 session as the `close_out` instruction of the response says); never complete work by editing its
-status in the source, which records no receipt and releases no claim. See
+status in the source, which records no receipt and releases no claim. `--end-session` is in the
+**current source tree**, not in the published 0.6.0 package. See
 [Finish the work and end the session](session-workflow.md#finish-the-work-and-end-the-session).
 
 ## Hook and verification boundary
@@ -208,7 +250,10 @@ last-consumed context, meaningful handoff content and revision-conflict handling
 
 The local CLI version/options and guide configuration syntax were checked.
 AWR's CLI continuation across provider/model metadata is exercised on a retained
-fixture. This delivery does not claim a Kimi model turn, native Kimi MCP tool
-invocation, automatic compact hook or E4 business scenario. The reusable
+fixture. The 2026-09-08 check predates the 0.6.0 package and is not evidence for
+a live Kimi catalog replay. 0.6.0 still defaults to the same eight domain tools
+and grouped `awr_query`, so the documented route applies. This delivery does not
+claim a Kimi model turn, native Kimi MCP tool invocation, automatic compact hook
+or E4 business scenario. The reusable
 [CLI lifecycle example](../../../examples/codex/README.md) is a local demonstration;
 its location under `codex/` does not make it a Kimi adapter.
