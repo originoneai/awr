@@ -21,7 +21,6 @@
   const GROUP_ORDER = ['developing', 'stalled', 'blocked', 'ready', 'draft', 'waiting'];
   const RANK = { blocked: 3, stalled: 2, developing: 1 };
   const BLOCK = 'BLOCK';
-  const STATE_MARK = { done: '✓', developing: '●', stalled: '◐', blocked: '✕', ready: '○', waiting: '○', draft: '○', cancelled: '✕' };
   const RED = '#c93b44';
   const RED_CHIP = [RED, 'rgba(225,75,84,.09)', 'rgba(225,75,84,.4)'];
   const AMBER_CHIP = ['#b4740a', 'rgba(245,158,11,.11)', 'rgba(245,158,11,.4)'];
@@ -393,22 +392,13 @@
       return best[1];
     }
 
-    function makeCard(model, G, n, w, size = 11.5, tmax = 2) {
+    function makeCard(model, n, w, size = 11.5, tmax = 2) {
       const { nodes, meta } = model;
       const nd = nodes.get(n);
-      const lines = [];
-      const declared = nd.deps.length;
-      const reduced = G.pred.get(n).length;
-      if (declared - reduced >= 2) lines.push([t('map.card.reduced', { declared, reduced }), FAINT]);
-      const kids = G.ids.filter((k) => k !== n && k.startsWith(n) && /^[A-Z]$/.test(k.slice(n.length))).sort(compare);
-      if (kids.length) {
-        model.kidsShown = true;
-        lines.push([t('map.card.rollup', { kids: kids.map((k) => `${k.slice(n.length)}${STATE_MARK[nodes.get(k).vis]}`).join(' ') }), MUTED]);
-      }
       const tag = nd.vis === 'stalled' ? (nd.idle !== null ? t('map.card.stalled_idle', { days: f0(nd.idle) }) : ST.stalled.label) : null;
       return (x, y) => kit.card(x, y, w, {
         vis: nd.vis, nid: nd.short, full: nd.id, key: nd.id, title: nd.title, owner: nd.vis === 'developing' || nd.vis === 'stalled' ? nd.owner : null,
-        lines, tag, compact: true, titleSize: size, tmax, stuck: meta.stuck.has(n), opaque: true,
+        tag, compact: true, titleSize: size, tmax, stuck: meta.stuck.has(n), opaque: true,
       });
     }
 
@@ -464,7 +454,7 @@
       const widths = new Map();
       const ids = [...G.shown].sort(compare);
       for (const n of ids) {
-        const f = makeCard(model, G, n, cw);
+        const f = makeCard(model, n, cw);
         hcache.set(n, f(0, 0)[1]);
         drawers.set(n, f);
       }
@@ -517,7 +507,6 @@
 
     function renderMainline(model, view = {}) {
       const { nodes, meta, cfg } = model;
-      model.kidsShown = false;
       const fold = view.mainline || {};
       const foldedPanels = fold.collapsed || new Set();
       const showDone = fold.showDone || new Set();
@@ -572,19 +561,13 @@
       if (critEnds.length) edgeKinds.push(['crit', t('map.edge.crit_of', { ends: critEnds.join(t('map.join.list')) })]);
       const lg = kit.legend(sv, 76, ly, W - 152, visItems, edgeKinds);
       sv.add(text(82, lg + 4, t('map.mainline.note_reduced'), 9.5, FAINT, 500));
-      let h = lg + 40;
-      if (model.kidsShown) {
-        sv.add(text(82, lg + 20, t('map.mainline.note_kids'), 9.5, FAINT, 500));
-        h = lg + 56;
-      }
-      return frame(sv, W, Math.floor(h));
+      return frame(sv, W, Math.floor(lg + 40));
     }
 
     // ------------------------------------------------------------------ milestone lanes
 
     function renderExplore(model, view = {}) {
       const { nodes, meta, cfg } = model;
-      model.kidsShown = false;
       const fold = view.explore || {};
       const foldedLanes = fold.collapsed || new Set();
       const showDone = Boolean(fold.showDone);
@@ -613,7 +596,7 @@
       }
       const LW = 146;
       const LG = 18;
-      const card3 = new Map(shown.map((k) => [k, makeCard(model, GE, k, LW, 10, 3)]));
+      const card3 = new Map(shown.map((k) => [k, makeCard(model, k, LW, 10, 3)]));
       const hh = new Map(shown.map((k) => [k, card3.get(k)(0, 0)[1]]));
       const nrows = shown.length ? Math.max(...row.values()) + 1 : 0;
       const rowh = Array.from({ length: nrows }, (_, r) => Math.max(0, ...shown.filter((k) => row.get(k) === r).map((k) => hh.get(k))));
@@ -712,7 +695,7 @@
     return { renderOverview, renderMainline, renderExplore, placeholder, compress, utc, prepare, critical, autoEnd };
   }
 
-  const api = { createViews, utc, STATE_MARK, GROUP_ORDER };
+  const api = { createViews, utc, GROUP_ORDER };
   if (commonJS) module.exports = api;
   else {
     root.AWR_PROJECT_MAP = root.AWR_PROJECT_MAP || {};

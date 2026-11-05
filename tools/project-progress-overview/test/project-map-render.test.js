@@ -17,6 +17,8 @@ const page = require('../public/project-map/page.js');
 const snapshotLib = require('../public/project-map/snapshot.js');
 const modelLib = require('../public/project-map/model.js');
 const demo = require('../public/project-map/demo.js');
+const viewsLib = require('../public/project-map/views.js');
+const detail = require('../public/project-map/detail.js');
 
 const GOLDEN = path.join(h.FIXTURES, 'golden');
 const REFRESH = process.env.UPDATE_GOLDEN === '1';
@@ -58,6 +60,48 @@ test('supporting information uses consistent cards and keeps field gaps collapse
   assert.match(out.notes, /<details class="pm-note-card pm-field-gaps"><summary>/);
   assert.doesNotMatch(out.notes, /<details[^>]*\bopen\b/);
   assert.ok(out.notes.includes(out.fingerprint));
+});
+
+test('compact cards omit suffix rollups and reduction counts while details retain declared dependencies', () => {
+  const source = h.readJson('states.json');
+  const template = source.nodes.find((n) => n.key === 'DEMO-A-004');
+  const key = 'DEMO-A-100';
+  const steps = Array.from({ length: 13 }, (_, i) => String.fromCharCode(65 + i));
+  source.nodes = [{ ...template, id: key, key, title: 'Deliver the service', owner: 'review-agent', claims: [], diagnostics: [] },
+    ...steps.map((step) => ({ ...template, id: key + step, key: key + step, title: `Contract step ${step}`, status: 'completed', owner: null, claims: [], diagnostics: [] }))];
+  source.edges = steps.flatMap((step, i) => [
+    { dependent: key, prerequisite: key + step, required: true },
+    ...(i ? [{ dependent: key + step, prerequisite: key + steps[i - 1], required: true }] : []),
+  ]);
+  source.edges.sort((a, b) => snapshotLib.compare(`${a.dependent}\u0000${a.prerequisite}`, `${b.dependent}\u0000${b.prerequisite}`));
+  source.sessions = [];
+  source.doctor.findings = [];
+  source.basis.work_graph.node_count = source.nodes.length;
+  source.basis.work_graph.edge_count = source.edges.length;
+  const config = h.readJson('config.json');
+  config.mainline_panels[0].keep_done = true;
+
+  for (const lang of ['en', 'zh-CN']) {
+    const t = h.tFor(lang);
+    const model = modelLib.loadModel(snapshotLib.seal(source, source.generated_at), config);
+    const views = viewsLib.createViews(t);
+    for (const svg of [views.renderMainline(model), views.renderExplore(model, { explore: { showDone: true } })]) {
+      const card = svg.match(/<g\b[^>]*\bclass="pm-card" data-key="DEMO-A-100"[\s\S]*?<rect class="pm-ring"[^>]*\/>\s*<\/g>/);
+      assert.ok(card, `${lang} compact card is visible`);
+      assert.match(card[0], /Deliver the service/);
+      assert.match(card[0], /review-agent/);
+      assert.ok(card[0].includes(t('map.status.developing')));
+      assert.doesNotMatch(card[0], /Roll-up|汇总项|[A-M]✓|Declares|声明|after reduction|约简后/);
+      assert.doesNotMatch(svg, /Roll-up ⊃|汇总项 ⊃/);
+    }
+    const data = detail.detailData(model, key, t);
+    assert.equal(data.prerequisites.length, steps.length);
+    const html = detail.renderDetail(data, t, (gap) => page.gapReason(t, gap));
+    for (const step of steps) {
+      assert.ok(html.includes(`data-pm-jump="${key + step}"`));
+      assert.ok(html.includes(`Contract step ${step}`));
+    }
+  }
 });
 
 test('default swimlanes follow recorded milestones and explicit empty configuration stays empty', () => {
