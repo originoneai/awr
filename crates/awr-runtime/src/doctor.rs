@@ -46,7 +46,7 @@ fn finding(
 }
 
 /// Findings that advise and never fail `doctor`: a project that was healthy for the exit code stays so.
-const ADVISORY_FINDINGS: &[&str] = &["claim_without_expiry"];
+pub(crate) const ADVISORY_FINDINGS: &[&str] = &["claim_without_expiry"];
 
 /// Inspect current files without calling the source indexer or changing retained freshness.
 pub fn diagnose_project(

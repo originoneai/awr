@@ -23,6 +23,34 @@ const config = () => h.readJson('config.json');
 const source = () => h.readJson('states.json');
 const extract = (cli, extra = {}) => extractSnapshot({ call: cli.call, config: config(), now: NOW, wait: noWait, ...extra });
 
+async function bundledFixture() {
+  const cli = createFakeCli(source(), { nodeActivity: true });
+  const bundle = { version: 1, project_revision: source().project.revision,
+    basis: { coherent: true, source_refresh_performed: false, source_currentness_verified: false, diagnostics_scope: 'recorded_runtime' }, milestones: {} };
+  for (const [name, field] of Object.entries({ workGraph: 'work_graph', nav: 'nav', goals: 'goals', sessions: 'sessions', doctor: 'doctor', events: 'events' })) {
+    bundle[field] = await cli.call(name, name === 'workGraph' ? { limit: 1000, cached: true } : {});
+  }
+  for (const milestone of ['M1', 'M2']) bundle.milestones[milestone] = (await cli.call('nav', { milestone })).scope.selection;
+  return bundle;
+}
+
+test('one coherent bundle retains the legacy extracted content and observation scope', async () => {
+  const bundle = await bundledFixture();
+  const got = await extractLib.extractBundledSnapshot({ bundle, config: config(), now: NOW });
+  const legacy = await extract(createFakeCli(source(), { nodeActivity: true }));
+  assert.deepEqual(content(got), content(legacy));
+  assert.deepEqual(got.basis.observation, bundle.basis);
+  snapshotLib.validate(got);
+});
+
+test('incoherent and mixed-revision bundles are refused before rendering', async () => {
+  const bundle = await bundledFixture();
+  bundle.nav.project_revision += 1;
+  await assert.rejects(extractLib.extractBundledSnapshot({ bundle }), (error) => error.code === 'RevisionDrift');
+  bundle.basis.coherent = false;
+  await assert.rejects(extractLib.extractBundledSnapshot({ bundle }), (error) => error.code === 'InvalidSnapshot');
+});
+
 /**
  * Everything the snapshot carries except the extraction clock, the basis bookkeeping and the wording of the
  * unavailable-field reasons (the fixtures were written by another implementation; the field names must still agree).

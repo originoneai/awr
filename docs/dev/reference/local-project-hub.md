@@ -45,7 +45,22 @@ visible as unavailable. Moved or unreadable directories also remain visible.
 
 The catalog stores project identity, name, root and usage timestamps. Project
 goals, tasks, sessions and evidence remain in their existing project sources and
-runtime. Progress views read the selected project through official CLI JSON.
+runtime. Progress views use AWR's bounded observation API over the selected project's
+SQLite projection. A single private database snapshot keeps tasks, dependencies,
+claims, sessions and runtime findings on the same revision.
+
+**Refresh map** rereads local recorded state. **Sync project sources** explicitly
+refreshes the source projection before reading. Ordinary viewing reports that source
+currentness was not checked. Runtime findings remain visible, while full file,
+artifact and database-integrity diagnosis is available through `awr doctor`.
+
+```sh
+awr --project /absolute/path/to/project overview snapshot --json
+awr --project /absolute/path/to/project overview snapshot --refresh --json
+```
+
+The source Node viewer negotiates `local.progress_snapshot` and uses the same bulk
+read when available. Older CLI versions retain the compatible multi-command read.
 
 ## Background service lifecycle
 

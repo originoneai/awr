@@ -69,6 +69,7 @@ const runtime = {
   reason: ARGS.demo ? 'Started with --demo' : null,
   jsonFlagPosition: 'global',
   running: 0,
+  bulkSnapshot: false,
 };
 
 function detectAwr() {
@@ -81,11 +82,18 @@ function detectAwr() {
     }
     const command = AWR_RESOLVED.needsNode ? process.execPath : AWR_RESOLVED.exe;
     const args = AWR_RESOLVED.needsNode ? [AWR_RESOLVED.entryPoint, '--version'] : ['--version'];
-    execFile(command, args, { timeout: 8000 }, (error, stdout) => {
+    const env = { ...process.env, AWR_LOCAL_WEB: '0' };
+    execFile(command, args, { timeout: 8000, env }, (error, stdout) => {
       runtime.mode = error ? 'demo' : 'live';
       runtime.reason = error ? 'The awr command could not start. Check its installation and restart this tool.' : null;
       runtime.awrVersion = error ? null : String(stdout).trim();
-      resolve();
+      if (error) return resolve();
+      const capabilities = ['capabilities', '--require', 'local.progress_snapshot', '--json'];
+      const capabilityArgs = AWR_RESOLVED.needsNode ? [AWR_RESOLVED.entryPoint, ...capabilities] : capabilities;
+      execFile(command, capabilityArgs, { timeout: 8000, env }, (failure) => {
+        runtime.bulkSnapshot = !failure;
+        resolve();
+      });
     });
   });
 }
@@ -110,6 +118,7 @@ function guardRequest(req) {
 }
 
 const COMMANDS = {
+  mapSnapshot: ['overview', 'snapshot'],
   mapWorkGraph: ['work', 'graph'],
   mapNav: ['nav', '--cached'],
   mapGoals: ['search', '--type', 'goal', '--limit', '100', '--cached'],
@@ -135,7 +144,7 @@ function execAwr(argv) {
   return new Promise((resolve) => {
     const command = AWR_RESOLVED.needsNode ? process.execPath : AWR_RESOLVED.exe;
     const args = AWR_RESOLVED.needsNode ? [AWR_RESOLVED.entryPoint, ...argv] : argv;
-    const child = spawn(command, args, { stdio: 'pipe', windowsHide: true });
+    const child = spawn(command, args, { stdio: 'pipe', windowsHide: true, env: { ...process.env, AWR_LOCAL_WEB: '0' } });
     runtime.running += 1;
     let released = false;
     const release = () => {
@@ -260,8 +269,12 @@ const routes = {
   }),
   'GET /api/map/config': async () => ({
     ok: true,
-    data: { config: MAP_CONFIG ? MAP_CONFIG.config : null, source: MAP_CONFIG ? path.basename(MAP_CONFIG.file) : null },
+    data: { config: MAP_CONFIG ? MAP_CONFIG.config : null, source: MAP_CONFIG ? path.basename(MAP_CONFIG.file) : null,
+      ...(runtime.bulkSnapshot ? { bulk_snapshot: true } : {}) },
   }),
+
+  'GET /api/map/snapshot': async () => runCommand('mapSnapshot', []),
+  'POST /api/map/snapshot': async () => runCommand('mapSnapshot', ['--refresh']),
 
   'GET /api/map/work-graph': async (url) => {
     const limit = url.searchParams.get('limit');

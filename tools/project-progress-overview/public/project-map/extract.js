@@ -91,7 +91,8 @@
     const nav = same('nav', await call('nav', {}));
     const navNodes = new Map(nav.mainline_graph.nodes.map((n) => [n.work_key, n]));
     const graphKeys = new Set(graph.nodes.map((n) => n.key));
-    const mismatch = [...new Set([...navNodes.keys(), ...graphKeys])].filter((k) => navNodes.has(k) !== graphKeys.has(k)).sort(compare);
+    const archived = new Set(graph.nodes.filter((node) => node.archived).map((node) => node.key));
+    const mismatch = [...new Set([...navNodes.keys(), ...graphKeys])].filter((k) => !archived.has(k) && navNodes.has(k) !== graphKeys.has(k)).sort(compare);
     if (mismatch.length) throw new AwrCallError('NodeSetMismatch', `nav and work graph disagree on the node set: ${mismatch.slice(0, 5).join(', ')}`);
 
     const milestones = modelLib.milestonesToResolve(cfg);
@@ -142,7 +143,7 @@
     const keyOfId = new Map(graph.nodes.map((n) => [n.id, n.key]));
     const haveMilestones = graph.nodes.length > 0 && graph.nodes.every((n) => Object.prototype.hasOwnProperty.call(n, 'milestone'));
     const nodes = [...graph.nodes].sort((a, b) => compare(a.key, b.key)).map((gn) => {
-      const nn = navNodes.get(gn.key);
+      const nn = navNodes.get(gn.key) || gn;
       if (nn.status !== gn.status) throw new AwrCallError('StatusMismatch', `${gn.key}: work graph ${gn.status} vs nav ${nn.status}`);
       const last = haveNodeActivity ? gn.last_event_at : lastByWork.get(gn.id);
       return {
@@ -202,7 +203,7 @@
    * Options: `cached` (read the recorded state only; fails when the CLI has no `work graph --cached`), `attempts`
    * (whole-run retries on RevisionDrift), `wait`, `onProgress(step, attempt)`.
    */
-  async function extractSnapshot({ call, config, now, cached = false, attempts = 8, driftWaitMs = 2000, wait = sleep, onProgress, concurrency = 3 }) {
+  async function extractSnapshot({ call, config, now, cached = false, attempts = 8, driftWaitMs = 2000, wait = sleep, onProgress, concurrency = 3, observationBasis }) {
     const cfg = modelLib.normalizeConfig(config, { nodes: [] });
     const guarded = withRetry(call, { wait });
     const generatedAt = now || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -210,6 +211,7 @@
     for (let attempt = 1; attempt <= attempts; attempt++) {
       try {
         const content = await extractOnce(guarded, cfg, { cached, onProgress, concurrency });
+        if (observationBasis) content.basis.observation = observationBasis;
         return snapshotLib.seal(content, generatedAt);
       } catch (e) {
         if (!(e instanceof AwrCallError) || e.code !== 'RevisionDrift') throw e;
@@ -223,7 +225,31 @@
     throw new AwrCallError('RevisionDrift', `the project revision kept changing for ${attempts} attempts: ${last.detail}`);
   }
 
-  const api = { AwrCallError, extractSnapshot, readWorkGraph, withRetry, mapLimit, GRAPH_CAP };
+  /** Reuse the extractor and its invariants over one backend-owned coherent read. */
+  async function extractBundledSnapshot({ bundle, config, now }) {
+    if (!bundle || bundle.version !== 1 || !bundle.basis || bundle.basis.coherent !== true) {
+      throw new AwrCallError('InvalidSnapshot', 'the backend did not supply a coherent progress snapshot');
+    }
+    const names = { workGraph: 'work_graph', nav: 'nav', goals: 'goals', sessions: 'sessions', doctor: 'doctor', events: 'events' };
+    for (const component of Object.values(names)) {
+      if (!bundle[component] || bundle[component].project_revision !== bundle.project_revision) {
+        throw new AwrCallError('RevisionDrift', `inconsistent bundled component ${component}`);
+      }
+    }
+    const call = async (name, params) => {
+      const value = bundle[names[name]];
+      if (!value) throw new AwrCallError('InvalidSnapshot', `missing snapshot component ${name}`);
+      if (name === 'nav' && params.milestone) {
+        const memberships = bundle.milestones || {};
+        const selection = Object.prototype.hasOwnProperty.call(memberships, params.milestone) ? memberships[params.milestone] : [];
+        return { ...value, scope: { ...value.scope, selection } };
+      }
+      return value;
+    };
+    return extractSnapshot({ call, config, now, cached: true, attempts: 1, observationBasis: bundle.basis });
+  }
+
+  const api = { AwrCallError, extractSnapshot, extractBundledSnapshot, readWorkGraph, withRetry, mapLimit, GRAPH_CAP };
   if (commonJS) module.exports = api;
   else {
     root.AWR_PROJECT_MAP = root.AWR_PROJECT_MAP || {};

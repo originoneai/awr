@@ -219,6 +219,7 @@ name = "awr-local"
 version = "0.6.0"
 dependencies = [
  "awr-core",
+ "awr-runtime",
  "awr-store",
  "axum",
  "serde",

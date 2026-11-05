@@ -95,6 +95,8 @@
     function setBusy(busy) {
       const button = el('mapRefreshBtn');
       if (button) button.disabled = busy;
+      const sync = el('mapSyncBtn');
+      if (sync) sync.disabled = busy;
       const body = el('mapBody');
       if (body) body.setAttribute('aria-busy', String(busy));
     }
@@ -118,7 +120,7 @@
 
     async function loadConfig() {
       const envelope = await callApi('/api/map/config');
-      if (envelope && envelope.ok) return { demo: false, config: envelope.data.config || undefined, source: envelope.data.source };
+      if (envelope && envelope.ok) return { demo: false, config: envelope.data.config || undefined, source: envelope.data.source, bulk: Boolean(envelope.data.bulk_snapshot) };
       if (envelope && envelope.error && envelope.error.code === 'DemoMode') return { demo: true };
       const e = (envelope && envelope.error) || { code: 'BridgeError', message: 'no response from the bridge' };
       throw new AwrCallError(e.code || 'BridgeError', e.message || '');
@@ -150,7 +152,7 @@
       setStatus(notes.join(' '), 'info');
     }
 
-    function refresh() {
+    function refresh({ sync = false } = {}) {
       if (state.running) return state.running;
       const run = (async () => {
         setBusy(true);
@@ -158,6 +160,8 @@
         const started = now();
         try {
           const loaded = await loadConfig();
+          if (el('mapSyncBtn')) el('mapSyncBtn').hidden = !loaded.bulk;
+          if (el('mapCachedControl')) el('mapCachedControl').hidden = Boolean(loaded.bulk);
           let snapshot;
           let config;
           const notes = [];
@@ -168,14 +172,24 @@
           } else {
             config = loaded.config;
             const cached = Boolean(el('mapCachedToggle') && el('mapCachedToggle').checked);
-            snapshot = await extractSnapshot({
+            if (loaded.bulk) {
+              setStatus(t(sync ? 'map.progress.sync' : 'map.progress.snapshot'), 'info');
+              const envelope = await callApi('/api/map/snapshot', sync ? { method: 'POST' } : {});
+              if (!envelope || !envelope.ok) {
+                const error = envelope && envelope.error;
+                throw new AwrCallError(error && error.code || 'BridgeError', error && error.message || 'No progress snapshot');
+              }
+              snapshot = await L.extract.extractBundledSnapshot({ bundle: envelope.data, config, now: clock ? clock() : undefined });
+              notes.push(t(sync ? 'map.status.synced' : 'map.status.recorded'));
+              notes.push(t('map.status.runtime_checks'));
+            } else snapshot = await extractSnapshot({
               call: bridgeCall(callApi), config, cached, now: clock ? clock() : undefined,
               onProgress: (step, attempt) => setStatus(step === 'retry' ? t('map.progress.retry', { attempt }) : t(`map.progress.${step}`), 'info'),
               ...extractOptions,
             });
             state.demo = false;
             notes.push(t('map.status.loaded', { revision: snapshot.project.revision, nodes: snapshot.nodes.length, seconds: ((now() - started) / 1000).toFixed(1) }));
-            if (cached) notes.push(t('map.status.recorded'));
+            if (cached && !loaded.bulk) notes.push(t('map.status.recorded'));
             notes.push(loaded.source ? t('map.config.source', { name: loaded.source }) : t('map.config.derived'));
           }
           render(snapshot, config, notes);
@@ -201,6 +215,7 @@
     }
 
     on('mapRefreshBtn', 'click', () => refresh());
+    on('mapSyncBtn', 'click', () => refresh({ sync: true }));
     on('mapRetryBtn', 'click', () => refresh());
     /** The interaction layer as the exported file carries it: the same module files the page runs, read once. */
     async function loadRuntime() {

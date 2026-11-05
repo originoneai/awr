@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 awr-core.workspace = true
 awr-store.workspace = true
+awr-runtime.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

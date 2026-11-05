@@ -212,7 +212,9 @@ td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
 
     const time = viewsLib.utc(meta.generated_at);
     const gaps = meta.unavailable.map((u) => `<li><code>${esc(u.field)}</code><span>${esc(gapReason(t, u))}</span></li>`).join('');
-    const notes = `<section class="notes"><article class="pm-note-card"><h2>${esc(t('map.notes.basis'))}</h2><p class="pm-note-intro">${esc(t('map.notes.snapshot', { revision: String(proj.revision), time }))}</p><details class="pm-fingerprint"><summary>${esc(t('map.notes.fingerprint'))}</summary><p>${t('map.notes.basis_text', {
+    const observation = snapshot.basis.observation;
+    const freshness = observation ? `<p class="pm-fingerprint">${esc(t(observation.source_currentness_verified ? 'map.status.synced' : 'map.status.recorded'))} ${esc(t('map.status.runtime_checks'))}</p>` : '';
+    const notes = `<section class="notes"><article class="pm-note-card"><h2>${esc(t('map.notes.basis'))}</h2><p class="pm-note-intro">${esc(t('map.notes.snapshot', { revision: String(proj.revision), time }))}</p>${freshness}<details class="pm-fingerprint"><summary>${esc(t('map.notes.fingerprint'))}</summary><p>${t('map.notes.basis_text', {
       revision: esc(String(proj.revision)), fingerprint: `<code>${esc(meta.fingerprint)}</code>`, time: esc(time),
     })}</p></details></article>`
       + `<details class="pm-note-card"><summary>${esc(t('map.notes.rules'))}</summary><ul><li>${esc(t('map.notes.rule_stalled', { days: cfg.stale_days }))}</li><li>${esc(t('map.notes.rule_lanes'))}</li><li>${esc(t('map.notes.rule_claims'))}</li></ul></details>`

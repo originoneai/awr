@@ -31,9 +31,10 @@
   <section class="panel" aria-label="Map controls" data-i18n-aria-label="progress.controls">
     <div class="body map-controls">
       <button class="btn" id="mapRefreshBtn" data-i18n="map.refresh">Refresh map</button>
+      <button class="btn ghost" id="mapSyncBtn" hidden data-i18n="map.sync_sources">Sync project sources</button>
       <button class="btn ghost" id="mapDownloadBtn" disabled data-i18n="map.download">Download HTML</button>
       <button class="btn ghost" id="mapDownloadJsonBtn" disabled data-i18n="map.download_json">Download snapshot JSON</button>
-      <label class="map-toggle" data-i18n-title="map.recorded_only_hint">
+      <label class="map-toggle" id="mapCachedControl" data-i18n-title="map.recorded_only_hint">
         <input type="checkbox" id="mapCachedToggle">
         <span data-i18n="map.recorded_only"></span>
       </label>

@@ -10,10 +10,11 @@
     $('projectHome').href = `/?lang=${encodeURIComponent(i18n.locale)}`;
   }
 
-  async function callApi(url) {
+  async function callApi(url, options = {}) {
     try {
       const route = projectKey ? `/api/projects/${encodeURIComponent(projectKey)}${url.slice(4)}` : url;
-      const response = await fetch(route, { credentials: 'same-origin' });
+      const response = await fetch(route, { credentials: 'same-origin', ...options,
+        headers: options.method === 'POST' ? { 'x-awr-project-progress-overview': '1' } : undefined });
       const result = await response.json();
       if (!result || typeof result.ok !== 'boolean') throw new Error(i18n.t('progress.invalid_response'));
       if (url === '/api/map/config') {
