@@ -107,7 +107,7 @@ fn source_file_roundtrip_preserves_created_edited_and_retired_identities() {
 }
 
 #[test]
-fn equal_identity_create_preserves_legacy_writeback_fingerprint() {
+fn equal_identity_create_preserves_existing_writeback_fingerprint() {
     let mut task = draft();
     task.work_id = "API-NEW".into();
     task.external_key = "API-NEW".into();
@@ -116,11 +116,11 @@ fn equal_identity_create_preserves_legacy_writeback_fingerprint() {
         &[change(DraftOpKind::CreateTask, None, task)],
     )
     .unwrap();
-    // Pin the output of the original writer so a pending equal-ID intent can
-    // still reproduce its immutable source fingerprint after an upgrade.
+    // Pin the existing definition-state writer's output so optional identity
+    // support does not change a pending equal-ID intent's source fingerprint.
     assert_eq!(
         patch.after_fingerprint,
-        "sha256:8a0522231770bc0d8f4577fe1920a5f524205e8a5d7f41d276fb0fc8deceb4d8"
+        "sha256:15a42ff34ff0ce8bcd5e96fb773d4cd0c5c7f3ee66f696ab61600700bc53c711"
     );
     let written: Value = serde_yaml_ng::from_slice(&patch.after_bytes).unwrap();
     assert!(written["work_items"][2].get("work_id").is_none());

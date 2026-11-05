@@ -95,6 +95,50 @@ fn markdown_original_chinese_columns_and_custom_names_are_retained() {
 }
 
 #[test]
+fn markdown_can_map_its_display_id_from_a_work_id_column() {
+    let batch = parse(
+        "| work_id | title | status |\n|---|---|---|\n| W | Existing task | planned |\n",
+        "markdown-ledger-v1",
+        "[sources.options.field_map]\nid='work_id'\n",
+    )
+    .unwrap();
+    assert_eq!(batch.work_items[0].meta.external_key, "W");
+    assert_eq!(batch.work_items[0].title, "Existing task");
+    assert!(
+        parse(
+            "| ID | title | identity |\n|---|---|---|\n| W | Existing task | internal-w |\n",
+            "markdown-ledger-v1",
+            "[sources.options.field_map]\nwork_id='identity'\n",
+        )
+        .is_err(),
+        "Markdown must not gain an internal-identity field mapping"
+    );
+}
+
+#[test]
+fn markdown_work_id_columns_do_not_change_display_key_dependencies() {
+    for (api_identity, client_identity) in [
+        ("internal-api", "internal-client"),
+        ("", ""),
+        ("same", "same"),
+    ] {
+        let text = format!(
+            "| ID | title | work_id | status | depends_on |\n|---|---|---|---|---|\n| API-1 | API | {api_identity} | completed | |\n| CLIENT-1 | Client | {client_identity} | planned | API-1 |\n"
+        );
+        let batch = parse(&text, "markdown-ledger-v1", "").unwrap();
+        assert_eq!(batch.work_items[0].meta.external_key, "API-1");
+        assert_eq!(batch.work_items[1].meta.external_key, "CLIENT-1");
+        let edge = batch
+            .edges
+            .iter()
+            .find(|edge| edge.relation == "depends_on")
+            .unwrap();
+        assert_eq!(edge.from_key, "CLIENT-1");
+        assert_eq!(edge.to_key, "API-1");
+    }
+}
+
+#[test]
 fn mapping_conflicts_and_invalid_semantics_are_rejected() {
     for options in [
         "[sources.options.status_map]\ncompleted='planned'\n",
@@ -102,6 +146,7 @@ fn mapping_conflicts_and_invalid_semantics_are_rejected() {
         "[sources.options.status_map]\nPending='planned'\npending='ready'\n",
         "[sources.options.field_map]\ntitle='same'\nstatus='same'\n",
         "[sources.options.field_map]\nstatus='evidence'\n",
+        "[sources.options.field_map]\ntitle='work_id'\n",
         "[sources.options.field_map]\nverification='checks'\n",
     ] {
         assert!(

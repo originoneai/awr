@@ -527,15 +527,21 @@ work_items:
 `depends_on` (or its existing `dependencies` alias) maps directly to contract
 `required_dependencies`: entries are internal work IDs. The keys of
 `dependency_acceptance`, and the planning `split_from` / `split_children`
-references, also use internal IDs. They are preserved verbatim, with no display
-key lookup or translation. Existing ledgers without `work_id` therefore retain
+references, also use internal IDs. Source bytes and Team contracts preserve
+these references verbatim. Both local YAML ledger adapters resolve dependencies
+by effective internal ID within the ledger, while local CLI selectors continue
+to use display keys. An internal ID takes precedence when it equals another
+row's display key; display-only references cannot silently alias a different
+internal identity. Existing ledgers without `work_id` therefore retain
 their dependency meaning. When introducing distinct IDs to an existing source,
 update its dependency references consistently; adding the field does not
 automatically migrate existing Team identities or receipts.
 
 Planning creates write `id` and add `work_id` when the two identities differ.
-Equal identities retain the legacy output bytes so an existing pending writeback
-can still reproduce its recorded source fingerprint. Edits, splits, archives and
+Equal identities retain the existing definition-state writer's output bytes so
+optional identity support does not change a pending writeback's recorded source
+fingerprint. Follow the [definition-metadata upgrade requirements](team-planning.md#changes-and-task-definitions)
+for intents recorded before that format was introduced. Edits, splits, archives and
 cancellations must match both existing identities and preserve them through
 writeback and subsequent publication. Source status notes remain separate from
 runtime completion receipts.

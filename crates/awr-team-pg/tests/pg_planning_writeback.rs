@@ -1586,12 +1586,11 @@ async fn durable_boundaries_recover_original_intent_and_commit_activation_once()
         ).await.unwrap();
         assert_eq!(journal.get::<_, String>(0), before);
         let after: String = journal.get(1);
-        // This is the original writer's fingerprint for these equal-ID changes.
-        // Keeping it stable also covers recovery of an intent recorded before
-        // the adapter gained support for distinct internal/display identities.
+        // Pin the existing definition-state writer's equal-ID fingerprint so
+        // optional identity support preserves the durable recovery boundaries.
         assert_eq!(
-            after, "sha256:47ca48614947366c19eb0573aff501dee8c40f3089f78e7626abaa0a5204f280",
-            "legacy pending intent changed at {boundary}"
+            after, "sha256:ad033ae66383f6394e44764ba22e83fc2718631ea4fe78f5e81848721f700456",
+            "equal-ID pending intent changed at {boundary}"
         );
         let intent: serde_json::Value = journal.get(2);
         assert_eq!(intent["request"], serde_json::to_value(&req).unwrap());

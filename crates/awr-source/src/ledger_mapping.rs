@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const FIELDS: &[&str] = &[
     "id",
+    "work_id",
     "title",
     "status",
     "kind",
@@ -64,13 +65,15 @@ impl LedgerMapping {
             ));
         }
         for (field, original) in &mapping.field_map {
+            let reserved_source_field = FIELDS.contains(&original.as_str())
+                && (original != "work_id" || spec.adapter != "markdown-ledger-v1");
             if !FIELDS.contains(&field.as_str())
                 || original.trim().is_empty()
                 || original.len() > 128
                 || original != original.trim()
                 || original.chars().any(char::is_control)
                 || !names.insert(original.to_lowercase())
-                || (FIELDS.contains(&original.as_str()) && original != field)
+                || (reserved_source_field && original != field)
                 || [
                     "external_key",
                     "required_for_v1",
