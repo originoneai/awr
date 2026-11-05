@@ -21,6 +21,7 @@ mod documents;
 mod graph;
 mod guidance;
 mod handoffs;
+pub(crate) use guidance::inspect_only;
 mod inbox;
 mod list;
 mod navigation;

@@ -712,22 +712,17 @@ async fn definition_only_pending_intent_fences_execution_and_recovers_each_commi
                 .iter()
                 .all(|item| item["work_id"] != "a")
         );
-        let resume = navigation["data"]["resume"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|item| item["work_id"] == "a")
-            .unwrap();
-        assert_eq!(resume["next_query"]["op"], "work.observe");
-        let observed = read
-            .query(
-                TENANT,
-                PROJECT,
-                A,
-                serde_json::from_value(resume["next_query"].clone()).unwrap(),
-            )
-            .await
-            .unwrap();
+        assert!(
+            navigation["data"]["resume"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item["work_id"] != "a")
+        );
+        let mut historical = query("work.observe");
+        historical.work_id = Some("a".into());
+        historical.session_id = Some("session-a".into());
+        let observed = read.query(TENANT, PROJECT, A, historical).await.unwrap();
         assert_eq!(observed["data"]["definition_state"], "cancelled");
         let state: String = admin
             .query_one(
@@ -832,6 +827,23 @@ async fn definition_states_and_titles_rebuild_from_source_after_projection_loss(
                     .iter()
                     .all(|item| item["definition_state"] == "enabled" && item["work_id"] != key)
             );
+            let enabled = next["data"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["work_id"] == "SOURCE-enabled")
+                .expect("rebuilt enabled source task must remain discoverable");
+            let selected = read
+                .query(
+                    TENANT,
+                    PROJECT,
+                    A,
+                    serde_json::from_value(enabled["next_query"].clone()).unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(selected["data"]["work_id"], "SOURCE-enabled");
+            assert_eq!(selected["data"]["definition_state"], "enabled");
         }
     }
     assert_eq!(
