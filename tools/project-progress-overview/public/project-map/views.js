@@ -489,7 +489,7 @@
       let path = [];
       if (critEnd && G.shown.has(critEnd)) ({ edges: crit, path } = critical(G, critEnd));
       const tmp = new Svg(0, 0);
-      const { width: gw, height: gh } = drawDag(kit, tmp, 0, 0, allIds, G.edges, cardFn, widthOf, heightOf, { gapX, gapY, crit, bad: G.bad });
+      const { width: gw, height: gh } = drawDag(kit, tmp, 0, 0, allIds, G.edges, cardFn, widthOf, heightOf, { gapX, gapY, crit, bad: G.bad, maxWidth: 1000 });
       const padX = 34;
       const headH = 74;
       return { tmp, gw, gh, pw: gw + 2 * padX, ph: gh + headH + 34, padX, headH, critPath: path, crit };
@@ -539,7 +539,7 @@
         built.push({ p, G, P, end, folded, doneToggle: !forced && hasDone ? { open: showDone.has(p.lane), label: t(showDone.has(p.lane) ? 'map.panel.hide_done' : 'map.panel.show_done') } : null });
       }
       const names = built.map(({ p }) => modelLib.laneName(laneMeta.get(p.lane), t));
-      const title = cfg.titles.mainline || (built.length ? t('map.title.mainline_lanes', { lanes: names.join(t('map.join.and')) }) : t('map.title.mainline'));
+      const title = cfg.titles.mainline || (built.length && built.length <= 3 ? t('map.title.mainline_lanes', { lanes: names.join(t('map.join.and')) }) : t('map.title.mainline'));
       if (!built.length) return placeholder(title, t('map.mainline.none'));
       const W = Math.floor(Math.max(1200, Math.max(...built.map(({ P }) => P.pw)) + 2 * 76));
       for (const b of built) if (b.folded) b.P.pw = W - 152;
@@ -589,14 +589,13 @@
       const foldedLanes = fold.collapsed || new Set();
       const showDone = Boolean(fold.showDone);
       const lanes = cfg.explore_lanes || [];
-      const title = cfg.titles.explore || t('map.title.explore');
+      const byMainline = lanes.length > 0 && lanes.every((lane) => lane.work_keys);
+      const title = cfg.titles.explore || t(byMainline ? 'map.title.explore_mainlines' : 'map.title.explore');
       if (!lanes.length) return placeholder(title, t('map.explore.no_lanes'));
-      const byMs = new Map();
-      lanes.forEach((l, i) => l.milestones.forEach((m) => byMs.set(m, i)));
       const now = meta.generated_at;
-      const exIds = [...nodes.values()].filter((n) => byMs.has(n.milestone)).map((n) => n.id);
+      const exIds = [...model.exploreLaneByWork.keys()];
       const GE = prepare(model, exIds);
-      const laneOf = (k) => byMs.get(nodes.get(k).milestone);
+      const laneOf = (k) => model.exploreLaneByWork.get(k);
       const candidates = (showDone ? GE.ids : GE.ids.filter((k) => nodes.get(k).vis !== 'done')).slice().sort(compare);
       if (!candidates.length) return placeholder(title, t('map.explore.none'));
       const shown = candidates.filter((k) => !foldedLanes.has(laneOf(k)));
@@ -636,7 +635,8 @@
       const ce = counter(GE.ids, (k) => nodes.get(k).vis);
       const sv = new Svg(W, 0);
       kit.header(sv, W / 2, 74, 'AWR · DEPENDENCY GRAPH', title,
-        t('map.explore.subtitle', { live: GE.live.size, declared: GE.E.length, kept: GE.R.length, time: utc(now) }), t('map.explore.note'));
+        t(byMainline ? 'map.explore.mainline_subtitle' : 'map.explore.subtitle', { live: GE.live.size, declared: GE.E.length, kept: GE.R.length, time: utc(now) }),
+        t(byMainline ? 'map.explore.mainline_note' : 'map.explore.note'));
       const ox = (W - pw) / 2;
       const oy = 196;
       sv.add(`<rect x="${ox}" y="${oy}" width="${pw}" height="${ph}" rx="24" fill="#fff" fill-opacity=".42" stroke="rgba(255,255,255,.88)" filter="url(#shS)"/>`);
@@ -647,10 +647,11 @@
         const x = gx + i * pitch;
         sv.add(`<rect x="${x - 5}" y="${gy - 12}" width="${LW + 10}" height="${bodyH + 24}" rx="18" fill="#fff" fill-opacity=".34" stroke="rgba(255,255,255,.85)"/>`);
         const goal = meta.goals[lane.goal];
-        const tl = wrap((goal && goal.title) || lane.name, 8.6, LW - 40, 2);
+        const name = modelLib.laneName(lane, t);
+        const tl = wrap((goal && goal.title) || name, 8.6, LW - 40, 2);
         sv.add(`<g class="pm-fold" data-xlane="${i}" data-open="${!foldedLanes.has(i)}"><rect x="${x}" y="${oy + 22}" width="${LW}" height="62" rx="12" fill="#fff" fill-opacity=".9" stroke="rgba(255,255,255,.9)" filter="url(#shS)"/>`
           + `<rect x="${x + 12}" y="${oy + 34}" width="10" height="10" rx="3" fill="${lane.color}"/>`
-          + text(x + 30, oy + 43.5, fit(lane.name, 12, LW - 54), 12, INK, 700) + tl.map((ln, j) => text(x + 12, oy + 58 + j * 11, ln, 8.6, MUTED, 500)).join('')
+          + text(x + 30, oy + 43.5, fit(name, 12, LW - 54), 12, INK, 700) + tl.map((ln, j) => text(x + 12, oy + 58 + j * 11, ln, 8.6, MUTED, 500)).join('')
           + kit.chevron(x + LW - 20, oy + 36, !foldedLanes.has(i)) + '</g>');
         const idsL = GE.ids.filter((k) => laneOf(k) === i);
         const d = idsL.filter((k) => nodes.get(k).vis === 'done').length;

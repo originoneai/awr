@@ -72,6 +72,31 @@ test('the work graph limit follows BudgetExceeded and stops at the service cap',
   await assert.rejects(extractSnapshot({ call: tooBig, config: {}, now: NOW, wait: noWait }), (e) => e.code === 'ProjectTooLarge' && /1500/.test(e.detail));
 });
 
+test('default swimlanes use already-read groups without plan enumeration or per-work reads', async () => {
+  const cli = createFakeCli(source(), { nodeActivity: true });
+  const got = await extractSnapshot({ call: cli.call, now: NOW, wait: noWait });
+  assert.equal(cli.calls.length, 5);
+  assert.ok(cli.calls.every((c) => !c.includes('--milestone') && !c.includes('plan')));
+  assert.ok(got.nodes.every((node) => node.milestone === null));
+  const model = require('../public/project-map/model.js').loadModel(got);
+  assert.equal(model.cfg.explore_lanes.length, 3);
+  assert.deepEqual(new Set(model.cfg.explore_lanes.flatMap((lane) => lane.work_keys)), new Set(got.nodes.map((node) => node.key)));
+});
+
+test('milestone membership already supplied by the task graph is retained without extra reads', async () => {
+  const original = source();
+  const cli = createFakeCli(original, { nodeActivity: true });
+  const milestones = new Map(original.nodes.map((node) => [node.key, node.milestone]));
+  const call = async (name, params) => {
+    const value = await cli.call(name, params);
+    return name === 'workGraph' ? { ...value, nodes: value.nodes.map((node) => ({ ...node, milestone: milestones.get(node.key) })) } : value;
+  };
+  const got = await extractSnapshot({ call, now: NOW, wait: noWait });
+  assert.deepEqual(got.nodes.map((node) => node.milestone), original.nodes.map((node) => node.milestone));
+  assert.ok(!got.unavailable.some((entry) => entry.field === 'node.milestone'));
+  assert.equal(cli.calls.length, 5);
+});
+
 test('only official read commands are used, each exactly as the shared definitions build them', async () => {
   const cli = createFakeCli(source());
   await extract(cli);
@@ -163,7 +188,7 @@ test('recorded-state reads need work graph --cached and say so when awr cannot d
   assert.ok(old.calls.every((c) => !(c[0] === 'work' && c.includes('--cached'))));
 });
 
-test('milestones are resolved only for the configured ones; the rest stay unavailable', async () => {
+test('explicit milestone configuration controls reads, including opting out with empty lanes', async () => {
   const original = source();
   const cli = createFakeCli(original);
   const got = await extract(cli);
@@ -172,7 +197,7 @@ test('milestones are resolved only for the configured ones; the rest stay unavai
   assert.deepEqual(got.nodes.map((n) => n.milestone), original.nodes.map((n) => n.milestone));
 
   const noConfig = createFakeCli(original);
-  const plain = await extractSnapshot({ call: noConfig.call, config: undefined, now: NOW, wait: noWait });
+  const plain = await extractSnapshot({ call: noConfig.call, config: { explore_lanes: [] }, now: NOW, wait: noWait });
   assert.equal(noConfig.calls.filter((c) => c.includes('--milestone')).length, 0);
   assert.ok(plain.nodes.every((n) => n.milestone === null));
   assert.deepEqual(plain.unavailable.map((u) => u.field), snapshotLib.UNAVAILABLE.map((u) => u.field));

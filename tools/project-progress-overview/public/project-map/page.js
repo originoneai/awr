@@ -51,6 +51,69 @@ th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:
 td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}
 .notes{color:var(--muted);font-size:12.5px}.notes h2{font-size:13px;margin:12px 0 4px;color:var(--ink)}.notes ul{margin:4px 0;padding-left:20px}
 @media (max-width:640px){h1{font-size:17px}.stats li{min-width:64px;padding:5px 10px}}
+/* Supporting panels share the same surface, type scale and spacing as the maps. */
+.table.pm-support-card, .notes .pm-note-card {
+  min-width: 0;
+  border: 1px solid var(--pm-line, var(--line));
+  border-radius: 14px;
+  background: var(--pm-surface, var(--panel));
+  color: var(--pm-ink, var(--ink));
+  box-shadow: 0 4px 16px rgb(27 63 118 / 4%);
+}
+.table.pm-support-card > summary, .pm-note-card > summary {
+  display: flex; align-items: center; gap: 12px;
+  padding: 18px 20px; cursor: pointer; list-style: none;
+  color: var(--pm-ink, var(--ink)); font-size: 14px; font-weight: 600;
+}
+.pm-support-card > summary::-webkit-details-marker, .pm-note-card > summary::-webkit-details-marker { display: none; }
+.pm-support-card > summary::before, .pm-note-card > summary::before {
+  content: ''; width: 7px; height: 7px; flex: none;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg); color: var(--pm-muted, var(--muted));
+}
+.pm-support-card[open] > summary::before, .pm-note-card[open] > summary::before { transform: rotate(45deg); }
+.pm-summary-hint { margin-left: auto; color: var(--pm-faint, var(--faint)); font-size: 12px; font-weight: 400; }
+.pm-summary-count { margin-left: auto; color: var(--pm-faint, var(--faint)); font: 12px ui-monospace, monospace; }
+.table.pm-support-card > .scroll {
+  max-height: 480px; border: 0; border-top: 1px solid var(--pm-line, var(--line));
+  border-radius: 0 0 14px 14px; box-shadow: none; background: transparent; overflow: auto;
+}
+.pm-support-card table { width: 100%; min-width: 900px; border-collapse: collapse; font-size: 13px; }
+.pm-support-card th, .pm-support-card td { padding: 12px 16px; line-height: 1.6; text-align: left; vertical-align: top; }
+.pm-support-card th { position: sticky; top: 0; z-index: 1; background: var(--pm-surface-2, var(--bg)); color: var(--pm-muted, var(--muted)); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.pm-support-card td { border-top: 1px solid var(--pm-line, var(--line)); border-bottom: 0; overflow-wrap: anywhere; }
+.pm-support-card td:nth-child(2) { min-width: 260px; max-width: 520px; }
+.pm-support-card td:nth-child(6) { max-width: 220px; }
+.pm-support-card tbody tr:nth-child(even) { background: var(--pm-surface-2, var(--bg)); }
+.pm-support-card tbody tr:hover { background: color-mix(in srgb, var(--pm-accent, var(--accent)) 7%, var(--pm-surface, var(--panel))); }
+.pm-support-card td.k { white-space: nowrap; font: 12px/1.6 ui-monospace, monospace; color: var(--pm-muted, var(--muted)); }
+.pm-table-status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12px; }
+.pm-table-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--pm-faint, var(--faint)); }
+.pm-table-status[data-vis='done']::before { background: #12855c; }
+.pm-table-status[data-vis='developing']::before { background: var(--pm-accent, var(--accent)); }
+.pm-table-status[data-vis='blocked']::before { background: #c93b44; }
+.pm-table-status[data-vis='stalled']::before { background: #b4740a; }
+.notes { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.notes article.pm-note-card { padding: 20px; }
+.notes .pm-note-card h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+.pm-note-intro { margin: 0; font-size: 12px; line-height: 1.7; color: var(--pm-muted, var(--muted)); }
+.pm-fingerprint { margin-top: 12px; color: var(--pm-muted, var(--muted)); font-size: 12px; }
+.pm-fingerprint > summary { cursor: pointer; }
+.pm-fingerprint p { margin: 8px 0 0; line-height: 1.7; }
+.pm-fingerprint code { display: block; margin: 8px 0; padding: 10px 12px; border-radius: 8px; background: var(--pm-surface-2, var(--bg)); font-size: 11px; overflow-wrap: anywhere; }
+.notes .pm-note-card > ul { margin: 0; padding: 0 20px 20px 36px; font-size: 12px; line-height: 1.8; color: var(--pm-muted, var(--muted)); }
+.notes .pm-note-card li + li { margin-top: 8px; }
+.notes .pm-field-gaps { grid-column: 1 / -1; }
+.notes .pm-field-gaps > ul { list-style: none; padding-left: 20px; }
+.notes .pm-field-gaps li { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 16px; padding-top: 12px; border-top: 1px solid var(--pm-line, var(--line)); }
+.pm-field-gaps code { overflow-wrap: anywhere; font-size: 11px; color: var(--pm-faint, var(--faint)); }
+@media (max-width:640px) {
+  .notes { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .pm-summary-hint { display: none; }
+  .table.pm-support-card > summary, .pm-note-card > summary { padding: 16px; }
+  .notes article.pm-note-card { padding: 16px; }
+  .notes .pm-field-gaps li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+}
 @media print{.tabs>input,.tabs>label{display:none}.view{display:block!important;break-inside:avoid;margin-bottom:16px}.scroll{box-shadow:none;overflow:visible}}
 `.trim();
 
@@ -140,20 +203,20 @@ td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
     const laneIndex = new Map(cfg.overview.lanes.map((l, i) => [l.id, i]));
     const rows = [...all].sort((a, b) => (laneIndex.get(a.lane) ?? 99) - (laneIndex.get(b.lane) ?? 99) || compare(a.id, b.id)).map((n) => {
       const idle = n.idle === null ? '—' : kitLib.f0(n.idle);
-      return `<tr data-key="${esc(n.id)}" data-vis="${n.vis}"><td class="k">${esc(n.id)}</td><td>${esc(n.title)}</td><td title="${esc(n.status)}">${esc(kit.ST[n.vis].label)}</td>`
+      return `<tr data-key="${esc(n.id)}" data-vis="${n.vis}"><td class="k">${esc(n.id)}</td><td>${esc(n.title)}</td><td title="${esc(n.status)}"><span class="pm-table-status" data-vis="${n.vis}">${esc(kit.ST[n.vis].label)}</span></td>`
         + `<td>${esc(laneName.get(n.lane) || n.lane)}</td><td>${esc(n.milestone || '—')}</td><td>${esc(n.owner || '—')}</td><td>${idle}</td></tr>`;
     });
-    const table = `<details class="table"><summary>${esc(t('map.table.summary', { count: nodes.size }))}</summary><div class="scroll"><table><thead><tr>`
-      + ['key', 'title', 'status', 'lane', 'milestone', 'owner', 'idle'].map((c) => `<th>${esc(t(`map.table.${c}`))}</th>`).join('')
+    const table = `<details class="table pm-support-card"><summary><span>${esc(t('map.table.summary', { count: nodes.size }))}</span><span class="pm-summary-hint">${esc(t('map.table.hint'))}</span></summary><div class="scroll"><table><thead><tr>`
+      + ['key', 'title', 'status', 'lane', 'milestone', 'owner', 'idle'].map((c) => `<th scope="col">${esc(t(`map.table.${c}`))}</th>`).join('')
       + `</tr></thead><tbody>${rows.join('')}</tbody></table></div></details>`;
 
     const time = viewsLib.utc(meta.generated_at);
-    const gaps = meta.unavailable.map((u) => `<li><code>${esc(u.field)}</code>: ${esc(gapReason(t, u))}</li>`).join('');
-    const notes = `<section class="notes"><h2>${esc(t('map.notes.basis'))}</h2><p>${t('map.notes.basis_text', {
+    const gaps = meta.unavailable.map((u) => `<li><code>${esc(u.field)}</code><span>${esc(gapReason(t, u))}</span></li>`).join('');
+    const notes = `<section class="notes"><article class="pm-note-card"><h2>${esc(t('map.notes.basis'))}</h2><p class="pm-note-intro">${esc(t('map.notes.snapshot', { revision: String(proj.revision), time }))}</p><details class="pm-fingerprint"><summary>${esc(t('map.notes.fingerprint'))}</summary><p>${t('map.notes.basis_text', {
       revision: esc(String(proj.revision)), fingerprint: `<code>${esc(meta.fingerprint)}</code>`, time: esc(time),
-    })}</p>`
-      + `<h2>${esc(t('map.notes.rules'))}</h2><ul><li>${esc(t('map.notes.rule_stalled', { days: cfg.stale_days }))}</li><li>${esc(t('map.notes.rule_lanes'))}</li><li>${esc(t('map.notes.rule_claims'))}</li></ul>`
-      + `<h2>${esc(t('map.notes.gaps'))}</h2><ul>${gaps}</ul></section>`;
+    })}</p></details></article>`
+      + `<details class="pm-note-card"><summary>${esc(t('map.notes.rules'))}</summary><ul><li>${esc(t('map.notes.rule_stalled', { days: cfg.stale_days }))}</li><li>${esc(t('map.notes.rule_lanes'))}</li><li>${esc(t('map.notes.rule_claims'))}</li></ul></details>`
+      + `<details class="pm-note-card pm-field-gaps"><summary><span>${esc(t('map.notes.gaps'))}</span><span class="pm-summary-count">${meta.unavailable.length}</span></summary><ul>${gaps}</ul></details></section>`;
 
     const title = cfg.titles.page || t('map.page.title', { name: proj.name });
     const stats = [[nodes.size, t('map.stat.items')], [edges, t('map.stat.edges')], [tot.stalled || 0, t('map.status.stalled')],

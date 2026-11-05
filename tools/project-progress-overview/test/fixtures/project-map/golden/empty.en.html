@@ -34,6 +34,69 @@ th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:
 td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}
 .notes{color:var(--muted);font-size:12.5px}.notes h2{font-size:13px;margin:12px 0 4px;color:var(--ink)}.notes ul{margin:4px 0;padding-left:20px}
 @media (max-width:640px){h1{font-size:17px}.stats li{min-width:64px;padding:5px 10px}}
+/* Supporting panels share the same surface, type scale and spacing as the maps. */
+.table.pm-support-card, .notes .pm-note-card {
+  min-width: 0;
+  border: 1px solid var(--pm-line, var(--line));
+  border-radius: 14px;
+  background: var(--pm-surface, var(--panel));
+  color: var(--pm-ink, var(--ink));
+  box-shadow: 0 4px 16px rgb(27 63 118 / 4%);
+}
+.table.pm-support-card > summary, .pm-note-card > summary {
+  display: flex; align-items: center; gap: 12px;
+  padding: 18px 20px; cursor: pointer; list-style: none;
+  color: var(--pm-ink, var(--ink)); font-size: 14px; font-weight: 600;
+}
+.pm-support-card > summary::-webkit-details-marker, .pm-note-card > summary::-webkit-details-marker { display: none; }
+.pm-support-card > summary::before, .pm-note-card > summary::before {
+  content: ''; width: 7px; height: 7px; flex: none;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg); color: var(--pm-muted, var(--muted));
+}
+.pm-support-card[open] > summary::before, .pm-note-card[open] > summary::before { transform: rotate(45deg); }
+.pm-summary-hint { margin-left: auto; color: var(--pm-faint, var(--faint)); font-size: 12px; font-weight: 400; }
+.pm-summary-count { margin-left: auto; color: var(--pm-faint, var(--faint)); font: 12px ui-monospace, monospace; }
+.table.pm-support-card > .scroll {
+  max-height: 480px; border: 0; border-top: 1px solid var(--pm-line, var(--line));
+  border-radius: 0 0 14px 14px; box-shadow: none; background: transparent; overflow: auto;
+}
+.pm-support-card table { width: 100%; min-width: 900px; border-collapse: collapse; font-size: 13px; }
+.pm-support-card th, .pm-support-card td { padding: 12px 16px; line-height: 1.6; text-align: left; vertical-align: top; }
+.pm-support-card th { position: sticky; top: 0; z-index: 1; background: var(--pm-surface-2, var(--bg)); color: var(--pm-muted, var(--muted)); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.pm-support-card td { border-top: 1px solid var(--pm-line, var(--line)); border-bottom: 0; overflow-wrap: anywhere; }
+.pm-support-card td:nth-child(2) { min-width: 260px; max-width: 520px; }
+.pm-support-card td:nth-child(6) { max-width: 220px; }
+.pm-support-card tbody tr:nth-child(even) { background: var(--pm-surface-2, var(--bg)); }
+.pm-support-card tbody tr:hover { background: color-mix(in srgb, var(--pm-accent, var(--accent)) 7%, var(--pm-surface, var(--panel))); }
+.pm-support-card td.k { white-space: nowrap; font: 12px/1.6 ui-monospace, monospace; color: var(--pm-muted, var(--muted)); }
+.pm-table-status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12px; }
+.pm-table-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--pm-faint, var(--faint)); }
+.pm-table-status[data-vis='done']::before { background: #12855c; }
+.pm-table-status[data-vis='developing']::before { background: var(--pm-accent, var(--accent)); }
+.pm-table-status[data-vis='blocked']::before { background: #c93b44; }
+.pm-table-status[data-vis='stalled']::before { background: #b4740a; }
+.notes { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.notes article.pm-note-card { padding: 20px; }
+.notes .pm-note-card h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+.pm-note-intro { margin: 0; font-size: 12px; line-height: 1.7; color: var(--pm-muted, var(--muted)); }
+.pm-fingerprint { margin-top: 12px; color: var(--pm-muted, var(--muted)); font-size: 12px; }
+.pm-fingerprint > summary { cursor: pointer; }
+.pm-fingerprint p { margin: 8px 0 0; line-height: 1.7; }
+.pm-fingerprint code { display: block; margin: 8px 0; padding: 10px 12px; border-radius: 8px; background: var(--pm-surface-2, var(--bg)); font-size: 11px; overflow-wrap: anywhere; }
+.notes .pm-note-card > ul { margin: 0; padding: 0 20px 20px 36px; font-size: 12px; line-height: 1.8; color: var(--pm-muted, var(--muted)); }
+.notes .pm-note-card li + li { margin-top: 8px; }
+.notes .pm-field-gaps { grid-column: 1 / -1; }
+.notes .pm-field-gaps > ul { list-style: none; padding-left: 20px; }
+.notes .pm-field-gaps li { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 16px; padding-top: 12px; border-top: 1px solid var(--pm-line, var(--line)); }
+.pm-field-gaps code { overflow-wrap: anywhere; font-size: 11px; color: var(--pm-faint, var(--faint)); }
+@media (max-width:640px) {
+  .notes { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .pm-summary-hint { display: none; }
+  .table.pm-support-card > summary, .pm-note-card > summary { padding: 16px; }
+  .notes article.pm-note-card { padding: 16px; }
+  .notes .pm-field-gaps li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+}
 @media print{.tabs>input,.tabs>label{display:none}.view{display:block!important;break-inside:avoid;margin-bottom:16px}.scroll{box-shadow:none;overflow:visible}}</style>
 </head>
 <body>
@@ -155,7 +218,7 @@ td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
 <rect x="315.0" y="146.0" width="470.0" height="22" rx="11" fill="rgba(245,158,11,.12)" stroke="rgba(245,158,11,.34)" stroke-width="1"/>
 <text x="550.0" y="160.5" font-size="10" fill="#8a6417" font-weight="500" text-anchor="middle">No dependency panel to draw: the display configuration has no lane panel with work items</text>
 </svg>
-</div></section><section class="view" id="s-explore" aria-label="Lane dependency graph"><div class="scroll"><svg xmlns="http://www.w3.org/2000/svg" width="1100" height="330" viewBox="0 0 1100 330" font-family="-apple-system,BlinkMacSystemFont,&#x27;SF Pro Display&#x27;,&#x27;Avenir Next&#x27;,&#x27;Segoe UI&#x27;,&#x27;PingFang SC&#x27;,&#x27;Microsoft YaHei&#x27;,sans-serif" role="img" aria-label="Lane dependency graph: unfinished work by milestone lane and its dependencies">
+</div></section><section class="view" id="s-explore" aria-label="Lane dependency graph"><div class="scroll"><svg xmlns="http://www.w3.org/2000/svg" width="1100" height="330" viewBox="0 0 1100 330" font-family="-apple-system,BlinkMacSystemFont,&#x27;SF Pro Display&#x27;,&#x27;Avenir Next&#x27;,&#x27;Segoe UI&#x27;,&#x27;PingFang SC&#x27;,&#x27;Microsoft YaHei&#x27;,sans-serif" role="img" aria-label="Lane dependency graph showing unfinished work and its dependencies">
 <defs>
 <radialGradient id="explore-gBg" cx="50%" cy="-12%" r="95%"><stop offset="0" stop-color="#ffffff"/><stop offset=".52" stop-color="#edf1f9"/><stop offset="1" stop-color="#e0e9f6"/></radialGradient>
 <linearGradient id="explore-gPanel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f8faff"/><stop offset="1" stop-color="#eef3fc"/></linearGradient>
@@ -179,7 +242,7 @@ td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
 <text x="550.0" y="160.5" font-size="10" fill="#8a6417" font-weight="500" text-anchor="middle">No unfinished work in the milestone lanes</text>
 </svg>
 </div></section></div></div>
-<details class="table"><summary>All work items (0)</summary><div class="scroll"><table><thead><tr><th>Key</th><th>Title</th><th>Status</th><th>Lane</th><th>Milestone</th><th>Owner / claim</th><th>Idle days</th></tr></thead><tbody></tbody></table></div></details>
-<section class="notes"><h2>Data basis</h2><p>Official CLI snapshot r100 · <code>sha256:cc56e9dda8863810e0df39effcfa8f22837e8a59721e891207a323df409ea614</code> · generated 2026-01-15 00:00 UTC. The page depends only on this snapshot and the display configuration; no ledger or state database was read.</p><h2>Definitions</h2><ul><li>“Stalled”: status in_progress and no event for ≥7 days.</li><li>Lanes come from the display configuration; the lane dependency graph groups by milestone.</li><li>Expired claims do not count as active claims.</li></ul><h2>Fields the official interfaces do not provide</h2><ul><li><code>node.goal</code>: work graph and nav nodes carry no goal; membership exists only per goal (nav --goal), which this map does not query</li><li><code>node.scope</code>: the contract or scope id is not exposed per item</li><li><code>node.priority</code>: only work show returns it, one refreshing call per item; not collected in bulk</li><li><code>node.milestone</code>: there is no bulk field; it is resolved only for the milestones named in the display configuration, through nav --milestone</li><li><code>project.scenarios</code>: project-specific acceptance scenarios are outside the AWR work model and have no data source</li><li><code>project.release_funnel</code>: a presentation concept without a data source</li></ul></section></main>
+<details class="table pm-support-card"><summary><span>All work items (0)</span><span class="pm-summary-hint">Expand to check status, ownership and milestones</span></summary><div class="scroll"><table><thead><tr><th scope="col">Key</th><th scope="col">Title</th><th scope="col">Status</th><th scope="col">Lane</th><th scope="col">Milestone</th><th scope="col">Owner / claim</th><th scope="col">Idle days</th></tr></thead><tbody></tbody></table></div></details>
+<section class="notes"><article class="pm-note-card"><h2>Data basis</h2><p class="pm-note-intro">Snapshot r100 · generated 2026-01-15 00:00 UTC</p><details class="pm-fingerprint"><summary>Source and snapshot fingerprint</summary><p>Official CLI snapshot r100 · <code>sha256:cc56e9dda8863810e0df39effcfa8f22837e8a59721e891207a323df409ea614</code> · generated 2026-01-15 00:00 UTC. The page depends only on this snapshot and the display configuration; no ledger or state database was read.</p></details></article><details class="pm-note-card"><summary>Definitions</summary><ul><li>“Stalled”: status in_progress and no event for ≥7 days.</li><li>Groups follow the display configuration. Swimlanes use recorded milestones when available, otherwise mainline groups.</li><li>Expired claims do not count as active claims.</li></ul></details><details class="pm-note-card pm-field-gaps"><summary><span>Fields the official interfaces do not provide</span><span class="pm-summary-count">6</span></summary><ul><li><code>node.goal</code><span>work graph and nav nodes carry no goal; membership exists only per goal (nav --goal), which this map does not query</span></li><li><code>node.scope</code><span>the contract or scope id is not exposed per item</span></li><li><code>node.priority</code><span>only work show returns it, one refreshing call per item; not collected in bulk</span></li><li><code>node.milestone</code><span>there is no bulk field; it is resolved only for the milestones named in the display configuration, through nav --milestone</span></li><li><code>project.scenarios</code><span>project-specific acceptance scenarios are outside the AWR work model and have no data source</span></li><li><code>project.release_funnel</code><span>a presentation concept without a data source</span></li></ul></details></section></main>
 </body>
 </html>

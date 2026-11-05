@@ -144,7 +144,7 @@ test('without a configuration file the status says the lanes were derived', asyn
     const dom = fakeDom();
     await controller(dom, callApiFor(plain)).refresh();
     assert.match(dom.els.mapStatus.textContent, /Display configuration derived from the data/);
-    assert.match(dom.els.mapStage.innerHTML, /No milestone lanes configured/);
+    assert.match(dom.els.mapStage.innerHTML, /data-xlane="0"/);
   } finally {
     await plain.stop();
   }

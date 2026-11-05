@@ -50,6 +50,74 @@ test('rendering twice gives the same bytes in every language', () => {
   }
 });
 
+test('supporting information uses consistent cards and keeps field gaps collapsed', () => {
+  const out = h.renderDemo('en');
+  assert.match(out.table, /class="table pm-support-card"/);
+  assert.match(out.table, /class="pm-table-status"/);
+  assert.match(out.notes, /class="pm-note-card"/);
+  assert.match(out.notes, /<details class="pm-note-card pm-field-gaps"><summary>/);
+  assert.doesNotMatch(out.notes, /<details[^>]*\bopen\b/);
+  assert.ok(out.notes.includes(out.fingerprint));
+});
+
+test('default swimlanes follow recorded milestones and explicit empty configuration stays empty', () => {
+  const source = h.readJson('states.json');
+  const automatic = modelLib.loadModel(source);
+  const expected = new Set(source.nodes.filter((n) => !['completed', 'cancelled'].includes(n.status)).map((n) => n.milestone).filter(Boolean));
+  assert.deepEqual(new Set(automatic.cfg.explore_lanes.flatMap((l) => l.milestones)), expected);
+  assert.deepEqual(modelLib.loadModel(source, { explore_lanes: [] }).cfg.explore_lanes, []);
+});
+
+test('a broad dependency level wraps within the panel while preserving cards and edges', () => {
+  const layout = require('../public/project-map/layout.js');
+  const kit = require('../public/project-map/svgkit.js');
+  const ids = ['ROOT', ...Array.from({ length: 32 }, (_, i) => `JOB-${i}`), 'END'];
+  const edges = ids.slice(1, -1).flatMap((id) => [['ROOT', id], [id, 'END']]);
+  const render = () => {
+    const svg = new kit.Svg(0, 0);
+    const result = layout.drawDag(kit.createKit(h.tFor('en')), svg, 0, 0, ids, edges,
+      (id, x, y) => `<rect data-key="${id}" x="${x}" y="${y}" width="198" height="72"/>`,
+      () => 198, () => 72, { maxWidth: 1000 });
+    return { svg, result };
+  };
+  const { svg, result } = render();
+  assert.ok(result.width <= 1000, `diagram width ${result.width}`);
+  assert.equal((svg.b.join('').match(/data-key=/g) || []).length, ids.length);
+  assert.equal((svg.b.join('').match(/data-from=/g) || []).length, edges.length);
+  for (const [pre, next] of edges) assert.ok(result.pos.get(pre)[1] < result.pos.get(next)[1]);
+  const positions = [...result.pos.values()];
+  for (const [i, a] of positions.entries()) for (const b of positions.slice(i + 1)) {
+    assert.ok(Math.abs(a[0] - b[0]) >= 198 || Math.abs(a[1] - b[1]) >= 72);
+  }
+  assert.deepEqual(render().svg.b, svg.b);
+});
+
+test('empty and deep dependency panels keep finite bounds without unnecessary wrapping', () => {
+  const layout = require('../public/project-map/layout.js');
+  const kit = require('../public/project-map/svgkit.js');
+  const draw = (ids, edges) => layout.drawDag(kit.createKit(h.tFor('en')), new kit.Svg(0, 0), 0, 0, ids, edges,
+    () => '', () => 198, () => 72, { maxWidth: 1000 });
+  assert.deepEqual(draw([], []), { width: 0, height: 0, pos: new Map(), wrapped: false });
+  const ids = Array.from({ length: 50 }, (_, i) => `STEP-${i}`);
+  const result = draw(ids, ids.slice(1).map((id, i) => [ids[i], id]));
+  assert.equal(result.wrapped, false);
+  assert.equal(result.width, 198);
+  assert.ok(Number.isFinite(result.height));
+});
+
+test('automatic mainline panels include every active lane in the project order', () => {
+  const data = h.readJson('states.json');
+  const template = data.nodes[0];
+  const lanes = Array.from({ length: 6 }, (_, i) => ({ id: `L${i}`, name: `Line ${i}`, color: '#3b82f6', key_regex: `^LINE${i}-` }));
+  data.nodes = lanes.flatMap((lane, i) => [0, 1].map((n) => ({ ...template, key: `LINE${i}-${n}`, id: `id-${i}-${n}`, status: 'in_progress', claims: [], diagnostics: [] })));
+  data.edges = lanes.map((lane, i) => ({ prerequisite: `LINE${i}-0`, dependent: `LINE${i}-1`, required: true }));
+  data.sessions = [];
+  data.basis.work_graph.node_count = data.nodes.length;
+  data.basis.work_graph.edge_count = data.edges.length;
+  const model = modelLib.loadModel(snapshotLib.seal(data, data.generated_at), { overview: { lanes } });
+  assert.deepEqual(model.cfg.mainline_panels.map((p) => p.lane), lanes.map((lane) => lane.id));
+});
+
 test('the page is one self-contained file: no script, no external request, no inline style attribute', () => {
   for (const [name, render] of CASES) {
     const out = render().document;
@@ -135,14 +203,21 @@ test('an empty project and a single item draw placeholders instead of failing', 
   h.assertWellFormed(single.document, 'single');
 });
 
-test('without lanes in the configuration they are derived from the keys, and milestone lanes say what is missing', () => {
+test('default grouping derives mainlines from keys and swimlanes from recorded milestones', () => {
   const t = h.tFor('en');
   const { snapshot } = demo.buildDemo(t);
   const r = page.renderProjectMap(snapshot, undefined, { t, lang: 'en' });
   assert.deepEqual(r.model.cfg.overview.lanes.map((l) => l.name), ['DEMO-A', 'DEMO-B', 'DEMO-C']);
-  assert.ok(r.views[2].svg.includes('No milestone lanes configured'), 'the lane view explains what it needs');
+  assert.match(r.views[2].svg, /data-xlane="0"/);
   assert.ok(r.views[1].svg.includes('DEMO-A'));
   assert.deepEqual(r.model.cfg.mainline_panels, [{ lane: 'DEMO_A' }, { lane: 'DEMO_B' }]);
+  const empty = JSON.parse(JSON.stringify(snapshot));
+  for (const node of empty.nodes) node.milestone = null;
+  const missing = page.renderProjectMap(snapshotLib.seal(empty, snapshot.generated_at), undefined, { t });
+  assert.match(missing.views[2].svg, /data-xlane="0"/);
+  assert.ok(missing.views[2].svg.includes(t('map.title.explore_mainlines')));
+  assert.ok(missing.model.cfg.explore_lanes.every((lane) => lane.work_keys.length));
+  assert.ok([...missing.model.nodes.values()].every((node) => node.milestone === null));
 });
 
 test('the lane configuration decides the grouping, the stale threshold decides what counts as stalled', () => {

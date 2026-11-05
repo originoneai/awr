@@ -174,8 +174,12 @@
       });
     }
 
-    if (raw.explore_lanes === undefined) {
-      cfg.explore_lanes = [];
+    cfg.auto_explore = raw.explore_lanes === undefined;
+    if (cfg.auto_explore) {
+      const recorded = snapshot.nodes.filter((n) => n.milestone);
+      const unfinished = recorded.filter((n) => n.status !== 'completed' && n.status !== 'cancelled');
+      const milestones = [...new Set((unfinished.length ? unfinished : recorded).map((n) => n.milestone))].sort(compare);
+      cfg.explore_lanes = milestones.map((m, i) => ({ name: m, color: PALETTE[i % PALETTE.length], goal: '', milestones: [m] }));
     } else {
       if (!Array.isArray(raw.explore_lanes) || raw.explore_lanes.length > 24) throw new ConfigError('explore_lanes must be a list of at most 24 lanes');
       const claimed = new Set();
@@ -254,6 +258,21 @@
         live: n.claims.length > 0 && !cancelled, idle: cancelled ? null : idle, blocker: cancelled ? null : n.blocker, milestone: n.milestone,
       });
     }
+    if (cfg.auto_explore) {
+      if (!cfg.explore_lanes.length) {
+        cfg.explore_lanes = cfg.overview.lanes.map((lane) => ({
+          ...lane, goal: '', milestones: [],
+          work_keys: [...nodes.values()].filter((n) => n.lane === lane.id).map((n) => n.id),
+        })).filter((lane) => lane.work_keys.length);
+      } else {
+        const unassigned = [...nodes.values()].filter((n) => !n.milestone).map((n) => n.id);
+        if (unassigned.length) cfg.explore_lanes.push({ name: null, name_key: 'map.lane.unassigned', color: PALETTE[5], goal: '', milestones: [], work_keys: unassigned });
+      }
+    }
+    const milestoneLane = new Map();
+    cfg.explore_lanes.forEach((lane, i) => lane.milestones.forEach((m) => milestoneLane.set(m, i)));
+    const exploreLaneByWork = new Map([...nodes.values()].filter((n) => milestoneLane.has(n.milestone)).map((n) => [n.id, milestoneLane.get(n.milestone)]));
+    cfg.explore_lanes.forEach((lane, i) => (lane.work_keys || []).forEach((key) => exploreLaneByWork.set(key, i)));
     const cancelled = new Set([...nodes.values()].filter((n) => n.vis === 'cancelled').map((n) => n.id));
     const stuck = new Set();
     for (let changed = true; changed;) {
@@ -276,16 +295,16 @@
     const claims = {};
     for (const n of snapshot.nodes) if (n.claims.length) claims[n.key] = n.claims[0].agent_id;
 
-    // Lanes the data fills but the configuration did not choose for a panel: the largest with an internal dependency.
+    // Keep the project view's lane order and include every unfinished lane with internal dependencies.
     let panels = cfg.mainline_panels;
     if (panels === null) {
       const stats = cfg.overview.lanes.map((lane) => {
         const members = [...nodes.values()].filter((n) => n.lane === lane.id);
         const inner = members.reduce((sum, n) => sum + n.deps.filter((d) => nodes.get(d).lane === lane.id).length, 0);
         const open = members.some((n) => n.vis !== 'done' && n.vis !== 'cancelled');
-        return { lane: lane.id, size: members.length, inner, open };
+        return { lane: lane.id, inner, open };
       });
-      panels = stats.filter((s) => s.open && s.inner > 0).sort((a, b) => b.size - a.size || compare(a.lane, b.lane)).slice(0, 3).map((s) => ({ lane: s.lane }));
+      panels = stats.filter((s) => s.open && s.inner > 0).map((s) => ({ lane: s.lane }));
     }
 
     const meta = {
@@ -303,7 +322,7 @@
       project: snapshot.project,
       config: { ...cfg, mainline_panels: panels },
     };
-    return { nodes, meta, cfg: meta.config, raw: new Map(snapshot.nodes.map((n) => [n.key, n])), snapshot };
+    return { nodes, meta, cfg: meta.config, exploreLaneByWork, raw: new Map(snapshot.nodes.map((n) => [n.key, n])), snapshot };
   }
 
   const api = { ConfigError, PALETTE, familyOf, deriveLanes, normalizeConfig, milestonesToResolve, shortKey, laneName, loadModel, escapeRegex };

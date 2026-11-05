@@ -6,7 +6,7 @@ A local viewer for an AWR project's progress and dependencies.
 | --- | --- |
 | Project nodes | Work grouped by display lanes, with status, blockers and claim summaries |
 | Mainline dependencies | Dependencies within configured panels and their critical paths |
-| Milestone swimlanes | Unfinished work and its dependencies grouped by milestone |
+| Collaboration swimlanes | Unfinished work and cross-lane dependencies grouped by recorded milestones or mainlines |
 
 ## Start
 
@@ -54,7 +54,15 @@ Unavailable fields remain explicit in the diagram's notes.
 
 Display lanes group work for this view. Their labels and prefixes can be configured in
 [project-map.config.json](examples/project-map.config.json). Without configuration, work-key prefixes
-supply the lane groups. Configure milestone identifiers to enable the milestone view.
+supply the lane groups. Without `explore_lanes`, the swimlane view uses recorded milestone membership
+when available and otherwise uses the same mainline groups as the project view. This adds no CLI reads.
+Explicit `explore_lanes` selects milestones whose membership is resolved with `nav --cached --milestone`.
+An empty list disables the swimlane view and milestone reads. Display grouping leaves recorded task
+ownership and milestone values intact.
+
+Broad mainline dependency layers wrap into bounded rows while keeping upstream work above its
+consumers. Long edges follow outside gutters. The table and source notes use the same supporting
+panels in the live view and standalone export.
 
 The `stale_days` display threshold defaults to 7 days for in-progress work without recorded activity.
 

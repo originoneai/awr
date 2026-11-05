@@ -82,7 +82,6 @@
       }
     }
     const panels = cfg.mainline_panels || [];
-    const milestones = new Set((cfg.explore_lanes || []).flatMap((l) => l.milestones));
     return {
       overviewLanes: cfg.overview.lanes.map((l) => l.id),
       overviewDone: cfg.overview.lanes.filter((l) => all.some((n) => n.lane === l.id && n.vis === 'done')).map((l) => l.id),
@@ -90,7 +89,7 @@
       mainlinePanels: panels.filter((p) => all.some((n) => n.lane === p.lane)).map((p) => p.lane),
       mainlineDone: panels.filter((p) => !p.keep_done && all.some((n) => n.lane === p.lane && n.vis === 'done')).map((p) => p.lane),
       exploreLanes: (cfg.explore_lanes || []).map((_, i) => i),
-      exploreDone: all.some((n) => n.vis === 'done' && milestones.has(n.milestone)),
+      exploreDone: all.some((n) => n.vis === 'done' && model.exploreLaneByWork.has(n.id)),
     };
   }
 
@@ -112,8 +111,7 @@
     const doc = container.ownerDocument;
     const lanes = new Map(model.cfg.overview.lanes.map((l) => [l.id, l]));
     const exploreLanes = model.cfg.explore_lanes || [];
-    const exploreIndex = new Map();
-    exploreLanes.forEach((lane, i) => lane.milestones.forEach((m) => exploreIndex.set(m, i)));
+    const exploreIndex = model.exploreLaneByWork;
     const all = [...model.nodes.values()];
     const edgeCount = all.reduce((s, n) => s + n.deps.length, 0);
     const listeners = [];
@@ -159,7 +157,7 @@
       const header = attr(el, 'data-lane') || attr(el, 'data-panel');
       if (header) return laneLabel(header);
       const x = attr(el, 'data-xlane');
-      if (x !== null && exploreLanes[Number(x)]) return exploreLanes[Number(x)].name;
+      if (x !== null && exploreLanes[Number(x)]) return modelLib.laneName(exploreLanes[Number(x)], t);
       const owner = attr(el, 'data-done-lane') || attr(el, 'data-panel-done') || String(attr(el, 'data-group') || '').split('|')[0];
       return owner ? `${laneLabel(owner)} \u00b7 ${text}` : text;
     }
@@ -358,8 +356,8 @@
           () => f.mainline.collapsed.delete(n.lane),
           () => n.vis === 'done' && targets.mainlineDone.includes(n.lane) && !f.mainline.showDone.has(n.lane) && Boolean(f.mainline.showDone.add(n.lane)),
         ];
-      } else if (exploreIndex.has(n.milestone)) {
-        const at = exploreIndex.get(n.milestone);
+      } else if (exploreIndex.has(key)) {
+        const at = exploreIndex.get(key);
         steps = [
           () => f.explore.collapsed.delete(at),
           () => n.vis === 'done' && !f.explore.showDone && Boolean((f.explore.showDone = true)),

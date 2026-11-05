@@ -140,13 +140,14 @@
     const doctor = same('doctor', await call('doctor', {}));
 
     const keyOfId = new Map(graph.nodes.map((n) => [n.id, n.key]));
+    const haveMilestones = graph.nodes.length > 0 && graph.nodes.every((n) => Object.prototype.hasOwnProperty.call(n, 'milestone'));
     const nodes = [...graph.nodes].sort((a, b) => compare(a.key, b.key)).map((gn) => {
       const nn = navNodes.get(gn.key);
       if (nn.status !== gn.status) throw new AwrCallError('StatusMismatch', `${gn.key}: work graph ${gn.status} vs nav ${nn.status}`);
       const last = haveNodeActivity ? gn.last_event_at : lastByWork.get(gn.id);
       return {
         key: gn.key, id: gn.id, title: gn.title, status: gn.status, ready: gn.ready, archived: gn.archived,
-        milestone: milestoneOf.get(gn.key) || null, owner: nn.person_responsibility ?? null, blocker: nn.blocker ?? null, next_action: nn.next_action ?? null,
+        milestone: milestoneOf.get(gn.key) ?? gn.milestone ?? nn.milestone ?? null, owner: nn.person_responsibility ?? null, blocker: nn.blocker ?? null, next_action: nn.next_action ?? null,
         waits: (nn.explainable_waits || []).map((w) => ({ kind: w.kind, summary: w.summary, release_condition: w.release_condition })),
         claims: [...gn.active_claims].sort((a, b) => compare(a.id, b.id)).map((c) => ({ id: c.id, agent_id: c.agent_id, session_id: c.session_id, acquired_at: c.acquired_at, expires_at: c.expires_at })),
         diagnostics: gn.diagnostics.map((d) => ({ code: d.code, detail: d.detail, work_item_key: d.work_item_key ?? null })),
@@ -175,7 +176,7 @@
       },
       nodes, edges, goals, sessions,
       doctor: { ok: doctor.ok, findings },
-      unavailable: snapshotLib.UNAVAILABLE.map((u) => ({ field: u.field, reason: u.reason })),
+      unavailable: snapshotLib.UNAVAILABLE.filter((u) => !haveMilestones || u.field !== 'node.milestone').map((u) => ({ field: u.field, reason: u.reason })),
     };
   }
 

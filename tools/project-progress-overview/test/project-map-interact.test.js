@@ -679,6 +679,21 @@ test('buttons that have nothing to act on are disabled', () => {
   assert.equal(ctx.action('collapse-all').hasAttribute('disabled'), false);
 });
 
+test('automatic mainline swimlanes support folding, revealing hidden cards and finished work', () => {
+  const next = JSON.parse(JSON.stringify(source));
+  for (const node of next.nodes) node.milestone = null;
+  const ctx = boot({ snapshot: snapshotLib.seal(next, next.generated_at), cfg: {} });
+  ctx.tab('explore');
+  assert.ok(ctx.card('DEMO-A-004'));
+  click(ctx.action('collapse-all'));
+  assert.equal(ctx.cards().length, 0);
+  ctx.app.reveal('DEMO-A-004');
+  assert.ok(ctx.card('DEMO-A-004'));
+  assert.equal(ctx.action('toggle-done').hasAttribute('disabled'), false);
+  click(ctx.action('toggle-done'));
+  assert.ok(ctx.card('DEMO-A-001'));
+});
+
 // ---------------------------------------------------------------------- zoom and pan
 
 const size = (ctx, id) => { const svg = ctx.section(id).querySelector('svg'); return [Number(svg.getAttribute('width')), Number(svg.getAttribute('height'))]; };

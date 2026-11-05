@@ -113,17 +113,55 @@
    * `crit`, `thin` and `bad` are Sets of pairKey strings.
    */
   function drawDag(kit, svg, ox, oy, ids, edges, cardFn, widthOf, heightOf, opts = {}) {
+    if (!ids.length) return { width: 0, height: 0, pos: new Map(), wrapped: false };
     const gapX = opts.gapX === undefined ? 24 : opts.gapX;
     const gapY = opts.gapY === undefined ? 46 : opts.gapY;
     const crit = opts.crit || new Set();
     const thin = opts.thin || new Set();
     const bad = opts.bad || new Set();
-    const { rows, x, chains } = layout(ids, edges, widthOf, gapX);
+    let { rows, x, chains } = layout(ids, edges, widthOf, gapX);
     const widthOfAny = (n) => (isDummy(n) ? DUMMY_WIDTH : widthOf(n));
+    const extent = () => [
+      Math.min(...[...x.keys()].map((n) => x.get(n) - widthOfAny(n) / 2)),
+      Math.max(...[...x.keys()].map((n) => x.get(n) + widthOfAny(n) / 2)),
+    ];
+    const [initialLeft, initialRight] = extent();
+    const wrapped = opts.maxWidth > 0 && initialRight - initialLeft > opts.maxWidth;
+    const gutter = wrapped ? 32 : 0;
+    if (wrapped) {
+      // Keep topological layers distinct. Parallel work wraps without acquiring new dependencies.
+      const capacity = Math.max(...ids.map(widthOf), opts.maxWidth - gutter * 2);
+      const compact = [];
+      for (const layer of rows) {
+        let row = [];
+        let width = 0;
+        for (const id of layer.filter((n) => !isDummy(n))) {
+          const next = widthOf(id) + (row.length ? gapX : 0);
+          if (row.length && width + next > capacity) {
+            compact.push(row);
+            row = [];
+            width = 0;
+          }
+          width += widthOf(id) + (row.length ? gapX : 0);
+          row.push(id);
+        }
+        if (row.length) compact.push(row);
+      }
+      rows = compact;
+      x = new Map();
+      for (const row of rows) {
+        const width = row.reduce((sum, id) => sum + widthOf(id), 0) + (row.length - 1) * gapX;
+        let cursor = -width / 2;
+        for (const id of row) {
+          x.set(id, cursor + widthOf(id) / 2);
+          cursor += widthOf(id) + gapX;
+        }
+      }
+    }
     const real = [...x.keys()].filter((n) => !isDummy(n));
-    const keys = [...x.keys()];
-    const left = Math.min(...keys.map((n) => x.get(n) - widthOfAny(n) / 2));
-    const right = Math.max(...keys.map((n) => x.get(n) + widthOfAny(n) / 2));
+    const [contentLeft, contentRight] = extent();
+    const left = contentLeft - gutter;
+    const right = contentRight + gutter;
     const rowHeights = rows.map((row) => Math.max(0, ...row.filter((n) => !isDummy(n)).map(heightOf)));
     const centres = [];
     let yy = 0;
@@ -133,20 +171,32 @@
     }
     const height = yy - gapY;
     const pos = new Map();
+    const rowOf = new Map();
     rows.forEach((row, r) => row.forEach((n) => pos.set(n, [ox - left + x.get(n), oy + centres[r]])));
+    rows.forEach((row, r) => row.forEach((n) => rowOf.set(n, r)));
     const rank = ([a, b]) => (crit.has(pairKey(a, b)) ? 2 : 0) + (bad.has(pairKey(a, b)) ? 1 : 0);
     const ordered = [...edges].sort((p, q) => rank(p) - rank(q));
     const f1 = kitLib.f1;
     for (const [a, b] of ordered) {
       const [xa, ya] = pos.get(a);
       const [xb, yb] = pos.get(b);
-      const pts = [[xa, ya + heightOf(a) / 2], ...chains.get(pairKey(a, b)).map((d) => pos.get(d)), [xb, yb - heightOf(b) / 2 - 1]];
+      const startY = ya + heightOf(a) / 2;
+      const endY = yb - heightOf(b) / 2 - 1;
+      const pts = [[xa, startY], ...(wrapped ? [] : chains.get(pairKey(a, b)).map((d) => pos.get(d))), [xb, endY]];
       let d = `M${f1(pts[0][0])},${f1(pts[0][1])}`;
       for (let i = 0; i + 1 < pts.length; i++) {
         const [x1, y1] = pts[i];
         const [x2, y2] = pts[i + 1];
         const dy = (y2 - y1) * 0.5;
         d += ` C${f1(x1)},${f1(y1 + dy)} ${f1(x2)},${f1(y2 - dy)} ${f1(x2)},${f1(y2)}`;
+      }
+      if (wrapped && rowOf.get(b) > rowOf.get(a) + 1) {
+        // Long edges use an outside gutter so their paths cannot run through intervening cards.
+        const side = (xa + xb) / 2 < ox + (right - left) / 2 ? ox + 12 : ox + right - left - 12;
+        const exitY = oy + centres[rowOf.get(a)] + rowHeights[rowOf.get(a)] / 2 + 12;
+        const enterY = oy + centres[rowOf.get(b)] - rowHeights[rowOf.get(b)] / 2 - 12;
+        d = `M${f1(xa)},${f1(startY)} L${f1(xa)},${f1(exitY)} L${f1(side)},${f1(exitY)}`
+          + ` L${f1(side)},${f1(enterY)} L${f1(xb)},${f1(enterY)} L${f1(xb)},${f1(endY)}`;
       }
       const key = pairKey(a, b);
       const kind = bad.has(key) ? 'cross' : crit.has(key) ? 'crit' : thin.has(key) ? 'thin' : 'dep';
@@ -156,7 +206,7 @@
       const [cx, cy] = pos.get(n);
       svg.add(cardFn(n, cx - widthOf(n) / 2, cy - heightOf(n) / 2));
     }
-    return { width: right - left, height, pos };
+    return { width: right - left, height, pos, wrapped };
   }
 
   const api = { pairKey, pav, layout, drawDag, isDummy };
