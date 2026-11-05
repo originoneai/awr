@@ -51,6 +51,21 @@ test('incoherent and mixed-revision bundles are refused before rendering', async
   await assert.rejects(extractLib.extractBundledSnapshot({ bundle }), (error) => error.code === 'InvalidSnapshot');
 });
 
+test('archived work omitted by navigation retains its recorded graph fields', async () => {
+  const bundle = await bundledFixture();
+  const node = bundle.work_graph.nodes[0];
+  node.archived = true;
+  node.person_responsibility = 'source-owner';
+  node.next_action = 'Retain the archived result';
+  bundle.nav.mainline_graph.nodes = bundle.nav.mainline_graph.nodes.filter((item) => item.work_key !== node.key);
+  const snapshot = await extractLib.extractBundledSnapshot({ bundle, now: NOW });
+  const archived = snapshot.nodes.find((item) => item.key === node.key);
+  assert.equal(archived.archived, true);
+  assert.equal(archived.owner, 'source-owner');
+  assert.equal(archived.next_action, 'Retain the archived result');
+  snapshotLib.validate(snapshot);
+});
+
 /**
  * Everything the snapshot carries except the extraction clock, the basis bookkeeping and the wording of the
  * unavailable-field reasons (the fixtures were written by another implementation; the field names must still agree).
