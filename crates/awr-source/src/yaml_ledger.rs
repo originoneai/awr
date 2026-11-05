@@ -6,7 +6,10 @@ use awr_core::{
     ProjectionBatch, Result, SourceDiagnostic, SourceRef, WorkItem, WorkStatus,
 };
 use serde_json::Value;
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 pub struct YamlLedgerAdapter;
 /// Explicit protocol opt-in. Older builds reject this adapter rather than
@@ -424,11 +427,51 @@ impl YamlLedgerAdapter {
                 )?,
             });
         }
+        let work_entries = entries(&document, "work_items")?;
+        let mut work_keys_by_id = BTreeMap::new();
+        let display_keys: BTreeSet<_> = work_entries
+            .iter()
+            .map(|entry| entry.key.as_str())
+            .collect();
+        for entry in &work_entries {
+            let work_id = match entry.value.get("work_id") {
+                None => entry.key.as_str(),
+                // Markdown shares this decoder without adopting YAML identities.
+                Some(_) if context.source.adapter == "markdown-ledger-v1" => entry.key.as_str(),
+                Some(value) => value.as_str().filter(|id| {
+                    !id.trim().is_empty() && awr_team::WorkId::new(*id).is_ok()
+                }).ok_or_else(|| invalid(
+                    &format!("{}/work_id", entry.pointer),
+                    "ledger.work_id",
+                    "work_id must be a nonblank string of at most 128 bytes without control characters",
+                    "Supply a valid internal work_id, or omit it to use the display key.",
+                ))?,
+            };
+            if work_keys_by_id
+                .insert(work_id, entry.key.as_str())
+                .is_some()
+            {
+                return Err(invalid(
+                    &format!(
+                        "{}/{}",
+                        entry.pointer,
+                        if entry.value.get("work_id").is_some() {
+                            "work_id"
+                        } else {
+                            "id"
+                        }
+                    ),
+                    "ledger.work_id",
+                    "effective work_id must be unique within the ledger",
+                    "Use distinct internal IDs, including IDs inherited from display keys.",
+                ));
+            }
+        }
         for Entry {
             key,
             pointer,
             value,
-        } in entries(&document, "work_items")?
+        } in &work_entries
         {
             let raw_status =
                 string(&value["status"], &format!("{pointer}/status"))?.unwrap_or_default();
@@ -630,6 +673,20 @@ impl YamlLedgerAdapter {
                         "{pointer}: duplicate dependency {target}"
                     )));
                 }
+                // Local edges use display keys; source dependency references
+                // use internal IDs, with no fallback to another row's display.
+                let target = match work_keys_by_id.get(target.as_str()) {
+                    Some(key) => *key,
+                    None if display_keys.contains(target.as_str()) => {
+                        return Err(invalid(
+                            &dependency_pointer,
+                            "ledger.dependency_identity",
+                            "dependency names a display key instead of an internal work_id",
+                            "Reference the target's work_id; use its display key only when work_id is omitted or equal.",
+                        ));
+                    }
+                    None => target.as_str(),
+                };
                 let mut reference = work.meta.source_ref.clone();
                 let field = if value.get("depends_on").is_some() {
                     "depends_on"
@@ -645,7 +702,7 @@ impl YamlLedgerAdapter {
                     &key,
                     "depends_on",
                     EntityKind::WorkItem,
-                    &target,
+                    target,
                     required,
                     reference,
                 ));

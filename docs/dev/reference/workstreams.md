@@ -498,6 +498,54 @@ the existing ingest → approve → activate path in `awr-team-pg`.
   `permissions` are rejected so publish preparation cannot invent Team role or
   membership relationships from source text.
 
+### Work identity and dependency keys
+
+In each YAML `work_items` row, `id` is the display key mapped to the Team
+contract's `external_key`. Optional `work_id` is the stable internal Team
+identity. Omission maps the internal identity to `id`, preserving existing
+ledgers and contract hashes. An explicit `work_id` must be a nonblank string of
+at most 128 UTF-8 bytes without control characters; `null` is rejected. Display
+keys and effective internal IDs must each be unique across the ledger. They are
+separate namespaces, so a display key does not alias another row's internal ID.
+
+```yaml
+work_items:
+  - id: API-1
+    work_id: internal-api
+    title: Define the interface
+    workstream: api
+    acceptance: [OpenAPI is reviewed]
+    depends_on: []
+  - id: API-2
+    work_id: internal-client
+    title: Implement the client
+    workstream: api
+    acceptance: [Client smoke test passes]
+    depends_on: [internal-api]
+```
+
+`depends_on` (or its existing `dependencies` alias) maps directly to contract
+`required_dependencies`: entries are internal work IDs. The keys of
+`dependency_acceptance`, and the planning `split_from` / `split_children`
+references, also use internal IDs. Source bytes and Team contracts preserve
+these references verbatim. Both local YAML ledger adapters resolve dependencies
+by effective internal ID within the ledger, while local CLI selectors continue
+to use display keys. An internal ID takes precedence when it equals another
+row's display key; display-only references cannot silently alias a different
+internal identity. Existing ledgers without `work_id` therefore retain
+their dependency meaning. When introducing distinct IDs to an existing source,
+update its dependency references consistently; adding the field does not
+automatically migrate existing Team identities or receipts.
+
+Planning creates write `id` and add `work_id` when the two identities differ.
+Equal identities retain the existing definition-state writer's output bytes so
+optional identity support does not change a pending writeback's recorded source
+fingerprint. Follow the [definition-metadata upgrade requirements](team-planning.md#changes-and-task-definitions)
+for intents recorded before that format was introduced. Edits, splits, archives and
+cancellations must match both existing identities and preserve them through
+writeback and subsequent publication. Source status notes remain separate from
+runtime completion receipts.
+
 ### Sole source location
 
 The Team project binds exactly one authoritative source location:

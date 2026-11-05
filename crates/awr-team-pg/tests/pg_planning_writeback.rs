@@ -159,6 +159,95 @@ fn workspace_activation(
 }
 
 #[tokio::test]
+async fn distinct_planning_identity_remains_addressable_after_writeback_and_republication() {
+    use awr_team_pg::WorkstreamReadStore;
+    let (_g, admin, db, store) = store_and_roles().await;
+    let read = WorkstreamReadStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let tmp = tempfile_ledger();
+    let mut task = draft("DISPLAY-NEW", &[], DraftDefinitionState::Enabled);
+    task.work_id = "internal-new".into();
+    task.workstream = Some("alpha".into());
+    let candidate = create_workspace_candidate(
+        &store,
+        DraftChange {
+            op: DraftOpKind::CreateTask,
+            before: None,
+            after: task.clone(),
+        },
+    )
+    .await;
+    let receipt = approve_workspace_candidate(&store, &candidate).await;
+    let request = workspace_activation(&tmp, receipt, "distinct-identity-create");
+    let result = store
+        .activate_planning_writeback(TENANT, PROJECT, A, &request)
+        .await
+        .unwrap();
+    assert_eq!(result["source_writeback_pending"], false);
+    // This authorized read failed with Forbidden when activation installed the
+    // display key as work_id instead of the approved internal identity.
+    let prepared = prepare(&read, A, "internal-new").await;
+    assert_eq!(prepared["data"]["work_id"], "internal-new");
+    let bytes = std::fs::read(tmp.root.join("ledger.yaml")).unwrap();
+    store
+        .activate_planning_writeback(TENANT, PROJECT, A, &request)
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(tmp.root.join("ledger.yaml")).unwrap(), bytes);
+
+    for (index, op) in [DraftOpKind::EditFields, DraftOpKind::Archive]
+        .into_iter()
+        .enumerate()
+    {
+        let mut after = task.clone();
+        after.title = "Reviewed task title".into();
+        if op == DraftOpKind::Archive {
+            after.definition_state = DraftDefinitionState::Archived;
+        }
+        let candidate = create_workspace_candidate(
+            &store,
+            DraftChange {
+                op,
+                before: Some(task),
+                after: after.clone(),
+            },
+        )
+        .await;
+        let receipt = approve_workspace_candidate(&store, &candidate).await;
+        let request =
+            workspace_activation(&tmp, receipt, &format!("distinct-identity-edit-{index}"));
+        let result = store
+            .activate_planning_writeback(TENANT, PROJECT, A, &request)
+            .await
+            .unwrap();
+        assert_eq!(result["source_writeback_pending"], false);
+        let row = admin
+            .query_one(
+                "SELECT w.external_key, c.contract_json FROM awr_team.work_items w
+             JOIN awr_team.projects p ON p.tenant_id=w.tenant_id AND p.id=w.project_id
+             JOIN awr_team.work_contracts c ON c.tenant_id=w.tenant_id AND c.project_id=w.project_id
+               AND c.work_id=w.id AND c.snapshot_id=p.active_snapshot_id AND c.scope_id='main'
+             WHERE w.tenant_id=$1 AND w.project_id=$2 AND w.id='internal-new'",
+                &[&TENANT, &PROJECT],
+            )
+            .await
+            .unwrap();
+        assert_eq!(row.get::<_, String>(0), "DISPLAY-NEW");
+        let contract: serde_json::Value = row.get(1);
+        assert_eq!(contract["work_id"], "internal-new");
+        assert_eq!(contract["external_key"], "DISPLAY-NEW");
+        // Inspect the active contract directly so identity preservation can be
+        // checked independently of retired-definition visibility.
+        if op == DraftOpKind::EditFields {
+            assert_eq!(
+                prepare(&read, A, "internal-new").await["data"]["work_id"],
+                "internal-new"
+            );
+        }
+        task = after;
+    }
+}
+
+#[tokio::test]
 #[expect(
     clippy::await_holding_lock,
     reason = "The guard serializes the shared PostgreSQL fixture for this entire async test."
@@ -1497,6 +1586,12 @@ async fn durable_boundaries_recover_original_intent_and_commit_activation_once()
         ).await.unwrap();
         assert_eq!(journal.get::<_, String>(0), before);
         let after: String = journal.get(1);
+        // Pin the existing definition-state writer's equal-ID fingerprint so
+        // optional identity support preserves the durable recovery boundaries.
+        assert_eq!(
+            after, "sha256:ad033ae66383f6394e44764ba22e83fc2718631ea4fe78f5e81848721f700456",
+            "equal-ID pending intent changed at {boundary}"
+        );
         let intent: serde_json::Value = journal.get(2);
         assert_eq!(intent["request"], serde_json::to_value(&req).unwrap());
         assert_eq!(intent["actor_id"], "agent");
