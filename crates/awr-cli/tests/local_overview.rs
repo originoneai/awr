@@ -197,6 +197,7 @@ fn project_requests_are_isolated_and_static_assets_are_bundled() {
 
 #[test]
 fn killing_the_owned_service_is_recovered_by_the_next_ordinary_call() {
+    let _port_holder = std::net::TcpListener::bind("127.0.0.1:7381").ok();
     let f = Fixture::new();
     let before = f.run(&["overview", "start", "--json"])["service"].clone();
     let pid = before["pid"].as_u64().unwrap().to_string();
@@ -233,6 +234,10 @@ fn killing_the_owned_service_is_recovered_by_the_next_ordinary_call() {
     assert_ne!(before["instance"], after["instance"]);
     assert!(after["pid"].as_u64().is_some());
     assert_eq!(after["service"], "awr-project-hub");
+    assert_eq!(
+        before["url"], after["url"],
+        "recovery retains the prior fallback address"
+    );
 }
 
 #[test]
