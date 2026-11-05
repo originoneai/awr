@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { mapObservation, pullRequestReference, createGithubObserver } = require('../team-progress');
+const { mapObservation, pullRequestReference, createGithubObserver } = require('../server/team-progress');
 
 test('selected session, last participant, execution and reports preserve independent origins', () => {
   const origin = { actor_id: 'developer', client_id: 'dev-client', session_id: 'dev-session', model: null };

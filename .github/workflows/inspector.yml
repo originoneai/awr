@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - 'tools/inspector/**'
+      - 'tools/observer/server/**'
       - '.github/workflows/inspector.yml'
   pull_request:
     paths:
       - 'tools/inspector/**'
+      - 'tools/observer/server/**'
       - '.github/workflows/inspector.yml'
   workflow_dispatch:
 

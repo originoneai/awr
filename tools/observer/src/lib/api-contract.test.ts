@@ -51,7 +51,7 @@ describe('API revocation and transport contract', () => {
   });
 
   it('keeps AUTH_ERROR_CODES in sync with the bridge READ_AUTH_FAILURES declaration', () => {
-    const source = readFileSync(path.resolve(process.cwd(), '../inspector/team-bridge.js'), 'utf8');
+    const source = readFileSync(path.resolve(process.cwd(), './server/team-bridge.js'), 'utf8');
     const declaration = source.match(/const READ_AUTH_FAILURES = new Set\(\[([^\]]+)\]\)/);
     expect(declaration).not.toBeNull();
     const bridgeCodes = [...declaration![1].matchAll(/'([^']+)'/g)].map((match) => match[1]).sort();

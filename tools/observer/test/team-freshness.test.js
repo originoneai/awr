@@ -15,8 +15,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 const path = require('path');
-const { createTeamBridge, readFreshness, readAttributionError } = require('../team-bridge');
-const { OBSERVATION_STALE_AFTER_MS } = require('../observation-contract');
+const { createTeamBridge, readFreshness, readAttributionError } = require('../server/team-bridge');
+const { OBSERVATION_STALE_AFTER_MS } = require('../server/observation-contract');
 
 const FIXTURE_DIR = path.resolve(__dirname, 'fixtures');
 

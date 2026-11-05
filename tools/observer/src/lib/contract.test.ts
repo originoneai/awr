@@ -8,7 +8,7 @@ import {
   resolveCurrency,
 } from './contract';
 
-describe('observation-contract alias (single source: tools/inspector)', () => {
+describe('observation-contract alias (single source: tools/observer/server)', () => {
   it('exposes the four-state vocabulary and read bounds', () => {
     expect([...PLANE_STATES]).toEqual(['measured', 'stale', 'failed', 'not_measured']);
     expect(OBSERVATION_STALE_AFTER_MS).toBe(120000);

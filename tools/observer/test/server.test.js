@@ -14,7 +14,12 @@ before(async () => {
 });
 
 after(async () => {
-  if (server.listening) await new Promise((resolve) => server.close(resolve));
+  if (server.listening) {
+    await new Promise((resolve) => {
+      server.close(resolve);
+      server.closeAllConnections();
+    });
+  }
 });
 
 function nonceFrom(response, html) {

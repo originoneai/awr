@@ -1,4 +1,4 @@
-// Existing package path only: src/lib/contract.ts aliases tools/inspector/observation-contract.js.
+// Existing package path only: src/lib/contract.ts aliases tools/observer/server/observation-contract.js.
 // The core never duplicates the four states or freshness thresholds.
 export {
   PLANE_STATES,

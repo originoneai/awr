@@ -12,7 +12,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
-const { createTeamBridge, READ_OPS, READ_DEFERRED_OPS } = require('../team-bridge');
+const { createTeamBridge, READ_OPS, READ_DEFERRED_OPS } = require('../server/team-bridge');
 
 const FIXTURE_DIR = path.resolve(__dirname, 'fixtures');
 

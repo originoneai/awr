@@ -13,7 +13,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 const path = require('path');
-const { createTeamBridge } = require('../team-bridge');
+const { createTeamBridge } = require('../server/team-bridge');
 
 const FIXTURE_DIR = path.resolve(__dirname, 'fixtures');
 

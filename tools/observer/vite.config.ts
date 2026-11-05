@@ -7,10 +7,10 @@ import react from '@vitejs/plugin-react';
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 // Single source of truth for the observation read contract: the UMD module in
-// tools/inspector (AWR-OBS-002) is aliased, not copied. It is CommonJS, so it
+// tools/observer/server (AWR-OBS-002) is aliased, not copied. It is CommonJS, so it
 // must be pre-bundled in dev (optimizeDeps.include) and transformed by the
 // commonjs plugin in build (commonjsOptions.include).
-const contractPath = path.resolve(here, '../inspector/observation-contract.js');
+const contractPath = path.resolve(here, './server/observation-contract.js');
 
 export default defineConfig({
   plugins: [react()],
@@ -29,7 +29,7 @@ export default defineConfig({
   },
   server: {
     fs: {
-      // The contract lives outside this package root.
+      // Permit the workspace root for local development.
       allow: [here, path.resolve(here, '..')],
     },
     proxy: {

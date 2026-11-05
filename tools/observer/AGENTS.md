@@ -57,13 +57,13 @@
 
 ## 数据契约（可沿用，以文档为准）
 
-- 后端对接一律经过 `tools/inspector/team-bridge.js` 的 `/api/team/*` 路由（只读适配 + 登录/连接/撤销），不重写、不复制。
-- 新鲜度/乱序/分页合同以 `tools/inspector/observation-contract.js` 为单一事实源（四态词汇 `measured | stale | failed | not_measured`、`compareAuthoritative`、`OBSERVATION_STALE_AFTER_MS` / `READ_TIMEOUT_MS` / `OVERVIEW_DEADLINE_MS`）。
+- 后端对接一律经过 `tools/observer/server/team-bridge.js` 的 `/api/team/*` 路由（只读适配 + 登录/连接/撤销），不重写、不复制。
+- 新鲜度/乱序/分页合同以 `tools/observer/server/observation-contract.js` 为单一事实源（四态词汇 `measured | stale | failed | not_measured`、`compareAuthoritative`、`OBSERVATION_STALE_AFTER_MS` / `READ_TIMEOUT_MS` / `OVERVIEW_DEADLINE_MS`）。
 - 网页不提供创建任务、派发、认领、批准、merge 或验收等业务控制；登录/连接/撤销入口与业务页面明确分离。
 
 ## 验证命令
 
-- `node --test test/*.test.js`（在 `tools/inspector` 目录下跑，与 CI 的 `bridge tests` 一致；不要在仓库根目录跑 `node --test`）：桥接合同测试必须保持全绿。
+- `node --test test/*.test.js`（在 `tools/observer` 目录下跑，包含迁移后的桥接合同测试；不要在仓库根目录跑 `node --test`）：桥接合同测试必须保持全绿。
 - `python3 scripts/check_public_tree.py`（仓库根目录）：公开树检查必须通过；`.local/`、`.awr/`、`ledger/` 不入 Git。
 - `cargo fmt --all --check`（改了 Rust 时必须；本目录原则上不改 Rust）。
 - 本目录（CI 为 `.github/workflows/observer.yml`，Node 24）：`npm ci`、`npx tsc --noEmit`、`npx vitest run`、`npx vite build`、`node --test test/*.test.js`、dist 无外部资源检查；本地冒烟 `node server.js --demo --port 0`。
