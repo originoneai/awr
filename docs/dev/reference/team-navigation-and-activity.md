@@ -12,10 +12,14 @@ rotation. Protect the copied instruction as a secret.
 After connecting, call `awr_team_query` with `op: "capabilities"` to confirm the
 current identity and permissions, then `op: "work.next"`. Both use
 `protocol_version: 1`. This project-level entry lists up to 20 resumable sessions
-owned by the current actor/client and a paged set of visible unfinished tasks.
+owned by the current actor/client and a paged set of visible unfinished tasks
+whose definitions are enabled. Draft, archived and cancelled definitions remain
+available through explicit reads and own-session continuation, but are excluded
+from the candidate page even when no runtime row exists.
 It distinguishes preparation, observation, held leases, dependency waits and
-recovery needs without exposing private dependency names. Follow the returned
-`next_query`; consume `work.prepare` before claiming or executing. Navigation
+recovery needs without exposing private dependency names. Read-only `observe`
+candidates link to `work.observe`. Follow the returned `next_query`; consume
+`work.prepare` before claiming or executing. Navigation
 grants no execution authority and does not certify dependency acceptance.
 
 The native [Team CLI](team-cli.md) exposes the same reads through

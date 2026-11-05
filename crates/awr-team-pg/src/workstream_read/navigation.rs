@@ -52,6 +52,8 @@ pub(super) async fn next(
     )?;
     let c = cursor(q, &binding)?;
     let limit = i64::from(q.limit.unwrap_or(20));
+    // Definitions can be inactive before any runtime exists. Keep those out of
+    // candidate selection; own-session observation remains available below.
     let rows = tx.query("SELECT c.work_id,c.title,c.contract_json,o.workstream_id,r.state,r.recovery_blocked,o.ownership_version,c.definition_state
         FROM awr_team.work_contracts c JOIN awr_team.workstream_snapshot_ownership o
           USING(tenant_id,project_id,snapshot_id,scope_id,work_id)
@@ -60,6 +62,7 @@ pub(super) async fn next(
           AND (o.workstream_id=ANY($4) OR EXISTS (
             SELECT 1 FROM unnest($7::text[], $8::text[]) allowed(work_id,workstream_id)
             WHERE allowed.work_id=c.work_id AND allowed.workstream_id=o.workstream_id))
+          AND c.definition_state='enabled'
           AND c.work_id>$5 AND (r.state IS NULL OR r.state NOT IN ('completed','cancelled','archived'))
         ORDER BY c.work_id LIMIT $6", &[&tenant,&project,&auth.snapshot,&streams,&c.key,&(limit+1),&task_ids,&task_streams]).await?;
     let own = tx.query("SELECT s.id,s.work_id,s.workstream_id,s.session_version FROM awr_team.sessions s
@@ -194,14 +197,14 @@ pub(super) async fn next(
             "waiting_external"
         } else if blocked_deps {
             "waiting_dependency"
-        } else if !writable || row.get::<_, String>(7) != "enabled" {
+        } else if !writable {
             "observe"
         } else {
             "prepare"
         };
         items.push(json!({"work_id":work,"title":row.get::<_,String>(1),"workstream_id":stream,
             "state":row.get::<_,Option<String>>(4),"definition_state":row.get::<_,String>(7),"navigation":status,"responsibility":responsibility,
-            "next_query":{"protocol_version":1,"op":if status=="resume" {"work.observe"} else if matches!(status,"recovery_required"|"waiting_external") {"work.recovery"} else {"work.prepare"},"work_id":work,"workstream_id":stream}}));
+            "next_query":{"protocol_version":1,"op":if matches!(status,"resume"|"observe") {"work.observe"} else if matches!(status,"recovery_required"|"waiting_external") {"work.recovery"} else {"work.prepare"},"work_id":work,"workstream_id":stream}}));
     }
     let next = if rows.len() > limit as usize {
         next_cursor(
@@ -216,7 +219,7 @@ pub(super) async fn next(
     Ok(
         json!({"protocol_version":1,"project_revision":auth.revision.to_string(),"data":{
         "identity":identity(auth),"resume":resume,"resume_truncated":own.len()>20,"items":items,"next_cursor":next,
-        "execution_authorized":false,"next_action":"Resume own current-client sessions first; otherwise consume work.prepare before session/claim/execution admission. Navigation is advisory, not a reservation or dependency acceptance.",
+        "execution_authorized":false,"next_action":"Resume own current-client sessions first; otherwise follow the selected item's next_query. Candidates have enabled definitions; consume work.prepare before session/claim/execution admission. Navigation is advisory, not a reservation or dependency acceptance.",
         "recheck_on":["progress","wait_resolved","claim_conflict","source_change","permission_change","unknown_outcome"]}}),
     )
 }
