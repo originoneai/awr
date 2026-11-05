@@ -17,6 +17,7 @@ awr-source.workspace = true
 awr-runtime.workspace = true
 awr-context.workspace = true
 awr-workspace.workspace = true
+awr-local.workspace = true
 awr-team = { path = "../awr-team" }
 toml.workspace = true
 clap.workspace = true

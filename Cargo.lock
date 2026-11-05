@@ -156,6 +156,7 @@ version = "0.6.0"
 dependencies = [
  "awr-context",
  "awr-core",
+ "awr-local",
  "awr-runtime",
  "awr-source",
  "awr-store",
@@ -214,11 +215,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "awr-local"
+version = "0.6.0"
+dependencies = [
+ "awr-core",
+ "awr-store",
+ "axum",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "ureq",
+ "url",
+]
+
+[[package]]
 name = "awr-mcp"
 version = "0.6.0"
 dependencies = [
  "awr-context",
  "awr-core",
+ "awr-local",
  "awr-runtime",
  "awr-source",
  "awr-store",
@@ -408,6 +425,8 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "serde_core",
+ "serde_json",
+ "serde_path_to_error",
  "sync_wrapper",
  "tokio",
  "tower",

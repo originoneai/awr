@@ -28,6 +28,7 @@ pub struct AwrServer {
     capacity: Arc<tokio::sync::Semaphore>,
     /// Runtime Team switch, resolved once when the server binds its projects.
     team: bool,
+    local_overview: bool,
 }
 /// MCP tools offered only while the Team switch is on.
 const TEAM_TOOLS: &[&str] = &["awr_team_handoff", "awr_team_review"];
@@ -45,6 +46,7 @@ impl AwrServer {
             project: Some(Arc::new(ProjectService::open(root, None)?)),
             hub: None,
             capacity: Arc::new(tokio::sync::Semaphore::new(64)),
+            local_overview: false,
             // An explicit override must parse; a broken manifest must not stop
             // the server, because status is how users learn to repair it.
             team: match awr_source::team_enabled_override()? {
@@ -58,8 +60,17 @@ impl AwrServer {
             project: None,
             capacity: hub.capacity.clone(),
             team: hub.team,
+            local_overview: hub
+                .local_overview
+                .load(std::sync::atomic::Ordering::Relaxed),
             hub: Some(hub),
         }
+    }
+    /// Enable the installed binary's local project catalog and service lifecycle.
+    pub fn with_local_overview(mut self) -> Self {
+        self.local_overview = true;
+        awr_local::maintain(self.project.as_ref().map(|p| p.root.as_path()));
+        self
     }
     fn catalog(&self) -> Vec<Tool> {
         without_team_tools(self.full_catalog(), self.team)
@@ -254,9 +265,14 @@ impl ServerHandler for AwrServer {
                 None,
             )
         })?;
+        let local_overview = self.local_overview;
         let result = tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            project.call(&name, args, principal.as_ref())
+            let result = project.call(&name, args, principal.as_ref());
+            if local_overview {
+                awr_local::maintain(Some(&project.root));
+            }
+            result
         })
         .await
         .map_err(|e| ErrorData::internal_error(format!("MCP domain worker failed: {e}"), None))?;

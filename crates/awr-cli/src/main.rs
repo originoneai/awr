@@ -1,5 +1,6 @@
 mod finished_work;
 mod organization;
+mod overview;
 mod runtime_snapshot;
 use awr_core::{Error, Result};
 use clap::{CommandFactory, Parser, Subcommand};
@@ -59,6 +60,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Open the local project hub, or inspect its catalog and background service.
+    Overview(overview::OverviewArgs),
     /// Inspect, back up and explicitly restore a matching local runtime.
     Runtime {
         #[command(subcommand)]
@@ -235,6 +238,7 @@ enum Command {
 
 fn run(cli: &Cli) -> cli_failure::CliResult<()> {
     let result = match &cli.command {
+        Some(Command::Overview(args)) => overview::run(&cli.project, args, cli.json),
         Some(Command::Host { command }) => host_save::run(&cli.project, command, cli.json),
         Some(Command::Runtime { command }) => {
             runtime_snapshot::run(&cli.project, command, cli.json)
@@ -360,6 +364,9 @@ fn main() -> std::process::ExitCode {
     let cli = match Cli::try_parse_from(&args) {
         Ok(cli) => cli,
         Err(error) => {
+            if !error.use_stderr() {
+                awr_local::maintain(None);
+            }
             // A literal after `--` is data, and `--field=--json` is not the JSON flag.
             let json = args
                 .iter()
@@ -378,7 +385,19 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(error.exit_code() as u8);
         }
     };
-    match run(&cli) {
+    if !matches!(cli.command, Some(Command::Overview(_))) {
+        let project = if matches!(cli.command, Some(Command::Capabilities(_))) {
+            None
+        } else {
+            Some(cli.project.as_path())
+        };
+        awr_local::maintain(project);
+    }
+    let result = run(&cli);
+    if result.is_ok() && matches!(cli.command, Some(Command::Init(_))) {
+        awr_local::maintain(Some(&cli.project));
+    }
+    match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
             error.print(cli.json);

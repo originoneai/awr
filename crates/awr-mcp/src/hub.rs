@@ -165,6 +165,7 @@ struct Credential {
     principal: Principal,
 }
 pub struct Hub {
+    pub(crate) local_overview: std::sync::atomic::AtomicBool,
     pub(crate) capacity: Arc<tokio::sync::Semaphore>,
     projects: BTreeMap<String, Arc<ProjectService>>,
     credentials: Vec<Credential>,
@@ -293,6 +294,7 @@ impl Hub {
             });
         }
         Ok(Arc::new(Self {
+            local_overview: std::sync::atomic::AtomicBool::new(false),
             capacity: Arc::new(tokio::sync::Semaphore::new(64)),
             projects,
             credentials,
@@ -340,6 +342,19 @@ impl Hub {
         json!({"ok":true,"read_only":true,"client":principal.id,"projects":principal.read.iter().map(|key| {
             json!({"key":key,"project_id":self.projects[key].id,"access":if principal.write.contains(key){"write"}else{"read"}})
         }).collect::<Vec<_>>(),"selection":"pass project on every project-scoped call; no shared current project"})
+    }
+    /// Opt the installed service into per-user local project observation.
+    pub fn enable_local_overview(&self) {
+        self.local_overview
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        if awr_local::enabled() {
+            if let Ok(dir) = awr_local::state_dir() {
+                for project in self.projects.values() {
+                    let _ = awr_local::register(&dir, &project.root);
+                }
+            }
+            awr_local::maintain(None);
+        }
     }
     pub fn router(self: &Arc<Self>) -> Router {
         let mut config = StreamableHttpServerConfig::default()

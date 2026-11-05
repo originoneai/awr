@@ -1,0 +1,18 @@
+[package]
+name = "awr-local"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+awr-core.workspace = true
+awr-store.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+ureq.workspace = true
+url.workspace = true
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "original-uri"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "signal", "time", "process", "io-util", "macros"] }
