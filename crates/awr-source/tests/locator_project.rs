@@ -251,7 +251,7 @@ fn bind_authored_project_key_attaches_the_key_only_at_registration() {
 }
 
 #[test]
-fn project_locator_key_charset_is_closed() {
+fn project_locator_key_unencoded_reserved_bytes_are_closed() {
     let root = project_root("charset");
     let manifest = manifest_with_key(Some("alpha"));
     for spec in [
@@ -259,6 +259,8 @@ fn project_locator_key_charset_is_closed() {
         "project://alpha@beta/evidence/check.json",
         "project:// /evidence/check.json",
         &format!("project://{}/evidence/check.json", "a".repeat(201)),
+        "project://alpha%2fbeta/evidence/check.json",
+        "project://%41lpha/evidence/check.json",
     ] {
         let error = Locator::parse(&root, &manifest, spec).unwrap_err();
         assert!(matches!(error, Error::InvalidInput(_)), "{spec}: {error}");
@@ -266,9 +268,61 @@ fn project_locator_key_charset_is_closed() {
 }
 
 #[test]
-fn bind_authored_project_key_refuses_a_key_outside_the_locator_charset() {
-    let root = project_root("bind-charset");
-    let manifest = manifest_with_key(Some("alpha@beta"));
+fn identity_bearing_project_locator_percent_encodes_a_slash_in_the_key() {
+    let root = project_root("slash-key");
+    let manifest = manifest_with_key(Some("awr-v1/records"));
+    let spec = "project://awr-v1%2Frecords/evidence/check.json";
+
+    let locator = Locator::parse(&root, &manifest, spec).unwrap();
+    match &locator {
+        Locator::Project { path, project_key } => {
+            assert_eq!(path.as_path(), Path::new("evidence/check.json"));
+            assert_eq!(project_key.as_deref(), Some("awr-v1/records"));
+        }
+        other => panic!("expected a project locator, got {other:?}"),
+    }
+    assert_eq!(locator.identity().unwrap(), spec);
+    let snapshot = locator.read(&root, 4096).unwrap();
+    assert_eq!(snapshot.locator, spec);
+}
+
+#[test]
+fn unencoded_slash_in_the_locator_key_does_not_silently_drop_identity() {
+    let root = project_root("unencoded-slash");
+    let manifest = manifest_with_key(Some("awr-v1/records"));
+    // Split at the first unencoded `/` yields key `awr-v1`, which does not match.
+    let error = Locator::parse(
+        &root,
+        &manifest,
+        "project://awr-v1/records/evidence/check.json",
+    )
+    .unwrap_err();
+    assert!(matches!(error, Error::SourceConflict(_)), "{error}");
+    assert!(error.to_string().contains("locator_key awr-v1"), "{error}");
+    assert!(
+        error.to_string().contains("current_key awr-v1/records"),
+        "{error}"
+    );
+}
+
+#[test]
+fn bind_authored_project_key_percent_encodes_reserved_characters() {
+    let root = project_root("bind-slash");
+    let manifest = manifest_with_key(Some("awr-v1/records"));
+    let locator = Locator::parse(&root, &manifest, "project:///evidence/check.json")
+        .unwrap()
+        .bind_authored_project_key(&manifest)
+        .unwrap();
+    assert_eq!(
+        locator.identity().unwrap(),
+        "project://awr-v1%2Frecords/evidence/check.json"
+    );
+}
+
+#[test]
+fn bind_authored_project_key_refuses_a_key_outside_decoded_length() {
+    let root = project_root("bind-length");
+    let manifest = manifest_with_key(Some(&"a".repeat(201)));
     let error = Locator::parse(&root, &manifest, "project:///evidence/check.json")
         .unwrap()
         .bind_authored_project_key(&manifest)
@@ -277,7 +331,7 @@ fn bind_authored_project_key_refuses_a_key_outside_the_locator_charset() {
     assert!(
         error
             .to_string()
-            .contains("project locator key must match [A-Za-z0-9._-]{1,200}"),
+            .contains("project locator key must be 1 to 200 bytes"),
         "{error}"
     );
 }

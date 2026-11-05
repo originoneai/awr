@@ -637,6 +637,44 @@ fn project_locator_without_authored_key_keeps_the_legacy_identity() {
 }
 
 #[test]
+fn project_locator_with_a_slash_in_the_authored_key_percent_encodes_and_round_trips() {
+    let f = Fixture::with_external_key(Some("awr-v1/records"));
+    fs::create_dir(f.0.join("evidence")).unwrap();
+    let body = b"{\"project\":true}\n";
+    fs::write(f.0.join("evidence/check.json"), body).unwrap();
+    let digest = format!("{:x}", Sha256::digest(body));
+    let draft = json!({"external_key":"PROJECT-SLASH","work_item_key":"W","evidence_type":"report","level":"locally_verified","summary":"Slash key project locator","locator":"project:///evidence/check.json","sha256":digest,"source_sha":"a".repeat(40),"command":"cargo test --test records_cli","scope":["W"],"branch_id":null,"verified_at":1});
+    fs::write(
+        f.0.join("evidence.json"),
+        serde_json::to_vec(&draft).unwrap(),
+    )
+    .unwrap();
+    let added = f.ok(&[
+        "evidence",
+        "add",
+        "--input",
+        "evidence.json",
+        "--expected-revision",
+        &f.revision(),
+    ]);
+    assert_eq!(
+        added["evidence"]["locator"],
+        "project://awr-v1%2Frecords/evidence/check.json"
+    );
+    let shown = f.ok(&[
+        "evidence",
+        "show",
+        "PROJECT-SLASH",
+        "--content",
+        "--max-bytes",
+        "4096",
+    ]);
+    assert_eq!(shown["locator_scheme"], "project");
+    assert_eq!(shown["content"], "{\"project\":true}\n");
+    assert_eq!(shown["content_hash_verified"], true);
+}
+
+#[test]
 fn project_locator_with_a_foreign_key_fails_closed_on_a_second_project() {
     let alpha = Fixture::with_external_key(Some("alpha"));
     let beta = Fixture::with_external_key(Some("beta"));

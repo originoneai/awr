@@ -235,15 +235,21 @@ projects/<key>/handoffs/<origin host>/<name>.json  交接单元（if-none-match�
 
 `project:///<project-relative-path>` is the legacy identity: one evidence row points at the same
 relative path inside whatever checkout each node holds. When `[project] external_key` is set in
-`.awr/project.toml`, **new** registrations store `project://<external_key>/<project-relative-path>`
-instead. Rows already stored as `project:///` keep parsing and reading as they do today; they are
-not rewritten on read.
+`.awr/project.toml`, **new** registrations store
+`project://<encoded-external_key>/<project-relative-path>` instead. Rows already stored as
+`project:///` keep parsing and reading as they do today; they are not rewritten on read.
 
 The key is authored in `.awr/project.toml`, which is a tracked project file (`awr init` ignores
 only runtime state such as `.awr/state.db`, `.awr/artifacts/` and `.awr/executions/`). Two
 checkouts of the same project therefore share the same key. The key separates **different
 projects**; it does not separate two checkouts of the same project. It is never taken from the
-SQLite name fallback used at `register_project`.
+SQLite name fallback used at `register_project`. Manifest validation only requires a non-empty
+key. Locator parse splits on the first unencoded `/` after `project://`, so a key that contains
+`/` (or any other reserved byte) is percent-encoded with uppercase hex (`awr-v1/records` becomes
+`awr-v1%2Frecords`). Parse percent-decodes the key and requires `encode(decode(s)) == s`; an
+unencoded reserved byte, lowercase hex, or over-encoded unreserved byte is `InvalidInput`. The
+decoded key is compared to the authored key. A key with `/` is never silently stored as a legacy
+`project:///` identity.
 
 **What "project root" means.** The root stored in the project record (the directory that holds
 `.awr/project.toml`), taken through `canonicalize()` at read time. If the root has moved, the

@@ -20,10 +20,11 @@ pub enum Locator {
     },
     /// Project-root-relative path.
     ///
-    /// `project_key` is the authored `[project] external_key`. `None` is the
-    /// legacy identity `project:///<relative-path>`. `Some` is
-    /// `project://<external_key>/<relative-path>`. The store's name fallback
-    /// is never used as this key.
+    /// `project_key` is the decoded authored `[project] external_key`. `None`
+    /// is the legacy identity `project:///<relative-path>`. `Some` is stored as
+    /// `project://<encoded-key>/<relative-path>`, with reserved bytes (including
+    /// `/`) percent-encoded so parse can split on the first unencoded `/`. The
+    /// store's name fallback is never used as this key.
     Project {
         path: PathBuf,
         project_key: Option<String>,
@@ -163,18 +164,83 @@ pub fn fingerprint(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
-fn project_locator_key(value: &str) -> Result<&str> {
-    if (1..=200).contains(&value.len())
-        && value
-            .bytes()
-            .all(|b| matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-'))
-    {
-        Ok(value)
-    } else {
-        Err(Error::InvalidInput(
-            "project locator key must match [A-Za-z0-9._-]{1,200}".into(),
-        ))
+fn is_unreserved_project_locator_key_byte(b: u8) -> bool {
+    matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-')
+}
+
+fn hex_nibble(b: u8) -> Result<u8> {
+    match b {
+        b'0'..=b'9' => Ok(b - b'0'),
+        b'A'..=b'F' => Ok(b - b'A' + 10),
+        _ => Err(Error::InvalidInput(
+            "project locator key percent-encoding must use uppercase hex".into(),
+        )),
     }
+}
+
+/// Percent-encode an authored `[project] external_key` for the locator string.
+/// Decoded length stays 1..=200 bytes; reserved bytes including `/` become `%XX`.
+fn encode_project_locator_key(value: &str) -> Result<String> {
+    if !(1..=200).contains(&value.len()) {
+        return Err(Error::InvalidInput(
+            "project locator key must be 1 to 200 bytes".into(),
+        ));
+    }
+    let mut encoded = String::with_capacity(value.len());
+    for b in value.as_bytes() {
+        if is_unreserved_project_locator_key_byte(*b) {
+            encoded.push(char::from(*b));
+        } else {
+            encoded.push_str(&format!("%{b:02X}"));
+        }
+    }
+    Ok(encoded)
+}
+
+/// Decode a locator key segment. Unencoded reserved bytes and encodings that
+/// do not round-trip (`encode(decode(s)) == s`) are `InvalidInput`.
+fn decode_project_locator_key(encoded: &str) -> Result<String> {
+    if encoded.is_empty() {
+        return Err(Error::InvalidInput(
+            "project locator key must be 1 to 200 bytes".into(),
+        ));
+    }
+    let raw = encoded.as_bytes();
+    let mut bytes = Vec::with_capacity(raw.len());
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i] == b'%' {
+            if i + 2 >= raw.len() {
+                return Err(Error::InvalidInput(
+                    "project locator key percent-encoding is incomplete".into(),
+                ));
+            }
+            let hi = hex_nibble(raw[i + 1])?;
+            let lo = hex_nibble(raw[i + 2])?;
+            bytes.push((hi << 4) | lo);
+            i += 3;
+        } else if is_unreserved_project_locator_key_byte(raw[i]) {
+            bytes.push(raw[i]);
+            i += 1;
+        } else {
+            return Err(Error::InvalidInput(
+                "project locator key must percent-encode reserved characters".into(),
+            ));
+        }
+    }
+    let decoded = String::from_utf8(bytes)
+        .map_err(|_| Error::InvalidInput("project locator key must be UTF-8".into()))?;
+    if !(1..=200).contains(&decoded.len()) {
+        return Err(Error::InvalidInput(
+            "project locator key must be 1 to 200 bytes".into(),
+        ));
+    }
+    if encode_project_locator_key(&decoded)? != encoded {
+        return Err(Error::InvalidInput(
+            "project locator key percent-encoding must round-trip".into(),
+        ));
+    }
+    Ok(decoded)
 }
 
 /// Compare an identity-bearing locator key to the authored manifest key only.
@@ -238,7 +304,10 @@ impl Locator {
                     .collect::<Result<Vec<_>>>()?
                     .join("/");
                 match project_key {
-                    Some(key) => Ok(format!("project://{key}/{path}")),
+                    Some(key) => Ok(format!(
+                        "project://{}/{path}",
+                        encode_project_locator_key(key)?
+                    )),
                     None => Ok(format!("project:///{path}")),
                 }
             }
@@ -256,8 +325,10 @@ impl Locator {
     }
     /// Attach the authored `[project] external_key` to a legacy `project:///` locator
     /// at registration. Stored `project:///` rows are parsed with `project_key: None`
-    /// and are not rewritten on read. A key outside the locator charset is refused
-    /// here so the store never writes a string `parse` cannot read back.
+    /// and are not rewritten on read. Reserved characters in the key are
+    /// percent-encoded in `identity` so `parse` can round-trip them; a key
+    /// outside 1..=200 decoded bytes is refused so the store never writes a
+    /// string `parse` cannot read back.
     pub fn bind_authored_project_key(self, manifest: &Manifest) -> Result<Self> {
         match self {
             Self::Project {
@@ -265,11 +336,13 @@ impl Locator {
                 project_key: None,
             } => Ok(Self::Project {
                 path,
-                project_key: manifest
-                    .authored_external_key()
-                    .map(project_locator_key)
-                    .transpose()?
-                    .map(str::to_owned),
+                project_key: match manifest.authored_external_key() {
+                    None => None,
+                    Some(key) => {
+                        encode_project_locator_key(key)?;
+                        Some(key.to_owned())
+                    }
+                },
             }),
             other => Ok(other),
         }
@@ -320,7 +393,7 @@ impl Locator {
                         "project locator syntax is project:///<project-relative-path> or project://<external_key>/<project-relative-path>".into(),
                     )
                 })?;
-                (Some(project_locator_key(key)?.to_owned()), path)
+                (Some(decode_project_locator_key(key)?), path)
             };
             if path.contains('#') {
                 return Err(Error::InvalidInput(
