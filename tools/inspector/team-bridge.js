@@ -214,9 +214,20 @@ function validateReadQuery(query) {
   return { ok: true };
 }
 
+function validWorkstreamList(reply) {
+  return reply && typeof reply === 'object' && !Array.isArray(reply)
+    && Array.isArray(reply.items)
+    && reply.items.every(item => item && typeof item === 'object' && !Array.isArray(item) && isBoundedId(item.id))
+    && Number.isSafeInteger(reply.total) && reply.total >= reply.items.length
+    && (reply.next_cursor === null || typeof reply.next_cursor === 'string'
+      && reply.next_cursor.length > 0 && reply.next_cursor.length <= 4096);
+}
+
 function validReadResponse(reply, op) {
+  // workstreams.list is a flat catalog page without a protocol/data envelope.
+  if (op === 'workstreams.list') return validWorkstreamList(reply);
   if (!reply || reply.protocol_version !== 1) return false;
-  // capabilities is the one flat discovery response; every other read carries data.
+  // capabilities is flat discovery; the remaining reads carry data.
   if (op === 'capabilities') return reply.protocol === 'awr-team-workstream';
   const data = reply.data;
   if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
@@ -228,12 +239,25 @@ function validReadResponse(reply, op) {
 
 /**
  * AWR-OBS-002 shared read attribution: one semantics for the generic read
- * route and the coordination detail route. The response must carry the
- * standard envelope, belong to the requested work/workstream/scope, and must
- * never grant execution. strictWorkstream additionally pins the response
- * workstream (coordination detail always selects one).
+ * route and the coordination detail route. Enveloped reads must belong to
+ * the requested work/workstream/scope; navigation reads use their own
+ * response contract. No read may grant execution. strictWorkstream
+ * additionally pins the response workstream (coordination detail selects one).
  */
 function readAttributionError(query, result, { strictWorkstream } = {}) {
+  // The catalog page has no scope/snapshot/object attribution envelope.
+  // Its project and identity are bound by the forwarded request path and
+  // cookie session; the service filters visible streams and binds cursors to
+  // that authority and snapshot. Do not invent missing freshness metadata.
+  if (query.op === 'workstreams.list') {
+    if (!validWorkstreamList(result) || result.items.length > (query.limit ?? 50)) {
+      return { code: 'BadGateway', message: 'Invalid Team read response' };
+    }
+    if (result.execution_authorized === true) {
+      return { code: 'BadGateway', message: 'A Team read response never authorizes execution' };
+    }
+    return null;
+  }
   // work.next is an identity-scoped navigation read: the real upstream
   // response carries only { data, project_revision, protocol_version } — no
   // scope/snapshot attribution envelope exists for it (verified against a
@@ -1057,7 +1081,7 @@ function createTeamBridge(opts) {
       // One shared attribution semantics with the coordination detail route
       // (AWR-OBS-002): the response must belong to the requested
       // work/workstream/scope and must never grant execution. capabilities is
-      // the one flat discovery response and carries no attributable object.
+      // a flat discovery response and carries no attributable object.
       if (reply.ok && input.query.op !== 'capabilities') {
         const attribution = readAttributionError(input.query, reply.result, { strictWorkstream: false });
         if (attribution) return { ok: false, error: attribution, freshness: failedFreshness(attribution.code, Date.now()) };
