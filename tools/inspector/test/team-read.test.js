@@ -66,9 +66,9 @@ function startLiveBridge(teamUrl) {
   });
 }
 
-function req(base, method, path, { body } = {}) {
+function req(base, method, path, { body, headers } = {}) {
   return new Promise((resolve, reject) => {
-    const request = http.request(base + path, { method, headers: { 'content-type': 'application/json' } }, (res) => {
+    const request = http.request(base + path, { method, headers: { 'content-type': 'application/json', ...headers } }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => resolve({ status: res.statusCode, json: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
@@ -151,7 +151,9 @@ test('read adapter forwards every registered read op with its exact selectors, u
       if (parsed.op === 'delivery.integration.inspect') echo.integration_id = parsed.request_id;
       response.end(JSON.stringify(parsed.op === 'capabilities'
         ? { protocol: 'awr-team-workstream', protocol_version: 1, queries: [], commands: [] }
-        : { ...ENVELOPE, data: { items: [], next_cursor: null, ...echo } }));
+        : parsed.op === 'workstreams.list'
+          ? { items: [], next_cursor: null, total: 0 }
+          : { ...ENVELOPE, data: { items: [], next_cursor: null, ...echo } }));
     });
   });
   const bridge = await startLiveBridge(upstream.base);
@@ -164,6 +166,118 @@ test('read adapter forwards every registered read op with its exact selectors, u
       assert.deepEqual(calls.pop(), { path: '/v1/web/projects/demo/query', query });
     }
     assert.equal(calls.length, 0);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('read adapter accepts flat workstream pages unchanged through the full read route', async () => {
+  const calls = [];
+  let result;
+  const upstream = await startMockUpstream((request, response) => {
+    const chunks = [];
+    request.on('data', (c) => chunks.push(c));
+    request.on('end', () => {
+      calls.push({ path: request.url, cookie: request.headers.cookie,
+        query: JSON.parse(Buffer.concat(chunks).toString('utf8')) });
+      response.end(JSON.stringify(result));
+    });
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    for (const [query, page] of [
+      [{ protocol_version: 1, op: 'workstreams.list', limit: 1 },
+        { items: [{ id: 'stream-1', title: 'First stream' }], total: 2, next_cursor: 'page-2' }],
+      [{ protocol_version: 1, op: 'workstreams.list', limit: 1, cursor: 'page-2' },
+        { items: [{ id: 'stream-2', title: 'Second stream' }], total: 2, next_cursor: null }],
+      [{ protocol_version: 1, op: 'workstreams.list' },
+        { items: [], total: 0, next_cursor: null }],
+      [{ protocol_version: 1, op: 'workstreams.list' },
+        { items: Array.from({ length: 50 }, (_, i) => ({ id: `stream-${i}` })), total: 51, next_cursor: 'x'.repeat(4096) }],
+    ]) {
+      result = page;
+      const read = await req(bridge.base, 'POST', '/api/team/read', {
+        body: { project: 'demo/project', query }, headers: { cookie: 'awr_web_session=synthetic-session' },
+      });
+      assert.equal(read.status, 200);
+      assert.equal(read.json.ok, true, JSON.stringify(read.json));
+      assert.deepEqual(read.json.result, page);
+      assert.deepEqual(read.json.query, query);
+      assert.deepEqual(read.json.freshness.authoritative, { status: 'not_measured' });
+      assert.deepEqual(read.json.freshness.report_received, { status: 'not_measured' });
+      assert.equal(read.json.freshness.page_read.status, 'measured');
+      assert.deepEqual(calls.pop(), { path: '/v1/web/projects/demo%2Fproject/query',
+        cookie: 'awr_web_session=synthetic-session', query });
+    }
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('read adapter refuses malformed flat workstream pages without exposing their contents', async () => {
+  let result;
+  const upstream = await startMockUpstream((_request, response) => response.end(JSON.stringify(result)));
+  const bridge = await startLiveBridge(upstream.base);
+  const page = { items: [{ id: 'stream-1' }], total: 1, next_cursor: null };
+  const query = { protocol_version: 1, op: 'workstreams.list', limit: 1 };
+  try {
+    for (const candidate of [
+      null, [], {}, { ...ENVELOPE, data: page },
+      { ...page, items: null }, { ...page, items: {} },
+      { ...page, items: [null] }, { ...page, items: [[]] }, { ...page, items: [{}] },
+      { ...page, items: [{ id: '' }] }, { ...page, items: [{ id: 1 }] },
+      { ...page, items: [{ id: 'x'.repeat(129) }] }, { ...page, items: [{ id: 'stream\n1' }] },
+      { ...page, total: undefined }, { ...page, total: '1' }, { ...page, total: -1 },
+      { ...page, total: 0 }, { ...page, total: 1.5 }, { ...page, total: Number.MAX_SAFE_INTEGER + 1 },
+      { ...page, next_cursor: undefined }, { ...page, next_cursor: '' },
+      { ...page, next_cursor: 42 }, { ...page, next_cursor: 'x'.repeat(4097) },
+      { ...page, items: [{ id: 'stream-1' }, { id: 'stream-2' }], total: 2 },
+      { ...page, execution_authorized: true },
+    ]) {
+      result = candidate;
+      const read = await req(bridge.base, 'POST', '/api/team/read', { body: { project: 'demo', query } });
+      assert.equal(read.status, 200);
+      assert.equal(read.json.ok, false, JSON.stringify(candidate));
+      assert.equal(read.json.error.code, 'BadGateway', JSON.stringify(candidate));
+      assert.equal(read.json.result, undefined);
+      assert.equal(read.json.freshness.authoritative.status, 'failed');
+    }
+    result = { items: Array.from({ length: 51 }, (_, i) => ({ id: `stream-${i}` })), total: 51, next_cursor: null };
+    const unbounded = await req(bridge.base, 'POST', '/api/team/read', {
+      body: { project: 'demo', query: { protocol_version: 1, op: 'workstreams.list' } },
+    });
+    assert.equal(unbounded.json.error.code, 'BadGateway');
+    assert.equal(unbounded.json.result, undefined);
+    result = { ...page, items: [{ id: 'stream-1', title: 'x'.repeat(2 * 1024 * 1024) }] };
+    const oversized = await req(bridge.base, 'POST', '/api/team/read', { body: { project: 'demo', query } });
+    assert.equal(oversized.json.error.code, 'ResponseTooLarge');
+    assert.equal(oversized.json.result, undefined);
+  } finally {
+    await bridge.close();
+    await upstream.close();
+  }
+});
+
+test('flat workstream reads preserve upstream session, project and cursor denials', async () => {
+  let behavior;
+  const upstream = await startMockUpstream((_request, response) => {
+    response.writeHead(behavior.status, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(behavior.body));
+  });
+  const bridge = await startLiveBridge(upstream.base);
+  try {
+    for (const [status, code] of [[401, 'Unauthenticated'], [401, 'SessionExpired'],
+      [403, 'Forbidden'], [400, 'CursorExpired']]) {
+      behavior = { status, body: { code, message: 'Read denied' } };
+      const read = await req(bridge.base, 'POST', '/api/team/read', {
+        body: { project: 'demo', query: { protocol_version: 1, op: 'workstreams.list', cursor: 'opaque' } },
+      });
+      assert.equal(read.json.ok, false);
+      assert.equal(read.json.error.code, code);
+      assert.equal(read.json.result, undefined);
+    }
   } finally {
     await bridge.close();
     await upstream.close();
@@ -198,6 +312,9 @@ test('read adapter rejects forged identity fields, malformed selectors and overs
     const cases = [
       { protocol_version: 2, op: 'capabilities' },
       { protocol_version: 1, op: 'capabilities', work_id: 'WORK' },
+      { protocol_version: 1, op: 'workstreams.list', actor_id: 'administrator' },
+      { protocol_version: 1, op: 'workstreams.list', project_id: 'another-project' },
+      { protocol_version: 1, op: 'workstreams.list', workstream_id: 'stream' },
       { protocol_version: 1, op: 'work.next', work_id: 'WORK' },
       { protocol_version: 1, op: 'work.next', workstream_id: 'stream' },
       { protocol_version: 1, op: 'work.search' },
