@@ -79,7 +79,9 @@ def main():
         print('Running native gate: ' + name, flush=True)
         log = evidence / (name + '.log')
         started = time.monotonic()
-        process_env = dict(os.environ, PYTHONUTF8='1', CARGO_TERM_COLOR='never', AWR_LOCAL_WEB='0')
+        # Full dependency debug symbols can exceed the runtime snapshot's file cap.
+        process_env = dict(os.environ, PYTHONUTF8='1', CARGO_TERM_COLOR='never', AWR_LOCAL_WEB='0',
+                           CARGO_PROFILE_DEV_DEBUG='1', CARGO_PROFILE_TEST_DEBUG='1')
         process_env.update(env or {})
         try:
             row.update(run_command(row['command'], cwd=ROOT, log=log, env=process_env,
@@ -118,6 +120,7 @@ def main():
                       environment={'system': platform.system(), 'release': platform.release(), 'version': platform.version(),
                                    'machine': machine, 'rustc': rust, 'cargo': read_command('cargo', '--version'),
                                    'python': sys.version, 'sqlite': __import__('sqlite3').sqlite_version,
+                                   'cargo_profile_debug': {'dev': '1', 'test': '1'},
                                    'ci': {key: os.environ[key] for key in ['GITHUB_REPOSITORY', 'GITHUB_WORKFLOW', 'GITHUB_RUN_ID',
                                           'GITHUB_RUN_ATTEMPT', 'GITHUB_SHA', 'RUNNER_OS', 'RUNNER_ARCH', 'RUNNER_NAME',
                                           'ImageOS', 'ImageVersion'] if key in os.environ}},
@@ -136,6 +139,7 @@ def main():
     gate('build', ['cargo', 'build', '--workspace', '--all-targets', '--locked'])
     if all(path.is_file() for path in [awr, mcp]):
         report['binary_sha256'] = {'awr': digest(awr), 'awr-mcp': digest(mcp)}
+        report['binary_bytes'] = {'awr': awr.stat().st_size, 'awr-mcp': mcp.stat().st_size}
 
     def inventory(text):
         names = re.findall(r'^(.+): test$', text, re.M)

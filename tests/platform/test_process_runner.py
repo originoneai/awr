@@ -166,7 +166,10 @@ class ProcessRunnerTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(verify.main(), 1)
         execute.assert_called_once()
+        for profile in ('DEV', 'TEST'):
+            self.assertEqual(execute.call_args.kwargs['env'][f'CARGO_PROFILE_{profile}_DEBUG'], '1')
         report = json.loads((output / 'evidence' / 'report.json').read_text())
+        self.assertEqual(report['environment']['cargo_profile_debug'], {'dev': '1', 'test': '1'})
         first = next(gate for gate in report['gates'] if gate['id'] == 'runner_tests')
         self.assertFalse(first['passed'])
         self.assertNotIn('log_sha256', first)
