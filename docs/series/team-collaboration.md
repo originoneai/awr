@@ -40,12 +40,12 @@ credential. Every participant uses their own credential, and repository
 permissions stay separate from AWR permissions — joining the AWR project does
 not grant Git access, and vice versa.
 
-Behind the scenes, an authorized administrator opens **Members** in Inspector,
-adds you, chooses your project role and workstreams, and copies a one-time
-personal connection instruction containing the endpoint and your credential.
-You receive it through a private channel. The administrator cannot retrieve its
-plaintext after clearing the issuance panel; if you lose the credential, it can
-be explicitly replaced.
+An authorized administrator adds you and sets your project role and workstreams
+through the service's access tools. They generate a personal credential in a
+protected local operator channel and register its hash. You receive the endpoint
+and credential through a private channel. If you lose the credential, it can be
+explicitly replaced. See the [Agent workflow](../dev/integrations/team-agent-workflow.md)
+for the administrator's supported entry points.
 
 Add the remote MCP server in any Agent client that supports remote MCP over
 **Streamable HTTP** with **Bearer authentication**:
@@ -151,17 +151,14 @@ Two practical limits to know: AWR cannot wake an idle Agent (lease renewal uses
 your host's scheduling, separate from checkpoints), and a blocked or waiting
 phase is a report — it does not create a wait item or renew a claim by itself.
 
-## Inspector: the optional workspace view
+## Observer workspace
 
-Inspector is a web view over the same project. Signing in or claiming through a
-website is not a prerequisite for anything above — the Agent remains the
-coordination surface. Use Inspector when you want to:
+Observer shows the same project's goals, work and evidence. Your connected Agent
+coordinates the work. Use Observer to:
 
-- Inspect task relationships, ownership, progress and recorded results.
-- Copy client-neutral MCP settings and a project instruction from **Connect
-  Agent**, or a per-task brief (copying text creates no session or claim).
-- As an administrator, manage members and project-scoped credentials in
-  **Members**.
+- Inspect project goals, ownership, progress and recorded results.
+- Copy the service address and inspect effective permissions in **Connect Agent**.
+  Copying the address creates no session or claim.
 - Review **Activity**, which separates authenticated access records from
   committed development history. Ordinary members see their own authorized
   activity; project auditors can filter by member or task. Audit records
@@ -169,9 +166,12 @@ coordination surface. Use Inspector when you want to:
   and request metadata has bounded retention — it is not a permanent
   compliance archive.
 
-Administrator and review permissions are enforced by the central service
-regardless of which client you use, so the rules hold whether someone works
-through an Agent, Inspector, or both.
+Member administration uses authorized access tools. The current **Members**
+browser page indicates its availability explicitly. The central service enforces
+administrator and review permissions for every client.
+
+For local progress maps and standalone exports, use
+[Project Progress Overview](../../tools/project-progress-overview/README.md).
 
 ## Next steps
 

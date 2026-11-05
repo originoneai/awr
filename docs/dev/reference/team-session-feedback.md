@@ -171,15 +171,15 @@ input, missing context and response-budget errors are not retried. No result or
 authority escapes an aborted attempt; persistent contention remains an error.
 This retry mechanism applies to scoped work queries, not commands or side effects.
 
-## Inspector observations and refresh
+## Observer observations and refresh
 
-Inspector prefers `work.snapshot` and validates its work/stream, contract,
+The Observer bridge prefers `work.snapshot` and validates its work/stream, contract,
 revision, source snapshot, epoch, query time and runtime fields. It uses the
 legacy `work.prepare`/`work.observe` pair only after an explicit Unsupported
 response. Legacy runtime consistency is labeled unconfirmed; denial, context
 errors, malformed snapshots and read failures never trigger a downgrade.
 
-The detail view keeps execution outcome reporting, artifact verification,
+The observation response keeps execution outcome reporting, artifact verification,
 scoped effect settlement and recovery separate. Missing legacy booleans remain
 unknown. Caller-asserted workspace settlement retains its declared basis and
 does not become repository integration or task acceptance. Expanded sources

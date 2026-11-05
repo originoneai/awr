@@ -39,15 +39,15 @@ def probe_pg(url: str) -> dict:
 
 
 def probe_inspector() -> dict:
-    """Best-effort local Inspector presence check (no login, no forged ops)."""
-    inspector = ROOT / "tools/inspector"
+    """Best-effort local Observer presence check (no login, no forged ops)."""
+    inspector = ROOT / "tools/observer"
     if not inspector.exists():
-        return {"ok": False, "reason": "tools/inspector not present"}
+        return {"ok": False, "reason": "tools/observer not present"}
     return {
         "ok": True,
-        "path": "tools/inspector",
+        "path": "tools/observer",
         "live_web_ops": False,
-        "note": "Inspector tree present; human Web operator still required for live gates",
+        "note": "Observer tree present; human Web operator still required for live gates",
     }
 
 

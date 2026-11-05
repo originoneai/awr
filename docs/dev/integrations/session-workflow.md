@@ -22,8 +22,7 @@ first. Older binaries refuse schema 14. See
 [AWR 0.6.0](../release/0.6.0.md) and
 [Upgrading from 0.5.x](../release/DISTRIBUTIONS.md#upgrading-from-05x-schema-7--14).
 0.6.0 packages compile Team code but leave it off unless enabled; this L0 path
-stays on personal CLI/MCP. The optional Inspector is not bundled; run it from a
-source checkout.
+stays on personal CLI/MCP. Optional source tools are available separately from the CLI packages.
 
 ## Bind the project
 
@@ -208,8 +207,9 @@ unknown; do not treat absence as zero or as failure. `session compaction inspect
 does not take `--include-observation` here; that flag expands host telemetry and
 is not required to decide whether to continue.
 
-The optional [Inspector](../../../tools/inspector/README.md) surfaces the same
-read-only commands from a source checkout. It is not in the npm/PyPI packages.
+Use the CLI commands above for session and recovery diagnostics.
+[Project Progress Overview](../../../tools/project-progress-overview/README.md) shows local project maps,
+and [Observer](../../../tools/observer/README.md) provides the Team observation workspace.
 
 ## Compile context
 

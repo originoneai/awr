@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>AWR Project Progress Overview</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%231760da%22/%3E%3Ctext x=%2216%22 y=%2223%22 text-anchor=%22middle%22 font-family=%22sans-serif%22 font-size=%2222%22 fill=%22white%22%3EA%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="project-map/interact.css">
+<link rel="stylesheet" href="project-map.css">
+</head>
+<body>
+<header class="app-header">
+  <div>
+    <p class="app-brand">AWR</p>
+    <h1>Project Progress Overview</h1>
+    <p class="app-description" data-i18n="map.lede"></p>
+  </div>
+  <label class="language-picker">
+    <span data-i18n="language.label">Language</span>
+    <select id="languageSelect" aria-label="Language" data-i18n-aria-label="language.label">
+      <option value="en" data-i18n="language.english">English</option>
+      <option value="zh-CN" data-i18n="language.chinese">Chinese</option>
+    </select>
+  </label>
+</header>
+<p id="connectionStatus" class="connection-status" role="status" aria-live="polite"></p>
+<main id="view-map">
+  <section class="panel" aria-label="Map controls" data-i18n-aria-label="progress.controls">
+    <div class="body map-controls">
+      <button class="btn" id="mapRefreshBtn" data-i18n="map.refresh">Refresh map</button>
+      <button class="btn ghost" id="mapDownloadBtn" disabled data-i18n="map.download">Download HTML</button>
+      <button class="btn ghost" id="mapDownloadJsonBtn" disabled data-i18n="map.download_json">Download snapshot JSON</button>
+      <label class="map-toggle" data-i18n-title="map.recorded_only_hint">
+        <input type="checkbox" id="mapCachedToggle">
+        <span data-i18n="map.recorded_only"></span>
+      </label>
+    </div>
+    <div class="body map-status" id="mapStatus" role="status" aria-live="polite" hidden></div>
+    <div class="retry-row"><button class="btn ghost" id="mapRetryBtn" hidden data-i18n="map.error.retry">Retry</button></div>
+  </section>
+  <div id="mapBody" hidden>
+    <div id="mapHeader"></div>
+    <div id="mapStage" class="pm-scope"></div>
+  </div>
+</main>
+<script src="locales/en.js"></script>
+<script src="locales/zh-CN.js"></script>
+<script src="i18n.js"></script>
+<script src="project-map/snapshot.js"></script>
+<script src="project-map/model.js"></script>
+<script src="project-map/svgkit.js"></script>
+<script src="project-map/layout.js"></script>
+<script src="project-map/views.js"></script>
+<script src="project-map/detail.js"></script>
+<script src="project-map/page.js"></script>
+<script src="project-map/interact.js"></script>
+<script src="project-map/extract.js"></script>
+<script src="project-map/demo.js"></script>
+<script src="project-map/ui.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

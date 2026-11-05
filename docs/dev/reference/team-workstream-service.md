@@ -185,7 +185,7 @@ separate; native conversation IDs are withheld, and unreported model and usage
 are explicit nulls. Observation never authorizes execution, resumes a session,
 or accepts a delivery.
 
-Inspector refreshes these observations while the task view is visible. Its
+The Observer bridge reads these observations for requested work. Its
 optional public GitHub lookup follows only an exact PR reference in the
 authorized response, checks the current head, and caches results for at least five
 minutes. The interval grows with the observed PR count to fit the shared anonymous

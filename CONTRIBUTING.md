@@ -37,6 +37,10 @@ messages in English. Keep localized documentation (such as Chinese READMEs),
 translation catalogs, and intentional multilingual parser or Unicode fixtures in
 their original language. Do not translate user-provided project content.
 
-Inspector interface text belongs in `tools/inspector/public/locales/`; provide
-matching English and Simplified Chinese keys and interpolation placeholders.
-Run `node --test test/*.test.js` from `tools/inspector` after changing its messages.
+Project Progress Overview interface text belongs in `tools/project-progress-overview/public/locales/`.
+Provide matching English and Simplified Chinese keys and interpolation placeholders. Run
+`node --test test/*.test.js` from `tools/project-progress-overview` after changing the maps.
+
+Observer owns its Team bridge and observation contract in `tools/observer/server/`.
+Run its frontend checks and production build, followed by `node --test test/*.test.js`
+from `tools/observer`, when changing the workspace or its service contracts.

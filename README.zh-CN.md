@@ -70,8 +70,8 @@ AWR 围绕同一个项目目标，把**任务与工作线、交叉依赖、上�
 这一版新增**可选的评估解释、字段级诊断、缓存的任务图与只读主线导航**，在无关的台账编辑后保持证据有效，并修复接入、完成与恢复中的边界问题。
 Team 功能已编译在内但**默认关闭**，见 [Team 运行时开关](docs/dev/reference/team-switch.md)。安装包不提供带身份鉴权的 Team 服务。详见 [0.6.0 变更说明](docs/dev/release/0.6.0.md)。
 
-可选的 [Inspector 查看界面](https://github.com/originoneai/awr/tree/v0.6.0/tools/inspector)需从这一版本的源码启动，npm/PyPI 安装包不包含它。
-界面包含中英文切换、完整队列分页、按来源刷新，以及会话与事件面板。
+`main` 的源码工具包括 [Project Progress Overview](tools/project-progress-overview/README.md)，
+提供本地项目节点图、主线依赖图和泳道依赖图，以及面向团队的 [Observer 观测工作区](tools/observer/README.md)。两者均从源码启动。
 
 **`main` 中的后续能力：** Team 服务、跨工作线版本交付采用、Team 协作与复核不在本次发行范围内。
 已发布安装包的能力以 [0.6.0 发布说明](https://github.com/originoneai/awr/releases/tag/v0.6.0)为准。

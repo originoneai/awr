@@ -27,7 +27,7 @@ from the DOM after submit.
 version = 1
 listen = "127.0.0.1:9908"
 allowed_hosts = []
-allowed_web_origins = ["http://127.0.0.1:7381"]
+allowed_web_origins = ["http://127.0.0.1:7390"]
 
 [[projects]]
 key = "example"
@@ -38,28 +38,20 @@ project_id = "project-a"
 Without `allowed_web_origins`, `/v1/web/*` returns `WebEntryDisabled`. Classic
 routes still deny any `Origin`.
 
-## Inspector
+## Observer workspace
 
-`tools/inspector` exposes the Team Web loop UI (`#team`): My Projects → parallel
-overview with card/list toggle → detail (owner, agent, outcome, blocker, next
-step) → collaboration actions (accept responsibility, select authorized agent,
-run/pause visibility, respond to blocker, receive handoff, submit review, rework,
-accept).
+The [Observer workspace](../../../tools/observer/README.md) serves the browser observation UI.
+Its bridge lives in `tools/observer/server/team-bridge.js` and forwards authorized requests to the
+server's Web entry using the member's cookie session. Cookie paths are rewritten from `/v1/web`
+to `/api/team` so the browser sends them to the workspace's bridge routes.
 
-- Demo/tests: `--demo` serves fixtures from
-  `tests/fixtures/workstreams/team-web-loop/`.
-- Live Team proxy: `--team-url http://127.0.0.1:9908` forwards to the server Web
-  entry (cookie session). The proxy rewrites upstream `Path=/v1/web` cookies to
-  `Path=/api/team` so the browser sends them to Inspector team routes. Live
-  overview/action never serve fixtures; writes go through `/v1/web/projects/{key}/command`.
+Start the built workspace with `--team-url http://127.0.0.1:9908`. Use `--team-public-url`
+when the member-facing MCP service has a different public address. Demo mode uses synthetic fixtures.
 
-Member/role/grant changes reuse the existing `access.inspect|preview|apply|outcome`
-server path behind the Web entry — no second admin plane and no enterprise org /
-cost-center wizards.
+Task planning, assignment, claims, review and delivery run through connected Agents. The workspace
+shows the resulting facts and their provenance. Its login and connection controls use the existing
+Web session entry.
 
-## Blocker detail
-
-Visible dependencies show prerequisite outcome, release condition, and check
-basis, and drill to accepted upstream. Hidden dependencies only show
-non-leaking handling hints. Backend codes and raw receipt references stay in the
-detail layer (`<details>`), not the card summary.
+Member, role and grant management continues to use `access.inspect`, `access.preview`, `access.apply`
+and `access.outcome` through authorized service clients. The retired Inspector member editor has
+been removed. The current Observer member page indicates its availability explicitly.
