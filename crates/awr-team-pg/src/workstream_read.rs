@@ -178,6 +178,15 @@ impl WorkstreamQuery {
         "artifact.segment",
         "delivery.exports",
     ];
+    /// Operations whose scope may be selected by `session_id` without `work_id`.
+    /// Shared with read delegation resolution so operations that reject
+    /// `session_id` still return input validation guidance instead of failing
+    /// early in `session_binding`.
+    pub(crate) fn supports_session_selection(&self) -> bool {
+        self.op == "session.inspect"
+            || self.op == "events.list"
+            || Self::WORK_SELECTION_OPERATIONS.contains(&self.op.as_str())
+    }
     /// Maximum explicit raw-byte budget for stored artifact reads and encodings.
     /// Command envelopes retain their separate, smaller transport bound.
     pub const MAX_ARTIFACT_BYTES: usize = 1_048_576;
@@ -1058,6 +1067,53 @@ mod input_guidance_tests {
             assert!(query.validate().is_err(), "{input}");
         }
     }
+
+    #[test]
+    fn session_selection_support_matches_query_validation() {
+        for op in WorkstreamQuery::OPERATIONS {
+            if matches!(
+                *op,
+                "source.content" | "audit.history" | "audit.export" | "audit.count"
+            ) {
+                continue;
+            }
+            let mut input = json!({"protocol_version":1,"op":op,"session_id":"session"});
+            match *op {
+                "command.inspect"
+                | "planning.outcome"
+                | "delivery.neutral.outcome"
+                | "delivery.integration.inspect" => input["request_id"] = json!("request"),
+                "claim.inspect" => input["claim_id"] = json!("claim"),
+                "execution.inspect" => input["execution_id"] = json!("execution"),
+                "handoff.inspect" => input["handoff_id"] = json!("handoff"),
+                "update.inspect" => input["update_id"] = json!("update"),
+                "evidence.inspect" => input["evidence_id"] = json!("evidence"),
+                "review.inspect" => input["review_round_id"] = json!("round"),
+                "artifact.content" => input["artifact_id"] = json!("artifact"),
+                "artifact.segment" => {
+                    input["artifact_id"] = json!("artifact");
+                    input["expected_sha256"] = json!("a".repeat(64));
+                }
+                "work.search" => input["search"] = json!("example"),
+                _ => {}
+            }
+            let query: WorkstreamQuery = serde_json::from_value(input).unwrap();
+            if query.supports_session_selection() {
+                assert!(query.validate().is_ok(), "{op} should allow session_id");
+            } else {
+                let error = query
+                    .validate()
+                    .expect_err(&format!("{op} should reject session_id"));
+                if *op == "work.next" {
+                    assert!(error.is_work_next_selectors(), "{op}");
+                } else {
+                    let detail = error.query_input_diagnostic().expect(op);
+                    assert_eq!(detail["invalid_field"], "/session_id", "{op}");
+                    assert_eq!(detail["constraint"], "unsupported_for_operation", "{op}");
+                }
+            }
+        }
+    }
 }
 
 impl WorkstreamReadStore {
@@ -1316,6 +1372,34 @@ pub(crate) async fn work_binding(
         },
         row.get(1),
     ))
+}
+
+pub(crate) async fn session_binding(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    auth: &ReaderAuthority,
+    session: &str,
+) -> PgResult<WorkstreamSessionBinding> {
+    let row = tx
+        .query_opt(
+            "SELECT work_id,workstream_id,ownership_version FROM awr_team.sessions
+            WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND scope_id='main'",
+            &[&tenant, &project, &session],
+        )
+        .await?
+        .ok_or(PgError::Forbidden)?;
+    let work: String = row.get(0);
+    let (binding, generation) = work_binding(tx, tenant, project, auth, &work).await?;
+    if row.get::<_, Option<String>>(1) != Some(binding.workstream_id.to_string())
+        || row.get::<_, Option<i64>>(2) != Some(generation)
+    {
+        return Err(PgError::Forbidden);
+    }
+    Ok(WorkstreamSessionBinding {
+        session_id: session.into(),
+        work: binding,
+    })
 }
 
 pub(crate) async fn read(
@@ -1615,25 +1699,7 @@ pub(crate) async fn read(
         selection.work = Some(work_binding(tx, tenant, project, auth, work).await?.0);
     }
     if let Some(session) = &q.session_id {
-        let row = tx
-            .query_opt(
-                "SELECT work_id,workstream_id,ownership_version FROM awr_team.sessions
-            WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND scope_id='main'",
-                &[&tenant, &project, &session],
-            )
-            .await?
-            .ok_or(PgError::Forbidden)?;
-        let work: String = row.get(0);
-        let (binding, generation) = work_binding(tx, tenant, project, auth, &work).await?;
-        if row.get::<_, Option<String>>(1) != Some(binding.workstream_id.to_string())
-            || row.get::<_, Option<i64>>(2) != Some(generation)
-        {
-            return Err(PgError::Forbidden);
-        }
-        selection.session = Some(WorkstreamSessionBinding {
-            session_id: session.clone(),
-            work: binding,
-        });
+        selection.session = Some(session_binding(tx, tenant, project, auth, session).await?);
     }
     let resolved = resolve_workstream(
         &auth.catalog,
