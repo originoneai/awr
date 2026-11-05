@@ -388,6 +388,9 @@ mod tests {
     #[test]
     fn native_payload_contains_the_retained_progress_assets() {
         for name in [
+            "hub.html",
+            "hub.js",
+            "hub.css",
             "index.html",
             "app.js",
             "styles.css",

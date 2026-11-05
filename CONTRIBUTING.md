@@ -4,13 +4,15 @@ Build with the Rust toolchain pinned in `rust-toolchain.toml`:
 
 ```sh
 cargo build --workspace --all-targets --locked
-cargo test --workspace --all-targets --locked
-cargo test --workspace --doc --locked
+AWR_LOCAL_WEB=0 cargo test --workspace --all-targets --locked
+AWR_LOCAL_WEB=0 cargo test --workspace --doc --locked
 cargo fmt --all --check
 python3 scripts/check_public_tree.py
 ```
 
 Use Python 3.11+ and `pip install -r requirements-dev.txt` for Python fixture checks.
+General regression runs disable automatic local web startup. Service lifecycle
+tests explicitly enable it inside isolated user-state directories.
 The concentrated runner also requires `rtk` and is `python3 tests/regression/verify.py --output .local/regression-001`.
 Use a new output directory for each run. Test specifications under `tests/` describe
 checks; they do not claim that any release or real-client acceptance has passed.

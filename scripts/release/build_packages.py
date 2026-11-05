@@ -24,6 +24,8 @@ PLATFORMS = {target[0] for target in TARGETS.values()}
 
 
 def run(args, *, cwd=ROOT, env=None):
+    if env is None:
+        env = dict(os.environ, AWR_LOCAL_WEB="0")
     return subprocess.check_output([str(a) for a in args], cwd=cwd, env=env, text=True).strip()
 
 
@@ -92,6 +94,7 @@ def copy_contract_docs(primary):
         "docs/reference/cli-mcp-contract.md",
         "docs/integrations/session-workflow.md",
         "docs/reference/daily-work.md",
+        "docs/reference/local-project-hub.md",
     ]
     for rel in contract_docs:
         # Repository docs moved; keep installed npm documentation paths stable.
@@ -131,6 +134,7 @@ def main():
     for binary in binaries:
         if version not in run([binary, "--version"]):
             raise ValueError(f"binary version mismatch: {binary.name}")
+    run([binaries[0], "--json", "capabilities", "--require", "local.project_hub"])
     architectures = {}
     if npm_os == "darwin":
         for binary in binaries:
@@ -149,6 +153,7 @@ def main():
         "binary_sha256": {p.name: digest(p) for p in binaries},
         "binary_architectures": architectures,
         "dependency_notices": inventory,
+        "local_project_hub": True,
     }
     primary = stage / "npm"
     shutil.copytree(ROOT / "packaging/npm", primary)
