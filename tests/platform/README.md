@@ -56,7 +56,7 @@ Uploads contain synthetic verification evidence, not private project state.
 Reports bind OS/architecture, compiler, source/tree/input/binary fingerprints,
 workflow run/attempt, command deadlines, actual exits, cleanup and finalized log
 digests. Rust counts come from executed test results. Unix-only tests omitted by
-Windows configuration are not credited there. Seven ignored entries require
+Windows configuration are not credited there. Eight ignored entries require
 actual parent-test execution or the explicit recovery command; listing them does
 not prove execution. Partial stdout cannot replace a completed workspace gate.
 

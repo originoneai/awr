@@ -37,6 +37,24 @@ Complete single-line literal glosses may remain, for example `FALSE=disabled; TR
 
 公开配置的命令说明也可以保留，例如 `PROJECT_ROOT=/public/project EXPECTED_ITEMS=42 cargo test --offline`，以及叙述或注释中的 `EXPECTED_ITEMS=42`。识别范围限于简单的无引号变量前缀加可识别命令词；不执行命令，不按项目名或某个变量名豁免。独立赋值、只有若干赋值的环境转储、`export` 和明确的 environment 对象继续拒绝。所有位置的敏感键赋值和可识别凭据仍独立检查；把实际密钥放在命令前缀中不能使其通过。
 
+For `awr execution run`, set required variables in the process environment **before
+invoking AWR**. The supervisor and managed child inherit that environment. For
+example, in a POSIX shell:
+
+```sh
+PATH="/public/toolchain/bin:$PATH" awr execution run --session <session-id> \
+  --key public-build --purpose "Build public report" -- /public/toolchain/bin/build-report
+```
+
+The shell supplies this environment to AWR; the assignment is absent from the
+recorded command vector. Passing `env` followed by a standalone `PATH=...` argument
+after `--` remains rejected as `environment_dump`. Use the inherited process
+environment for this case; do not move environment assignments into recorded shell
+command strings as a workaround. Detection and execution-intent/event validation
+are unchanged. Environment contents are not captured in the immutable command
+intent or operation key, so changing the environment does not make the same key
+dispatch again; use a new operation key for a new run.
+
 `Completed native authorization: the user confirmed this operation.` 这类叙述也可保留：标签前有普通文字，后面是多词文字或带明确标点的中文句子。独立的 authorization 字段、HTTP Header、不透明单值，以及跟随 Bearer/Basic 的值继续拒绝。不确定内容保留拒绝，不提供全局关闭检查或任意字符串白名单。需要明确表达公开配置时可以使用普通结构字段，授权过程可以记在 summary 等叙述字段；这不是对任意未标记私有文字的自动分类承诺。
 
 产物在创建受管文件前，读取完整且最多 64 MiB 的快照，完成检查，再写入同一份字节并计算摘要。扫描不使用可能漏掉跨块内容的滑动窗口；为此使用有明确上限的内存缓冲。显式产物/证据正文读取仍受 16 MiB 限制，并在大小、摘要和秘密检查全部通过后返回。正文为有效 JSON 时也检查解码内容。元数据登记不构成对外部文件正文的验证。
@@ -45,7 +63,7 @@ Complete single-line literal glosses may remain, for example `FALSE=disabled; TR
 
 - FTS policy is 12. On first read it rebuilds old caches, redacting ASCII token-like glosses previously accepted by policy 11 and preserving short Han-letter boolean glosses, exact literal glosses, boolean/null notes, ordinary auth notes, public configuration, and structure definitions that earlier policies redacted by mistake. Failed source reindexes reread the original content; source-map and adapter-config changes also invalidate the cache. Summaries are shortened only after the full field passes; sensitive summaries become `[redacted]`. When identity, linked work, or source references contain sensitive values, the whole search document stays out of the index. Query parameters are checked as well.
 - L0、L1、硬规则/关联事实及 delta 检查实际选中的输出。选中的必需事实包含敏感值时返回 `ContextIncomplete`，不返回看似完整的包、哈希或渲染文本。原本不进入 Context 的正文仍然被排除；例如 delta 只使用 checkpoint 的基线和身份，不返回 digest。
-- CLI 的敏感参数在参数解析报错前拒绝；证据、完成输入、分支关闭输入及 Manifest 的结构错误不回显字段内容。CLI 和 MCP 共用安全错误报告；MCP 同时保护结构化结果、文本副本与读取输出。
+- CLI 的敏感参数在参数解析报错前拒绝，包括 `--` 之后的参数。拒绝仍以退出码 1 和 stderr JSON 返回原有 `RuleViolation` 与通用消息；`details` 保留共享分类器的 `policy_version`、`category`、`next_action`，并给出 `argument_index` 与 `argument_index_basis: zero_based_process_argv`。索引从 0 开始，0 表示可执行文件参数；不回显命中的参数、键、值或片段。环境转储分类的指引说明通过启动 AWR 前的进程环境传递变量。证据、完成输入、分支关闭输入及 Manifest 的结构错误不回显字段内容。CLI 和 MCP 共用安全错误报告；MCP 同时保护结构化结果、文本副本与读取输出。
 
 FTS 重建仅更新派生索引。原有权威数据、不可变事件、SQLite 空闲页和备份不因此被擦除；这不是磁盘擦除或凭据轮换功能。
 

@@ -115,6 +115,37 @@ fn decode(o: Output) -> Value {
     serde_json::from_slice(&o.stdout).unwrap()
 }
 
+fn contains_recorded_text(value: &Value, text: &str) -> bool {
+    match value {
+        Value::String(value) => value.contains(text),
+        Value::Array(values) => values
+            .iter()
+            .any(|value| contains_recorded_text(value, text)),
+        Value::Object(values) => values
+            .values()
+            .any(|value| contains_recorded_text(value, text)),
+        _ => false,
+    }
+}
+
+#[test]
+fn recorded_environment_check_detects_windows_paths_after_json_round_trip() {
+    let path = r"C:\synthetic\public-bin";
+    for intent in [
+        serde_json::json!({"command": ["public-build", path]}),
+        serde_json::json!({"command": ["public-build"], "environment": {"PATH": path}}),
+    ] {
+        let encoded = serde_json::to_string(&intent).unwrap();
+        let decoded: Value = serde_json::from_str(&encoded).unwrap();
+        assert!(
+            contains_recorded_text(&decoded, path),
+            "a recorded environment path must be detected after JSON decoding"
+        );
+    }
+    let public = serde_json::json!({"command": ["public-build", "--offline"]});
+    assert!(!contains_recorded_text(&public, path));
+}
+
 #[test]
 #[ignore = "owned child process fixture, launched explicitly by integration checks"]
 fn successful_child() {
@@ -130,6 +161,25 @@ fn successful_child() {
     fs::write(root.join("report.txt"), "Reviewed report artifact").unwrap();
     println!("report complete");
 }
+
+#[test]
+#[ignore = "owned child process fixture for inherited environment checks"]
+fn inherited_environment_child() {
+    let root = PathBuf::from(std::env::var_os("AWR_EXECUTION_TEST_ROOT").unwrap());
+    let path = std::env::var_os("PATH").unwrap();
+    assert_eq!(
+        std::env::split_paths(&path).next().unwrap(),
+        root.join("public-bin")
+    );
+    let mut count = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(root.join("environment-launches.txt"))
+        .unwrap();
+    writeln!(count, "one launch").unwrap();
+    println!("inherited environment verified");
+}
+
 #[test]
 #[ignore = "owned child process fixture, launched explicitly by integration checks"]
 fn failed_child() {
@@ -401,6 +451,103 @@ fn managed_command_outlives_calling_session_and_keeps_result_logs() {
         1
     );
 }
+
+#[test]
+fn managed_child_inherits_process_environment_without_recording_or_replaying_it() {
+    let p = Project::new();
+    let session = p.bind("inherited-environment");
+    let public_bin = p.0.join("public-bin");
+    fs::create_dir(&public_bin).unwrap();
+    let original_path = std::env::var_os("PATH").unwrap_or_default();
+    let inherited_path = std::env::join_paths(
+        std::iter::once(public_bin.clone()).chain(std::env::split_paths(&original_path)),
+    )
+    .unwrap();
+    let child = std::env::current_exe().unwrap();
+    let args = [
+        "execution",
+        "run",
+        "--session",
+        &session,
+        "--key",
+        "inherited-report",
+        "--purpose",
+        "Build the report",
+        "--",
+        child.to_str().unwrap(),
+        "--ignored",
+        "--exact",
+        "inherited_environment_child",
+        "--nocapture",
+    ];
+    let launch = |path: &std::ffi::OsStr| {
+        decode(
+            Command::new(env!("CARGO_BIN_EXE_awr"))
+                .args(["--project", p.0.to_str().unwrap(), "--json"])
+                .args(args)
+                .env("PATH", path)
+                .env("AWR_EXECUTION_TEST_ROOT", &p.0)
+                .output()
+                .unwrap(),
+        )
+    };
+    let launched = launch(&inherited_path);
+    assert_eq!(launched["created"], true);
+    let id = launched["execution"]["id"].as_str().unwrap();
+    let finished = p.wait(id, &["succeeded", "failed"]);
+    assert_eq!(finished["state"], "succeeded");
+    assert_eq!(finished["exit_code"], 0);
+    assert!(!contains_recorded_text(
+        &finished["intent"],
+        public_bin.to_str().unwrap()
+    ));
+    let inspection = p.ok(&["execution", "inspect", id]);
+    assert_eq!(inspection["observation"]["verified"], true);
+    assert_eq!(inspection["observation"]["state"], "succeeded");
+    let stdout = fs::read_to_string(p.0.join(finished["stdout"].as_str().unwrap())).unwrap();
+    assert!(stdout.contains("inherited environment verified"));
+
+    // An environment change is not part of the immutable intent and never replays the key.
+    let duplicate = launch(&original_path);
+    assert_eq!(duplicate["created"], false);
+    assert_eq!(duplicate["dispatch_requested"], false);
+    assert_eq!(duplicate["execution"]["id"], id);
+    assert_eq!(
+        fs::read_to_string(p.0.join("environment-launches.txt"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+
+    let rejected = p.run(&[
+        "execution",
+        "run",
+        "--session",
+        &session,
+        "--key",
+        "rejected-environment",
+        "--purpose",
+        "Build the report",
+        "--",
+        "env",
+        "PATH=/synthetic/bin",
+        child.to_str().unwrap(),
+    ]);
+    assert_eq!(rejected.status.code(), Some(1));
+    assert!(rejected.stdout.is_empty());
+    let report: Value = serde_json::from_slice(&rejected.stderr).unwrap();
+    assert_eq!(report["code"], "RuleViolation");
+    assert_eq!(report["details"]["category"], "environment_dump");
+    assert_eq!(
+        p.ok(&["execution", "list", "--work", "INTAKE-001"])["executions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
 #[test]
 fn concurrent_registration_dispatches_only_one_child_and_rejects_changed_intent() {
     let p = Arc::new(Project::new());

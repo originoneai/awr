@@ -333,17 +333,29 @@ fn run(cli: &Cli) -> cli_failure::CliResult<()> {
 
 fn main() -> std::process::ExitCode {
     let args = std::env::args_os().collect::<Vec<_>>();
-    if args
-        .iter()
-        .any(|arg| awr_core::contains_sensitive_text(&arg.to_string_lossy()))
-    {
-        let report =
-            Error::RuleViolation("sensitive command arguments are not accepted".into()).report();
-        eprintln!(
-            "{}",
-            serde_json::to_string(&report).expect("error report serializes")
-        );
-        return std::process::ExitCode::from(1);
+    for (index, arg) in args.iter().enumerate() {
+        if let Err(error) = awr_core::ensure_public_text(&arg.to_string_lossy()) {
+            let mut report =
+                Error::RuleViolation("sensitive command arguments are not accepted".into())
+                    .report();
+            let mut details = error
+                .report()
+                .details
+                .unwrap_or_else(|| serde_json::json!({}));
+            details["argument_index"] = serde_json::json!(index);
+            details["argument_index_basis"] = serde_json::json!("zero_based_process_argv");
+            if details["category"] == "environment_dump" {
+                details["next_action"] = serde_json::json!(
+                    "Set required variables in the process environment before invoking awr; its supervisor and managed child inherit that environment. Standalone environment assignments are not accepted as recorded command arguments. Keep environment dumps outside AWR-managed data."
+                );
+            }
+            report.details = Some(details);
+            eprintln!(
+                "{}",
+                serde_json::to_string(&report).expect("error report serializes")
+            );
+            return std::process::ExitCode::from(1);
+        }
     }
     let cli = match Cli::try_parse_from(&args) {
         Ok(cli) => cli,

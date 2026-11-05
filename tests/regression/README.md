@@ -25,7 +25,7 @@ and unchanged-input check. Never use a report produced on different inputs as a
 current pass. A new specialist contract version or ignored test requires updating
 the regression contract and its execution route.
 
-The seven ignored entries have explicit routes: six are child fixtures invoked
+The eight ignored entries have explicit routes: seven are child fixtures invoked
 by their owning tests; one is a crash-to-CLI recovery check whose runner supplies
 the real executable. `--ignored --list` audits their inventory
 without accidentally launching unconfigured private fixtures.

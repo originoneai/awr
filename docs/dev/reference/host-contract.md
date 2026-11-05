@@ -515,6 +515,9 @@ or access rights are inferred from another record.
    `execution register --session <id> --key <operation-key> --purpose <purpose>
    --reference <host-execution-reference>`. AWR never adopts the PID, launches or
    terminates that client. `execution run` is for commands owned by AWR's supervisor.
+   Set required environment variables before invoking AWR; its supervisor and managed
+   child inherit them. Standalone assignments in recorded command arguments remain
+   rejected, including after `--`; see [secret boundaries](secret-boundaries.md).
 4. Save useful progress with `client progress --client generic --external-session
    <native-id> --digest <observed-summary> --next-action <next> --open-loop <issue>`.
    Deliver a lifecycle callback using `client hook --client generic --work <key>`

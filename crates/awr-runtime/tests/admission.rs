@@ -252,6 +252,80 @@ fn executions_need_a_current_decision_to_register_and_again_to_start() {
 }
 
 #[test]
+fn execution_registration_checks_public_command_arguments_without_cli_preflight() {
+    let mut f = Fixture::new();
+    let worker = f.session("agent-w", Some("W"));
+    let reviewer = f.session("reviewer", None);
+    f.approve(reviewer, "approve-public-command");
+
+    let mut public = f.intent("public-command");
+    public.command = vec!["public-build".into(), "--config.ignore-scripts=true".into()];
+    let revision = f.revision();
+    let (registered, _) = f
+        .store
+        .register_execution(f.project, revision, worker, public.clone())
+        .unwrap();
+    assert_eq!(registered.state, ExecutionState::Registered);
+    assert_eq!(registered.intent.command, public.command);
+    assert_eq!(f.store.executions(f.project, None).unwrap().len(), 1);
+    assert_eq!(f.revision(), revision + 1);
+
+    for (key, command, category) in [
+        (
+            "standalone-environment",
+            vec!["env", "PATH=/synthetic/bin", "public-build"],
+            "environment_dump",
+        ),
+        (
+            "synthetic-credential",
+            vec!["public-build", "Basic YTpi"],
+            "credential",
+        ),
+        (
+            "synthetic-labelled-value",
+            vec!["public-build", "SYNTHETIC_PASSWORD=fixture-labelled-value"],
+            "labelled_value",
+        ),
+        (
+            "environment-dump",
+            vec![
+                "public-build",
+                "SYNTHETIC_HOME=/synthetic/home\nSYNTHETIC_BIN=/synthetic/bin",
+            ],
+            "environment_dump",
+        ),
+    ] {
+        let mut intent = f.intent(key);
+        intent.command = command.into_iter().map(String::from).collect();
+        let revision = f.revision();
+        let count = f.store.executions(f.project, None).unwrap().len();
+        let error = f
+            .store
+            .register_execution(f.project, revision, worker, intent)
+            .unwrap_err();
+        assert!(
+            matches!(&error, Error::RuleViolation(_)),
+            "{key}: {error:?}"
+        );
+        let report = error.report();
+        assert_eq!(report.code, "RuleViolation", "{key}");
+        let details = report.details.unwrap();
+        assert_eq!(details["category"], category, "{key}");
+        assert_eq!(details["policy_version"], SECRET_POLICY_VERSION, "{key}");
+        assert_eq!(
+            f.store.executions(f.project, None).unwrap().len(),
+            count,
+            "{key}: a refusal must not register an execution"
+        );
+        assert_eq!(
+            f.revision(),
+            revision,
+            "{key}: a refusal must not advance the project revision"
+        );
+    }
+}
+
+#[test]
 fn a_decision_computed_against_an_older_revision_is_rejected_as_a_stale_write() {
     let mut f = Fixture::new();
     let reviewer = f.session("reviewer", None);

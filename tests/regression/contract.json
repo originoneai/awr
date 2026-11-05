@@ -45,6 +45,11 @@
       "role": "execution_registry parents explicitly launch the native test binary to observe a successful managed command, logs and persistent result"
     },
     {
+      "name": "inherited_environment_child",
+      "covered_by": "workspace",
+      "role": "managed_child_inherits_process_environment_without_recording_or_replaying_it launches this native fixture through AWR to verify inherited PATH without recording environment values or replaying an existing operation key"
+    },
+    {
       "name": "failed_child",
       "covered_by": "workspace",
       "role": "execution_registry parents explicitly launch the native test binary to observe a managed exit code 7 and stderr"
@@ -181,7 +186,7 @@
       "kind": "contract",
       "requires_build": true,
       "contract": "tests/concurrency/contract.json",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "target_conditions": 20,
       "command": [
         "{python}",
