@@ -740,7 +740,7 @@ pub(crate) fn guidance(data: &Value, fallback: Value) -> Value {
         )
     {
         return json!({"code":"work_definition_inactive","when":"the current task definition is inactive",
-            "because":"the published definition is not enabled","action":{"op":"work.next","note":"Select enabled work; archive or draft state does not grant execution authority."},
+            "because":"the published definition is not enabled","action":{"op":"work.next","note":"Select an enabled candidate; draft, archived and cancelled definitions remain readable but do not grant execution authority."},
             "recheck_on":"source definition or recovery changes"});
     }
     if !matches!(

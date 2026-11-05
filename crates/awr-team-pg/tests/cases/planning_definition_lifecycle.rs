@@ -705,14 +705,30 @@ async fn definition_only_pending_intent_fences_execution_and_recovers_each_commi
             .query(TENANT, PROJECT, A, query("work.next"))
             .await
             .unwrap();
-        let item = navigation["data"]["items"]
+        assert!(
+            navigation["data"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item["work_id"] != "a")
+        );
+        let resume = navigation["data"]["resume"]
             .as_array()
             .unwrap()
             .iter()
             .find(|item| item["work_id"] == "a")
             .unwrap();
-        assert_eq!(item["definition_state"], "cancelled");
-        assert_ne!(item["navigation"], "prepare");
+        assert_eq!(resume["next_query"]["op"], "work.observe");
+        let observed = read
+            .query(
+                TENANT,
+                PROJECT,
+                A,
+                serde_json::from_value(resume["next_query"].clone()).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(observed["data"]["definition_state"], "cancelled");
         let state: String = admin
             .query_one(
                 "SELECT state FROM awr_team.executions WHERE id=$1",
@@ -802,6 +818,19 @@ async fn definition_states_and_titles_rebuild_from_source_after_projection_loss(
                     .as_array()
                     .unwrap()
                     .contains(&serde_json::json!("work_definition_inactive"))
+            );
+            let guidance_op = result["data"]["guidance"]["action"]["op"].as_str().unwrap();
+            assert_eq!(guidance_op, "work.next");
+            let next = read
+                .query(TENANT, PROJECT, A, query(guidance_op))
+                .await
+                .unwrap();
+            assert!(
+                next["data"]["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|item| item["definition_state"] == "enabled" && item["work_id"] != key)
             );
         }
     }

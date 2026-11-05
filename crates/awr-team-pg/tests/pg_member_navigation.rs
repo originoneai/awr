@@ -8,6 +8,152 @@ use fixture::*;
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn inactive_definitions_do_not_cycle_from_prepare_back_to_next() {
+    let (_g, owner, _db, store) = setup().await;
+    enable_writes(&owner).await;
+    for with_runtime in [false, true] {
+        if with_runtime {
+            owner.batch_execute("INSERT INTO awr_team.work_runtime(tenant_id,project_id,scope_id,work_id,state) SELECT tenant_id,project_id,scope_id,work_id,'pending' FROM awr_team.work_contracts WHERE work_id='a'").await.unwrap();
+        }
+        for state in ["archived", "draft", "cancelled"] {
+            owner
+                .execute(
+                    "UPDATE awr_team.work_contracts SET definition_state=$1 WHERE work_id='a'",
+                    &[&state],
+                )
+                .await
+                .unwrap();
+            let prepared = prepare(&store, A, "a").await;
+            assert_eq!(prepared["data"]["definition_state"], state);
+            assert_eq!(prepared["data"]["runtime"].is_null(), !with_runtime);
+            assert_eq!(prepared["data"]["context_complete"], false);
+            assert!(
+                prepared["data"]["completeness_reasons"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("work_definition_inactive"))
+            );
+            assert_eq!(
+                prepared["data"]["guidance"]["code"],
+                "work_definition_inactive"
+            );
+            let action = &prepared["data"]["guidance"]["action"];
+            assert_eq!(action["op"], "work.next");
+            let mut follow = query(action["op"].as_str().unwrap());
+            follow.limit = Some(1);
+            // Follow the actual inactive guidance with a one-item page. A
+            // filtered first row must not hide later enabled work or repeat a.
+            let page = store
+                .query(TENANT, PROJECT, A, follow.clone())
+                .await
+                .unwrap();
+            assert_eq!(
+                page["data"]["items"][0]["work_id"], "c",
+                "{state}, runtime={with_runtime}"
+            );
+            assert_eq!(page["data"]["items"][0]["definition_state"], "enabled");
+            assert_eq!(
+                page["data"]["items"][0]["next_query"],
+                json!({
+                    "protocol_version":1,"op":"work.prepare","work_id":"c",
+                    "workstream_id":page["data"]["items"][0]["workstream_id"]
+                })
+            );
+            assert!(page["data"]["next_cursor"].is_null());
+            let next_read = store
+                .query(
+                    TENANT,
+                    PROJECT,
+                    A,
+                    serde_json::from_value(page["data"]["items"][0]["next_query"].clone()).unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(next_read["data"]["work_id"], "c");
+            assert!(
+                !next_read["data"]["completeness_reasons"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("work_definition_inactive"))
+            );
+            let mut observe = query("work.observe");
+            observe.work_id = Some("a".into());
+            let observed = store.query(TENANT, PROJECT, A, observe).await.unwrap();
+            assert_eq!(observed["data"]["definition_state"], state);
+            assert_eq!(observed["data"]["execution_authorized"], false);
+            // Existing own sessions remain discoverable for observation and
+            // recovery even though their inactive definitions are not choices.
+            let resume = &page["data"]["resume"][0];
+            assert_eq!(resume["work_id"], "a");
+            assert_eq!(resume["next_query"]["op"], "work.observe");
+            let resumed = store
+                .query(
+                    TENANT,
+                    PROJECT,
+                    A,
+                    serde_json::from_value(resume["next_query"].clone()).unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resumed["data"]["definition_state"], state);
+            // No candidate remains when all visible definitions are inactive.
+            owner
+                .execute(
+                    "UPDATE awr_team.work_contracts SET definition_state=$1 WHERE work_id='c'",
+                    &[&state],
+                )
+                .await
+                .unwrap();
+            let empty = store.query(TENANT, PROJECT, A, follow).await.unwrap();
+            assert_eq!(empty["data"]["items"], json!([]));
+            assert!(empty["data"]["next_cursor"].is_null());
+            owner.batch_execute("UPDATE awr_team.work_contracts SET definition_state='enabled' WHERE work_id='c'").await.unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn enabled_read_only_candidates_point_to_observation() {
+    let (_g, owner, _db, store) = setup().await;
+    let before: i64 = owner
+        .query_one("SELECT count(*) FROM awr_team.work_runtime", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let next = store
+        .query(TENANT, PROJECT, A, query("work.next"))
+        .await
+        .unwrap();
+    let item = &next["data"]["items"][0];
+    assert_eq!(item["work_id"], "a");
+    assert_eq!(item["navigation"], "observe");
+    assert_eq!(
+        item["next_query"],
+        json!({"protocol_version":1,"op":"work.observe",
+        "work_id":"a","workstream_id":item["workstream_id"]})
+    );
+    let observed = store
+        .query(
+            TENANT,
+            PROJECT,
+            A,
+            serde_json::from_value(item["next_query"].clone()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(observed["data"]["work_id"], "a");
+    assert_eq!(observed["data"]["execution_authorized"], false);
+    assert_eq!(
+        owner
+            .query_one("SELECT count(*) FROM awr_team.work_runtime", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        before
+    );
+}
+
+#[tokio::test]
 async fn navigation_and_audit_obey_identity_visibility_and_stable_cursors() {
     let (_g, owner, _db, store) = setup().await;
     enable_writes(&owner).await;
@@ -16,6 +162,21 @@ async fn navigation_and_audit_obey_identity_visibility_and_stable_cursors() {
         .await
         .unwrap();
     assert_eq!(initial["data"]["items"][0]["navigation"], "prepare");
+    assert_eq!(
+        initial["data"]["items"][0]["next_query"]["op"],
+        "work.prepare"
+    );
+    let prepared = store
+        .query(
+            TENANT,
+            PROJECT,
+            A,
+            serde_json::from_value(initial["data"]["items"][0]["next_query"].clone()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(prepared["data"]["definition_state"], "enabled");
+    assert_eq!(prepared["data"]["context_complete"], true);
     assert_eq!(
         initial["data"]["items"][1]["navigation"],
         "waiting_dependency"
