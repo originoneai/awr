@@ -44,6 +44,31 @@ fn edge(f: &Fixture, from: &str, to: &str, required: bool) -> Edge {
     }
 }
 
+fn assert_batch_matches_individual_reads(f: &Fixture, branch: Option<Id>, at: i64) {
+    let keys: Vec<_> = f
+        .store
+        .work_items(f.project.id)
+        .unwrap()
+        .into_iter()
+        .map(|work| work.item.meta.external_key)
+        .collect();
+    let batch = f
+        .store
+        .map_work_readiness(f.project.id, &keys, branch, at, Ok)
+        .unwrap();
+    for (key, result) in keys.iter().zip(batch) {
+        let individual = f
+            .store
+            .work_readiness(f.project.id, key, branch, at)
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(result).unwrap(),
+            serde_json::to_value(individual).unwrap(),
+            "Batch readiness differs for {key}"
+        );
+    }
+}
+
 #[test]
 fn recursive_graph_handles_diamonds_missing_cycles_unknown_and_duplicate_sources() {
     let mut f = Fixture::new();
@@ -168,6 +193,7 @@ fn recursive_graph_handles_diamonds_missing_cycles_unknown_and_duplicate_sources
         f.store.ready_work(f.project.id, Some(Id::new()), 100),
         Err(Error::NotFound(_))
     ));
+    assert_batch_matches_individual_reads(&f, None, 100);
 }
 
 #[test]
@@ -218,4 +244,7 @@ fn active_and_expired_claims_block_the_same_work_across_branches() {
     let expired = f.store.ready_work(f.project.id, None, 200).unwrap();
     assert_eq!(expired.ready.len(), 1);
     assert!(f.store.doctor().unwrap().ok);
+    assert_batch_matches_individual_reads(&f, None, 100);
+    assert_batch_matches_individual_reads(&f, Some(bid), 100);
+    assert_batch_matches_individual_reads(&f, None, 200);
 }

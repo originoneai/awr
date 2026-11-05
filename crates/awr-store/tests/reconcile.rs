@@ -80,6 +80,50 @@ fn checkpoint_draft() -> CheckpointDraft {
 }
 
 #[test]
+fn checkpoint_inspection_retains_pending_attempts_with_duplicate_and_legacy_receipts() {
+    let fixture = Fixture::new();
+    let attempts = [Id::new(), Id::new(), Id::new()];
+    let connection = Connection::open(fixture.root.join("state.db")).unwrap();
+    let events = [
+        (attempts[0], "checkpoint.started", serde_json::json!({})),
+        (attempts[1], "checkpoint.started", serde_json::json!({})),
+        (attempts[2], "checkpoint.started", serde_json::json!({})),
+        (
+            Id::new(),
+            "checkpoint.created",
+            serde_json::json!({"attempt_id":attempts[0]}),
+        ),
+        (
+            Id::new(),
+            "checkpoint.created",
+            serde_json::json!({"attempt_id":attempts[0]}),
+        ),
+        (
+            Id::new(),
+            "checkpoint.abandoned",
+            serde_json::json!({"attempt_id":attempts[1]}),
+        ),
+        (Id::new(), "checkpoint.created", serde_json::json!({})),
+    ];
+    for (index, (id, kind, payload)) in events.into_iter().enumerate() {
+        connection.execute("INSERT INTO events(id,project_id,event_type,importance,summary,payload_json,project_revision,created_at)
+            VALUES(?1,?2,?3,'normal','Synthetic checkpoint receipt',?4,?5,?5)",
+            params![id.to_string(),fixture.project.id.to_string(),kind,payload.to_string(),index as i64+100]).unwrap();
+    }
+    let report = fixture
+        .store
+        .inspect_runtime(fixture.project.id, 1000)
+        .unwrap();
+    let pending: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|finding| finding.code == "incomplete_checkpoint")
+        .map(|finding| finding.object_id.clone())
+        .collect();
+    assert_eq!(pending, [attempts[2].to_string()]);
+}
+
+#[test]
 fn inspection_is_read_only_and_reports_runtime_metadata_without_opening_files() {
     let mut fixture = Fixture::new();
     let work_id = add_work(&mut fixture, "W-1");
