@@ -104,7 +104,7 @@ function createGithubObserver(fetchImpl = fetch, now = Date.now) {
   async function read(path) {
     if (now() < blockedUntil) throw new Error('GitHub observation rate limited');
     const response = await fetchImpl('https://api.github.com' + path, {
-      headers: { accept: 'application/vnd.github+json', 'user-agent': 'AWR-Inspector' },
+      headers: { accept: 'application/vnd.github+json', 'user-agent': 'AWR-Observer' },
       redirect: 'error', signal: AbortSignal.timeout(5000),
     });
     const header = name => response.headers?.get(name);

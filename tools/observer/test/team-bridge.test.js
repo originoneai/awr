@@ -24,8 +24,8 @@ function coordinationItem(op = 'review.inspect') {
       action: { op, query }, recheck_on: 'Requirements, review or permissions change' } };
 }
 
-function startBridge() {
-  const bridge = createTeamBridge({ teamFixtureDir: FIXTURE_DIR, port: 0 });
+function startBridge(options = {}) {
+  const bridge = createTeamBridge({ teamFixtureDir: FIXTURE_DIR, port: 0, ...options });
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     const key = `${req.method} ${url.pathname}`;
@@ -951,4 +951,16 @@ test('coordination detail rejects a different review round or integration reques
       assert.equal(accepted.json.freshness.authoritative.status, 'measured');
     }
   } finally { await bridge.close(); await upstream.close(); }
+});
+
+
+test('the relocated bridge finds its default demonstration fixtures', async () => {
+  const bridge = await startBridge({ teamFixtureDir: undefined, demo: true });
+  try {
+    const overview = await req(bridge.base, 'GET', '/api/team/overview?view=team&project=demo');
+    assert.equal(overview.json.ok, true);
+    assert.ok(overview.json.works.some((work) => work.key === 'TW-202'));
+  } finally {
+    await bridge.close();
+  }
 });

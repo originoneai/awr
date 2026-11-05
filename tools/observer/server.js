@@ -9,7 +9,7 @@
  *
  * Loopback binding alone is insufficient: any browser page can request
  * 127.0.0.1. The /api/* routes enforce the same request-origin boundary as
- * the Inspector (Host allowlist, Origin/Sec-Fetch-Site checks, a custom
+ * the workspace (Host allowlist, Origin/Sec-Fetch-Site checks, a custom
  * header on mutations).
  *
  * Usage:

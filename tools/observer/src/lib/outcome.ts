@@ -6,7 +6,7 @@ import type { TeamReadResponse } from './types';
 export type OutcomeData = Record<string, unknown>;
 export type OutcomeSelector = Record<string, unknown>;
 
-/** Bounded, exact-object read through the existing Inspector /api/team/read route. */
+/** Bounded, exact-object read through the Observer /api/team/read route. */
 export function outcomeQueryOptions(
   project: string,
   op: string,
