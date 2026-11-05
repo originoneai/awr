@@ -28,7 +28,7 @@
 
   const VIEW_IDS = ['overview', 'mainline', 'explore'];
   const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 2, 3];
-  const STATUS_ORDER = ['done', 'developing', 'stalled', 'blocked', 'ready', 'draft', 'waiting', 'cancelled'];
+  const STATUS_ORDER = ['done', 'developing', 'stalled', 'blocked', 'ready', 'draft', 'waiting', 'cancelled', 'unknown'];
   const FOLD_ATTRS = ['data-lane', 'data-panel', 'data-xlane', 'data-done-lane', 'data-group', 'data-panel-done'];
   const FOLDABLE = FOLD_ATTRS.map((a) => `[${a}]`).join(',');
   const ACTIVATABLE = '.pm-card,.pm-fold,.pm-btn,.pm-agent,tr[data-key]';

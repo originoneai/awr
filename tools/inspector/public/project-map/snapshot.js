@@ -13,7 +13,7 @@
 
   const SCHEMA = 'awr-project-snapshot';
   const VERSION = 1;
-  const STATUSES = Object.freeze(['draft', 'planned', 'ready', 'claimed', 'in_progress', 'blocked', 'completed', 'cancelled']);
+  const STATUSES = Object.freeze(['draft', 'planned', 'ready', 'claimed', 'in_progress', 'blocked', 'completed', 'cancelled', 'unknown']);
   /** Fields that describe the extraction, not the project state; they are left out of the content fingerprint. */
   const VOLATILE = Object.freeze(['fingerprint', 'generated_at']);
 

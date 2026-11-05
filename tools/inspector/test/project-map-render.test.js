@@ -231,3 +231,32 @@ test('the renderer sources read nothing from the project: no files, no database,
     }
   }
 });
+
+
+test('unknown work stays visible in all views without becoming ready or completed', () => {
+  const raw = h.readJson('single.json');
+  raw.nodes[0].status = 'unknown';
+  raw.nodes[0].milestone = 'M1';
+  const dependent = { ...raw.nodes[0], key: 'DEMO-A-002', id: 'id-DEMO-A-002', status: 'planned' };
+  raw.nodes.push(dependent);
+  raw.edges.push({ dependent: dependent.key, prerequisite: raw.nodes[0].key, required: true });
+  raw.basis.work_graph.node_count = 2;
+  raw.basis.work_graph.edge_count = 1;
+  const snapshot = snapshotLib.seal(raw, raw.generated_at);
+  for (const lang of ['en', 'zh-CN']) {
+    const t = h.tFor(lang);
+    const rendered = page.renderProjectMap(snapshot, h.readJson('config.json'), { t, lang });
+    assert.equal(rendered.model.nodes.get('DEMO-A-001').vis, 'unknown');
+    assert.equal(rendered.model.nodes.get('DEMO-A-001').status, 'unknown');
+    assert.equal(rendered.model.nodes.get('DEMO-A-002').vis, 'waiting');
+    assert.notEqual(t('map.status.unknown'), 'map.status.unknown');
+    for (const view of rendered.views) {
+      assert.ok(view.svg.includes('data-key="DEMO-A-001"'), `${lang} ${view.id}: unknown card`);
+      assert.ok(view.svg.includes(t('map.status.unknown')), `${lang} ${view.id}: unknown legend`);
+      h.assertWellFormed(view.svg, `${lang} ${view.id}`);
+    }
+    assert.ok(rendered.document.includes('<td class="k">DEMO-A-001</td>'));
+    assert.ok(rendered.document.includes(t('map.group.unknown')));
+  }
+  assert.equal(raw.nodes[0].status, 'unknown');
+});
