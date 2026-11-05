@@ -39,6 +39,10 @@ body { margin: 0; padding: 24px; background: var(--surface-2); color: var(--ink)
 .app-brand { margin: 0 0 4px; color: var(--accent); font-weight: 600; }
 h1 { margin: 0; font-size: 24px; line-height: 1.25; }
 .app-description { margin: 8px 0 0; color: var(--ink-2); }
+.project-home { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 16px; color: var(--accent); text-decoration: none; font-size: 13px; }
+.project-home::before { content: '←'; }
+.project-home:hover { text-decoration: underline; }
+.project-home:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .language-picker { display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
 select, .btn { min-height: 36px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; font: inherit; }
 select { color: var(--ink); background: var(--surface); }

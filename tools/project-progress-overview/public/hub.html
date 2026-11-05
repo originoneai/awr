@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>AWR Project Hub</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%228%22 fill=%22%231760da%22/%3E%3Ctext x=%2216%22 y=%2223%22 text-anchor=%22middle%22 font-family=%22sans-serif%22 font-size=%2222%22 fill=%22white%22%3EA%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="hub.css">
+</head>
+<body class="hub-page">
+<header class="hub-topbar">
+  <a class="hub-brand" href="/" aria-label="AWR"><span class="hub-logo" aria-hidden="true">A</span>AWR</a>
+  <label class="language-picker">
+    <span data-i18n="language.label">Language</span>
+    <select id="languageSelect" aria-label="Language" data-i18n-aria-label="language.label">
+      <option value="en" data-i18n="language.english">English</option>
+      <option value="zh-CN" data-i18n="language.chinese">Chinese</option>
+    </select>
+  </label>
+</header>
+<main class="hub-main">
+  <section class="hub-heading">
+    <p class="hub-eyebrow" data-i18n="hub.local_label">ON THIS COMPUTER</p>
+    <h1 data-i18n="hub.title">Project Hub</h1>
+    <p class="hub-description" data-i18n="hub.subtitle"></p>
+  </section>
+  <section class="hub-controls" data-i18n-aria-label="hub.search_label" aria-label="Find a project">
+    <label class="hub-search">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4 4" stroke-linecap="round"/></svg>
+      <input id="hubSearch" type="search" autocomplete="off" data-i18n-placeholder="hub.search_placeholder" data-i18n-aria-label="hub.search_label" aria-label="Find a project">
+    </label>
+    <button class="btn ghost" id="hubRefresh" data-i18n="hub.refresh">Refresh projects</button>
+  </section>
+  <div class="hub-list-heading"><span id="hubCount"></span><span class="hub-sort" data-i18n="hub.sort">Most recently used</span></div>
+  <p id="hubStatus" class="hub-status" role="status" aria-live="polite"></p>
+  <section id="hubProjects" class="hub-projects" data-i18n-aria-label="hub.projects_label" aria-label="Registered projects"></section>
+  <section id="hubMessage" class="hub-message" hidden>
+    <div class="hub-message-icon" aria-hidden="true">A</div>
+    <h2 id="hubMessageTitle"></h2><p id="hubMessageText"></p>
+  </section>
+  <footer class="hub-footer"><span class="hub-local-dot" aria-hidden="true"></span><span data-i18n="hub.registry_hint"></span></footer>
+</main>
+<script src="locales/en.js"></script>
+<script src="locales/zh-CN.js"></script>
+<script src="i18n.js"></script>
+<script src="hub.js"></script>
+</body>
+</html>
