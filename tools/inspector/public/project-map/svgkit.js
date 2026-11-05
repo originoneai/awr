@@ -19,6 +19,7 @@
 
   /** Visual classes with their colors; labels are added per language by `createKit`. */
   const PALETTE = {
+    unknown: { dot: '#8d96a6', fill: '#ffffff', ring: '#8d96a6', border: '#8d96a6', fg: '#556075', bg: '#f4f5f8', dash: '3 3', op: 1, cardbg: '#ffffff' },
     done: { dot: '#1fae74', fill: '#1fae74', ring: null, border: 'rgba(31,174,116,.38)', fg: '#12855c', bg: 'rgba(31,174,116,.09)', dash: null, op: 1, cardbg: '#ffffff' },
     developing: { dot: 'url(#gDev)', fill: 'url(#gDev)', ring: null, border: 'rgba(10,92,255,.5)', fg: '#0a5cff', bg: 'rgba(10,92,255,.08)', dash: null, op: 1, cardbg: '#ffffff', glow: true },
     stalled: { dot: '#f59e0b', fill: '#ffffff', ring: '#f59e0b', border: 'rgba(245,158,11,.65)', fg: '#b4740a', bg: 'rgba(245,158,11,.11)', dash: '5 3', op: 1, cardbg: '#fffdf7' },
@@ -29,7 +30,7 @@
     waiting: { dot: '#cfd5df', fill: '#ffffff', ring: '#c9d0dc', border: 'rgba(0,0,0,.16)', fg: '#86868b', bg: 'rgba(0,0,0,.035)', dash: '4 3', op: 0.74, cardbg: '#ffffff' },
   };
   /** Stacked-bar segment colors, in drawing order. */
-  const BAR = [['done', '#1fae74'], ['developing', 'url(#gDev)'], ['stalled', '#f59e0b'], ['blocked', '#e14b54'], ['ready', '#c2c9d6'], ['waiting', '#e6e9f0'], ['draft', '#eff1f5'], ['cancelled', '#8d96a6']];
+  const BAR = [['done', '#1fae74'], ['developing', 'url(#gDev)'], ['stalled', '#f59e0b'], ['blocked', '#e14b54'], ['ready', '#c2c9d6'], ['waiting', '#e6e9f0'], ['draft', '#eff1f5'], ['cancelled', '#8d96a6'], ['unknown', '#8d96a6']];
 
   /** Edge styles: stroke, width, extra attributes, arrow marker. */
   const EDGE = {

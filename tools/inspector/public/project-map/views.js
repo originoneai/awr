@@ -18,10 +18,10 @@
   const GAP = 28;
   const LANE_Y = 318;
   const TOP = 414;
-  const GROUP_ORDER = ['developing', 'stalled', 'blocked', 'ready', 'draft', 'waiting'];
+  const GROUP_ORDER = ['developing', 'stalled', 'blocked', 'ready', 'draft', 'waiting', 'unknown'];
   const RANK = { blocked: 3, stalled: 2, developing: 1 };
   const BLOCK = 'BLOCK';
-  const STATE_MARK = { done: '✓', developing: '●', stalled: '◐', blocked: '✕', ready: '○', waiting: '○', draft: '○', cancelled: '✕' };
+  const STATE_MARK = { done: '✓', developing: '●', stalled: '◐', blocked: '✕', ready: '○', waiting: '○', draft: '○', cancelled: '✕', unknown: '?' };
   const RED = '#c93b44';
   const RED_CHIP = [RED, 'rgba(225,75,84,.09)', 'rgba(225,75,84,.4)'];
   const AMBER_CHIP = ['#b4740a', 'rgba(245,158,11,.11)', 'rgba(245,158,11,.4)'];
@@ -317,7 +317,7 @@
         body.add(markup);
         hx += w + 8;
       }
-      const visItems = ['done', 'developing', 'stalled', 'blocked', 'ready', 'waiting'].concat(tot.draft ? ['draft'] : []);
+      const visItems = ['done', 'developing', 'stalled', 'blocked', 'ready', 'waiting'].concat(tot.draft ? ['draft'] : []).concat(tot.unknown ? ['unknown'] : []);
       const lgBottom = kit.legend(body, X0, barBottom + 40, inner, visItems, [['dep', t('map.edge.dep')]]);
       const gaps = meta.unavailable.map((u) => u.field).join(', ');
       body.add(text(X0 + 6, lgBottom + 4, t('map.overview.note_stalled', { days: stale }), 9.5, FAINT, 500));
@@ -565,7 +565,7 @@
         y += P.ph + 28;
       }
       const present = new Set(built.flatMap(({ G }) => [...G.shown].map((k) => nodes.get(k).vis)));
-      const visItems = ['done', 'developing', 'stalled', 'blocked', 'ready', 'draft', 'waiting'].filter((v) => present.has(v));
+      const visItems = ['done', 'developing', 'stalled', 'blocked', 'ready', 'draft', 'waiting', 'unknown'].filter((v) => present.has(v));
       const ly = y - 6;
       const critEnds = built.filter(({ P }) => P.critPath.length).map(({ end }) => nodes.get(end).short);
       const edgeKinds = [['dep', t('map.edge.dep_up')]];
@@ -698,7 +698,7 @@
       }
       const ly = oy + ph + 22;
       const present = new Set(shown.map((k) => nodes.get(k).vis));
-      const visItems = (showDone ? ['done'] : []).concat(['blocked', 'stalled', 'developing', 'ready', 'draft', 'waiting', 'cancelled']).filter((v) => present.has(v));
+      const visItems = (showDone ? ['done'] : []).concat(['blocked', 'stalled', 'developing', 'ready', 'draft', 'waiting', 'cancelled', 'unknown']).filter((v) => present.has(v));
       const lg = kit.legend(sv, 76, ly, W - 152, visItems, [['dep', t('map.edge.same_lane')], ['xlane', t('map.edge.cross_lane')], ['cross', t('map.edge.to_cancelled')]], true);
       const cx0 = 76 + 6 + 40 + visItems.reduce((s, v) => s + 16 + tw(ST[v].label, 10) + 22, 0)
         + [t('map.edge.same_lane'), t('map.edge.cross_lane'), t('map.edge.to_cancelled')].reduce((s, label) => s + 38 + tw(label, 10) + 22, 0);

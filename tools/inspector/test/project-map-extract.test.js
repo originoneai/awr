@@ -219,3 +219,14 @@ test('the snapshot is deterministic and sorted whatever order the answers come i
   assert.equal(a.fingerprint, b.fingerprint);
   assert.equal(JSON.stringify(a), JSON.stringify(b));
 });
+
+
+test('the official unknown work status survives extraction without changing readiness', async () => {
+  const original = source();
+  original.nodes[0].status = 'unknown';
+  original.nodes[0].ready = false;
+  const got = await extract(createFakeCli(original));
+  assert.equal(got.nodes[0].status, 'unknown');
+  assert.equal(got.nodes[0].ready, false);
+  assert.equal(snapshotLib.validate(got), got);
+});

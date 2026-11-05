@@ -835,3 +835,26 @@ test('Escape is ignored while the map is not on screen', () => {
   dom.press(ctx.doc.body, 'Escape');
   assert.equal(ctx.app.state.drawer, 'DEMO-A-004');
 });
+
+
+test('unknown work has a localized status filter and remains selectable after refresh', () => {
+  const next = JSON.parse(JSON.stringify(source));
+  next.nodes[0].status = 'unknown';
+  next.nodes[0].ready = false;
+  const snapshot = snapshotLib.seal(next, next.generated_at);
+  for (const lang of ['en', 'zh-CN']) {
+    const ctx = boot({ snapshot, lang });
+    const chip = ctx.container.querySelector('[data-pm-status="unknown"]');
+    assert.ok(chip, `${lang}: unknown filter`);
+    assert.ok(chip.textContent.includes(ctx.t('map.status.unknown')));
+    click(chip);
+    const visibleRows = ctx.container.querySelectorAll('tr[data-key]').filter((r) => !has(r, 'pm-dim'));
+    assert.deepEqual(visibleRows.map((r) => r.getAttribute('data-key')), [next.nodes[0].key]);
+    click(ctx.card(next.nodes[0].key));
+    assert.equal(ctx.app.state.selected, next.nodes[0].key);
+    const refreshed = boot({ snapshot, lang, restore: ctx.app.state });
+    assert.ok(refreshed.app.state.filters.has('unknown'));
+    ctx.app.destroy();
+    refreshed.app.destroy();
+  }
+});
