@@ -33,6 +33,7 @@
     "mutation_apply::recovery_tests::fixture_worker",
     "mutation_apply::recovery_tests::cli_recovery_after_process_death_binds_original_attempt_and_resolves_once",
     "successful_child",
+    "inherited_environment_child",
     "failed_child",
     "slow_child"
   ],
@@ -42,6 +43,7 @@
     "mutation_apply::recovery_tests::fixture_worker": "workspace and crash_recovery parents launch isolated mutation writers",
     "mutation_apply::recovery_tests::cli_recovery_after_process_death_binds_original_attempt_and_resolves_once": "crash_recovery explicitly executes this test with the native AWR_RECOVERY_CLI",
     "successful_child": "execution_registry parents explicitly launch the native test binary to observe a successful managed command, logs and persistent result",
+    "inherited_environment_child": "workspace runs managed_child_inherits_process_environment_without_recording_or_replaying_it, which launches this native fixture through AWR to verify inherited PATH without recording environment values or replaying an existing operation key",
     "failed_child": "execution_registry parents explicitly launch the native test binary to observe a managed exit code 7 and stderr",
     "slow_child": "execution_registry parents explicitly launch the native test binary for live recovery, supervisor interruption and final receipt recovery"
   },

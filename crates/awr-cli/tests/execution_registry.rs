@@ -115,6 +115,37 @@ fn decode(o: Output) -> Value {
     serde_json::from_slice(&o.stdout).unwrap()
 }
 
+fn contains_recorded_text(value: &Value, text: &str) -> bool {
+    match value {
+        Value::String(value) => value.contains(text),
+        Value::Array(values) => values
+            .iter()
+            .any(|value| contains_recorded_text(value, text)),
+        Value::Object(values) => values
+            .values()
+            .any(|value| contains_recorded_text(value, text)),
+        _ => false,
+    }
+}
+
+#[test]
+fn recorded_environment_check_detects_windows_paths_after_json_round_trip() {
+    let path = r"C:\synthetic\public-bin";
+    for intent in [
+        serde_json::json!({"command": ["public-build", path]}),
+        serde_json::json!({"command": ["public-build"], "environment": {"PATH": path}}),
+    ] {
+        let encoded = serde_json::to_string(&intent).unwrap();
+        let decoded: Value = serde_json::from_str(&encoded).unwrap();
+        assert!(
+            contains_recorded_text(&decoded, path),
+            "a recorded environment path must be detected after JSON decoding"
+        );
+    }
+    let public = serde_json::json!({"command": ["public-build", "--offline"]});
+    assert!(!contains_recorded_text(&public, path));
+}
+
 #[test]
 #[ignore = "owned child process fixture, launched explicitly by integration checks"]
 fn successful_child() {
@@ -466,11 +497,10 @@ fn managed_child_inherits_process_environment_without_recording_or_replaying_it(
     let finished = p.wait(id, &["succeeded", "failed"]);
     assert_eq!(finished["state"], "succeeded");
     assert_eq!(finished["exit_code"], 0);
-    assert!(
-        !finished["intent"]
-            .to_string()
-            .contains(public_bin.to_str().unwrap())
-    );
+    assert!(!contains_recorded_text(
+        &finished["intent"],
+        public_bin.to_str().unwrap()
+    ));
     let inspection = p.ok(&["execution", "inspect", id]);
     assert_eq!(inspection["observation"]["verified"], true);
     assert_eq!(inspection["observation"]["state"], "succeeded");

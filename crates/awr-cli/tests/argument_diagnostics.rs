@@ -1,11 +1,20 @@
 use serde_json::Value;
-use std::process::Command;
+use std::process::{Command, Output};
 
 fn refusal(args: &[&str], index: usize, category: &str, private_fragments: &[&str]) -> Value {
     let output = Command::new(env!("CARGO_BIN_EXE_awr"))
         .args(args)
         .output()
         .unwrap();
+    refusal_output(output, index, category, private_fragments)
+}
+
+fn refusal_output(
+    output: Output,
+    index: usize,
+    category: &str,
+    private_fragments: &[&str],
+) -> Value {
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
@@ -111,6 +120,94 @@ fn malformed_arguments_cannot_bypass_preflight_or_echo_sensitive_content() {
             category,
             &fragments,
         );
+    }
+}
+
+#[test]
+fn issue_515_reporter_command_controls_keep_their_admission_behavior() {
+    enum Expected {
+        Refusal(usize),
+        Usage,
+        Help,
+        InheritedHelp,
+    }
+    let cases: &[(&[&str], Expected)] = &[
+        (
+            &[
+                "execution",
+                "run",
+                "--",
+                "env",
+                "PATH=/synthetic/bin",
+                "true",
+            ],
+            Expected::Refusal(5),
+        ),
+        (&["execution", "run", "--", "true"], Expected::Usage),
+        (
+            &["--help", "--", "PATH=/synthetic/bin"],
+            Expected::Refusal(3),
+        ),
+        (
+            &[
+                "--help",
+                "--",
+                "env",
+                "PATH=/synthetic/bin",
+                "pnpm",
+                "--config.ignore-scripts=true",
+                "pack",
+            ],
+            Expected::Refusal(4),
+        ),
+        (
+            &["--help", "--", "PATH=/synthetic/bin pnpm pack"],
+            Expected::Help,
+        ),
+        (
+            &["--help", "--", "--config.ignore-scripts=true"],
+            Expected::Help,
+        ),
+        (&["--help"], Expected::InheritedHelp),
+    ];
+    for (args, expected) in cases {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_awr"));
+        command.args(*args);
+        if matches!(expected, Expected::InheritedHelp) {
+            let original = std::env::var_os("PATH").unwrap_or_default();
+            let path = std::env::join_paths(
+                std::iter::once(std::path::PathBuf::from("/synthetic/bin"))
+                    .chain(std::env::split_paths(&original)),
+            )
+            .unwrap();
+            command.env("PATH", path);
+        }
+        let output = command.output().unwrap();
+        match expected {
+            Expected::Refusal(index) => {
+                refusal_output(
+                    output,
+                    *index,
+                    "environment_dump",
+                    &["PATH", "/synthetic/bin"],
+                );
+            }
+            Expected::Usage => {
+                assert_eq!(output.status.code(), Some(2), "{args:?}");
+                assert!(output.stdout.is_empty(), "{args:?}");
+                let stderr = String::from_utf8(output.stderr).unwrap();
+                for option in ["--session", "--key", "--purpose"] {
+                    assert!(stderr.contains(option), "{args:?}: {stderr}");
+                }
+                assert!(!stderr.contains("RuleViolation"), "{args:?}: {stderr}");
+            }
+            Expected::Help | Expected::InheritedHelp => {
+                assert_eq!(output.status.code(), Some(0), "{args:?}");
+                assert!(output.stderr.is_empty(), "{args:?}");
+                let stdout = String::from_utf8(output.stdout).unwrap();
+                assert!(stdout.contains("Usage:"), "{args:?}: {stdout}");
+            }
+        }
     }
 }
 
