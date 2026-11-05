@@ -259,6 +259,7 @@ const COMMANDS = {
   ready: { argv: ['ready'], write: false },
   workShow: { argv: ['work', 'show'], write: false },
   workAssess: { argv: ['work', 'assess'], write: false },
+  workPrepare: { argv: ['work', 'prepare'], write: false },
   specCheck: { argv: ['spec', 'check'], write: false },
   mainlineNav: { argv: ['nav'], write: false },
   search: { argv: ['search'], write: false },
@@ -654,6 +655,16 @@ const routes = {
     }
     // Read-only assess. Query strings cannot add --explain or record observations.
     return runCommand('workAssess', [key]);
+  },
+
+  'GET /api/prepare': async (url) => {
+    const key = asKey(url.searchParams.get('key'));
+    if (!key) {
+      return { ok: false, error: { code: 'BadRequest', message: 'A valid key parameter is required' } };
+    }
+    // Read-only action card. Query strings cannot add --explain, --session,
+    // --budget or claim/manage flags. Incomplete context still returns guidance.
+    return runCommand('workPrepare', [key, '--response-view', 'action']);
   },
 
   'GET /api/spec-check': async (url) => {

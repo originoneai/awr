@@ -78,6 +78,15 @@
       cycles:     ['dependency_cycles'],
       specRefs:   ['spec_refs'],
     },
+    // awr work prepare --response-view action --json: one bounded instruction.
+    // Paths checked against crates/awr-core/src/guidance.rs and crates/awr-runtime/src/guidance.rs.
+    workPrepare: {
+      when:       ['guidance.when'],
+      basis:      ['guidance.basis'],
+      nextAction: ['guidance.next_action'],
+      recheck:    ['guidance.recheck'],
+      view:       ['response_view.view'],
+    },
     // awr work assess --json: management intensity, not completion or admission.
     workAssess: {
       mode:              ['decision.mode'],
@@ -317,6 +326,7 @@
     works: [],             // Normalized work-item list.
     workDetail: {},        // Key to details.
     workAssess: {},        // Key to read-only work assess results.
+    workPrepare: {},       // Key to read-only work prepare action cards.
     specCheck: {},         // Project-wide read-only spec check.
     sources: null,
     sessions: { items: [], loaded: false, error: null, command: null, mayHaveMore: false },
@@ -1929,6 +1939,7 @@
     detailGuard.invalidate();
     state.workDetail = {};
     state.workAssess = {};
+    state.workPrepare = {};
     state.specCheck = {};
     state.workPageLoading = true;
     state.workPage = null;
@@ -2094,6 +2105,126 @@
     }
 
     return renderWorkDetail(state.selectedWork);
+  }
+
+  function hasPrepareGuidance(data) {
+    const g = data && data.guidance;
+    return !!(g && (g.when || g.basis || g.next_action || g.recheck));
+  }
+
+  function applyWorkPrepare(key, response) {
+    const k = key == null ? '' : String(key);
+    if (isUnsupported(response)) {
+      state.unsupported.add('work.prepare');
+      state.workPrepare[k] = {
+        loaded: true,
+        error: response.error,
+        data: null,
+        command: response.command,
+      };
+      return;
+    }
+    state.unsupported.delete('work.prepare');
+    const data = response && response.data;
+    if (hasPrepareGuidance(data)) {
+      state.workPrepare[k] = {
+        loaded: true,
+        error: null,
+        data: data,
+        command: response && response.command,
+      };
+      return;
+    }
+    if (response && response.ok) {
+      state.workPrepare[k] = {
+        loaded: true,
+        error: null,
+        data: data || {},
+        command: response.command,
+      };
+      return;
+    }
+    state.workPrepare[k] = {
+      loaded: true,
+      error: (response && response.error) || { code: 'Error', message: '' },
+      data: null,
+      command: response && response.command,
+    };
+  }
+
+  function renderWorkPrepare(host, bag) {
+    if (!host) return;
+    clear(host);
+    if (!bag || !bag.loaded) {
+      host.appendChild(el('p', 'sub', i18n.t('ui.work_prepare_loading')));
+      return;
+    }
+    if (bag.error) {
+      host.appendChild(errorBlock(bag.error, bag.command));
+      return;
+    }
+    const data = bag.data || {};
+    const P = FIELD_MAP.workPrepare;
+    const when = pick(data, P.when, null);
+    const basis = pick(data, P.basis, null);
+    const nextAction = pick(data, P.nextAction, null);
+    const recheck = pick(data, P.recheck, null);
+
+    host.appendChild(el('h4', null, i18n.t('ui.work_prepare')));
+    if (bag.command) {
+      const cmd = el('div', 'cmd');
+      cmd.appendChild(el('span', 'prompt', '$'));
+      cmd.appendChild(el('code', null, bag.command));
+      host.appendChild(cmd);
+    }
+    host.appendChild(el('p', 'figure-note', i18n.t('ui.work_prepare_not_completion')));
+    if (when) {
+      const line = el('p', null);
+      line.appendChild(el('span', 'sub', i18n.t('ui.work_prepare_when') + ' '));
+      line.appendChild(document.createTextNode(String(when)));
+      host.appendChild(line);
+    }
+    if (basis) {
+      const line = el('p', null);
+      line.appendChild(el('span', 'sub', i18n.t('ui.work_prepare_basis') + ' '));
+      line.appendChild(document.createTextNode(String(basis)));
+      host.appendChild(line);
+    }
+    if (nextAction) {
+      const line = el('p', null);
+      line.appendChild(el('span', 'sub', i18n.t('ui.work_prepare_next') + ' '));
+      line.appendChild(document.createTextNode(String(nextAction)));
+      host.appendChild(line);
+    }
+    if (recheck) {
+      const line = el('p', null);
+      line.appendChild(el('span', 'sub', i18n.t('ui.work_prepare_recheck') + ' '));
+      line.appendChild(document.createTextNode(String(recheck)));
+      host.appendChild(line);
+    }
+  }
+
+  async function loadWorkPrepare(key, token, host) {
+    const cached = state.workPrepare[key];
+    if (cached && cached.loaded) {
+      renderWorkPrepare(host, cached);
+      return;
+    }
+    renderWorkPrepare(host, { loaded: false });
+    let response;
+    if (state.mode === 'demo') {
+      const demo = window.AWR_DEMO && typeof window.AWR_DEMO.workPrepare === 'function'
+        ? window.AWR_DEMO.workPrepare(key)
+        : null;
+      response = demo
+        ? { ok: true, data: demo, command: 'awr work prepare ' + key + ' --response-view action' }
+        : { ok: false, error: { code: 'NotFound', message: i18n.t('ui.work_prepare_missing') } };
+    } else {
+      response = await callApi('/api/prepare?key=' + encodeURIComponent(key));
+    }
+    if (!detailGuard.isCurrent(token)) return;
+    applyWorkPrepare(key, response);
+    renderWorkPrepare(host, state.workPrepare[key]);
   }
 
   function applyWorkAssess(key, response) {
@@ -2569,6 +2700,10 @@
     const specHost = el('div');
     box.appendChild(specHost);
     await loadSpecCheck(key, token, specHost);
+    if (!detailGuard.isCurrent(token)) return;
+    const prepareHost = el('div');
+    box.appendChild(prepareHost);
+    await loadWorkPrepare(key, token, prepareHost);
   }
 
   // Context
@@ -2951,6 +3086,7 @@
     detailGuard.invalidate();
     state.workDetail = {};
     state.workAssess = {};
+    state.workPrepare = {};
     state.specCheck = {};
     state.compile = null;
     await loadAll();
@@ -2975,6 +3111,7 @@
     state.workPageError = null;
     state.workDetail = {};
     state.workAssess = {};
+    state.workPrepare = {};
     state.specCheck = {};
     state.status = null;
     state.sources = null;
@@ -3021,6 +3158,7 @@
     detailGuard.invalidate();
     state.workDetail = {};
     state.workAssess = {};
+    state.workPrepare = {};
     state.specCheck = {};
     state.workPage = null;
     const health = await callApi('/api/health');

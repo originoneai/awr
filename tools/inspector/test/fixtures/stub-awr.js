@@ -168,6 +168,22 @@ if (mode === 'slow') {
     coverage_basis: 'Explicit registered items and exact task references only; no prose scanning or inferred cancellations.',
     boundary: 'Matched/covered describe declared version bindings and task coverage, never semantic agreement, implementation, acceptance or completion. No source is modified.',
   });
+} else if (joined.includes('work prepare')) {
+  emit({
+    version: 1,
+    stage: 'prepared',
+    work: { external_key: argv.find((a, i) => argv[i - 1] === 'prepare') || argv[argv.length - 1] },
+    ready: true,
+    ok: true,
+    guidance: {
+      when: 'Required context is complete and no higher-priority blocker is present',
+      basis: 'Current work, claims and management requirements',
+      next_action: 'Consume the rendered context and follow this work\'s next_action using the existing session/claim rules',
+      recheck: 'Scope change, wait, uncertain result, completed compaction or handoff',
+    },
+    response_view: { version: 1, view: 'action' },
+    context: { completeness: { complete: true } },
+  });
 } else if (joined.includes('work assess')) {
   emit({
     version: 1,
