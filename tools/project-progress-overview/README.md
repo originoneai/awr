@@ -59,6 +59,7 @@ For Team project observation and browser login, use the [Observer workspace](../
 - Select a card or table row to inspect recorded status, ownership, claims, blockers and dependencies.
 - Hover or focus a card to highlight its dependency chain. Follow predecessor and successor buttons in the detail panel.
 - Fold lanes and groups, search, filter by status, zoom or pan. Refresh retains those view choices.
+- Filter all seven table columns together and select a column heading to cycle through ascending, descending and default order. Text searches are case-insensitive, labels and keys sort naturally, and idle days support numeric ranges. Empty values have their own filter and sort last. Table filters also respect the graph search and status selection. Table choices are retained per project across refreshes when browser storage is available, including in interactive HTML exports.
 - Download HTML to share a self-contained snapshot with the same interactions. A viewer without scripts still shows the diagrams and table.
 - Download snapshot JSON to retain the exact data and its fingerprint. Offline exports show the state at their generation time.
 - English and Simplified Chinese are available from the language selector. Query parameter `lang=en` or `lang=zh-CN` takes precedence.
