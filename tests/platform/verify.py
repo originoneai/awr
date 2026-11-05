@@ -79,7 +79,7 @@ def main():
         print('Running native gate: ' + name, flush=True)
         log = evidence / (name + '.log')
         started = time.monotonic()
-        process_env = dict(os.environ, PYTHONUTF8='1', CARGO_TERM_COLOR='never')
+        process_env = dict(os.environ, PYTHONUTF8='1', CARGO_TERM_COLOR='never', AWR_LOCAL_WEB='0')
         process_env.update(env or {})
         try:
             row.update(run_command(row['command'], cwd=ROOT, log=log, env=process_env,

@@ -163,18 +163,18 @@ fn argv(route: &str, query: &HashMap<String, String>) -> Result<Vec<String>> {
     if route == "map/work-graph" && query.get("cached").is_some_and(|v| v == "1") {
         args.push("--cached".into());
     }
-    if route == "map/nav" {
-        if let Some(milestone) = query.get("milestone") {
-            if milestone.is_empty()
-                || milestone.len() > 200
-                || !milestone
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"_.:#/-".contains(&b))
-            {
-                return Err(Error::InvalidInput("invalid milestone key".into()));
-            }
-            args.extend(["--milestone".into(), milestone.clone()]);
+    if route == "map/nav"
+        && let Some(milestone) = query.get("milestone")
+    {
+        if milestone.is_empty()
+            || milestone.len() > 200
+            || !milestone
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_.:#/-".contains(&b))
+        {
+            return Err(Error::InvalidInput("invalid milestone key".into()));
         }
+        args.extend(["--milestone".into(), milestone.clone()]);
     }
     if route == "map/events" {
         if query.contains_key("through") {
@@ -275,9 +275,9 @@ async fn project_api(
 }
 
 async fn shutdown(headers: HeaderMap, State(server): State<Arc<Server>>) -> Response {
-    if !headers
+    if headers
         .get("x-awr-local-instance")
-        .is_some_and(|v| v == server.status.instance.as_str())
+        .is_none_or(|v| v != server.status.instance.as_str())
     {
         return StatusCode::FORBIDDEN.into_response();
     }
@@ -292,10 +292,16 @@ pub fn serve(dir: &Path, executable: &Path) -> Result<()> {
         .enable_all()
         .build()?;
     runtime.block_on(async {
-        let listener = match tokio::net::TcpListener::bind("127.0.0.1:7381").await {
-            Ok(listener) => listener,
-            Err(_) => tokio::net::TcpListener::bind("127.0.0.1:0").await?,
-        };
+        let port = registry::read_json::<ServiceStatus>(&dir.join("service.json"))
+            .ok()
+            .and_then(|prior| url::Url::parse(&prior.url).ok())
+            .and_then(|url| url.port())
+            .unwrap_or(7381);
+        let listener =
+            match tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await {
+                Ok(listener) => listener,
+                Err(_) => tokio::net::TcpListener::bind("127.0.0.1:0").await?,
+            };
         let status = ServiceStatus {
             service: "awr-project-hub".into(),
             protocol: 1,

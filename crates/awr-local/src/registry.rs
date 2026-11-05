@@ -47,10 +47,10 @@ pub fn state_dir() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("LOCALAPPDATA") {
         return Ok(PathBuf::from(path).join("AWR"));
     }
-    if let Some(path) = std::env::var_os("XDG_STATE_HOME") {
-        if Path::new(&path).is_absolute() {
-            return Ok(PathBuf::from(path).join("awr"));
-        }
+    if let Some(path) = std::env::var_os("XDG_STATE_HOME")
+        && Path::new(&path).is_absolute()
+    {
+        return Ok(PathBuf::from(path).join("awr"));
     }
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))

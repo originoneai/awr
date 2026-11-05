@@ -99,10 +99,10 @@ pub fn ensure(dir: &Path, executable: &Path) -> Result<ServiceStatus> {
         status.version == env!("CARGO_PKG_VERSION")
             && (status.executable != executable || status.binary_stamp == current_stamp)
     };
-    if let Some(status) = running(dir)? {
-        if matches(&status) {
-            return Ok(status);
-        }
+    if let Some(status) = running(dir)?
+        && matches(&status)
+    {
+        return Ok(status);
     }
     let _start = registry::lock(dir, "start.lock", Duration::from_secs(5))?;
     if let Some(status) = running(dir)? {
