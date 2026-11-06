@@ -13,9 +13,9 @@ import { DEMO_OVERVIEW, DEMO_PROJECTS, renderApp } from './test-utils';
 // service-completion-inspect-api-run09.json,
 // service-delivery-integration-inspect-api-run09.json, and
 // service-delivery-integration-inspect-page-rejected-run09.json.
-const LIVE_COMPLETION = JSON.parse(readFileSync(resolve('../inspector/test/fixtures/obs006/completion-inspect.json'), 'utf8'));
-const LIVE_INTEGRATION = JSON.parse(readFileSync(resolve('../inspector/test/fixtures/obs006/delivery-integration-inspect.json'), 'utf8'));
-const REJECTED_INTEGRATION = JSON.parse(readFileSync(resolve('../inspector/test/fixtures/obs006/delivery-integration-inspect-page-rejected.json'), 'utf8'));
+const LIVE_COMPLETION = JSON.parse(readFileSync(resolve('./test/fixtures/obs006/completion-inspect.json'), 'utf8'));
+const LIVE_INTEGRATION = JSON.parse(readFileSync(resolve('./test/fixtures/obs006/delivery-integration-inspect.json'), 'utf8'));
+const REJECTED_INTEGRATION = JSON.parse(readFileSync(resolve('./test/fixtures/obs006/delivery-integration-inspect-page-rejected.json'), 'utf8'));
 
 const WORK = 'issue-filter-api';
 const PAGE = 'issue-filter-page';

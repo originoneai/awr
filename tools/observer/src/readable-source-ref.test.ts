@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readableSourceRef } from './lib/queries';
 
 /**
- * The refusal rules of the bridge itself (tools/inspector/team-bridge.js): a source read needs a
+ * The refusal rules of the bridge itself (tools/observer/server/team-bridge.js): a source read needs a
  * controlled project-relative path (no leading slash, no `..` anywhere, no backslash, no colon,
  * no control characters, 1 to 512 characters) and a 64-digit lowercase hexadecimal digest. The
  * page offers no entry and sends nothing for a reference that fails any rule.

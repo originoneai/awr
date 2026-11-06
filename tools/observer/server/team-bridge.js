@@ -11,7 +11,7 @@ const { OBSERVATION_STALE_AFTER_MS, READ_TIMEOUT_MS, OVERVIEW_DEADLINE_MS, resol
 const fs = require('fs');
 const path = require('path');
 
-/** Owned Inspector path so browsers attach the session to /api/team/* routes. */
+/** Owned Observer path so browsers attach the session to /api/team/* routes. */
 const OWNED_COOKIE_PATH = '/api/team';
 const UPSTREAM_COOKIE_PATH = '/v1/web';
 const INBOX_PAGE_SIZE = 20;
@@ -462,7 +462,7 @@ function asObject(body) {
 /**
  * Rewrite upstream Set-Cookie Path=/v1/web → Path=/api/team at the proxy
  * boundary (including Max-Age=0 clears). Upstream Path would not be sent to
- * Inspector /api/team/projects, logout, or revoke.
+ * Observer /api/team/projects, logout, or revoke.
  */
 function rewriteOwnedCookiePath(cookie) {
   const raw = String(cookie);
@@ -513,7 +513,7 @@ function createTeamBridge(opts) {
     port: opts.port,
     fixtureDir:
       opts.teamFixtureDir ||
-      path.resolve(__dirname, '../../tests/fixtures/workstreams/team-web-loop'),
+      path.resolve(__dirname, '../../../tests/fixtures/workstreams/team-web-loop'),
     sessions: new Map(),
     receipts: new Map(),
   };

@@ -1,6 +1,6 @@
 /**
  * Shared observation read contract (AWR-OBS-002). Pure and dependency-free:
- * the Inspector bridge requires it and the browser surface may import it as
+ * the Observer bridge requires it and the browser surface may import it as
  * a plain script, so both sides apply one vocabulary and one ordering rule.
  *
  * Plane states: every freshness clock (report received, authoritative

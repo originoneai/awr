@@ -100,7 +100,7 @@ const MAP_CONFIG = (() => {
     process.exit(1);
   }
 })();
-const { createTeamBridge } = require('./team-bridge');
+const { createTeamBridge } = require('../observer/server/team-bridge');
 const teamBridge = createTeamBridge({ teamUrl: ARGS.teamUrl, teamPublicUrl: ARGS.teamPublicUrl, teamFixtureDir: ARGS.teamFixtureDir, port: ARGS.port });
 
 // awr executable resolution

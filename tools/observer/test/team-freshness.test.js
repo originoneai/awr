@@ -2,7 +2,7 @@
 
 /**
  * AWR-OBS-002 unified observation freshness, coverage and partial-failure
- * contract. One shared semantics for every Inspector Team read: three clocks
+ * contract. One shared semantics for every Observer Team read: three clocks
  * (report received, authoritative measurement, page read) are presented
  * separately and never substitute for each other; composed lists declare
  * their authorized scope, enumerated/succeeded/failed/truncated coverage and
@@ -15,8 +15,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 const path = require('path');
-const { createTeamBridge, readFreshness, readAttributionError } = require('../team-bridge');
-const { OBSERVATION_STALE_AFTER_MS } = require('../observation-contract');
+const { createTeamBridge, readFreshness, readAttributionError } = require('../server/team-bridge');
+const { OBSERVATION_STALE_AFTER_MS } = require('../server/observation-contract');
 
 const FIXTURE_DIR = path.resolve(__dirname, 'fixtures');
 

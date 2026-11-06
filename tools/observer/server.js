@@ -3,13 +3,13 @@
  * AWR Observer: observation workspace server.
  *
  * Serves the built React app (dist/) and mounts every Team bridge route from
- * tools/inspector/team-bridge.js unchanged — the bridge is the single read
+ * the Observer-owned server/team-bridge.js — the bridge is the single read
  * adapter plus the login/connect/revoke entries; this process adds nothing
  * business-shaped of its own.
  *
  * Loopback binding alone is insufficient: any browser page can request
  * 127.0.0.1. The /api/* routes enforce the same request-origin boundary as
- * the Inspector (Host allowlist, Origin/Sec-Fetch-Site checks, a custom
+ * the workspace (Host allowlist, Origin/Sec-Fetch-Site checks, a custom
  * header on mutations).
  *
  * Usage:
@@ -66,7 +66,7 @@ function parseArgs(argv) {
 const ARGS = parseArgs(process.argv.slice(2));
 const DIST_DIR = path.join(__dirname, 'dist');
 
-const { createTeamBridge } = require('../inspector/team-bridge');
+const { createTeamBridge } = require('./server/team-bridge');
 const teamBridge = createTeamBridge({
   teamUrl: ARGS.teamUrl,
   teamPublicUrl: ARGS.teamPublicUrl,
@@ -76,7 +76,7 @@ const teamBridge = createTeamBridge({
 });
 const routes = Object.assign({}, teamBridge.routes);
 
-// Request-origin boundary (mirrors tools/inspector/server.js).
+// Request-origin boundary for the local observation workspace.
 
 /** Mutations require this custom header; cross-site form POSTs cannot send it. */
 const GUARD_HEADER = 'x-awr-observer';

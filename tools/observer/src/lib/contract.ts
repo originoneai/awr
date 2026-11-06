@@ -1,4 +1,4 @@
-// Single source of truth: tools/inspector/observation-contract.js (AWR-OBS-002),
+// Single source of truth: tools/observer/server/observation-contract.js (AWR-OBS-002),
 // aliased as 'observation-contract' in vite.config.ts. Never copy it here.
 import * as contract from 'observation-contract';
 

@@ -11,7 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { readAttributionError } = require('../team-bridge');
+const { readAttributionError } = require('../server/team-bridge');
 
 const DIR = path.resolve(__dirname, 'fixtures', 'obs006');
 const WORK = 'issue-filter-api';

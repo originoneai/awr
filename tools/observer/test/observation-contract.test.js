@@ -19,7 +19,7 @@ const {
   OVERVIEW_DEADLINE_MS,
   compareAuthoritative,
   resolveCurrency,
-} = require('../observation-contract');
+} = require('../server/observation-contract');
 
 const measured = (revision, extra = {}) => ({
   status: 'measured',

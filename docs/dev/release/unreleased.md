@@ -36,7 +36,7 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   report's — with `stale_after_ms` and `age_ms` reported next to every measurement, and a failed
   read keeps its clocks with the planes marked `failed`. The bridge's default bounds
   (`OBSERVATION_STALE_AFTER_MS`, `READ_TIMEOUT_MS`, `OVERVIEW_DEADLINE_MS`) are exported constants
-  of the contract module. The pure ordering rule lives in `tools/inspector/observation-contract.js` (importable by
+  of the contract module. The pure ordering rule lives in `tools/observer/server/observation-contract.js` (importable by
   the bridge and the browser): an incoming authoritative measurement replaces the held one only for
   the same source snapshot and coordinator epoch with a numerically higher or equal revision; a
   lower revision never replaces; anything else is incomparable and says so. The generic read route
