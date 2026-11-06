@@ -87,14 +87,11 @@ def check_local_hub(awr, mcp, project, state_dir):
     def catalog():
         return json.loads(run([awr, "overview", "projects", "--json"], env=env).stdout)
 
-    def wait_for(predicate):
-        deadline = time.monotonic() + 15
-        while True:
-            current = catalog()
-            if predicate(current):
-                return current
-            assert time.monotonic() < deadline, current
-            time.sleep(0.05)
+    def refresh():
+        request = urllib.request.Request(first["url"] + "/api/projects/refresh",
+                                         headers={"X-AWR-Project-Hub": "1"}, method="POST")
+        with opener.open(request, timeout=10) as response:
+            return json.load(response)["data"]
 
     try:
         run([awr, "--project", project, "status", "--cached", "--json"], env=env)
@@ -143,14 +140,27 @@ def check_local_hub(awr, mcp, project, state_dir):
         connected, = [entry for entry in catalog()["projects"] if entry["key"] == pending["key"]]
         assert connected["state"] == "connected" and connected["project_id"], connected
 
-        added = project.parent / "Background repository"
+        added = project.parent / "New managed repository"
         (added / ".git").mkdir(parents=True)
         run([awr, "--project", added, "init", "--goal", goal, "--accept", "--json"], env=dict(env, AWR_LOCAL_WEB="0"))
-        observed = wait_for(lambda result: any(entry["root"] == str(added.resolve()) for entry in result["projects"]))
+        last_scan = catalog()["discovery"]["completed_at"]
+        time.sleep(1.1)
+        idle = catalog()
+        assert idle["discovery"]["completed_at"] == last_scan, idle
+        assert all(entry["root"] != str(added.resolve()) for entry in idle["projects"]), idle
+        observed = refresh()
         added_entry, = [entry for entry in observed["projects"] if entry["root"] == str(added.resolve())]
         assert added_entry["state"] == "connected", added_entry
         shutil.rmtree(added)
-        wait_for(lambda result: any(entry["key"] == added_entry["key"] and not entry["available"] for entry in result["projects"]))
+        assert any(entry["key"] == added_entry["key"] and not entry["available"] for entry in refresh()["projects"])
+
+        request = urllib.request.Request(first["url"] + "/api/projects/" + pending["key"],
+                                         headers={"X-AWR-Project-Hub": "1"}, method="DELETE")
+        with opener.open(request, timeout=10) as response:
+            assert json.load(response)["ok"] is True
+        run([awr, "--project", repository, "status", "--cached", "--json"], env=env)
+        assert all(entry["key"] != pending["key"] for entry in refresh()["projects"])
+        assert (repository / ".awr/state.db").is_file()
 
         os.kill(first["pid"], signal.SIGTERM)
         deadline = time.monotonic() + 10
@@ -160,6 +170,14 @@ def check_local_hub(awr, mcp, project, state_dir):
         run([awr, "--version"], env=env)
         recovered = json.loads(run([awr, "overview", "status", "--json"], env=env).stdout)["service"]
         assert recovered["instance"] != first["instance"] and recovered["url"] == first["url"], recovered
+        with opener.open(recovered["url"] + "/api/projects", timeout=10) as response:
+            assert all(entry["key"] != pending["key"] for entry in json.load(response)["data"]["projects"])
+        request = urllib.request.Request(recovered["url"] + "/api/projects/intake",
+                                         data=json.dumps({"root": str(repository.resolve())}).encode(),
+                                         headers={"Content-Type": "application/json", "X-AWR-Project-Hub": "1"}, method="POST")
+        with opener.open(request, timeout=10) as response:
+            assert json.load(response)["data"]["project"]["key"] == pending["key"]
+        assert any(entry["key"] == pending["key"] for entry in catalog()["projects"])
         run([awr, "--version"], env=env)
         reused = json.loads(run([awr, "overview", "status", "--json"], env=env).stdout)["service"]
         assert reused["instance"] == recovered["instance"], reused
