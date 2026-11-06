@@ -82,6 +82,7 @@
   "map.group.ready": "Ready",
   "map.group.draft": "Draft · not activated",
   "map.group.waiting": "Waiting for prerequisites",
+  "map.group.unknown": "Unknown status",
   "map.more.title": "{count} more",
   "map.lane.empty": "No work items",
   "map.title.overview": "Project node graph",

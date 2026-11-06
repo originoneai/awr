@@ -64,6 +64,7 @@ test('canonical unknown work status remains visible and distinct from readiness 
     const model = out.model;
     assert.equal(model.nodes.get(node.key).vis, 'unknown');
     assert.ok(out.table.includes(t('map.status.unknown')));
+    assert.doesNotMatch(out.body, /map\.group\.unknown/);
     for (const view of out.views) {
       assert.ok(view.svg.includes(t('map.status.unknown')), view.id);
     }

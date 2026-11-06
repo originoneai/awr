@@ -82,6 +82,7 @@
   "map.group.ready": "就绪",
   "map.group.draft": "草稿 · 未激活",
   "map.group.waiting": "等待前置",
+  "map.group.unknown": "状态未识别",
   "map.more.title": "另有 {count} 项",
   "map.lane.empty": "无工作项",
   "map.title.overview": "项目节点图",
