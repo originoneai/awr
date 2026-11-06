@@ -43,7 +43,8 @@ enum OverviewCommand {
         /// Apply a complete, reviewed discovery configuration JSON.
         #[arg(long)]
         config: Option<PathBuf>,
-        #[arg(long)]
+        /// Compatibility input; discovery is now startup-only or explicitly requested.
+        #[arg(long, hide = true)]
         interval_seconds: Option<u64>,
     },
     #[command(hide = true)]

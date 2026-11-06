@@ -24,15 +24,23 @@ Select a connected card to open the project's three progress views, then use
 **Back to projects** to return. Pending or attention-required cards provide a
 short instruction to give your agent and the current inspection details.
 
-The page refreshes its catalog every ten seconds while visible. The coverage
-panel reports the latest background scan, its roots, exclusions and failures.
+The page reads the catalog once when opened. **Refresh projects** runs an explicit
+scan and reloads the cards. Search filters the loaded cards locally. The coverage
+panel reports the latest scan, its roots, exclusions and failures.
 An isolated user-state directory is explicitly labeled as a separate environment.
+
+Each card has a **Delete** button that persistently removes it from this list.
+Hidden cards stay hidden across scanning, ordinary AWR use and service restarts.
+Use **Take over project** with the same absolute path to restore a card. Removal
+updates the current user's display preferences, preserving project files and AWR
+state.
 
 ## Automatic discovery and Agent intake
 
 The first CLI or installed MCP use starts the local background service. In the
-default user-state directory, it scans the current user's home and checks again
-every 60 seconds. Automatic discovery recognizes directories that already have
+default user-state directory, it scans the current user's home once per service
+startup. Further scans are user-triggered through **Refresh projects** or
+`awr overview discover`. Automatic discovery recognizes directories that already have
 an AWR project manifest or database. Git repositories and package manifests alone
 do not enroll a directory. Discovery reads directory metadata and project identity,
 without calling a model or writing target-project files.
@@ -65,10 +73,10 @@ migrations require a matching backup. An uninitialized local MCP project's
 `awr_project_status` response includes the same intake guidance for its bound
 directory. Shared MCP clients do not receive the machine-wide project catalog.
 
-To scan additional workspace roots or change the interval, configure them once.
+To scan additional workspace roots, configure them once.
 
 ```sh
-awr overview discover --root /absolute/workspace --root /another/workspace --interval-seconds 60
+awr overview discover --root /absolute/workspace --root /another/workspace
 awr overview projects --json
 ```
 
@@ -81,7 +89,9 @@ Child symlinks are skipped. The
 coverage report exposes these boundaries and access errors. Scans are bounded to
 200,000 directories and depth 32, and incomplete scans report a partial result.
 Use `--config` with a complete `DiscoveryConfig` JSON to customize roots,
-`exclude_names`, `interval_seconds`, `directory_limit` or `depth_limit`. Custom
+`exclude_names`, `directory_limit` or `depth_limit`. Legacy `interval_seconds`
+configuration and `--interval-seconds` inputs remain accepted for compatibility
+and have no scheduling effect. Custom
 `AWR_LOCAL_HOME` environments start with no scan roots until configured.
 
 After a complete scan, earlier unused, unbound automatic suggestions that are
@@ -117,7 +127,8 @@ runtime. Progress views use AWR's bounded observation API over the selected proj
 SQLite projection. A single private database snapshot keeps tasks, dependencies,
 claims, sessions and runtime findings on the same revision.
 
-**Refresh map** rereads local recorded state. **Sync project sources** explicitly
+Opening a project reads a fresh SQLite snapshot, including when browser history
+restores a cached detail page. **Refresh map** rereads local recorded state. **Sync project sources** explicitly
 refreshes the source projection before reading. Ordinary viewing reports that source
 currentness was not checked. Runtime findings remain visible, while full file,
 artifact and database-integrity diagnosis is available through `awr doctor`.
@@ -159,8 +170,9 @@ State is stored under `AWR_LOCAL_HOME` when that absolute path is configured.
 Otherwise Windows uses `%LOCALAPPDATA%/AWR`, an absolute `XDG_STATE_HOME` uses its
 `awr` child, and the fallback is `$HOME/.local/state/awr`.
 
-The directory contains the versioned `projects.json` catalog, discovery settings
-and coverage, `service.json`, coordination locks and `service.log`. Version-one
+The directory contains the versioned `projects.json` catalog, `hidden-projects.json`
+display preferences, discovery settings and coverage, `service.json`, coordination
+locks and `service.log`. Version-one
 and version-two catalogs remain readable and upgrade to version three on the next
 catalog write. Version three preserves explicit takeover intent across clients.
 Older writers reject the newer catalog version. State belongs

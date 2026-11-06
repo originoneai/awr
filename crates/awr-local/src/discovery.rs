@@ -6,7 +6,7 @@ use std::{
     collections::{BTreeSet, VecDeque},
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 const ISSUE_LIMIT: usize = 100;
@@ -18,6 +18,7 @@ pub struct DiscoveryConfig {
     pub version: u32,
     pub roots: Vec<PathBuf>,
     pub exclude_names: Vec<String>,
+    #[serde(skip_serializing)]
     pub interval_seconds: u64,
     pub directory_limit: usize,
     pub depth_limit: usize,
@@ -134,7 +135,6 @@ pub struct DiscoveryReport {
     pub state: String,
     pub roots: Vec<PathBuf>,
     pub exclude_names: Vec<String>,
-    pub interval_seconds: u64,
     pub started_at: Option<i64>,
     pub completed_at: Option<i64>,
     pub last_completed_at: Option<i64>,
@@ -161,7 +161,6 @@ impl DiscoveryReport {
             state: "pending".into(),
             roots: config.roots.clone(),
             exclude_names: config.exclude_names.clone(),
-            interval_seconds: config.interval_seconds,
             started_at: None,
             completed_at: None,
             last_completed_at: None,
@@ -363,40 +362,27 @@ pub(crate) fn scan(dir: &Path, cancelled: &AtomicBool) -> Result<DiscoveryReport
     Ok(report)
 }
 
-pub(crate) async fn monitor(dir: PathBuf, mut shutdown: tokio::sync::watch::Receiver<bool>) {
-    loop {
-        let cancelled = std::sync::Arc::new(AtomicBool::new(false));
-        let scan_cancelled = cancelled.clone();
-        let scan_dir = dir.clone();
-        let mut job = tokio::task::spawn_blocking(move || scan(&scan_dir, &scan_cancelled));
-        tokio::select! {
-            _ = shutdown.changed() => {
-                cancelled.store(true, Ordering::Relaxed);
-                let _ = job.await;
-                return;
-            }
-            outcome = &mut job => {
-                if let Ok(Err(error)) = outcome {
-                    if let Ok(mut report) = discovery_status(&dir) {
-                        report.state = "error".into();
-                        report.issue(&dir, error.report().message);
-                        let _ = registry::write_json(&dir.join("discovery-status.json"), &report);
-                    }
-                }
-            }
+pub(crate) async fn discover_on_startup(
+    dir: PathBuf,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    let cancelled = std::sync::Arc::new(AtomicBool::new(false));
+    let scan_cancelled = cancelled.clone();
+    let scan_dir = dir.clone();
+    let mut job = tokio::task::spawn_blocking(move || scan(&scan_dir, &scan_cancelled));
+    tokio::select! {
+        _ = shutdown.changed() => {
+            cancelled.store(true, Ordering::Relaxed);
+            let _ = job.await;
+            return;
         }
-        let completed = Instant::now();
-        loop {
-            let interval = config(&dir)
-                .map(|config| config.interval_seconds)
-                .unwrap_or(60);
-            let remaining = Duration::from_secs(interval).saturating_sub(completed.elapsed());
-            if remaining.is_zero() {
-                break;
-            }
-            tokio::select! {
-                _ = shutdown.changed() => return,
-                _ = tokio::time::sleep(remaining.min(Duration::from_secs(1))) => (),
+        outcome = &mut job => {
+            if let Ok(Err(error)) = outcome {
+                if let Ok(mut report) = discovery_status(&dir) {
+                    report.state = "error".into();
+                    report.issue(&dir, error.report().message);
+                    let _ = registry::write_json(&dir.join("discovery-status.json"), &report);
+                }
             }
         }
     }

@@ -13,7 +13,7 @@
   async function callApi(url, options = {}) {
     try {
       const route = projectKey ? `/api/projects/${encodeURIComponent(projectKey)}${url.slice(4)}` : url;
-      const response = await fetch(route, { credentials: 'same-origin', ...options,
+      const response = await fetch(route, { credentials: 'same-origin', cache: 'no-store', ...options,
         headers: options.method === 'POST' ? { 'x-awr-project-progress-overview': '1' } : undefined });
       const result = await response.json();
       if (!result || typeof result.ok !== 'boolean') throw new Error(i18n.t('progress.invalid_response'));
@@ -43,4 +43,7 @@
 
   connection.textContent = i18n.t('progress.connecting');
   projectMap.show();
+  root.addEventListener('pageshow', (event) => {
+    if (event.persisted) projectMap.refresh();
+  });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

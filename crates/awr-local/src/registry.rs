@@ -52,6 +52,37 @@ struct Catalog {
     projects: Vec<LocalProject>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct HiddenProjects {
+    version: u32,
+    keys: BTreeSet<String>,
+}
+
+fn hidden_projects(dir: &Path) -> Result<HiddenProjects> {
+    let path = dir.join("hidden-projects.json");
+    if !path.exists() {
+        return Ok(HiddenProjects {
+            version: 1,
+            keys: BTreeSet::new(),
+        });
+    }
+    let hidden: HiddenProjects = read_json(&path)?;
+    if hidden.version != 1 || hidden.keys.len() > MAX_PROJECTS {
+        return Err(Error::InvalidInput(
+            "unsupported hidden project catalog".into(),
+        ));
+    }
+    Ok(hidden)
+}
+
+pub(crate) fn hide(dir: &Path, key: &str) -> Result<()> {
+    let _lock = lock(dir, "projects.lock", Duration::from_secs(2))?;
+    let _entry = get(dir, key)?;
+    let mut hidden = hidden_projects(dir)?;
+    hidden.keys.insert(key.to_owned());
+    write_json(&dir.join("hidden-projects.json"), &hidden)
+}
+
 pub fn state_dir() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os("AWR_LOCAL_HOME") {
         let path = PathBuf::from(path);
@@ -293,11 +324,23 @@ pub(crate) fn record(
 ) -> Result<Vec<LocalProject>> {
     let _lock = lock(dir, "projects.lock", Duration::from_secs(2))?;
     let mut catalog = catalog(dir)?;
+    let mut hidden = hidden_projects(dir)?;
+    let mut restored = false;
     let merged = entries
         .into_iter()
-        .map(|entry| merge(&mut catalog, entry, used))
+        .map(|entry| {
+            let explicit = entry.intake_requested;
+            let project = merge(&mut catalog, entry, used)?;
+            if explicit {
+                restored |= hidden.keys.remove(&project.key);
+            }
+            Ok(project)
+        })
         .collect::<Result<Vec<_>>>()?;
     write_json(&dir.join("projects.json"), &catalog)?;
+    if restored {
+        write_json(&dir.join("hidden-projects.json"), &hidden)?;
+    }
     Ok(merged)
 }
 
@@ -383,7 +426,14 @@ pub(crate) fn validate(entry: &LocalProject) -> Result<()> {
 }
 
 pub fn list(dir: &Path) -> Result<Vec<LocalProject>> {
-    let mut entries = catalog(dir)?.projects;
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let (mut entries, hidden) = {
+        let _lock = lock(dir, "projects.lock", Duration::from_secs(2))?;
+        (catalog(dir)?.projects, hidden_projects(dir)?)
+    };
+    entries.retain(|entry| !hidden.keys.contains(&entry.key));
     entries.retain(|entry| {
         entry.project_id.is_some()
             || entry.intake_requested
@@ -577,6 +627,53 @@ mod tests {
         assert!(register(&fixture.dir(), &root).is_err());
         assert!(list(&fixture.dir()).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), b"broken catalog");
+    }
+
+    #[test]
+    fn hidden_display_preferences_survive_concurrent_registration_and_pending_adoption() {
+        let fixture = Fixture::new();
+        let managed = fixture.project("managed");
+        let first = register(&fixture.dir(), &managed).unwrap();
+        let pending = fixture.0.join("pending");
+        std::fs::create_dir(&pending).unwrap();
+        let second = request_intake(&fixture.dir(), &pending).unwrap();
+        let bytes = std::fs::read(managed.join(".awr/state.db")).unwrap();
+        let dir = fixture.dir();
+        let used = managed.clone();
+        let registration = std::thread::spawn(move || {
+            for _ in 0..8 {
+                register(&dir, &used).unwrap();
+            }
+        });
+        hide(&fixture.dir(), &first.key).unwrap();
+        hide(&fixture.dir(), &second.key).unwrap();
+        registration.join().unwrap();
+        hide(&fixture.dir(), &first.key).unwrap();
+        assert!(list(&fixture.dir()).unwrap().is_empty());
+        assert_eq!(std::fs::read(managed.join(".awr/state.db")).unwrap(), bytes);
+        assert!(!pending.join(".awr").exists());
+        fixture.project("pending");
+        assert_eq!(register(&fixture.dir(), &pending).unwrap().key, second.key);
+        assert!(list(&fixture.dir()).unwrap().is_empty());
+        assert_eq!(
+            request_intake(&fixture.dir(), &pending).unwrap().key,
+            second.key
+        );
+        assert_eq!(list(&fixture.dir()).unwrap().len(), 1);
+        assert_eq!(hidden_projects(&fixture.dir()).unwrap().keys.len(), 1);
+    }
+
+    #[test]
+    fn invalid_hidden_preferences_are_preserved_and_never_silently_reveal_cards() {
+        let fixture = Fixture::new();
+        let root = fixture.project("managed");
+        let entry = register(&fixture.dir(), &root).unwrap();
+        let path = fixture.dir().join("hidden-projects.json");
+        std::fs::write(&path, b"broken display preferences").unwrap();
+        assert!(list(&fixture.dir()).is_err());
+        assert!(register(&fixture.dir(), &root).is_err());
+        assert!(hide(&fixture.dir(), &entry.key).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"broken display preferences");
     }
 
     #[cfg(unix)]
