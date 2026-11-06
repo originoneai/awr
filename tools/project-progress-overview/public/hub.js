@@ -137,6 +137,7 @@
       details.appendChild(element('p', '', t('hub.discovery_exclusions', { count: report.excluded_directories || 0, symlinks: report.symlinks_skipped || 0 })));
       details.appendChild(element('p', 'hub-exclusion-patterns', (report.exclude_names || []).join(' · ')));
       details.appendChild(element('p', '', t('hub.discovery_boundaries', { caches: report.dependency_caches_skipped || 0 })));
+      details.appendChild(element('p', '', t('hub.discovery_temporary', { count: report.temporary_directories_skipped || 0 })));
       if (report.completed_at) details.appendChild(element('p', '', t('hub.discovery_completed', { time: new Date(report.completed_at).toLocaleString(i18n.locale) })));
       const issues = element('ul', 'hub-coverage-issues');
       for (const issue of report.issues || []) issues.appendChild(element('li', '', `${issue.path} — ${issue.reason}`));

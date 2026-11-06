@@ -48,6 +48,11 @@ without calling a model or writing target-project files.
 Connected projects are registered automatically. Incomplete, unreadable or older
 AWR databases appear as **Needs inspection**, with their diagnostic retained.
 
+Dated Codex session directories (`Codex/YYYY-MM-DD/...`) are treated as temporary
+working areas. Discovery skips them, earlier cards are filtered out, and Hub
+enrollment directs the user to a durable project directory. Coverage reports the
+number of skipped temporary paths.
+
 To connect a new project, click **Take over project**, enter its absolute directory
 path and click **Create pending card**. The directory must already exist. This
 creates a **Pending setup** card and records explicit takeover intent in the local

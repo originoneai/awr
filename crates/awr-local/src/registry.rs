@@ -46,6 +46,24 @@ fn available() -> bool {
     true
 }
 
+pub(crate) fn is_temporary_session_directory(root: &Path) -> bool {
+    root.ancestors().any(|ancestor| {
+        ancestor
+            .parent()
+            .is_some_and(|parent| parent.ends_with("Codex"))
+            && ancestor
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.len() == 10
+                        && name.bytes().enumerate().all(|(index, byte)| match index {
+                            4 | 7 => byte == b'-',
+                            _ => byte.is_ascii_digit(),
+                        })
+                })
+    })
+}
+
 #[derive(Serialize, Deserialize)]
 struct Catalog {
     version: u32,
@@ -225,6 +243,11 @@ pub fn inspect(root: &Path) -> Result<LocalProject> {
     if !root.is_dir() {
         return Err(Error::InvalidInput(
             "project root must be a directory".into(),
+        ));
+    }
+    if is_temporary_session_directory(&root) {
+        return Err(Error::InvalidInput(
+            "Temporary agent session directories are excluded from Project Hub. Use a durable project directory.".into(),
         ));
     }
     let now = now_millis()?;
@@ -407,6 +430,11 @@ pub fn register(dir: &Path, root: &Path) -> Result<LocalProject> {
 }
 
 pub(crate) fn validate(entry: &LocalProject) -> Result<()> {
+    if is_temporary_session_directory(&entry.root) {
+        return Err(Error::InvalidInput(
+            "Temporary agent session directories are excluded from Project Hub.".into(),
+        ));
+    }
     if entry.root.canonicalize()? != entry.root {
         return Err(Error::SourceConflict(
             "registered project directory changed".into(),
@@ -433,7 +461,9 @@ pub fn list(dir: &Path) -> Result<Vec<LocalProject>> {
         let _lock = lock(dir, "projects.lock", Duration::from_secs(2))?;
         (catalog(dir)?.projects, hidden_projects(dir)?)
     };
-    entries.retain(|entry| !hidden.keys.contains(&entry.key));
+    entries.retain(|entry| {
+        !hidden.keys.contains(&entry.key) && !is_temporary_session_directory(&entry.root)
+    });
     entries.retain(|entry| {
         entry.project_id.is_some()
             || entry.intake_requested
@@ -529,6 +559,61 @@ mod tests {
         assert_eq!(entries[0].key, first.key);
         assert_eq!(used.registered_at, first.registered_at);
         assert!(entries.iter().all(|p| p.available));
+    }
+
+    #[test]
+    fn dated_session_paths_exclude_descendants_without_excluding_durable_workspaces() {
+        for path in [
+            "workspace/Codex/2026-09-29",
+            "workspace/Codex/2026-09-29/chat/work/project",
+        ] {
+            assert!(is_temporary_session_directory(Path::new(path)), "{path}");
+        }
+        for path in [
+            "workspace/Codex",
+            "workspace/Codex/permanent-project",
+            "workspace/projects/2026-09-29",
+            "workspace/Codex/2026-09",
+            "workspace/Codex/202a-09-29",
+        ] {
+            assert!(!is_temporary_session_directory(Path::new(path)), "{path}");
+        }
+    }
+
+    #[test]
+    fn temporary_projects_are_filtered_from_prior_catalogs_and_cannot_be_enrolled() {
+        let fixture = Fixture::new();
+        let durable = fixture.project("durable");
+        let temporary = fixture.project("Codex/2026-09-29/chat/work/project");
+        let mut prior = register(&fixture.dir(), &durable).unwrap();
+        let store = Store::open_readonly(&temporary.join(".awr/state.db")).unwrap();
+        let project = store
+            .project_by_root(&temporary.canonicalize().unwrap())
+            .unwrap();
+        prior.root = temporary.clone();
+        prior.key = "f".repeat(64);
+        prior.project_id = Some(project.id.to_string());
+        record(&fixture.dir(), vec![prior.clone()], false).unwrap();
+        assert_eq!(catalog(&fixture.dir()).unwrap().projects.len(), 2);
+        assert_eq!(list(&fixture.dir()).unwrap().len(), 1);
+        assert!(select(&fixture.dir(), &prior.key).is_err());
+        assert!(hide(&fixture.dir(), &prior.key).is_ok());
+        assert!(register(&fixture.dir(), &temporary).is_err());
+        assert!(observe(&fixture.dir(), &temporary).is_err());
+        assert!(request_intake(&fixture.dir(), &temporary).is_err());
+        assert_eq!(catalog(&fixture.dir()).unwrap().projects.len(), 2);
+        assert!(temporary.join(".awr/state.db").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_canonical_alias_cannot_enroll_a_temporary_session_project() {
+        let fixture = Fixture::new();
+        let temporary = fixture.project("Codex/2026-09-29/project");
+        let alias = fixture.0.join("alias");
+        std::os::unix::fs::symlink(&temporary, &alias).unwrap();
+        assert!(request_intake(&fixture.dir(), &alias).is_err());
+        assert!(list(&fixture.dir()).unwrap().is_empty());
     }
 
     #[test]

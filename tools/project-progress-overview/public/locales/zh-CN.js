@@ -46,6 +46,7 @@
   "hub.discovery_no_roots": "当前独立环境还没有配置扫描目录，可通过 awr overview discover --root 指定工作目录。",
   "hub.discovery_exclusions": "已跳过 {count} 个生成、隐藏或排除目录 · 已跳过 {symlinks} 个链接 · 仅在服务启动或点击「刷新项目」时扫描",
   "hub.discovery_completed": "上次扫描完成于 {time}",
+  "hub.discovery_temporary": "已跳过 {count} 处临时会话目录。Codex 下按日期生成的目录会被排除。",
   "hub.discovery_more_issues": "另有 {count} 个问题已计入扫描汇总",
   "hub.intake_connected": "项目已接入 AWR，Agent 可以读取当前目标、任务和检查点，接着推进工作。",
   "hub.intake_description": "把下面的指令交给你的 Agent，它会查看现有资料并接入项目。缺少的目标会保留为待澄清事项。",
