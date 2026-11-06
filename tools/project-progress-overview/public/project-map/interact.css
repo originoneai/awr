@@ -174,14 +174,35 @@
 .pm-scope tr[data-key]:focus-visible { outline: 2px solid var(--pm-accent); outline-offset: -2px; }
 .pm-scope tr[data-key].pm-selected td { background: color-mix(in srgb, var(--pm-accent) 14%, transparent); }
 
-@media (max-width: 720px) {
-  .pm-scope .pm-drawer { top: auto; left: 0; width: auto; max-height: 72vh; }
-  .pm-scope .pm-drawer-panel { border-left: 0; border-top: 1px solid var(--pm-line); border-radius: 18px 18px 0 0; animation-name: pm-rise; }
+@media (max-width: 768px), (max-width: 1000px) and (pointer: coarse) {
+  .pm-scope .pm-drawer { top: auto; left: 0; width: auto; max-height: 78dvh; }
+  .pm-scope .pm-drawer-panel { min-width: 0; border-left: 0; border-top: 1px solid var(--pm-line); border-radius: 18px 18px 0 0; animation-name: pm-rise; }
+  .pm-scope .pm-drawer-close { width: 44px; height: 44px; }
+  .pm-scope .pm-d-head { padding-right: 48px; }
+  .pm-scope .pm-d-actions { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+}
+@media (max-width: 768px), (pointer: coarse) {
+  .pm-scope .pm-search input, .pm-scope .pm-table-filter input, .pm-scope .pm-table-filter select { min-height: 44px; height: auto; font-size: 16px; }
+  .pm-scope .pm-bar button, .pm-scope .pm-d-actions button, .pm-scope .pm-link, .pm-scope .pm-table-tools button, .pm-scope [data-pm-table-sort] { min-height: 44px; min-width: 44px; }
+  .pm-scope .tabs > label, .pm-scope .pm-drawer-close { min-height: 44px; }
+  .pm-scope .view > .scroll { max-height: 65svh; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y pinch-zoom; }
+  .pm-scope .table > .scroll { max-height: 65svh; overscroll-behavior-x: contain; touch-action: pan-x pan-y pinch-zoom; }
+}
+@media (max-width: 768px) {
+  .pm-scope .pm-bar { gap: 8px; }
+  .pm-scope .pm-search { flex: 1 1 100%; min-width: 0; }
   .pm-scope .pm-search input { width: 100%; }
+  .pm-scope .pm-count:empty { display: none; }
+  .pm-scope .pm-group { flex: 1 1 100%; min-width: 0; max-width: 100%; flex-wrap: nowrap; overflow-x: auto; border-radius: 14px; scrollbar-width: thin; overscroll-behavior-x: contain; }
+  .pm-scope .pm-group button { flex: none; justify-content: center; padding: 8px 10px; }
+  .pm-scope .pm-zoom-group button { flex: 1; }
+  .pm-scope .pm-table-tools { gap: 8px; flex-wrap: wrap; padding: 8px 12px; }
+  .pm-scope .pm-d-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 6px 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .pm-scope * { animation: none !important; transition: none !important; }
 }
 @media print {
   .pm-scope .pm-toolbar, .pm-scope .pm-drawer { display: none !important; }
+  .pm-scope .view > .scroll { max-height: none !important; overflow: visible; }
 }

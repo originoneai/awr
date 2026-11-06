@@ -290,6 +290,7 @@
   "map.ui.clear": "Clear selection",
   "map.ui.highlighting": "Highlighting {key}: {up} upstream, {down} downstream",
   "map.ui.hint": "Click a card for details · hover or focus it to see its dependency chain · lane headers and “more” blocks fold and unfold · drag the background to move, Ctrl/⌘ + wheel to zoom",
+  "map.ui.touch_hint": "Swipe to explore · tap a card for details · use + / − to zoom",
   "map.ui.card_label": "{key}, {title}, {status}. Press Enter for details.",
   "map.ui.fold": "Fold or unfold {name}",
   "map.ui.row_open": "Open details of {key}",

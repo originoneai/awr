@@ -114,7 +114,25 @@ td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
   .notes article.pm-note-card { padding: 16px; }
   .notes .pm-field-gaps li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
 }
-@media print{.tabs>input,.tabs>label{display:none}.view{display:block!important;break-inside:avoid;margin-bottom:16px}.scroll{box-shadow:none;overflow:visible}}
+@media (max-width: 768px) {
+  .top { padding: 16px max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left)); gap: 12px; }
+  .brand { width: 100%; align-items: flex-start; }
+  .brand > div { min-width: 0; }
+  .top h1 { font-size: 17px; overflow-wrap: anywhere; }
+  .stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; width: 100%; }
+  .stats li { min-width: 0; padding: 7px 3px; border-radius: 10px; }
+  .stats b { font-size: 16px; }
+  .stats span { font-size: 10.5px; }
+  .tabs { padding: 6px max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left)); }
+  .tabs > label { display: inline-flex; align-items: center; justify-content: center; vertical-align: top; width: calc((100% - 24px) / 3); min-height: 48px; margin: 0 8px 12px 0; padding: 8px 4px; border-radius: 12px; font-size: 12px; text-align: center; }
+  .view > .scroll { max-height: 65svh; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y pinch-zoom; }
+  .table, .notes { margin-left: max(12px, env(safe-area-inset-left)); margin-right: max(12px, env(safe-area-inset-right)); }
+}
+@media (pointer: coarse) {
+  .tabs > label { min-height: 44px; }
+  .view > .scroll { max-height: 65svh; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y pinch-zoom; }
+}
+@media print{.tabs>input,.tabs>label{display:none}.view{display:block!important;break-inside:avoid;margin-bottom:16px}.scroll{box-shadow:none;overflow:visible;max-height:none!important}}
 `.trim();
 
   /** Language function over the catalogs: unknown keys fall back to English, then to the key itself. */
@@ -240,7 +258,7 @@ td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
     const body = `<div class="tabs">${inputs}${toolbar}<div class="views">${main}</div></div>\n${table}\n${notes}${panel}`;
     const css = runtime ? `${CSS}\n${runtime.css}` : CSS;
     const content = runtime ? `<main class="pm-root pm-scope" id="pm-root">${body}</main>\n${runtimeBlock({ snapshot, userConfig, lang, runtime })}` : `<main>${body}</main>`;
-    const document = `<!doctype html>\n<html lang="${esc(lang)}">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<meta name="color-scheme" content="light dark">\n`
+    const document = `<!doctype html>\n<html lang="${esc(lang)}">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n<meta name="color-scheme" content="light dark">\n`
       + `<title>${esc(title)} · r${esc(String(proj.revision))}</title>\n<style>${css}</style>\n</head>\n<body>\n${header}\n${content}\n</body>\n</html>\n`;
 
     return { document, title, header, body, views: parts, table, notes, stats, model, fingerprint: snapshot.fingerprint, revision: proj.revision };

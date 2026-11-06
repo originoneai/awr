@@ -290,6 +290,7 @@
   "map.ui.clear": "清除选择",
   "map.ui.highlighting": "正在高亮 {key}：上游 {up} 项，下游 {down} 项",
   "map.ui.hint": "点击卡片查看详情 · 悬停或聚焦查看依赖链 · 泳道标题与“另有 N 项”块可折叠与展开 · 拖动背景平移，Ctrl/⌘ + 滚轮缩放",
+  "map.ui.touch_hint": "滑动浏览图表 · 点击节点查看详情 · 使用 ＋／－ 缩放",
   "map.ui.card_label": "{key}，{title}，{status}。按 Enter 查看详情。",
   "map.ui.fold": "折叠或展开 {name}",
   "map.ui.row_open": "查看 {key} 的详情",

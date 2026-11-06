@@ -56,7 +56,7 @@ function fakeTimers() {
 }
 
 /** Render the interactive page markup, attach it to a document and mount the layer. */
-function boot({ snapshot = source, lang = 'en', cfg = config, restore, container: reuse, offsetTop, noCopy, storage } = {}) {
+function boot({ snapshot = source, lang = 'en', cfg = config, restore, container: reuse, offsetTop, noCopy, storage, touch = false } = {}) {
   const t = h.tFor(lang);
   const result = page.renderProjectMap(snapshot, cfg, { t, lang, interactive: true });
   const { doc, container } = reuse || dom.createPage(result.body);
@@ -65,6 +65,7 @@ function boot({ snapshot = source, lang = 'en', cfg = config, restore, container
   const timers = fakeTimers();
   // a stand-in for the window: an event target that records scrolling and holds a clipboard
   const win = doc.createElement('window');
+  win.matchMedia = () => ({ matches: touch });
   win.localStorage = storage;
   win.scrolls = [];
   win.scrollBy = (x, y) => win.scrolls.push([x, y]);
@@ -964,6 +965,39 @@ test('dragging the background pans the diagram and the click that ends the drag 
   dom.fire(ctx.doc.body, 'mouseup', {});
   assert.equal(scroll.scrollLeft, 430);
   ctx.timers.run();
+});
+
+test('touch guidance remains localized after clearing a dependency highlight', () => {
+  for (const lang of ['en', 'zh-CN']) {
+    const ctx = boot({ lang, touch: true });
+    const note = ctx.container.querySelector('[data-pm-note]');
+    assert.equal(note.textContent, ctx.t('map.ui.touch_hint'));
+    ctx.app.select('DEMO-A-004');
+    assert.notEqual(note.textContent, ctx.t('map.ui.touch_hint'));
+    click(ctx.action('clear'));
+    assert.equal(note.textContent, ctx.t('map.ui.touch_hint'));
+    ctx.app.destroy();
+  }
+});
+
+test('dragging a height-bounded diagram scrolls inside its frame instead of moving the page', () => {
+  const ctx = boot();
+  const scroll = ctx.section('overview');
+  const svg = scroll.querySelector('svg');
+  scroll.scrollHeight = 1600;
+  scroll.clientHeight = 400;
+  scroll.scrollTop = 200;
+  scroll.scrollLeft = 300;
+  dom.fire(svg, 'mousedown', { button: 0, clientX: 200, clientY: 300 });
+  dom.fire(ctx.doc.body, 'mousemove', { clientX: 170, clientY: 260 });
+  assert.equal(scroll.scrollLeft, 330);
+  assert.equal(scroll.scrollTop, 240);
+  assert.deepEqual(ctx.win.scrolls, []);
+  dom.fire(ctx.doc.body, 'mousemove', { clientX: 160, clientY: 250 });
+  assert.equal(scroll.scrollTop, 250);
+  dom.fire(ctx.doc.body, 'mouseup', {});
+  assert.equal(has(scroll, 'pm-panning'), false);
+  ctx.app.destroy();
 });
 
 // ---------------------------------------------------------------------- lifecycle

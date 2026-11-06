@@ -52,6 +52,16 @@ test('rendering twice gives the same bytes in every language', () => {
   }
 });
 
+test('offline documents retain responsive graph frames and unrestricted browser zoom', () => {
+  for (const lang of ['en', 'zh-CN']) {
+    const html = h.renderFixture('states', lang).document;
+    assert.match(html, /name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/);
+    assert.match(html, /\.view > \.scroll \{ max-height: 65svh; overflow: auto;/);
+    assert.match(html, /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
+    assert.doesNotMatch(html, /user-scalable=no|maximum-scale=1/);
+  }
+});
+
 test('canonical unknown work status remains visible and distinct from readiness in every view', () => {
   const source = h.readJson('states.json');
   const node = source.nodes.find((n) => n.key === 'DEMO-A-004');

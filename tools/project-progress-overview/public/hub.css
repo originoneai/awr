@@ -82,21 +82,41 @@
 .hub-footer { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 32px; color: var(--ink-3); font-size: 12px; }
 .hub-local-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); opacity: .65; }
 @media (max-width: 1000px) { .hub-projects { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 768px), (pointer: coarse) {
+  .hub-search input, .hub-enroll-dialog input, .hub-topbar .language-picker select { font-size: 16px; }
+  .project-delete { min-height: 44px; min-width: 44px; }
+}
 @media (max-width: 640px) {
-  .hub-topbar { padding: 16px; gap: 12px; }
+  .hub-topbar { padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left)); gap: 12px; }
   .hub-topbar .language-picker { align-self: center; font-size: 12px; }
   .hub-topbar .language-picker > span { display: none; }
-  .hub-main { padding: 32px 16px 24px; }
+  .hub-main { padding: 28px max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
   .hub-heading { margin-bottom: 24px; }
   .hub-description { font-size: 14px; line-height: 1.7; }
   .hub-controls { gap: 8px; flex-wrap: wrap; }
   .hub-search { flex-basis: 100%; }
-  .hub-controls .btn { padding: 6px 10px; font-size: 12px; }
+  .hub-controls .btn { flex: 1; padding: 10px; font-size: 14px; }
   .hub-search { padding: 0 12px; gap: 8px; }
-  .hub-search input { font-size: 13px; }
+  .hub-search input { font-size: 16px; }
+  .hub-topbar .language-picker select { font-size: 16px; }
+  .hub-coverage { padding: 16px; margin-bottom: 20px; }
+  .hub-coverage-details summary { display: flex; align-items: center; min-height: 44px; }
+  .hub-coverage-details summary::before { content: '▸'; margin-right: 8px; }
+  .hub-coverage-details[open] summary::before { content: '▾'; }
+  .hub-enroll-dialog { max-height: calc(100dvh - 32px); padding: 20px; overflow: auto; }
+  .hub-enroll-dialog input { font-size: 16px; }
+  .hub-enroll-actions { flex-wrap: wrap; gap: 8px; }
+  .hub-enroll-actions .btn { flex: 1; white-space: normal; }
+  .hub-intake { padding: 20px 16px; }
+  .hub-intake > a { display: inline-flex; align-items: center; min-height: 44px; }
+  .hub-intake-heading { margin-top: 12px; }
+  .hub-intake-actions { flex-direction: column; }
+  .hub-intake-actions .btn { display: flex; align-items: center; justify-content: center; text-align: center; }
   .hub-list-heading { margin-top: 26px; font-size: 12px; }
   .hub-projects { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .project-card { min-height: 220px; padding: 20px; }
+  .project-delete { top: 16px; right: 16px; min-height: 44px; min-width: 44px; font-size: 13px; }
+  .project-card:has(.project-delete) .project-card-top { padding-right: 64px; }
   .hub-footer { align-items: flex-start; line-height: 1.7; }
   .hub-local-dot { margin-top: 7px; flex: none; }
 }

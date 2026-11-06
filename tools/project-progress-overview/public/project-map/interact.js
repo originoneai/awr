@@ -164,6 +164,7 @@
     const exploreLanes = model.cfg.explore_lanes || [];
     const exploreIndex = model.exploreLaneByWork;
     const all = [...model.nodes.values()];
+    const interactionHint = t(win.matchMedia?.('(pointer: coarse)').matches ? 'map.ui.touch_hint' : 'map.ui.hint');
     const edgeCount = all.reduce((s, n) => s + n.deps.length, 0);
     const listeners = [];
     const pulses = new Set();
@@ -406,9 +407,9 @@
         + `<label class="pm-search"><span class="pm-sr">${esc(t('map.ui.search'))}</span><input type="search" data-pm-search placeholder="${esc(t('map.ui.search_placeholder'))}" autocomplete="off" spellcheck="false"></label>`
         + '<span class="pm-count" data-pm-count role="status" aria-live="polite"></span>'
         + `<span class="pm-group" role="group" aria-label="${esc(t('map.ui.filter'))}">${chips}</span>`
-        + `<span class="pm-group" role="group" aria-label="${esc(t('map.ui.zoom'))}">${act('zoom-out', '\u2212', ` aria-label="${esc(t('map.ui.zoom_out'))}"`)}${act('zoom-fit', t('map.ui.zoom_fit'))}${act('zoom-100', t('map.ui.zoom_100'))}${act('zoom-in', '+', ` aria-label="${esc(t('map.ui.zoom_in'))}"`)}</span>`
+        + `<span class="pm-group pm-zoom-group" role="group" aria-label="${esc(t('map.ui.zoom'))}">${act('zoom-out', '\u2212', ` aria-label="${esc(t('map.ui.zoom_out'))}"`)}${act('zoom-fit', t('map.ui.zoom_fit'))}${act('zoom-100', t('map.ui.zoom_100'))}${act('zoom-in', '+', ` aria-label="${esc(t('map.ui.zoom_in'))}"`)}</span>`
         + `<span class="pm-group" role="group" aria-label="${esc(t('map.ui.layout'))}">${act('collapse-all', t('map.ui.collapse_all'))}${act('expand-all', t('map.ui.expand_all'))}${act('toggle-done', t('map.ui.show_done'), ' aria-pressed="false" data-pm-done-toggle')}</span>`
-        + `${act('clear', t('map.ui.clear'), ' hidden')}</div><p class="pm-note" data-pm-note>${esc(t('map.ui.hint'))}</p>`;
+        + `${act('clear', t('map.ui.clear'), ' hidden')}</div><p class="pm-note" data-pm-note>${esc(interactionHint)}</p>`;
     }
 
     /** Whether the active view has anything for the fold buttons to act on. */
@@ -438,7 +439,7 @@
       const count = bar.querySelector('[data-pm-count]');
       if (count) count.textContent = query ? (found.size ? t('map.ui.matches', { count: found.size }) : t('map.ui.no_matches')) : '';
       const note = bar.querySelector('[data-pm-note]');
-      if (note) note.textContent = focus ? t('map.ui.highlighting', { key: focus.key, up: focus.up.size, down: focus.down.size }) : t('map.ui.hint');
+      if (note) note.textContent = focus ? t('map.ui.highlighting', { key: focus.key, up: focus.up.size, down: focus.down.size }) : interactionHint;
       const clear = bar.querySelector('[data-pm-action="clear"]');
       if (clear) clear.hidden = !(state.selected || state.search || state.filters.size);
       const can = foldableNow();
@@ -843,14 +844,15 @@
       pan.moved = true;
       pan.scroll.classList.add('pm-panning');
       pan.scroll.scrollLeft = pan.left - dx;
-      if (win.scrollBy) win.scrollBy(0, pan.lastY - event.clientY);
+      if (pan.scroll.scrollHeight > pan.scroll.clientHeight) pan.scroll.scrollTop = pan.top - dy;
+      else if (win.scrollBy) win.scrollBy(0, pan.lastY - event.clientY);
       pan.lastY = event.clientY;
     }
     on(container, 'mousedown', (event) => {
       if (event.button !== 0 || !event.target.closest) return;
       const scroll = event.target.closest('.scroll');
       if (!scroll || !event.target.closest('svg') || event.target.closest('.pm-card,.pm-fold,.pm-btn,.pm-agent')) return;
-      pan = { scroll, x: event.clientX, y: event.clientY, lastY: event.clientY, left: scroll.scrollLeft, moved: false };
+      pan = { scroll, x: event.clientX, y: event.clientY, lastY: event.clientY, left: scroll.scrollLeft, top: scroll.scrollTop, moved: false };
       doc.addEventListener('mousemove', movePan);
       doc.addEventListener('mouseup', endPan);
     });

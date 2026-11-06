@@ -63,10 +63,23 @@ code { overflow-wrap: anywhere; }
 table { width: 100%; border-collapse: collapse; }
 th, td { border-bottom: 1px solid var(--line); text-align: left; }
 th { color: var(--ink-2); }
-@media (max-width: 640px) {
-  body { padding: 16px; }
-  .app-header { flex-direction: column; gap: 12px; }
+@media (pointer: coarse) {
+  select, .btn { min-height: 44px; }
+  input, select { font-size: 16px; }
+}
+@media (max-width: 768px) {
+  body { padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  .app-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px 12px; }
+  .app-header > div { display: contents; }
+  .project-home, .app-brand { grid-column: 1; grid-row: 1; margin: 0; min-height: 44px; display: flex; align-items: center; }
+  .project-home:not([hidden]) + .app-brand { display: none; }
+  .app-header h1, .app-description { grid-column: 1 / -1; overflow-wrap: anywhere; }
   h1 { font-size: 21px; }
-  .language-picker { align-self: flex-end; }
+  .app-description { margin-top: 0; }
+  .app-header .language-picker { grid-column: 2; grid-row: 1; }
+  .language-picker > span { display: none; }
+  select, input { font-size: 16px; }
+  select, .btn { min-height: 44px; }
+  .connection-status { margin: 12px 0; overflow-wrap: anywhere; }
   .body { padding: 12px; }
 }

@@ -104,6 +104,19 @@
   .notes .pm-field-gaps li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
 }
 
-@media (max-width: 640px) {
-  #view-map .stats li { min-width: 64px; padding: 5px 10px; }
+@media (max-width: 768px) {
+  #view-map .map-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  #view-map .map-controls .btn { min-width: 0; padding: 8px; white-space: normal; }
+  #view-map .map-toggle { grid-column: 1 / -1; min-height: 44px; }
+  #view-map .map-status { font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+  #view-map .top { gap: 12px; }
+  #view-map .brand { width: 100%; align-items: flex-start; }
+  #view-map .brand > div { min-width: 0; }
+  #view-map .top h1 { overflow-wrap: anywhere; }
+  #view-map .stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; width: 100%; }
+  #view-map .stats li { min-width: 0; padding: 7px 3px; border-radius: 10px; }
+  #view-map .stats b { font-size: 16px; }
+  #view-map .stats span { font-size: 10.5px; }
+  #view-map .tabs > label { display: inline-flex; align-items: center; justify-content: center; vertical-align: top; width: calc((100% - 24px) / 3); min-height: 48px; margin: 0 8px 12px 0; padding: 8px 4px; border-radius: 12px; font-size: 12px; text-align: center; }
+  #view-map .view > .scroll { max-height: 65svh; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y pinch-zoom; }
 }
