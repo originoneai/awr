@@ -64,12 +64,22 @@ awr overview projects --json
 ```
 
 Roots replace the configured root list. Hidden, dependency, generated, cache and
-fixture directories are excluded by default. Child symlinks are skipped. The
+fixture directories, application bundles and generated evidence are excluded by
+default. Recognized Go module caches are skipped. Package-only subdirectories
+remain part of their parent project; nested Git and AWR roots stay independent.
+A manifest in the user's home directory does not group all workspaces together.
+An explicit scan root can expose a separately managed package within a repository.
+Child symlinks are skipped. The
 coverage report exposes these boundaries and access errors. Scans are bounded to
 200,000 directories and depth 32, and incomplete scans report a partial result.
 Use `--config` with a complete `DiscoveryConfig` JSON to customize roots,
 `exclude_names`, `interval_seconds`, `directory_limit` or `depth_limit`. Custom
 `AWR_LOCAL_HOME` environments start with no scan roots until configured.
+
+After a complete scan, unused, unbound discovery suggestions that are proven to
+be ordinary subdirectories or excluded caches are retired. Previously used,
+identity-bound and attention-required entries remain in the catalog. Missing
+directories remain visible. Partial scans do not retire suggestions.
 
 The service first tries port 7381 on `127.0.0.1`. An occupied port selects an
 available loopback port. The service receipt records the actual address. Recovery

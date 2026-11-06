@@ -54,6 +54,7 @@
   "hub.intake_copy_failed": "请选中并复制上方指令",
   "hub.intake_open": "查看项目进展",
   "hub.intake_diagnostic": "查看诊断信息",
+  "hub.discovery_boundaries": "包清单子目录归入所属项目，嵌套的独立 Git／AWR 项目分别保留。已跳过 {caches} 个 Go 依赖缓存。",
   "map.status.done": "完成",
   "map.status.developing": "开发中",
   "map.status.stalled": "停滞",

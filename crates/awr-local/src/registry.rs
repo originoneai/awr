@@ -3,6 +3,7 @@ use awr_store::Store;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeSet,
     fs::{File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -297,6 +298,31 @@ pub(crate) fn record(
 
 pub fn observe(dir: &Path, root: &Path) -> Result<LocalProject> {
     Ok(record(dir, vec![inspect(root)?], true)?.remove(0))
+}
+
+/// Retire unused discovery suggestions only after a complete scan proves they are not project roots.
+pub(crate) fn retire_candidates(
+    dir: &Path,
+    visited: &BTreeSet<PathBuf>,
+    selected: &BTreeSet<PathBuf>,
+    excluded: &[PathBuf],
+) -> Result<usize> {
+    let _lock = lock(dir, "projects.lock", Duration::from_secs(2))?;
+    let mut catalog = catalog(dir)?;
+    let before = catalog.projects.len();
+    catalog.projects.retain(|entry| {
+        entry.project_id.is_some()
+            || entry.last_used_at != 0
+            || entry.state != ProjectState::Discovered
+            || selected.contains(&entry.root)
+            || (!visited.contains(&entry.root)
+                && !excluded.iter().any(|path| entry.root.starts_with(path)))
+    });
+    let retired = before - catalog.projects.len();
+    if retired != 0 {
+        write_json(&dir.join("projects.json"), &catalog)?;
+    }
+    Ok(retired)
 }
 
 pub fn register(dir: &Path, root: &Path) -> Result<LocalProject> {
