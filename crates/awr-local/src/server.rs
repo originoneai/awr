@@ -3,7 +3,7 @@ use awr_core::{Error, Result};
 use axum::{
     Router,
     body::Body,
-    extract::{OriginalUri, Path as RoutePath, State},
+    extract::{DefaultBodyLimit, Json, OriginalUri, Path as RoutePath, State},
     http::{HeaderMap, Method, Request, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -105,6 +105,33 @@ async fn projects(State(server): State<Arc<Server>>) -> Response {
             axum::Json(json!({"ok":true,"data":{"projects":projects,"discovery":discovery,"catalog_scope":if default_scope { "user" } else { "isolated" }}})).into_response()
         }
         Ok(Err(error)) => failure(StatusCode::INTERNAL_SERVER_ERROR, error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IntakeRequest {
+    root: PathBuf,
+}
+
+async fn request_intake(
+    State(server): State<Arc<Server>>,
+    headers: HeaderMap,
+    Json(request): Json<IntakeRequest>,
+) -> Response {
+    if headers
+        .get("x-awr-project-hub")
+        .is_none_or(|value| value != "1")
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let dir = server.dir.clone();
+    match tokio::task::spawn_blocking(move || registry::request_intake(&dir, &request.root)).await {
+        Ok(Ok(project)) => {
+            axum::Json(json!({"ok":true,"data":{"project":project}})).into_response()
+        }
+        Ok(Err(error)) => failure(StatusCode::BAD_REQUEST, error),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -406,6 +433,10 @@ pub fn serve(dir: &Path, executable: &Path) -> Result<()> {
                 }),
             )
             .route("/api/projects", get(projects))
+            .route(
+                "/api/projects/intake",
+                post(request_intake).layer(DefaultBodyLimit::max(8192)),
+            )
             .route(
                 "/api/projects/{key}/{*route}",
                 get(project_api).post(project_api),

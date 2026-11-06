@@ -15,6 +15,16 @@
 .hub-search input:focus-visible { outline: none; }
 .hub-search input::placeholder { color: var(--ink-3); }
 .hub-controls .btn { min-height: 46px; border-radius: 11px; white-space: nowrap; }
+.hub-enroll-dialog { width: min(540px, calc(100vw - 32px)); padding: 28px; border: 1px solid var(--line); border-radius: 18px; color: var(--ink); background: var(--surface); box-shadow: var(--shadow-2); }
+.hub-enroll-dialog::backdrop { background: rgb(20 35 60 / 30%); backdrop-filter: blur(4px); }
+.hub-enroll-dialog h2 { margin: 0; font-size: 22px; }
+.hub-enroll-description { margin: 12px 0 24px; color: var(--ink-2); font-size: 14px; line-height: 1.8; }
+.hub-enroll-dialog label { display: block; margin-bottom: 9px; font-size: 13px; font-weight: 600; }
+.hub-enroll-dialog input { box-sizing: border-box; width: 100%; min-height: 46px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: var(--surface-2); font: 13px/1.5 var(--f-mono); }
+.hub-enroll-dialog input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hub-enroll-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 26px; }
+.hub-enroll-error { color: var(--crit); font-size: 13px; line-height: 1.7; }
+.project-intake-hint { margin: -4px 0 16px; color: var(--ink-2); font-size: 12px; }
 .hub-list-heading { display: flex; justify-content: space-between; gap: 16px; margin: 34px 0 16px; color: var(--ink-2); font-size: 13px; }
 #hubCount { font-weight: 600; }
 .hub-sort { color: var(--ink-3); }
@@ -75,7 +85,8 @@ a.project-card:focus-visible, .hub-brand:focus-visible { outline: 2px solid var(
   .hub-main { padding: 32px 16px 24px; }
   .hub-heading { margin-bottom: 24px; }
   .hub-description { font-size: 14px; line-height: 1.7; }
-  .hub-controls { gap: 8px; }
+  .hub-controls { gap: 8px; flex-wrap: wrap; }
+  .hub-search { flex-basis: 100%; }
   .hub-controls .btn { padding: 6px 10px; font-size: 12px; }
   .hub-search { padding: 0 12px; gap: 8px; }
   .hub-search input { font-size: 13px; }

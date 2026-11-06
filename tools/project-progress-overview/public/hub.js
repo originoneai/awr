@@ -14,10 +14,16 @@
     return `/?project=${key}&lang=${locale === 'zh-CN' ? 'zh-CN' : 'en'}${state === 'connected' ? '' : '&intake=1'}`;
   }
 
-  function createHub({ document: doc, i18n, load, selectedKey = null, loadIntake, copy }) {
+  function validProject(project) {
+    return project && /^[a-f0-9]{64}$/.test(project.key) && typeof project.name === 'string' && typeof project.root === 'string'
+      && typeof project.available === 'boolean' && Number.isFinite(project.last_used_at)
+      && (!project.state || ['connected', 'discovered', 'attention'].includes(project.state));
+  }
+
+  function createHub({ document: doc, i18n, load, selectedKey = null, loadIntake, copy, enroll }) {
     const $ = (id) => doc.getElementById(id);
     const t = (key, params) => i18n.t(key, params);
-    const state = { projects: [], running: null, error: null, discovery: null, scope: null, signature: null, coverageSignature: null };
+    const state = { projects: [], running: null, enrolling: false, error: null, discovery: null, scope: null, signature: null, coverageSignature: null };
 
     function element(tag, className, text) {
       const node = doc.createElement(tag);
@@ -50,15 +56,17 @@
       const path = element('p', 'project-path', project.root);
       path.setAttribute('title', project.root);
       node.appendChild(path);
+      if (project.state === 'discovered') node.appendChild(element('p', 'project-intake-hint', t('hub.intake_card_hint')));
       if (!project.available) node.appendChild(element('p', 'project-unavailable', t('hub.unavailable_hint')));
       const bottom = element('div', 'project-card-bottom');
       const label = !project.available ? 'hub.unavailable' : project.state === 'discovered' ? 'hub.pending' : project.state === 'attention' ? 'hub.attention' : 'hub.available';
       bottom.appendChild(element('span', 'project-state', t(label)));
       const date = new Date(project.last_used_at || project.registered_at || 0);
       const formatted = new Intl.DateTimeFormat(i18n.locale, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date);
-      const time = element('time', 'project-time', project.last_used_at ? formatted : t('hub.discovered_time', { time: formatted }));
+      const manuallyAdded = project.state === 'discovered' && project.intake_requested;
+      const time = element('time', 'project-time', project.last_used_at ? formatted : t(manuallyAdded ? 'hub.added_time' : 'hub.discovered_time', { time: formatted }));
       time.setAttribute('datetime', date.toISOString());
-      time.setAttribute('title', `${t(project.last_used_at ? 'hub.last_used' : 'hub.first_seen')} · ${date.toLocaleString(i18n.locale)}`);
+      time.setAttribute('title', `${t(project.last_used_at ? 'hub.last_used' : manuallyAdded ? 'hub.first_added' : 'hub.first_seen')} · ${date.toLocaleString(i18n.locale)}`);
       bottom.appendChild(time);
       node.appendChild(bottom);
       return node;
@@ -72,7 +80,8 @@
       if (!target) return;
       if (!report) { target.hidden = true; state.coverageSignature = null; return; }
       target.hidden = false;
-      const signature = JSON.stringify(report);
+      const counts = Object.fromEntries(['connected', 'discovered', 'attention'].map((phase) => [phase, state.projects.filter((project) => (project.state || 'connected') === phase).length]));
+      const signature = JSON.stringify([report, counts]);
       if (signature === state.coverageSignature) return;
       state.coverageSignature = signature;
       const open = target.querySelector('details')?.hasAttribute('open');
@@ -82,7 +91,7 @@
       heading.appendChild(element('h2', '', t('hub.discovery_title')));
       heading.appendChild(element('span', `hub-discovery-state ${phase}`, t(`hub.discovery_${phase}`)));
       target.appendChild(heading);
-      target.appendChild(element('p', 'hub-coverage-summary', t('hub.discovery_summary', { directories: report.directories_scanned || 0, connected: report.connected || 0, pending: report.pending || 0, attention: report.attention || 0 })));
+      target.appendChild(element('p', 'hub-coverage-summary', t('hub.discovery_summary', { directories: report.directories_scanned || 0, connected: counts.connected, pending: counts.discovered, attention: counts.attention })));
       const details = element('details', 'hub-coverage-details');
       if (open) details.setAttribute('open', '');
       details.appendChild(element('summary', '', t('hub.discovery_scope')));
@@ -155,13 +164,13 @@
             throw new Error(response && response.error ? response.error.message : t('progress.invalid_response'));
           }
           const projects = response.data.projects;
-          if (projects.some((p) => !p || !/^[a-f0-9]{64}$/.test(p.key) || typeof p.name !== 'string' || typeof p.root !== 'string' || typeof p.available !== 'boolean' || !Number.isFinite(p.last_used_at) || (p.state && !['connected', 'discovered', 'attention'].includes(p.state)))) {
+          if (projects.some((p) => !validProject(p))) {
             throw new Error(t('progress.invalid_response'));
           }
           state.projects = projects;
           state.discovery = response.data.discovery || null;
           state.scope = response.data.catalog_scope || null;
-          const signature = JSON.stringify(projects.map(({ key, root, name, available, state, last_used_at, registered_at }) => ({ key, root, name, available, state, last_used_at, registered_at })));
+          const signature = JSON.stringify(projects.map(({ key, root, name, available, state, last_used_at, registered_at, intake_requested }) => ({ key, root, name, available, state, last_used_at, registered_at, intake_requested })));
           if (!quiet || state.signature !== signature) render();
           else renderCoverage();
           state.signature = signature;
@@ -189,6 +198,41 @@
 
     $('hubSearch').addEventListener('input', () => { if (!state.error) render(); });
     $('hubRefresh').addEventListener('click', refresh);
+    const dialog = $('hubEnrollDialog');
+    if (dialog && enroll) {
+      $('hubEnroll').addEventListener('click', () => {
+        $('hubEnrollError').hidden = true;
+        dialog.showModal();
+        $('hubEnrollPath').focus();
+      });
+      $('hubEnrollCancel').addEventListener('click', () => dialog.close());
+      $('hubEnrollForm').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (state.enrolling) return;
+        state.enrolling = true;
+        $('hubEnrollSubmit').disabled = true;
+        $('hubEnrollError').hidden = true;
+        const path = $('hubEnrollPath').value.trim();
+        try {
+          if (!path) throw new Error('missing project path');
+          const response = await enroll(path);
+          if (!response?.ok || !validProject(response.data?.project)) throw new Error('invalid enrollment response');
+          $('hubSearch').value = '';
+          await refresh();
+          if (!state.projects.some((project) => project.key === response.data.project.key)) state.projects.push(response.data.project);
+          state.signature = null;
+          render();
+          dialog.close();
+          $('hubEnrollPath').value = '';
+        } catch (_) {
+          $('hubEnrollError').textContent = t('hub.enroll_failed');
+          $('hubEnrollError').hidden = false;
+        } finally {
+          state.enrolling = false;
+          $('hubEnrollSubmit').disabled = false;
+        }
+      });
+    }
     const copyButton = $('hubIntakeCopy');
     if (copyButton && copy) copyButton.addEventListener('click', async () => {
       try { await copy($('hubIntakePrompt').textContent); copyButton.textContent = t('hub.intake_copied'); }
@@ -204,6 +248,7 @@
     const selectedKey = new URL(root.location.href).searchParams.get('intake') === '1' ? new URL(root.location.href).searchParams.get('project') : null;
     const hub = createHub({ document: root.document, i18n: root.AWR_I18N, selectedKey,
       copy: (text) => root.navigator.clipboard.writeText(text),
+      enroll: async (path) => (await fetch('/api/projects/intake', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-AWR-Project-Hub': '1' }, body: JSON.stringify({ root: path }) })).json(),
       loadIntake: async (key) => (await fetch(`/api/projects/${encodeURIComponent(key)}/intake`, { credentials: 'same-origin', cache: 'no-store' })).json(),
       load: async () => {
       const response = await fetch('/api/projects', { credentials: 'same-origin', cache: 'no-store' });

@@ -36,7 +36,7 @@ enum OverviewCommand {
     Projects,
     /// Read the current directory's connection state and Agent intake/repair actions.
     Inspect,
-    /// Discover existing AWR projects and code repositories, with explicit coverage reporting.
+    /// Discover existing AWR-managed projects, with explicit coverage reporting.
     Discover {
         #[arg(long = "root")]
         roots: Vec<PathBuf>,

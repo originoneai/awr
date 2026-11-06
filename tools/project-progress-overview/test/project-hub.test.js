@@ -17,6 +17,9 @@ const projects = [
 function mount(load, locale = 'en', options = {}) {
   const { doc } = dom.createPage(fs.readFileSync(path.join(__dirname, '..', 'public', 'hub.html'), 'utf8'));
   doc.getElementById('hubSearch').value = '';
+  const dialog = doc.getElementById('hubEnrollDialog');
+  dialog.showModal = () => dialog.setAttribute('open', '');
+  dialog.close = () => dialog.removeAttribute('open');
   const app = hub.createHub({ document: doc, i18n: { t: h.tFor(locale), locale }, load, ...options });
   return { doc, app, el: (id) => doc.getElementById(id) };
 }
@@ -202,4 +205,51 @@ test('quiet recovery rebuilds the same catalog after a failed poll', async () =>
   offline = false;
   await ctx.app.refresh({ quiet: true });
   assert.equal(ctx.el('hubProjects').querySelectorAll('.project-card').length, 3);
+});
+
+test('explicit takeover creates one pending card even when a prior catalog poll is stale', async () => {
+  const pending = { ...projects[0], key: 'd'.repeat(64), name: 'New app', root: '/work/new app', state: 'discovered', intake_requested: true, last_used_at: 0, registered_at: 40000 };
+  for (const locale of ['en', 'zh-CN']) {
+    let complete;
+    const requests = [];
+    const ctx = mount(async () => ({ ok: true, data: { projects } }), locale, {
+      enroll: (root) => { requests.push(root); return new Promise((resolve) => { complete = resolve; }); },
+    });
+    await ctx.app.refresh();
+    dom.fire(ctx.el('hubEnroll'), 'click');
+    assert.equal(ctx.el('hubEnrollDialog').hasAttribute('open'), true);
+    assert.equal(ctx.doc.activeElement, ctx.el('hubEnrollPath'));
+    ctx.el('hubEnrollPath').value = '  /work/new app  ';
+    dom.fire(ctx.el('hubEnrollForm'), 'submit');
+    dom.fire(ctx.el('hubEnrollForm'), 'submit');
+    assert.deepEqual(requests, ['/work/new app']);
+    assert.equal(ctx.el('hubEnrollSubmit').disabled, true);
+    complete({ ok: true, data: { project: pending } });
+    await new Promise(setImmediate);
+    assert.equal(ctx.el('hubEnrollDialog').hasAttribute('open'), false);
+    assert.equal(ctx.el('hubEnrollSubmit').disabled, false);
+    const card = ctx.el('hubProjects').querySelector(`[data-project="${pending.key}"]`);
+    assert.equal(card.getAttribute('href'), `/?project=${pending.key}&lang=${locale}&intake=1`);
+    assert.ok(card.textContent.includes(h.tFor(locale)('hub.intake_card_hint')));
+    assert.ok(card.querySelector('time').getAttribute('title').includes(h.tFor(locale)('hub.first_added')));
+  }
+});
+
+test('invalid takeover paths stay in the dialog for correction and cancellation creates no card', async () => {
+  let calls = 0;
+  const ctx = mount(async () => ({ ok: true, data: { projects: [] } }), 'zh-CN', {
+    enroll: async () => { calls += 1; return { ok: false, error: { code: 'InvalidInput' } }; },
+  });
+  dom.fire(ctx.el('hubEnroll'), 'click');
+  ctx.el('hubEnrollPath').value = 'relative/path';
+  dom.fire(ctx.el('hubEnrollForm'), 'submit');
+  await new Promise(setImmediate);
+  assert.equal(ctx.el('hubEnrollDialog').hasAttribute('open'), true);
+  assert.equal(ctx.el('hubEnrollPath').value, 'relative/path');
+  assert.equal(ctx.el('hubEnrollError').hidden, false);
+  assert.equal(ctx.el('hubEnrollError').textContent, h.tFor('zh-CN')('hub.enroll_failed'));
+  assert.equal(ctx.app.state.projects.length, 0);
+  dom.fire(ctx.el('hubEnrollCancel'), 'click');
+  assert.equal(ctx.el('hubEnrollDialog').hasAttribute('open'), false);
+  assert.equal(calls, 1);
 });

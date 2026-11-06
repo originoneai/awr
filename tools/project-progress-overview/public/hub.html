@@ -34,7 +34,18 @@
       <input id="hubSearch" type="search" autocomplete="off" data-i18n-placeholder="hub.search_placeholder" data-i18n-aria-label="hub.search_label" aria-label="Find a project">
     </label>
     <button class="btn ghost" id="hubRefresh" data-i18n="hub.refresh">Refresh projects</button>
+    <button class="btn" id="hubEnroll" data-i18n="hub.enroll">Take over project</button>
   </section>
+  <dialog id="hubEnrollDialog" class="hub-enroll-dialog" aria-labelledby="hubEnrollTitle">
+    <form id="hubEnrollForm">
+      <h2 id="hubEnrollTitle" data-i18n="hub.enroll_title">Take over a project</h2>
+      <p class="hub-enroll-description" data-i18n="hub.enroll_description"></p>
+      <label for="hubEnrollPath" data-i18n="hub.enroll_path">Absolute project path</label>
+      <input id="hubEnrollPath" name="root" type="text" required autocomplete="off" spellcheck="false" data-i18n-placeholder="hub.enroll_placeholder">
+      <p id="hubEnrollError" class="hub-enroll-error" role="alert" hidden></p>
+      <div class="hub-enroll-actions"><button class="btn ghost" type="button" id="hubEnrollCancel" data-i18n="hub.enroll_cancel">Cancel</button><button class="btn" type="submit" id="hubEnrollSubmit" data-i18n="hub.enroll_submit">Create pending card</button></div>
+    </form>
+  </dialog>
   <div id="hubListHeading" class="hub-list-heading"><span id="hubCount"></span><span class="hub-sort" data-i18n="hub.sort">Most recently used</span></div>
   <p id="hubStatus" class="hub-status" role="status" aria-live="polite"></p>
   <section id="hubProjects" class="hub-projects" data-i18n-aria-label="hub.projects_label" aria-label="Registered projects"></section>

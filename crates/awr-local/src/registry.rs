@@ -36,6 +36,8 @@ pub struct LocalProject {
     pub state: ProjectState,
     #[serde(default)]
     pub last_seen_at: i64,
+    #[serde(default)]
+    pub intake_requested: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue: Option<String>,
 }
@@ -172,17 +174,17 @@ fn catalog(dir: &Path) -> Result<Catalog> {
     let path = dir.join("projects.json");
     if !path.exists() {
         return Ok(Catalog {
-            version: 2,
+            version: 3,
             projects: Vec::new(),
         });
     }
     let mut value: Catalog = read_json(&path)?;
-    if ![1, 2].contains(&value.version) || value.projects.len() > MAX_PROJECTS {
+    if ![1, 2, 3].contains(&value.version) || value.projects.len() > MAX_PROJECTS {
         return Err(Error::InvalidInput(
             "unsupported local project catalog".into(),
         ));
     }
-    value.version = 2;
+    value.version = 3;
     Ok(value)
 }
 
@@ -209,6 +211,7 @@ pub fn inspect(root: &Path) -> Result<LocalProject> {
         available: true,
         state: ProjectState::Discovered,
         last_seen_at: now,
+        intake_requested: false,
         issue: None,
     };
     if entry.root.join(".awr").exists() {
@@ -244,6 +247,7 @@ fn merge(catalog: &mut Catalog, mut entry: LocalProject, used: bool) -> Result<L
         // A scan may have observed the directory before a concurrent initialization finished.
         // A bound identity also survives missing/corrupt runtime files until explicit repair.
         old.last_seen_at = old.last_seen_at.max(entry.last_seen_at);
+        old.intake_requested |= entry.intake_requested;
         old.available = validate(old).is_ok();
         if !old.available {
             old.state = ProjectState::Attention;
@@ -261,6 +265,7 @@ fn merge(catalog: &mut Catalog, mut entry: LocalProject, used: bool) -> Result<L
             || (project.root == entry.root && project.project_id.is_none())
     });
     if let Some(old) = old {
+        entry.intake_requested |= old.intake_requested;
         entry.key = old.key.clone();
         entry.registered_at = old.registered_at;
         entry.last_used_at = if used {
@@ -297,7 +302,29 @@ pub(crate) fn record(
 }
 
 pub fn observe(dir: &Path, root: &Path) -> Result<LocalProject> {
-    Ok(record(dir, vec![inspect(root)?], true)?.remove(0))
+    let entry = inspect(root)?;
+    if entry.state == ProjectState::Discovered
+        && !catalog(dir)?
+            .projects
+            .iter()
+            .any(|old| old.root == entry.root && (old.intake_requested || old.project_id.is_some()))
+    {
+        return Err(Error::NotFound(
+            "project has not been enrolled for AWR intake".into(),
+        ));
+    }
+    Ok(record(dir, vec![entry], true)?.remove(0))
+}
+
+pub(crate) fn request_intake(dir: &Path, root: &Path) -> Result<LocalProject> {
+    if !root.is_absolute() {
+        return Err(Error::InvalidInput(
+            "project root must be an absolute directory path".into(),
+        ));
+    }
+    let mut entry = inspect(root)?;
+    entry.intake_requested = true;
+    Ok(record(dir, vec![entry], false)?.remove(0))
 }
 
 /// Retire unused discovery suggestions only after a complete scan proves they are not project roots.
@@ -311,12 +338,13 @@ pub(crate) fn retire_candidates(
     let mut catalog = catalog(dir)?;
     let before = catalog.projects.len();
     catalog.projects.retain(|entry| {
+        let is_excluded = excluded.iter().any(|path| entry.root.starts_with(path));
         entry.project_id.is_some()
             || entry.last_used_at != 0
-            || entry.state != ProjectState::Discovered
+            || entry.intake_requested
             || selected.contains(&entry.root)
-            || (!visited.contains(&entry.root)
-                && !excluded.iter().any(|path| entry.root.starts_with(path)))
+            || (!is_excluded
+                && (entry.state == ProjectState::Attention || !visited.contains(&entry.root)))
     });
     let retired = before - catalog.projects.len();
     if retired != 0 {
@@ -356,6 +384,11 @@ pub(crate) fn validate(entry: &LocalProject) -> Result<()> {
 
 pub fn list(dir: &Path) -> Result<Vec<LocalProject>> {
     let mut entries = catalog(dir)?.projects;
+    entries.retain(|entry| {
+        entry.project_id.is_some()
+            || entry.intake_requested
+            || entry.state != ProjectState::Discovered
+    });
     for entry in &mut entries {
         entry.available = if entry.project_id.is_some() {
             validate(entry).is_ok()
@@ -476,6 +509,30 @@ mod tests {
         );
         assert!(entries.iter().any(|p| p.key == entry.key && !p.available));
         assert!(select(&fixture.dir(), &entry.key).is_err());
+    }
+
+    #[test]
+    fn explicit_intake_validates_paths_deduplicates_and_preserves_directory_contents() {
+        let fixture = Fixture::new();
+        let root = fixture.0.join("pending project");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("README.md"), "Existing project sources\n").unwrap();
+        assert!(observe(&fixture.dir(), &root).is_err());
+        assert!(list(&fixture.dir()).unwrap().is_empty());
+        assert!(request_intake(&fixture.dir(), Path::new("relative/path")).is_err());
+        assert!(request_intake(&fixture.dir(), &root.join("missing")).is_err());
+        let pending = request_intake(&fixture.dir(), &root).unwrap();
+        let repeated = request_intake(&fixture.dir(), &root.join(".")).unwrap();
+        assert_eq!(pending.key, repeated.key);
+        assert_eq!(pending.state, ProjectState::Discovered);
+        assert!(pending.intake_requested);
+        assert_eq!(pending.last_used_at, 0);
+        assert_eq!(list(&fixture.dir()).unwrap().len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(root.join("README.md")).unwrap(),
+            "Existing project sources\n"
+        );
+        assert!(!root.join(".awr").exists());
     }
 
     #[test]
