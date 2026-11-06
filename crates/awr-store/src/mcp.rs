@@ -68,6 +68,45 @@ pub(crate) fn session_binding(
         })
         .transpose()
 }
+fn pending_waits(
+    conn: &Connection,
+    project: Id,
+    branch: Option<Id>,
+    work: Option<Id>,
+) -> Result<Vec<(Id, McpWait)>> {
+    let mut query = conn
+        .prepare(
+            "WITH replied(wait_id) AS MATERIALIZED (
+            SELECT DISTINCT json_extract(payload_json,'$.wait.id') FROM events
+            WHERE project_id=?1 AND event_type='mcp.wait_replied'
+        )
+        SELECT s.work_item_id,json_extract(e.payload_json,'$.wait') FROM events e
+        JOIN sessions s ON s.id=e.session_id AND s.project_id=e.project_id
+        LEFT JOIN replied ON replied.wait_id=json_extract(e.payload_json,'$.wait.id')
+        WHERE e.project_id=?1 AND e.event_type='mcp.wait_created' AND s.branch_id IS ?2
+          AND s.work_item_id IS NOT NULL AND (?3 IS NULL OR s.work_item_id=?3)
+          AND replied.wait_id IS NULL ORDER BY e.project_revision",
+        )
+        .map_err(db_error)?;
+    let rows = query
+        .query_map(
+            params![
+                project.to_string(),
+                branch.map(|id| id.to_string()),
+                work.map(|id| id.to_string())
+            ],
+            |row| Ok((id_at(row, 0)?, row.get::<_, String>(1)?)),
+        )
+        .map_err(db_error)?;
+    rows.map(|row| {
+        let (id, value) = row.map_err(db_error)?;
+        let wait = serde_json::from_str(&value)
+            .map_err(|_| Error::Storage("invalid MCP wait receipt".into()))?;
+        Ok((id, wait))
+    })
+    .collect()
+}
+
 impl Store {
     pub fn mcp_operation(
         &self,
@@ -210,23 +249,22 @@ impl Store {
         work: Id,
         branch: Option<Id>,
     ) -> Result<Vec<McpWait>> {
-        let mut query = self.conn.prepare("SELECT json_extract(e.payload_json,'$.wait') FROM events e JOIN sessions s ON s.id=e.session_id AND s.project_id=e.project_id WHERE e.project_id=?1 AND s.work_item_id=?2 AND s.branch_id IS ?3 AND e.event_type='mcp.wait_created' AND NOT EXISTS(SELECT 1 FROM events r WHERE r.project_id=e.project_id AND r.event_type='mcp.wait_replied' AND json_extract(r.payload_json,'$.wait.id')=json_extract(e.payload_json,'$.wait.id')) ORDER BY e.project_revision").map_err(db_error)?;
-        let values = query
-            .query_map(
-                params![
-                    project.to_string(),
-                    work.to_string(),
-                    branch.map(|b| b.to_string())
-                ],
-                |r| r.get::<_, String>(0),
-            )
-            .map_err(db_error)?;
-        values
-            .map(|v| {
-                serde_json::from_str(&v.map_err(db_error)?)
-                    .map_err(|_| Error::Storage("invalid MCP wait receipt".into()))
-            })
-            .collect()
+        Ok(pending_waits(&self.conn, project, branch, Some(work))?
+            .into_iter()
+            .map(|(_, wait)| wait)
+            .collect())
+    }
+    /// Project-owner observation query. Adapters authorize before exposing these facts.
+    pub fn pending_project_waits(
+        &self,
+        project: Id,
+        branch: Option<Id>,
+    ) -> Result<std::collections::BTreeMap<Id, Vec<McpWait>>> {
+        let mut grouped: std::collections::BTreeMap<Id, Vec<McpWait>> = Default::default();
+        for (id, wait) in pending_waits(&self.conn, project, branch, None)? {
+            grouped.entry(id).or_default().push(wait);
+        }
+        Ok(grouped)
     }
     pub fn create_mcp_wait(
         &mut self,

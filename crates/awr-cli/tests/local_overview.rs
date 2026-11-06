@@ -155,6 +155,16 @@ fn project_requests_are_isolated_and_static_assets_are_bundled() {
         let json = nav.to_string();
         assert!(json.contains(selected["projects"][0]["project_id"].as_str().unwrap()));
         assert!(!json.contains(other["projects"][0]["project_id"].as_str().unwrap()));
+        let snapshot = f.get(&format!("{base}/api/projects/{key}/map/snapshot"));
+        assert_eq!(snapshot["ok"], true);
+        assert_eq!(snapshot["data"]["basis"]["coherent"], true);
+        assert_eq!(snapshot["data"]["basis"]["source_refresh_performed"], false);
+        assert_eq!(
+            snapshot["data"]["nav"]["project"]["id"],
+            selected["projects"][0]["project_id"]
+        );
+        let unguarded = ureq::post(format!("{base}/api/projects/{key}/map/snapshot")).send_empty();
+        assert!(matches!(unguarded, Err(ureq::Error::StatusCode(403))));
     }
     let reads: Vec<_> = [&ra, &rb]
         .into_iter()

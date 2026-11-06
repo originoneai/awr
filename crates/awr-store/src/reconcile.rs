@@ -384,26 +384,19 @@ fn inspect_checkpoint_attempts(
 ) -> Result<()> {
     let rows = conn
         .prepare(
-            "SELECT started.id,started.project_revision,started.created_at
+            "WITH resolved(attempt_id) AS MATERIALIZED (
+                 SELECT DISTINCT json_extract(payload_json,'$.attempt_id') FROM events
+                 WHERE project_id=?1 AND event_type IN ('checkpoint.created','checkpoint.abandoned')
+             )
+             SELECT started.id,started.project_revision,started.created_at
              FROM events started
              WHERE started.project_id=?1 AND started.event_type='checkpoint.started'
-               AND NOT EXISTS (
-                 SELECT 1 FROM events finished
-                 WHERE finished.project_id=started.project_id AND finished.event_type='checkpoint.created'
-                   AND json_extract(finished.payload_json,'$.attempt_id')=started.id)
-               AND NOT EXISTS (
-                 SELECT 1 FROM events abandoned
-                 WHERE abandoned.project_id=started.project_id AND abandoned.event_type='checkpoint.abandoned'
-                   AND json_extract(abandoned.payload_json,'$.attempt_id')=started.id)
+               AND started.id NOT IN (SELECT attempt_id FROM resolved WHERE attempt_id IS NOT NULL)
              ORDER BY started.project_revision,started.id",
         )
         .map_err(db_error)?
         .query_map([project.to_string()], |row| {
-            Ok((
-                id_at(row, 0)?,
-                revision_at(row, 1)?,
-                row.get::<_, i64>(2)?,
-            ))
+            Ok((id_at(row, 0)?, revision_at(row, 1)?, row.get::<_, i64>(2)?))
         })
         .map_err(db_error)?
         .collect::<rusqlite::Result<Vec<_>>>()

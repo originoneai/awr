@@ -32,7 +32,7 @@ const GUARD = { 'content-type': 'application/json', 'X-AWR-Project-Progress-Over
 
 /** A minimal DOM: the elements the controller touches, remembering every status text it showed. */
 function fakeDom() {
-  const ids = ['mapStatus', 'mapRefreshBtn', 'mapCachedToggle', 'mapDownloadBtn', 'mapDownloadJsonBtn', 'mapRetryBtn', 'mapBody', 'mapHeader', 'mapStage'];
+  const ids = ['mapStatus', 'mapRefreshBtn', 'mapSyncBtn', 'mapCachedControl', 'mapCachedToggle', 'mapDownloadBtn', 'mapDownloadJsonBtn', 'mapRetryBtn', 'mapBody', 'mapHeader', 'mapStage'];
   const els = {};
   for (const id of ids) {
     const e = { id, hidden: false, disabled: false, checked: false, innerHTML: '', attrs: {}, listeners: {}, statuses: [] };
@@ -86,6 +86,32 @@ async function exported(lang, options = {}) {
   const snapshot = await extractSnapshot({ call: createFakeCli(source).call, config, now: NOW, wait: async () => {} });
   return { snapshot, result: page.renderProjectMap(snapshot, config, { t: h.tFor(lang), lang, ...options }) };
 }
+
+test('bulk progress uses one recorded read and source synchronization is an explicit POST', async () => {
+  const cli = createFakeCli(source, { nodeActivity: true });
+  const bundle = { version: 1, project_revision: source.project.revision,
+    basis: { coherent: true, source_refresh_performed: false, source_currentness_verified: false }, milestones: {} };
+  for (const [name, field] of Object.entries({ workGraph: 'work_graph', nav: 'nav', goals: 'goals', sessions: 'sessions', doctor: 'doctor', events: 'events' })) {
+    bundle[field] = await cli.call(name, name === 'workGraph' ? { limit: 1000 } : {});
+  }
+  const calls = [];
+  const callApi = async (route, options = {}) => {
+    calls.push([route, options.method || 'GET']);
+    if (route === '/api/map/config') return { ok: true, data: { bulk_snapshot: true } };
+    assert.equal(route, '/api/map/snapshot', 'Bulk loading must not call the legacy per-component routes');
+    return { ok: true, data: bundle };
+  };
+  const dom = fakeDom();
+  const map = controller(dom, callApi);
+  await map.refresh();
+  assert.equal(map.state.error, null);
+  assert.equal(dom.els.mapSyncBtn.hidden, false);
+  assert.equal(dom.els.mapCachedControl.hidden, true);
+  assert.deepEqual(calls, [['/api/map/config', 'GET'], ['/api/map/snapshot', 'GET']]);
+  await dom.els.mapSyncBtn.click();
+  assert.equal(calls.at(-1)[1], 'POST');
+  assert.equal(map.state.error, null);
+});
 
 test('the page shows exactly what the static export shows, read through the real bridge', async () => {
   for (const lang of ['en', 'zh-CN']) {

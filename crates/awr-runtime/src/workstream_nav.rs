@@ -154,6 +154,18 @@ fn work_fact(work: &Projected<WorkItem>) -> MainlineNavWorkFact {
     }
 }
 
+fn user_waits(waits: Vec<awr_core::McpWait>) -> Vec<ExplainableWait> {
+    waits
+        .into_iter()
+        .map(|wait| ExplainableWait {
+            kind: "user_wait".into(),
+            summary: short(&wait.question),
+            basis: format!("MCP wait {}", wait.id),
+            release_condition: "Record the user's actual reply on this wait".into(),
+        })
+        .collect()
+}
+
 fn concrete_outcomes(work: &MainlineNavWorkFact) -> Vec<String> {
     let mut out: Vec<String> = work
         .acceptance
@@ -815,6 +827,18 @@ pub fn mainline_nav_for(
             })
             .collect();
     }
+    if let MainlineNavAudience::Owner = audience {
+        if let Ok(mut waits) = store.pending_project_waits(project.id, project.current_branch_id) {
+            for work in &projected {
+                extras
+                    .waits_by_work
+                    .entry(work.item.meta.external_key.clone())
+                    .or_insert_with(|| {
+                        user_waits(waits.remove(&work.item.meta.id).unwrap_or_default())
+                    });
+            }
+        }
+    }
     for work in &projected {
         let key = work.item.meta.external_key.as_str();
         if !extras.responsibility_by_work.contains_key(key) {
@@ -837,19 +861,9 @@ pub fn mainline_nav_for(
                 store.pending_work_waits(project.id, work.item.meta.id, project.current_branch_id)
             {
                 if !waits.is_empty() {
-                    extras.waits_by_work.insert(
-                        key.to_string(),
-                        waits
-                            .into_iter()
-                            .map(|w| ExplainableWait {
-                                kind: "user_wait".into(),
-                                summary: short(&w.question),
-                                basis: format!("MCP wait {}", w.id),
-                                release_condition: "Record the user's actual reply on this wait"
-                                    .into(),
-                            })
-                            .collect(),
-                    );
+                    extras
+                        .waits_by_work
+                        .insert(key.to_string(), user_waits(waits));
                 }
             }
         }

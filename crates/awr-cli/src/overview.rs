@@ -16,6 +16,11 @@ pub struct OverviewArgs {
 
 #[derive(Debug, Subcommand)]
 enum OverviewCommand {
+    /// Read progress from one SQLite snapshot. Source files are synchronized only with --refresh.
+    Snapshot {
+        #[arg(long)]
+        refresh: bool,
+    },
     /// Start or reuse this user's background project hub.
     Start,
     /// Inspect the verified running service without starting it.
@@ -68,6 +73,9 @@ fn open_browser(url: &str) -> Result<()> {
 pub fn run(root: &Path, args: &OverviewArgs, json_output: bool) -> Result<()> {
     let dir = awr_local::state_dir()?;
     match &args.command {
+        Some(OverviewCommand::Snapshot { refresh }) => {
+            print(&awr_runtime::progress_snapshot(root, *refresh)?)
+        }
         Some(OverviewCommand::Serve) => awr_local::serve(&dir, &awr_local::executable()?),
         Some(OverviewCommand::Status) => {
             print(&serde_json::json!({"ok":true,"service":awr_local::running(&dir)?}))

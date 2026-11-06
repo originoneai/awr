@@ -27,6 +27,16 @@ struct Capability {
 fn catalog() -> Vec<Capability> {
     [
         (
+            "local.progress_snapshot",
+            true,
+            &["overview snapshot", "overview snapshot --refresh"][..],
+            &[
+                "recorded_state_by_default",
+                "bounded_consistent_sqlite_snapshot",
+                "runtime_diagnostics_only",
+            ][..],
+        ),
+        (
             "local.project_hub",
             true,
             &[

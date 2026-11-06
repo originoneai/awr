@@ -4,7 +4,7 @@ use axum::{
     Router,
     body::Body,
     extract::{OriginalUri, Path as RoutePath, State},
-    http::{HeaderMap, Request, StatusCode, header},
+    http::{HeaderMap, Method, Request, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -243,7 +243,17 @@ async fn project_api(
     RoutePath((key, route)): RoutePath<(String, String)>,
     OriginalUri(uri): OriginalUri,
     State(server): State<Arc<Server>>,
+    method: Method,
+    headers: HeaderMap,
 ) -> Response {
+    if method != Method::GET
+        && (route != "map/snapshot"
+            || headers
+                .get("x-awr-project-progress-overview")
+                .is_none_or(|value| value != "1"))
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     let query: HashMap<String, String> =
         url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes())
             .into_owned()
@@ -259,9 +269,33 @@ async fn project_api(
         Err(error) => return failure(StatusCode::NOT_FOUND, error),
     };
     if route == "map/config" {
-        return axum::Json(json!({"ok":true,"data":{"config":null,"source":null}})).into_response();
+        return axum::Json(
+            json!({"ok":true,"data":{"config":null,"source":null,"bulk_snapshot":true}}),
+        )
+        .into_response();
     }
-    let args = match argv(&route, &query) {
+    if route == "map/snapshot" && method == Method::GET {
+        let root = entry.root.clone();
+        let result =
+            tokio::task::spawn_blocking(move || awr_runtime::progress_snapshot(&root, false)).await;
+        return match result {
+            Ok(Ok(value)) => match registry::validate(&entry) {
+                Ok(()) => axum::Json(json!({"ok":true,"data":value})).into_response(),
+                Err(error) => failure(StatusCode::CONFLICT, error),
+            },
+            Ok(Err(error)) => failure(StatusCode::INTERNAL_SERVER_ERROR, error),
+            Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+    }
+    let args = match if route == "map/snapshot" {
+        Ok(vec![
+            "overview".into(),
+            "snapshot".into(),
+            "--refresh".into(),
+        ])
+    } else {
+        argv(&route, &query)
+    } {
         Ok(args) => args,
         Err(error) => return failure(StatusCode::BAD_REQUEST, error),
     };
@@ -329,7 +363,10 @@ pub fn serve(dir: &Path, executable: &Path) -> Result<()> {
                 }),
             )
             .route("/api/projects", get(projects))
-            .route("/api/projects/{key}/{*route}", get(project_api))
+            .route(
+                "/api/projects/{key}/{*route}",
+                get(project_api).post(project_api),
+            )
             .route("/api/service/stop", post(shutdown))
             .route(
                 "/{*asset}",

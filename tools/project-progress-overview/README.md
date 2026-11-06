@@ -67,11 +67,19 @@ The work-item table and graph detail panel support the three views. All interact
 
 ## Data and display configuration
 
-The graph is built from official CLI JSON returned by `work graph`, `nav --cached`, goal search,
-active sessions, event history and `doctor`. Reads must agree on a project revision. A changing project
-is retried within a bound and then reported as an error.
+Native progress views read one bounded, coherent snapshot of the local SQLite
+projection. The source viewer uses the same `overview snapshot --json` command when
+the CLI advertises `local.progress_snapshot`. Tasks, dependencies, claims, sessions
+and runtime findings come from the same project revision.
 
-Refresh may update AWR's source projection. Select **Recorded state only** to request `work graph --cached`.
+**Refresh map** reads recorded state without synchronizing source files. **Sync
+project sources** explicitly refreshes the source projection before reading. The
+page distinguishes these freshness conditions. Full source/artifact hashing and
+database-integrity checks remain available through `awr doctor`.
+
+Older CLIs retain the compatible `work graph`, `nav --cached`, search, session,
+event and `doctor` extraction. Those answers must agree on a revision, with bounded
+retries on concurrent changes. **Recorded state only** remains available there.
 Unavailable fields remain explicit in the diagram's notes.
 
 Display lanes group work for this view. Their labels and prefixes can be configured in

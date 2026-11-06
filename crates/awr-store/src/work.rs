@@ -6,7 +6,7 @@ use crate::{
 };
 use awr_core::*;
 use rusqlite::{Connection, OptionalExtension, params};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 // UNION, rather than UNION ALL, terminates cycles and deduplicates diamonds/duplicate edges.
 fn reachable(scoped: bool) -> String {
@@ -205,6 +205,19 @@ pub(crate) fn readiness(
     let work: Projected<WorkItem> = projection(conn, project, EntityKind::WorkItem, key)?;
     let dependencies = graph(conn, project, key, true, revision, false)?;
     let active_claims = active_claims(conn, project, work.item.meta.id, branch, at)?;
+    evaluate_readiness(conn, project, work, dependencies, active_claims, branch, at)
+}
+
+fn evaluate_readiness(
+    conn: &Connection,
+    project: Id,
+    work: Projected<WorkItem>,
+    dependencies: DependencyGraph,
+    active_claims: Vec<Claim>,
+    branch: Option<Id>,
+    at: i64,
+) -> Result<WorkReadiness> {
+    let key = work.item.meta.external_key.as_str();
     let mut diagnostics = BTreeSet::new();
     let mut add = |code: &str, work_key: &str, detail: String| {
         diagnostics.insert(ReadinessDiagnostic {
@@ -368,6 +381,141 @@ impl Store {
         let tx = self.conn.unchecked_transaction().map_err(db_error)?;
         let revision = check_context(&tx, project, branch, at)?;
         let result = readiness(&tx, project, key, branch, at, revision)?;
+        tx.commit().map_err(db_error)?;
+        Ok(result)
+    }
+    /// Evaluate a graph in one read transaction, retaining each dependency expansion only for its callback.
+    pub fn map_work_readiness<T>(
+        &self,
+        project: Id,
+        keys: &[String],
+        branch: Option<Id>,
+        at: i64,
+        mut map: impl FnMut(WorkReadiness) -> Result<T>,
+    ) -> Result<Vec<T>> {
+        if keys.len() > 1000 {
+            return Err(Error::BudgetExceeded {
+                required: keys.len(),
+                budget: 1000,
+            });
+        }
+        let tx = self.conn.unchecked_transaction().map_err(db_error)?;
+        let revision = check_context(&tx, project, branch, at)?;
+        let works: BTreeMap<String, Projected<WorkItem>> =
+            projections::<WorkItem>(&tx, project, EntityKind::WorkItem, None)?
+                .into_iter()
+                .map(|work| (work.item.meta.external_key.clone(), work))
+                .collect();
+        let sources: BTreeMap<_, _> = self
+            .sources(project)?
+            .into_iter()
+            .map(|source| (source.id, source))
+            .collect();
+        let edges: Vec<_> = dependency_links(&tx, project)?
+            .into_iter()
+            .filter(|edge| edge.required)
+            .map(|edge| {
+                let source = sources
+                    .get(&edge.source_ref.source_id)
+                    .ok_or_else(|| Error::Storage("dependency source is absent".into()))?;
+                Ok(Projected {
+                    item: edge,
+                    source: source.clone(),
+                    project_revision: revision,
+                })
+            })
+            .collect::<Result<_>>()?;
+        let mut links: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for edge in &edges {
+            links
+                .entry(edge.item.from_key.clone())
+                .or_default()
+                .insert(edge.item.to_key.clone());
+        }
+        let mut all_keys = BTreeSet::new();
+        let mut pending = keys.to_vec();
+        while let Some(key) = pending.pop() {
+            if all_keys.insert(key.clone()) {
+                if all_keys.len() > 1000 {
+                    return Err(Error::BudgetExceeded {
+                        required: all_keys.len(),
+                        budget: 1000,
+                    });
+                }
+                if let Some(children) = links.get(&key) {
+                    pending.extend(children.iter().cloned());
+                }
+            }
+        }
+        let edges: Vec<_> = edges
+            .into_iter()
+            .filter(|edge| {
+                all_keys.contains(&edge.item.from_key) && all_keys.contains(&edge.item.to_key)
+            })
+            .collect();
+        let mut closures = BTreeMap::new();
+        for key in &all_keys {
+            let mut reachable = BTreeSet::new();
+            let mut pending = vec![key.clone()];
+            while let Some(current) = pending.pop() {
+                if reachable.insert(current.clone()) {
+                    if let Some(children) = links.get(&current) {
+                        pending.extend(children.iter().cloned());
+                    }
+                }
+            }
+            closures.insert(key.clone(), reachable);
+        }
+        let cyclic: BTreeSet<_> = all_keys
+            .iter()
+            .filter(|key| {
+                links.get(*key).is_some_and(|children| {
+                    children.iter().any(|child| closures[child].contains(*key))
+                })
+            })
+            .cloned()
+            .collect();
+        let mut result = Vec::with_capacity(keys.len());
+        for key in keys {
+            let work = works
+                .get(key)
+                .ok_or_else(|| Error::NotFound(format!("work {key}")))?;
+            let reachable = &closures[key];
+            let dependencies = DependencyGraph {
+                work_item_key: key.clone(),
+                required_only: true,
+                dependencies: reachable
+                    .iter()
+                    .filter(|dependency| *dependency != key)
+                    .filter_map(|dependency| works.get(dependency).cloned())
+                    .collect(),
+                edges: edges
+                    .iter()
+                    .filter(|edge| {
+                        reachable.contains(&edge.item.from_key)
+                            && reachable.contains(&edge.item.to_key)
+                    })
+                    .cloned()
+                    .collect(),
+                missing_keys: reachable
+                    .iter()
+                    .filter(|dependency| *dependency != key && !works.contains_key(*dependency))
+                    .cloned()
+                    .collect(),
+                cycle_keys: reachable.intersection(&cyclic).cloned().collect(),
+                project_revision: revision,
+            };
+            let claims = active_claims(&tx, project, work.item.meta.id, branch, at)?;
+            result.push(map(evaluate_readiness(
+                &tx,
+                project,
+                work.clone(),
+                dependencies,
+                claims,
+                branch,
+                at,
+            )?)?);
+        }
         tx.commit().map_err(db_error)?;
         Ok(result)
     }
