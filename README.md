@@ -91,9 +91,9 @@ cases. Team surfaces are compiled in but **off by default**; see the
 authenticated Team service in the packages.
 See [what changed in 0.6.0](docs/dev/release/0.6.0.md).
 
-The optional [Inspector](https://github.com/originoneai/awr/tree/v0.6.0/tools/inspector) runs from this source checkout;
-it is not bundled in npm/PyPI. It includes Chinese/English views, complete queue
-pagination, source-aware refresh, and session/event panels.
+Source tools on `main` include [Project Progress Overview](tools/project-progress-overview/README.md)
+for three local progress and dependency views, and [Observer](tools/observer/README.md)
+for the Team observation workspace. Run them from a source checkout.
 
 **Development on `main`:** the Team service, versioned cross-workstream delivery
 adoption and Team collaboration/review are outside this release. The

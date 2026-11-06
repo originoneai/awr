@@ -1,0 +1,52 @@
+name: Project Progress Overview verification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/project-progress-overview/**'
+      - '.github/workflows/project-progress-overview.yml'
+  pull_request:
+    paths:
+      - 'tools/project-progress-overview/**'
+      - '.github/workflows/project-progress-overview.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bridge:
+    name: bridge tests
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: tools/project-progress-overview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Syntax check
+        run: |
+          node --check server.js
+          node --check public/app.js
+          node --check public/i18n.js
+          node --check public/locales/en.js
+          node --check public/locales/zh-CN.js
+          node --check export-map.js
+          node --check project-map-config.js
+          node --check awr-process.js
+          for f in public/project-map/*.js; do node --check "$f"; done
+      - name: Bridge tests
+        run: node --test test/*.test.js
+      - name: No external asset loads
+        run: |
+          # This local tool must not load external resources.
+          # Check network-loading syntax; XML namespaces in data URIs do not count.
+          # User-followed anchors are not resource loads; check link/src/url()/@import.
+          if grep -rnE '<link[^>]+href="https?://|src="https?://|url\(\s*["'"'"']?https?://|@import[^;]*https?://' \
+               --include='*.html' --include='*.css' public/; then
+            echo "External resource loading found under public/"
+            exit 1
+          fi

@@ -553,7 +553,7 @@ retry delay and server observation time. State-change logs include only the
 configured identity and finite codes; raw PG/filesystem/provider errors,
 credential values and environment names are omitted. Snapshots are runtime
 observations, not delivery receipts. There is no new anonymous management
-endpoint; authenticated Inspector aggregation remains a separate integration.
+endpoint; authenticated Observer aggregation remains a separate integration.
 The generic library/MCP capability flags describe their own layer and do not
 certify an operator's worker configuration or liveness.
 

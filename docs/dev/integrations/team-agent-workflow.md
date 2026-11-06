@@ -2,9 +2,9 @@
 
 Connect the Agent you already use to the team's remote MCP service. Give it a
 task in your normal conversation. The Agent reads shared work, claims an eligible
-task and keeps the project updated as it develops locally. Inspector is an
-optional view of the same project; signing in or claiming through a website is
-not a prerequisite.
+task and keeps the project updated as it develops locally. Observer provides an
+optional view of the same project. The Agent discovers and claims work directly
+through MCP.
 
 This guide applies to the development Team service. It does not describe the
 published 0.5.0 personal MCP server.
@@ -15,12 +15,12 @@ Get a project MCP URL and an individual credential from the project administrato
 then clone the code repository. Each participant uses their own credential.
 Repository permissions remain separate from AWR permissions.
 
-In Inspector, an authorized administrator can open **Members**, add a member,
-choose their project role and workstreams, then copy the one-time personal Agent
-connection instruction. The instruction includes the endpoint and that member's
-credential. Give it only to the intended member through a private channel. The
-administrator cannot retrieve its plaintext after clearing the issuance panel;
-a lost credential can be explicitly replaced.
+An authorized administrator manages project members, roles and workstream scopes
+through the `awr_team_access_*` tools. Generate a credential in a protected local
+operator channel with `awr-server access token`, then register only its hash through
+the access preview/apply flow. Give the service endpoint and the credential to the
+intended member through a private channel. Inspect an unknown apply outcome before
+retrying the original request.
 
 Use any Agent client that supports remote MCP over **Streamable HTTP** with
 **Bearer authentication**. AWR does not select a default Agent or model.
@@ -58,7 +58,7 @@ For example:
 
 The Agent handles coordination in the same conversation used for development.
 It should report an actual permission, dependency or ownership conflict when
-encountered. The user does not need to copy task IDs from Inspector or manually
+encountered. The user does not need to copy task IDs from a browser or manually
 maintain progress in a browser.
 
 ## Agent workflow
@@ -535,13 +535,13 @@ entry point and does not establish authenticated package consumption.
 
 ## Optional workspace view
 
-Open Inspector to inspect task relationships, ownership, progress and recorded
-results. **Connect Agent** provides client-neutral MCP settings and a project instruction;
-each task also has an optional copyable brief. Copying either text creates no
-session or claim. Administrator and review permissions are still enforced by the
-central service, regardless of which client is used.
+Open Observer to inspect project goals, ownership, progress and recorded results.
+**Connect Agent** shows the service address and effective permissions. Copying
+the address creates no session or claim. Administrator and review permissions
+are enforced by the central service for each client.
 
-Administrators can manage members and project-scoped credentials in **Members**.
+Administrators manage members through the authorized access tools described above.
+The current **Members** page indicates that its browser view is unavailable.
 **Activity** separates authenticated access records from committed development
 history. Ordinary members see their own authorized activity; project auditors can
 filter by member or task. Audit records exclude credential values, conversations

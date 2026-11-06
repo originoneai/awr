@@ -24,7 +24,7 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   `awr_team_input_contract` still reads the exact input of one operation from the full catalog, and
   every call is still checked against the full schema. The default and `?catalog=full` are
   unchanged; any other value, or the parameter given twice, is refused when listing.
-- One observation freshness and coverage contract for the Inspector Team reads (AWR-OBS-002): every
+- One observation freshness and coverage contract for the Observer Team reads (AWR-OBS-002): every
   read (`POST /api/team/read`, `/api/team/inbox-detail`, `GET /api/team/inbox`, `GET /api/team/work`)
   carries a `freshness` envelope that presents the report-received clock, the authoritative
   measurement (project revision, source snapshot, coordinator epoch, query time) and the page-read
@@ -194,7 +194,7 @@ Changes shipped in 0.6.0 are listed in [0.6.0](0.6.0.md).
   execution admission, context completeness, delivery observation, completion validity), which Team operations carry
   it and which entries of the personal CLI and MCP server have no Team operation, with the reason; the report is checked
   against the protocol's own operation lists. Asking for such an entry is still refused as `Unsupported`.
-- A bounded, read-only observation entry in the Inspector Team bridge (`POST /api/team/read`): every implemented Team
+- A bounded, read-only observation entry in the Observer Team bridge (`POST /api/team/read`): every implemented Team
   query is reachable except the deferred full ops audit (`audit.history`, `audit.export`, `audit.count`); commands are
   never exposed, an arbitrary command or a full audit export cannot be requested. Each operation's selectors, paging and
   byte budgets are checked against a hand mirror of the service's `WorkstreamQuery` rules — guarded by a drift test that

@@ -2,12 +2,12 @@
 
 ## Connect once
 
-Inspector administrators can create a human member, select their role and
-workstreams, and copy one client-neutral connection instruction. The browser
-generates a personal project-scoped credential; only its hash is registered.
-The plaintext remains in the one-time panel until explicitly cleared, logout or
-project change. It cannot be retrieved later. Lost credentials require explicit
-rotation. Protect the copied instruction as a secret.
+Project administrators manage members, roles and workstream permissions through
+the authorized `awr_team_access_*` tools. Generate a credential with
+`awr-server access token` in a protected local operator channel, then register
+only its hash through access preview/apply. Share the project MCP address and
+personal credential privately with the intended member. Lost credentials require
+explicit rotation. The current Observer member page does not issue credentials.
 
 After connecting, call `awr_team_query` with `op: "capabilities"` to confirm the
 current identity and permissions, then `op: "work.next"`. Both use
