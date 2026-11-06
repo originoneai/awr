@@ -25,6 +25,46 @@ pub(crate) fn stamp(path: &Path) -> Result<String> {
     Ok(format!("{}:{:?}", meta.len(), meta.modified()?))
 }
 
+/// Prepare a background child without retaining the caller's standard pipes.
+pub fn detach_background(command: &mut Command) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::{
+            Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation},
+            Storage::FileSystem::{FILE_TYPE_PIPE, GetFileType},
+        };
+        // Rust 1.93 CreateProcess inherits every inheritable handle, even when the new
+        // standard streams are NUL. Do not let a background child retain our caller's pipe
+        // endpoints: output() would otherwise wait for the entire background command.
+        // These borrowed handles remain owned and open in the calling process;
+        // changing their inherit bit neither closes them nor affects the caller's copy.
+        for handle in [
+            std::io::stdin().as_raw_handle(),
+            std::io::stdout().as_raw_handle(),
+            std::io::stderr().as_raw_handle(),
+        ] {
+            // SAFETY: std supplies live borrowed standard handles. GetFileType accepts
+            // absent/invalid handles; SetHandleInformation is called only for valid pipes.
+            unsafe {
+                if GetFileType(handle) == FILE_TYPE_PIPE
+                    && SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) == 0
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+        }
+        command.creation_flags(0x00000200 | 0x08000000);
+    }
+    Ok(())
+}
+
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .proxy(None)
@@ -140,16 +180,7 @@ pub fn ensure(dir: &Path, executable: &Path) -> Result<ServiceStatus> {
         }
     }
     command.env("AWR_LOCAL_HOME", dir).env("AWR_LOCAL_WEB", "0");
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x00000008 | 0x00000200);
-    }
+    detach_background(&mut command)?;
     let mut child = command.spawn()?;
     let start = Instant::now();
     loop {
