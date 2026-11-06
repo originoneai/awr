@@ -174,17 +174,17 @@ fn catalog(dir: &Path) -> Result<Catalog> {
     let path = dir.join("projects.json");
     if !path.exists() {
         return Ok(Catalog {
-            version: 2,
+            version: 3,
             projects: Vec::new(),
         });
     }
     let mut value: Catalog = read_json(&path)?;
-    if ![1, 2].contains(&value.version) || value.projects.len() > MAX_PROJECTS {
+    if ![1, 2, 3].contains(&value.version) || value.projects.len() > MAX_PROJECTS {
         return Err(Error::InvalidInput(
             "unsupported local project catalog".into(),
         ));
     }
-    value.version = 2;
+    value.version = 3;
     Ok(value)
 }
 

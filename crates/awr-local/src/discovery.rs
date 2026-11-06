@@ -627,24 +627,28 @@ mod tests {
     }
 
     #[test]
-    fn version_one_catalogs_remain_readable_and_receive_an_explicit_version_two_migration() {
+    fn prior_catalogs_remain_readable_and_migrate_explicitly_to_the_intake_aware_version() {
         let f = Workspace::new();
         let root = f.project("existing");
         let dir = f.settings();
         let entry = registry::register(&dir, &root).unwrap();
-        let legacy = serde_json::json!({"version":1,"projects":[{
-            "key":entry.key,"project_id":entry.project_id,"name":entry.name,"root":entry.root,
-            "registered_at":entry.registered_at,"last_used_at":entry.last_used_at,"available":true
-        }]});
-        registry::write_json(&dir.join("projects.json"), &legacy).unwrap();
-        discover(&dir).unwrap();
-        assert_eq!(registry::list(&dir).unwrap()[0].key, entry.key);
-        let catalog: serde_json::Value = registry::read_json(&dir.join("projects.json")).unwrap();
-        assert_eq!(catalog["version"], 2);
-        assert_eq!(
-            catalog["projects"][0]["project_id"],
-            legacy["projects"][0]["project_id"]
-        );
+        for version in [1, 2] {
+            let legacy = serde_json::json!({"version":version,"projects":[{
+                "key":entry.key,"project_id":entry.project_id,"name":entry.name,"root":entry.root,
+                "registered_at":entry.registered_at,"last_used_at":entry.last_used_at,"available":true
+            }]});
+            registry::write_json(&dir.join("projects.json"), &legacy).unwrap();
+            discover(&dir).unwrap();
+            assert_eq!(registry::list(&dir).unwrap()[0].key, entry.key);
+            let catalog: serde_json::Value =
+                registry::read_json(&dir.join("projects.json")).unwrap();
+            assert_eq!(catalog["version"], 3);
+            assert_eq!(catalog["projects"][0]["intake_requested"], false);
+            assert_eq!(
+                catalog["projects"][0]["project_id"],
+                legacy["projects"][0]["project_id"]
+            );
+        }
     }
 
     #[test]

@@ -161,7 +161,9 @@ Otherwise Windows uses `%LOCALAPPDATA%/AWR`, an absolute `XDG_STATE_HOME` uses i
 
 The directory contains the versioned `projects.json` catalog, discovery settings
 and coverage, `service.json`, coordination locks and `service.log`. Version-one
-catalogs remain readable and are upgraded on the next catalog write. State belongs
+and version-two catalogs remain readable and upgrade to version three on the next
+catalog write. Version three preserves explicit takeover intent across clients.
+Older writers reject the newer catalog version. State belongs
 to the current OS user. The HTTP service binds to
 loopback and validates request hosts and origins.
 
