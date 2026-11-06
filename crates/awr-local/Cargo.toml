@@ -17,3 +17,6 @@ ureq.workspace = true
 url.workspace = true
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "original-uri"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "signal", "time", "process", "io-util", "macros"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }

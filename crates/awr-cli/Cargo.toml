@@ -29,9 +29,6 @@ cap-std.workspace = true
 ureq.workspace = true
 url.workspace = true
 
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
-
 [dev-dependencies]
 rusqlite.workspace = true
 
