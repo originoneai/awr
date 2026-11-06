@@ -169,6 +169,7 @@ fn wait_for_projects(f: &Fixture, count: usize) -> Value {
         let value = f.run(&["overview", "projects", "--json"]);
         if value["projects"].as_array().unwrap().len() == count
             && value["discovery"]["state"] == "complete"
+            && value["discovery"]["connected"].as_u64() == Some(count as u64)
         {
             return value;
         }
