@@ -37,8 +37,10 @@ query route: the CLI appends the route without guessing or stripping suffixes.
 capability report. With `--remote`, it now performs authenticated discovery and
 reports connection/authentication failures; it no longer returns the local
 capability report for a configured remote. Remote service commands advertised
-by capabilities do not imply CLI write support. The existing `team command`
-entry still refuses remote submission.
+by capabilities do not imply CLI write support. The existing `team command
+--body JSON [--remote NAME] [--offline]` entry still validates locally or refuses
+remote submission. `team command inspect` only queries the original request;
+it cannot be combined with `--body` or `--offline`.
 
 ## Commands and selectors
 
@@ -56,9 +58,21 @@ All remote reads explicitly require `--remote NAME`. Global `--project` and
 | `work prepare [WORK] --remote NAME` | `work.prepare` | `--session`, `--workstream`, `--max-context-bytes` |
 | `work snapshot [WORK] --remote NAME` | `work.snapshot` | `--session`, `--workstream`, `--max-context-bytes` |
 | `work observe [WORK] --remote NAME` | `work.observe` | `--session`, `--workstream`, `--max-context-bytes` |
+| `session inspect SESSION_ID --remote NAME` | `session.inspect` | `--work`, `--workstream` |
+| `claim inspect CLAIM_ID --remote NAME` | `claim.inspect` | `--work`, `--session`, `--workstream` |
+| `execution inspect EXECUTION_ID --remote NAME` | `execution.inspect` | `--work`, `--session`, `--workstream` |
+| `command inspect REQUEST_ID --remote NAME` | `command.inspect` | `--work`, `--session`, `--workstream` |
+| `work recovery [WORK] --remote NAME` | `work.recovery` | `--session`, `--workstream` |
 
-Prepare, snapshot and observe require WORK or `--session ID`, and allow both;
+Prepare, snapshot, observe and recovery require WORK or `--session ID`, and allow both;
 the service checks that selectors agree. A workstream alone cannot select a task.
+Claim, execution and command inspection require `--work WORK` or `--session ID`
+in addition to the positional record ID, and also allow both. Record IDs do not
+replace task scope; the CLI never looks up a work ID in a second request. Session
+inspection uses its required positional session directly, with optional
+`--work WORK` to confirm task scope. All selectors remain subject to the service's
+current authorization and consistency checks.
+
 `--workstream` is a ULID, not a title or external key. If list/search cannot
 uniquely select a workstream, specify one from `workstream list`; the CLI does
 not pick the first visible stream or aggregate across streams. Search is a
@@ -67,8 +81,9 @@ case-insensitive **literal title substring** within the selected workstream.
 Limits are 1..100; byte budgets are 1..262144, not token counts. Unspecified
 options are omitted so the service remains responsible for defaults. Current
 defaults are 50 items for workstream/list/search, 20 for next/inbox, and 65536
-bytes for budgeted reads. Work/session selectors are nonempty, at most 128 UTF-8
-bytes without controls; search is at most 512 bytes. Cursors are opaque strings
+bytes for budgeted reads. Work, session, claim, execution and request selectors
+are nonempty, at most 128 UTF-8 bytes without controls; they are not trimmed or
+required to be ULIDs. Search is at most 512 bytes. Cursors are opaque strings
 of at most 4096 bytes.
 
 ```sh
@@ -78,6 +93,11 @@ awr --json team work prepare WORK_ID --remote team-dev
 awr --json team work snapshot --session SESSION_ID --remote team-dev \
   --max-context-bytes 131072
 awr --json team work observe WORK_ID --remote team-dev
+awr --json team session inspect SESSION_ID --work WORK_ID --remote team-dev
+awr --json team claim inspect CLAIM_ID --work WORK_ID --remote team-dev
+awr --json team execution inspect EXECUTION_ID --work WORK_ID --remote team-dev
+awr --json team command inspect ORIGINAL_REQUEST_ID --work WORK_ID --remote team-dev
+awr --json team work recovery WORK_ID --remote team-dev
 ```
 
 These are business reads. They do not claim work, start execution, report
@@ -91,8 +111,9 @@ JSON mode emits one original service result object on stdout. Keep stdout and
 stderr separate. There is no added `result` wrapper: capabilities and
 workstream lists are flat, while other operations use their service envelopes.
 Unknown fields, nulls, versions, context hashes, permissions and gaps are retained.
-Ordinary output summarizes navigation pages; prepare/snapshot/observe retain the
-full returned object. Missing observations are not converted to zero usage,
+Ordinary output summarizes navigation pages; detail reads, including runtime
+inspection and recovery, retain the full returned object with terminal controls
+escaped. Missing observations are not converted to zero usage,
 successful completion, or proof of a running process.
 
 **Exit 0 means a successful read.** A valid Team prepare/snapshot result with
@@ -104,7 +125,28 @@ from Personal `work prepare`'s incomplete-context exit convention. A server
 error such as HTTP 409 `ContextIncomplete` exits 1 with no result on stdout.
 Neither complete context nor a successful read grants execution admission.
 
-Each invocation issues one query and returns one page. Pass `next_cursor`
+Runtime inspection also exits 0 for ended sessions, expired/released claims and
+failed/settled executions. `lease_live`, `effects_settled`, `artifact_verified`
+and `settlement_basis=caller_asserted` describe different facts; successful
+inspection does not renew a lease, resume execution or prove independent
+acceptance. Permission-hidden receipt details remain null.
+
+`command inspect` accepts the **original request ID** and preserves the service's
+`data.state`. Both `committed` and `unknown` are successful reads (exit 0).
+`unknown` means no committed receipt is currently visible; it does not establish
+that the original command failed, never ran or cannot still commit. Human output
+states this uncertainty. The CLI does not generate a new request ID, replay a
+command or repeat external effects. Planning and delivery outcome protocols
+retain their separate entry points.
+
+`work recovery` returns at most two session/checkpoint candidates belonging to
+the current ownership binding. It is not full session history. Empty `items`
+is a successful read. Checkpoint actions and context hashes are historical;
+follow current guidance and read fresh `work prepare` before continuing. The CLI
+does not automatically resume work. Session/claim/execution/command inspection
+and recovery do not accept `--limit`, `--cursor` or `--max-context-bytes`.
+
+Each invocation issues one query. For paginated operations, pass `next_cursor`
 unchanged with the same operation and filters to continue. The CLI does not
 preflight capabilities, automatically retry, follow hints, or restart an expired
 cursor. After source/permission changes, start a fresh traversal explicitly.
@@ -113,7 +155,7 @@ An inbox page can have no items **and still have a continuation cursor**; it
 does not establish that the project has no coordination items. Continue until
 the cursor is null. Next's resume list is limited to 20 independently of item
 pagination; `resume_truncated` remains visible. A `next_query` may name an
-operation outside this CLI group, such as `work.recovery`; use MCP for it.
+operation outside the fourteen CLI reads; use MCP for unsupported operations.
 Snapshot uses one service transaction, rather than combining separate reads.
 
 ## Failures and verification
@@ -133,9 +175,15 @@ is printed as a successful read; HTTP client diagnostics and credentials are
 not echoed.
 
 `team_query_cli` tests invoke the native CLI against a mock service. The server's
-`workstream_cli` test additionally compares all nine reads against authenticated
-MCP with a process-owned PostgreSQL fixture, preserving domain facts and
-checking normal audit writes separately:
+`workstream_cli` tests additionally compare all fourteen reads against
+authenticated MCP with a process-owned PostgreSQL fixture. Runtime records are
+created through domain commands, inspected before and after termination, and
+checked for unknown results and scope mismatches. A second client verifies that
+existing execution receipts are hidden from other readers, committed
+command outcomes remain client-bound, and all five runtime reads reject a client
+after its target workstream read grant is revoked, including through an existing
+MCP connection. These tests preserve domain facts and check normal audit writes
+separately:
 
 ```sh
 cargo test -p awr-cli --test team_query_cli --test team_cli --test team_switch --locked
