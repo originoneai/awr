@@ -6,7 +6,7 @@ mod server;
 
 pub use discovery::config as discovery_config;
 pub use discovery::{DiscoveryConfig, DiscoveryReport, configure, discover, discovery_status};
-pub use lifecycle::{ServiceStatus, ensure, running, stop};
+pub use lifecycle::{ServiceStatus, detach_background, ensure, running, stop};
 pub use registry::{
     LocalProject, ProjectState, default_state_dir, get, inspect, is_default_state_dir, list,
     observe, register, state_dir,
