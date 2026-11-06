@@ -91,6 +91,17 @@ impl Fixture {
             .unwrap();
         serde_json::from_str(&response.body_mut().read_to_string().unwrap()).unwrap()
     }
+    fn refresh(&self) -> Value {
+        let base = self.run(&["overview", "status", "--json"])["service"]["url"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let mut response = ureq::post(format!("{base}/api/projects/refresh"))
+            .header("x-awr-project-hub", "1")
+            .send_empty()
+            .unwrap();
+        serde_json::from_str(&response.body_mut().read_to_string().unwrap()).unwrap()
+    }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -211,7 +222,7 @@ fn first_use_discovers_existing_projects_in_the_default_user_scope_without_regis
 }
 
 #[test]
-fn background_discovery_observes_new_projects_and_keeps_source_files_unchanged() {
+fn startup_discovery_stays_idle_until_a_manual_refresh_and_preserves_source_files() {
     let f = Fixture::new();
     let existing = f.project("existing");
     let source = existing.join(".awr/project.toml");
@@ -226,7 +237,17 @@ fn background_discovery_observes_new_projects_and_keeps_source_files_unchanged()
         "--json",
     ]);
     assert_eq!(initial["discovery"]["connected"], 1);
+    let base = initial["service"]["url"].as_str().unwrap();
+    let startup = f.get(&format!("{base}/api/projects"));
     let repository = f.project("new-repository");
+    std::thread::sleep(Duration::from_millis(1300));
+    let idle = f.run(&["overview", "projects", "--json"]);
+    assert_eq!(idle["projects"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        idle["discovery"]["completed_at"],
+        startup["data"]["discovery"]["completed_at"]
+    );
+    assert_eq!(f.refresh()["data"]["projects"].as_array().unwrap().len(), 2);
     let observed = wait_for_projects(&f, 2);
     assert_eq!(observed["discovery"]["connected"], 2);
     assert_eq!(std::fs::read(source).unwrap(), before);
@@ -239,7 +260,7 @@ fn background_discovery_observes_new_projects_and_keeps_source_files_unchanged()
 }
 
 #[test]
-fn updated_discovery_settings_take_effect_in_the_running_service() {
+fn manual_refresh_adopts_updated_scan_roots_without_restarting_the_service() {
     let f = Fixture::new();
     let started = f.run(&["overview", "start", "--json"])["service"].clone();
     f.run(&[
@@ -251,7 +272,12 @@ fn updated_discovery_settings_take_effect_in_the_running_service() {
         "1",
         "--json",
     ]);
+    f.get(&format!(
+        "{}/api/projects",
+        started["url"].as_str().unwrap()
+    ));
     f.project("added");
+    f.refresh();
     let observed = wait_for_projects(&f, 1);
     assert_eq!(observed["discovery"]["connected"], 1);
     let current = f.run(&["overview", "status", "--json"])["service"].clone();
@@ -329,6 +355,133 @@ fn explicit_enrollment_creates_a_pending_card_and_initialization_promotes_the_sa
         connected["data"]["guidance"]["next_action"]["argv"][3],
         "status"
     );
+}
+
+#[test]
+fn hidden_cards_stay_hidden_after_use_rescan_and_restart_until_explicitly_enrolled() {
+    let f = Fixture::new();
+    let root = f.project("managed");
+    let registered = f.register(&root);
+    f.run(&[
+        "overview",
+        "discover",
+        "--root",
+        f.root.to_str().unwrap(),
+        "--json",
+    ]);
+    let key = registered["projects"][0]["key"].as_str().unwrap();
+    let base = registered["service"]["url"].as_str().unwrap();
+    let guarded = ureq::delete(format!("{base}/api/projects/{key}"))
+        .header("x-awr-project-hub", "1")
+        .call()
+        .unwrap();
+    assert_eq!(guarded.status(), 200);
+    assert!(
+        f.refresh()["data"]["projects"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    f.register(&root);
+    assert!(
+        f.run(&["overview", "projects", "--json"])["projects"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    f.run(&["overview", "stop", "--json"]);
+    let restarted = f.run(&["overview", "start", "--json"]);
+    let observed = f.get(&format!(
+        "{}/api/projects",
+        restarted["service"]["url"].as_str().unwrap()
+    ));
+    assert!(observed["data"]["projects"].as_array().unwrap().is_empty());
+    let restored = f.enroll(&root);
+    assert_eq!(restored["data"]["project"]["key"], key);
+    assert_eq!(
+        f.run(&["overview", "projects", "--json"])["projects"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn deletion_and_manual_discovery_require_local_request_guards() {
+    let f = Fixture::new();
+    let root = f.project("managed");
+    let registered = f.register(&root);
+    let base = registered["service"]["url"].as_str().unwrap();
+    let key = registered["projects"][0]["key"].as_str().unwrap();
+    for guarded in [false, true] {
+        let mut remove = ureq::delete(format!("{base}/api/projects/{key}"));
+        let mut refresh = ureq::post(format!("{base}/api/projects/refresh"));
+        if guarded {
+            remove = remove
+                .header("x-awr-project-hub", "1")
+                .header("origin", "https://untrusted.example");
+            refresh = refresh
+                .header("x-awr-project-hub", "1")
+                .header("origin", "https://untrusted.example");
+        }
+        assert!(matches!(remove.call(), Err(ureq::Error::StatusCode(403))));
+        assert!(matches!(
+            refresh.send_empty(),
+            Err(ureq::Error::StatusCode(403))
+        ));
+    }
+    assert_eq!(
+        f.get(&format!("{base}/api/projects"))["data"]["projects"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn each_project_snapshot_reads_newly_committed_awr_state() {
+    let f = Fixture::new();
+    let root = f.project("managed");
+    let registered = f.register(&root);
+    let base = registered["service"]["url"].as_str().unwrap();
+    let key = registered["projects"][0]["key"].as_str().unwrap();
+    let url = format!("{base}/api/projects/{key}/map/snapshot");
+    let before = f.get(&url);
+    let mut store = awr_store::Store::open(&root.join(".awr/state.db")).unwrap();
+    let project = store
+        .project_by_root(&root.canonicalize().unwrap())
+        .unwrap();
+    let (started, _) = store
+        .start_session(
+            project.id,
+            project.project_revision,
+            awr_core::SessionDraft {
+                work_item_key: None,
+                agent_id: "freshness-fixture".into(),
+                provider: "fixture".into(),
+                model: "fixture".into(),
+                branch_id: None,
+                claim: false,
+                claim_ttl_ms: None,
+            },
+        )
+        .unwrap();
+    drop(store);
+    let after = f.get(&url);
+    assert!(
+        after["data"]["project_revision"].as_u64().unwrap()
+            > before["data"]["project_revision"].as_u64().unwrap()
+    );
+    assert!(
+        after["data"]["sessions"]["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|session| session["id"] == started.session.id.to_string())
+    );
+    assert_eq!(after["data"]["basis"]["source_refresh_performed"], false);
 }
 
 #[test]

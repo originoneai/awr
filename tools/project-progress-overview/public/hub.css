@@ -56,9 +56,13 @@
 .hub-intake details pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .hub-projects[hidden], .hub-controls[hidden], .hub-list-heading[hidden], .hub-intake[hidden], .hub-coverage[hidden], .hub-scope[hidden], .hub-intake [hidden] { display: none; }
 .hub-projects { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
-.project-card { display: flex; flex-direction: column; min-width: 0; min-height: 238px; padding: 24px; border: 1px solid var(--line); border-radius: 16px; color: var(--ink); background: var(--surface); box-shadow: var(--shadow-1); text-decoration: none; transition: border-color .16s, box-shadow .16s, transform .16s; }
-a.project-card:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); box-shadow: var(--shadow-2); }
-a.project-card:focus-visible, .hub-brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.project-card { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 238px; padding: 24px; border: 1px solid var(--line); border-radius: 16px; color: var(--ink); background: var(--surface); box-shadow: var(--shadow-1); text-decoration: none; transition: border-color .16s, box-shadow .16s, transform .16s; }
+.project-card-open, .project-card-content { display: flex; flex: 1; flex-direction: column; min-width: 0; color: inherit; text-decoration: none; }
+.project-card[data-available="true"]:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); box-shadow: var(--shadow-2); }
+.project-card-open:focus-visible, .hub-brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.project-delete { position: absolute; top: 24px; right: 20px; min-height: 40px; padding: 8px; border: 0; border-radius: 8px; color: var(--ink-3); background: transparent; font: 12px/1.5 var(--f-ui, sans-serif); cursor: pointer; }
+.project-delete:hover, .project-delete:focus-visible { color: var(--crit); background: color-mix(in srgb, var(--crit) 7%, var(--surface)); }
+.project-card:has(.project-delete) .project-card-top { padding-right: 48px; }
 .project-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
 .project-mark { display: grid; place-items: center; width: 42px; height: 42px; border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--line-soft)); border-radius: 12px; color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
 .project-arrow { color: var(--ink-3); font-size: 20px; font-weight: 400; }

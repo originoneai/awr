@@ -7,7 +7,7 @@ use axum::{
     http::{HeaderMap, Method, Request, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use serde_json::{Value, json};
 use std::{
@@ -30,6 +30,7 @@ struct Server {
     status: ServiceStatus,
     capacity: Semaphore,
     shutdown: watch::Sender<bool>,
+    discovery_ready: watch::Receiver<bool>,
 }
 
 fn failure(status: StatusCode, error: Error) -> Response {
@@ -92,6 +93,9 @@ async fn boundary(State(server): State<Arc<Server>>, req: Request<Body>, next: N
 }
 
 async fn projects(State(server): State<Arc<Server>>) -> Response {
+    if let Err(error) = await_discovery(&server).await {
+        return failure(StatusCode::INTERNAL_SERVER_ERROR, error);
+    }
     let dir = server.dir.clone();
     match tokio::task::spawn_blocking(move || {
         let projects = registry::list(&dir)?;
@@ -109,6 +113,53 @@ async fn projects(State(server): State<Arc<Server>>) -> Response {
     }
 }
 
+async fn await_discovery(server: &Server) -> Result<()> {
+    let mut ready = server.discovery_ready.clone();
+    ready
+        .wait_for(|complete| *complete)
+        .await
+        .map_err(|_| Error::Storage("startup discovery did not finish".into()))?;
+    Ok(())
+}
+
+fn hub_request(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-awr-project-hub")
+        .is_some_and(|value| value == "1")
+}
+
+async fn refresh_projects(State(server): State<Arc<Server>>, headers: HeaderMap) -> Response {
+    if !hub_request(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if let Err(error) = await_discovery(&server).await {
+        return failure(StatusCode::INTERNAL_SERVER_ERROR, error);
+    }
+    let dir = server.dir.clone();
+    match tokio::task::spawn_blocking(move || crate::discover(&dir)).await {
+        Ok(Ok(_)) => projects(State(server)).await,
+        Ok(Err(error)) => failure(StatusCode::CONFLICT, error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+async fn hide_project(
+    RoutePath(key): RoutePath<String>,
+    State(server): State<Arc<Server>>,
+    headers: HeaderMap,
+) -> Response {
+    if !hub_request(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let dir = server.dir.clone();
+    let selected = key.clone();
+    match tokio::task::spawn_blocking(move || registry::hide(&dir, &selected)).await {
+        Ok(Ok(())) => axum::Json(json!({"ok":true,"data":{"key":key}})).into_response(),
+        Ok(Err(error)) => failure(StatusCode::BAD_REQUEST, error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct IntakeRequest {
@@ -120,10 +171,7 @@ async fn request_intake(
     headers: HeaderMap,
     Json(request): Json<IntakeRequest>,
 ) -> Response {
-    if headers
-        .get("x-awr-project-hub")
-        .is_none_or(|value| value != "1")
-    {
+    if !hub_request(&headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
     let dir = server.dir.clone();
@@ -418,11 +466,13 @@ pub fn serve(dir: &Path, executable: &Path) -> Result<()> {
             started_at: awr_core::now_millis()?,
         };
         let (tx, mut rx) = watch::channel(false);
+        let (ready_tx, ready_rx) = watch::channel(false);
         let server = Arc::new(Server {
             dir: dir.into(),
             status: status.clone(),
             capacity: Semaphore::new(4),
             shutdown: tx,
+            discovery_ready: ready_rx,
         });
         let router = Router::new()
             .route("/", get(home))
@@ -433,6 +483,8 @@ pub fn serve(dir: &Path, executable: &Path) -> Result<()> {
                 }),
             )
             .route("/api/projects", get(projects))
+            .route("/api/projects/refresh", post(refresh_projects))
+            .route("/api/projects/{key}", delete(hide_project))
             .route(
                 "/api/projects/intake",
                 post(request_intake).layer(DefaultBodyLimit::max(8192)),
@@ -449,7 +501,12 @@ pub fn serve(dir: &Path, executable: &Path) -> Result<()> {
             .layer(middleware::from_fn_with_state(server.clone(), boundary))
             .with_state(server);
         registry::write_json(&dir.join("service.json"), &status)?;
-        let discovery = tokio::spawn(crate::discovery::monitor(dir.into(), rx.clone()));
+        let discovery_dir = dir.to_path_buf();
+        let discovery_shutdown = rx.clone();
+        let discovery = tokio::spawn(async move {
+            crate::discovery::discover_on_startup(discovery_dir, discovery_shutdown).await;
+            let _ = ready_tx.send(true);
+        });
         axum::serve(listener, router)
             .with_graceful_shutdown(async move {
                 let _ = rx.changed().await;

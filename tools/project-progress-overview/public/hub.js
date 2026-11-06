@@ -20,10 +20,10 @@
       && (!project.state || ['connected', 'discovered', 'attention'].includes(project.state));
   }
 
-  function createHub({ document: doc, i18n, load, selectedKey = null, loadIntake, copy, enroll }) {
+  function createHub({ document: doc, i18n, load, selectedKey = null, loadIntake, copy, enroll, remove, rescan }) {
     const $ = (id) => doc.getElementById(id);
     const t = (key, params) => i18n.t(key, params);
-    const state = { projects: [], running: null, enrolling: false, error: null, discovery: null, scope: null, signature: null, coverageSignature: null };
+    const state = { projects: [], running: null, removing: new Set(), enrolling: false, error: null, discovery: null, scope: null, signature: null, coverageSignature: null };
 
     function element(tag, className, text) {
       const node = doc.createElement(tag);
@@ -33,12 +33,13 @@
     }
 
     function card(project) {
-      const node = element(project.available ? 'a' : 'article', 'project-card');
+      const node = element('article', 'project-card');
       node.setAttribute('data-project', project.key);
       node.setAttribute('data-available', String(project.available));
       node.setAttribute('data-state', project.state || 'connected');
-      if (project.available) node.setAttribute('href', projectHref(project.key, i18n.locale, project.state));
-      else node.setAttribute('aria-disabled', 'true');
+      const content = element(project.available ? 'a' : 'div', project.available ? 'project-card-open' : 'project-card-content');
+      if (project.available) content.setAttribute('href', projectHref(project.key, i18n.locale, project.state));
+      else content.setAttribute('aria-disabled', 'true');
       const top = element('div', 'project-card-top');
       const mark = element('span', 'project-mark');
       mark.setAttribute('aria-hidden', 'true');
@@ -49,15 +50,15 @@
         arrow.setAttribute('aria-hidden', 'true');
         top.appendChild(arrow);
       }
-      node.appendChild(top);
+      content.appendChild(top);
       const title = element('h2', 'project-title', project.name);
       title.setAttribute('title', project.name);
-      node.appendChild(title);
+      content.appendChild(title);
       const path = element('p', 'project-path', project.root);
       path.setAttribute('title', project.root);
-      node.appendChild(path);
-      if (project.state === 'discovered') node.appendChild(element('p', 'project-intake-hint', t('hub.intake_card_hint')));
-      if (!project.available) node.appendChild(element('p', 'project-unavailable', t('hub.unavailable_hint')));
+      content.appendChild(path);
+      if (project.state === 'discovered') content.appendChild(element('p', 'project-intake-hint', t('hub.intake_card_hint')));
+      if (!project.available) content.appendChild(element('p', 'project-unavailable', t('hub.unavailable_hint')));
       const bottom = element('div', 'project-card-bottom');
       const label = !project.available ? 'hub.unavailable' : project.state === 'discovered' ? 'hub.pending' : project.state === 'attention' ? 'hub.attention' : 'hub.available';
       bottom.appendChild(element('span', 'project-state', t(label)));
@@ -68,7 +69,41 @@
       time.setAttribute('datetime', date.toISOString());
       time.setAttribute('title', `${t(project.last_used_at ? 'hub.last_used' : manuallyAdded ? 'hub.first_added' : 'hub.first_seen')} · ${date.toLocaleString(i18n.locale)}`);
       bottom.appendChild(time);
-      node.appendChild(bottom);
+      content.appendChild(bottom);
+      node.appendChild(content);
+      if (remove) {
+        const button = element('button', 'project-delete', t('hub.remove'));
+        button.type = 'button';
+        button.setAttribute('aria-label', t('hub.remove_label', { name: project.name }));
+        button.setAttribute('title', t('hub.remove_hint'));
+        button.disabled = state.removing.has(project.key);
+        button.addEventListener('click', async () => {
+          if (state.removing.has(project.key)) return;
+          state.removing.add(project.key);
+          button.disabled = true;
+          $('hubRefresh').disabled = true;
+          $('hubEnroll').disabled = true;
+          try {
+            if (state.running) await state.running;
+            const response = await remove(project.key);
+            if (!response?.ok) throw new Error('project removal failed');
+            state.projects = state.projects.filter((entry) => entry.key !== project.key);
+            state.signature = null;
+            render();
+            $('hubStatus').textContent = '';
+          } catch (_) {
+            $('hubStatus').setAttribute('data-kind', 'error');
+            $('hubStatus').textContent = t('hub.remove_failed');
+          } finally {
+            state.removing.delete(project.key);
+            const current = $('hubProjects').querySelector(`[data-project="${project.key}"] .project-delete`);
+            if (current) current.disabled = false;
+            $('hubRefresh').disabled = Boolean(state.running) || state.removing.size > 0;
+            $('hubEnroll').disabled = state.removing.size > 0;
+          }
+        });
+        node.appendChild(button);
+      }
       return node;
     }
 
@@ -99,7 +134,7 @@
       for (const path of report.roots || []) roots.appendChild(element('li', '', path));
       details.appendChild(roots);
       if (!report.roots?.length) details.appendChild(element('p', '', t('hub.discovery_no_roots')));
-      details.appendChild(element('p', '', t('hub.discovery_exclusions', { count: report.excluded_directories || 0, symlinks: report.symlinks_skipped || 0, interval: report.interval_seconds || 60 })));
+      details.appendChild(element('p', '', t('hub.discovery_exclusions', { count: report.excluded_directories || 0, symlinks: report.symlinks_skipped || 0 })));
       details.appendChild(element('p', 'hub-exclusion-patterns', (report.exclude_names || []).join(' · ')));
       details.appendChild(element('p', '', t('hub.discovery_boundaries', { caches: report.dependency_caches_skipped || 0 })));
       if (report.completed_at) details.appendChild(element('p', '', t('hub.discovery_completed', { time: new Date(report.completed_at).toLocaleString(i18n.locale) })));
@@ -151,15 +186,16 @@
       if (!projects.length) message(t(state.projects.length ? 'hub.no_matches' : 'hub.empty'), t(state.projects.length ? 'hub.no_matches_hint' : 'hub.empty_hint'));
     }
 
-    function refresh({ quiet = false } = {}) {
+    function refresh({ quiet = false, scan = false } = {}) {
       if (state.running) return state.running;
+      if (state.removing.size) return Promise.resolve();
       const request = (async () => {
         $('hubRefresh').disabled = true;
         $('hubStatus').textContent = t('hub.loading');
         $('hubStatus').setAttribute('data-kind', 'info');
         state.error = null;
         try {
-          const response = await Promise.resolve().then(load);
+          const response = await Promise.resolve().then(scan && rescan ? rescan : load);
           if (!response || !response.ok || !response.data || !Array.isArray(response.data.projects)) {
             throw new Error(response && response.error ? response.error.message : t('progress.invalid_response'));
           }
@@ -188,7 +224,7 @@
           $('hubStatus').setAttribute('data-kind', 'error');
           $('hubStatus').textContent = t('hub.error', { message: error.message });
         } finally {
-          $('hubRefresh').disabled = false;
+          $('hubRefresh').disabled = state.removing.size > 0;
           state.running = null;
         }
       })();
@@ -197,7 +233,8 @@
     }
 
     $('hubSearch').addEventListener('input', () => { if (!state.error) render(); });
-    $('hubRefresh').addEventListener('click', refresh);
+    $('hubRefresh').addEventListener('click', () => refresh({ scan: true }));
+    $('hubIntakeRefresh')?.addEventListener('click', () => refresh());
     const dialog = $('hubEnrollDialog');
     if (dialog && enroll) {
       $('hubEnroll').addEventListener('click', () => {
@@ -249,14 +286,13 @@
     const hub = createHub({ document: root.document, i18n: root.AWR_I18N, selectedKey,
       copy: (text) => root.navigator.clipboard.writeText(text),
       enroll: async (path) => (await fetch('/api/projects/intake', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-AWR-Project-Hub': '1' }, body: JSON.stringify({ root: path }) })).json(),
+      remove: async (key) => (await fetch(`/api/projects/${encodeURIComponent(key)}`, { method: 'DELETE', credentials: 'same-origin', headers: { 'X-AWR-Project-Hub': '1' } })).json(),
+      rescan: async () => (await fetch('/api/projects/refresh', { method: 'POST', credentials: 'same-origin', headers: { 'X-AWR-Project-Hub': '1' } })).json(),
       loadIntake: async (key) => (await fetch(`/api/projects/${encodeURIComponent(key)}/intake`, { credentials: 'same-origin', cache: 'no-store' })).json(),
       load: async () => {
       const response = await fetch('/api/projects', { credentials: 'same-origin', cache: 'no-store' });
       return response.json();
     } });
     hub.refresh();
-    const timer = root.setInterval(() => { if (!root.document.hidden) hub.refresh({ quiet: true }); }, 10000);
-    root.addEventListener('pagehide', () => root.clearInterval(timer), { once: true });
-    root.document.addEventListener('visibilitychange', () => { if (!root.document.hidden) hub.refresh({ quiet: true }); });
   }
 })(typeof globalThis !== 'undefined' ? globalThis : this);
