@@ -46,6 +46,9 @@ jobs:
         shell: bash
     env:
       CARGO_TERM_COLOR: never
+      # Shrink debug artifacts on the ~14 GiB GitHub-hosted root volume.
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
       # Throwaway container credentials; the fixture refuses any non-loopback host.
       AWR_TEAM_TEST_DATABASE_URL: postgres://postgres:awr-test@127.0.0.1:5432/postgres
     services:
@@ -65,6 +68,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Free disk space on the Ubuntu runner
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          echo '== disk before cleanup =='
+          df -h
+          # Preinstalled toolchains the Rust jobs do not use. Prefer an inline
+          # cleanup over a third-party action so the paths stay reviewable.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force || true
+          echo '== disk after cleanup =='
+          df -h
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install 1.93.1 --profile minimal --component rustfmt --component clippy
       - name: Run the PostgreSQL-backed tests
