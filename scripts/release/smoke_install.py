@@ -6,11 +6,13 @@ import json
 import os
 from pathlib import Path
 import queue
+import signal
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import urllib.request
 from mcp_catalog import validate_stdio_tools
 
@@ -26,10 +28,10 @@ def run(args, code=0, env=None):
     return result
 
 
-def check_mcp(command, project):
+def check_mcp(command, project, *, env=None, expect_intake=False):
     process = subprocess.Popen([str(command), "--project", str(project)], stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                               env=dict(os.environ, AWR_LOCAL_WEB="0"))
+                               env=env if env is not None else dict(os.environ, AWR_LOCAL_WEB="0"))
     responses = queue.Queue()
 
     def receive():
@@ -55,6 +57,16 @@ def check_mcp(command, project):
         tools = responses.get(timeout=20)
         assert tools["id"] == 2 and "result" in tools, tools
         names = validate_stdio_tools([t["name"] for t in tools["result"]["tools"]])
+        if expect_intake:
+            request = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+                "name": "awr_project_status", "arguments": {}}}
+            process.stdin.write(json.dumps(request) + "\n")
+            process.stdin.flush()
+            reply = responses.get(timeout=20)
+            assert reply["id"] == 3 and reply["result"]["isError"] is True, reply
+            intake = reply["result"]["structuredContent"]["takeover"]
+            assert intake["project"]["state"] == "discovered", intake
+            assert intake["guidance"]["basis"]["goal_inferred"] is False, intake
         process.stdin.close()
         assert process.wait(timeout=10) == 0
         return names
@@ -67,15 +79,29 @@ def check_mcp(command, project):
         process.stderr.close()
 
 
-def check_local_hub(awr, project, state_dir):
+def check_local_hub(awr, mcp, project, state_dir):
     env = dict(os.environ, AWR_LOCAL_HOME=str(state_dir), AWR_LOCAL_WEB="1")
+    mcp_env = dict(env, AWR_LOCAL_HOME=str(state_dir.parent / "mcp-hub-user"))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+    def catalog():
+        return json.loads(run([awr, "overview", "projects", "--json"], env=env).stdout)
+
+    def wait_for(predicate):
+        deadline = time.monotonic() + 15
+        while True:
+            current = catalog()
+            if predicate(current):
+                return current
+            assert time.monotonic() < deadline, current
+            time.sleep(0.05)
+
     try:
         run([awr, "--project", project, "status", "--cached", "--json"], env=env)
         first = json.loads(run([awr, "overview", "status", "--json"], env=env).stdout)["service"]
         assert first and first["service"] == "awr-project-hub"
         entries = json.loads(run([awr, "overview", "projects", "--json"], env=env).stdout)["projects"]
         assert len(entries) == 1 and os.path.samefile(entries[0]["root"], project)
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         for route, expected in [("/", "AWR Project Hub"), ("/hub.js", "createHub"),
                                 ("/?project=" + entries[0]["key"], 'id="projectHome"')]:
             with opener.open(first["url"] + route, timeout=10) as response:
@@ -83,9 +109,56 @@ def check_local_hub(awr, project, state_dir):
         run([awr, "--version"], env=env)
         second = json.loads(run([awr, "overview", "status", "--json"], env=env).stdout)["service"]
         assert second["instance"] == first["instance"]
+
+        repository = project.parent / "Pending repository"
+        (repository / ".git").mkdir(parents=True)
+        run([awr, "overview", "discover", "--root", project.parent, "--interval-seconds", "1", "--json"], env=env)
+        pending, = [entry for entry in catalog()["projects"] if os.path.samefile(entry["root"], repository)]
+        assert pending["state"] == "discovered" and pending["project_id"] is None, pending
+        assert not (repository / ".awr").exists()
+        intake = json.loads(run([awr, "--project", repository, "overview", "inspect", "--json"], env=env).stdout)
+        assert intake["guidance"]["next_action"]["argv"][3] == "init", intake
+        assert intake["guidance"]["basis"]["goal_inferred"] is False, intake
+        with opener.open(first["url"] + "/api/projects/" + pending["key"] + "/intake", timeout=10) as response:
+            assert json.load(response)["data"]["project"]["key"] == pending["key"]
+
+        check_mcp(mcp, repository, env=mcp_env, expect_intake=True)
+        mcp_status = json.loads(run([awr, "overview", "status", "--json"], env=mcp_env).stdout)["service"]
+        assert mcp_status and mcp_status["service"] == "awr-project-hub", mcp_status
+        mcp_entries = json.loads(run([awr, "overview", "projects", "--json"], env=mcp_env).stdout)["projects"]
+        assert len(mcp_entries) == 1 and mcp_entries[0]["state"] == "discovered", mcp_entries
+        assert not (repository / ".awr").exists()
+
+        goal = "Deliver a documented report viewer with verified source dates"
+        run([awr, "--project", repository, "init", "--goal", goal, "--json"], env=env)
+        assert not (repository / ".awr").exists()
+        run([awr, "--project", repository, "init", "--goal", goal, "--accept", "--json"], env=env)
+        connected, = [entry for entry in catalog()["projects"] if entry["key"] == pending["key"]]
+        assert connected["state"] == "connected" and connected["project_id"], connected
+
+        added = project.parent / "Background repository"
+        (added / ".git").mkdir(parents=True)
+        observed = wait_for(lambda result: any(entry["root"] == str(added.resolve()) for entry in result["projects"]))
+        added_entry, = [entry for entry in observed["projects"] if entry["root"] == str(added.resolve())]
+        assert added_entry["state"] == "discovered", added_entry
+        shutil.rmtree(added)
+        wait_for(lambda result: any(entry["key"] == added_entry["key"] and not entry["available"] for entry in result["projects"]))
+
+        os.kill(first["pid"], signal.SIGTERM)
+        deadline = time.monotonic() + 10
+        while json.loads(run([awr, "overview", "status", "--json"], env=env).stdout)["service"]:
+            assert time.monotonic() < deadline, "Owned test service did not terminate"
+            time.sleep(0.05)
+        run([awr, "--version"], env=env)
+        recovered = json.loads(run([awr, "overview", "status", "--json"], env=env).stdout)["service"]
+        assert recovered["instance"] != first["instance"] and recovered["url"] == first["url"], recovered
+        run([awr, "--version"], env=env)
+        reused = json.loads(run([awr, "overview", "status", "--json"], env=env).stdout)["service"]
+        assert reused["instance"] == recovered["instance"], reused
         return True
     finally:
-        run([awr, "overview", "stop", "--json"], env=env)
+        for environment in (env, mcp_env):
+            run([awr, "overview", "stop", "--json"], env=environment)
 
 
 def exercise(awr, mcp, scratch, version):
@@ -109,10 +182,11 @@ def exercise(awr, mcp, scratch, version):
     assert organization["state"] == "ready", organization
     assert organization["business_execution_ready"] and "EXAMPLE-001" in organization["executable_work"], organization
     names = check_mcp(mcp, project)
-    local_hub = check_local_hub(awr, project, scratch / "hub-user")
+    local_hub = check_local_hub(awr, mcp, project, scratch / "hub-user")
     return {"version_and_help": True, "exit_code_and_stderr": True,
             "unicode_space_project_init_and_status": True, "task_context_and_intake": True,
-            "mcp_stdio_tools": names, "local_project_hub": local_hub}
+            "mcp_stdio_tools": names, "local_project_hub": local_hub,
+            "local_project_discovery_and_intake": local_hub}
 
 
 def main():

@@ -6,7 +6,7 @@ use std::{
     collections::{BTreeSet, VecDeque},
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const ISSUE_LIMIT: usize = 100;
@@ -379,12 +379,19 @@ pub(crate) async fn monitor(dir: PathBuf, mut shutdown: tokio::sync::watch::Rece
                 }
             }
         }
-        let interval = config(&dir)
-            .map(|config| config.interval_seconds)
-            .unwrap_or(60);
-        tokio::select! {
-            _ = shutdown.changed() => return,
-            _ = tokio::time::sleep(Duration::from_secs(interval)) => (),
+        let completed = Instant::now();
+        loop {
+            let interval = config(&dir)
+                .map(|config| config.interval_seconds)
+                .unwrap_or(60);
+            let remaining = Duration::from_secs(interval).saturating_sub(completed.elapsed());
+            if remaining.is_zero() {
+                break;
+            }
+            tokio::select! {
+                _ = shutdown.changed() => return,
+                _ = tokio::time::sleep(remaining.min(Duration::from_secs(1))) => (),
+            }
         }
     }
 }

@@ -220,6 +220,26 @@ fn background_discovery_observes_new_projects_and_keeps_source_files_unchanged()
 }
 
 #[test]
+fn updated_discovery_settings_take_effect_in_the_running_service() {
+    let f = Fixture::new();
+    let started = f.run(&["overview", "start", "--json"])["service"].clone();
+    f.run(&[
+        "overview",
+        "discover",
+        "--root",
+        f.root.to_str().unwrap(),
+        "--interval-seconds",
+        "1",
+        "--json",
+    ]);
+    std::fs::create_dir_all(f.root.join("added/.git")).unwrap();
+    let observed = wait_for_projects(&f, 1);
+    assert_eq!(observed["discovery"]["pending"], 1);
+    let current = f.run(&["overview", "status", "--json"])["service"].clone();
+    assert_eq!(current["instance"], started["instance"]);
+}
+
+#[test]
 fn ordinary_project_use_records_pending_intake_and_initialization_promotes_the_same_card() {
     let f = Fixture::new();
     let root = f.root.join("application");
