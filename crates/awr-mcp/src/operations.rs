@@ -333,7 +333,7 @@ pub(crate) fn call(root: &Path, name: &str, mut args: JsonObject) -> Result<Call
                 root.join(".awr/project.toml").exists() || root.join(".awr/state.db").exists();
             let organization =
                 awr_runtime::OrganizationReport::unavailable(initialized, &error.report().message);
-            let value = json!({"ok":false,"read_only":true,"source_refresh_performed":false,"error":error.report(),"organization":organization,"total":null,"next_action":organization.next_action});
+            let value = json!({"ok":false,"read_only":true,"source_refresh_performed":false,"error":error.report(),"organization":organization,"total":null,"next_action":organization.next_action,"takeover":awr_local::project_intake(root).ok()});
             ensure_public_value(&value)?;
             return Ok(CallToolResult::structured_error(value));
         }

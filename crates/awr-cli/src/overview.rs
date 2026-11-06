@@ -34,6 +34,8 @@ enum OverviewCommand {
     },
     /// List the local project catalog, including unavailable directories.
     Projects,
+    /// Read the current directory's connection state and Agent intake/repair actions.
+    Inspect,
     /// Discover existing AWR projects and code repositories, with explicit coverage reporting.
     Discover {
         #[arg(long = "root")]
@@ -94,6 +96,7 @@ pub fn run(root: &Path, args: &OverviewArgs, json_output: bool) -> Result<()> {
             awr_local::stop(&dir)?;
             print(&serde_json::json!({"ok":true,"service":null}))
         }
+        Some(OverviewCommand::Inspect) => print(&awr_local::project_intake(root)?),
         Some(OverviewCommand::Projects) => print(
             &serde_json::json!({"ok":true,"projects":awr_local::list(&dir)?,"discovery":awr_local::discovery_status(&dir)?,"catalog_scope":if awr_local::is_default_state_dir(&dir) { "user" } else { "isolated" }}),
         ),

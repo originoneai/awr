@@ -26,16 +26,27 @@
     <h1 data-i18n="hub.title">Project Hub</h1>
     <p class="hub-description" data-i18n="hub.subtitle"></p>
   </section>
-  <section class="hub-controls" data-i18n-aria-label="hub.search_label" aria-label="Find a project">
+  <p id="hubScope" class="hub-scope" hidden></p>
+  <section id="hubCoverage" class="hub-coverage" hidden></section>
+  <section id="hubControls" class="hub-controls" data-i18n-aria-label="hub.search_label" aria-label="Find a project">
     <label class="hub-search">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 4 4" stroke-linecap="round"/></svg>
       <input id="hubSearch" type="search" autocomplete="off" data-i18n-placeholder="hub.search_placeholder" data-i18n-aria-label="hub.search_label" aria-label="Find a project">
     </label>
     <button class="btn ghost" id="hubRefresh" data-i18n="hub.refresh">Refresh projects</button>
   </section>
-  <div class="hub-list-heading"><span id="hubCount"></span><span class="hub-sort" data-i18n="hub.sort">Most recently used</span></div>
+  <div id="hubListHeading" class="hub-list-heading"><span id="hubCount"></span><span class="hub-sort" data-i18n="hub.sort">Most recently used</span></div>
   <p id="hubStatus" class="hub-status" role="status" aria-live="polite"></p>
   <section id="hubProjects" class="hub-projects" data-i18n-aria-label="hub.projects_label" aria-label="Registered projects"></section>
+  <section id="hubIntake" class="hub-intake" hidden>
+    <a id="hubIntakeBack" href="/" data-i18n="hub.back">Back to projects</a>
+    <div class="hub-intake-heading"><h2 id="hubIntakeTitle"></h2><span id="hubIntakeState" class="project-state"></span></div>
+    <p id="hubIntakePath" class="hub-intake-path"></p>
+    <p id="hubIntakeDescription"></p>
+    <pre id="hubIntakePrompt" class="hub-intake-prompt"></pre>
+    <div class="hub-intake-actions"><button id="hubIntakeCopy" class="btn" data-i18n="hub.intake_copy">Copy for your agent</button><a id="hubIntakeOpen" class="btn ghost" data-i18n="hub.intake_open" hidden>Open project progress</a></div>
+    <details id="hubIntakeDiagnostic" hidden><summary data-i18n="hub.intake_diagnostic">Inspection details</summary><pre id="hubIntakeIssue"></pre></details>
+  </section>
   <section id="hubMessage" class="hub-message" hidden>
     <div class="hub-message-icon" aria-hidden="true">A</div>
     <h2 id="hubMessageTitle"></h2><p id="hubMessageText"></p>

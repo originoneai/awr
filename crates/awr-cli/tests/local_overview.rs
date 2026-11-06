@@ -236,6 +236,26 @@ fn ordinary_project_use_records_pending_intake_and_initialization_promotes_the_s
     let pending = f.run(&["overview", "projects", "--json"])["projects"][0].clone();
     assert_eq!(pending["state"], "discovered");
     assert!(!root.join(".awr").exists());
+    let intake = f.run(&[
+        "--project",
+        root.to_str().unwrap(),
+        "overview",
+        "inspect",
+        "--json",
+    ]);
+    assert_eq!(intake["project"]["state"], "discovered");
+    assert_eq!(intake["guidance"]["basis"]["goal_inferred"], false);
+    assert_eq!(intake["guidance"]["next_action"]["argv"][3], "init");
+    let base = f.run(&["overview", "status", "--json"])["service"]["url"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let url = format!(
+        "{base}/api/projects/{}/intake",
+        pending["key"].as_str().unwrap()
+    );
+    assert_eq!(f.get(&url)["data"]["project"]["key"], pending["key"]);
+    assert!(!root.join(".awr").exists());
     let output = f
         .command()
         .env("AWR_LOCAL_WEB", "1")
@@ -256,6 +276,33 @@ fn ordinary_project_use_records_pending_intake_and_initialization_promotes_the_s
     assert_eq!(entries["projects"][0]["key"], pending["key"]);
     assert_eq!(entries["projects"][0]["state"], "connected");
     assert!(entries["projects"][0]["project_id"].as_str().is_some());
+    let connected = f.get(&url);
+    assert_eq!(connected["data"]["project"]["key"], pending["key"]);
+    assert_eq!(connected["data"]["project"]["state"], "connected");
+    assert_eq!(
+        connected["data"]["guidance"]["next_action"]["argv"][3],
+        "status"
+    );
+}
+
+#[test]
+fn intake_rejects_an_identity_replaced_at_the_registered_path() {
+    let f = Fixture::new();
+    let original = f.project("original");
+    let registered = f.register(&original);
+    std::fs::rename(&original, f.root.join("previous")).unwrap();
+    f.project("original");
+    let base = registered["service"]["url"].as_str().unwrap();
+    let key = registered["projects"][0]["key"].as_str().unwrap();
+    let result = ureq::get(format!("{base}/api/projects/{key}/intake")).call();
+    assert!(matches!(result, Err(ureq::Error::StatusCode(409))));
+    std::fs::remove_dir_all(original.join(".awr")).unwrap();
+    let repair = f.get(&format!("{base}/api/projects/{key}/intake"));
+    assert_eq!(repair["data"]["project"]["state"], "attention");
+    assert_eq!(
+        repair["data"]["guidance"]["next_action"]["argv"][3],
+        "doctor"
+    );
 }
 
 #[test]

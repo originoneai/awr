@@ -29,7 +29,7 @@ fn catalog() -> Vec<Capability> {
         (
             "local.project_discovery",
             true,
-            &["overview discover", "overview projects"][..],
+            &["overview discover", "overview projects", "overview inspect"][..],
             &[
                 "metadata_only",
                 "explicit_scan_coverage",

@@ -110,8 +110,10 @@ async fn projects(State(server): State<Arc<Server>>) -> Response {
 }
 
 async fn home(OriginalUri(uri): OriginalUri) -> Response {
-    let project = url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes())
-        .any(|(name, _)| name == "project");
+    let query: HashMap<_, _> =
+        url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes()).collect();
+    let project =
+        query.contains_key("project") && !query.get("intake").is_some_and(|value| value == "1");
     asset(if project { "index.html" } else { "hub.html" })
 }
 
@@ -271,6 +273,40 @@ async fn project_api(
             Error::Storage("local viewer is busy; retry shortly".into()),
         );
     };
+    if route == "intake" && method == Method::GET {
+        let entry = match registry::get(&server.dir, &key) {
+            Ok(entry) => entry,
+            Err(error) => return failure(StatusCode::NOT_FOUND, error),
+        };
+        return match registry::inspect(&entry.root) {
+            Ok(mut project) => {
+                if project.root != entry.root
+                    || entry
+                        .project_id
+                        .as_deref()
+                        .zip(project.project_id.as_deref())
+                        .is_some_and(|(expected, actual)| expected != actual)
+                {
+                    return failure(
+                        StatusCode::CONFLICT,
+                        Error::SourceConflict(
+                            "project identity changed; return to the project catalog".into(),
+                        ),
+                    );
+                }
+                if entry.project_id.is_some() && project.project_id.is_none() {
+                    project.state = crate::ProjectState::Attention;
+                    project
+                        .issue
+                        .get_or_insert_with(|| "registered AWR identity requires repair".into());
+                }
+                project.key = entry.key;
+                let value = crate::intake::describe(project);
+                axum::Json(json!({"ok":true,"data":value})).into_response()
+            }
+            Err(error) => failure(StatusCode::NOT_FOUND, error),
+        };
+    }
     let entry = match registry::select(&server.dir, &key) {
         Ok(entry) => entry,
         Err(error) => return failure(StatusCode::NOT_FOUND, error),
