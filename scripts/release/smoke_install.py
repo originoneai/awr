@@ -147,9 +147,9 @@ def check_local_hub(awr, mcp, project, state_dir):
         time.sleep(1.1)
         idle = catalog()
         assert idle["discovery"]["completed_at"] == last_scan, idle
-        assert all(entry["root"] != str(added.resolve()) for entry in idle["projects"]), idle
+        assert all(not os.path.samefile(entry["root"], added) for entry in idle["projects"]), idle
         observed = refresh()
-        added_entry, = [entry for entry in observed["projects"] if entry["root"] == str(added.resolve())]
+        added_entry, = [entry for entry in observed["projects"] if os.path.samefile(entry["root"], added)]
         assert added_entry["state"] == "connected", added_entry
         shutil.rmtree(added)
         assert any(entry["key"] == added_entry["key"] and not entry["available"] for entry in refresh()["projects"])
