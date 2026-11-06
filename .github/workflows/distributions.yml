@@ -48,10 +48,23 @@ jobs:
       PYTHONUTF8: '1'
       CARGO_TERM_COLOR: never
       AWR_LOCAL_WEB: '0'
+      CARGO_INCREMENTAL: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Free disk space on the Ubuntu runner
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          echo '== disk before cleanup =='
+          df -h
+          # Preinstalled toolchains the Rust jobs do not use. Prefer an inline
+          # cleanup over a third-party action so the paths stay reviewable.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force || true
+          echo '== disk after cleanup =='
+          df -h
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
           python-version: '3.12'
