@@ -113,6 +113,13 @@ def check_local_hub(awr, mcp, project, state_dir):
         repository = project.parent / "Pending repository"
         (repository / ".git").mkdir(parents=True)
         run([awr, "overview", "discover", "--root", project.parent, "--interval-seconds", "1", "--json"], env=env)
+        assert len(catalog()["projects"]) == 1
+        request = urllib.request.Request(first["url"] + "/api/projects/intake",
+                                         data=json.dumps({"root": str(repository.resolve())}).encode(),
+                                         headers={"Content-Type": "application/json", "X-AWR-Project-Hub": "1"}, method="POST")
+        with opener.open(request, timeout=10) as response:
+            enrolled = json.load(response)["data"]["project"]
+        assert enrolled["intake_requested"] is True
         pending, = [entry for entry in catalog()["projects"] if os.path.samefile(entry["root"], repository)]
         assert pending["state"] == "discovered" and pending["project_id"] is None, pending
         assert not (repository / ".awr").exists()
@@ -126,7 +133,7 @@ def check_local_hub(awr, mcp, project, state_dir):
         mcp_status = json.loads(run([awr, "overview", "status", "--json"], env=mcp_env).stdout)["service"]
         assert mcp_status and mcp_status["service"] == "awr-project-hub", mcp_status
         mcp_entries = json.loads(run([awr, "overview", "projects", "--json"], env=mcp_env).stdout)["projects"]
-        assert len(mcp_entries) == 1 and mcp_entries[0]["state"] == "discovered", mcp_entries
+        assert not mcp_entries, mcp_entries
         assert not (repository / ".awr").exists()
 
         goal = "Deliver a documented report viewer with verified source dates"
@@ -138,9 +145,10 @@ def check_local_hub(awr, mcp, project, state_dir):
 
         added = project.parent / "Background repository"
         (added / ".git").mkdir(parents=True)
+        run([awr, "--project", added, "init", "--goal", goal, "--accept", "--json"], env=dict(env, AWR_LOCAL_WEB="0"))
         observed = wait_for(lambda result: any(entry["root"] == str(added.resolve()) for entry in result["projects"]))
         added_entry, = [entry for entry in observed["projects"] if entry["root"] == str(added.resolve())]
-        assert added_entry["state"] == "discovered", added_entry
+        assert added_entry["state"] == "connected", added_entry
         shutil.rmtree(added)
         wait_for(lambda result: any(entry["key"] == added_entry["key"] and not entry["available"] for entry in result["projects"]))
 

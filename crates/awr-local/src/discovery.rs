@@ -214,21 +214,6 @@ fn exclusions(config: &DiscoveryConfig) -> Result<globset::GlobSet> {
         .map_err(|_| Error::InvalidInput("invalid discovery exclusion set".into()))
 }
 
-fn has_package_manifest(root: &Path) -> bool {
-    [
-        "Cargo.toml",
-        "package.json",
-        "pyproject.toml",
-        "go.mod",
-        "pom.xml",
-        "CMakeLists.txt",
-        "build.gradle",
-        "Package.swift",
-    ]
-    .iter()
-    .any(|marker| root.join(marker).exists())
-}
-
 fn flush(dir: &Path, batch: &mut Vec<LocalProject>, report: &DiscoveryReport) -> Result<()> {
     if !batch.is_empty() {
         registry::record(dir, std::mem::take(batch), false)?;
@@ -254,16 +239,14 @@ pub(crate) fn scan(dir: &Path, cancelled: &AtomicBool) -> Result<DiscoveryReport
     let mut queue: VecDeque<_> = configured
         .roots
         .iter()
-        .map(|root| (root.clone(), 0, false))
+        .map(|root| (root.clone(), 0))
         .collect();
     let mut visited = BTreeSet::new();
     let mut selected = BTreeSet::new();
     let mut excluded_paths = Vec::new();
     let mut batch = Vec::new();
     let state_root = dir.canonicalize()?;
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .and_then(|path| PathBuf::from(path).canonicalize().ok());
-    while let Some((path, depth, within_project)) = queue.pop_front() {
+    while let Some((path, depth)) = queue.pop_front() {
         if cancelled.load(Ordering::Relaxed) {
             report.state = "interrupted".into();
             break;
@@ -294,9 +277,8 @@ pub(crate) fn scan(dir: &Path, cancelled: &AtomicBool) -> Result<DiscoveryReport
             }
         };
         report.directories_scanned += 1;
-        let boundary = root.join(".awr").exists() || root.join(".git").exists();
-        let candidate = boundary
-            || (!within_project && home.as_ref() != Some(&root) && has_package_manifest(&root));
+        let candidate =
+            root.join(".awr/project.toml").is_file() || root.join(".awr/state.db").is_file();
         if candidate {
             match registry::inspect(&root) {
                 Ok(project) => {
@@ -353,7 +335,7 @@ pub(crate) fn scan(dir: &Path, cancelled: &AtomicBool) -> Result<DiscoveryReport
                     report.issue(&entry.path(), "queued directory limit reached");
                     break;
                 }
-                queue.push_back((entry.path(), depth + 1, within_project || candidate));
+                queue.push_back((entry.path(), depth + 1));
             }
         }
         if batch.len() >= BATCH_SIZE || report.directories_scanned % 1000 == 0 {
@@ -466,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn discovers_existing_projects_and_repositories_without_initializing_or_rewriting_them() {
+    fn discovers_only_existing_awr_projects_without_initializing_or_rewriting_them() {
         let f = Workspace::new();
         let connected = f.project("existing");
         let pending = f.directory("application");
@@ -474,6 +456,7 @@ mod tests {
         let ordinary = f.directory("notes");
         let invalid = f.directory("incomplete");
         std::fs::create_dir(invalid.join(".awr")).unwrap();
+        std::fs::write(invalid.join(".awr/project.toml"), "").unwrap();
         let readme = connected.join("README.md");
         std::fs::write(&readme, "Original project requirements\n").unwrap();
         let database = std::fs::read(connected.join(".awr/state.db")).unwrap();
@@ -486,11 +469,11 @@ mod tests {
                 report.pending,
                 report.attention
             ),
-            (3, 1, 1, 1)
+            (2, 1, 0, 1)
         );
         assert_eq!(report.state, "complete");
         let projects = registry::list(&dir).unwrap();
-        assert_eq!(projects.len(), 3);
+        assert_eq!(projects.len(), 2);
         assert!(projects.iter().all(|entry| entry.last_used_at == 0));
         assert!(
             projects
@@ -500,14 +483,7 @@ mod tests {
                 .project_id
                 .is_some()
         );
-        assert!(
-            projects
-                .iter()
-                .find(|entry| entry.root == pending)
-                .unwrap()
-                .project_id
-                .is_none()
-        );
+        assert!(!projects.iter().any(|entry| entry.root == pending));
         assert!(!pending.join(".awr").exists());
         assert!(!ordinary.join(".awr").exists());
         assert_eq!(
@@ -537,11 +513,11 @@ mod tests {
         std::fs::write(application.join("package.json"), "{}").unwrap();
         let dir = f.settings();
         let report = discover(&dir).unwrap();
-        assert_eq!(report.projects_found, 4);
+        assert_eq!(report.projects_found, 1);
         assert_eq!(report.dependency_caches_skipped, 1);
         let projects = registry::list(&dir).unwrap();
         assert!(projects.iter().any(|entry| entry.root == connected));
-        assert!(projects.iter().any(|entry| entry.root == plain));
+        assert!(!projects.iter().any(|entry| entry.root == plain));
         assert!(
             !projects
                 .iter()
@@ -569,8 +545,10 @@ mod tests {
             false,
         )
         .unwrap();
+        registry::request_intake(&dir, &missing).unwrap();
         std::fs::rename(&missing, f.0.join("renamed-project")).unwrap();
         let used = f.directory("repository/packages/used");
+        registry::request_intake(&dir, &used).unwrap();
         registry::observe(&dir, &used).unwrap();
         let bound = f.project("repository/evidence/bound-project");
         let registered = registry::register(&dir, &bound).unwrap();
@@ -607,8 +585,7 @@ mod tests {
         let dir = f.settings();
         let used = registry::register(&dir, &project).unwrap();
         discover(&dir).unwrap();
-        let added = f.directory("new-application");
-        std::fs::write(added.join("package.json"), "{}").unwrap();
+        let added = f.project("new-application");
         let report = discover(&dir).unwrap();
         assert_eq!(report.projects_found, 2);
         let projects = registry::list(&dir).unwrap();
@@ -632,7 +609,10 @@ mod tests {
         std::fs::write(root.join("Cargo.toml"), "[package]\nname='application'\n").unwrap();
         let dir = f.settings();
         discover(&dir).unwrap();
-        let pending = registry::list(&dir).unwrap().remove(0);
+        assert!(registry::list(&dir).unwrap().is_empty());
+        let pending = registry::request_intake(&dir, &root).unwrap();
+        discover(&dir).unwrap();
+        assert_eq!(registry::list(&dir).unwrap().len(), 1);
         assert!(registry::select(&dir, &pending.key).is_err());
         f.project("application");
         let connected = registry::register(&dir, &root).unwrap();
@@ -751,7 +731,7 @@ mod tests {
         let f = Workspace::new();
         let root = f.directory("application");
         let dir = f.settings();
-        let stale = registry::observe(&dir, &root).unwrap();
+        let stale = registry::request_intake(&dir, &root).unwrap();
         f.project("application");
         let connected = registry::register(&dir, &root).unwrap();
         registry::record(&dir, vec![stale], false).unwrap();

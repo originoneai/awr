@@ -32,14 +32,23 @@ An isolated user-state directory is explicitly labeled as a separate environment
 
 The first CLI or installed MCP use starts the local background service. In the
 default user-state directory, it scans the current user's home and checks again
-every 60 seconds. Discovery recognizes AWR metadata, Git repositories and common
-package/build manifests. It reads directory metadata and project identity, without
-calling a model or writing target-project files.
+every 60 seconds. Automatic discovery recognizes directories that already have
+an AWR project manifest or database. Git repositories and package manifests alone
+do not enroll a directory. Discovery reads directory metadata and project identity,
+without calling a model or writing target-project files.
 
-Connected projects are registered automatically. Ordinary repositories appear as
-**Pending setup**. Incomplete, unreadable or older AWR databases appear as
-**Needs inspection**. Their diagnostic remains visible. A discovered directory's
-card retains its key when initialization connects the actual project identity.
+Connected projects are registered automatically. Incomplete, unreadable or older
+AWR databases appear as **Needs inspection**, with their diagnostic retained.
+
+To connect a new project, click **Take over project**, enter its absolute directory
+path and click **Create pending card**. The directory must already exist. This
+creates a **Pending setup** card and records explicit takeover intent in the local
+catalog. It does not initialize the project or change its files. Repeated paths
+and canonical aliases reuse the same card.
+
+Open that card to copy the Agent guidance. The agent inspects existing sources,
+reviews the normal initialization preview and uses the actual user goal before
+accepting setup. The card retains its key when the actual AWR identity connects.
 
 Agents inspect a specific directory through the normal CLI entry point.
 
@@ -65,10 +74,9 @@ awr overview projects --json
 
 Roots replace the configured root list. Hidden, dependency, generated, cache and
 fixture directories, application bundles and generated evidence are excluded by
-default. Recognized Go module caches are skipped. Package-only subdirectories
-remain part of their parent project; nested Git and AWR roots stay independent.
-A manifest in the user's home directory does not group all workspaces together.
-An explicit scan root can expose a separately managed package within a repository.
+default. Recognized Go module caches are skipped. Nested AWR-managed projects
+remain independently discoverable. New directories, including ones inside the
+scan scope, require explicit takeover enrollment.
 Child symlinks are skipped. The
 coverage report exposes these boundaries and access errors. Scans are bounded to
 200,000 directories and depth 32, and incomplete scans report a partial result.
@@ -76,10 +84,11 @@ Use `--config` with a complete `DiscoveryConfig` JSON to customize roots,
 `exclude_names`, `interval_seconds`, `directory_limit` or `depth_limit`. Custom
 `AWR_LOCAL_HOME` environments start with no scan roots until configured.
 
-After a complete scan, unused, unbound discovery suggestions that are proven to
-be ordinary subdirectories or excluded caches are retired. Previously used,
-identity-bound and attention-required entries remain in the catalog. Missing
-directories remain visible. Partial scans do not retire suggestions.
+After a complete scan, earlier unused, unbound automatic suggestions that are
+proven to be ordinary directories or excluded artifacts are retired. Explicitly
+requested takeover cards and identity-bound entries remain in the catalog. Missing
+registered or requested directories remain visible. Partial scans do not retire
+suggestions. Project lists expose managed projects and explicitly requested cards.
 
 The service first tries port 7381 on `127.0.0.1`. An occupied port selects an
 available loopback port. The service receipt records the actual address. Recovery

@@ -78,6 +78,19 @@ impl Fixture {
             .unwrap();
         serde_json::from_str(&response.body_mut().read_to_string().unwrap()).unwrap()
     }
+    fn enroll(&self, root: &Path) -> Value {
+        let base = self.run(&["overview", "start", "--json"])["service"]["url"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let body = serde_json::json!({"root":root}).to_string();
+        let mut response = ureq::post(format!("{base}/api/projects/intake"))
+            .header("content-type", "application/json")
+            .header("x-awr-project-hub", "1")
+            .send(body.as_bytes())
+            .unwrap();
+        serde_json::from_str(&response.body_mut().read_to_string().unwrap()).unwrap()
+    }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -173,16 +186,17 @@ fn first_use_discovers_existing_projects_in_the_default_user_scope_without_regis
         .output()
         .unwrap();
     success(&output);
-    let projects = wait_for_projects(&f, 2);
+    let projects = wait_for_projects(&f, 1);
     assert_eq!(projects["catalog_scope"], "user");
     let entries = projects["projects"].as_array().unwrap();
     assert!(entries.iter().any(|entry| entry["root"]
         == existing.canonicalize().unwrap().to_str().unwrap()
         && entry["state"] == "connected"));
-    assert!(entries.iter().any(|entry| entry["root"]
-        == repository.canonicalize().unwrap().to_str().unwrap()
-        && entry["state"] == "discovered"
-        && entry["project_id"].is_null()));
+    assert!(
+        !entries
+            .iter()
+            .any(|entry| entry["root"] == repository.canonicalize().unwrap().to_str().unwrap())
+    );
     assert!(!repository.join(".awr").exists());
 }
 
@@ -202,17 +216,11 @@ fn background_discovery_observes_new_projects_and_keeps_source_files_unchanged()
         "--json",
     ]);
     assert_eq!(initial["discovery"]["connected"], 1);
-    let repository = f.root.join("new-repository");
-    std::fs::create_dir(&repository).unwrap();
-    std::fs::write(
-        repository.join("pyproject.toml"),
-        "[project]\nname='new-repository'\n",
-    )
-    .unwrap();
+    let repository = f.project("new-repository");
     let observed = wait_for_projects(&f, 2);
-    assert_eq!(observed["discovery"]["pending"], 1);
+    assert_eq!(observed["discovery"]["connected"], 2);
     assert_eq!(std::fs::read(source).unwrap(), before);
-    assert!(!repository.join(".awr").exists());
+    assert!(repository.join(".awr/state.db").exists());
     let instance = initial["service"]["instance"].clone();
     assert_eq!(
         f.run(&["overview", "status", "--json"])["service"]["instance"],
@@ -233,15 +241,15 @@ fn updated_discovery_settings_take_effect_in_the_running_service() {
         "1",
         "--json",
     ]);
-    std::fs::create_dir_all(f.root.join("added/.git")).unwrap();
+    f.project("added");
     let observed = wait_for_projects(&f, 1);
-    assert_eq!(observed["discovery"]["pending"], 1);
+    assert_eq!(observed["discovery"]["connected"], 1);
     let current = f.run(&["overview", "status", "--json"])["service"].clone();
     assert_eq!(current["instance"], started["instance"]);
 }
 
 #[test]
-fn ordinary_project_use_records_pending_intake_and_initialization_promotes_the_same_card() {
+fn explicit_enrollment_creates_a_pending_card_and_initialization_promotes_the_same_identity() {
     let f = Fixture::new();
     let root = f.root.join("application");
     std::fs::create_dir(&root).unwrap();
@@ -254,8 +262,15 @@ fn ordinary_project_use_records_pending_intake_and_initialization_promotes_the_s
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let pending = f.run(&["overview", "projects", "--json"])["projects"][0].clone();
+    assert!(
+        f.run(&["overview", "projects", "--json"])["projects"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let pending = f.enroll(&root)["data"]["project"].clone();
     assert_eq!(pending["state"], "discovered");
+    assert_eq!(pending["intake_requested"], true);
     assert!(!root.join(".awr").exists());
     let intake = f.run(&[
         "--project",
@@ -304,6 +319,60 @@ fn ordinary_project_use_records_pending_intake_and_initialization_promotes_the_s
         connected["data"]["guidance"]["next_action"]["argv"][3],
         "status"
     );
+}
+
+#[test]
+fn intake_requests_require_absolute_paths_and_the_local_request_guard() {
+    let f = Fixture::new();
+    let root = f.root.join("pending");
+    std::fs::create_dir(&root).unwrap();
+    let base = f.run(&["overview", "start", "--json"])["service"]["url"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for (path, guarded, origin, expected) in [
+        (root.to_str().unwrap(), false, None, 403),
+        (
+            root.to_str().unwrap(),
+            true,
+            Some("https://untrusted.example"),
+            403,
+        ),
+        ("relative/project", true, None, 400),
+    ] {
+        let mut request = ureq::post(format!("{base}/api/projects/intake"))
+            .header("content-type", "application/json");
+        if guarded {
+            request = request.header("x-awr-project-hub", "1");
+        }
+        if let Some(origin) = origin {
+            request = request.header("origin", origin);
+        }
+        let body = serde_json::json!({"root":path}).to_string();
+        assert!(
+            matches!(request.send(body.as_bytes()), Err(ureq::Error::StatusCode(code)) if code == expected)
+        );
+    }
+    assert!(
+        f.run(&["overview", "projects", "--json"])["projects"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let first = f.enroll(&root);
+    let again = f.enroll(&root.join("."));
+    assert_eq!(
+        first["data"]["project"]["key"],
+        again["data"]["project"]["key"]
+    );
+    assert_eq!(
+        f.run(&["overview", "projects", "--json"])["projects"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(!root.join(".awr").exists());
 }
 
 #[test]
