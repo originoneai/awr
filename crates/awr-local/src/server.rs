@@ -93,9 +93,16 @@ async fn boundary(State(server): State<Arc<Server>>, req: Request<Body>, next: N
 
 async fn projects(State(server): State<Arc<Server>>) -> Response {
     let dir = server.dir.clone();
-    match tokio::task::spawn_blocking(move || registry::list(&dir)).await {
-        Ok(Ok(projects)) => {
-            axum::Json(json!({"ok":true,"data":{"projects":projects}})).into_response()
+    match tokio::task::spawn_blocking(move || {
+        let projects = registry::list(&dir)?;
+        let discovery = match crate::discovery_status(&dir) {
+            Ok(report) => json!(report),
+            Err(error) => json!({"state":"error","message":error.report().message}),
+        };
+        Ok::<_, Error>((projects, discovery, registry::is_default_state_dir(&dir)))
+    }).await {
+        Ok(Ok((projects, discovery, default_scope))) => {
+            axum::Json(json!({"ok":true,"data":{"projects":projects,"discovery":discovery,"catalog_scope":if default_scope { "user" } else { "isolated" }}})).into_response()
         }
         Ok(Err(error)) => failure(StatusCode::INTERNAL_SERVER_ERROR, error),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -375,11 +382,13 @@ pub fn serve(dir: &Path, executable: &Path) -> Result<()> {
             .layer(middleware::from_fn_with_state(server.clone(), boundary))
             .with_state(server);
         registry::write_json(&dir.join("service.json"), &status)?;
+        let discovery = tokio::spawn(crate::discovery::monitor(dir.into(), rx.clone()));
         axum::serve(listener, router)
             .with_graceful_shutdown(async move {
                 let _ = rx.changed().await;
             })
             .await?;
+        let _ = discovery.await;
         Ok(())
     })
 }

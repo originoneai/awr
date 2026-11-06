@@ -27,6 +27,18 @@ struct Capability {
 fn catalog() -> Vec<Capability> {
     [
         (
+            "local.project_discovery",
+            true,
+            &["overview discover", "overview projects"][..],
+            &[
+                "metadata_only",
+                "explicit_scan_coverage",
+                "background_rescan",
+                "uninitialized_projects_require_agent_intake",
+                "isolated_namespaces_require_scan_roots",
+            ][..],
+        ),
+        (
             "local.progress_snapshot",
             true,
             &["overview snapshot", "overview snapshot --refresh"][..],

@@ -7,17 +7,29 @@ use std::{
 
 struct Fixture {
     root: PathBuf,
+    default_scope: bool,
 }
 impl Fixture {
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!("awr-hub-cli-{}", awr_core::Id::new()));
         std::fs::create_dir(&root).unwrap();
-        Self { root }
+        Self {
+            root,
+            default_scope: false,
+        }
     }
     fn command(&self) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_awr"));
-        c.env("AWR_LOCAL_HOME", self.root.join("user-state"))
-            .env("AWR_LOCAL_WEB", "0");
+        c.env("AWR_LOCAL_WEB", "0");
+        if self.default_scope {
+            c.env_remove("AWR_LOCAL_HOME")
+                .env_remove("XDG_STATE_HOME")
+                .env("HOME", &self.root)
+                .env("USERPROFILE", &self.root)
+                .env("LOCALAPPDATA", self.root.join("AppData"));
+        } else {
+            c.env("AWR_LOCAL_HOME", self.root.join("user-state"));
+        }
         c
     }
     fn run(&self, args: &[&str]) -> Value {
@@ -127,6 +139,123 @@ fn ordinary_calls_register_projects_and_concurrent_startup_reuses_one_service() 
         f.run(&["overview", "status", "--json"])["service"]["pid"],
         first["pid"]
     );
+}
+
+fn wait_for_projects(f: &Fixture, count: usize) -> Value {
+    let deadline = std::time::Instant::now() + Duration::from_secs(12);
+    loop {
+        let value = f.run(&["overview", "projects", "--json"]);
+        if value["projects"].as_array().unwrap().len() == count
+            && value["discovery"]["state"] == "complete"
+        {
+            return value;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "project discovery did not converge: {value}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn first_use_discovers_existing_projects_in_the_default_user_scope_without_registration() {
+    let mut f = Fixture::new();
+    let existing = f.project("existing");
+    let repository = f.root.join("repository");
+    std::fs::create_dir_all(repository.join(".git")).unwrap();
+    f.default_scope = true;
+    let output = f
+        .command()
+        .env("AWR_LOCAL_WEB", "1")
+        .args(["--version"])
+        .output()
+        .unwrap();
+    success(&output);
+    let projects = wait_for_projects(&f, 2);
+    assert_eq!(projects["catalog_scope"], "user");
+    let entries = projects["projects"].as_array().unwrap();
+    assert!(entries.iter().any(|entry| entry["root"]
+        == existing.canonicalize().unwrap().to_str().unwrap()
+        && entry["state"] == "connected"));
+    assert!(entries.iter().any(|entry| entry["root"]
+        == repository.canonicalize().unwrap().to_str().unwrap()
+        && entry["state"] == "discovered"
+        && entry["project_id"].is_null()));
+    assert!(!repository.join(".awr").exists());
+}
+
+#[test]
+fn background_discovery_observes_new_projects_and_keeps_source_files_unchanged() {
+    let f = Fixture::new();
+    let existing = f.project("existing");
+    let source = existing.join(".awr/project.toml");
+    let before = std::fs::read(&source).unwrap();
+    let initial = f.run(&[
+        "overview",
+        "discover",
+        "--root",
+        f.root.to_str().unwrap(),
+        "--interval-seconds",
+        "1",
+        "--json",
+    ]);
+    assert_eq!(initial["discovery"]["connected"], 1);
+    let repository = f.root.join("new-repository");
+    std::fs::create_dir(&repository).unwrap();
+    std::fs::write(
+        repository.join("pyproject.toml"),
+        "[project]\nname='new-repository'\n",
+    )
+    .unwrap();
+    let observed = wait_for_projects(&f, 2);
+    assert_eq!(observed["discovery"]["pending"], 1);
+    assert_eq!(std::fs::read(source).unwrap(), before);
+    assert!(!repository.join(".awr").exists());
+    let instance = initial["service"]["instance"].clone();
+    assert_eq!(
+        f.run(&["overview", "status", "--json"])["service"]["instance"],
+        instance
+    );
+}
+
+#[test]
+fn ordinary_project_use_records_pending_intake_and_initialization_promotes_the_same_card() {
+    let f = Fixture::new();
+    let root = f.root.join("application");
+    std::fs::create_dir(&root).unwrap();
+    let output = f
+        .command()
+        .env("AWR_LOCAL_WEB", "1")
+        .arg("--project")
+        .arg(&root)
+        .args(["status", "--cached", "--json"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let pending = f.run(&["overview", "projects", "--json"])["projects"][0].clone();
+    assert_eq!(pending["state"], "discovered");
+    assert!(!root.join(".awr").exists());
+    let output = f
+        .command()
+        .env("AWR_LOCAL_WEB", "1")
+        .arg("--project")
+        .arg(&root)
+        .args([
+            "init",
+            "--goal",
+            "Deliver a documented application with current acceptance evidence",
+            "--accept",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    success(&output);
+    let entries = f.run(&["overview", "projects", "--json"]);
+    assert_eq!(entries["projects"].as_array().unwrap().len(), 1);
+    assert_eq!(entries["projects"][0]["key"], pending["key"]);
+    assert_eq!(entries["projects"][0]["state"], "connected");
+    assert!(entries["projects"][0]["project_id"].as_str().is_some());
 }
 
 #[test]
