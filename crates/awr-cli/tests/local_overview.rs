@@ -257,3 +257,30 @@ fn status_and_stopped_service_leave_the_catalog_intact() {
         1
     );
 }
+
+#[test]
+fn background_startup_releases_captured_output_before_the_service_stops() {
+    for args in [vec!["overview", "start", "--json"], vec!["--version"]] {
+        let f = Fixture::new();
+        let mut command = f.command();
+        command.env("AWR_LOCAL_WEB", "1").args(&args);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let _ = sender.send(command.output());
+        });
+        // Fixture teardown stops the service even if its inherited pipes prevent EOF.
+        let output = receiver
+            .recv_timeout(Duration::from_secs(15))
+            .expect("background startup retained the calling client's output pipes")
+            .unwrap();
+        reader.join().unwrap();
+        success(&output);
+        let status = f.run(&["overview", "status", "--json"])["service"].clone();
+        assert!(status["pid"].as_u64().is_some());
+        assert_eq!(status["service"], "awr-project-hub");
+        assert_eq!(
+            f.get(&format!("{}/api/health", status["url"].as_str().unwrap()))["data"]["instance"],
+            status["instance"]
+        );
+    }
+}

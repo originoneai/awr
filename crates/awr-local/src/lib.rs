@@ -3,7 +3,7 @@ mod lifecycle;
 mod registry;
 mod server;
 
-pub use lifecycle::{ServiceStatus, ensure, running, stop};
+pub use lifecycle::{ServiceStatus, detach_background, ensure, running, stop};
 pub use registry::{LocalProject, list, register, state_dir};
 
 use std::path::{Path, PathBuf};
