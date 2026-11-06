@@ -579,6 +579,22 @@ test('table filters intersect every column and numeric bounds include their endp
   }
 });
 
+test('unknown canonical work status is an explicit graph and table filter', () => {
+  const next = JSON.parse(JSON.stringify(source));
+  const node = next.nodes.find((n) => n.key === 'DEMO-A-004');
+  node.status = 'unknown';
+  node.ready = false;
+  const snapshot = snapshotLib.seal(next, source.generated_at);
+  for (const lang of ['en', 'zh-CN']) {
+    const ctx = boot({ snapshot, lang });
+    assert.ok(ctx.container.querySelector('[data-pm-status="unknown"]'));
+    const selected = interact.selectTable(ctx.result.model, { filters: { status: 'value:unknown' }, sort: null }, ctx.t);
+    assert.deepEqual(selected.map((n) => n.id), [node.key]);
+    assert.ok(ctx.container.textContent.includes(ctx.t('map.status.unknown')));
+    ctx.app.destroy();
+  }
+});
+
 test('missing table values sort last in both directions and missing idle time is distinct from zero', () => {
   const model = numericTableModel();
   model.nodes.set('WORK-0', { ...model.nodes.get('WORK-1'), id: 'WORK-0', milestone: '', owner: null, idle: null });

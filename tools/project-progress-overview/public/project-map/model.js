@@ -246,6 +246,7 @@
       const idle = n.last_event_at ? (generatedMs - n.last_event_at) / DAY_MS : null;
       let vis;
       if (n.status === 'cancelled') vis = 'cancelled';
+      else if (n.status === 'unknown') vis = 'unknown';
       else if (n.status === 'completed') vis = 'done';
       else if (n.status === 'blocked') vis = 'blocked';
       else if (n.status === 'in_progress' || n.status === 'claimed') vis = idle === null || idle >= cfg.stale_days ? 'stalled' : 'developing';
