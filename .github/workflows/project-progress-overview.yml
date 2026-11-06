@@ -31,6 +31,7 @@ jobs:
         run: |
           node --check server.js
           node --check public/app.js
+          node --check public/hub.js
           node --check public/i18n.js
           node --check public/locales/en.js
           node --check public/locales/zh-CN.js

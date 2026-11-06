@@ -1,6 +1,15 @@
 # AWR Project Progress Overview
 
-A local viewer for an AWR project's progress and dependencies.
+A local project hub and viewer for AWR project progress and dependencies.
+
+The development native CLI embeds the hub and the three views. Open `awr overview`
+to search this user's registered projects, select a card, and return to the list
+from its overview. Projects are ordered by their latest AWR use. The native
+service and assets ship together in the npm and Python payloads built from this
+source. Published 0.6.0 packages predate this feature.
+
+See the [local hub guide](../../docs/dev/reference/local-project-hub.md) for
+registration, automatic single-instance startup, recovery and state locations.
 
 | View | What it shows |
 | --- | --- |
@@ -8,7 +17,20 @@ A local viewer for an AWR project's progress and dependencies.
 | Mainline dependencies | Dependencies within configured panels and their critical paths |
 | Collaboration swimlanes | Unfinished work and cross-lane dependencies grouped by recorded milestones or mainlines |
 
-## Start
+## Start the bundled hub
+
+```sh
+awr overview
+```
+
+Use `awr overview --no-open` to print its address. Initialize or use an existing
+project with AWR to add it automatically, or register known roots explicitly.
+
+```sh
+awr overview register /absolute/path/to/project
+```
+
+## Start the source project viewer
 
 Use Node.js 18 or later and an installed `awr` command.
 

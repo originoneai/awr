@@ -27,6 +27,25 @@ struct Capability {
 fn catalog() -> Vec<Capability> {
     [
         (
+            "local.project_hub",
+            true,
+            &[
+                "overview",
+                "overview projects",
+                "overview register",
+                "overview status",
+                "overview start",
+                "overview stop",
+            ][..],
+            &[
+                "per_user_catalog",
+                "loopback_only",
+                "bundled_native_assets",
+                "automatic_single_instance_recovery",
+                "AWR_LOCAL_WEB=0_disables_automatic_startup",
+            ][..],
+        ),
+        (
             "runtime.matched_snapshot",
             true,
             &[

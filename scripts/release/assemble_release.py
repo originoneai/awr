@@ -35,6 +35,8 @@ def main():
             assert check["version_and_help"] is True and check["exit_code_and_stderr"] is True
             assert check["unicode_space_project_init_and_status"] is True and check["task_context_and_intake"] is True
             validate_stdio_tools(check["mcp_stdio_tools"])
+            if manifest.get("local_project_hub", False):
+                assert check.get("local_project_hub") is True, "bundled local project hub was not exercised"
         versions.add(manifest["version"])
         for name, expected in manifest["artifacts"].items():
             assert Path(name).name == name and name.endswith((".whl", ".tgz"))
@@ -46,6 +48,7 @@ def main():
             files[name] = (source, actual)
         selected[platform] = manifest
     assert set(selected) == PLATFORMS and len(versions) == 1
+    assert len({m.get("local_project_hub", False) for m in selected.values()}) == 1, "local hub coverage differs across platforms"
     assert sum(name.endswith(".whl") for name in files) == len(PLATFORMS)
     assert sum(name.endswith(".tgz") for name in files) == len(PLATFORMS) + 1
     if args.candidate:
@@ -63,6 +66,8 @@ def main():
                "python_version": selected["darwin-arm64"]["python_version"],
                "channel": "next" if "-" in selected["darwin-arm64"]["version"] else "latest",
                "platforms": sorted(selected), "artifacts": {name: sha for name, (_, sha) in files.items()}}
+    if selected["darwin-arm64"].get("local_project_hub", False):
+        receipt["local_project_hub"] = True
     (args.output / "release-manifest.json").write_text(json.dumps(receipt, indent=2) + "\n")
     (args.output / "SHA256SUMS").write_text("".join(f"{sha}  {name}\n" for name, sha in sorted(receipt["artifacts"].items())))
     print(json.dumps(receipt))

@@ -91,9 +91,11 @@ cases. Team surfaces are compiled in but **off by default**; see the
 authenticated Team service in the packages.
 See [what changed in 0.6.0](docs/dev/release/0.6.0.md).
 
-Source tools on `main` include [Project Progress Overview](tools/project-progress-overview/README.md)
-for three local progress and dependency views, and [Observer](tools/observer/README.md)
-for the Team observation workspace. Run them from a source checkout.
+Development source embeds [Project Hub](docs/dev/reference/local-project-hub.md)
+in native payloads. `awr overview` opens searchable project cards and their three
+Project Progress Overview views. CLI/MCP use maintains the local catalog and one
+recoverable background web service. This feature is outside published 0.6.0.
+[Observer](tools/observer/README.md) provides the source Team observation workspace.
 
 **Development on `main`:** the Team service, versioned cross-workstream delivery
 adoption and Team collaboration/review are outside this release. The

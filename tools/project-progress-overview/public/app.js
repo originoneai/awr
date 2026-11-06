@@ -5,6 +5,10 @@
   const $ = (id) => root.document.getElementById(id);
   const connection = $('connectionStatus');
   const projectKey = new URL(root.location.href).searchParams.get('project');
+  if (projectKey) {
+    $('projectHome').hidden = false;
+    $('projectHome').href = `/?lang=${encodeURIComponent(i18n.locale)}`;
+  }
 
   async function callApi(url) {
     try {

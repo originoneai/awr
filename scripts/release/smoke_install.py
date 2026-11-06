@@ -11,12 +11,15 @@ import subprocess
 import sys
 import tempfile
 import threading
+import urllib.request
 from mcp_catalog import validate_stdio_tools
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def run(args, code=0, env=None):
+    if env is None:
+        env = dict(os.environ, AWR_LOCAL_WEB="0")
     result = subprocess.run([str(a) for a in args], capture_output=True, text=True, env=env, timeout=90)
     if result.returncode != code:
         raise AssertionError(f"{args}: expected {code}, got {result.returncode}\n{result.stdout}\n{result.stderr}")
@@ -25,7 +28,8 @@ def run(args, code=0, env=None):
 
 def check_mcp(command, project):
     process = subprocess.Popen([str(command), "--project", str(project)], stdin=subprocess.PIPE,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                               env=dict(os.environ, AWR_LOCAL_WEB="0"))
     responses = queue.Queue()
 
     def receive():
@@ -63,6 +67,27 @@ def check_mcp(command, project):
         process.stderr.close()
 
 
+def check_local_hub(awr, project, state_dir):
+    env = dict(os.environ, AWR_LOCAL_HOME=str(state_dir), AWR_LOCAL_WEB="1")
+    try:
+        run([awr, "--project", project, "status", "--cached", "--json"], env=env)
+        first = json.loads(run([awr, "overview", "status", "--json"], env=env).stdout)["service"]
+        assert first and first["service"] == "awr-project-hub"
+        entries = json.loads(run([awr, "overview", "projects", "--json"], env=env).stdout)["projects"]
+        assert len(entries) == 1 and os.path.samefile(entries[0]["root"], project)
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        for route, expected in [("/", "AWR Project Hub"), ("/hub.js", "createHub"),
+                                ("/?project=" + entries[0]["key"], 'id="projectHome"')]:
+            with opener.open(first["url"] + route, timeout=10) as response:
+                assert response.status == 200 and expected in response.read().decode("utf-8")
+        run([awr, "--version"], env=env)
+        second = json.loads(run([awr, "overview", "status", "--json"], env=env).stdout)["service"]
+        assert second["instance"] == first["instance"]
+        return True
+    finally:
+        run([awr, "overview", "stop", "--json"], env=env)
+
+
 def exercise(awr, mcp, scratch, version):
     for command in (awr, mcp):
         result = run([command, "--version"])
@@ -84,8 +109,10 @@ def exercise(awr, mcp, scratch, version):
     assert organization["state"] == "ready", organization
     assert organization["business_execution_ready"] and "EXAMPLE-001" in organization["executable_work"], organization
     names = check_mcp(mcp, project)
+    local_hub = check_local_hub(awr, project, scratch / "hub-user")
     return {"version_and_help": True, "exit_code_and_stderr": True,
-            "unicode_space_project_init_and_status": True, "task_context_and_intake": True, "mcp_stdio_tools": names}
+            "unicode_space_project_init_and_status": True, "task_context_and_intake": True,
+            "mcp_stdio_tools": names, "local_project_hub": local_hub}
 
 
 def main():

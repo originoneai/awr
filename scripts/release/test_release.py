@@ -37,6 +37,7 @@ class ReleaseChecks(unittest.TestCase):
                 "docs/integrations/session-workflow.md",
                 "docs/reference/cli-mcp-contract.md",
                 "docs/reference/daily-work.md",
+                "docs/reference/local-project-hub.md",
             ])
             for rel in installed:
                 self.assertEqual((package / rel).read_bytes(),
@@ -114,17 +115,17 @@ class ReleaseChecks(unittest.TestCase):
                 (base / "publish" / name).write_bytes(content)
                 artifacts[name] = hashlib.sha256(content).hexdigest()
             manifest = {"platform": platform, "version": "0.2.0", "python_version": "0.2.0", "source_sha": source,
-                        "source_tree_clean": True, "artifacts": artifacts}
+                        "source_tree_clean": True, "artifacts": artifacts, "local_project_hub": True}
             (base / "manifest.json").write_text(json.dumps(manifest))
             checks = {"version_and_help": True, "exit_code_and_stderr": True,
                       "unicode_space_project_init_and_status": True, "task_context_and_intake": True,
-                      "mcp_stdio_tools": sorted(DOMAIN_TOOLS)}
+                      "mcp_stdio_tools": sorted(DOMAIN_TOOLS), "local_project_hub": True}
             receipt = {"source_sha": source, "platform": platform, "artifact_sha256": artifacts, "npm": checks, "python": checks}
             (base / "installation-checks.json").write_text(json.dumps(receipt))
         return source
 
     def test_assembly_requires_matching_installation_and_source_receipts(self):
-        for fault in [None, "source", "installation", "bytes", "missing_intel", "intel_installation", "missing_tool", "duplicate_tool", "wrong_tool"]:
+        for fault in [None, "source", "installation", "bytes", "missing_intel", "intel_installation", "missing_tool", "duplicate_tool", "wrong_tool", "missing_hub_receipt", "inconsistent_hub"]:
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 source = self.assembled_inputs(root / "inputs")
@@ -139,10 +140,14 @@ class ReleaseChecks(unittest.TestCase):
                 elif fault == "bytes":
                     (platform / "publish/darwin-arm64.whl").write_bytes(b"different")
                 elif fault:
-                    path = platform / ("manifest.json" if fault == "source" else "installation-checks.json")
+                    path = platform / ("manifest.json" if fault in ("source", "inconsistent_hub") else "installation-checks.json")
                     data = json.loads(path.read_text())
                     if fault == "source":
                         data["source_sha"] = "2" * 40
+                    elif fault == "inconsistent_hub":
+                        data["local_project_hub"] = False
+                    elif fault == "missing_hub_receipt":
+                        del data["python"]["local_project_hub"]
                     elif fault == "missing_tool":
                         data["python"]["mcp_stdio_tools"].remove("awr_session")
                     elif fault == "duplicate_tool":
@@ -163,6 +168,22 @@ class ReleaseChecks(unittest.TestCase):
                         self.assertEqual((result["version"], result["python_version"], result["channel"]), ("0.2.0", "0.2.0", "latest"))
                         self.assertEqual(len(result["artifacts"]), 11)
                         self.assertIn("darwin-x64", result["platforms"])
+
+    def test_legacy_release_receipts_remain_usable_without_a_hub_declaration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = self.assembled_inputs(root / "inputs")
+            for platform in assemble_release.PLATFORMS:
+                base = root / "inputs" / platform
+                manifest = json.loads((base / "manifest.json").read_text())
+                del manifest["local_project_hub"]
+                (base / "manifest.json").write_text(json.dumps(manifest))
+                receipt = json.loads((base / "installation-checks.json").read_text())
+                for ecosystem in ("npm", "python"):
+                    del receipt[ecosystem]["local_project_hub"]
+                (base / "installation-checks.json").write_text(json.dumps(receipt))
+            with patch.object(sys, "argv", ["assemble_release.py", str(root / "inputs"), "--output", str(root / "release"), "--expected-sha", source]), redirect_stdout(io.StringIO()):
+                assemble_release.main()
 
 
 if __name__ == "__main__":

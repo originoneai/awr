@@ -1,9 +1,16 @@
-# Agent Work Runtime
+# AWR
 
-Persistent work state and minimal context for long-running AI agents.
+The open-source project delivery platform for people and AI.
 
 AWR 0.6.0 installs the native Rust `awr` CLI and `awr-mcp` server for stdio and shared Streamable HTTP.
 Context compilation runs locally without an AI model call.
+
+Native payloads built from the development source also embed Project Hub. Run
+`awr overview` to browse registered projects, search by name or directory and open
+their progress views. The service starts automatically on ordinary CLI/MCP use
+and recovers as one instance after termination. Existing projects appear as you
+use them, or through `awr overview register /absolute/project`. Published 0.6.0
+packages predate the hub. See the [local hub guide](https://github.com/originoneai/awr/blob/main/docs/dev/reference/local-project-hub.md).
 
 ```sh
 npm install -g @originoneai/agent-work-runtime@0.6.0
@@ -22,7 +29,7 @@ npx --package=@originoneai/agent-work-runtime@0.6.0 awr-mcp --project /absolute/
 The project must be initialized before starting its MCP server. Follow the
 [project documentation](https://github.com/originoneai/agent-work-runtime).
 
-The distribution targets macOS 15+ arm64 and Intel x64, Linux x64 with glibc 2.39+ (Ubuntu 24.04
+The distribution targets macOS 15+ arm64 and Intel x64, Linux x64/arm64 with glibc 2.39+ (Ubuntu 24.04
 baseline), and Windows x64. Node.js 22.14+ is required for the npm launcher. Git is
 required for Git-bound work branch operations. SQLite is included in the binaries.
 Installation requires access to the npm registry; no Rust compiler or install-time

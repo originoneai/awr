@@ -2,7 +2,7 @@ name: npm and PyPI distributions
 
 on:
   pull_request:
-    paths: ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'crates/**', 'examples/**', 'packaging/**', 'scripts/release/**', '.github/workflows/distributions.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'crates/**', 'tools/project-progress-overview/public/**', 'examples/**', 'packaging/**', 'scripts/release/**', '.github/workflows/distributions.yml']
   workflow_dispatch:
     inputs:
       publish:
@@ -47,6 +47,7 @@ jobs:
     env:
       PYTHONUTF8: '1'
       CARGO_TERM_COLOR: never
+      AWR_LOCAL_WEB: '0'
       CARGO_INCREMENTAL: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
