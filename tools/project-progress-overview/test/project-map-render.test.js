@@ -52,6 +52,25 @@ test('rendering twice gives the same bytes in every language', () => {
   }
 });
 
+test('canonical unknown work status remains visible and distinct from readiness in every view', () => {
+  const source = h.readJson('states.json');
+  const node = source.nodes.find((n) => n.key === 'DEMO-A-004');
+  node.status = 'unknown';
+  node.ready = false;
+  const snapshot = snapshotLib.seal(source, source.generated_at);
+  for (const lang of ['en', 'zh-CN']) {
+    const t = h.tFor(lang);
+    const out = page.renderProjectMap(snapshot, h.readJson('config.json'), { t, lang });
+    const model = out.model;
+    assert.equal(model.nodes.get(node.key).vis, 'unknown');
+    assert.ok(out.table.includes(t('map.status.unknown')));
+    for (const view of out.views) {
+      assert.ok(view.svg.includes(t('map.status.unknown')), view.id);
+    }
+    assert.equal(snapshot.nodes.find((n) => n.key === node.key).status, 'unknown');
+  }
+});
+
 test('supporting information uses consistent cards and keeps field gaps collapsed', () => {
   const out = h.renderDemo('en');
   assert.match(out.table, /class="table pm-support-card"/);

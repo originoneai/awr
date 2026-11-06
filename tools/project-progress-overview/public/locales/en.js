@@ -63,6 +63,7 @@
   "map.status.cancelled": "Cancelled",
   "map.status.draft": "Draft",
   "map.status.waiting": "Waiting",
+  "map.status.unknown": "Unknown status",
   "map.card.stalled_idle": "Stalled {days}d",
   "map.card.no_record": "No record",
   "map.legend.title": "Legend",

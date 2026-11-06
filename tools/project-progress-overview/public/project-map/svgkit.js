@@ -27,9 +27,10 @@
     cancelled: { dot: '#9aa3b2', fill: '#ffffff', ring: '#9aa3b2', border: 'rgba(0,0,0,.24)', fg: '#6e6e73', bg: 'rgba(0,0,0,.05)', dash: '3 3', op: 0.92, cardbg: '#f4f5f8' },
     draft: { dot: '#d6dbe4', fill: '#ffffff', ring: '#cdd3df', border: 'rgba(0,0,0,.12)', fg: '#86868b', bg: 'rgba(0,0,0,.03)', dash: '2 3', op: 0.7, cardbg: '#ffffff' },
     waiting: { dot: '#cfd5df', fill: '#ffffff', ring: '#c9d0dc', border: 'rgba(0,0,0,.16)', fg: '#86868b', bg: 'rgba(0,0,0,.035)', dash: '4 3', op: 0.74, cardbg: '#ffffff' },
+    unknown: { dot: '#86868b', fill: '#ffffff', ring: '#86868b', border: 'rgba(0,0,0,.24)', fg: '#6e6e73', bg: 'rgba(0,0,0,.05)', dash: '2 3', op: 1, cardbg: '#f4f5f8' },
   };
   /** Stacked-bar segment colors, in drawing order. */
-  const BAR = [['done', '#1fae74'], ['developing', 'url(#gDev)'], ['stalled', '#f59e0b'], ['blocked', '#e14b54'], ['ready', '#c2c9d6'], ['waiting', '#e6e9f0'], ['draft', '#eff1f5'], ['cancelled', '#8d96a6']];
+  const BAR = [['done', '#1fae74'], ['developing', 'url(#gDev)'], ['stalled', '#f59e0b'], ['blocked', '#e14b54'], ['ready', '#c2c9d6'], ['waiting', '#e6e9f0'], ['draft', '#eff1f5'], ['cancelled', '#8d96a6'], ['unknown', '#86868b']];
 
   /** Edge styles: stroke, width, extra attributes, arrow marker. */
   const EDGE = {

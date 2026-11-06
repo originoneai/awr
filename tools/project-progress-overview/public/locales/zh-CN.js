@@ -63,6 +63,7 @@
   "map.status.cancelled": "已取消",
   "map.status.draft": "草稿",
   "map.status.waiting": "等待",
+  "map.status.unknown": "状态未识别",
   "map.card.stalled_idle": "停滞 {days}d",
   "map.card.no_record": "无记录",
   "map.legend.title": "图例",
