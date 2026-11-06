@@ -260,6 +260,47 @@ fn startup_discovery_stays_idle_until_a_manual_refresh_and_preserves_source_file
 }
 
 #[test]
+fn ordinary_calls_and_explicit_intake_do_not_enroll_temporary_session_projects() {
+    let f = Fixture::new();
+    let parent = f.root.join("Codex/2026-09-29/chat/work");
+    std::fs::create_dir_all(&parent).unwrap();
+    let temporary = f.project("Codex/2026-09-29/chat/work/project");
+    let output = f
+        .command()
+        .env("AWR_LOCAL_WEB", "1")
+        .arg("--project")
+        .arg(&temporary)
+        .args(["status", "--cached", "--json"])
+        .output()
+        .unwrap();
+    success(&output);
+    let catalog = f.run(&["overview", "projects", "--json"]);
+    assert!(catalog["projects"].as_array().unwrap().is_empty());
+    let discovered = f.run(&[
+        "overview",
+        "discover",
+        "--root",
+        f.root.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(discovered["discovery"]["temporary_directories_skipped"], 1);
+    let base = discovered["service"]["url"].as_str().unwrap();
+    let body = serde_json::json!({"root":temporary}).to_string();
+    let result = ureq::post(format!("{base}/api/projects/intake"))
+        .header("content-type", "application/json")
+        .header("x-awr-project-hub", "1")
+        .send(body.as_bytes());
+    assert!(matches!(result, Err(ureq::Error::StatusCode(400))));
+    assert!(
+        f.refresh()["data"]["projects"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(temporary.join(".awr/state.db").is_file());
+}
+
+#[test]
 fn manual_refresh_adopts_updated_scan_roots_without_restarting_the_service() {
     let f = Fixture::new();
     let started = f.run(&["overview", "start", "--json"])["service"].clone();

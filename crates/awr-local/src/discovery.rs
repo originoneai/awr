@@ -147,6 +147,8 @@ pub struct DiscoveryReport {
     #[serde(default)]
     pub dependency_caches_skipped: usize,
     #[serde(default)]
+    pub temporary_directories_skipped: usize,
+    #[serde(default)]
     pub retired_candidates: usize,
     pub symlinks_skipped: usize,
     pub limit_reached: bool,
@@ -171,6 +173,7 @@ impl DiscoveryReport {
             attention: 0,
             excluded_directories: 0,
             dependency_caches_skipped: 0,
+            temporary_directories_skipped: 0,
             retired_candidates: 0,
             symlinks_skipped: 0,
             limit_reached: false,
@@ -265,6 +268,12 @@ pub(crate) fn scan(dir: &Path, cancelled: &AtomicBool) -> Result<DiscoveryReport
                 continue;
             }
         };
+        if registry::is_temporary_session_directory(&root) {
+            report.excluded_directories += 1;
+            report.temporary_directories_skipped += 1;
+            excluded_paths.push(root);
+            continue;
+        }
         if root.starts_with(&state_root) || !visited.insert(root.clone()) {
             continue;
         }
@@ -426,6 +435,26 @@ mod tests {
             .unwrap();
             dir
         }
+    }
+
+    #[test]
+    fn temporary_sessions_are_skipped_even_as_explicit_scan_roots() {
+        let workspace = Workspace::new();
+        let temporary = workspace.project("Codex/2026-09-29/chat/work/project");
+        let durable = workspace.project("projects/durable");
+        let dir = workspace.settings();
+        let report = discover(&dir).unwrap();
+        assert_eq!(report.temporary_directories_skipped, 1);
+        let projects = registry::list(&dir).unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].root, durable);
+        let mut settings = config(&dir).unwrap();
+        settings.roots = vec![temporary.clone()];
+        configure(&dir, settings).unwrap();
+        let report = discover(&dir).unwrap();
+        assert_eq!(report.temporary_directories_skipped, 1);
+        assert_eq!(report.projects_found, 0);
+        assert!(temporary.join(".awr/state.db").is_file());
     }
     impl Drop for Workspace {
         fn drop(&mut self) {

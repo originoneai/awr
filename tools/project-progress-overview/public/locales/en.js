@@ -46,6 +46,7 @@
   "hub.discovery_no_roots": "No scan roots configured for this environment. Use awr overview discover --root with a workspace directory.",
   "hub.discovery_exclusions": "{count} generated, hidden or excluded directories skipped · {symlinks} links skipped · Scans run at service startup and on Refresh projects",
   "hub.discovery_completed": "Last scan finished {time}",
+  "hub.discovery_temporary": "{count} temporary session paths skipped. Dated Codex session directories are excluded.",
   "hub.discovery_more_issues": "{count} additional issues retained in the scan totals",
   "hub.intake_connected": "AWR is connected. Your agent can read the current goal, work and checkpoints before continuing.",
   "hub.intake_description": "Give the instruction below to your agent. It will inspect the existing materials and connect the project. Missing goals remain explicit until clarified.",
