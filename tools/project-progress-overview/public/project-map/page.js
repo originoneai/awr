@@ -206,7 +206,7 @@ td.k{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-spac
       return `<tr data-key="${esc(n.id)}" data-vis="${n.vis}"><td class="k">${esc(n.id)}</td><td>${esc(n.title)}</td><td title="${esc(n.status)}"><span class="pm-table-status" data-vis="${n.vis}">${esc(kit.ST[n.vis].label)}</span></td>`
         + `<td>${esc(laneName.get(n.lane) || n.lane)}</td><td>${esc(n.milestone || '—')}</td><td>${esc(n.owner || '—')}</td><td>${idle}</td></tr>`;
     });
-    const table = `<details class="table pm-support-card"><summary><span>${esc(t('map.table.summary', { count: nodes.size }))}</span><span class="pm-summary-hint">${esc(t('map.table.hint'))}</span></summary><div class="scroll"><table><thead><tr>`
+    const table = `<details class="table pm-support-card"><summary><span>${esc(t('map.table.summary', { count: nodes.size }))}</span><span class="pm-summary-hint">${esc(t('map.table.hint'))}</span></summary><div class="pm-table-tools" hidden></div><div class="scroll"><table><thead><tr>`
       + ['key', 'title', 'status', 'lane', 'milestone', 'owner', 'idle'].map((c) => `<th scope="col">${esc(t(`map.table.${c}`))}</th>`).join('')
       + `</tr></thead><tbody>${rows.join('')}</tbody></table></div></details>`;
 

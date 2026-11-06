@@ -56,7 +56,7 @@ function fakeTimers() {
 }
 
 /** Render the interactive page markup, attach it to a document and mount the layer. */
-function boot({ snapshot = source, lang = 'en', cfg = config, restore, container: reuse, offsetTop, noCopy } = {}) {
+function boot({ snapshot = source, lang = 'en', cfg = config, restore, container: reuse, offsetTop, noCopy, storage } = {}) {
   const t = h.tFor(lang);
   const result = page.renderProjectMap(snapshot, cfg, { t, lang, interactive: true });
   const { doc, container } = reuse || dom.createPage(result.body);
@@ -65,6 +65,7 @@ function boot({ snapshot = source, lang = 'en', cfg = config, restore, container
   const timers = fakeTimers();
   // a stand-in for the window: an event target that records scrolling and holds a clipboard
   const win = doc.createElement('window');
+  win.localStorage = storage;
   win.scrolls = [];
   win.scrollBy = (x, y) => win.scrolls.push([x, y]);
   win.navigator = { clipboard: { writeText: (text) => { copied.push(text); return Promise.resolve(); } } };
@@ -529,6 +530,160 @@ test('the table under the diagrams follows the search and the status filter', ()
   assert.deepEqual(rows().filter((r) => !has(r, 'pm-dim')).map((r) => r.getAttribute('data-key')), ['DEMO-A-008']);
   click(ctx.container.querySelector('[data-pm-status="cancelled"]'));
   assert.deepEqual(rows().filter((r) => !has(r, 'pm-dim')).map((r) => r.getAttribute('data-key')), ['DEMO-A-008', 'DEMO-A-011']);
+});
+
+// ---------------------------------------------------------------------- table columns
+
+const visibleTableKeys = (ctx) => ctx.container.querySelectorAll('tr[data-key]').filter((row) => !row.hidden).map((row) => row.getAttribute('data-key'));
+const tableFilter = (ctx, column, value) => {
+  const control = ctx.container.querySelector(`[data-pm-table-filter="${column}"]`);
+  control.value = value;
+  dom.fire(control, control.tagName === 'select' ? 'change' : 'input');
+};
+
+function numericTableModel() {
+  const nodes = [10, 2, 1].map((n) => ({
+    id: `WORK-${n}`, title: `Build ${n}`, vis: { 10: 'ready', 2: 'developing', 1: 'blocked' }[n],
+    lane: `lane-${n}`, milestone: `M${n}`, owner: `agent-${n}`, idle: n,
+  }));
+  return { nodes: new Map(nodes.map((node) => [node.id, node])), cfg: { overview: { lanes: [10, 2, 1].map((n) => ({ id: `lane-${n}`, name: `Lane ${n}` })) } } };
+}
+
+test('all seven columns sort by visible values, with natural text ordering and numeric idle days', () => {
+  const model = numericTableModel();
+  const original = [...model.nodes.keys()];
+  for (const column of interact.TABLE_COLUMNS) {
+    for (const direction of ['ascending', 'descending']) {
+      const rows = interact.selectTable(model, { filters: {}, sort: { column, direction } }, h.tFor('en'));
+      assert.deepEqual(rows.map((row) => row.id), direction === 'ascending' ? ['WORK-1', 'WORK-2', 'WORK-10'] : ['WORK-10', 'WORK-2', 'WORK-1'], `${column} ${direction}`);
+    }
+  }
+  assert.deepEqual([...model.nodes.keys()], original, 'sorting never mutates the project model');
+  assert.deepEqual(interact.selectTable(model, { filters: {}, sort: null }, h.tFor('en')).map((row) => row.id), original, 'default ordering keeps the configured lanes');
+  model.nodes.get('WORK-1').title = '按需求定义';
+  model.nodes.get('WORK-2').title = '把结果核对';
+  model.nodes.get('WORK-10').title = '本地运行';
+  assert.deepEqual(interact.selectTable(model, { filters: {}, sort: { column: 'title', direction: 'ascending' } }, h.tFor('zh-CN'), 'zh-CN').map((row) => row.id), ['WORK-1', 'WORK-2', 'WORK-10'], 'Chinese labels use the interface locale');
+});
+
+test('table filters intersect every column and numeric bounds include their endpoints', () => {
+  const model = numericTableModel();
+  const filters = { key: 'work-', title: ' BUILD 2 ', status: 'value:developing', lane: 'value:lane-2', milestone: 'value:M2', owner: 'value:agent-2', idle_min: '2', idle_max: '2' };
+  const select = () => interact.selectTable(model, { filters, sort: null }, h.tFor('en')).map((row) => row.id);
+  assert.deepEqual(select(), ['WORK-2']);
+  for (const column of ['key', 'title', 'status', 'lane', 'milestone', 'owner', 'idle_min', 'idle_max']) {
+    const previous = filters[column];
+    filters[column] = column === 'idle_min' ? '3' : column === 'idle_max' ? '1' : 'unmatched';
+    assert.deepEqual(select(), [], column);
+    filters[column] = previous;
+  }
+});
+
+test('missing table values sort last in both directions and missing idle time is distinct from zero', () => {
+  const model = numericTableModel();
+  model.nodes.set('WORK-0', { ...model.nodes.get('WORK-1'), id: 'WORK-0', milestone: '', owner: null, idle: null });
+  model.nodes.get('WORK-1').idle = 0;
+  for (const column of ['milestone', 'owner', 'idle']) {
+    for (const direction of ['ascending', 'descending']) {
+      const rows = interact.selectTable(model, { filters: {}, sort: { column, direction } }, h.tFor('en'));
+      assert.equal(rows.at(-1).id, 'WORK-0', `${column} ${direction}`);
+    }
+    assert.deepEqual(interact.selectTable(model, { filters: { [column]: 'missing' }, sort: null }, h.tFor('en')).map((row) => row.id), ['WORK-0']);
+  }
+  assert.deepEqual(interact.selectTable(model, { filters: { idle_min: '0', idle_max: '0' }, sort: null }, h.tFor('en')).map((row) => row.id), ['WORK-1']);
+  assert.equal(interact.selectTable(model, { filters: { idle: 'present' }, sort: null }, h.tFor('en')).length, 3);
+  assert.equal(interact.selectTable(model, { filters: { idle_min: '10', idle_max: '2' }, sort: null }, h.tFor('en')).length, 0);
+});
+
+test('column controls combine with graph filters, show real counts and retain row details', () => {
+  const ctx = boot();
+  assert.equal(ctx.container.querySelectorAll('[data-pm-table-sort]').length, 7);
+  assert.equal(ctx.container.querySelectorAll('[data-pm-table-filter]').length, 9);
+  const graph = ctx.section('overview').innerHTML;
+  tableFilter(ctx, 'key', 'demo-a-');
+  tableFilter(ctx, 'title', '核心功能');
+  tableFilter(ctx, 'status', 'value:developing');
+  tableFilter(ctx, 'lane', 'value:ALPHA');
+  tableFilter(ctx, 'milestone', 'value:M1');
+  tableFilter(ctx, 'owner', 'value:demo-agent-1');
+  tableFilter(ctx, 'idle_min', '1');
+  tableFilter(ctx, 'idle_max', '1');
+  assert.deepEqual(visibleTableKeys(ctx), ['DEMO-A-004']);
+  assert.equal(ctx.section('overview').innerHTML, graph, 'table-only filters leave the graph intact');
+  assert.match(ctx.container.querySelector('[data-pm-table-count]').textContent, /^1 of /);
+  click(ctx.container.querySelector('tr[data-key="DEMO-A-004"] td'));
+  assert.equal(ctx.app.state.drawer, 'DEMO-A-004');
+  ctx.app.closeDetails();
+  click(ctx.container.querySelector('[data-pm-status="blocked"]'));
+  assert.deepEqual(visibleTableKeys(ctx), []);
+  assert.equal(ctx.container.querySelector('.pm-table-empty').hidden, false);
+  click(ctx.action('clear'));
+  assert.deepEqual(visibleTableKeys(ctx), ['DEMO-A-004']);
+  click(ctx.container.querySelector('[data-pm-table-reset]'));
+  assert.equal(visibleTableKeys(ctx).length, source.nodes.length);
+  assert.equal(ctx.container.querySelector('.pm-table-empty').hidden, true);
+});
+
+test('table header buttons cycle ascending, descending and default through keyboard and pointer input', () => {
+  const ctx = boot();
+  const before = visibleTableKeys(ctx);
+  for (const column of interact.TABLE_COLUMNS) {
+    const button = ctx.container.querySelector(`[data-pm-table-sort="${column}"]`);
+    const header = button.closest('th');
+    dom.press(button, 'Enter');
+    assert.equal(header.getAttribute('aria-sort'), 'ascending');
+    assert.match(button.getAttribute('aria-label'), /descending$/);
+    click(button);
+    assert.equal(header.getAttribute('aria-sort'), 'descending');
+    dom.press(button, ' ');
+    assert.equal(header.getAttribute('aria-sort'), 'none');
+    assert.deepEqual(visibleTableKeys(ctx), before);
+  }
+});
+
+test('table open state, filters and sort survive a new snapshot and stay isolated from other projects', () => {
+  const values = new Map();
+  const storage = { getItem: (key) => values.get(key) || null, setItem: (key, value) => values.set(key, value) };
+  const ctx = boot({ storage });
+  const panel = ctx.container.querySelector('details.table');
+  panel.setAttribute('open', '');
+  dom.fire(panel, 'toggle');
+  tableFilter(ctx, 'owner', 'value:demo-agent-1');
+  click(ctx.container.querySelector('[data-pm-table-sort="key"]'));
+  const expected = visibleTableKeys(ctx);
+  ctx.app.destroy();
+  const next = boot({ snapshot: grown(), restore: ctx.app.state, container: ctx, storage });
+  assert.deepEqual(visibleTableKeys(next), expected);
+  assert.ok(next.container.querySelector('details.table').hasAttribute('open'));
+  assert.equal(next.container.querySelector('[data-pm-table-filter="owner"]').value, 'value:demo-agent-1');
+  assert.equal(next.container.querySelector('[data-pm-table-column="key"]').getAttribute('aria-sort'), 'ascending');
+  assert.equal(next.container.listenerCount('click'), 1);
+  next.app.destroy();
+  assert.deepEqual(visibleTableKeys(boot({ storage })), expected, 'a page reload restores project-specific table choices');
+  const other = JSON.parse(JSON.stringify(source));
+  other.project.id = 'other-project';
+  const otherPage = boot({ snapshot: snapshotLib.seal(other, other.generated_at), storage });
+  assert.equal(visibleTableKeys(otherPage).length, source.nodes.length);
+  assert.equal(otherPage.app.state.table.sort, null);
+});
+
+test('table controls remain usable with blocked/corrupt storage, missing selections and Chinese labels', () => {
+  for (const storage of [
+    { getItem: () => '{broken', setItem() {} },
+    { getItem() { throw new Error('storage blocked'); }, setItem() { throw new Error('storage blocked'); } },
+  ]) {
+    const ctx = boot({ storage, lang: 'zh-CN' });
+    tableFilter(ctx, 'owner', 'missing');
+    assert.ok(visibleTableKeys(ctx).length > 0);
+    assert.match(ctx.container.querySelector('[data-pm-table-count]').textContent, /显示 \d+ \/ \d+ 个工作项/);
+    assert.equal(ctx.container.querySelector('[data-pm-table-sort="key"]').getAttribute('aria-label'), '按键升序排列');
+    tableFilter(ctx, 'owner', 'value:departed-agent');
+    const next = boot({ restore: ctx.app.state, storage });
+    assert.deepEqual(visibleTableKeys(next), []);
+    assert.equal(next.container.querySelector('[data-pm-table-filter="owner"]').value, 'value:departed-agent');
+    assert.ok(next.container.querySelector('option[value="value:departed-agent"]'));
+    assert.doesNotMatch(labels(ctx), /\bmap\.table\./);
+  }
 });
 
 test('"/" focuses the search field', () => {

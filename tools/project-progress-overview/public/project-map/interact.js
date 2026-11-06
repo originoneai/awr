@@ -31,7 +31,9 @@
   const STATUS_ORDER = ['done', 'developing', 'stalled', 'blocked', 'ready', 'draft', 'waiting', 'cancelled'];
   const FOLD_ATTRS = ['data-lane', 'data-panel', 'data-xlane', 'data-done-lane', 'data-group', 'data-panel-done'];
   const FOLDABLE = FOLD_ATTRS.map((a) => `[${a}]`).join(',');
-  const ACTIVATABLE = '.pm-card,.pm-fold,.pm-btn,.pm-agent,tr[data-key]';
+  const ACTIVATABLE = '.pm-card,.pm-fold,.pm-btn,.pm-agent,tr[data-key],[data-pm-table-sort],[data-pm-table-reset]';
+  const TABLE_COLUMNS = ['key', 'title', 'status', 'lane', 'milestone', 'owner', 'idle'];
+  const TABLE_FILTERS = [...TABLE_COLUMNS, 'idle_min', 'idle_max'];
   const PAN_THRESHOLD = 4;
   const { esc, compare } = kitLib;
 
@@ -46,6 +48,7 @@
       hover: null,
       search: '',
       filters: new Set(),
+      table: { open: false, filters: {}, sort: null },
       zoom: { overview: 1, mainline: 1, explore: 1 },
       drawer: null,
       fold: {
@@ -66,6 +69,53 @@
       if (fields.some((f) => f && String(f).toLowerCase().includes(q))) found.add(n.id);
     }
     return found;
+  }
+
+  /** Values follow the visible table, including the active claimant and localized display lane/status. */
+  function tableValue(node, column, model, t) {
+    if (column === 'key') return node.id;
+    if (column === 'status') return t(`map.status.${node.vis}`);
+    if (column === 'lane') {
+      const lane = model.cfg.overview.lanes.find((entry) => entry.id === node.lane);
+      return lane ? modelLib.laneName(lane, t) : node.lane;
+    }
+    return node[column];
+  }
+
+  /** Column filters intersect. Unknown idle days never become zero, and missing sort values stay last in either direction. */
+  function selectTable(model, table, t, lang = 'en') {
+    const filters = table.filters;
+    const rows = [...model.nodes.values()].filter((node) => TABLE_COLUMNS.every((column) => {
+      const value = tableValue(node, column, model, t);
+      const filter = filters[column] || '';
+      if (column === 'idle') {
+        if (filter === 'missing') return value === null;
+        if (filter === 'present' && value === null) return false;
+        return ['min', 'max'].every((bound) => {
+          const raw = filters[`idle_${bound}`];
+          if (!raw || !Number.isFinite(Number(raw))) return true;
+          return value !== null && (bound === 'min' ? value >= Number(raw) : value <= Number(raw));
+        });
+      }
+      if (!filter) return true;
+      if (column === 'key' || column === 'title') return String(value || '').toLowerCase().includes(filter.trim().toLowerCase());
+      if (filter === 'missing') return value === null || value === '';
+      const actual = column === 'status' ? node.vis : column === 'lane' ? node.lane : value;
+      return filter === `value:${actual}`;
+    }));
+    const sort = table.sort;
+    const collator = new Intl.Collator(lang, { numeric: true, sensitivity: 'base' });
+    const lanes = model.cfg.overview.lanes.map((lane) => lane.id);
+    return rows.sort((a, b) => {
+      if (!sort) return lanes.indexOf(a.lane) - lanes.indexOf(b.lane) || compare(a.id, b.id);
+      const av = tableValue(a, sort.column, model, t);
+      const bv = tableValue(b, sort.column, model, t);
+      const missingA = av === null || av === '';
+      const missingB = bv === null || bv === '';
+      if (missingA || missingB) return Number(missingA) - Number(missingB) || compare(a.id, b.id);
+      const order = sort.column === 'idle' ? av - bv : collator.compare(String(av), String(bv));
+      return (sort.direction === 'ascending' ? order : -order) || compare(a.id, b.id);
+    });
   }
 
   /**
@@ -109,6 +159,7 @@
     const targets = foldTargets(model);
     const state = createState();
     const doc = container.ownerDocument;
+    const tableLocale = doc.documentElement.getAttribute('lang') || 'en';
     const lanes = new Map(model.cfg.overview.lanes.map((l) => [l.id, l]));
     const exploreLanes = model.cfg.explore_lanes || [];
     const exploreIndex = model.exploreLaneByWork;
@@ -120,6 +171,11 @@
     let matchCursor = -1;
     let pan = null;
     let suppressClick = false;
+    const tablePanel = container.querySelector('details.table');
+    const tableRows = [...container.querySelectorAll('tr[data-key]')];
+    let tableMatches = new Set(all.map((node) => node.id));
+    let tableEmpty = null;
+    const tableStorageKey = `awr:progress-table:${model.meta.project.id}`;
 
     const section = (id) => container.querySelector(`#s-${id} .scroll`);
     const attr = (el, name) => el.getAttribute(name);
@@ -241,11 +297,103 @@
       }
       for (const row of container.querySelectorAll('tr[data-key]')) {
         const key = attr(row, 'data-key');
+        row.hidden = !tableMatches.has(key) || (query && !found.has(key)) || (state.filters.size > 0 && !state.filters.has(attr(row, 'data-vis')));
         row.classList.toggle('pm-selected', key === state.selected);
         row.classList.toggle('pm-dim', Boolean((query && !found.has(key)) || (state.filters.size > 0 && !state.filters.has(attr(row, 'data-vis')))));
       }
+      const visibleRows = tableRows.filter((row) => !row.hidden).length;
+      const tableCount = container.querySelector('[data-pm-table-count]');
+      if (tableCount) tableCount.textContent = t('map.table.count', { count: visibleRows, total: tableRows.length });
+      if (tableEmpty) tableEmpty.hidden = visibleRows > 0;
       container.classList.toggle('pm-focusing', Boolean(focus || query || state.filters.size));
       syncToolbar(focus, found, query);
+    }
+
+    // ------------------------------------------------------------------ work-item table
+
+    function saveTable() {
+      try { if (win.localStorage) win.localStorage.setItem(tableStorageKey, JSON.stringify(state.table)); } catch (_) { /* Offline viewers may disable storage. */ }
+    }
+
+    function refreshTable() {
+      const selected = selectTable(model, state.table, t, tableLocale);
+      tableMatches = new Set(selected.map((node) => node.id));
+      const tbody = tablePanel && tablePanel.querySelector('tbody');
+      const byKey = new Map(tableRows.map((row) => [attr(row, 'data-key'), row]));
+      for (const node of selected) tbody.appendChild(byKey.get(node.id));
+      if (tableEmpty) tbody.appendChild(tableEmpty);
+      for (const header of container.querySelectorAll('[data-pm-table-column]')) {
+        const column = attr(header, 'data-pm-table-column');
+        const direction = state.table.sort && state.table.sort.column === column ? state.table.sort.direction : 'none';
+        header.setAttribute('aria-sort', direction);
+        const button = header.querySelector('[data-pm-table-sort]');
+        const next = direction === 'none' ? 'ascending' : direction === 'ascending' ? 'descending' : 'default';
+        button.setAttribute('aria-label', t(`map.table.sort_${next}`, { field: t(`map.table.${column}`) }));
+      }
+      for (const bound of ['min', 'max']) {
+        const input = container.querySelector(`[data-pm-table-filter="idle_${bound}"]`);
+        if (input) input.disabled = state.table.filters.idle === 'missing';
+      }
+      applyEmphasis();
+      saveTable();
+    }
+
+    function setupTable() {
+      if (!tablePanel) return;
+      let saved = restore && restore.table;
+      if (!saved) {
+        try { saved = win.localStorage && JSON.parse(win.localStorage.getItem(tableStorageKey)); } catch (_) { /* Keep the default view when storage is unavailable. */ }
+      }
+      if (saved) {
+        state.table.open = Boolean(saved.open);
+        for (const column of TABLE_FILTERS) {
+          if (saved.filters && typeof saved.filters[column] === 'string') state.table.filters[column] = saved.filters[column];
+        }
+        if (saved.sort && TABLE_COLUMNS.includes(saved.sort.column) && ['ascending', 'descending'].includes(saved.sort.direction)) state.table.sort = { ...saved.sort };
+      }
+      if (state.table.open) tablePanel.setAttribute('open', '');
+      on(tablePanel, 'toggle', () => { state.table.open = tablePanel.hasAttribute('open'); saveTable(); });
+      const table = tablePanel.querySelector('table');
+      const tools = tablePanel.querySelector('.pm-table-tools');
+      tools.innerHTML = `<span data-pm-table-count role="status" aria-live="polite"></span><button type="button" data-pm-table-reset>${esc(t('map.table.reset'))}</button>`;
+      tools.hidden = false;
+      const collator = new Intl.Collator(tableLocale, { numeric: true, sensitivity: 'base' });
+      const headers = [...table.querySelectorAll('th')];
+      for (const [index, column] of TABLE_COLUMNS.entries()) {
+        const header = headers[index];
+        const label = t(`map.table.${column}`);
+        const accessible = esc(t('map.table.filter', { field: label }));
+        const data = `data-pm-table-filter="${column}" aria-label="${accessible}"`;
+        let control;
+        if (column === 'key' || column === 'title') {
+          control = `<input type="search" ${data} placeholder="${esc(t('map.table.contains'))}" autocomplete="off">`;
+        } else if (column === 'idle') {
+          control = `<select ${data}><option value="">${esc(t('map.table.all'))}</option><option value="missing">${esc(t('map.table.missing'))}</option><option value="present">${esc(t('map.table.present'))}</option></select>`
+            + `<div class="pm-table-range">${['min', 'max'].map((bound) => `<input type="number" min="0" step="any" data-pm-table-filter="idle_${bound}" aria-label="${esc(t(`map.table.idle_${bound}`))}" placeholder="${esc(t(`map.table.${bound}`))}">`).join('')}</div>`;
+        } else {
+          const options = new Map();
+          for (const node of all) {
+            const value = column === 'status' ? node.vis : node[column];
+            if (value !== null && value !== '') options.set(`value:${value}`, tableValue(node, column, model, t));
+          }
+          const filter = state.table.filters[column];
+          if (filter && filter.startsWith('value:') && !options.has(filter)) options.set(filter, filter.slice(6));
+          control = `<select ${data}><option value="">${esc(t('map.table.all'))}</option><option value="missing">${esc(t('map.table.missing'))}</option>`
+            + [...options].sort((a, b) => collator.compare(a[1], b[1])).map(([value, text]) => `<option value="${esc(value)}">${esc(text)}</option>`).join('') + '</select>';
+        }
+        header.setAttribute('data-pm-table-column', column);
+        header.innerHTML = `<button type="button" data-pm-table-sort="${column}">${esc(label)}<span class="pm-table-sort-icon" aria-hidden="true"></span></button><div class="pm-table-filter">${control}</div>`;
+      }
+      for (const control of table.querySelectorAll('[data-pm-table-filter]')) control.value = state.table.filters[attr(control, 'data-pm-table-filter')] || '';
+      tableEmpty = doc.createElement('tr');
+      tableEmpty.className = 'pm-table-empty';
+      tableEmpty.innerHTML = `<td colspan="7">${esc(t('map.table.empty'))}</td>`;
+      refreshTable();
+    }
+
+    function filterTable(control) {
+      state.table.filters[attr(control, 'data-pm-table-filter')] = control.value || '';
+      refreshTable();
     }
 
     // ------------------------------------------------------------------ toolbar
@@ -547,6 +695,22 @@
     // ------------------------------------------------------------------ events
 
     function activate(el, event) {
+      const sort = el.closest('[data-pm-table-sort]');
+      if (sort) {
+        const column = attr(sort, 'data-pm-table-sort');
+        const previous = state.table.sort;
+        state.table.sort = previous && previous.column === column && previous.direction === 'descending' ? null
+          : { column, direction: previous && previous.column === column ? 'descending' : 'ascending' };
+        refreshTable();
+        return true;
+      }
+      if (el.closest('[data-pm-table-reset]')) {
+        state.table.filters = {};
+        state.table.sort = null;
+        for (const control of container.querySelectorAll('[data-pm-table-filter]')) control.value = '';
+        refreshTable();
+        return true;
+      }
       const jump = el.closest('[data-pm-jump]');
       if (jump) {
         const key = attr(jump, 'data-pm-jump');
@@ -628,6 +792,7 @@
     });
 
     on(container, 'input', (event) => {
+      if (event.target.closest && event.target.closest('[data-pm-table-filter]')) { filterTable(event.target); return; }
       if (event.target.closest && event.target.closest('[data-pm-search]')) {
         state.search = event.target.value || '';
         matchCursor = -1;
@@ -636,6 +801,7 @@
     });
 
     on(container, 'change', (event) => {
+      if (event.target.closest && event.target.closest('select[data-pm-table-filter]')) { filterTable(event.target); return; }
       const radio = event.target.closest && event.target.closest('input[name="view"]');
       if (radio) setView(String(attr(radio, 'id') || '').replace(/^v-/, ''));
     });
@@ -729,6 +895,7 @@
     } else {
       for (const id of VIEW_IDS) decorate(id);
     }
+    setupTable();
 
     function destroy() {
       endPan();
@@ -745,7 +912,7 @@
     };
   }
 
-  const api = { mount, createState, foldTargets, matching, VIEW_IDS, ZOOM_STEPS };
+  const api = { mount, createState, foldTargets, matching, selectTable, TABLE_COLUMNS, VIEW_IDS, ZOOM_STEPS };
   if (commonJS) module.exports = api;
   else {
     root.AWR_PROJECT_MAP = root.AWR_PROJECT_MAP || {};
