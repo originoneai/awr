@@ -32,7 +32,7 @@ async fn main() -> std::process::ExitCode {
     }
     let server = match awr_mcp::AwrServer::open(&args.project.unwrap_or_else(|| PathBuf::from(".")))
     {
-        Ok(server) => server,
+        Ok(server) => server.with_local_overview(),
         Err(error) => {
             eprintln!(
                 "{}",
@@ -59,6 +59,7 @@ async fn main() -> std::process::ExitCode {
 
 async fn serve_http(registry: &std::path::Path, address: SocketAddr) -> awr_mcp::Result<()> {
     let hub = awr_mcp::hub::Hub::load(registry)?;
+    hub.enable_local_overview();
     let listener = tokio::net::TcpListener::bind(address).await?;
     eprintln!("AWR MCP listening at http://{}/mcp", listener.local_addr()?);
     axum::serve(listener, hub.router())

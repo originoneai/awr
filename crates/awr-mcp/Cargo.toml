@@ -12,6 +12,7 @@ awr-runtime.workspace = true
 awr-context.workspace = true
 awr-store.workspace = true
 awr-source.workspace = true
+awr-local.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 clap.workspace = true

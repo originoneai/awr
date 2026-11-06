@@ -17,6 +17,7 @@ awr-source.workspace = true
 awr-runtime.workspace = true
 awr-context.workspace = true
 awr-workspace.workspace = true
+awr-local.workspace = true
 awr-team = { path = "../awr-team" }
 toml.workspace = true
 clap.workspace = true
@@ -27,9 +28,6 @@ sha2.workspace = true
 cap-std.workspace = true
 ureq.workspace = true
 url.workspace = true
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 rusqlite.workspace = true

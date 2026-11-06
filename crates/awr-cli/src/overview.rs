@@ -1,0 +1,104 @@
+use awr_core::Result;
+use clap::{Args, Subcommand};
+use std::{
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
+
+#[derive(Debug, Args)]
+pub struct OverviewArgs {
+    #[command(subcommand)]
+    command: Option<OverviewCommand>,
+    /// Print the address without opening a browser.
+    #[arg(long)]
+    no_open: bool,
+}
+
+#[derive(Debug, Subcommand)]
+enum OverviewCommand {
+    /// Start or reuse this user's background project hub.
+    Start,
+    /// Inspect the verified running service without starting it.
+    Status,
+    /// Stop this user's service; the next ordinary AWR call can start it again.
+    Stop,
+    /// Register initialized project directories without scanning the filesystem.
+    Register {
+        #[arg(required = true)]
+        roots: Vec<PathBuf>,
+    },
+    /// List the local project catalog, including unavailable directories.
+    Projects,
+    #[command(hide = true)]
+    Serve,
+}
+
+fn print<T: serde::Serialize>(value: &T) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(value)?);
+    Ok(())
+}
+
+fn open_browser(url: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut c = Command::new("open");
+        c.arg(url);
+        c
+    };
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut c = Command::new("rundll32.exe");
+        c.args(["url.dll,FileProtocolHandler", url]);
+        c
+    };
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    let mut command = {
+        let mut c = Command::new("xdg-open");
+        c.arg(url);
+        c
+    };
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    Ok(())
+}
+
+pub fn run(root: &Path, args: &OverviewArgs, json_output: bool) -> Result<()> {
+    let dir = awr_local::state_dir()?;
+    match &args.command {
+        Some(OverviewCommand::Serve) => awr_local::serve(&dir, &awr_local::executable()?),
+        Some(OverviewCommand::Status) => {
+            print(&serde_json::json!({"ok":true,"service":awr_local::running(&dir)?}))
+        }
+        Some(OverviewCommand::Stop) => {
+            awr_local::stop(&dir)?;
+            print(&serde_json::json!({"ok":true,"service":null}))
+        }
+        Some(OverviewCommand::Projects) => {
+            print(&serde_json::json!({"ok":true,"projects":awr_local::list(&dir)?}))
+        }
+        Some(OverviewCommand::Register { roots }) => {
+            let mut entries = Vec::new();
+            for root in roots {
+                entries.push(awr_local::register(&dir, root)?);
+            }
+            let service = awr_local::ensure(&dir, &awr_local::executable()?)?;
+            print(&serde_json::json!({"ok":true,"projects":entries,"service":service}))
+        }
+        Some(OverviewCommand::Start) | None => {
+            let _ = awr_local::register(&dir, root);
+            let status = awr_local::ensure(&dir, &awr_local::executable()?)?;
+            if args.command.is_none() && !args.no_open && !json_output {
+                open_browser(&status.url)?;
+            }
+            if json_output {
+                print(&serde_json::json!({"ok":true,"service":status}))
+            } else {
+                println!("AWR Project Hub: {}", status.url);
+                Ok(())
+            }
+        }
+    }
+}

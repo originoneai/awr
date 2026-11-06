@@ -4,10 +4,12 @@
   const i18n = root.AWR_I18N;
   const $ = (id) => root.document.getElementById(id);
   const connection = $('connectionStatus');
+  const projectKey = new URL(root.location.href).searchParams.get('project');
 
   async function callApi(url) {
     try {
-      const response = await fetch(url, { credentials: 'same-origin' });
+      const route = projectKey ? `/api/projects/${encodeURIComponent(projectKey)}${url.slice(4)}` : url;
+      const response = await fetch(route, { credentials: 'same-origin' });
       const result = await response.json();
       if (!result || typeof result.ok !== 'boolean') throw new Error(i18n.t('progress.invalid_response'));
       if (url === '/api/map/config') {

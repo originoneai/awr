@@ -24,6 +24,10 @@ targets. The runner checks the actual OS, CPU and Rust host. Parameters cannot
 pretend to be another platform. The scripts use Python's standard library and
 UTF-8 mode; locally installed RTK proxies external commands.
 
+Native development and test builds retain limited debug information (`debug=1`)
+and enabled debug assertions. This keeps dependency symbols within the existing
+runtime snapshot file limit. The report records both profile settings.
+
 ## Bounded processes and finalized evidence
 
 The default command deadline is 1,800 seconds. Only the Intel workspace gate has
