@@ -146,7 +146,10 @@ def check_local_hub(awr, mcp, project, state_dir):
         added = project.parent / "Background repository"
         (added / ".git").mkdir(parents=True)
         run([awr, "--project", added, "init", "--goal", goal, "--accept", "--json"], env=dict(env, AWR_LOCAL_WEB="0"))
-        observed = wait_for(lambda result: any(os.path.samefile(entry["root"], added) for entry in result["projects"]))
+        observed = wait_for(lambda result: any(
+            os.path.samefile(entry["root"], added) and entry["state"] == "connected"
+            for entry in result["projects"]
+        ))
         added_entry, = [entry for entry in observed["projects"] if os.path.samefile(entry["root"], added)]
         assert added_entry["state"] == "connected", added_entry
         shutil.rmtree(added)
