@@ -94,6 +94,15 @@ fn success(output: &Output) {
     );
 }
 
+fn set_prior_service_address(fixture: &Fixture, mut status: Value, address: &str) {
+    status["url"] = Value::String(address.to_owned());
+    std::fs::write(
+        fixture.root.join("user-state/service.json"),
+        serde_json::to_vec(&status).unwrap(),
+    )
+    .unwrap();
+}
+
 #[test]
 fn ordinary_calls_register_projects_and_concurrent_startup_reuses_one_service() {
     let f = Fixture::new();
@@ -217,6 +226,26 @@ fn background_discovery_observes_new_projects_and_keeps_source_files_unchanged()
         f.run(&["overview", "status", "--json"])["service"]["instance"],
         instance
     );
+}
+
+#[test]
+fn updated_discovery_settings_take_effect_in_the_running_service() {
+    let f = Fixture::new();
+    let started = f.run(&["overview", "start", "--json"])["service"].clone();
+    f.run(&[
+        "overview",
+        "discover",
+        "--root",
+        f.root.to_str().unwrap(),
+        "--interval-seconds",
+        "1",
+        "--json",
+    ]);
+    std::fs::create_dir_all(f.root.join("added/.git")).unwrap();
+    let observed = wait_for_projects(&f, 1);
+    assert_eq!(observed["discovery"]["pending"], 1);
+    let current = f.run(&["overview", "status", "--json"])["service"].clone();
+    assert_eq!(current["instance"], started["instance"]);
 }
 
 #[test]
@@ -383,8 +412,11 @@ fn project_requests_are_isolated_and_static_assets_are_bundled() {
 
 #[test]
 fn killing_the_owned_service_is_recovered_by_the_next_ordinary_call() {
-    let _port_holder = std::net::TcpListener::bind("127.0.0.1:7381").ok();
     let f = Fixture::new();
+    let previous = f.run(&["overview", "start", "--json"])["service"].clone();
+    f.run(&["overview", "stop", "--json"]);
+    // Let the OS assign this fixture's port instead of competing for the shared default.
+    set_prior_service_address(&f, previous, "http://127.0.0.1:0");
     let before = f.run(&["overview", "start", "--json"])["service"].clone();
     let pid = before["pid"].as_u64().unwrap().to_string();
     assert_eq!(
@@ -423,6 +455,22 @@ fn killing_the_owned_service_is_recovered_by_the_next_ordinary_call() {
     assert_eq!(
         before["url"], after["url"],
         "recovery retains the prior fallback address"
+    );
+}
+
+#[test]
+fn startup_recovers_to_an_available_address_when_the_prior_port_is_occupied() {
+    let f = Fixture::new();
+    let previous = f.run(&["overview", "start", "--json"])["service"].clone();
+    f.run(&["overview", "stop", "--json"]);
+    let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let unavailable = format!("http://{}", occupied.local_addr().unwrap());
+    set_prior_service_address(&f, previous, &unavailable);
+    let current = f.run(&["overview", "start", "--json"])["service"].clone();
+    assert_ne!(current["url"], unavailable);
+    assert_eq!(
+        f.get(&format!("{}/api/health", current["url"].as_str().unwrap()))["data"]["instance"],
+        current["instance"]
     );
 }
 

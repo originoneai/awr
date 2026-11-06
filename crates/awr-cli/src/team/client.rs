@@ -240,20 +240,23 @@ mod tests {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+        let (release, held_body) = std::sync::mpsc::channel();
         let server = std::thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
             assert!(socket.read(&mut [0; 4096]).unwrap() > 0);
             socket
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{")
                 .unwrap();
-            std::thread::sleep(Duration::from_millis(300));
+            // Hold the incomplete body until the client finishes, with a bounded failure path.
+            let _ = held_body.recv_timeout(Duration::from_secs(5));
         });
-        let mut response = agent(Duration::from_millis(100))
+        let mut response = agent(Duration::from_secs(1))
             .get(format!("http://{address}"))
             .call()
             .unwrap();
         let error = response.body_mut().read_to_vec().unwrap_err();
         assert!(matches!(error, ureq::Error::Timeout(_)), "{error:?}");
+        release.send(()).unwrap();
         server.join().unwrap();
     }
 }
