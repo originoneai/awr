@@ -54,6 +54,7 @@
   "hub.intake_copy_failed": "Select and copy the instruction above",
   "hub.intake_open": "Open project progress",
   "hub.intake_diagnostic": "Inspection details",
+  "hub.discovery_boundaries": "Package subdirectories stay with their parent project. Nested Git/AWR roots remain separate. Go module caches skipped: {caches}.",
   "map.status.done": "Done",
   "map.status.developing": "In progress",
   "map.status.stalled": "Stalled",

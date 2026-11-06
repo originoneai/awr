@@ -58,6 +58,8 @@ impl Default for DiscoveryConfig {
                 "artifacts",
                 "outputs",
                 "coverage",
+                "*.app",
+                "evidence",
             ]
             .into_iter()
             .map(str::to_owned)
@@ -142,6 +144,10 @@ pub struct DiscoveryReport {
     pub pending: usize,
     pub attention: usize,
     pub excluded_directories: usize,
+    #[serde(default)]
+    pub dependency_caches_skipped: usize,
+    #[serde(default)]
+    pub retired_candidates: usize,
     pub symlinks_skipped: usize,
     pub limit_reached: bool,
     pub issues: Vec<ScanIssue>,
@@ -165,6 +171,8 @@ impl DiscoveryReport {
             pending: 0,
             attention: 0,
             excluded_directories: 0,
+            dependency_caches_skipped: 0,
+            retired_candidates: 0,
             symlinks_skipped: 0,
             limit_reached: false,
             issues: Vec::new(),
@@ -206,10 +214,8 @@ fn exclusions(config: &DiscoveryConfig) -> Result<globset::GlobSet> {
         .map_err(|_| Error::InvalidInput("invalid discovery exclusion set".into()))
 }
 
-fn recognized(root: &Path) -> bool {
+fn has_package_manifest(root: &Path) -> bool {
     [
-        ".awr",
-        ".git",
         "Cargo.toml",
         "package.json",
         "pyproject.toml",
@@ -248,12 +254,16 @@ pub(crate) fn scan(dir: &Path, cancelled: &AtomicBool) -> Result<DiscoveryReport
     let mut queue: VecDeque<_> = configured
         .roots
         .iter()
-        .map(|root| (root.clone(), 0))
+        .map(|root| (root.clone(), 0, false))
         .collect();
     let mut visited = BTreeSet::new();
+    let mut selected = BTreeSet::new();
+    let mut excluded_paths = Vec::new();
     let mut batch = Vec::new();
     let state_root = dir.canonicalize()?;
-    while let Some((path, depth)) = queue.pop_front() {
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .and_then(|path| PathBuf::from(path).canonicalize().ok());
+    while let Some((path, depth, within_project)) = queue.pop_front() {
         if cancelled.load(Ordering::Relaxed) {
             report.state = "interrupted".into();
             break;
@@ -284,9 +294,13 @@ pub(crate) fn scan(dir: &Path, cancelled: &AtomicBool) -> Result<DiscoveryReport
             }
         };
         report.directories_scanned += 1;
-        if recognized(&root) {
+        let boundary = root.join(".awr").exists() || root.join(".git").exists();
+        let candidate = boundary
+            || (!within_project && home.as_ref() != Some(&root) && has_package_manifest(&root));
+        if candidate {
             match registry::inspect(&root) {
                 Ok(project) => {
+                    selected.insert(root.clone());
                     report.projects_found += 1;
                     match project.state {
                         ProjectState::Connected => report.connected += 1,
@@ -323,8 +337,13 @@ pub(crate) fn scan(dir: &Path, cancelled: &AtomicBool) -> Result<DiscoveryReport
             if !kind.is_dir() {
                 continue;
             }
-            if excluded_names.is_match(entry.file_name()) {
+            let dependency_cache = entry.file_name() == "mod"
+                && root.file_name().is_some_and(|name| name == "pkg")
+                && entry.path().join("cache/download").is_dir();
+            if excluded_names.is_match(entry.file_name()) || dependency_cache {
                 report.excluded_directories += 1;
+                report.dependency_caches_skipped += usize::from(dependency_cache);
+                excluded_paths.push(entry.path());
             } else if depth >= configured.depth_limit {
                 report.limit_reached = true;
                 report.issue(&entry.path(), "depth limit reached");
@@ -334,7 +353,7 @@ pub(crate) fn scan(dir: &Path, cancelled: &AtomicBool) -> Result<DiscoveryReport
                     report.issue(&entry.path(), "queued directory limit reached");
                     break;
                 }
-                queue.push_back((entry.path(), depth + 1));
+                queue.push_back((entry.path(), depth + 1, within_project || candidate));
             }
         }
         if batch.len() >= BATCH_SIZE || report.directories_scanned % 1000 == 0 {
@@ -354,6 +373,11 @@ pub(crate) fn scan(dir: &Path, cancelled: &AtomicBool) -> Result<DiscoveryReport
         }
     }
     flush(dir, &mut batch, &report)?;
+    if report.state == "complete" {
+        report.retired_candidates =
+            registry::retire_candidates(dir, &visited, &selected, &excluded_paths)?;
+        registry::write_json(&dir.join("discovery-status.json"), &report)?;
+    }
     Ok(report)
 }
 
@@ -493,6 +517,86 @@ mod tests {
         assert_eq!(
             std::fs::read(connected.join(".awr/state.db")).unwrap(),
             database
+        );
+    }
+
+    #[test]
+    fn package_subdirectories_and_dependency_caches_do_not_become_projects() {
+        let f = Workspace::new();
+        f.directory("repository/.git");
+        let package = f.directory("repository/packages/library");
+        std::fs::write(package.join("package.json"), "{}").unwrap();
+        f.directory("repository/tools/nested-git/.git");
+        let connected = f.project("repository/tools/nested-awr");
+        let plain = f.directory("plain-project");
+        std::fs::write(plain.join("Cargo.toml"), "[workspace]\n").unwrap();
+        f.directory("go/pkg/mod/cache/download");
+        let dependency = f.directory("go/pkg/mod/example/dependency");
+        std::fs::write(dependency.join("go.mod"), "module example/dependency\n").unwrap();
+        let application = f.directory("Installed.app/Contents");
+        std::fs::write(application.join("package.json"), "{}").unwrap();
+        let dir = f.settings();
+        let report = discover(&dir).unwrap();
+        assert_eq!(report.projects_found, 4);
+        assert_eq!(report.dependency_caches_skipped, 1);
+        let projects = registry::list(&dir).unwrap();
+        assert!(projects.iter().any(|entry| entry.root == connected));
+        assert!(projects.iter().any(|entry| entry.root == plain));
+        assert!(
+            !projects
+                .iter()
+                .any(|entry| entry.root == package || entry.root == dependency)
+        );
+    }
+
+    #[test]
+    fn complete_scans_retire_only_unused_unbound_suggestions_and_preserve_moved_or_used_entries() {
+        let f = Workspace::new();
+        f.directory("repository/.git");
+        let nested = f.directory("repository/packages/nested");
+        std::fs::write(nested.join("package.json"), "{}").unwrap();
+        f.directory("go/pkg/mod/cache/download");
+        let dependency = f.directory("go/pkg/mod/example/dependency");
+        std::fs::write(dependency.join("go.mod"), "module example/dependency\n").unwrap();
+        let missing = f.directory("moved-project");
+        let dir = f.settings();
+        registry::record(
+            &dir,
+            [&nested, &dependency, &missing]
+                .into_iter()
+                .map(|root| registry::inspect(root).unwrap())
+                .collect(),
+            false,
+        )
+        .unwrap();
+        std::fs::rename(&missing, f.0.join("renamed-project")).unwrap();
+        let used = f.directory("repository/packages/used");
+        registry::observe(&dir, &used).unwrap();
+        let bound = f.project("repository/evidence/bound-project");
+        let registered = registry::register(&dir, &bound).unwrap();
+        let report = discover(&dir).unwrap();
+        assert_eq!(report.retired_candidates, 2);
+        let projects = registry::list(&dir).unwrap();
+        assert!(
+            !projects
+                .iter()
+                .any(|entry| entry.root == nested || entry.root == dependency)
+        );
+        assert!(
+            projects
+                .iter()
+                .any(|entry| entry.root == used && entry.last_used_at > 0)
+        );
+        assert!(
+            projects
+                .iter()
+                .any(|entry| entry.key == registered.key
+                    && entry.project_id == registered.project_id)
+        );
+        assert!(
+            projects
+                .iter()
+                .any(|entry| entry.root == missing && !entry.available)
         );
     }
 

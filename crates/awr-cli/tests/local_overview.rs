@@ -161,6 +161,7 @@ fn wait_for_projects(f: &Fixture, count: usize) -> Value {
 #[test]
 fn first_use_discovers_existing_projects_in_the_default_user_scope_without_registration() {
     let mut f = Fixture::new();
+    std::fs::write(f.root.join("package.json"), "{}").unwrap();
     let existing = f.project("existing");
     let repository = f.root.join("repository");
     std::fs::create_dir_all(repository.join(".git")).unwrap();
