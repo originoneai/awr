@@ -17,10 +17,59 @@ The command starts or reuses the current user's service and opens its address.
 Use `awr overview --no-open` to print the address, or `awr overview --json` for a
 machine-readable service receipt.
 
-The landing page lists registered projects as cards, ordered by the latest AWR
-use. Search matches project names and directory paths. Each card shows its name,
-directory and last-use time. Select a card to open the project's three progress
-views, then use **Back to projects** to return.
+The landing page lists local projects as cards, ordered by the latest AWR use.
+Search matches project names and directory paths. Each card shows its name,
+directory and connection state. Discovery time is distinguished from actual use.
+Select a connected card to open the project's three progress views, then use
+**Back to projects** to return. Pending or attention-required cards provide a
+short instruction to give your agent and the current inspection details.
+
+The page refreshes its catalog every ten seconds while visible. The coverage
+panel reports the latest background scan, its roots, exclusions and failures.
+An isolated user-state directory is explicitly labeled as a separate environment.
+
+## Automatic discovery and Agent intake
+
+The first CLI or installed MCP use starts the local background service. In the
+default user-state directory, it scans the current user's home and checks again
+every 60 seconds. Discovery recognizes AWR metadata, Git repositories and common
+package/build manifests. It reads directory metadata and project identity, without
+calling a model or writing target-project files.
+
+Connected projects are registered automatically. Ordinary repositories appear as
+**Pending setup**. Incomplete, unreadable or older AWR databases appear as
+**Needs inspection**. Their diagnostic remains visible. A discovered directory's
+card retains its key when initialization connects the actual project identity.
+
+Agents inspect a specific directory through the normal CLI entry point.
+
+```sh
+awr --project /absolute/path/to/project overview inspect --json
+```
+
+The compact response gives a condition, observed basis, next command and recheck
+trigger. Pending projects use the existing `awr init` preview and acceptance
+workflow. Goals come from the user's request and project sources. Missing intent
+remains explicit. A connected identity still requires an organization/readiness
+check before implementation. Repair guidance starts with `awr doctor`; supported
+migrations require a matching backup. An uninitialized local MCP project's
+`awr_project_status` response includes the same intake guidance for its bound
+directory. Shared MCP clients do not receive the machine-wide project catalog.
+
+To scan additional workspace roots or change the interval, configure them once.
+
+```sh
+awr overview discover --root /absolute/workspace --root /another/workspace --interval-seconds 60
+awr overview projects --json
+```
+
+Roots replace the configured root list. Hidden, dependency, generated, cache and
+fixture directories are excluded by default. Child symlinks are skipped. The
+coverage report exposes these boundaries and access errors. Scans are bounded to
+200,000 directories and depth 32, and incomplete scans report a partial result.
+Use `--config` with a complete `DiscoveryConfig` JSON to customize roots,
+`exclude_names`, `interval_seconds`, `directory_limit` or `depth_limit`. Custom
+`AWR_LOCAL_HOME` environments start with no scan roots until configured.
 
 The service first tries port 7381 on `127.0.0.1`. An occupied port selects an
 available loopback port. The service receipt records the actual address. Recovery
@@ -31,7 +80,7 @@ tries that recorded port first, preserving existing links when it is available.
 Successful initialization and subsequent CLI use register an initialized project.
 The installed MCP server registers its bound projects and updates their last-use
 time on project calls. Existing projects appear as they are used with this version.
-You can also register known directories explicitly.
+You can also register initialized directories explicitly.
 
 ```sh
 awr overview register /absolute/path/to/alpha /absolute/path/to/beta
@@ -91,8 +140,10 @@ State is stored under `AWR_LOCAL_HOME` when that absolute path is configured.
 Otherwise Windows uses `%LOCALAPPDATA%/AWR`, an absolute `XDG_STATE_HOME` uses its
 `awr` child, and the fallback is `$HOME/.local/state/awr`.
 
-The directory contains `projects.json`, `service.json`, coordination locks and
-`service.log`. It belongs to the current OS user. The HTTP service binds to
+The directory contains the versioned `projects.json` catalog, discovery settings
+and coverage, `service.json`, coordination locks and `service.log`. Version-one
+catalogs remain readable and are upgraded on the next catalog write. State belongs
+to the current OS user. The HTTP service binds to
 loopback and validates request hosts and origins.
 
 Project selection is explicit in every progress request. The browser URL carries

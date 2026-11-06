@@ -14,10 +14,10 @@ const projects = [
   { key: 'c'.repeat(64), name: 'Missing', root: '/old/project', available: false, last_used_at: 20000 },
 ];
 
-function mount(load, locale = 'en') {
-  const { doc } = dom.createPage('<input id="hubSearch"><button id="hubRefresh"></button><p id="hubStatus"></p><span id="hubCount"></span><section id="hubProjects"></section><section id="hubMessage"><h2 id="hubMessageTitle"></h2><p id="hubMessageText"></p></section>');
+function mount(load, locale = 'en', options = {}) {
+  const { doc } = dom.createPage(fs.readFileSync(path.join(__dirname, '..', 'public', 'hub.html'), 'utf8'));
   doc.getElementById('hubSearch').value = '';
-  const app = hub.createHub({ document: doc, i18n: { t: h.tFor(locale), locale }, load });
+  const app = hub.createHub({ document: doc, i18n: { t: h.tFor(locale), locale }, load, ...options });
   return { doc, app, el: (id) => doc.getElementById(id) };
 }
 
@@ -111,4 +111,95 @@ test('the hub and single-project shells expose localized search and return navig
   assert.match(fs.readFileSync(path.join(publicDir, 'index.html'), 'utf8'), /id="projectHome"[^>]*data-i18n="hub.back"/);
   assert.match(fs.readFileSync(path.join(publicDir, 'app.js'), 'utf8'), /\/api\/projects\/\$\{encodeURIComponent\(projectKey\)\}/);
   assert.doesNotMatch(html, /src="https?:|href="https?:/);
+});
+
+test('discovered and repair cards retain identity-bound intake links and honest timestamps', async () => {
+  const pending = { ...projects[0], state: 'discovered', last_used_at: 0, registered_at: 40000 };
+  const repair = { ...projects[1], state: 'attention' };
+  for (const locale of ['en', 'zh-CN']) {
+    const ctx = mount(async () => ({ ok: true, data: { projects: [pending, repair] } }), locale);
+    await ctx.app.refresh();
+    for (const project of [pending, repair]) {
+      const card = ctx.el('hubProjects').querySelector(`[data-project="${project.key}"]`);
+      assert.equal(card.getAttribute('href'), `/?project=${project.key}&lang=${locale}&intake=1`);
+      assert.equal(card.getAttribute('data-state'), project.state);
+    }
+    const time = ctx.el('hubProjects').querySelector('[data-state="discovered"] time');
+    assert.equal(time.getAttribute('datetime'), new Date(pending.registered_at).toISOString());
+    assert.ok(time.getAttribute('title').includes(h.tFor(locale)('hub.first_seen')));
+    assert.ok(ctx.el('hubProjects').textContent.includes(h.tFor(locale)('hub.pending')));
+    assert.ok(ctx.el('hubProjects').textContent.includes(h.tFor(locale)('hub.attention')));
+  }
+});
+
+test('coverage shows limits and isolated scope and quiet refresh preserves card focus and expanded details', async () => {
+  const report = { state: 'partial', roots: ['/work'], exclude_names: ['node_modules'], directories_scanned: 50, connected: 1, pending: 2, attention: 1, interval_seconds: 60, issues: [{ path: '/work/private', reason: 'permission denied' }], omitted_issues: 3 };
+  const ctx = mount(async () => ({ ok: true, data: { projects, discovery: report, catalog_scope: 'isolated' } }));
+  await ctx.app.refresh();
+  assert.equal(ctx.el('hubScope').hidden, false);
+  assert.ok(ctx.el('hubCoverage').textContent.includes('/work/private'));
+  assert.ok(ctx.el('hubCoverage').textContent.includes('node_modules'));
+  assert.ok(ctx.el('hubCoverage').textContent.includes(h.tFor('en')('hub.discovery_partial')));
+  const card = ctx.el('hubProjects').querySelector('a');
+  card.focus();
+  ctx.el('hubCoverage').querySelector('details').setAttribute('open', '');
+  await ctx.app.refresh({ quiet: true });
+  assert.equal(ctx.el('hubProjects').querySelector('a'), card);
+  assert.equal(ctx.doc.activeElement, card);
+  report.directories_scanned += 10;
+  await ctx.app.refresh({ quiet: true });
+  assert.equal(ctx.el('hubCoverage').querySelector('details').hasAttribute('open'), true);
+});
+
+test('intake promotes the same card to connected with language-preserving progress and return navigation', async () => {
+  for (const locale of ['en', 'zh-CN']) {
+    const project = { ...projects[0], state: 'discovered' };
+    const ctx = mount(async () => ({ ok: true, data: { projects: [project] } }), locale, {
+      selectedKey: project.key,
+      loadIntake: async (key) => ({ ok: true, data: { project: { ...project, key } } }),
+    });
+    await ctx.app.refresh();
+    assert.equal(ctx.el('hubIntake').hidden, false);
+    assert.equal(ctx.el('hubProjects').hidden, true);
+    assert.equal(ctx.el('hubControls').hidden, true);
+    assert.equal(ctx.el('hubIntakeOpen').hidden, true);
+    assert.equal(ctx.el('hubIntakeBack').getAttribute('href'), `/?lang=${locale}`);
+    assert.ok(ctx.el('hubIntakePrompt').textContent.includes(project.root));
+    project.state = 'connected';
+    await ctx.app.refresh({ quiet: true });
+    assert.equal(ctx.el('hubIntakeState').textContent, h.tFor(locale)('hub.connected'));
+    assert.equal(ctx.el('hubIntakeOpen').hidden, false);
+    assert.equal(ctx.el('hubIntakeOpen').getAttribute('href'), `/?project=${project.key}&lang=${locale}`);
+  }
+});
+
+test('intake rejects cross-project replies and removes stale details after disconnection', async () => {
+  let returned = { ...projects[0], state: 'attention', issue: 'legacy schema requires supported migration' };
+  const ctx = mount(async () => ({ ok: true, data: { projects } }), 'en', {
+    selectedKey: projects[0].key,
+    loadIntake: async () => ({ ok: true, data: { project: returned } }),
+  });
+  await ctx.app.refresh();
+  assert.equal(ctx.el('hubIntakeDiagnostic').hidden, false);
+  assert.equal(ctx.el('hubIntakeIssue').textContent, returned.issue);
+  returned = projects[1];
+  await ctx.app.refresh({ quiet: true });
+  assert.ok(ctx.app.state.error);
+  assert.equal(ctx.el('hubIntake').hidden, true);
+  returned = projects[0];
+  await ctx.app.refresh({ quiet: true });
+  assert.equal(ctx.app.state.error, null);
+  assert.equal(ctx.el('hubIntake').hidden, false);
+});
+
+test('quiet recovery rebuilds the same catalog after a failed poll', async () => {
+  let offline = false;
+  const ctx = mount(() => { if (offline) throw new Error('offline'); return { ok: true, data: { projects } }; });
+  await ctx.app.refresh();
+  offline = true;
+  await ctx.app.refresh({ quiet: true });
+  assert.equal(ctx.el('hubProjects').querySelectorAll('.project-card').length, 0);
+  offline = false;
+  await ctx.app.refresh({ quiet: true });
+  assert.equal(ctx.el('hubProjects').querySelectorAll('.project-card').length, 3);
 });

@@ -1,11 +1,13 @@
 //! Per-user project discovery and the bundled loopback progress service.
 mod discovery;
+mod intake;
 mod lifecycle;
 mod registry;
 mod server;
 
 pub use discovery::config as discovery_config;
 pub use discovery::{DiscoveryConfig, DiscoveryReport, configure, discover, discovery_status};
+pub use intake::project_intake;
 pub use lifecycle::{ServiceStatus, ensure, running, stop};
 pub use registry::{
     LocalProject, ProjectState, default_state_dir, get, inspect, is_default_state_dir, list,

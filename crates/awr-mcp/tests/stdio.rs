@@ -2207,6 +2207,19 @@ async fn uninitialized_mcp_project_returns_intake_guidance_without_creating_stat
     );
     assert_eq!(status["organization"]["state"], "not_initialized");
     assert_eq!(status["organization"]["business_execution_ready"], false);
+    assert_eq!(status["takeover"]["project"]["state"], "discovered");
+    assert_eq!(
+        status["takeover"]["guidance"]["basis"]["goal_inferred"],
+        false
+    );
+    assert_eq!(
+        status["takeover"]["guidance"]["next_action"]["argv"][3],
+        "init"
+    );
+    assert_eq!(
+        status["takeover"]["guidance"]["recheck"]["argv"][4],
+        "inspect"
+    );
     assert!(status["total"].is_null());
     assert!(
         status["organization"]["actions"]

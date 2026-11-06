@@ -339,6 +339,17 @@ pub fn list(dir: &Path) -> Result<Vec<LocalProject>> {
                 .canonicalize()
                 .is_ok_and(|root| root == entry.root && root.is_dir())
         };
+        if !entry.available
+            && let Ok(current) = inspect(&entry.root)
+            && current.root == entry.root
+            && current.project_id.is_none()
+        {
+            entry.available = true;
+            entry.state = ProjectState::Attention;
+            entry.issue = current
+                .issue
+                .or_else(|| Some("registered AWR identity requires repair".into()));
+        }
     }
     entries.sort_by(|a, b| {
         b.last_used_at
@@ -438,6 +449,22 @@ mod tests {
                 .any(|p| p.key == replacement.key && p.available)
         );
         assert!(entries.iter().any(|p| p.key == entry.key && !p.available));
+        assert!(select(&fixture.dir(), &entry.key).is_err());
+    }
+
+    #[test]
+    fn damaged_runtime_keeps_its_identity_and_an_accessible_repair_card() {
+        let fixture = Fixture::new();
+        let root = fixture.project("alpha");
+        let original = register(&fixture.dir(), &root).unwrap();
+        std::fs::remove_dir_all(root.join(".awr")).unwrap();
+        observe(&fixture.dir(), &root).unwrap();
+        let entry = list(&fixture.dir()).unwrap().remove(0);
+        assert_eq!(entry.key, original.key);
+        assert_eq!(entry.project_id, original.project_id);
+        assert_eq!(entry.state, ProjectState::Attention);
+        assert!(entry.available);
+        assert!(entry.issue.is_some());
         assert!(select(&fixture.dir(), &entry.key).is_err());
     }
 
