@@ -34,6 +34,16 @@ enum OverviewCommand {
     },
     /// List the local project catalog, including unavailable directories.
     Projects,
+    /// Discover existing AWR projects and code repositories, with explicit coverage reporting.
+    Discover {
+        #[arg(long = "root")]
+        roots: Vec<PathBuf>,
+        /// Apply a complete, reviewed discovery configuration JSON.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        interval_seconds: Option<u64>,
+    },
     #[command(hide = true)]
     Serve,
 }
@@ -84,8 +94,41 @@ pub fn run(root: &Path, args: &OverviewArgs, json_output: bool) -> Result<()> {
             awr_local::stop(&dir)?;
             print(&serde_json::json!({"ok":true,"service":null}))
         }
-        Some(OverviewCommand::Projects) => {
-            print(&serde_json::json!({"ok":true,"projects":awr_local::list(&dir)?}))
+        Some(OverviewCommand::Projects) => print(
+            &serde_json::json!({"ok":true,"projects":awr_local::list(&dir)?,"discovery":awr_local::discovery_status(&dir)?,"catalog_scope":if awr_local::is_default_state_dir(&dir) { "user" } else { "isolated" }}),
+        ),
+        Some(OverviewCommand::Discover {
+            roots,
+            config,
+            interval_seconds,
+        }) => {
+            let mut settings = if let Some(path) = config {
+                serde_json::from_slice::<awr_local::DiscoveryConfig>(&awr_source::read_capped(
+                    path,
+                    128 * 1024,
+                )?)?
+            } else {
+                awr_local::discovery_config(&dir)?
+            };
+            if !roots.is_empty() {
+                settings.roots = roots
+                    .iter()
+                    .map(std::path::absolute)
+                    .collect::<std::io::Result<_>>()?;
+            }
+            if let Some(interval) = interval_seconds {
+                settings.interval_seconds = *interval;
+            }
+            if config.is_some() || !roots.is_empty() || interval_seconds.is_some() {
+                awr_local::configure(&dir, settings)?;
+            }
+            let report = match awr_local::discover(&dir) {
+                Ok(report) => report,
+                Err(awr_core::Error::SourceConflict(_)) => awr_local::discovery_status(&dir)?,
+                Err(error) => return Err(error),
+            };
+            let service = awr_local::ensure(&dir, &awr_local::executable()?)?;
+            print(&serde_json::json!({"ok":true,"discovery":report,"service":service}))
         }
         Some(OverviewCommand::Register { roots }) => {
             let mut entries = Vec::new();

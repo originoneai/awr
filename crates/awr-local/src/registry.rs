@@ -9,18 +9,34 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MAX_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_PROJECTS: usize = 10_000;
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectState {
+    #[default]
+    Connected,
+    Discovered,
+    Attention,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalProject {
     pub key: String,
-    pub project_id: String,
+    pub project_id: Option<String>,
     pub name: String,
     pub root: PathBuf,
     pub registered_at: i64,
     pub last_used_at: i64,
     #[serde(default = "available")]
     pub available: bool,
+    #[serde(default)]
+    pub state: ProjectState,
+    #[serde(default)]
+    pub last_seen_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<String>,
 }
 
 fn available() -> bool {
@@ -43,6 +59,10 @@ pub fn state_dir() -> Result<PathBuf> {
         }
         return Ok(path);
     }
+    default_state_dir()
+}
+
+pub fn default_state_dir() -> Result<PathBuf> {
     #[cfg(windows)]
     if let Some(path) = std::env::var_os("LOCALAPPDATA") {
         return Ok(PathBuf::from(path).join("AWR"));
@@ -56,6 +76,13 @@ pub fn state_dir() -> Result<PathBuf> {
         .or_else(|| std::env::var_os("USERPROFILE"))
         .ok_or_else(|| Error::InvalidInput("local user state directory is unavailable".into()))?;
     Ok(PathBuf::from(home).join(".local/state/awr"))
+}
+
+pub fn is_default_state_dir(dir: &Path) -> bool {
+    default_state_dir().is_ok_and(|expected| {
+        dir.canonicalize().unwrap_or_else(|_| dir.into())
+            == expected.canonicalize().unwrap_or(expected)
+    })
 }
 
 pub(crate) fn prepare(dir: &Path) -> Result<()> {
@@ -144,59 +171,142 @@ fn catalog(dir: &Path) -> Result<Catalog> {
     let path = dir.join("projects.json");
     if !path.exists() {
         return Ok(Catalog {
-            version: 1,
+            version: 2,
             projects: Vec::new(),
         });
     }
-    let value: Catalog = read_json(&path)?;
-    if value.version != 1 || value.projects.len() > 1000 {
+    let mut value: Catalog = read_json(&path)?;
+    if ![1, 2].contains(&value.version) || value.projects.len() > MAX_PROJECTS {
         return Err(Error::InvalidInput(
             "unsupported local project catalog".into(),
         ));
     }
+    value.version = 2;
     Ok(value)
 }
 
-pub fn register(dir: &Path, root: &Path) -> Result<LocalProject> {
+/// Inspect only project identity metadata. A discovered directory receives no invented AWR identity.
+pub fn inspect(root: &Path) -> Result<LocalProject> {
     let root = root.canonicalize()?;
-    let store = Store::open_readonly(&root.join(".awr/state.db"))?;
-    let project = store.project_by_root(&root)?;
-    let mut identity = Sha256::new();
-    identity.update(root.to_string_lossy().as_bytes());
-    identity.update(b"\0");
-    identity.update(project.id.to_string().as_bytes());
-    let key = format!("{:x}", identity.finalize());
+    if !root.is_dir() {
+        return Err(Error::InvalidInput(
+            "project root must be a directory".into(),
+        ));
+    }
     let now = now_millis()?;
-    let _lock = lock(dir, "projects.lock", Duration::from_secs(2))?;
-    let mut catalog = catalog(dir)?;
-    let entry = LocalProject {
-        key: key.clone(),
-        project_id: project.id.to_string(),
-        name: project.name,
+    let mut entry = LocalProject {
+        key: String::new(),
+        project_id: None,
+        name: root
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
         root,
         registered_at: now,
-        last_used_at: now,
+        last_used_at: 0,
         available: true,
+        state: ProjectState::Discovered,
+        last_seen_at: now,
+        issue: None,
     };
-    let entry = if let Some(old) = catalog.projects.iter_mut().find(|p| p.key == key) {
-        if old.project_id != entry.project_id {
-            return Err(Error::SourceConflict("registered project identity changed; inspect the directory before registering it again".into()));
+    if entry.root.join(".awr").exists() {
+        match Store::open_readonly(&entry.root.join(".awr/state.db"))
+            .and_then(|store| store.project_by_root(&entry.root))
+        {
+            Ok(project) => {
+                entry.project_id = Some(project.id.to_string());
+                entry.name = project.name;
+                entry.state = ProjectState::Connected;
+            }
+            Err(error) => {
+                entry.state = ProjectState::Attention;
+                entry.issue = Some(error.report().message);
+            }
         }
-        let entry = LocalProject {
-            registered_at: old.registered_at,
-            ..entry
+    }
+    let mut identity = Sha256::new();
+    identity.update(entry.root.to_string_lossy().as_bytes());
+    identity.update(b"\0");
+    identity.update(entry.project_id.as_deref().unwrap_or("").as_bytes());
+    entry.key = format!("{:x}", identity.finalize());
+    Ok(entry)
+}
+
+fn merge(catalog: &mut Catalog, mut entry: LocalProject, used: bool) -> Result<LocalProject> {
+    if entry.project_id.is_none()
+        && let Some(old) = catalog
+            .projects
+            .iter_mut()
+            .find(|project| project.root == entry.root && project.project_id.is_some())
+    {
+        // A scan may have observed the directory before a concurrent initialization finished.
+        // A bound identity also survives missing/corrupt runtime files until explicit repair.
+        old.last_seen_at = old.last_seen_at.max(entry.last_seen_at);
+        old.available = validate(old).is_ok();
+        if !old.available {
+            old.state = ProjectState::Attention;
+            old.issue = entry
+                .issue
+                .or_else(|| Some("registered AWR identity requires repair".into()));
+        }
+        if used {
+            old.last_used_at = entry.last_seen_at;
+        }
+        return Ok(old.clone());
+    }
+    let old = catalog.projects.iter_mut().find(|project| {
+        (project.root == entry.root && project.project_id == entry.project_id)
+            || (project.root == entry.root && project.project_id.is_none())
+    });
+    if let Some(old) = old {
+        entry.key = old.key.clone();
+        entry.registered_at = old.registered_at;
+        entry.last_used_at = if used {
+            entry.last_seen_at
+        } else {
+            old.last_used_at
         };
         *old = entry.clone();
-        entry
     } else {
-        if catalog.projects.len() >= 1000 {
+        if catalog.projects.len() >= MAX_PROJECTS {
             return Err(Error::InvalidInput("local project catalog is full".into()));
         }
+        if used {
+            entry.last_used_at = entry.last_seen_at;
+        }
         catalog.projects.push(entry.clone());
-        entry
-    };
-    write_json(&dir.join("projects.json"), &catalog)?;
+    }
     Ok(entry)
+}
+
+pub(crate) fn record(
+    dir: &Path,
+    entries: Vec<LocalProject>,
+    used: bool,
+) -> Result<Vec<LocalProject>> {
+    let _lock = lock(dir, "projects.lock", Duration::from_secs(2))?;
+    let mut catalog = catalog(dir)?;
+    let merged = entries
+        .into_iter()
+        .map(|entry| merge(&mut catalog, entry, used))
+        .collect::<Result<Vec<_>>>()?;
+    write_json(&dir.join("projects.json"), &catalog)?;
+    Ok(merged)
+}
+
+pub fn observe(dir: &Path, root: &Path) -> Result<LocalProject> {
+    Ok(record(dir, vec![inspect(root)?], true)?.remove(0))
+}
+
+pub fn register(dir: &Path, root: &Path) -> Result<LocalProject> {
+    let entry = inspect(root)?;
+    if entry.state != ProjectState::Connected {
+        return Err(Error::NotFound(
+            "initialized AWR project; use overview inspect for intake guidance".into(),
+        ));
+    }
+    Ok(record(dir, vec![entry], true)?.remove(0))
 }
 
 pub(crate) fn validate(entry: &LocalProject) -> Result<()> {
@@ -205,8 +315,12 @@ pub(crate) fn validate(entry: &LocalProject) -> Result<()> {
             "registered project directory changed".into(),
         ));
     }
+    let expected = entry
+        .project_id
+        .as_deref()
+        .ok_or_else(|| Error::NotFound("project awaits AWR intake".into()))?;
     let store = Store::open_readonly(&entry.root.join(".awr/state.db"))?;
-    if store.project_by_root(&entry.root)?.id.to_string() != entry.project_id {
+    if store.project_by_root(&entry.root)?.id.to_string() != expected {
         return Err(Error::SourceConflict(
             "registered project identity changed".into(),
         ));
@@ -217,24 +331,36 @@ pub(crate) fn validate(entry: &LocalProject) -> Result<()> {
 pub fn list(dir: &Path) -> Result<Vec<LocalProject>> {
     let mut entries = catalog(dir)?.projects;
     for entry in &mut entries {
-        entry.available = validate(entry).is_ok();
+        entry.available = if entry.project_id.is_some() {
+            validate(entry).is_ok()
+        } else {
+            entry
+                .root
+                .canonicalize()
+                .is_ok_and(|root| root == entry.root && root.is_dir())
+        };
     }
     entries.sort_by(|a, b| {
         b.last_used_at
             .cmp(&a.last_used_at)
+            .then(b.registered_at.cmp(&a.registered_at))
             .then(a.root.cmp(&b.root))
     });
     Ok(entries)
 }
 
 pub(crate) fn select(dir: &Path, key: &str) -> Result<LocalProject> {
-    let entry = catalog(dir)?
+    let entry = get(dir, key)?;
+    validate(&entry)?;
+    Ok(entry)
+}
+
+pub fn get(dir: &Path, key: &str) -> Result<LocalProject> {
+    catalog(dir)?
         .projects
         .into_iter()
         .find(|p| p.key == key)
-        .ok_or_else(|| Error::NotFound("registered local project".into()))?;
-    validate(&entry)?;
-    Ok(entry)
+        .ok_or_else(|| Error::NotFound("registered local project".into()))
 }
 
 #[cfg(test)]

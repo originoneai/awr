@@ -15,5 +15,6 @@ serde_json.workspace = true
 sha2.workspace = true
 ureq.workspace = true
 url.workspace = true
+globset.workspace = true
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "original-uri"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "signal", "time", "process", "io-util", "macros"] }

@@ -222,6 +222,7 @@ dependencies = [
  "awr-runtime",
  "awr-store",
  "axum",
+ "globset",
  "serde",
  "serde_json",
  "sha2 0.10.9",
