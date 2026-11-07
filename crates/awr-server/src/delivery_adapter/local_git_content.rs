@@ -1,5 +1,5 @@
 //! Bounded complete-tree reads. Rewritten history is observed, never performed.
-use super::{LocalGitAdapter, LocalGitError};
+use super::{LocalGitAdapter, LocalGitError, blob_path};
 use awr_team::delivery::*;
 
 fn unavailable(reason: ContentProofUnavailableReason) -> IntegrationContentWitness {
@@ -12,8 +12,9 @@ impl LocalGitAdapter {
         candidate: &DeliveryCandidate,
         result: Option<&RevisionRef>,
         source_available: bool,
+        source_is_ancestor: Option<bool>,
     ) -> IntegrationContentWitness {
-        self.resolve_content(candidate, result, source_available)
+        self.resolve_content(candidate, result, source_available, source_is_ancestor)
             .await
             .unwrap_or_else(|_| unavailable(ContentProofUnavailableReason::HistoryUnavailable))
     }
@@ -65,6 +66,7 @@ impl LocalGitAdapter {
         candidate: &DeliveryCandidate,
         result: Option<&RevisionRef>,
         source_available: bool,
+        source_is_ancestor: Option<bool>,
     ) -> Result<IntegrationContentWitness, LocalGitError> {
         let (Some(source), Some(result)) = (candidate.binding.source_revision.as_ref(), result)
         else {
@@ -116,6 +118,41 @@ impl LocalGitAdapter {
                     ));
                 }
             }
+        }
+        if source_is_ancestor == Some(true) {
+            // Compare tree entries rather than blob bytes alone: chmod, removal
+            // and type changes invalidate the delivered artifact too. GitProcess
+            // already enforces --literal-pathspecs; pass the validated path as-is.
+            let mut args = vec![
+                "diff-tree".to_owned(),
+                "-r".into(),
+                "--quiet".into(),
+                "--no-ext-diff".into(),
+                "--no-textconv".into(),
+                "--no-renames".into(),
+                "--ignore-submodules=none".into(),
+                source.value.clone(),
+                result.value.clone(),
+                "--".into(),
+            ];
+            for entry in &candidate.manifest.entries {
+                let Some(path) = blob_path(&entry.locator) else {
+                    return Ok(unavailable(ContentProofUnavailableReason::Unsupported));
+                };
+                args.push(path.into());
+            }
+            return Ok(
+                match self
+                    .git
+                    .run(&args.iter().map(String::as_str).collect::<Vec<_>>(), 4096)
+                    .await?
+                    .code
+                {
+                    0 => IntegrationContentWitness::RetainedAncestorArtifacts,
+                    1 => unavailable(ContentProofUnavailableReason::ContentChanged),
+                    _ => unavailable(ContentProofUnavailableReason::HistoryUnavailable),
+                },
+            );
         }
         let (Some(source_snapshot), Some(result_snapshot)) =
             (self.tree(source).await?, self.tree(result).await?)

@@ -709,7 +709,12 @@ impl LocalGitAdapter {
             None
         };
         let mut content_witness = self
-            .content_witness(candidate, target_revision.as_ref(), source_available)
+            .content_witness(
+                candidate,
+                target_revision.as_ref(),
+                source_available,
+                graph_contains_source,
+            )
             .await;
         let usable_content = !matches!(
             content_witness,
