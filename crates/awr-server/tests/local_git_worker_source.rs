@@ -482,6 +482,105 @@ async fn physical_source_first_sha1_and_sha256_close_without_a_pr_and_restart_wi
 }
 
 #[tokio::test]
+async fn advancing_shared_main_keeps_finalized_source_reference_until_artifacts_change() {
+    for sha256 in [false, true] {
+        let repo = git::GitFixture::integration(sha256);
+        let root = repo.source_contract();
+        let mut f =
+            integration_fixture::setup_source_integration(repo.integration_candidate(), &root)
+                .await;
+        observe_and_review(&mut f, &repo).await;
+        let id = prepare_losing_reply(&f, "retained-source-integration").await;
+        let workers = start(&f, &repo, "initial-integration", true, true).await;
+        wait_closed(&f, &repo, &root, &id).await;
+        workers.shutdown().await;
+        let session = integration_fixture::run(
+            &f.reads,
+            SUPERVISOR,
+            "finalizer-session",
+            "session.start",
+            json!({"conversation_id":"retention-finalizer"}),
+        )
+        .await;
+        let completed = integration_fixture::run(
+            &f.reads,
+            SUPERVISOR,
+            "finalize-retained",
+            "delivery.finalize",
+            json!({"session_id":session["session_id"],"expected_session_version":"1",
+                "evidence_id":f.evidence["evidence_id"],"context_complete":true}),
+        )
+        .await;
+        let receipt = completed["receipt_id"].as_str().unwrap();
+        let workers = start(&f, &repo, "initial-completion", true, false).await;
+        wait(async || {
+            status(&f).await["source_synchronized"] == true
+                && fs::read_to_string(root.join("ledger.yaml"))
+                    .unwrap()
+                    .contains(receipt)
+        })
+        .await;
+        workers.shutdown().await;
+
+        repo.commit("page.html", b"A later independent delivery\n");
+        repo.push_main();
+        let target = repo.bare(&["rev-parse", "refs/heads/main"]);
+        let workers = start(&f, &repo, "later-delivery", true, false).await;
+        wait(async || {
+            let current = read(&f, SUPERVISOR, "delivery.neutral.inspect", None).await;
+            current["facts"].as_array().unwrap().iter().any(|fact| {
+                fact["current"] == true
+                    && fact["observation"]["kind"] == "integration_observation"
+                    && fact["observation"]["result_revision"]["value"] == target
+            }) && status(&f).await["source_synchronized"] == true
+        })
+        .await;
+        workers.shutdown().await;
+        let current = read(&f, SUPERVISOR, "delivery.neutral.inspect", None).await;
+        let facts = current["facts"].as_array().unwrap();
+        assert!(facts.iter().any(|fact| fact["current"] == true
+            && fact["observation"]["kind"] == "integration_observation"
+            && fact["observation"]["outcome"] == "applied"));
+        assert!(facts.iter().any(|fact| fact["current"] == true
+            && fact["observation"]["witness_kind"] == "retained_ancestor_artifacts"));
+        assert!(
+            fs::read_to_string(root.join("ledger.yaml"))
+                .unwrap()
+                .contains(receipt),
+            "a later independent delivery must preserve the earlier completion reference"
+        );
+        assert_eq!(proof(&f).await["observation"]["outcome"], "passed");
+
+        repo.commit("src/api/result.json", b"Overwritten delivered artifact\n");
+        repo.push_main();
+        let workers = start(&f, &repo, "overwritten-artifact", true, false).await;
+        wait(async || {
+            status(&f).await["source_synchronized"] == true
+                && !fs::read_to_string(root.join("ledger.yaml"))
+                    .unwrap()
+                    .contains(receipt)
+        })
+        .await;
+        workers.shutdown().await;
+        let current = read(&f, SUPERVISOR, "delivery.neutral.inspect", None).await;
+        assert!(
+            !current["facts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|fact| fact["current"] == true
+                    && fact["observation"]["kind"] == "integration_observation"
+                    && fact["observation"]["outcome"] == "applied")
+        );
+        assert_eq!(
+            count(&f, "SELECT count(*) FROM awr_team.completion_receipts").await,
+            1,
+            "current target failure must not erase the historical finalization receipt"
+        );
+    }
+}
+
+#[tokio::test]
 async fn concurrent_combined_services_share_one_git_effect_and_confirmed_source() {
     let repo = git::GitFixture::integration(false);
     repo.bare(&["config", "core.logAllRefUpdates", "true"]);

@@ -633,6 +633,27 @@ impl DeliverySyncStore {
             .get::<_, i64>(2)
             .checked_add(1)
             .ok_or(PgError::PreconditionsChanged)?;
+        // Observation refreshes preserve a real selected completion only while
+        // its contract/evidence and current repository inclusion remain valid.
+        // This never creates a receipt or upgrades an observation to acceptance.
+        let mut completion = request.completion_receipt_id.clone();
+        if completion.is_none() && worker.is_some() {
+            if let Some(row) = tx.query_opt("SELECT selected_completion_id FROM awr_team.work_runtime
+                WHERE tenant_id=$1 AND project_id=$2 AND scope_id='main' AND work_id=$3
+                  AND state='completed' AND NOT recovery_blocked AND selected_completion_id IS NOT NULL",
+                &[&tenant,&project,&set.work_id]).await?
+            {
+                let receipt: String = row.get(0);
+                let candidate = snapshots::selection(&tx, tenant, project, &set.work_id).await?
+                    .ok_or(PgError::InactiveCandidate)?.0;
+                if acceptance::current(&tx, tenant, project, set, &receipt,
+                    &request.candidate_digest, selection).await?
+                    && integration::current_target_contains(&tx, tenant, project, set, &candidate, selection).await?
+                {
+                    completion = Some(receipt);
+                }
+            }
+        }
         let note = current_note(
             &tx,
             tenant,
@@ -643,7 +664,7 @@ impl DeliverySyncStore {
             next,
             &request.candidate_digest,
             selection,
-            request.completion_receipt_id.as_deref(),
+            completion.as_deref(),
         )
         .await?;
         let patch =

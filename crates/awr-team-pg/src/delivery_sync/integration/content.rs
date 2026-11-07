@@ -75,6 +75,72 @@ pub(super) async fn resolve(
     matched.ok_or(PgError::EvidenceInvalid)
 }
 
+/// Reuse only a current, mapped adapter's inclusion proof for this exact selection.
+/// Historical integration confirmations alone do not describe today's target.
+pub(in crate::delivery_sync) async fn current_target_contains(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    set: &DeliveryReadSet,
+    candidate: &DeliveryCandidate,
+    selection: i64,
+) -> PgResult<bool> {
+    let rows = tx.query("SELECT f.envelope_json,i.id,x.connector_version FROM awr_team.delivery_fact_heads h
+        JOIN awr_team.delivery_facts f ON (f.tenant_id,f.project_id,f.id)=(h.tenant_id,h.project_id,h.fact_id)
+        JOIN awr_team.delivery_inbox i ON (i.tenant_id,i.project_id,i.id)=(f.tenant_id,f.project_id,f.inbox_id)
+        JOIN awr_team.delivery_inspections x ON (x.tenant_id,x.project_id,x.id)=(i.tenant_id,i.project_id,i.inspection_id)
+        JOIN awr_team.delivery_connectors c ON (c.tenant_id,c.project_id,c.id)=(h.tenant_id,h.project_id,h.connector_id)
+        WHERE h.tenant_id=$1 AND h.project_id=$2 AND h.work_id=$3 AND i.state='applied'
+          AND x.binding_digest=$4 AND x.source_snapshot_id=$5 AND x.ownership_version=$6
+          AND x.selection_version=$7 AND x.coordinator_epoch=$8 AND c.enabled
+          AND c.version=x.connector_version AND c.coordinator_epoch=x.coordinator_epoch
+          AND c.fact_source='adapter_observation'
+          AND f.envelope_json#>>'{record,kind}'='integration_observation'
+        ORDER BY h.connector_id,h.slot LIMIT 33",
+        &[&tenant,&project,&set.work_id,&candidate.binding.digest().map_err(|_| PgError::BindingInvalid)?,
+            &set.source_snapshot_id,&version(&set.ownership_version)?,&selection,&set.coordinator_epoch]).await?;
+    if rows.len() > 32 {
+        return Err(PgError::ResponseTooLarge);
+    }
+    for row in rows {
+        let envelope: DeliveryEnvelope =
+            serde_json::from_value(row.get(0)).map_err(|_| PgError::SourceDivergence)?;
+        envelope.validate().map_err(|_| PgError::EvidenceInvalid)?;
+        envelope
+            .record
+            .validate_against(&candidate.binding)
+            .map_err(|_| PgError::BindingInvalid)?;
+        let DeliveryRecord::IntegrationObservation(observation) = envelope.record else {
+            return Err(PgError::SourceDivergence);
+        };
+        if observation.provenance.source != FactSource::AdapterObservation
+            || observation.outcome != IntegrationOutcome::Applied
+        {
+            continue;
+        }
+        let inbox: String = row.get(1);
+        let connector_version: i64 = row.get(2);
+        match resolve(
+            tx,
+            tenant,
+            project,
+            ConfirmationBinding {
+                inbox_id: &inbox,
+                original_connector_version: connector_version,
+                observed_connector_version: connector_version,
+                observation: &observation,
+            },
+        )
+        .await
+        {
+            Ok(proof) if !proof.is_null() => return Ok(true),
+            Ok(_) | Err(PgError::EvidenceInvalid) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(false)
+}
+
 /// Read the original batch for an already-authorized intent inspection. This
 /// preserves historical descriptions without revalidating a terminal receipt.
 pub(super) async fn details(

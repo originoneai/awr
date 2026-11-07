@@ -360,6 +360,16 @@ verification field or a legacy unbound completion receipt cannot create a
 completion reference. Publication neither supplies missing domain approval nor
 changes the source status into a completed state.
 
+Background observation refreshes preserve an already selected domain completion
+reference when the exact candidate, contract and evidence remain valid and a
+current mapped adapter proves that the target still contains its artifacts.
+Different result revisions require the adapter's content proof from the same
+observation batch and connector version. A new unrelated delivery therefore
+does not erase an earlier completion reference. A missing, changed or unproved
+target withdraws the current source reference; it does not erase the historical
+finalization receipt or create another approval. Direct source-publication
+requests continue to use their explicit optional completion reference.
+
 Schema 44 adds the publication cursor/journal and a nullable candidate binding
 on completion receipts. The atomic migration preserves legacy receipts as
 unbound, creates no inferred publications and retains tenant/project row-level
