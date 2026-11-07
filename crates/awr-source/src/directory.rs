@@ -171,7 +171,7 @@ impl SourceAdapter for MarkdownDirectoryAdapter {
         files.sort_by_key(|locator| match locator {
             Locator::File(path) => path.to_string_lossy().into_owned(),
             Locator::Git { path, .. } => path.to_string_lossy().into_owned(),
-            Locator::Project { path } => path.to_string_lossy().into_owned(),
+            Locator::Project { path, .. } => path.to_string_lossy().into_owned(),
         });
         Ok(files)
     }
