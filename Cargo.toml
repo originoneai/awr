@@ -8,7 +8,7 @@ version = "0.7.0"
 edition = "2024"
 rust-version = "1.93"
 license = "Apache-2.0"
-repository = "https://github.com/originoneai/awr"
+repository = "https://github.com/originoneai/agent-work-runtime"
 
 [workspace.dependencies]
 awr-core = { path = "crates/awr-core" }
