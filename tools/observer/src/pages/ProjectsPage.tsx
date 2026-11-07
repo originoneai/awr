@@ -6,6 +6,7 @@ import { ObservationEmpty, ObservationForbidden } from '../components/states';
 import { ObservationValue } from '../components/ObservationValue';
 import { isAuthError } from '../lib/api';
 import { projectsQueryOptions } from '../lib/queries';
+import { projectLabel } from '../lib/project-label';
 import { useRevocation } from '../lib/revocation';
 
 /** Project list placeholder: the only real data so far is the projects read. */
@@ -30,7 +31,7 @@ export function ProjectsPage() {
           renderItem={(project) => (
             <List.Item>
               <Space>
-                <Link to={`/projects/${encodeURIComponent(project.key)}`}>{project.title}</Link>
+                <Link to={`/projects/${encodeURIComponent(project.key)}`}>{projectLabel(project)}</Link>
                 <Tag><ObservationValue value={project.role} field="role" /></Tag>
               </Space>
             </List.Item>

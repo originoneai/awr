@@ -35,6 +35,7 @@ import { useTranslation } from 'react-i18next';
 import { matchPath, NavLink, useLocation } from 'react-router';
 import i18n from '../i18n';
 import { projectsQueryOptions } from '../lib/queries';
+import { projectLabel } from '../lib/project-label';
 import { useRevocation } from '../lib/revocation';
 import { useScope } from '../lib/scope';
 import { craftTokens } from '../theme';
@@ -139,12 +140,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const projectItems = revoked ? [] : (projects.data?.projects ?? []);
   const selectedProject = projectItems.find((project) => project.key === projectKey);
   const scopeLabel = selectedProject
-    ? `${selectedProject.title} (${selectedProject.key})`
+    ? projectLabel(selectedProject, true)
     : (!revoked && projectKey) || t('shell.scope');
   const scopeMenu: MenuProps = {
     items: [
       { key: '__org__', label: t('shell.scope') },
-      ...projectItems.map((project) => ({ key: project.key, label: `${project.title} (${project.key})` })),
+      ...projectItems.map((project) => ({ key: project.key, label: projectLabel(project, true) })),
     ],
     selectedKeys: [projectKey ?? '__org__'],
     onClick: ({ key }) => setProjectKey(key === '__org__' ? null : key),
