@@ -139,6 +139,8 @@ export function ProjectAcceptance({ project }: { project: string }) {
   const exportData = exports.data?.result.data;
   const exportItems = asArray(exportData?.items);
   const verification = asArray(collaboration?.verification);
+  const reviewDecisions = asArray(reviewObject?.decisions);
+  const reviewFindings = asArray(at(reviewObject, ['findings', 'findings']));
   const requiredDependencies = snapshotData?.visible_contract?.required_dependencies
     ?? snapshotData?.published_contract?.required_dependencies
     ?? asArray(at(snapshotData, ['adopted_dependencies']))
@@ -321,6 +323,8 @@ export function ProjectAcceptance({ project }: { project: string }) {
                     ?? observation?.reporting?.client_reported_at_unix_ms;
                   const label = state === 'approved'
                     ? t('acceptance.statusApproved')
+                    : state === 'rejected'
+                      ? t('acceptance.statusFailed')
                     : state === 'open'
                       ? t('acceptance.statusReviewPending')
                       : observation?.collaboration?.candidate || observation?.collaboration?.review
@@ -331,7 +335,7 @@ export function ProjectAcceptance({ project }: { project: string }) {
                       <Space direction="vertical" size={2} style={{ width: '100%' }}>
                         <Space style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
                           <Typography.Text strong style={{ overflowWrap: 'anywhere' }}>{work.title}{version ? ` ${version}` : ''}</Typography.Text>
-                          <Tag color={state === 'approved' ? 'success' : state === 'open' ? 'warning' : 'default'}>{label}</Tag>
+                          <Tag color={state === 'approved' ? 'success' : state === 'rejected' ? 'error' : state === 'open' ? 'warning' : 'default'}>{label}</Tag>
                         </Space>
                         <Typography.Text type="secondary">
                           {author}
@@ -394,6 +398,41 @@ export function ProjectAcceptance({ project }: { project: string }) {
                 ) : null}
                 {reviewIsHistorical ? <Tag color="warning">{t('acceptance.historical')}</Tag> : null}
                 <Typography.Text type="secondary">{t('acceptance.reviewChangeNote')}</Typography.Text>
+                {review.isError ? readError(review, 'acceptance-review-explanation-error')
+                  : selectedRound && review.isPending ? loading
+                    : reviewObject ? (
+                      <>
+                        {reviewDecisions.map((decision, index) => (
+                          <div key={asText(at(decision, ['decision_id'])) ?? index} data-testid="review-explanation" style={{ width: '100%' }}>
+                            <Typography.Text strong>{t('acceptance.reviewReason')}</Typography.Text>
+                            <Typography.Paragraph ellipsis={{ rows: 4, expandable: true, symbol: t('acceptance.readMore') }} style={{ marginBottom: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                              {asText(at(decision, ['reason']))?.trim() || missing}
+                            </Typography.Paragraph>
+                          </div>
+                        ))}
+                        {reviewFindings.map((finding, index) => (
+                          <Space key={asText(at(finding, ['finding_key'])) ?? index} direction="vertical" size={4} style={{ width: '100%', overflowWrap: 'anywhere' }} data-testid="review-finding">
+                            <Space wrap>
+                              <Typography.Text strong>{t('acceptance.reviewFinding')}</Typography.Text>
+                              <Tag color={at(finding, ['severity']) === 'blocking' && at(finding, ['state']) === 'open' ? 'error' : 'default'}>{value(at(finding, ['severity']), 'severity')}</Tag>
+                              <Tag>{at(finding, ['state']) === 'open' ? t('acceptance.findingOpen') : value(at(finding, ['state']), 'state')}</Tag>
+                            </Space>
+                            <Typography.Text>{asText(at(finding, ['summary']))?.trim() || missing}</Typography.Text>
+                            {asText(at(finding, ['criterion'])) ? <Typography.Text type="secondary">{t('acceptance.findingCriterion')}: {asText(at(finding, ['criterion']))}</Typography.Text> : null}
+                            {(['given', 'when', 'then'] as const).map((part) => (
+                              asText(at(finding, ['counterexample', part])) ? (
+                                <Typography.Text key={part} type="secondary">
+                                  {t(`acceptance.counterexample.${part}`)}: {asText(at(finding, ['counterexample', part]))}
+                                </Typography.Text>
+                              ) : null
+                            ))}
+                          </Space>
+                        ))}
+                        {reviewDecisions.length === 0 && reviewFindings.length === 0 ? (
+                          <Typography.Text type="secondary">{t('acceptance.noReviewExplanation')}</Typography.Text>
+                        ) : null}
+                      </>
+                    ) : null}
               </Space>
             </Card>
 

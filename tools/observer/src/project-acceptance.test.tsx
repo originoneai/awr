@@ -398,6 +398,56 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     expect(label.textContent).toContain('Combine filters');
   });
 
+  it('shows rework reasons, findings and counterexamples before opening technical details', async () => {
+    const { payloads } = setupAcceptance();
+    payloads.snapshots[PAGE].observation.collaboration.review.state = 'rejected';
+    const review = payloads.reviews[PAGE];
+    review.state = 'rejected';
+    review.decisions = [{
+      ...payloads.reviews[WORK].decisions[0], decision: 'reject',
+      reason: 'Return this version because an earlier response replaces the selected result.',
+    }];
+    Object.assign(review.findings.findings[0], {
+      state: 'open', summary: 'The visible list can disagree with the chosen filter.',
+      counterexample: { given: 'Two requests overlap.', when: 'The earlier request finishes last.', then: 'The previous results replace the current selection.' },
+    });
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-page', { expand: false });
+    expect(await screen.findByText(review.decisions[0].reason)).toBeTruthy();
+    expect(screen.getByText('The visible list can disagree with the chosen filter.')).toBeTruthy();
+    expect(screen.getByTestId('review-finding').textContent).toContain('阻塞');
+    expect(screen.getByText(/Two requests overlap\./)).toBeTruthy();
+    expect(screen.getByText(/The earlier request finishes last\./)).toBeTruthy();
+    expect(screen.getByText(/The previous results replace the current selection\./)).toBeTruthy();
+    expect(screen.getByTestId(`acceptance-work-${PAGE}`).textContent).toContain('未通过');
+    expect(screen.queryByTestId('acceptance-review')).toBeNull();
+  });
+
+  it('does not carry a previous task explanation into another task review', async () => {
+    const { payloads } = setupAcceptance();
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api', { expand: false });
+    const reason = payloads.reviews[WORK].decisions[0].reason;
+    expect(await screen.findByText(reason)).toBeTruthy();
+    await userEvent.setup().click(screen.getByTestId(`acceptance-work-${PAGE}`));
+    await screen.findByTestId(`acceptance-review-${PAGE_ROUND}`);
+    await waitFor(() => expect(screen.queryByText(reason)).toBeNull());
+    expect(screen.queryByTestId('acceptance-current-approval')).toBeNull();
+  });
+
+  it('reports unavailable review details without calling them unreported', async () => {
+    setupAcceptance({ failOps: ['review.inspect'] });
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-page', { expand: false });
+    expect(await screen.findByTestId('acceptance-review-explanation-error')).toBeTruthy();
+    expect(screen.queryByText('尚未提供复核说明。')).toBeNull();
+  });
+
+  it('distinguishes a readable review with no supplied explanation from a failed read', async () => {
+    const { payloads } = setupAcceptance();
+    payloads.reviews[PAGE].findings.findings = [];
+    await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-page', { expand: false });
+    expect(await screen.findByText('尚未提供复核说明。')).toBeTruthy();
+    expect(screen.queryByTestId('acceptance-review-explanation-error')).toBeNull();
+  });
+
   it('shows the decision human_approval value instead of hiding it', async () => {
     setupAcceptance();
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
