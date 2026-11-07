@@ -402,6 +402,8 @@ fn source_failure_does_not_lose_reports_and_reports_cannot_adopt_foreign_or_mana
                 command: vec!["not-dispatched".into()],
                 cwd: h.0.to_string_lossy().into(),
                 external_reference: None,
+                inputs: Vec::new(),
+                input_binding: awr_core::InputBinding::None,
             },
         )
         .unwrap()

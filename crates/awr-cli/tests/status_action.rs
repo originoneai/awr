@@ -242,6 +242,8 @@ fn persistent_user_wait_and_unknown_execution_require_resolution_before_continua
                 command: vec![],
                 cwd: f.root.to_string_lossy().into(),
                 external_reference: Some("fixture-writing".into()),
+                inputs: Vec::new(),
+                input_binding: awr_core::InputBinding::None,
             },
         )
         .unwrap()
