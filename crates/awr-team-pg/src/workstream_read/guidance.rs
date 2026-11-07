@@ -533,6 +533,13 @@ fn rejected_integration(data: &Value, owns_session: bool, fallback: Value) -> Va
         "recheck_on":"execution, target, candidate, blocker, ownership or permission changes"})
 }
 
+pub(crate) fn inspect_only() -> Value {
+    json!({"code":"inspect_only","when":"observation is complete and the suggested mutation is outside current authority",
+        "because":"no current covering action and write grant","action":{"op":"work.next",
+        "note":"Stop automatic navigation after this observation. Obtain the required scoped grant before mutations; recheck work.next only after a change listed in recheck_on."},
+        "recheck_on":"member, delegation, source or workstream permissions change"})
+}
+
 /// Preserve legacy action.op while keeping one bounded factual basis. A read
 /// grant must not suggest an unauthorized session or lease mutation.
 pub(super) fn authorized(
@@ -566,10 +573,7 @@ pub(super) fn authorized(
             work,
         )
     }) {
-        hint = json!({"code":"inspect_only","when":"the suggested mutation is outside current authority",
-            "because":"no current covering action and write grant","action":{"op":"work.next",
-            "note":"Inspect your visible work; obtain the required scoped grant before session, responsibility or execution mutations."},
-            "recheck_on":"member, delegation, source or workstream permissions change"});
+        hint = inspect_only();
     }
     if let Some(basis) = hint["because"].as_str() {
         hint["because"] = json!([basis]);

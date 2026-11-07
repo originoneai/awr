@@ -52,6 +52,8 @@ pub(super) async fn next(
     )?;
     let c = cursor(q, &binding)?;
     let limit = i64::from(q.limit.unwrap_or(20));
+    // Definitions can be inactive before any runtime exists. Keep those out of
+    // candidate selection; explicit observation remains available.
     let rows = tx.query("SELECT c.work_id,c.title,c.contract_json,o.workstream_id,r.state,r.recovery_blocked,o.ownership_version,c.definition_state
         FROM awr_team.work_contracts c JOIN awr_team.workstream_snapshot_ownership o
           USING(tenant_id,project_id,snapshot_id,scope_id,work_id)
@@ -60,26 +62,62 @@ pub(super) async fn next(
           AND (o.workstream_id=ANY($4) OR EXISTS (
             SELECT 1 FROM unnest($7::text[], $8::text[]) allowed(work_id,workstream_id)
             WHERE allowed.work_id=c.work_id AND allowed.workstream_id=o.workstream_id))
+          AND c.definition_state='enabled'
           AND c.work_id>$5 AND (r.state IS NULL OR r.state NOT IN ('completed','cancelled','archived'))
         ORDER BY c.work_id LIMIT $6", &[&tenant,&project,&auth.snapshot,&streams,&c.key,&(limit+1),&task_ids,&task_streams]).await?;
-    let own = tx.query("SELECT s.id,s.work_id,s.workstream_id,s.session_version FROM awr_team.sessions s
+    let mut resume = Vec::new();
+    let mut after_session = String::new();
+    loop {
+        let own = tx.query("SELECT s.id,s.work_id,s.workstream_id,s.session_version,o.ownership_version,c.definition_state FROM awr_team.sessions s
         JOIN awr_team.workstream_snapshot_ownership o ON o.tenant_id=s.tenant_id AND o.project_id=s.project_id
           AND o.snapshot_id=$3 AND o.work_id=s.work_id AND o.workstream_id=s.workstream_id AND o.ownership_version=s.ownership_version
+        JOIN awr_team.work_contracts c ON c.tenant_id=s.tenant_id AND c.project_id=s.project_id
+          AND c.snapshot_id=$3 AND c.scope_id=s.scope_id AND c.work_id=s.work_id
         WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.actor_id=$4 AND s.client_id=$5 AND s.state='active'
+          AND s.id>$9
           AND (s.workstream_id=ANY($6) OR EXISTS (
             SELECT 1 FROM unnest($7::text[], $8::text[]) allowed(work_id,workstream_id)
             WHERE allowed.work_id=s.work_id AND allowed.workstream_id=s.workstream_id))
-          ORDER BY s.id LIMIT 21", &[&tenant,&project,&auth.snapshot,&auth.actor_id,&auth.client_id,&streams,&task_ids,&task_streams]).await?;
-    let resume: Vec<_> = own
-        .iter()
-        .take(20)
-        .map(|s| {
-            json!({"session_id":s.get::<_,String>(0),"work_id":s.get::<_,String>(1),
-        "workstream_id":s.get::<_,String>(2),"session_version":s.get::<_,i64>(3).to_string(),
-        "next_query":{"protocol_version":1,"op":"work.observe","session_id":s.get::<_,String>(0),
-            "work_id":s.get::<_,String>(1),"workstream_id":s.get::<_,String>(2)}})
-        })
-        .collect();
+          ORDER BY s.id LIMIT 21", &[&tenant,&project,&auth.snapshot,&auth.actor_id,&auth.client_id,&streams,&task_ids,&task_streams,&after_session]).await?;
+        for s in &own {
+            let session: String = s.get(0);
+            let work: String = s.get(1);
+            let stream: String = s.get(2);
+            after_session.clone_from(&session);
+            if s.get::<_, String>(5) != "enabled" {
+                // Reuse current guidance so recovery and unresolved effects keep
+                // priority without duplicating their predicates in navigation.
+                let current = super::observation::read(
+                    tx,
+                    tenant,
+                    project,
+                    auth,
+                    &work,
+                    &stream,
+                    s.get(4),
+                    Some(&session),
+                )
+                .await?;
+                if current["guidance"]["action"]["op"] == "work.next" {
+                    continue;
+                }
+            }
+            resume.push(json!({"session_id":session,"work_id":work,
+        "workstream_id":stream,"session_version":s.get::<_,i64>(3).to_string(),
+        "next_query":{"protocol_version":1,"op":"work.observe","session_id":session,
+            "work_id":work,"workstream_id":stream}}));
+            if resume.len() > 20 {
+                break;
+            }
+        }
+        // Apply the bound after filtering; inactive history must not hide a
+        // later eligible session or make resume_truncated inaccurate.
+        if resume.len() > 20 || own.len() < 21 {
+            break;
+        }
+    }
+    let resume_truncated = resume.len() > 20;
+    resume.truncate(20);
     let mut items = Vec::new();
     for row in rows.iter().take(limit as usize) {
         let work: String = row.get(0);
@@ -140,7 +178,6 @@ pub(super) async fn next(
             )
             .is_ok();
         let resumable = if unsettled == 1
-            && row.get::<_, String>(7) == "enabled"
             && !pending.get::<_, bool>(0)
             && !unknown_resources
             && !recovery_blocked
@@ -194,14 +231,14 @@ pub(super) async fn next(
             "waiting_external"
         } else if blocked_deps {
             "waiting_dependency"
-        } else if !writable || row.get::<_, String>(7) != "enabled" {
+        } else if !writable {
             "observe"
         } else {
             "prepare"
         };
         items.push(json!({"work_id":work,"title":row.get::<_,String>(1),"workstream_id":stream,
             "state":row.get::<_,Option<String>>(4),"definition_state":row.get::<_,String>(7),"navigation":status,"responsibility":responsibility,
-            "next_query":{"protocol_version":1,"op":if status=="resume" {"work.observe"} else if matches!(status,"recovery_required"|"waiting_external") {"work.recovery"} else {"work.prepare"},"work_id":work,"workstream_id":stream}}));
+            "next_query":{"protocol_version":1,"op":if matches!(status,"resume"|"observe") {"work.observe"} else if matches!(status,"recovery_required"|"waiting_external") {"work.recovery"} else {"work.prepare"},"work_id":work,"workstream_id":stream}}));
     }
     let next = if rows.len() > limit as usize {
         next_cursor(
@@ -215,8 +252,8 @@ pub(super) async fn next(
     };
     Ok(
         json!({"protocol_version":1,"project_revision":auth.revision.to_string(),"data":{
-        "identity":identity(auth),"resume":resume,"resume_truncated":own.len()>20,"items":items,"next_cursor":next,
-        "execution_authorized":false,"next_action":"Resume own current-client sessions first; otherwise consume work.prepare before session/claim/execution admission. Navigation is advisory, not a reservation or dependency acceptance.",
+        "identity":identity(auth),"resume":resume,"resume_truncated":resume_truncated,"items":items,"next_cursor":next,
+        "execution_authorized":false,"next_action":"Follow current guidance for the listed own sessions first; otherwise follow the selected item's next_query. Stop automatic navigation on inspect_only until recheck_on changes. Candidates have enabled definitions; consume work.prepare before session/claim/execution admission. Navigation is advisory, not a reservation or dependency acceptance.",
         "recheck_on":["progress","wait_resolved","claim_conflict","source_change","permission_change","unknown_outcome"]}}),
     )
 }
