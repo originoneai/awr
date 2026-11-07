@@ -142,6 +142,48 @@ pub enum PgError {
 }
 
 impl PgError {
+    pub(crate) fn review_finding_reference(index: usize, field: &'static str) -> Self {
+        if index >= 32 || !matches!(field, "criterion" | "rule") {
+            return Self::invalid_command_fields();
+        }
+        Self::Protocol(format!(
+            "review_input/findings/{index}/{field}/contract_reference"
+        ))
+    }
+
+    /// Closed field identifiers only: neither submitted text nor source content
+    /// may become a public validation diagnostic.
+    pub fn review_finding_input_diagnostic(&self) -> Option<serde_json::Value> {
+        let Self::Protocol(message) = self else {
+            return None;
+        };
+        let (index, field) = message
+            .strip_prefix("review_input/findings/")?
+            .split_once('/')?;
+        let number: usize = index.parse().ok()?;
+        if number >= 32 || number.to_string() != index {
+            return None;
+        }
+        let (field, source) = match field {
+            "criterion/contract_reference" => ("criterion", "acceptance"),
+            "rule/contract_reference" => ("rule", "hard_rules"),
+            _ => return None,
+        };
+        Some(serde_json::json!({
+            "code":"InvalidInput",
+            "message":"finding reference must match one current contract entry exactly",
+            "invalid_field":format!("/args/findings/{number}/{field}"),
+            "constraint":"exact_current_contract_reference",
+            "request_reserved":false,
+            "action_guidance":{
+                "when":"A review finding names a criterion or hard rule absent from the current contract.",
+                "because":"Severity is derived from an exact contract reference, not a paraphrase or a combination of entries.",
+                "action":format!("Read this work with work.prepare and copy one complete data.published_contract.{source} entry exactly into {field}. Put explanation or additional references in summary/counterexample; keep the counterexample and applicable re-review scope."),
+                "recheck_on":"After correcting the finding; refresh if the contract or round changed. Review authority and independence still apply."
+            }
+        }))
+    }
+
     pub(crate) fn planning_scope_invalid() -> Self {
         Self::Protocol("planning_input/scope_paths/bounds".into())
     }

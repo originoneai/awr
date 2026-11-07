@@ -76,6 +76,30 @@ fn text_ok(text: &str) -> bool {
 }
 
 impl ReviewFinding {
+    /// Names only a field whose reference differs from the current contract;
+    /// never returns the submitted text or a contract value.
+    pub fn unmatched_contract_field(
+        &self,
+        acceptance: &[String],
+        hard_rules: &[String],
+    ) -> Option<&'static str> {
+        if self
+            .criterion
+            .as_deref()
+            .is_some_and(|c| !acceptance.iter().any(|a| a == c))
+        {
+            Some("criterion")
+        } else if self
+            .rule
+            .as_deref()
+            .is_some_and(|r| !hard_rules.iter().any(|h| h == r))
+        {
+            Some("rule")
+        } else {
+            None
+        }
+    }
+
     pub fn validate(&self) -> TeamResult<()> {
         if !name_ok(&self.finding_key, MAX_KEY) {
             return Err(invalid("the key is blank, padded or too long"));
@@ -119,21 +143,14 @@ pub fn judge_finding(
     unresolved: &BTreeSet<String>,
 ) -> TeamResult<JudgedFinding> {
     finding.validate()?;
-    if finding
-        .criterion
-        .as_deref()
-        .is_some_and(|c| !acceptance.iter().any(|a| a == c))
-    {
-        return Err(invalid(
-            "the criterion is not an acceptance criterion of the work",
-        ));
-    }
-    if finding
-        .rule
-        .as_deref()
-        .is_some_and(|r| !hard_rules.iter().any(|h| h == r))
-    {
-        return Err(invalid("the rule is not a hard rule of the contract"));
+    match finding.unmatched_contract_field(acceptance, hard_rules) {
+        Some("criterion") => {
+            return Err(invalid(
+                "the criterion is not an acceptance criterion of the work",
+            ));
+        }
+        Some("rule") => return Err(invalid("the rule is not a hard rule of the contract")),
+        _ => {}
     }
     let input = FindingInput {
         work: String::new(),

@@ -418,6 +418,54 @@ fn decision_args(round_id: &Value, extra: Value) -> Value {
 }
 
 #[tokio::test]
+async fn a_mismatched_finding_reference_names_its_field_and_keeps_the_request_correctable() {
+    let governed = candidate("governed_enforce", complete());
+    let (_g, admin, _, store) = setup_with_specs(files(&governed)).await;
+    seed_review_actors(&admin).await;
+    let evidence = submitted(&admin, &store, "exec-ref", "ev-ref", b"reference-check").await;
+    let round = open_round(&store, "open-ref", &evidence).await["round_id"].clone();
+    let note = json!({"finding_key":"NOTE", "summary":"A deferred observation"});
+    for field in ["criterion", "rule"] {
+        let mut finding = blocking_finding("REFERENCE");
+        finding[field] = json!("A paraphrased contract entry with operator-note-sentinel");
+        let error = run_err(
+            &store,
+            REVIEWER_TOKEN,
+            "ret-reference",
+            "review.return",
+            decision_args(&round, json!({"findings":[note, finding]})),
+        )
+        .await;
+        assert!(
+            error.to_string().contains(&format!(
+                "review_input/findings/1/{field}/contract_reference"
+            )),
+            "{error:?}"
+        );
+        let count: i64 = admin
+            .query_one("SELECT count(*) FROM awr_team.review_findings", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(count, 0, "even an earlier valid finding rolls back");
+    }
+    // The same request ID remains usable once the exact criterion is supplied.
+    let result = run(
+        &store,
+        REVIEWER_TOKEN,
+        "ret-reference",
+        "review.return",
+        decision_args(
+            &round,
+            json!({"findings":[note, blocking_finding("REFERENCE")]}),
+        ),
+    )
+    .await;
+    assert_eq!(result["state"], "rejected");
+    assert_eq!(result["findings"]["open_blocking"], json!(["REFERENCE"]));
+}
+
+#[tokio::test]
 async fn a_return_of_governed_work_needs_a_blocking_finding_and_everything_else_is_deferred() {
     let governed = candidate("governed_enforce", complete());
     let (_g, admin, _, store) = setup_with_specs(files(&governed)).await;

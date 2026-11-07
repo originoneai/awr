@@ -114,7 +114,7 @@ pub(crate) async fn record(
     let round = u32::try_from(round_index).map_err(|_| invalid())?;
     let mut keys = BTreeSet::new();
     let mut recorded = Vec::new();
-    for finding in findings {
+    for (index, finding) in findings.iter().enumerate() {
         if !keys.insert(finding.finding_key.clone()) {
             return Err(invalid());
         }
@@ -129,6 +129,11 @@ pub(crate) async fn record(
         if taken {
             // A finding key names one finding of the work for good.
             return Err(invalid());
+        }
+        if let Some(field) =
+            finding.unmatched_contract_field(&contract.acceptance, &contract.hard_rules)
+        {
+            return Err(PgError::review_finding_reference(index, field));
         }
         let judged = judge_finding(
             finding,
