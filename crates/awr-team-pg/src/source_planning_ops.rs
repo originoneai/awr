@@ -140,6 +140,27 @@ enum PlanningReservation {
     },
 }
 
+#[derive(Clone, Copy)]
+enum PlanningInput<'a> {
+    Suggest(&'a PlanningSuggestRequest),
+    Draft(&'a PlanningDraftRequest),
+    Approve(&'a PlanningApproveRequest),
+}
+
+impl PlanningDraftRequest {
+    fn create_input(&self, domain_id: &str) -> DraftCandidateCreate {
+        DraftCandidateCreate {
+            changes: self.changes.clone(),
+            suggestion_ids: self.suggestion_ids.clone(),
+            allowed_spec_roots: self.allowed_spec_roots.clone(),
+            project_goal_keys: self.project_goal_keys.clone(),
+            self_approve_policy: self.self_approve_policy.clone(),
+            author_person_id: self.author_person_id.clone(),
+            predetermined_candidate_id: Some(domain_id.to_owned()),
+        }
+    }
+}
+
 impl SourceStore {
     /// One in-flight command per request_id. The receipt commits before the
     /// domain mutation, so a peer must wait until finalize instead of applying
@@ -169,7 +190,7 @@ impl SourceStore {
 }
 
 /// Both planning transports and the generic query use the same live authority
-/// and completed-only receipt view. Reserved commands remain unknown.
+/// and receipt view. A reservation is visible but never proves a domain effect.
 pub(crate) async fn read_planning_command_receipt(
     tx: &tokio_postgres::Transaction<'_>,
     tenant_id: &str,
@@ -261,7 +282,16 @@ pub(crate) async fn read_planning_command_receipt(
         }
     }
     if !completed {
-        return Ok(None);
+        return Ok(Some(json!({
+            "protocol": RECEIPT_PROTOCOL,
+            "request_id": request_id,
+            "op": row.get::<_, String>(0),
+            "request_hash": row.get::<_, String>(1),
+            "status": "reserved",
+            "already_recorded": false,
+            "result": null,
+            "next_step": "This request is reserved; its effect is unconfirmed. Retry the identical operation and payload with this request_id, then query planning.outcome. Do not change its payload or use a new request_id to repeat it."
+        })));
     }
     Ok(Some(json!({
         "protocol": RECEIPT_PROTOCOL,
@@ -327,6 +357,7 @@ impl SourceStore {
         hash: &str,
         domain_id: &str,
         extra: &Value,
+        input: Option<PlanningInput<'_>>,
     ) -> PgResult<PlanningReservation> {
         let action = action_for_planning_op(op)?;
         let mut client = self.connect().await?;
@@ -395,6 +426,56 @@ impl SourceStore {
                 domain_id: domain,
                 placeholder: prior,
             });
+        }
+        // Check only fresh slots. Existing requests retain immutable payloads and
+        // resume semantics even when their domain state has moved on.
+        if let Some(input) = input {
+            let asserted = match input {
+                PlanningInput::Suggest(req) => req.author_person_id.as_deref(),
+                PlanningInput::Draft(req) => req.author_person_id.as_deref(),
+                PlanningInput::Approve(req) => req.author_person_id.as_deref(),
+            };
+            awr_team::attested_actor_person(&auth.actor_id, asserted).map_err(|_| {
+                PgError::Protocol("planning_input/author_person_id/actor_mismatch".into())
+            })?;
+            if let PlanningInput::Draft(req) = input {
+                match req.mode.as_str() {
+                    "create" => {
+                        super::planning::prepare_candidate_create(
+                            &tx,
+                            tenant_id,
+                            project_id,
+                            &auth,
+                            &req.create_input(domain_id),
+                            domain_id,
+                        )
+                        .await?;
+                    }
+                    "edit" => {
+                        let candidate = req
+                            .candidate_id
+                            .as_deref()
+                            .filter(|id| !id.trim().is_empty())
+                            .ok_or_else(|| {
+                                PgError::Protocol("candidate_id required for draft edit".into())
+                            })?;
+                        super::planning::prepare_candidate_edit(
+                            &tx,
+                            tenant_id,
+                            project_id,
+                            &auth,
+                            candidate,
+                            req.changes.clone(),
+                        )
+                        .await?;
+                    }
+                    _ => {
+                        return Err(PgError::Protocol(
+                            "draft mode must be create or edit".into(),
+                        ));
+                    }
+                }
+            }
         }
         let mut placeholder = json!({
             "protocol": RECEIPT_PROTOCOL,
@@ -588,6 +669,7 @@ impl SourceStore {
                 &hash,
                 &domain_id,
                 &json!({"affected_work_keys": req.affected_work_keys}),
+                Some(PlanningInput::Suggest(req)),
             )
             .await?;
         let domain_id = match reserved {
@@ -671,6 +753,7 @@ impl SourceStore {
                 &hash,
                 &domain_id,
                 &extra,
+                Some(PlanningInput::Draft(req)),
             )
             .await?;
         let (domain_id, placeholder) = match reserved {
@@ -707,15 +790,7 @@ impl SourceStore {
         }
         let result = match req.mode.as_str() {
             "create" => {
-                let create = DraftCandidateCreate {
-                    changes: req.changes.clone(),
-                    suggestion_ids: req.suggestion_ids.clone(),
-                    allowed_spec_roots: req.allowed_spec_roots.clone(),
-                    project_goal_keys: req.project_goal_keys.clone(),
-                    self_approve_policy: req.self_approve_policy.clone(),
-                    author_person_id: req.author_person_id.clone(),
-                    predetermined_candidate_id: Some(domain_id.clone()),
-                };
+                let create = req.create_input(&domain_id);
                 let bind = crate::source::planning::PlanningCommandBind {
                     request_id: req.request_id.clone(),
                     op: "planning.edit_draft".into(),
@@ -799,6 +874,7 @@ impl SourceStore {
                 &hash,
                 &req.candidate_id,
                 &json!({}),
+                Some(PlanningInput::Approve(req)),
             )
             .await?;
         if let PlanningReservation::Completed(existing) = reserved {
@@ -911,6 +987,7 @@ impl SourceStore {
                 &hash,
                 &req.candidate_id,
                 &json!({"canonical_request":intent}),
+                None,
             )
             .await?;
         if let PlanningReservation::Completed(existing) = reserved {

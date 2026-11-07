@@ -592,7 +592,7 @@ async fn scoped_proposer_recovers_only_own_receipt_on_both_read_paths() {
 }
 
 #[tokio::test]
-async fn task_proposal_recovery_stays_unknown_until_completed_and_allows_paused_reads() {
+async fn task_proposal_recovery_exposes_pending_until_completed_and_allows_paused_reads() {
     let (_guard, admin, db, read) = setup().await;
     enable_writes(&admin).await;
     flip_actor_to_agent(&admin).await;
@@ -615,11 +615,13 @@ async fn task_proposal_recovery_stays_unknown_until_completed_and_allows_paused_
         .unwrap();
     admin.execute("UPDATE awr_team.planning_command_receipts SET status='reserved',result_json=$1 WHERE request_id=$2",
         &[&json!({"affected_work_keys":["a"],"domain_id":"private-reserved-payload"}), &req.request_id]).await.unwrap();
-    assert!(
-        outcome_both(&source, &read, A, &req.request_id)
-            .await
-            .is_none()
-    );
+    let pending = outcome_both(&source, &read, A, &req.request_id)
+        .await
+        .unwrap();
+    assert_eq!(pending["status"], "reserved");
+    assert_eq!(pending["already_recorded"], false);
+    assert!(pending["result"].is_null());
+    assert!(!pending.to_string().contains("private-reserved-payload"));
     admin.execute("UPDATE awr_team.planning_command_receipts SET status='completed',result_json=$1 WHERE request_id=$2",
         &[&submitted, &req.request_id]).await.unwrap();
     admin.batch_execute("UPDATE awr_team.workstream_grants SET can_write=false WHERE client_id='cli-a';
@@ -796,11 +798,13 @@ async fn project_inspection_preserves_human_and_explicit_project_reads() {
     );
     admin.execute("UPDATE awr_team.planning_command_receipts SET status='reserved',result_json=$1 WHERE request_id=$2",
         &[&json!({"domain_id":"private-reserved-payload"}), &req.request_id]).await.unwrap();
-    assert!(
-        outcome_both(&source, &read, B, &req.request_id)
-            .await
-            .is_none()
-    );
+    let pending = outcome_both(&source, &read, B, &req.request_id)
+        .await
+        .unwrap();
+    assert_eq!(pending["status"], "reserved");
+    assert_eq!(pending["already_recorded"], false);
+    assert!(pending["result"].is_null());
+    assert!(!pending.to_string().contains("private-reserved-payload"));
 }
 
 async fn deny_both_suggestion_entries(store: &SourceStore, request: &PlanningSuggestRequest) {

@@ -385,7 +385,6 @@ impl SourceStore {
         .await?;
         let (baseline_digest, baseline_epoch) =
             current_baseline(&tx, tenant_id, project_id).await?;
-        let known = known_work(&tx, tenant_id, project_id).await?;
         let policy = create
             .self_approve_policy
             .clone()
@@ -395,7 +394,7 @@ impl SourceStore {
             &policy.delivery_completion_policy,
         )
         .map_err(map_team)?;
-        let person = attested_actor_person(&auth.actor_id, create.author_person_id.as_deref())
+        attested_actor_person(&auth.actor_id, create.author_person_id.as_deref())
             .map_err(map_team)?;
         let candidate_id = create
             .predetermined_candidate_id
@@ -422,35 +421,9 @@ impl SourceStore {
             tx.commit().await?;
             return Ok(result);
         }
-        let candidate = PlanningCandidate {
-            codec: planning_codec_for_changes(&create.changes).into(),
-            candidate_id: candidate_id.clone(),
-            project_id: project_id.into(),
-            author_person_id: person,
-            author_actor_id: auth.actor_id.clone(),
-            baseline_digest: baseline_digest.clone(),
-            baseline_epoch: baseline_epoch.clone(),
-            draft_revision: 1,
-            changes: create.changes.clone(),
-            suggestion_ids: create.suggestion_ids.clone(),
-            state: CandidateState::Drafting,
-            approval: None,
-            allowed_spec_roots: create.allowed_spec_roots.clone(),
-            project_goal_keys: if create.project_goal_keys.is_empty() {
-                vec!["delivery".into()]
-            } else {
-                create.project_goal_keys.clone()
-            },
-        };
-        let base_view = BaselineView {
-            digest: &baseline_digest,
-            epoch: &baseline_epoch,
-            current: true,
-            known_work_ids: known.ids.iter().map(String::as_str).collect(),
-            known_external_keys: known.keys.iter().map(String::as_str).collect(),
-        };
-        validate_candidate(&candidate, &base_view).map_err(map_team)?;
-        authorize_candidate_writable_scope(&tx, &auth, tenant_id, project_id, &candidate).await?;
+        let (candidate, policy) =
+            prepare_candidate_create(&tx, tenant_id, project_id, &auth, create, &candidate_id)
+                .await?;
         let digest = candidate.candidate_digest().map_err(map_team)?;
         let changes_json = serde_json::to_value(&candidate.changes)
             .map_err(|e| PgError::Protocol(e.to_string()))?;
@@ -565,23 +538,11 @@ impl SourceStore {
         )
         .await?;
         lock_candidate(&tx, tenant_id, project_id, candidate_id).await?;
-        let mut candidate = load_candidate(&tx, tenant_id, project_id, candidate_id).await?;
-        let (baseline_digest, baseline_epoch) =
-            current_baseline(&tx, tenant_id, project_id).await?;
-        // Do not silently replace the stored baseline; require an explicit rebase
-        // (fresh candidate) when the authority source has moved on.
-        ensure_baseline_current(&candidate, &baseline_digest, &baseline_epoch)?;
-        candidate = edit_candidate(candidate, changes).map_err(map_team)?;
-        let known = known_work(&tx, tenant_id, project_id).await?;
-        let base_view = BaselineView {
-            digest: &baseline_digest,
-            epoch: &baseline_epoch,
-            current: true,
-            known_work_ids: known.ids.iter().map(String::as_str).collect(),
-            known_external_keys: known.keys.iter().map(String::as_str).collect(),
-        };
-        validate_candidate(&candidate, &base_view).map_err(map_team)?;
-        authorize_candidate_writable_scope(&tx, &auth, tenant_id, project_id, &candidate).await?;
+        let candidate =
+            prepare_candidate_edit(&tx, tenant_id, project_id, &auth, candidate_id, changes)
+                .await?;
+        let baseline_digest = candidate.baseline_digest.clone();
+        let baseline_epoch = candidate.baseline_epoch.clone();
         let digest = candidate.candidate_digest().map_err(map_team)?;
         let changes_json = serde_json::to_value(&candidate.changes)
             .map_err(|e| PgError::Protocol(e.to_string()))?;
@@ -1337,4 +1298,85 @@ fn now_unix_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Share definition validation between fresh request admission and the domain write.
+pub(super) async fn prepare_candidate_create(
+    tx: &Transaction<'_>,
+    tenant_id: &str,
+    project_id: &str,
+    auth: &ReaderAuthority,
+    create: &DraftCandidateCreate,
+    candidate_id: &str,
+) -> PgResult<(PlanningCandidate, OrdinaryPlanningSelfApprovePolicy)> {
+    let (baseline_digest, baseline_epoch) = current_baseline(tx, tenant_id, project_id).await?;
+    let known = known_work(tx, tenant_id, project_id).await?;
+    let policy = create
+        .self_approve_policy
+        .clone()
+        .unwrap_or_else(OrdinaryPlanningSelfApprovePolicy::ordinary_default);
+    ensure_independent_review_not_downgraded(
+        "independent_review",
+        &policy.delivery_completion_policy,
+    )
+    .map_err(map_team)?;
+    let person = attested_actor_person(&auth.actor_id, create.author_person_id.as_deref())
+        .map_err(map_team)?;
+    let candidate = PlanningCandidate {
+        codec: planning_codec_for_changes(&create.changes).into(),
+        candidate_id: candidate_id.to_owned(),
+        project_id: project_id.into(),
+        author_person_id: person,
+        author_actor_id: auth.actor_id.clone(),
+        baseline_digest: baseline_digest.clone(),
+        baseline_epoch: baseline_epoch.clone(),
+        draft_revision: 1,
+        changes: create.changes.clone(),
+        suggestion_ids: create.suggestion_ids.clone(),
+        state: CandidateState::Drafting,
+        approval: None,
+        allowed_spec_roots: create.allowed_spec_roots.clone(),
+        project_goal_keys: if create.project_goal_keys.is_empty() {
+            vec!["delivery".into()]
+        } else {
+            create.project_goal_keys.clone()
+        },
+    };
+    let base_view = BaselineView {
+        digest: &baseline_digest,
+        epoch: &baseline_epoch,
+        current: true,
+        known_work_ids: known.ids.iter().map(String::as_str).collect(),
+        known_external_keys: known.keys.iter().map(String::as_str).collect(),
+    };
+    validate_candidate(&candidate, &base_view).map_err(map_team)?;
+    authorize_candidate_writable_scope(tx, auth, tenant_id, project_id, &candidate).await?;
+    Ok((candidate, policy))
+}
+
+pub(super) async fn prepare_candidate_edit(
+    tx: &Transaction<'_>,
+    tenant_id: &str,
+    project_id: &str,
+    auth: &ReaderAuthority,
+    candidate_id: &str,
+    changes: Vec<DraftChange>,
+) -> PgResult<PlanningCandidate> {
+    let mut candidate = load_candidate(tx, tenant_id, project_id, candidate_id).await?;
+    let (baseline_digest, baseline_epoch) = current_baseline(tx, tenant_id, project_id).await?;
+    // Do not silently replace the stored baseline; require an explicit rebase
+    // (fresh candidate) when the authority source has moved on.
+    ensure_baseline_current(&candidate, &baseline_digest, &baseline_epoch)?;
+    candidate = edit_candidate(candidate, changes).map_err(map_team)?;
+    let known = known_work(tx, tenant_id, project_id).await?;
+    let base_view = BaselineView {
+        digest: &baseline_digest,
+        epoch: &baseline_epoch,
+        current: true,
+        known_work_ids: known.ids.iter().map(String::as_str).collect(),
+        known_external_keys: known.keys.iter().map(String::as_str).collect(),
+    };
+    validate_candidate(&candidate, &base_view).map_err(map_team)?;
+    authorize_candidate_writable_scope(tx, auth, tenant_id, project_id, &candidate).await?;
+    Ok(candidate)
 }

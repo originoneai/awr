@@ -142,6 +142,22 @@ pub enum PgError {
 }
 
 impl PgError {
+    /// Fixed diagnostics for fresh planning input rejection; never echo the assertion.
+    pub fn planning_input_diagnostic(&self) -> Option<serde_json::Value> {
+        if !matches!(self, Self::Protocol(message) if message == "planning_input/author_person_id/actor_mismatch")
+        {
+            return None;
+        }
+        Some(serde_json::json!({
+            "code": "Forbidden",
+            "message": "author_person_id must match the authenticated actor_id",
+            "invalid_field": "/author_person_id",
+            "constraint": "authenticated_actor_assertion",
+            "request_reserved": false,
+            "next_step": "Normally omit author_person_id. If supplied, use the credential's actor_id, not the responsible member ID. Correct this unused request and retry; this assertion grants no authority."
+        }))
+    }
+
     /// Validation records only fixed field/rule identifiers. Never store caller
     /// values here or forward arbitrary Protocol text to a transport.
     pub(crate) fn query_field(field: &'static str, rule: &'static str) -> Self {

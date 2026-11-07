@@ -595,3 +595,194 @@ async fn developer_publish_does_not_reserve_a_receipt() {
         .get(0);
     assert_eq!(reserved, 0);
 }
+
+async fn receipt_count(admin: &tokio_postgres::Client, request: &str) -> i64 {
+    admin.query_one(
+        "SELECT count(*) FROM awr_team.planning_command_receipts WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3",
+        &[&TENANT, &PROJECT, &request],
+    ).await.unwrap().get(0)
+}
+
+#[tokio::test]
+async fn invalid_author_does_not_consume_suggest_draft_or_approve_request_ids() {
+    let (_g, admin, db, _read) = setup().await;
+    elev_maintainer(&admin).await;
+    let store = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let mut suggest = PlanningSuggestRequest {
+        protocol_version: 1,
+        request_id: "correct-suggest".into(),
+        rationale: "Share an API contract".into(),
+        affected_work_keys: vec!["a".into()],
+        proposed_notes: json!({}),
+        author_person_id: Some("responsible-member".into()),
+    };
+    assert!(
+        store
+            .planning_suggest(TENANT, PROJECT, A, &suggest)
+            .await
+            .is_err()
+    );
+    assert_eq!(receipt_count(&admin, &suggest.request_id).await, 0);
+    suggest.author_person_id = None;
+    store
+        .planning_suggest(TENANT, PROJECT, A, &suggest)
+        .await
+        .unwrap();
+    let mut req = create_req("correct-draft", "API-CONTRACT");
+    req.author_person_id = Some("responsible-member".into());
+    assert!(
+        store
+            .planning_draft(TENANT, PROJECT, A, &req)
+            .await
+            .is_err()
+    );
+    assert_eq!(receipt_count(&admin, &req.request_id).await, 0);
+    let candidates: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.planning_candidates", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(candidates, 0);
+    req.author_person_id = None;
+    let candidate = store
+        .planning_draft(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    let mut approval = PlanningApproveRequest {
+        protocol_version: 1,
+        request_id: "correct-approve".into(),
+        candidate_id: candidate["result"]["candidate_id"].as_str().unwrap().into(),
+        candidate_digest: candidate["result"]["candidate_digest"]
+            .as_str()
+            .unwrap()
+            .into(),
+        author_person_id: Some("responsible-member".into()),
+    };
+    assert!(
+        store
+            .planning_approve(TENANT, PROJECT, A, &approval)
+            .await
+            .is_err()
+    );
+    assert_eq!(receipt_count(&admin, &approval.request_id).await, 0);
+    let approvals: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.planning_approvals", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(approvals, 0);
+    approval.author_person_id = None;
+    store
+        .planning_approve(TENANT, PROJECT, A, &approval)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn invalid_draft_definition_is_correctable_before_reservation() {
+    let (_g, admin, db, _read) = setup().await;
+    elev_maintainer(&admin).await;
+    let store = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let mut req = create_req("correct-definition", "SUPPORT-FILTER");
+    req.changes[0].after.goals = vec!["support-queue".into()];
+    assert!(
+        store
+            .planning_draft(TENANT, PROJECT, A, &req)
+            .await
+            .is_err()
+    );
+    assert_eq!(receipt_count(&admin, &req.request_id).await, 0);
+    req.project_goal_keys = vec!["support-queue".into()];
+    let created = store
+        .planning_draft(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    let mut edit = req.clone();
+    edit.request_id = "correct-edit".into();
+    edit.mode = "edit".into();
+    edit.candidate_id = Some(created["result"]["candidate_id"].as_str().unwrap().into());
+    edit.changes[0].op = DraftOpKind::EditFields;
+    edit.changes[0].before = Some(req.changes[0].after.clone());
+    edit.changes[0].after.scope_paths = vec!["../outside.md".into()];
+    assert!(
+        store
+            .planning_draft(TENANT, PROJECT, A, &edit)
+            .await
+            .is_err()
+    );
+    assert_eq!(receipt_count(&admin, &edit.request_id).await, 0);
+    edit.changes[0].after.scope_paths = vec!["specs/filter.md".into()];
+    let edited = store
+        .planning_draft(TENANT, PROJECT, A, &edit)
+        .await
+        .unwrap();
+    assert_eq!(edited["result"]["draft_revision"], 2);
+    let mut changed = edit.clone();
+    changed.changes[0].after.title = "different intent".into();
+    assert!(matches!(
+        store.planning_draft(TENANT, PROJECT, A, &changed).await,
+        Err(PgError::IdempotencyConflict)
+    ));
+}
+
+#[tokio::test]
+async fn reserved_outcome_exposes_pending_state_without_claiming_an_effect() {
+    let (_g, admin, db, read) = setup().await;
+    elev_maintainer(&admin).await;
+    let store = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let req = create_req("reserved-visible", "VISIBLE-DRAFT");
+    let created = store
+        .planning_draft(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    rewind_receipt(
+        &admin,
+        &req.request_id,
+        "planning.edit_draft",
+        created["result"]["candidate_id"].as_str().unwrap(),
+        None,
+    )
+    .await;
+    let pending = store
+        .get_planning_command_receipt(TENANT, PROJECT, A, &req.request_id)
+        .await
+        .unwrap()
+        .expect("a reservation is distinct from an absent receipt");
+    assert_eq!(pending["status"], "reserved");
+    assert_eq!(pending["already_recorded"], false);
+    assert!(pending["result"].is_null());
+    assert!(pending.get("domain_id").is_none());
+    let query: WorkstreamQuery = serde_json::from_value(
+        json!({"protocol_version":1,"op":"planning.outcome","request_id":req.request_id}),
+    )
+    .unwrap();
+    assert_eq!(
+        read.query(TENANT, PROJECT, A, query).await.unwrap()["data"],
+        pending
+    );
+    assert!(
+        store
+            .get_planning_command_receipt(TENANT, PROJECT, A, "never-submitted")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let mut changed = req.clone();
+    changed.author_person_id = None;
+    assert!(matches!(
+        store.planning_draft(TENANT, PROJECT, A, &changed).await,
+        Err(PgError::IdempotencyConflict)
+    ));
+    store
+        .planning_draft(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .get_planning_command_receipt(TENANT, PROJECT, A, &req.request_id)
+            .await
+            .unwrap()
+            .unwrap()["already_recorded"],
+        true
+    );
+}

@@ -1464,7 +1464,7 @@ fn catalog() -> Vec<Tool> {
             "rationale":{"type":"string","minLength":1,"maxLength":8192},
             "affected_work_keys":{"type":"array","maxItems":256,"items":{"type":"string","maxLength":128}},
             "proposed_notes":{},
-            "author_person_id":{"type":["string","null"],"maxLength":128}
+            "author_person_id":{"type":["string","null"],"maxLength":128,"description":"Optional compatibility assertion; normally omit. If supplied, match the credential actor_id, not the responsible member ID. Grants no authority."}
         }
     });
     let mut planning_draft = json!({
@@ -1477,10 +1477,10 @@ fn catalog() -> Vec<Tool> {
             "candidate_id":{"type":["string","null"],"maxLength":128},
             "changes":{"type":"array","maxItems":256},
             "suggestion_ids":{"type":"array","maxItems":256,"items":{"type":"string"}},
-            "allowed_spec_roots":{"type":"array","maxItems":64,"items":{"type":"string"}},
-            "project_goal_keys":{"type":"array","maxItems":64,"items":{"type":"string"}},
+            "allowed_spec_roots":{"type":"array","maxItems":64,"items":{"type":"string"},"description":"For create, supply the project specification roots covering every change scope_path. Edit retains the candidate roots."},
+            "project_goal_keys":{"type":"array","maxItems":64,"items":{"type":"string"},"description":"For create, supply current project goal keys covering every change goal; omission defaults to delivery. Edit retains candidate goal keys."},
             "self_approve_policy":{"type":["object","null"]},
-            "author_person_id":{"type":["string","null"],"maxLength":128}
+            "author_person_id":{"type":["string","null"],"maxLength":128,"description":"Optional compatibility assertion; normally omit. If supplied, match the credential actor_id, not the responsible member ID. Grants no authority."}
         }
     });
     planning_schema::add(&mut planning_draft);
@@ -1500,7 +1500,7 @@ fn catalog() -> Vec<Tool> {
             "request_id":{"type":"string","maxLength":128},
             "candidate_id":{"type":"string","maxLength":128},
             "candidate_digest":{"type":"string","pattern":"^[0-9a-f]{64}$"},
-            "author_person_id":{"type":["string","null"],"maxLength":128}
+            "author_person_id":{"type":["string","null"],"maxLength":128,"description":"Optional compatibility assertion; normally omit. If supplied, match the credential actor_id, not the responsible member ID. Grants no authority."}
         }
     });
     let planning_publish = json!({
