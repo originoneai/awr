@@ -161,12 +161,17 @@ export function sourceContentQueryOptions(
 ) {
   return {
     queryKey: queryKeys.sourceContent(project, sourcePath, expectedSha256),
-    queryFn: ({ signal }: { signal: AbortSignal }) => teamRead<SourceContentData>(project, {
-      protocol_version: 1,
-      op: 'source.content',
-      source_path: sourcePath,
-      expected_sha256: expectedSha256,
-    }, signal),
+    queryFn: ({ signal, client }: { signal: AbortSignal; client: QueryClient }) => {
+      // Scheduled observers can retain options from before the revocation render.
+      if (isObservationReadRevoked(client)) throw new DOMException('Observation access revoked', 'AbortError');
+      signal.throwIfAborted();
+      return teamRead<SourceContentData>(project, {
+        protocol_version: 1,
+        op: 'source.content',
+        source_path: sourcePath,
+        expected_sha256: expectedSha256,
+      }, signal);
+    },
     enabled: !revoked,
     staleTime: Infinity,
     gcTime: Infinity,
