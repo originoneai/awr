@@ -2,11 +2,11 @@
 
 A local project hub and viewer for AWR project progress and dependencies.
 
-The development native CLI embeds the hub and the three views. Open `awr overview`
+The AWR 0.7.0 native CLI embeds the hub and the three views. Open `awr overview`
 to search this user's registered projects, select a card, and return to the list
 from its overview. Projects are ordered by their latest AWR use. The native
 service and assets ship together in the npm and Python payloads built from this
-source. Published 0.6.0 packages predate this feature.
+source. No separate Node viewer is needed for installed packages.
 
 See the [local hub guide](../../docs/dev/reference/local-project-hub.md) for
 registration, automatic single-instance startup, recovery and state locations.
@@ -25,6 +25,12 @@ awr overview
 
 Use `awr overview --no-open` to print its address. Initialize or use an existing
 project with AWR to add it automatically, or register known roots explicitly.
+
+The first ordinary AWR command or local Agent MCP connection automatically starts
+the background service. Then visit **<http://127.0.0.1:7381>** directly; running
+`awr overview` first is optional. Installation alone does not launch a process.
+If 7381 is occupied, `awr overview status --json` reports the selected URL.
+Concurrent calls reuse one instance, and the next CLI/MCP use recovers a killed service.
 
 ```sh
 awr overview register /absolute/path/to/project

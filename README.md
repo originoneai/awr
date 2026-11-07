@@ -39,6 +39,7 @@ release from development on `main`.
 
 | Core value | What changes for your project | Availability |
 | --- | --- | --- |
+| **See all your local projects in one place** | Search AWR-managed project cards, then inspect project nodes, mainline dependencies and collaboration swimlanes in the bundled Project Progress Overview. | **0.7.0** · [Project Hub](docs/dev/reference/local-project-hub.md) |
 | **Keep the goal through every handoff** | Goals, shared rules, decisions and unfinished work stay connected. A successor receives the current task's required context and checkpoint, so the project can continue across sessions and agents. | **0.6.0** · [Continuity](docs/dev/integrations/context-continuity.md) |
 | **Run independent workstreams in one project** | Frontend, backend and testing keep their own tasks, context and ownership while sharing project constraints. Work ownership, session attribution and scoped context are supported; authenticated transport isolation and resource scheduling are still in development. | **0.6.0 foundation** · [Workstreams](docs/dev/reference/workstreams.md) |
 | **Depend on a verified delivery** | Bind downstream work to an accepted artifact and contract version. When that dependency changes, recheck affected consumers according to their adoption policy. | **In development** · [Delivery dependencies](docs/dev/reference/workstreams.md#cross-workstream-dependencies) |
@@ -78,28 +79,28 @@ This example explains the collaboration model; it is not an executed benchmark.
 
 ## What you can use today
 
-The published **0.6.0** CLI/MCP packages provide source-backed goals and tasks,
+The **0.7.0** CLI/MCP packages provide source-backed goals and tasks,
 dependency navigation, focused context, session claims and checkpoints,
 version-bound evidence, a [shared HTTP MCP service](docs/dev/reference/mcp-service.md)
 for multiple clients/projects, and Personal Workspace file exchange.
 
-This release adds **opt-in assessment explanations, field-level diagnostics,
-cached work graphs and read-only mainline navigation**, keeps evidence current
-across unrelated ledger edits, and fixes intake, completion and recovery edge
-cases. Team surfaces are compiled in but **off by default**; see the
+This release adds **a bundled local Project Hub and Project Progress Overview**,
+with searchable project cards, three progress views, table filters and sorting,
+offline exports, and one recoverable background service. Optional work definitions
+and governance help keep decomposition, admission and rework tied to the goal.
+Team surfaces are compiled in but **off by default**; see the
 [Team runtime switch](docs/dev/reference/team-switch.md). It does not provide an
 authenticated Team service in the packages.
-See [what changed in 0.6.0](docs/dev/release/0.6.0.md).
+See [what changed in 0.7.0](docs/dev/release/0.7.0.md).
 
-Development source embeds [Project Hub](docs/dev/reference/local-project-hub.md)
-in native payloads. `awr overview` opens searchable project cards and their three
-Project Progress Overview views. CLI/MCP use maintains the local catalog and one
-recoverable background web service. This feature is outside published 0.6.0.
+Both npm and PyPI packages embed [Project Hub](docs/dev/reference/local-project-hub.md)
+and its assets in the native payload. `awr overview` opens the local workspace;
+you can also visit its address directly after the first CLI/MCP use.
 [Observer](tools/observer/README.md) provides the source Team observation workspace.
 
 **Development on `main`:** the Team service, versioned cross-workstream delivery
 adoption and Team collaboration/review are outside this release. The
-[release notes](https://github.com/originoneai/awr/releases/tag/v0.6.0) define the
+[release notes](https://github.com/originoneai/awr/releases/tag/v0.7.0) define the
 published package boundary.
 
 ## Quickstart
@@ -109,13 +110,13 @@ published package boundary.
 Choose one package manager. Both install the native `awr` and `awr-mcp` commands.
 
 ```sh
-npm install -g @originoneai/agent-work-runtime@0.6.0
+npm install -g @originoneai/agent-work-runtime@0.7.0
 ```
 
 Or, inside a Python virtual environment:
 
 ```sh
-python -m pip install agent-work-runtime==0.6.0
+python -m pip install agent-work-runtime==0.7.0
 ```
 
 ```sh
@@ -125,13 +126,27 @@ awr --version
 Prebuilt packages support **macOS 15+ (Apple Silicon and Intel)**,
 **Linux x64/arm64 (glibc 2.39+)** and **Windows x64**. Launchers require
 Node 22.14+ or Python 3.9+. See the
-[0.6.0 installation and upgrade guide](https://github.com/originoneai/awr/blob/v0.6.0/docs/dev/release/DISTRIBUTIONS.md).
+[0.7.0 installation and upgrade guide](https://github.com/originoneai/awr/blob/v0.7.0/docs/dev/release/DISTRIBUTIONS.md).
+
+**First use starts the local workspace.** After installation, the first ordinary
+AWR command (including `awr --version`) or an Agent connection through the local
+`awr-mcp` starts the background web service automatically. Then open
+**<http://127.0.0.1:7381>** directly; `awr overview` is a convenient browser shortcut,
+not a prerequisite. Installation alone does not start a process. If port 7381 is
+occupied, AWR selects a free local port; run `awr overview status --json` to find
+the actual URL. After the service is killed, the next CLI/MCP use restarts it
+without creating duplicate instances.
+
+**Upgrading from 0.6.0:** the project database stays at schema 14. Back up project
+state and the per-user Hub directory before upgrading. Reindex sources once to
+refresh changed projections; keep the matching backup for rollback. See the
+[upgrade checklist](docs/dev/release/DISTRIBUTIONS.md#upgrading-from-060).
 
 **Upgrading from 0.5.x:** stop existing writers and back up `.awr/state.db`
 (with SQLite's backup API), your sources and the old binaries first. The explicit
 source refresh migrates SQLite schema 7 to 14; the new tables are additive. Older
 binaries cannot open schema 14; rollback needs the matching pre-upgrade snapshot.
-See the [upgrade guide](https://github.com/originoneai/awr/blob/v0.6.0/docs/dev/release/DISTRIBUTIONS.md#upgrading-from-05x-schema-7--14).
+See the [upgrade guide](https://github.com/originoneai/awr/blob/v0.7.0/docs/dev/release/DISTRIBUTIONS.md#upgrading-from-05x-schema-7--14).
 
 ### 2. Connect your project
 
@@ -195,6 +210,22 @@ For multiple clients and projects, use the
 [MCP reference](crates/awr-mcp/README.md) for configuration and tool discovery.
 
 </details>
+
+### 4. Open the local project workspace
+
+```sh
+awr overview
+```
+
+Search the cards for projects already managed by AWR. Select one to inspect its
+nodes, mainline dependencies or collaboration swimlanes, and use **Back to projects**
+to return. **Take over project** creates a pending card from an absolute directory
+path and provides instructions for your Agent. **Delete** hides a card persistently.
+Use **Refresh projects** when needed; the list does not poll every minute.
+
+Opening a project reads its latest recorded SQLite state. **Sync project sources**
+is the explicit action for importing source-file changes. The local workspace is
+an observation surface; your Agent continues to manage work through CLI/MCP.
 
 ## Architecture
 

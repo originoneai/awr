@@ -34,6 +34,7 @@ AWR 围绕同一个项目目标，把**任务与工作线、交叉依赖、上�
 
 | 核心亮点 | 对项目的实际作用 | 当前状态 |
 | --- | --- | --- |
+| **一个入口，看清本机项目进度** | 搜索 AWR 已管理的项目卡片，进入内置 Project Progress Overview 查看项目节点、主线依赖和协作泳道。 | **0.7.0** · [本地项目工作台](docs/dev/reference/local-project-hub.md) |
 | **换会话、换 Agent，项目目标持续有效** | 目标、共享规则、决策和未完成事项保持关联。接手者获得当前任务必需的上下文与检查点，沿着同一个项目继续推进。 | **0.6.0 已发布** · [工作接续](docs/dev/integrations/context-continuity.md) |
 | **多条工作线独立推进，共同交付** | 前端、后端、测试分别维护任务、上下文与归属，同时遵守共享约束；支持任务归属、会话归属和按工作线组织上下文；带身份鉴权的通道隔离与资源调度仍在开发中。 | **0.6.0 提供基础能力** · [工作线机制](docs/dev/reference/workstreams.md) |
 | **依赖的是已验证交付物与具体版本** | 下游采用的是经过验收的产物和合同版本。依赖发生变化时，按照采用策略重新检查受影响的下游。 | **开发中** · [交叉依赖](docs/dev/reference/workstreams.md#cross-workstream-dependencies) |
@@ -63,18 +64,19 @@ AWR 围绕同一个项目目标，把**任务与工作线、交叉依赖、上�
 
 ## 现在可以使用什么
 
-已发布的 **0.6.0** CLI/MCP 安装包提供有来源的目标与任务、依赖导航、聚焦上下文、
+**0.7.0** CLI/MCP 安装包提供有来源的目标与任务、依赖导航、聚焦上下文、
 会话认领与检查点、绑定版本的证据，以及支持多个客户端和项目的
 [共享 HTTP MCP 服务](docs/dev/reference/mcp-service.md)与 Personal Workspace 文件交换。
 
-这一版新增**可选的评估解释、字段级诊断、缓存的任务图与只读主线导航**，在无关的台账编辑后保持证据有效，并修复接入、完成与恢复中的边界问题。
-Team 功能已编译在内但**默认关闭**，见 [Team 运行时开关](docs/dev/reference/team-switch.md)。安装包不提供带身份鉴权的 Team 服务。详见 [0.6.0 变更说明](docs/dev/release/0.6.0.md)。
+这一版新增**内置的本地项目工作台与 Project Progress Overview**：可搜索的项目卡片、三种进度视图、表格筛选排序、离线导出，以及可自动恢复的单实例后台服务。可选的任务定义与治理让拆解、准入和返工持续关联项目目标。
+Team 功能已编译在内但**默认关闭**，见 [Team 运行时开关](docs/dev/reference/team-switch.md)。安装包不提供带身份鉴权的 Team 服务。详见 [0.7.0 变更说明](docs/dev/release/0.7.0.md)。
 
-`main` 的源码工具包括 [Project Progress Overview](tools/project-progress-overview/README.md)，
-提供本地项目节点图、主线依赖图和泳道依赖图，以及面向团队的 [Observer 观测工作区](tools/observer/README.md)。两者均从源码启动。
+npm 和 PyPI 安装包均内置 [Project Hub](docs/dev/reference/local-project-hub.md) 服务与页面资源，
+执行 `awr overview` 即可打开；首次 CLI/MCP 使用启动服务后，也可直接访问本地地址。
+面向团队的 [Observer 观测工作区](tools/observer/README.md)仍从源码启动。
 
 **`main` 中的后续能力：** Team 服务、跨工作线版本交付采用、Team 协作与复核不在本次发行范围内。
-已发布安装包的能力以 [0.6.0 发布说明](https://github.com/originoneai/awr/releases/tag/v0.6.0)为准。
+安装包的能力以 [0.7.0 发布说明](https://github.com/originoneai/awr/releases/tag/v0.7.0)为准。
 
 <a id="quickstart"></a>
 
@@ -85,13 +87,13 @@ Team 功能已编译在内但**默认关闭**，见 [Team 运行时开关](docs/
 任选一种包管理器，两者都会安装原生的 `awr` 和 `awr-mcp` 命令。
 
 ```sh
-npm install -g @originoneai/agent-work-runtime@0.6.0
+npm install -g @originoneai/agent-work-runtime@0.7.0
 ```
 
 或者，在 Python 虚拟环境中安装：
 
 ```sh
-python -m pip install agent-work-runtime==0.6.0
+python -m pip install agent-work-runtime==0.7.0
 ```
 
 ```sh
@@ -101,11 +103,21 @@ awr --version
 预编译包支持 **macOS 15+（Apple Silicon 与 Intel）**、
 **Linux x64/arm64（glibc 2.39+）**、**Windows x64**。
 启动器需要 Node 22.14+ 或 Python 3.9+。详见
-[0.6.0 安装与升级指南](https://github.com/originoneai/awr/blob/v0.6.0/docs/dev/release/DISTRIBUTIONS.md)。
+[0.7.0 安装与升级指南](https://github.com/originoneai/awr/blob/v0.7.0/docs/dev/release/DISTRIBUTIONS.md)。
+
+**首次使用自动启动本地工作台。** 安装后，首次执行普通 AWR 命令（包括 `awr --version`），
+或让 Agent 通过本机 `awr-mcp` 连接，即会自动拉起后台 Web 服务。此后可直接打开
+**<http://127.0.0.1:7381>**，不必先执行 `awr overview`；这个命令只是打开浏览器的快捷入口。
+仅安装包不会启动进程。若 7381 已被占用，AWR 自动选择空闲本地端口，
+执行 `awr overview status --json` 可查看实际地址。服务被终止后，下次 CLI/MCP 使用会自动恢复，
+并发调用也不会重复启动多个实例。
+
+**从 0.6.0 升级：** 项目数据库仍为 schema 14。升级前保留项目状态和本机用户 Hub 目录的匹配备份，
+升级后重新索引一次来源以更新投影；回退使用对应备份。详见[升级清单](docs/dev/release/DISTRIBUTIONS.md#upgrading-from-060)。
 
 **从 0.5.x 升级：** 先停止现有写入方，用 SQLite 备份 API 备份 `.awr/state.db`，并保留源文件和旧程序。
 显式刷新来源时，SQLite schema 将从 7 升至 14，新增的表均为附加表。旧程序不能读取 schema 14，
-回退需要恢复匹配的升级前快照。详见[升级与回退指南](https://github.com/originoneai/awr/blob/v0.6.0/docs/dev/release/DISTRIBUTIONS.md#upgrading-from-05x-schema-7--14)。
+回退需要恢复匹配的升级前快照。详见[升级与回退指南](https://github.com/originoneai/awr/blob/v0.7.0/docs/dev/release/DISTRIBUTIONS.md#upgrading-from-05x-schema-7--14)。
 
 ### 2. 接入你的项目
 
@@ -162,6 +174,19 @@ Agent 可以在已初始化的项目中调用 CLI 后，把这段指令发给它
 配置和工具发现方式见 [MCP 参考](crates/awr-mcp/README.md)。
 
 </details>
+
+### 4. 打开本地项目工作台
+
+```sh
+awr overview
+```
+
+在卡片列表中搜索 AWR 已管理的项目，点击进入项目节点图、主线依赖图或协作泳道图，
+通过“返回项目列表”切换项目。“接管项目”接受绝对目录路径，生成待接管卡片和 Agent 接入指引；
+卡片“删除”会持久隐藏该项目。列表按需手动刷新，不会每分钟轮询。
+
+每次进入项目详情都会读取最新的 SQLite 记录；源文件变更通过“同步项目来源”显式导入。
+工作台负责观测，Agent 仍通过 CLI/MCP 推进任务。
 
 ## 工作架构
 
