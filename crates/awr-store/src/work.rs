@@ -393,10 +393,10 @@ impl Store {
         at: i64,
         mut map: impl FnMut(WorkReadiness) -> Result<T>,
     ) -> Result<Vec<T>> {
-        if keys.len() > 1000 {
+        if keys.len() > MAX_WORK_GRAPH_NODES {
             return Err(Error::BudgetExceeded {
                 required: keys.len(),
-                budget: 1000,
+                budget: MAX_WORK_GRAPH_NODES,
             });
         }
         let tx = self.conn.unchecked_transaction().map_err(db_error)?;
@@ -436,10 +436,10 @@ impl Store {
         let mut pending = keys.to_vec();
         while let Some(key) = pending.pop() {
             if all_keys.insert(key.clone()) {
-                if all_keys.len() > 1000 {
+                if all_keys.len() > MAX_WORK_GRAPH_NODES {
                     return Err(Error::BudgetExceeded {
                         required: all_keys.len(),
-                        budget: 1000,
+                        budget: MAX_WORK_GRAPH_NODES,
                     });
                 }
                 if let Some(children) = links.get(&key) {

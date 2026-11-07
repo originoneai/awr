@@ -109,10 +109,10 @@ test('the work graph limit follows BudgetExceeded and stops at the service cap',
 
   const huge = createFakeCli(big);
   const tooBig = async (name, params) => {
-    if (name === 'workGraph') throw new AwrCallError('BudgetExceeded', 'context budget exceeded', { required: 1500, budget: params.limit });
+    if (name === 'workGraph') throw new AwrCallError('BudgetExceeded', 'context budget exceeded', { required: 15000, budget: params.limit });
     return huge.call(name, params);
   };
-  await assert.rejects(extractSnapshot({ call: tooBig, config: {}, now: NOW, wait: noWait }), (e) => e.code === 'ProjectTooLarge' && /1500/.test(e.detail));
+  await assert.rejects(extractSnapshot({ call: tooBig, config: {}, now: NOW, wait: noWait }), (e) => e.code === 'ProjectTooLarge' && /15000/.test(e.detail));
 });
 
 test('default swimlanes use already-read groups without plan enumeration or per-work reads', async () => {

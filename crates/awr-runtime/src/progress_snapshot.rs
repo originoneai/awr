@@ -25,7 +25,7 @@ pub fn progress_snapshot(root: &Path, refresh: bool) -> Result<Value> {
         &store,
         &root,
         &crate::WorkGraphRequest {
-            limit: 1000,
+            limit: MAX_WORK_GRAPH_NODES,
             roots: vec![],
             branch: None,
         },

@@ -46,7 +46,7 @@ function createFakeCli(snapshot, options = {}) {
     if (a === 'work' && b === 'graph') {
       if (flag(args, '--cached') && !opts.cachedSupported) return error('InvalidInput', "invalid input: error: unexpected argument '--cached' found");
       const limit = Number(option(args, '--limit') || 100);
-      if (!(limit >= 1 && limit <= 1000)) return error('InvalidInput', 'graph limit must be 1..1000 and roots at most 100');
+      if (!(limit >= 1 && limit <= 10000)) return error('InvalidInput', 'graph limit must be 1..10000 and roots at most 100');
       if (snapshot.nodes.length > limit) return error('BudgetExceeded', `context budget exceeded: required ${snapshot.nodes.length}, budget ${limit}`, { budget: limit, required: snapshot.nodes.length });
       const source_ref = { source_id: 'S', locator: 'ledger', source_revision: 1, source_fingerprint: 'fp' };
       return ok({

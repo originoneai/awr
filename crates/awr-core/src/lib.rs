@@ -58,6 +58,14 @@ pub use workstream::*;
 pub use workstream_accounting::*;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Upper bound of one Work graph: the CLI `work graph --limit` range, the
+/// Project Progress Overview default snapshot budget and the readiness
+/// expansion guard all share it, so any ledger that fits the graph limit is
+/// also renderable end to end. Aligned with the specification-check limit
+/// (1..=10000) instead of the earlier hardcoded 1000, which permanently broke
+/// the progress overview for projects with more than 1000 work items.
+pub const MAX_WORK_GRAPH_NODES: usize = 10_000;
+
 pub fn now_millis() -> Result<i64> {
     let elapsed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

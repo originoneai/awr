@@ -217,7 +217,7 @@ fn argv(route: &str, query: &HashMap<String, String>) -> Result<Vec<String>> {
             "work".into(),
             "graph".into(),
             "--limit".into(),
-            number(query, "limit", 100, 1, 1000)?,
+            number(query, "limit", 100, 1, MAX_WORK_GRAPH_NODES as u64)?,
         ],
         "map/nav" => vec!["nav".into(), "--cached".into()],
         "map/goals" => vec![
