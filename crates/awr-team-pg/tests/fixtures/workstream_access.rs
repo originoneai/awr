@@ -46,13 +46,13 @@ pub async fn enable_writes(admin: &Client) {
 }
 
 pub async fn setup() -> (MutexGuard<'static, ()>, Client, String, WorkstreamReadStore) {
-    let (guard, admin, db, store, _) = setup_inner(false, None, false, false).await;
+    let (guard, admin, db, store, _) = setup_inner(false, None, false, false, None).await;
     (guard, admin, db, store)
 }
 
 pub async fn setup_with_three_streams()
 -> (MutexGuard<'static, ()>, Client, String, WorkstreamReadStore) {
-    let (guard, admin, db, store, _) = setup_inner(false, None, true, false).await;
+    let (guard, admin, db, store, _) = setup_inner(false, None, true, false, None).await;
     (guard, admin, db, store)
 }
 
@@ -63,20 +63,29 @@ pub async fn setup_with_legacy_resource() -> (
     WorkstreamReadStore,
     String,
 ) {
-    let (guard, admin, db, store, legacy) = setup_inner(true, None, false, false).await;
+    let (guard, admin, db, store, legacy) = setup_inner(true, None, false, false, None).await;
     (guard, admin, db, store, legacy.expect("legacy resource"))
 }
 
 pub async fn setup_with_specs(
     files: Vec<SourceFile>,
 ) -> (MutexGuard<'static, ()>, Client, String, WorkstreamReadStore) {
-    let (guard, admin, db, store, _) = setup_inner(false, Some(files), false, false).await;
+    let (guard, admin, db, store, _) = setup_inner(false, Some(files), false, false, None).await;
     (guard, admin, db, store)
 }
 
 pub async fn setup_with_assigned_tasks()
 -> (MutexGuard<'static, ()>, Client, String, WorkstreamReadStore) {
-    let (guard, admin, db, store, _) = setup_inner(false, None, false, true).await;
+    let (guard, admin, db, store, _) = setup_inner(false, None, false, true, None).await;
+    (guard, admin, db, store)
+}
+
+pub async fn setup_with_work_external_key(
+    work: &str,
+    external_key: &str,
+) -> (MutexGuard<'static, ()>, Client, String, WorkstreamReadStore) {
+    let (guard, admin, db, store, _) =
+        setup_inner(false, None, false, false, Some((work, external_key))).await;
     (guard, admin, db, store)
 }
 
@@ -85,6 +94,7 @@ async fn setup_inner(
     spec_files: Option<Vec<SourceFile>>,
     third_stream: bool,
     assigned_tasks: bool,
+    work_external_key: Option<(&str, &str)>,
 ) -> (
     MutexGuard<'static, ()>,
     Client,
@@ -158,7 +168,10 @@ async fn setup_inner(
                 execution_settlement: None,
                 codec: WorkContract::CODEC.into(),
                 work_id: WorkId::new(id).unwrap(),
-                external_key: id.into(),
+                external_key: work_external_key
+                    .filter(|(work, _)| *work == id)
+                    .map_or(id, |(_, external_key)| external_key)
+                    .into(),
                 goals: vec!["ship".into()],
                 hard_rules: vec!["preserve compatibility".into()],
                 scope_paths: vec!["src".into()],

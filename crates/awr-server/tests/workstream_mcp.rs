@@ -611,6 +611,121 @@ fn raw(server: &Server, token: &str) -> reqwest::RequestBuilder {
 }
 
 #[tokio::test]
+async fn delegated_session_reads_match_http_and_mcp_and_recheck_revocation() {
+    use awr_core::*;
+    use awr_team_pg::AuthorizationStore;
+    use std::collections::BTreeSet;
+
+    let (_guard, admin, db, store) = setup().await;
+    admin.batch_execute("UPDATE awr_team.actors SET kind='agent' WHERE tenant_id='reader-tenant' AND id='agent';
+        INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status) VALUES('reader-tenant','reader-project','alice','Alice','active');
+        INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status) VALUES('reader-tenant','reader-project','bind-agent','alice','agent','active');
+        INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read)
+        SELECT tenant_id,project_id,actor_id,'cli-a',workstream_id,authority_version,can_read FROM awr_team.workstream_grants WHERE client_id='cli-b';").await.unwrap();
+    let authorizations =
+        AuthorizationStore::from_config(common::with_app_role(&common::test_config(), &db));
+    for (id, stream, created_at_ms) in [("alpha-read", 1, 1000), ("beta-read", 2, 1001)] {
+        authorizations
+            .issue(
+                TENANT,
+                PROJECT,
+                &IssueAuthorizationRequest {
+                    request_key: id.into(),
+                    authorization: AgentAuthorization {
+                        id: id.into(),
+                        authorizer_person_id: PersonId::new("alice").unwrap(),
+                        responsible_person_id: PersonId::new("alice").unwrap(),
+                        subject_kind: ExecutionSubjectKind::Agent,
+                        subject_id: "agent".into(),
+                        client_id: "cli-a".into(),
+                        session_id: None,
+                        model_id: None,
+                        scope: AuthorizationScope::Workstream {
+                            project_id: PROJECT.into(),
+                            workstream_id: Id::from(stream).to_string(),
+                        },
+                        actions: BTreeSet::from([AuthorizedAction::Inspect]),
+                        expires_at_ms: None,
+                        status: AuthorizationStatus::Active,
+                        revoked_at_ms: None,
+                        revoked_by: None,
+                        verifiable_capabilities: vec![],
+                        self_reported_skill_hints: vec![],
+                        parent_authorization_id: None,
+                        maintainer_person_id: None,
+                        created_at_ms,
+                        binding_id: Some("bind-agent".into()),
+                    },
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    for revoked in [false, true] {
+        if revoked {
+            authorizations
+                .revoke(
+                    TENANT,
+                    PROJECT,
+                    &RevokeAuthorizationRequest {
+                        request_key: "revoke-beta".into(),
+                        authorization_id: "beta-read".into(),
+                        revoked_by: PersonId::new("alice").unwrap(),
+                        revoked_at_ms: 2000,
+                        reason: "Synthetic session-read revocation check".into(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        for op in ["work.observe", "session.inspect"] {
+            let args = json!({"protocol_version":1,"op":op,"session_id":"session-b"});
+            let mcp = call(&client, "awr_team_query", args.clone(), revoked).await;
+            let response = http()
+                .post(format!("{}/one/query", server.url))
+                .bearer_auth(A)
+                .json(&args)
+                .send()
+                .await
+                .unwrap();
+            if revoked {
+                assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+                assert_eq!(mcp, json!({"code":"Forbidden","message":"access denied"}));
+                assert_eq!(response.json::<Value>().await.unwrap(), mcp);
+            } else {
+                assert_eq!(response.status(), reqwest::StatusCode::OK);
+                let http: Value = response.json().await.unwrap();
+                for read in [&mcp, &http] {
+                    assert_eq!(read["selection_basis"], "session");
+                    assert_eq!(read["workstream_id"], Id::from(2).to_string());
+                    if op == "work.observe" {
+                        assert_eq!(read["data"]["work_id"], "b-private");
+                        assert_eq!(read["data"]["session"]["id"], "session-b");
+                        assert_eq!(read["data"]["execution_authorized"], false);
+                    } else {
+                        assert_eq!(read["data"]["items"][0]["session_id"], "session-b");
+                    }
+                }
+                let mut mcp_data = mcp["data"].clone();
+                let mut http_data = http["data"].clone();
+                mcp_data
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("observed_at_unix_ms");
+                http_data
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("observed_at_unix_ms");
+                assert_eq!(mcp_data, http_data);
+            }
+        }
+    }
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn mcp_inbox_discovery_reconnect_and_http_reads_share_current_scoped_conditions() {
     let (_guard, admin, _, store) = setup().await;
     enable_writes(&admin).await;

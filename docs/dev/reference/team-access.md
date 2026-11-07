@@ -274,6 +274,11 @@ Discovery cursors bind the effective authorization bodies as well as identity,
 access grants and source, so changes invalidate earlier pages. Resume queries
 carry the returned work and workstream selectors to resolve the correct grant.
 
+Project and workstream delegations support reads selected by `session_id` alone;
+the server resolves the session's current internal work binding and selects one
+covering read delegation before narrowing access. An optional `workstream_id`
+must still agree with that binding.
+
 Task delegations also support selector-free `work.next`, limited to exact assigned
 tasks whose current owners are independently readable through credential access.
 Their own current-client sessions on those tasks can be resumed. This does not

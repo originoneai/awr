@@ -1155,6 +1155,34 @@ pub(crate) async fn work_binding(
     ))
 }
 
+pub(crate) async fn session_binding(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    auth: &ReaderAuthority,
+    session: &str,
+) -> PgResult<WorkstreamSessionBinding> {
+    let row = tx
+        .query_opt(
+            "SELECT work_id,workstream_id,ownership_version FROM awr_team.sessions
+            WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND scope_id='main'",
+            &[&tenant, &project, &session],
+        )
+        .await?
+        .ok_or(PgError::Forbidden)?;
+    let work: String = row.get(0);
+    let (binding, generation) = work_binding(tx, tenant, project, auth, &work).await?;
+    if row.get::<_, Option<String>>(1) != Some(binding.workstream_id.to_string())
+        || row.get::<_, Option<i64>>(2) != Some(generation)
+    {
+        return Err(PgError::Forbidden);
+    }
+    Ok(WorkstreamSessionBinding {
+        session_id: session.into(),
+        work: binding,
+    })
+}
+
 pub(crate) async fn read(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -1419,25 +1447,7 @@ pub(crate) async fn read(
         selection.work = Some(work_binding(tx, tenant, project, auth, work).await?.0);
     }
     if let Some(session) = &q.session_id {
-        let row = tx
-            .query_opt(
-                "SELECT work_id,workstream_id,ownership_version FROM awr_team.sessions
-            WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND scope_id='main'",
-                &[&tenant, &project, &session],
-            )
-            .await?
-            .ok_or(PgError::Forbidden)?;
-        let work: String = row.get(0);
-        let (binding, generation) = work_binding(tx, tenant, project, auth, &work).await?;
-        if row.get::<_, Option<String>>(1) != Some(binding.workstream_id.to_string())
-            || row.get::<_, Option<i64>>(2) != Some(generation)
-        {
-            return Err(PgError::Forbidden);
-        }
-        selection.session = Some(WorkstreamSessionBinding {
-            session_id: session.clone(),
-            work: binding,
-        });
+        selection.session = Some(session_binding(tx, tenant, project, auth, session).await?);
     }
     let resolved = resolve_workstream(
         &auth.catalog,
