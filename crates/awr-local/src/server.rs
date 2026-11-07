@@ -1,5 +1,5 @@
 use crate::{ServiceStatus, lifecycle, registry};
-use awr_core::{Error, Result};
+use awr_core::{Error, MAX_WORK_GRAPH_NODES, Result};
 use axum::{
     Router,
     body::Body,

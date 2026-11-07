@@ -1,5 +1,5 @@
 //! Bounded observation of one private SQLite snapshot, independent of source synchronization.
-use awr_core::{Error, Result, now_millis};
+use awr_core::{Error, MAX_WORK_GRAPH_NODES, Result, now_millis};
 use awr_store::Store;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::Path};
