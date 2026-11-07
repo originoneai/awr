@@ -169,10 +169,39 @@ describe('deriveWorkState: progress word', () => {
     expect(Object.keys(phases)).toHaveLength(11);
     for (const [phase, [zhText, enText, tone]] of Object.entries(phases)) {
       // 'delivered' reads as delivered only with the system's completion behind it (see the next test)
-      const snapshot = { runtime: { state: 'completed', selected_completion_id: 'completion-1' }, observation: { progress: { phase } } };
+      const runtime = phase === 'delivered'
+        ? { state: 'completed', selected_completion_id: 'completion-1' }
+        : { state: 'claimed', selected_completion_id: null };
+      const snapshot = { runtime, observation: { progress: { phase } } };
       expect(deriveWorkState({ ...zh, snapshot }).progress, phase).toMatchObject({ kind: 'phase', text: zhText, tone });
       expect(deriveWorkState({ language: 'en-US', readState: 'ready', snapshot }).progress.text, phase).toBe(enText);
       expect(findForbiddenVisibleText(zhText), phase).toEqual([]);
+    }
+  });
+
+  it.each(['reviewing', 'ready_for_review', 'reworking', 'integrating'])('keeps a confirmed completion ahead of the earlier %s report', (phase) => {
+    const snapshot = {
+      ...DELIVERED,
+      observation: { ...DELIVERED.observation, progress: { ...DELIVERED.observation.progress, phase } },
+    };
+    expect(deriveWorkState({ ...zh, snapshot }).progress).toMatchObject({
+      kind: 'runtime', text: '已完成', tone: 'positive',
+      technical: { phase, runtimeState: 'completed', completionId: DELIVERED.runtime.selected_completion_id },
+    });
+    expect(deriveWorkState({ language: 'en-US', readState: 'ready', snapshot }).progress.text).toBe('Completed');
+    expect(deriveWorkState({ ...zh, snapshot: { ...snapshot, runtime: undefined } }).progress.text).toBe('已完成');
+  });
+
+  it('requires both a current completed state and a selected completion to override an unfinished report', () => {
+    for (const runtime of [
+      { state: 'completed', selected_completion_id: null },
+      { state: 'claimed', selected_completion_id: 'completion-1' },
+    ]) {
+      const snapshot = {
+        runtime,
+        observation: { runtime, progress: { phase: 'reviewing' } },
+      };
+      expect(deriveWorkState({ ...zh, snapshot }).progress).toMatchObject({ kind: 'phase', text: '评审中' });
     }
   });
 
