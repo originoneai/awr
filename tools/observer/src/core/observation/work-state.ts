@@ -69,8 +69,9 @@ export function deriveWorkState(input: WorkStateInput): WorkStateResult {
 }
 
 /**
- * One word for how far a work has come: the reporter's own phase, else the runtime state, else the
- * overview row's status; a word the vocabulary does not know is said to be unrecognized, never
+ * One word for how far a work has come: a confirmed completion takes precedence over an earlier
+ * unfinished report; otherwise use the reporter's phase, then the runtime state, then the overview
+ * row's status. A word the vocabulary does not know is said to be unrecognized, never
  * guessed, and a read that did not happen contributes nothing. A reporter's "delivered" is a
  * declaration: it reads as delivered only when the system holds a selected completion for a work
  * whose runtime state is completed, otherwise as "reported as delivered". The word keeps the time at
@@ -93,6 +94,10 @@ function deriveProgress(input: {
     return { kind: 'loading', text: humanText('loading', language), tone: 'neutral', asOfUnixMs: null, technical: { phase: null, runtimeState: null, rowStatus: null, completionId: null } };
   }
   const technical = { phase, runtimeState, rowStatus, completionId };
+  if (completionConfirmed && phase !== 'delivered') {
+    const word = statusWord(runtimeState, { language, field: 'runtime_state' });
+    return { kind: 'runtime', text: word.text, tone: word.tone, asOfUnixMs, technical };
+  }
   const phaseWord = phase === 'delivered' && !completionConfirmed
     ? { text: humanText('deliveredUnconfirmed', language), known: true, tone: 'warning' as const }
     : phase == null ? null : statusWord(phase, { language, field: 'phase' });
