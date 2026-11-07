@@ -18,8 +18,8 @@ export interface TeamFreshness {
 
 export interface TeamProject {
   key: string;
-  title: string;
-  role: string;
+  title?: string | null;
+  role?: string | null;
 }
 
 export interface TeamProjectsResponse {
