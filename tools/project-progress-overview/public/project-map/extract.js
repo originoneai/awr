@@ -20,7 +20,7 @@
   const snapshotLib = commonJS ? require('./snapshot.js') : root.AWR_PROJECT_MAP.snapshot;
   const modelLib = commonJS ? require('./model.js') : root.AWR_PROJECT_MAP.model;
 
-  const GRAPH_CAP = 1000; // work graph refuses --limit above this
+  const GRAPH_CAP = 10000; // work graph refuses --limit above this
   const TRANSIENT = new Set(['RevisionConflict', 'MutationConflict', 'SourceConflict', 'SourceStale', 'BridgeBusy', 'NoOutput']);
   const MAX_EVENT_PAGES = 500;
 
