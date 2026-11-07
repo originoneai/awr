@@ -1,13 +1,13 @@
 # Native npm and PyPI distributions
 
-AWR 0.6.0 is a stable package release. npm uses the `latest` channel and PyPI uses
-`0.6.0` without a prerelease suffix. Both install the same Rust CLI and MCP server;
+AWR 0.7.0 is a stable package release. npm uses the `latest` channel and PyPI uses
+`0.7.0` without a prerelease suffix. Both install the same Rust CLI and MCP server;
 no separate JavaScript or Python SDK is included.
 
 ```sh
-npm install -g @originoneai/agent-work-runtime@0.6.0
+npm install -g @originoneai/agent-work-runtime@0.7.0
 # or, in a virtual environment
-python -m pip install agent-work-runtime==0.6.0
+python -m pip install agent-work-runtime==0.7.0
 awr --version
 awr-mcp --version
 ```
@@ -39,6 +39,19 @@ Native payloads include source identity, binary hashes and dependency license no
 Only explicit packaging inputs and binaries are included; internal records and AWR
 runtime databases are excluded.
 
+## Open the local workspace
+
+The first ordinary AWR command (including `awr --version`) or local Agent MCP
+connection automatically starts the bundled background service. Installation
+alone does not start a process. Then visit **http://127.0.0.1:7381** directly, or
+use `awr overview` to open the browser. If the default port is occupied,
+`awr overview status --json` reports the actual URL. A killed service restarts
+on the next CLI/MCP use, and concurrent calls reuse one instance.
+
+The Hub lists AWR-managed projects and explicitly requested takeover cards.
+See the [Hub guide](../reference/local-project-hub.md) for discovery, hiding,
+manual refresh and the difference between recorded state and source synchronization.
+
 ## Build and verify
 
 Use a separate environment with `scripts/release/requirements.txt`. On Linux also
@@ -51,9 +64,10 @@ python scripts/release/smoke_install.py .local/distribution-001
 
 Each run uses a new output directory. The installation check uses isolated pip/npm
 installs, verifies both native versions and errors, initializes a Unicode project,
-compiles task context, checks intake diagnosis and verifies the exact 32-tool stdio
-MCP catalog. Shared HTTP exposes 30 tools, including project discovery. Previously
-published versions retain their release catalog.
+compiles task context, checks intake diagnosis and verifies the advertised stdio
+MCP catalog, including the default grouped personal entry points. HTTP discovery
+and catalog profiles retain their own contracts. Previously published versions
+retain their release catalog. It also checks the bundled local Hub and assets.
 These are installation checks, not proof of every real-agent business scenario.
 
 ## Publish reviewed builds
@@ -81,9 +95,9 @@ packages, checksums and aggregate manifest. Raw execution records stay local or 
 isolated CI artifacts and are not committed to the repository.
 
 
-## Pinned host payload (0.6.0)
+## Pinned host payload (0.7.0)
 
-AWR `0.6.0` uses database schema 14. Host applications can bundle the same native CLI and MCP server without the registry launchers. A locally built payload has its own recorded source and artifact identity. The matching macOS arm64 or Intel x64 payload can be embedded directly in an application; runtime users need no Node/Python/Rust installation and no PATH changes. The build/verification machine still needs its development tools. The host is responsible for application signing, notarization and updating its bundled binary.
+AWR `0.7.0` uses database schema 14. Host applications can bundle the same native CLI and MCP server without the registry launchers. A locally built payload has its own recorded source and artifact identity. The matching macOS arm64 or Intel x64 payload can be embedded directly in an application; runtime users need no Node/Python/Rust installation and no PATH changes. The build/verification machine still needs its development tools. The host is responsible for application signing, notarization and updating its bundled binary.
 
 From clean committed source:
 
@@ -94,6 +108,27 @@ python scripts/release/build_host_bundle.py --output .local/host-payload-001 --b
 The output directory is new and never overwritten. Its archive name binds purpose, version, platform, source SHA and batch. The payload contains `bin/awr`, `bin/awr-mcp`, `build.json`, `capabilities.json`, `SHA256SUMS`, Apache-2.0 and dependency license notices. `host-manifest.json` binds the archive digest and every payload file. Verify these hashes and the source commit before embedding; keep the same reviewed bytes through signing and installation, recording any signing changes separately. Both macOS architectures require macOS 15+. Other target builds and application integrations require their own native receipts.
 
 Invoke the executable by its absolute application-resource path with `--project <original project root> --json`. Capability negotiation requires no project, database, model configuration, shell, or language interpreter. Initialization, source reads and work context likewise run natively; Git is a separate optional requirement for Git-bound workflows. SQLite is bundled. Do not use `npx`, `pip`, a shell command string or an opportunistic downloader as the embedded invocation path.
+
+## Upgrading from 0.6.0
+
+The project database remains **schema 14**. Stop writers and the local Hub
+(`awr overview stop --json`) before taking matching backups. Preserve the database
+through SQLite's backup API, `.awr/project.toml`, registered sources and old
+binaries. Also back up the per-user Hub directory: `AWR_LOCAL_HOME` when configured,
+otherwise `%LOCALAPPDATA%/AWR` on Windows, `$XDG_STATE_HOME/awr` for an absolute
+XDG state root, or `$HOME/.local/state/awr`.
+
+Install 0.7.0, confirm both binary versions, then run `awr source reindex` once
+and inspect `awr status`. Source reindexing refreshes changed projections; viewing
+a PPO snapshot alone does not synchronize sources. Open `awr overview` and check
+that expected project cards and recorded progress are available.
+
+The Hub catalog upgrades to version three on its next write. Old catalog writers
+reject that format. To roll back, stop writers and the Hub again, retain the new
+history separately and restore the matching program, project snapshot and Hub
+state backup. Do not overwrite changed source files blindly. The matched runtime
+snapshot commands below cover project state; the user Hub directory is backed up
+separately.
 
 ## Upgrading from 0.5.x (schema 7 → 14)
 

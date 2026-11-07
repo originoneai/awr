@@ -2,25 +2,26 @@
 
 The open-source project delivery platform for people and AI.
 
-AWR 0.6.0 includes the native Rust `awr` CLI and `awr-mcp` server for stdio and shared Streamable HTTP.
+AWR 0.7.0 includes the native Rust `awr` CLI and `awr-mcp` server for stdio and shared Streamable HTTP.
 It provides command-line tools; context compilation runs locally.
 
-Native payloads built from the development source also embed Project Hub. Run
-`awr overview` to browse registered projects, search by name or directory and open
-their progress views. Its bundled service starts automatically on ordinary
-CLI/MCP use and recovers as one instance after termination. The native program
-serves the web assets directly. Existing projects appear as you use them, or
-through `awr overview register /absolute/project`. Published 0.6.0 packages predate
-the hub. See the [local hub guide](https://github.com/originoneai/awr/blob/main/docs/dev/reference/local-project-hub.md).
+Project Hub and Project Progress Overview are bundled with the native payload.
+Run `awr overview` to search local AWR-managed projects and inspect their progress.
+The first ordinary AWR command or local Agent MCP connection starts one background
+service automatically. After that, open **http://127.0.0.1:7381** directly; running
+`awr overview` first is optional. Installation alone does not start a process.
+If the port is occupied, `awr overview status --json` reports the actual URL.
+The next CLI/MCP use recovers a terminated service without duplicate instances.
+See the [local hub guide](https://github.com/originoneai/awr/blob/v0.7.0/docs/dev/reference/local-project-hub.md).
 
 ```sh
-python -m pip install agent-work-runtime==0.6.0
+python -m pip install agent-work-runtime==0.7.0
 awr --version
 awr --help
 awr-mcp --help
 ```
 
-For an isolated application installation, use `pipx install agent-work-runtime==0.6.0` or `uv tool install agent-work-runtime==0.6.0`.
+For an isolated application installation, use `pipx install agent-work-runtime==0.7.0` or `uv tool install agent-work-runtime==0.7.0`.
 
 The project must be initialized before running
 `awr-mcp --project /absolute/project`. Follow the

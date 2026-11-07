@@ -1,11 +1,10 @@
 # Local Project Hub
 
-The development native payload embeds Project Hub and Project Progress Overview.
+AWR 0.7.0 embeds Project Hub and Project Progress Overview in its native payload.
 Both npm and Python distributions carry the same native service and page assets.
 Python installations use their native executable to serve the pages.
 
-The published 0.6.0 packages predate this feature. Use a build of this source until
-a release containing the hub is published.
+No separate viewer installation or source checkout is needed.
 
 ## Open your projects
 
@@ -16,6 +15,13 @@ awr overview
 The command starts or reuses the current user's service and opens its address.
 Use `awr overview --no-open` to print the address, or `awr overview --json` for a
 machine-readable service receipt.
+
+Installation alone does not start the service. The first ordinary AWR command
+(including `awr --version`) or local Agent MCP connection starts it automatically.
+After that, open **<http://127.0.0.1:7381>** directly without running
+`awr overview`. If the default port is occupied, run `awr overview status --json`
+to find the actual URL. The service binds to this computer's loopback interface;
+responsive layouts do not make it remotely accessible.
 
 The landing page lists local projects as cards, ordered by the latest AWR use.
 Search matches project names and directory paths. Each card shows its name,
