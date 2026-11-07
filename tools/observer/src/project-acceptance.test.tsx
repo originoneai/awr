@@ -414,6 +414,7 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-page', { expand: false });
     expect(await screen.findByText(review.decisions[0].reason)).toBeTruthy();
     expect(screen.getByText('The visible list can disagree with the chosen filter.')).toBeTruthy();
+    expect(screen.getByTestId('review-finding').textContent).toContain('阻塞');
     expect(screen.getByText(/Two requests overlap\./)).toBeTruthy();
     expect(screen.getByText(/The earlier request finishes last\./)).toBeTruthy();
     expect(screen.getByText(/The previous results replace the current selection\./)).toBeTruthy();

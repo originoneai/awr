@@ -414,8 +414,8 @@ export function ProjectAcceptance({ project }: { project: string }) {
                           <Space key={asText(at(finding, ['finding_key'])) ?? index} direction="vertical" size={4} style={{ width: '100%', overflowWrap: 'anywhere' }} data-testid="review-finding">
                             <Space wrap>
                               <Typography.Text strong>{t('acceptance.reviewFinding')}</Typography.Text>
-                              <Tag color={at(finding, ['severity']) === 'blocking' && at(finding, ['state']) === 'open' ? 'error' : 'default'}>{value(at(finding, ['severity']))}</Tag>
-                              <Tag>{at(finding, ['state']) === 'open' ? t('acceptance.findingOpen') : value(at(finding, ['state']))}</Tag>
+                              <Tag color={at(finding, ['severity']) === 'blocking' && at(finding, ['state']) === 'open' ? 'error' : 'default'}>{value(at(finding, ['severity']), 'severity')}</Tag>
+                              <Tag>{at(finding, ['state']) === 'open' ? t('acceptance.findingOpen') : value(at(finding, ['state']), 'state')}</Tag>
                             </Space>
                             <Typography.Text>{asText(at(finding, ['summary']))?.trim() || missing}</Typography.Text>
                             {asText(at(finding, ['criterion'])) ? <Typography.Text type="secondary">{t('acceptance.findingCriterion')}: {asText(at(finding, ['criterion']))}</Typography.Text> : null}
