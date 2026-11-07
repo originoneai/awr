@@ -142,8 +142,24 @@ pub enum PgError {
 }
 
 impl PgError {
+    pub(crate) fn planning_scope_invalid() -> Self {
+        Self::Protocol("planning_input/scope_paths/bounds".into())
+    }
+
     /// Fixed diagnostics for fresh planning input rejection; never echo the assertion.
     pub fn planning_input_diagnostic(&self) -> Option<serde_json::Value> {
+        if matches!(self, Self::Protocol(message) if message == "planning_input/scope_paths/bounds")
+        {
+            return Some(serde_json::json!({
+                "code": "InvalidInput",
+                "message": "planning scope_paths must be project-relative and within allowed_spec_roots",
+                "invalid_field": "/changes",
+                "related_fields": ["/allowed_spec_roots"],
+                "constraint": "project_relative_scope_bounds",
+                "request_reserved": false,
+                "next_step": "Read the selected work's scope_paths. Every after.scope_paths entry must be project-relative, without empty, dot or parent segments. Include its code, test or specification directory in allowed_spec_roots when declaring bounds. Correct this unused request and retry; declared roots grant no additional authority."
+            }));
+        }
         if !matches!(self, Self::Protocol(message) if message == "planning_input/author_person_id/actor_mismatch")
         {
             return None;

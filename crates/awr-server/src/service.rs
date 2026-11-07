@@ -883,7 +883,12 @@ fn retryable_value() -> Value {
 // Shared by HTTP and MCP; never expose SQL, URLs, credentials or source bodies.
 fn public_error(error: PgError) -> (StatusCode, Value) {
     if let Some(diagnostic) = error.planning_input_diagnostic() {
-        return (StatusCode::FORBIDDEN, diagnostic);
+        let status = if diagnostic["code"] == "Forbidden" {
+            StatusCode::FORBIDDEN
+        } else {
+            StatusCode::BAD_REQUEST
+        };
+        return (status, diagnostic);
     }
     if let Some(diagnostic) = error.query_input_diagnostic() {
         return (StatusCode::BAD_REQUEST, diagnostic);
