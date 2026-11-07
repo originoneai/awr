@@ -8,7 +8,7 @@
 Checked against **Codex CLI 0.155.0** and the official
 [MCP](https://learn.chatgpt.com/docs/extend/mcp) and
 [hooks](https://learn.chatgpt.com/docs/hooks) documentation on **2026-09-20**.
-This note describes published **AWR 0.6.0** and the current source tree. Both
+This note describes the **AWR 0.6.0** integration baseline and the current source tree. Both
 expose grouped `awr_query`. The **0.4.0** package does not. **0.5.1** already
 grouped the catalog; install 0.6.0 for schema 14 and
 `session start --client/--conversation`. Codex owns its model, UI, native
@@ -36,12 +36,15 @@ this page. Do not add a second AWR runtime or client-private history access.
 
 ## MCP merge paths
 
-Install published AWR 0.6.0, which includes the grouped MCP catalog, or build
+Install AWR 0.7.0, which includes the grouped MCP catalog, or build
 both executables from this checkout:
 
+Installation examples use the canonical 0.7.0 package names. Existing users should
+follow the [package migration steps](../release/DISTRIBUTIONS.md#migrate-from-the-previous-package-names) first.
+
 ```sh
-npm install -g @originoneai/agent-work-runtime@0.6.0
-# or: python -m pip install agent-work-runtime==0.6.0
+npm install -g @originoneai/awr@0.7.0
+# or: python -m pip install originoneai-awr==0.7.0
 command -v awr-mcp
 
 # Contributor/source path. This tree uses the same grouped default as 0.6.0.

@@ -173,7 +173,7 @@ def main():
     for binary in binaries:
         shutil.copy2(binary, native / "bin" / binary.name)
     native_package = {
-        "name": f"@originoneai/agent-work-runtime-{target}", "version": version,
+        "name": f"@originoneai/awr-{target}", "version": version,
         "description": f"Native AWR binaries for {target}", "license": "Apache-2.0",
         "repository": package["repository"], "os": [npm_os], "cpu": [npm_cpu],
         "files": ["bin", "build.json", "LICENSE", "THIRD_PARTY_LICENSES.txt"],

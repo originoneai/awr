@@ -15,17 +15,23 @@ The next CLI/MCP use recovers a terminated service without duplicate instances.
 See the [local hub guide](https://github.com/originoneai/awr/blob/v0.7.0/docs/dev/reference/local-project-hub.md).
 
 ```sh
-python -m pip install agent-work-runtime==0.7.0
+python -m pip install originoneai-awr==0.7.0
 awr --version
 awr --help
 awr-mcp --help
 ```
 
-For an isolated application installation, use `pipx install agent-work-runtime==0.7.0` or `uv tool install agent-work-runtime==0.7.0`.
+Upgrading an existing installation? Uninstall `agent-work-runtime` with the same
+package manager before installing `originoneai-awr`. Do not install both in the
+same environment: they share Python files and command entry points. Commands and
+project state keep their existing names. The bare PyPI package `awr` is unrelated.
+See the [migration guide](https://github.com/originoneai/awr/blob/v0.7.0/docs/dev/release/DISTRIBUTIONS.md#migrate-from-the-previous-package-names).
+
+For an isolated application installation, use `pipx install originoneai-awr==0.7.0` or `uv tool install originoneai-awr==0.7.0`.
 
 The project must be initialized before running
 `awr-mcp --project /absolute/project`. Follow the
-[project documentation](https://github.com/originoneai/agent-work-runtime).
+[project documentation](https://github.com/originoneai/awr).
 
 The distribution targets macOS 15+ arm64 and Intel x64, Linux x64/arm64 with glibc 2.39+ (Ubuntu 24.04
 baseline), and Windows x64. Python 3.9+ is required for the launcher. Git is required
@@ -42,4 +48,4 @@ awr-mcp --registry /etc/awr/service.toml --listen 127.0.0.1:8080
 ```
 
 Configure project registrations and client credentials using the
-[shared MCP service guide](https://github.com/originoneai/agent-work-runtime/blob/main/docs/dev/reference/mcp-service.md).
+[shared MCP service guide](https://github.com/originoneai/awr/blob/main/docs/dev/reference/mcp-service.md).

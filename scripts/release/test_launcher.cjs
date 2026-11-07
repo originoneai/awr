@@ -38,9 +38,9 @@ for (const arch of ['arm64', 'x64']) {
   for (const command of ['awr', 'awr-mcp']) {
     test(`macOS ${arch} ${command} selects its native package and forwards arguments and exit status`, () => {
       const {calls, child, process} = launch(arch, command);
-      assert.deepEqual(calls.resolved, [`@originoneai/agent-work-runtime-darwin-${arch}/package.json`]);
+      assert.deepEqual(calls.resolved, [`@originoneai/awr-darwin-${arch}/package.json`]);
       assert.equal(calls.spawn.length, 1);
-      assert.equal(calls.spawn[0][0], path.join('/native-packages', `@originoneai/agent-work-runtime-darwin-${arch}/bin/${command}`));
+      assert.equal(calls.spawn[0][0], path.join('/native-packages', `@originoneai/awr-darwin-${arch}/bin/${command}`));
       assert.deepEqual(Array.from(calls.spawn[0][1]), ['--project', '/tmp/项目 with spaces', '--json']);
       assert.equal(calls.spawn[0][2].stdio, 'inherit');
       child.emit('exit', 7, null);
@@ -56,7 +56,7 @@ test('a missing Intel package reports how to reinstall without launching another
   const {calls, process} = launch('x64', 'awr', true);
   assert.equal(calls.spawn.length, 0);
   assert.equal(process.exitCode, 1);
-  assert.match(calls.stderr, /missing @originoneai\/agent-work-runtime-darwin-x64; reinstall with optional dependencies enabled/);
+  assert.match(calls.stderr, /missing @originoneai\/awr-darwin-x64; reinstall with optional dependencies enabled/);
 });
 
 test('unsupported macOS architectures remain rejected', () => {

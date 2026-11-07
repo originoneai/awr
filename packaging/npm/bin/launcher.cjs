@@ -24,7 +24,7 @@ exports.run = function run(command) {
       return fail('this Linux distribution requires glibc 2.39 or newer (Ubuntu 24.04 baseline).');
     }
   }
-  const packageName = `@originoneai/agent-work-runtime-${target}`;
+  const packageName = `@originoneai/awr-${target}`;
   let root;
   try {
     root = path.dirname(require.resolve(`${packageName}/package.json`));

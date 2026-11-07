@@ -10,7 +10,7 @@ The open-source project delivery platform for people and AI.
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-2563eb)](LICENSE) [![GitHub release](https://img.shields.io/github/v/release/originoneai/awr?color=2563eb)](https://github.com/originoneai/awr/releases) [![npm](https://img.shields.io/npm/v/%40originoneai%2Fagent-work-runtime?label=npm&color=2563eb)](https://www.npmjs.com/package/@originoneai/agent-work-runtime) [![PyPI](https://img.shields.io/pypi/v/agent-work-runtime?color=2563eb)](https://pypi.org/project/agent-work-runtime/)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-2563eb)](LICENSE) [![GitHub release](https://img.shields.io/github/v/release/originoneai/awr?color=2563eb)](https://github.com/originoneai/awr/releases) [![npm](https://img.shields.io/npm/v/%40originoneai%2Fawr?label=npm&color=2563eb)](https://www.npmjs.com/package/@originoneai/awr) [![PyPI](https://img.shields.io/pypi/v/originoneai-awr?color=2563eb)](https://pypi.org/project/originoneai-awr/)
 
 [![Official website](https://img.shields.io/badge/Visit_the_website_%E2%86%92-145dff?style=for-the-badge)](https://awr.originoneai.com/) [![Quickstart](https://img.shields.io/badge/Get_started_%E2%86%92-e8f0ff?style=for-the-badge&logoColor=145dff)](#quickstart)
 
@@ -110,18 +110,23 @@ published package boundary.
 Choose one package manager. Both install the native `awr` and `awr-mcp` commands.
 
 ```sh
-npm install -g @originoneai/agent-work-runtime@0.7.0
+npm install -g @originoneai/awr@0.7.0
 ```
 
 Or, inside a Python virtual environment:
 
 ```sh
-python -m pip install agent-work-runtime==0.7.0
+python -m pip install originoneai-awr==0.7.0
 ```
 
 ```sh
 awr --version
 ```
+
+**Previously installed AWR?** The package names are now `@originoneai/awr`
+and `originoneai-awr`. Uninstall the old package before installing the new one;
+the `awr` / `awr-mcp` commands and existing project state stay the same. Follow
+the [package migration steps](docs/dev/release/DISTRIBUTIONS.md#migrate-from-the-previous-package-names).
 
 Prebuilt packages support **macOS 15+ (Apple Silicon and Intel)**,
 **Linux x64/arm64 (glibc 2.39+)** and **Windows x64**. Launchers require

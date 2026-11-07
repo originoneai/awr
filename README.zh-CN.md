@@ -10,7 +10,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
-[![许可证：Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-2563eb)](LICENSE) [![GitHub 发布版](https://img.shields.io/github/v/release/originoneai/awr?color=2563eb)](https://github.com/originoneai/awr/releases) [![npm](https://img.shields.io/npm/v/%40originoneai%2Fagent-work-runtime?label=npm&color=2563eb)](https://www.npmjs.com/package/@originoneai/agent-work-runtime) [![PyPI](https://img.shields.io/pypi/v/agent-work-runtime?color=2563eb)](https://pypi.org/project/agent-work-runtime/)
+[![许可证：Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-2563eb)](LICENSE) [![GitHub 发布版](https://img.shields.io/github/v/release/originoneai/awr?color=2563eb)](https://github.com/originoneai/awr/releases) [![npm](https://img.shields.io/npm/v/%40originoneai%2Fawr?label=npm&color=2563eb)](https://www.npmjs.com/package/@originoneai/awr) [![PyPI](https://img.shields.io/pypi/v/originoneai-awr?color=2563eb)](https://pypi.org/project/originoneai-awr/)
 
 [![访问官网](https://img.shields.io/badge/%E8%AE%BF%E9%97%AE%E5%AE%98%E7%BD%91_%E2%86%92-145dff?style=for-the-badge)](https://awr.originoneai.com/) [![快速开始](https://img.shields.io/badge/%E5%BF%AB%E9%80%9F%E5%BC%80%E5%A7%8B_%E2%86%92-e8f0ff?style=for-the-badge&logoColor=145dff)](#quickstart)
 
@@ -87,18 +87,22 @@ npm 和 PyPI 安装包均内置 [Project Hub](docs/dev/reference/local-project-h
 任选一种包管理器，两者都会安装原生的 `awr` 和 `awr-mcp` 命令。
 
 ```sh
-npm install -g @originoneai/agent-work-runtime@0.7.0
+npm install -g @originoneai/awr@0.7.0
 ```
 
 或者，在 Python 虚拟环境中安装：
 
 ```sh
-python -m pip install agent-work-runtime==0.7.0
+python -m pip install originoneai-awr==0.7.0
 ```
 
 ```sh
 awr --version
 ```
+
+**已安装过 AWR？** 安装包现统一为 `@originoneai/awr` 和 `originoneai-awr`。
+请先卸载旧包，再安装新包；`awr` / `awr-mcp` 命令与现有项目数据保持不变。
+完整步骤见[包名迁移说明](docs/dev/release/DISTRIBUTIONS.md#migrate-from-the-previous-package-names)。
 
 预编译包支持 **macOS 15+（Apple Silicon 与 Intel）**、
 **Linux x64/arm64（glibc 2.39+）**、**Windows x64**。

@@ -5,12 +5,50 @@ AWR 0.7.0 is a stable package release. npm uses the `latest` channel and PyPI us
 no separate JavaScript or Python SDK is included.
 
 ```sh
-npm install -g @originoneai/agent-work-runtime@0.7.0
+npm install -g @originoneai/awr@0.7.0
 # or, in a virtual environment
-python -m pip install agent-work-runtime==0.7.0
+python -m pip install originoneai-awr==0.7.0
 awr --version
 awr-mcp --version
 ```
+
+## Migrate from the previous package names
+
+The canonical packages are **`@originoneai/awr`** on npm and
+**`originoneai-awr`** on PyPI. The product is AWR; the commands remain `awr` and
+`awr-mcp`. This changes installation identities only, not project IDs, `.awr`
+paths, database schemas, sessions or checkpoints. Earlier releases retain their
+original package names and immutable files.
+
+Choose the package manager you already use. Back up state as described below,
+stop running writers and the Hub, then **uninstall the old package before
+installing the new one**. Both packages own the same command names, and both
+Python distributions own `awr_binary`; installing them side by side is unsupported.
+
+```sh
+# npm global installation
+npm uninstall -g @originoneai/agent-work-runtime
+npm install -g @originoneai/awr@0.7.0
+
+# Or, in the same Python virtual environment
+python -m pip uninstall agent-work-runtime
+python -m pip install originoneai-awr==0.7.0
+```
+
+For pipx or uv tools, remove the old `agent-work-runtime` application with the
+same tool before installing `originoneai-awr==0.7.0`. If both Python packages
+were already installed, uninstall the old one and then reinstall the new one
+with `python -m pip install --force-reinstall originoneai-awr==0.7.0` to restore
+shared files and entry points.
+
+Run `awr --version` and `awr-mcp --version` and check the executable paths your
+Agent uses. Configurations that invoke these command names need no rename;
+absolute paths into `node_modules/@originoneai/agent-work-runtime` must point to
+`node_modules/@originoneai/awr` instead. Keep project paths and `.awr` state.
+Then follow the appropriate version upgrade checklist below. The bare PyPI
+package `awr` is an unrelated project; use the full `originoneai-awr` name.
+
+## Supported platforms
 
 | Target | Compatibility |
 | --- | --- |

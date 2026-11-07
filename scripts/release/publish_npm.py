@@ -26,12 +26,12 @@ def main():
         with tarfile.open(file) as archive:
             package = json.load(archive.extractfile("package/package.json"))
         assert package["version"] == version and package["publishConfig"]["tag"] == tag
-        assert package["name"] in {"@originoneai/agent-work-runtime", *[f"@originoneai/agent-work-runtime-{platform}" for platform in manifest["platforms"]]}
+        assert package["name"] in {"@originoneai/awr", *[f"@originoneai/awr-{platform}" for platform in manifest["platforms"]]}
         packages.append((package["name"], file))
     assert len(packages) == len(PLATFORMS) + 1
-    assert {name for name, _ in packages} == {"@originoneai/agent-work-runtime", *[f"@originoneai/agent-work-runtime-{platform}" for platform in manifest["platforms"]]}
+    assert {name for name, _ in packages} == {"@originoneai/awr", *[f"@originoneai/awr-{platform}" for platform in manifest["platforms"]]}
     # Installers may fetch the wrapper as soon as it exists, so its dependencies go first.
-    packages.sort(key=lambda p: p[0] == "@originoneai/agent-work-runtime")
+    packages.sort(key=lambda p: p[0] == "@originoneai/awr")
     for name, file in packages:
         command = ["npm", "publish", str(file), "--access", "public", "--tag", tag,
                    "--registry=https://registry.npmjs.org/"]

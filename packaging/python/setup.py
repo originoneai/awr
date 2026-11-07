@@ -20,14 +20,14 @@ class BinaryWheel(bdist_wheel):
 
 
 setup(
-    name="agent-work-runtime",
+    name="originoneai-awr",
     version=metadata["python_version"],
-    description="Persistent work state and minimal context for long-running AI agents",
+    description="AWR — the project delivery platform for people and AI",
     long_description=(root / "README.md").read_text(),
     long_description_content_type="text/markdown",
     license="Apache-2.0",
     license_files=["LICENSE", "THIRD_PARTY_LICENSES.txt"],
-    url="https://github.com/originoneai/agent-work-runtime",
+    url="https://github.com/originoneai/awr",
     python_requires=">=3.9",
     packages=["awr_binary"],
     package_data={"awr_binary": ["bin/*", "_build.json"]},

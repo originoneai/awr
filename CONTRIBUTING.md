@@ -28,7 +28,7 @@ user documentation and reproducible aggregate results are welcome. The public-tr
 check prevents known internal paths from entering the Git index, including files
 added with `git add -f`; review still needs to catch private material under new names.
 
-Use [GitHub issues](https://github.com/originoneai/agent-work-runtime/issues) for
+Use [GitHub issues](https://github.com/originoneai/awr/issues) for
 bugs and proposals. Never include credentials or private project sources. By
 contributing, you agree to license your contributions under Apache-2.0.
 

@@ -15,7 +15,7 @@ exposes `--continue` and `--session`, and links to the `kimi-code`
 documentation. Older `kimi-cli` releases use different configuration paths and
 flags; check `kimi --version` and `kimi --help` before applying an older recipe.
 
-This note describes published **AWR 0.6.0** and the current source tree. Both
+This note describes the **AWR 0.6.0** integration baseline and the current source tree. Both
 expose grouped `awr_query`. The **0.4.0** package does not. **0.5.1** already
 grouped the catalog; install 0.6.0 for schema 14 and
 `session start --client/--conversation`. Kimi owns its model, native
@@ -51,15 +51,18 @@ personal CLI/MCP steps below are 0.6.0.
 
 ## Optional MCP connection
 
-Install published AWR 0.6.0, which includes the grouped MCP catalog, or build
+Install AWR 0.7.0, which includes the grouped MCP catalog, or build
 `awr` and `awr-mcp` from this repository using
 [the repository instructions](../../../README.md), then initialize the target
 project from its reviewed source manifest. For an already initialized project,
 keep its existing database and mapping.
 
+Installation examples use the canonical 0.7.0 package names. Existing users should
+follow the [package migration steps](../release/DISTRIBUTIONS.md#migrate-from-the-previous-package-names) first.
+
 ```sh
-npm install -g @originoneai/agent-work-runtime@0.6.0
-# or: python -m pip install agent-work-runtime==0.6.0
+npm install -g @originoneai/awr@0.7.0
+# or: python -m pip install originoneai-awr==0.7.0
 # or from this tree:
 cargo build --locked -p awr-cli -p awr-mcp
 # binaries: target/debug/awr and target/debug/awr-mcp

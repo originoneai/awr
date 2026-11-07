@@ -4,16 +4,19 @@ This is the **L0** operator path. It works from any coding agent's terminal
 tool, and from any MCP client that can start `awr-mcp` or reach the shared
 HTTP service. Host-specific merge paths live in [L1/L2 notes](README.md).
 
-This page describes published **AWR 0.6.0** and the current source tree. The
+This page describes the **AWR 0.6.0** integration baseline and the current source tree. The
 packages include the CLI, stdio MCP, session/claim tools and the
 [shared HTTP service](../reference/mcp-service.md). **0.5.1** already grouped the
 MCP catalog; install 0.6.0 for schema 14 and
 `session start --client/--conversation`. The 0.4.0 package is not the current
 release.
 
+Installation examples use the canonical 0.7.0 package names. Existing users should
+follow the [package migration steps](../release/DISTRIBUTIONS.md#migrate-from-the-previous-package-names) first.
+
 ```sh
-npm install -g @originoneai/agent-work-runtime@0.6.0
-# or: python -m pip install agent-work-runtime==0.6.0
+npm install -g @originoneai/awr@0.7.0
+# or: python -m pip install originoneai-awr==0.7.0
 ```
 
 0.5.1 projects use SQLite schema 7. 0.6.0 migrates **7 → 14** on the first
