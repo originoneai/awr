@@ -143,8 +143,10 @@ describe('effective plan table', () => {
       return impl(input, init);
     });
     await waitFor(() => expect(screen.getByTestId('plan-status-W1').textContent).toBe('加载中…'));
+    expect(screen.getByTestId('plan-owner-W1').textContent).toBe('加载中…');
     await act(async () => { release(); });
     await waitFor(() => expect(screen.getByTestId('plan-status-W1').textContent).toBe('已认领'));
+    expect(screen.getByTestId('plan-owner-W1').textContent).toBe('lin');
   });
 
   it('refreshes the progress words of the list slowly, ten minutes, and the selected work\'s own detail fast', async () => {
@@ -185,7 +187,7 @@ describe('effective plan table', () => {
     expect(screen.getByTestId('workstream-group-WS1').textContent).toContain('Backend workstream');
     expect(screen.getByTestId('workstream-group-WS2').textContent).toContain('Frontend workstream');
     await waitFor(() => expect(screen.getByTestId('plan-status-W1').textContent).toBe('已认领'));
-    expect(screen.getByTestId('plan-owner-W1').textContent).toBe('未提供');
+    expect(screen.getByTestId('plan-owner-W1').textContent).toBe('lin');
     expect(screen.getByRole('radio', { name: '看板' })).toHaveProperty('disabled', true);
     expect(screen.queryByRole('button', { name: '提出需求' })).toBeNull();
 
@@ -672,6 +674,62 @@ describe('work-plan review round 2: sub-read failures and behavior pins', () => 
     const cell = await screen.findByTestId('plan-owner-W1');
     expect(cell.textContent).toBe('lin');
     expect(cell.textContent).not.toContain('agent-x');
+  });
+
+  it('shows each responsible member from the current work snapshot without extra reads', async () => {
+    const { fetchMock } = setupPlan({
+      path: '/projects/demo?tab=plan',
+      snapshot: (workId) => {
+        const response = demoWorkSnapshot(workId);
+        return {
+          ...response,
+          result: {
+            ...response.result,
+            data: {
+              ...response.result.data,
+              observation: {
+                ...response.result.data.observation,
+                progress: CHECKPOINT,
+                responsibility: {
+                  relation: 'owned_by_other',
+                  owner: `member_${workId.toLowerCase()}`,
+                  owner_name: workId === 'W1' ? 'Lin Wei' : 'Mei Chen',
+                  version: '1',
+                },
+              },
+            },
+          },
+        };
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('plan-owner-W1').textContent).toBe('Lin Wei');
+      expect(screen.getByTestId('plan-owner-W2').textContent).toBe('Mei Chen');
+    });
+    const reads = fetchMock.mock.calls
+      .filter(([, init]) => String(init?.body ?? '').includes('"work.snapshot"'))
+      .map(([, init]) => (JSON.parse(String(init?.body)) as { query: { work_id: string } }).query.work_id);
+    expect(reads.sort()).toEqual(['W1', 'W2']);
+    expect(screen.getByTestId('plan-owner-W1').textContent).not.toContain('Lin Agent');
+  });
+
+  it('does not present a failed owner read or a bare member identifier as a person', async () => {
+    setupPlan({
+      path: '/projects/demo?tab=plan',
+      snapshot: (workId) => {
+        if (workId === 'W1') return { ok: false, error: { code: 'ReadTimeout', message: 'slow' } };
+        const response = demoWorkSnapshot(workId);
+        response.result.data.observation.responsibility.owner = 'member_internal_002';
+        return response;
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('plan-status-W1').textContent).toBe('未知');
+      expect(screen.getByTestId('plan-status-W2').textContent).toBe('已认领');
+    });
+    expect(screen.getByTestId('plan-owner-W1').textContent).toBe('未提供');
+    expect(screen.getByTestId('plan-owner-W2').textContent).toBe('未提供');
+    expect(screen.getByTestId('plan-owner-W2').textContent).not.toContain('member_internal_002');
   });
 
   it('review reads are keyed per (work, round) with the right ids', async () => {

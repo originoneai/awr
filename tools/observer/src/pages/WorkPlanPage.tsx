@@ -16,13 +16,14 @@ import {
 } from 'antd';
 import type { KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { groupWorks, rawObservationText } from '../core/observation';
+import { deriveOwner, groupWorks, ownerCellText } from '../core/observation';
 import { Link, useSearchParams } from 'react-router';
 import { ObservationEmpty, ObservationForbidden, PartialFailure } from '../components/states';
 import { WorkProgress } from '../components/WorkProgress';
 import { WorkDetailPanel } from '../components/WorkDetailPanel';
 import { isAuthError } from '../lib/api';
 import { overviewQueryOptions } from '../lib/queries';
+import { readStateOf } from '../lib/read-state';
 import { useRevocation } from '../lib/revocation';
 import { useWorkSnapshots } from '../lib/work-snapshots';
 import type { TeamWork } from '../lib/types';
@@ -44,7 +45,7 @@ function taskPath(project: string, workId: string) {
 }
 
 export function WorkPlanPage({ project }: { project: string }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { revoked } = useRevocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const overview = useQuery(overviewQueryOptions(project, revoked));
@@ -130,11 +131,20 @@ export function WorkPlanPage({ project }: { project: string }) {
       key: 'owner',
       width: 160,
       onCell: (row) => ({ colSpan: row.kind === 'group' ? 0 : 1 }),
-      render: (_, row) => row.kind === 'work' ? (
-        <span data-testid={`plan-owner-${row.work.key}`}>
-          {rawObservationText(row.work.owner_person ?? row.work.agent).text ?? t('common.notProvided')}
-        </span>
-      ) : null,
+      render: (_, row) => {
+        if (row.kind !== 'work') return null;
+        const query = snapshots[row.index];
+        const owner = deriveOwner({
+          rowOwner: row.work.owner_person ?? row.work.agent,
+          snapshot: query?.data?.result.data,
+          readState: readStateOf(query),
+        });
+        return (
+          <span data-testid={`plan-owner-${row.work.key}`} data-owner-source={owner.source}>
+            {ownerCellText(owner, { language: i18n.language })}
+          </span>
+        );
+      },
     },
   ];
 
