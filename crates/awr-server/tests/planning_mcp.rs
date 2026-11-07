@@ -109,6 +109,65 @@ fn draft(id: &str) -> TaskDraft {
 }
 
 #[tokio::test]
+async fn planning_scope_rejection_explains_bounds_and_allows_corrected_retry() {
+    let (_g, admin, _db, store) = setup().await;
+    admin.batch_execute(
+        "UPDATE awr_team.project_memberships SET role='maintainer', membership_version=membership_version+1 WHERE actor_id='agent';
+         UPDATE awr_team.workstream_grants SET can_write=true, grant_version=grant_version+1 WHERE client_id='cli-a';"
+    ).await.unwrap();
+    let server = start(store).await;
+    let client = connect(&server, A).await;
+    let mut task = draft("QUEUE-CHANGE");
+    task.scope_paths = vec!["src/queue.js".into(), "test/queue.test.js".into()];
+    let mut input = json!({
+        "protocol_version":1,"request_id":"scope-correction","mode":"create",
+        "changes":[{"op":"create_task","after":task}],
+        "allowed_spec_roots":["docs/requirements.md"],"project_goal_keys":["delivery"]
+    });
+    let denied = call(&client, "awr_team_planning_draft", input.clone(), true).await;
+    assert_eq!(denied["code"], "InvalidInput");
+    assert_eq!(denied["invalid_field"], "/changes");
+    assert_eq!(denied["constraint"], "project_relative_scope_bounds");
+    assert_eq!(denied["request_reserved"], false);
+    let guidance = denied["next_step"].as_str().unwrap();
+    assert!(guidance.contains("scope_paths") && guidance.contains("allowed_spec_roots"));
+    assert!(!denied.to_string().contains("src/queue.js"));
+    let response = http()
+        .post(format!("{}/one/planning/draft", server.url))
+        .bearer_auth(A)
+        .json(&input)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(response.json::<Value>().await.unwrap(), denied);
+    let count: i64 = admin.query_one("SELECT count(*) FROM awr_team.planning_command_receipts WHERE request_id='scope-correction'", &[]).await.unwrap().get(0);
+    assert_eq!(count, 0, "invalid scope must not reserve a command");
+    let count: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.planning_candidates", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 0, "invalid scope must not create a candidate");
+
+    input["allowed_spec_roots"] = json!(["src", "test"]);
+    for path in ["", "../src/queue.js", "/outside/queue.js", "src//queue.js"] {
+        input["changes"][0]["after"]["scope_paths"] = json!([path]);
+        let denied = call(&client, "awr_team_planning_draft", input.clone(), true).await;
+        assert_eq!(denied["constraint"], "project_relative_scope_bounds");
+        assert_eq!(denied["request_reserved"], false);
+    }
+    input["changes"][0]["after"]["scope_paths"] = json!(["src/queue.js", "test/queue.test.js"]);
+    let created = call(&client, "awr_team_planning_draft", input.clone(), false).await;
+    assert!(created["result"]["candidate_id"].is_string());
+    assert_eq!(
+        call(&client, "awr_team_planning_draft", input, false).await["already_recorded"],
+        true
+    );
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn planning_input_correction_and_reserved_outcome_have_transport_parity() {
     let (_g, admin, _db, store) = setup().await;
     admin.batch_execute(

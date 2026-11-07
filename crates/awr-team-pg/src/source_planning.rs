@@ -155,6 +155,11 @@ async fn bind_planning_receipt_and_ops_audit(
 
 fn map_team(err: awr_team::TeamError) -> PgError {
     match err {
+        awr_team::TeamError::InvalidInput(message)
+            if message == "empty scope path" || message.starts_with("out-of-bound spec path: ") =>
+        {
+            PgError::planning_scope_invalid()
+        }
         awr_team::TeamError::PermissionDenied(msg) => {
             if msg.contains("downgraded") {
                 PgError::PolicyDowngrade

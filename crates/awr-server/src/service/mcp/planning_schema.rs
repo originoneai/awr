@@ -2,6 +2,9 @@
 use serde_json::{Value, json};
 
 pub(super) fn add(schema: &mut Value) {
+    schema["properties"]["allowed_spec_roots"]["description"] = json!(
+        "Optional project-relative roots for every task's scope_paths, including code, tests and specifications (for example src, public and test). Each scope path must equal a root or lie beneath it. Empty roots retain project-relative path validation. Declared roots grant no additional authority."
+    );
     let strings = json!({"type":"array","items":{"type":"string"}});
     schema["$defs"] = json!({"TaskDraft":{
         "type":"object","additionalProperties":false,

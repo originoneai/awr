@@ -33,6 +33,19 @@ history. Preview identifies domain, dependency and publication requirements.
 Definition states cannot forge runtime completion. Empty or incompatible values
 still fail domain validation; the schema does not replace those checks.
 
+`allowed_spec_roots` bounds each task's `after.scope_paths`, including its code
+and test directories. For example, work in `src/queue.js` and
+`test/queue.test.js` fits roots `["src", "test"]`. A requirements document alone
+does not cover those directories. Paths must remain project-relative without
+empty, dot or parent segments, even when roots are empty. Declaring roots grants
+no additional access or execution authority.
+
+Scope rejection returns `InvalidInput` with the fixed constraint
+`project_relative_scope_bounds` and correction guidance through both HTTP and
+MCP, without echoing rejected paths. A fresh rejected draft reserves no command
+and creates no candidate; correct that unused request before retrying. For an
+unknown outcome, inspect the original request's outcome first.
+
 Approved source writeback persists both `title` and an explicit `definition_state`
 in each YAML task. The states `draft` and `enabled` remain distinct even when the
 human progress note is `status: planned`. `status` is a source note, never an

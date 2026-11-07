@@ -482,7 +482,11 @@ async fn rejects_cycles_dangling_cross_project_oob_and_policy_downgrade() {
         .create_planning_candidate(TENANT, PROJECT, A, &oob_c)
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("out-of-bound"), "{err}");
+    assert_eq!(
+        err.planning_input_diagnostic().unwrap()["constraint"],
+        "project_relative_scope_bounds"
+    );
+    assert!(!err.to_string().contains("../etc/passwd"));
 
     let downgrade = DraftCandidateCreate {
         changes: vec![DraftChange {
