@@ -233,6 +233,8 @@ def main():
         python_bin = python_env / ("Scripts" if os.name == "nt" else "bin")
         python = python_bin / ("python.exe" if os.name == "nt" else "python")
         run([python, "-m", "pip", "install", "--no-index", "--no-deps", wheel])
+        installed_version = run([python, "-c", "from importlib.metadata import version; print(version('originoneai-awr'))"]).stdout.strip()
+        assert installed_version == manifest["python_version"], "canonical Python distribution identity mismatch"
         suffix = ".exe" if os.name == "nt" else ""
         py_result = exercise(python_bin / ("awr" + suffix), python_bin / ("awr-mcp" + suffix),
                              scratch / "python-use", manifest["version"])
@@ -241,6 +243,8 @@ def main():
         # Only the two tarballs under test are available; no registry fallback can hide omissions.
         run(["npm.cmd" if os.name == "nt" else "npm", "install", "--prefix", npm_root,
              "--offline", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false", *tarballs])
+        installed = json.loads((npm_root / "node_modules/@originoneai/awr/package.json").read_text())
+        assert installed["name"] == "@originoneai/awr" and installed["version"] == manifest["version"]
         npm_bin = npm_root / "node_modules/.bin"
         suffix = ".cmd" if os.name == "nt" else ""
         npm_result = exercise(npm_bin / ("awr" + suffix), npm_bin / ("awr-mcp" + suffix),

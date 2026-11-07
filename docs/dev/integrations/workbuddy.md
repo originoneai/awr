@@ -32,7 +32,7 @@ Do not copy the L0 tutorial here. Do not add `--client workbuddy`. Do not run
 
 ## MCP merge path
 
-This note describes the **packaged** `@originoneai/agent-work-runtime`. Install
+This note describes the **packaged** `@originoneai/awr`. Install
 the pinned release; source builds are out of scope for this host.
 
 Initialize the project before starting the server, then merge one entry into
@@ -62,7 +62,7 @@ does not add the installer's Node directory for you:
       "type": "stdio",
       "command": "/absolute/path/to/node",
       "args": [
-        "/absolute/path/to/node_modules/@originoneai/agent-work-runtime/bin/awr-mcp.cjs",
+        "/absolute/path/to/node_modules/@originoneai/awr/bin/awr-mcp.cjs",
         "--project",
         "/absolute/path/to/initialized/project"
       ]

@@ -15,21 +15,27 @@ The next CLI/MCP use recovers a terminated service without duplicate instances.
 See the [local hub guide](https://github.com/originoneai/awr/blob/v0.7.0/docs/dev/reference/local-project-hub.md).
 
 ```sh
-npm install -g @originoneai/agent-work-runtime@0.7.0
+npm install -g @originoneai/awr@0.7.0
 awr --version
 awr --help
 awr-mcp --help
 ```
 
+Upgrading an existing installation? Run
+`npm uninstall -g @originoneai/agent-work-runtime` before installing
+`@originoneai/awr`. Commands and project state keep their existing names.
+Update absolute paths into the old npm package directory in Agent configurations.
+See the [migration guide](https://github.com/originoneai/awr/blob/v0.7.0/docs/dev/release/DISTRIBUTIONS.md#migrate-from-the-previous-package-names).
+
 Without a global installation, select the command explicitly:
 
 ```sh
-npx --package=@originoneai/agent-work-runtime@0.7.0 awr --help
-npx --package=@originoneai/agent-work-runtime@0.7.0 awr-mcp --project /absolute/project
+npx --package=@originoneai/awr@0.7.0 awr --help
+npx --package=@originoneai/awr@0.7.0 awr-mcp --project /absolute/project
 ```
 
 The project must be initialized before starting its MCP server. Follow the
-[project documentation](https://github.com/originoneai/agent-work-runtime).
+[project documentation](https://github.com/originoneai/awr).
 
 The distribution targets macOS 15+ arm64 and Intel x64, Linux x64/arm64 with glibc 2.39+ (Ubuntu 24.04
 baseline), and Windows x64. Node.js 22.14+ is required for the npm launcher. Git is
@@ -47,4 +53,4 @@ awr-mcp --registry /etc/awr/service.toml --listen 127.0.0.1:8080
 ```
 
 Configure project registrations and client credentials using the
-[shared MCP service guide](https://github.com/originoneai/agent-work-runtime/blob/main/docs/dev/reference/mcp-service.md).
+[shared MCP service guide](https://github.com/originoneai/awr/blob/main/docs/dev/reference/mcp-service.md).

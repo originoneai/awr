@@ -10,9 +10,9 @@ Both package channels install the same Rust CLI and MCP server; there is no
 separate JavaScript or Python SDK:
 
 ```sh
-npm install -g @originoneai/agent-work-runtime@0.6.0
+npm install -g @originoneai/awr@0.7.0
 # or, in a Python virtual environment
-python -m pip install agent-work-runtime==0.6.0
+python -m pip install originoneai-awr==0.7.0
 ```
 
 Verify with `awr --version` and `awr-mcp --version`.

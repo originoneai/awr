@@ -29,9 +29,10 @@ def check():
     )
     assert all(p["version"] == version for p in packages), "workspace package versions must match Cargo.toml"
     npm = json.loads((ROOT / "packaging/npm/package.json").read_text())
+    assert npm["name"] == "@originoneai/awr", "canonical npm package identity mismatch"
     assert npm["version"] == version
     assert set(npm["optionalDependencies"]) == {
-        f"@originoneai/agent-work-runtime-{target}" for target in PLATFORMS
+        f"@originoneai/awr-{target}" for target in PLATFORMS
     }
     assert set(npm["optionalDependencies"].values()) == {version}
     tag = "next" if "-" in version else "latest"

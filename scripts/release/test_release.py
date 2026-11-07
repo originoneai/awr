@@ -60,7 +60,7 @@ class ReleaseChecks(unittest.TestCase):
         tag = "next" if "-" in version else "latest"
         for suffix in ["", "-darwin-arm64", "-darwin-x64", "-linux-x64-gnu", "-linux-arm64-gnu", "-win32-x64"]:
             path = npm / ("package" + suffix + ".tgz")
-            metadata = json.dumps({"name": "@originoneai/agent-work-runtime" + suffix,
+            metadata = json.dumps({"name": "@originoneai/awr" + suffix,
                                    "version": version, "publishConfig": {"tag": tag}}).encode()
             with tarfile.open(path, "w:gz") as archive:
                 info = tarfile.TarInfo("package/package.json")
@@ -104,6 +104,25 @@ class ReleaseChecks(unittest.TestCase):
                     with self.assertRaises(AssertionError):
                         publish_npm.main()
                     run.assert_not_called()
+
+    def test_legacy_package_identity_is_rejected_before_any_publication(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = self.package_set(root, "0.7.0")
+            path = root / "npm/package.tgz"
+            metadata = json.dumps({"name": "@originoneai/agent-work-runtime",
+                                   "version": "0.7.0", "publishConfig": {"tag": "latest"}}).encode()
+            with tarfile.open(path, "w:gz") as archive:
+                info = tarfile.TarInfo("package/package.json")
+                info.size = len(metadata)
+                archive.addfile(info, io.BytesIO(metadata))
+            # A valid checksum alone must not authorize publishing the old identity.
+            manifest["artifacts"][path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+            (root / "release-manifest.json").write_text(json.dumps(manifest))
+            with patch.object(sys, "argv", ["publish_npm.py", str(root)]), patch("publish_npm.subprocess.run") as run:
+                with self.assertRaises(AssertionError):
+                    publish_npm.main()
+                run.assert_not_called()
 
     def assembled_inputs(self, root):
         source = "1" * 40
