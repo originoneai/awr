@@ -165,6 +165,38 @@ fn exact_content_identity_supports_both_git_formats_and_missing_target_creation(
 }
 
 #[test]
+fn retained_ancestor_proofs_bind_the_original_candidate_and_adapter_observation() {
+    let (mut proof, mut observation) = rewritten_proof();
+    proof.witness = IntegrationContentWitness::RetainedAncestorArtifacts;
+    assert!(proof.proves_observation(&observation).unwrap());
+    let wire = envelope(DeliveryRecord::IntegrationContentProof(proof.clone()));
+    assert_eq!(
+        parse_delivery_record(&serde_json::to_vec(&wire).unwrap()).unwrap(),
+        wire
+    );
+    for (pointer, value) in [
+        ("/binding/manifest_digest", json!("f".repeat(64))),
+        ("/binding/candidate_version", json!("2")),
+        ("/request_id", json!("other-attempt")),
+        ("/provenance/source", json!("caller_declared")),
+        ("/provenance/reference", json!("other-report")),
+        ("/provenance/observed_at_unix_ms", json!(999)),
+    ] {
+        let mut changed = serde_json::to_value(&proof).unwrap();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        let changed: IntegrationContentProof = serde_json::from_value(changed).unwrap();
+        assert!(
+            changed.proves_observation(&observation).is_err(),
+            "accepted {pointer}"
+        );
+    }
+    observation.outcome = IntegrationOutcome::Unknown;
+    assert!(!proof.proves_observation(&observation).unwrap());
+    proof.result_revision = proof.binding.source_revision.clone();
+    assert!(proof.validate().is_err());
+}
+
+#[test]
 fn complete_snapshot_identities_keep_the_repository_object_algorithm() {
     for (format, snapshot_format, length) in [
         (

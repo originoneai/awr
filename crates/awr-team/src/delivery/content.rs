@@ -1,4 +1,4 @@
-//! Complete snapshot observations are distinct from selected manifest entries.
+//! Distinct proofs for exact revisions, retained ancestor artifacts and complete snapshots.
 use super::binding::text;
 use super::{
     CandidateBinding, FactProvenance, FactSource, IntegrationObservation, IntegrationOutcome,
@@ -57,6 +57,10 @@ pub enum ContentProofUnavailableReason {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IntegrationContentWitness {
     ExactRevision,
+    /// The source is an ancestor of the result, and every manifest path keeps
+    /// its Git object identity and mode. Other paths may have evolved.
+    /// This is not a complete-snapshot proof for rewritten history.
+    RetainedAncestorArtifacts,
     MatchingCompleteSnapshots {
         source_snapshot: CompleteSnapshotIdentity,
         result_snapshot: CompleteSnapshotIdentity,
@@ -72,6 +76,7 @@ impl IntegrationContentWitness {
     pub fn kind(&self) -> &'static str {
         match self {
             Self::ExactRevision => "exact_revision",
+            Self::RetainedAncestorArtifacts => "retained_ancestor_artifacts",
             Self::MatchingCompleteSnapshots { .. } => "matching_complete_snapshots",
             Self::Unavailable { .. } => "unavailable",
         }
@@ -128,6 +133,7 @@ impl IntegrationContentProof {
         }
         match &self.witness {
             IntegrationContentWitness::ExactRevision if source == result => Ok(()),
+            IntegrationContentWitness::RetainedAncestorArtifacts if source != result => Ok(()),
             IntegrationContentWitness::MatchingCompleteSnapshots {
                 source_snapshot,
                 result_snapshot,

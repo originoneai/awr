@@ -92,6 +92,127 @@ async fn sha256_query_push_observation_and_restart() {
     observe(true).await;
 }
 
+#[tokio::test]
+async fn later_deliveries_preserve_an_ancestor_candidates_artifacts() {
+    for sha256 in [false, true] {
+        let f = GitFixture::new(sha256);
+        f.push_main();
+        let adapter = f.adapter().await;
+        let candidate = f.candidate();
+        let original = adapter
+            .inspect(&candidate, "original-delivery")
+            .await
+            .unwrap();
+        assert_eq!(
+            original.report.integration_outcome,
+            IntegrationOutcome::Applied
+        );
+
+        f.commit("page.html", b"A separate delivery\n");
+        f.push_main();
+        let target = f.bare(&["rev-parse", "refs/heads/main"]);
+        let before = f.bare(&["for-each-ref", "--format=%(refname) %(objectname)"]);
+        let retained = adapter.inspect(&candidate, "later-delivery").await.unwrap();
+        assert_eq!(retained.report.graph_contains_source, Some(true));
+        assert_eq!(
+            retained.report.integration_outcome,
+            IntegrationOutcome::Applied
+        );
+        assert_eq!(
+            content(&retained).witness.kind(),
+            "retained_ancestor_artifacts"
+        );
+        assert_eq!(
+            retained.report.target_revision.as_ref().unwrap().value,
+            target
+        );
+        let DeliveryRecord::IntegrationObservation(observation) = &retained.records[1].record
+        else {
+            panic!("missing integration observation");
+        };
+        assert!(content(&retained).proves_observation(observation).unwrap());
+        assert_eq!(
+            before,
+            f.bare(&["for-each-ref", "--format=%(refname) %(objectname)"])
+        );
+    }
+}
+
+#[tokio::test]
+async fn ancestry_does_not_hide_changed_missing_or_chmodded_artifacts() {
+    for sha256 in [false, true] {
+        for change in ["content", "omission", "mode"] {
+            let f = GitFixture::new(sha256);
+            match change {
+                "content" => f.commit("deliverable.txt", b"overwritten\n"),
+                "omission" => {
+                    f.git(&["rm", "deliverable.txt"]);
+                    f.git(&["commit", "-m", "Remove a delivered artifact"]);
+                }
+                _ => {
+                    f.git(&["update-index", "--chmod=+x", "deliverable.txt"]);
+                    f.git(&["commit", "-m", "Change a delivered artifact mode"]);
+                }
+            }
+            f.push_main();
+            let result = f
+                .adapter()
+                .await
+                .inspect(&f.candidate(), "changed-artifact")
+                .await
+                .unwrap();
+            assert_eq!(result.report.graph_contains_source, Some(true));
+            assert_ne!(
+                result.report.integration_outcome,
+                IntegrationOutcome::Applied,
+                "accepted {change}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn retained_ancestor_checks_every_manifest_path_recursively_and_literally() {
+    for sha256 in [false, true] {
+        let mut f = GitFixture::new(sha256);
+        let path = "scripts/run[1].sh";
+        let bytes = b"echo approved\n";
+        f.commit(path, bytes);
+        f.source = f.git(&["rev-parse", "HEAD"]);
+        let mut candidate = f.candidate();
+        candidate.manifest.entries.push(ArtifactEntry {
+            artifact_id: "nested-script".into(),
+            locator: format!("git-blob:{path}"),
+            sha256: sha(bytes),
+            byte_length: bytes.len().to_string(),
+        });
+        candidate.binding.manifest_digest = candidate.manifest.digest().unwrap();
+        f.commit("scripts/run1.sh", b"A different, unselected path\n");
+        f.push_main();
+        let adapter = f.adapter().await;
+        let retained = adapter
+            .inspect(&candidate, "literal-retention")
+            .await
+            .unwrap();
+        assert_eq!(
+            retained.report.integration_outcome,
+            IntegrationOutcome::Applied
+        );
+        f.git(&["update-index", "--chmod=+x", path]);
+        f.git(&["commit", "-m", "Change the nested delivered script mode"]);
+        f.push_main();
+        let changed = adapter
+            .inspect(&candidate, "nested-mode-change")
+            .await
+            .unwrap();
+        assert_eq!(changed.report.manifest_outcome, VerificationOutcome::Passed);
+        assert_ne!(
+            changed.report.integration_outcome,
+            IntegrationOutcome::Applied
+        );
+    }
+}
+
 async fn retained_base_rewrite(sha256: bool) {
     let f = GitFixture::new(sha256);
     let rewritten = f.rewrite_main(Some(&f.base));
@@ -376,6 +497,45 @@ async fn target_read_barrier_follows_complete_content_queries() {
         IntegrationOutcome::Unknown
     );
     assert_eq!(f.bare(&["rev-parse", "refs/heads/main"]), f.base);
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn target_read_barrier_follows_ancestor_artifact_comparison() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut f = GitFixture::new(false);
+    f.commit("later.txt", b"Independent change\n");
+    f.push_main();
+    let target = f.bare(&["rev-parse", "refs/heads/main"]);
+    let real_git = f
+        .config
+        .git_executable
+        .to_str()
+        .unwrap()
+        .replace('\'', "'\\''");
+    let wrapper = f.root.join("ancestor-target-race-git");
+    std::fs::write(&wrapper, format!(
+        "#!/bin/sh\nfor arg do\n  if [ \"$arg\" = diff-tree ]; then\n    '{real_git}' \"$@\"\n    command_status=$?\n    '{real_git}' --git-dir=. update-ref refs/heads/main {} {target}\n    exit \"$command_status\"\n  fi\ndone\nexec '{real_git}' \"$@\"\n", f.base
+    )).unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    f.config.git_executable = wrapper;
+    let result = f
+        .adapter()
+        .await
+        .inspect(&f.candidate(), "ancestor-target-race")
+        .await
+        .unwrap();
+    assert!(!result.report.target_stable);
+    assert_eq!(
+        result.report.integration_outcome,
+        IntegrationOutcome::Unknown
+    );
+    assert_eq!(
+        content(&result).witness,
+        IntegrationContentWitness::Unavailable {
+            reason: ContentProofUnavailableReason::TargetUnstable
+        }
+    );
 }
 
 #[tokio::test]

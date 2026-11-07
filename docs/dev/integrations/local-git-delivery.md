@@ -47,11 +47,19 @@ Other required checks remain explicitly unsupported in the report and absent
 from observed verification facts. A missing/unavailable revision, unsupported
 artifact or exceeded content budget stays unknown; a measured mismatch fails.
 
-Integration is observed as applied only with a usable complete-content witness,
+Integration is observed as applied only with a usable content witness,
 matching manifest bytes and a stable target reference. The witness distinguishes:
 
 - `exact_revision`: the actual target is the same immutable Git commit as the
   selected source. Missing-target creation retains this ordinary behavior.
+- `retained_ancestor_artifacts`: the selected source is an actual ancestor of
+  the target, the declared exact base remains in both histories, and every
+  manifest path retains its Git object identity and mode. Later deliveries may
+  add or change other files without withdrawing this delivery's proof. Literal,
+  recursive tree comparisons include nested paths and executable bits; both
+  source and target artifact bytes must still pass verification. This proves
+  preservation of the declared artifacts, not behavioral compatibility of
+  subsequent changes or equality of the entire repository.
 - `matching_complete_snapshots`: the actual commits differ, their **whole** Git
   trees match, and the declared exact target base is an ancestor of both commits.
   The source need not be an ancestor of a rewritten result. Fixed bounded reads
@@ -60,13 +68,14 @@ matching manifest bytes and a stable target reference. The witness distinguishes
   fetched. The final target read occurs after these queries and artifact reads.
 - `unavailable`: no usable proof was obtained. Finite reasons distinguish missing
   observations/history, changed content/base, unstable targets and unsupported
-  formats. A matching selected subset or a caller flag cannot establish equality.
+  formats. A matching selected subset without actual ancestry, or a caller flag,
+  cannot establish equality.
 
-This supports read-only recognition of squash/rebase results under the unchanged
+The complete-snapshot witness supports read-only recognition of squash/rebase results under the unchanged
 declared base. A different base, file omission, unrelated content or mode change,
 missing nonmanifest object, or target race cannot confirm the old candidate.
-Exact whole-snapshot equality is deliberately conservative: legitimate changes
-that produce a different tree need a new candidate, verification and review.
+For rewritten history, exact whole-snapshot equality remains deliberately
+conservative: a different tree needs a new candidate, verification and review.
 `graph_contains_source` still reports actual ancestry; it is not rewritten to
 true when complete trees establish equality.
 

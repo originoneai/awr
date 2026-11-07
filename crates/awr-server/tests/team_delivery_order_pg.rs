@@ -1572,6 +1572,38 @@ fn assignment_refinement_review_and_delivery_hold_in_the_planned_order() {
         deliver_page(&mut team, &mut order, &page_decision).await;
         let api = order.api.last().unwrap().clone();
         let page = order.page.last().unwrap().clone();
+        // A later delivery must not withdraw the earlier item's current proof.
+        // Re-observe the API after the page has advanced the shared target.
+        team.observe(API).await;
+        let current = team
+            .store
+            .inspect(TENANT, PROJECT, WORKER.token, API.id)
+            .await
+            .unwrap();
+        let facts = current["facts"].as_array().unwrap();
+        let integration = facts
+            .iter()
+            .find(|fact| {
+                fact["current"] == true && fact["observation"]["kind"] == "integration_observation"
+            })
+            .unwrap();
+        assert_eq!(integration["observation"]["outcome"], "applied");
+        assert_eq!(
+            integration["observation"]["result_revision"]["value"],
+            page.source
+        );
+        let content = facts
+            .iter()
+            .find(|fact| {
+                fact["current"] == true
+                    && fact["observation"]["kind"] == "integration_content_proof"
+            })
+            .unwrap();
+        assert_eq!(
+            content["observation"]["witness_kind"],
+            "retained_ancestor_artifacts"
+        );
+        assert_eq!(team.runtime_state(API).await, "completed");
         assert_closed_to_follow_up(&mut team, LIN, API, &api).await;
         assert_closed_to_follow_up(&mut team, MEI, PAGE, &page).await;
     });
