@@ -169,7 +169,7 @@ fn envelope(data: Value) -> Value {
 fn response(op: &str) -> Value {
     match op {
         "capabilities" => json!({"protocol":"awr-team-workstream","protocol_version":1,
-            "identity":{"actor_id":"reader","client_id":"terminal"},"queries":["capabilities","work.next"],"commands":["session.start"],"extension":{"keep":true}}),
+            "identity":{"actor_id":"reader","client_id":"terminal"},"queries":["capabilities","work.next","session.inspect","claim.inspect","execution.inspect","command.inspect","work.recovery"],"commands":["session.start"],"extension":{"keep":true}}),
         "workstreams.list" => {
             json!({"items":[{"id":STREAM,"title":"Synthetic stream","external_key":"main","state":"active","authority_version":4}],"total":1,"next_cursor":null})
         }
@@ -203,6 +203,27 @@ fn response(op: &str) -> Value {
             json!({"work_id":"w","observed_at_unix_ms":1000,"runtime":null,"usage":null,
             "execution_authorized":false,"missing":{"usage":"no_session"},"pr_deliveries":[],"guidance":{"condition":"inspect recorded facts"}}),
         ),
+        "session.inspect" | "work.recovery" => envelope(json!({
+            "items":[{"session_id":"s","state":"ended","session_version":"9007199254740993",
+                "checkpoint_id":"checkpoint","context_hash":"historical-context-hash",
+                "contract_hash":"contract-hash","contract_matches_current":true,
+                "next_action":"historical action","open_loops":[]}],
+            "current_contract_hash":"contract-hash","automatic_resume":false,
+            "checkpoint_actions_are_historical":true,"guidance":{"code":"inspect_current_facts"}
+        })),
+        "claim.inspect" => envelope(
+            json!({"claim_id":"claim","session_id":"s","state":"released",
+            "fence":"9007199254740993","lease_version":"2","lease_live":false,"execution_authorized":false}),
+        ),
+        "execution.inspect" => envelope(
+            json!({"execution_id":"execution","session_id":"s","state":"failed",
+            "execution_version":"9007199254740993","effects_settled":false,"artifact_verified":false,
+            "receipt_details_available":false,"latest_receipt":null,"execution_authorized":false,
+            "extension":{"authority":"future-authority","optional":null}}),
+        ),
+        "command.inspect" => envelope(json!({"state":"committed","receipt":{
+            "request_id":"original-request","op":"session.start","committed_project_revision":"9007199254740993",
+            "data":{"session_id":"s","state":"active"},"extension":null}})),
         _ => panic!("unknown fixture operation"),
     }
 }
@@ -213,8 +234,8 @@ fn error(out: &Output, exit: i32) -> Value {
 }
 
 #[test]
-fn all_nine_native_commands_preserve_service_results_and_send_one_minimal_query() {
-    let cases: [(&str, Vec<&str>, Value); 9] = [
+fn all_fourteen_native_commands_preserve_service_results_and_send_one_minimal_query() {
+    let cases: [(&str, Vec<&str>, Value); 14] = [
         ("capabilities", vec!["capabilities"], json!({})),
         ("workstreams.list", vec!["workstream", "list"], json!({})),
         ("work.next", vec!["work", "next"], json!({})),
@@ -239,6 +260,39 @@ fn all_nine_native_commands_preserve_service_results_and_send_one_minimal_query(
             "work.observe",
             vec!["work", "observe", "w", "--session", "s"],
             json!({"work_id":"w","session_id":"s"}),
+        ),
+        (
+            "session.inspect",
+            vec!["session", "inspect", "s"],
+            json!({"session_id":"s"}),
+        ),
+        (
+            "claim.inspect",
+            vec!["claim", "inspect", "claim", "--work", "w"],
+            json!({"claim_id":"claim","work_id":"w"}),
+        ),
+        (
+            "execution.inspect",
+            vec!["execution", "inspect", "execution", "--session", "s"],
+            json!({"execution_id":"execution","session_id":"s"}),
+        ),
+        (
+            "command.inspect",
+            vec![
+                "command",
+                "inspect",
+                "original-request",
+                "--work",
+                "w",
+                "--session",
+                "s",
+            ],
+            json!({"request_id":"original-request","work_id":"w","session_id":"s"}),
+        ),
+        (
+            "work.recovery",
+            vec!["work", "recovery", "w"],
+            json!({"work_id":"w"}),
         ),
     ];
     for (op, arguments, extra) in cases {
@@ -285,6 +339,322 @@ fn all_nine_native_commands_preserve_service_results_and_send_one_minimal_query(
             profile_before
         );
         project.assert_no_personal_state();
+    }
+}
+
+#[test]
+fn runtime_inspections_preserve_scope_combinations_and_literal_record_ids() {
+    let record = " original 中文 request ";
+    for (resource, field) in [
+        ("claim", "claim_id"),
+        ("execution", "execution_id"),
+        ("command", "request_id"),
+    ] {
+        for (scope, fields) in [
+            (vec!["--work", "w"], json!({"work_id":"w"})),
+            (vec!["--session", "s"], json!({"session_id":"s"})),
+            (
+                vec!["--work", "w", "--session", "s"],
+                json!({"work_id":"w","session_id":"s"}),
+            ),
+        ] {
+            let op = format!("{resource}.inspect");
+            let server = Server::json(200, &response(&op));
+            let project = Project::new(&server.endpoint(), "demo");
+            let mut args = vec![
+                "team",
+                resource,
+                "inspect",
+                record,
+                "--remote",
+                "test",
+                "--workstream",
+                STREAM,
+            ];
+            args.extend(scope);
+            assert!(project.run(&args, true).status.success(), "{args:?}");
+            let mut expected = json!({"protocol_version":1,"op":op,"workstream_id":STREAM});
+            expected[field] = json!(record);
+            expected
+                .as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            assert_eq!(server.finish().body, expected);
+        }
+    }
+    for (op, args, fields) in [
+        (
+            "session.inspect",
+            vec!["session", "inspect", "s", "--work", "w"],
+            json!({"work_id":"w","session_id":"s"}),
+        ),
+        (
+            "work.recovery",
+            vec!["work", "recovery", "--session", "s"],
+            json!({"session_id":"s"}),
+        ),
+        (
+            "work.recovery",
+            vec!["work", "recovery", "w", "--session", "s"],
+            json!({"work_id":"w","session_id":"s"}),
+        ),
+    ] {
+        let server = Server::json(200, &response(op));
+        let project = Project::new(&server.endpoint(), "demo");
+        let mut all = vec!["team"];
+        all.extend(args);
+        all.extend(["--remote", "test", "--workstream", STREAM]);
+        assert!(project.run(&all, true).status.success());
+        let mut expected = json!({"protocol_version":1,"op":op,"workstream_id":STREAM});
+        expected
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        assert_eq!(server.finish().body, expected);
+    }
+}
+
+#[test]
+fn runtime_reads_reject_missing_scope_invalid_ids_and_unsupported_options_without_network() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let project = Project::new(
+        &format!("http://{}", listener.local_addr().unwrap()),
+        "demo",
+    );
+    let long_id = "雪".repeat(43);
+    for resource in ["claim", "execution", "command"] {
+        for scope in [vec![], vec!["--workstream", STREAM]] {
+            let mut args = vec!["team", resource, "inspect", "record", "--remote", "test"];
+            args.extend(scope);
+            assert_eq!(
+                error(&project.run(&args, true), 2)["code"],
+                "InvalidInput",
+                "{args:?}"
+            );
+        }
+    }
+    for base in [
+        vec!["team", "session", "inspect", "s"],
+        vec!["team", "claim", "inspect", "c", "--work", "w"],
+        vec!["team", "execution", "inspect", "e", "--session", "s"],
+        vec!["team", "command", "inspect", "r", "--work", "w"],
+        vec!["team", "work", "recovery", "w"],
+    ] {
+        assert_eq!(error(&project.run(&base, true), 2)["code"], "InvalidInput");
+        for flag in ["--limit", "--cursor", "--max-context-bytes"] {
+            let mut args = base.clone();
+            args.extend(["--remote", "test", flag, "1"]);
+            assert_eq!(
+                error(&project.run(&args, true), 2)["code"],
+                "InvalidInput",
+                "{args:?}"
+            );
+        }
+        for invalid in ["", &long_id, "record\n"] {
+            let mut args = base.clone();
+            args[3] = invalid;
+            args.extend(["--remote", "test"]);
+            assert_eq!(
+                error(&project.run(&args, true), 2)["code"],
+                "InvalidInput",
+                "{args:?}"
+            );
+        }
+        let mut missing_id = base.clone();
+        missing_id.remove(3);
+        missing_id.extend(["--remote", "test"]);
+        assert_eq!(
+            error(&project.run(&missing_id, true), 2)["code"],
+            "InvalidInput"
+        );
+    }
+    for extra in [
+        vec!["--body", "{}"],
+        vec!["--offline"],
+        vec!["--body", "{}", "--offline"],
+    ] {
+        let mut args = vec![
+            "team", "command", "inspect", "r", "--work", "w", "--remote", "test",
+        ];
+        args.extend(extra.iter().copied());
+        assert_eq!(error(&project.run(&args, true), 2)["code"], "InvalidInput");
+        let mut before = vec!["team", "command"];
+        before.extend(extra);
+        before.extend(["inspect", "r", "--work", "w", "--remote", "test"]);
+        assert_eq!(
+            error(&project.run(&before, true), 2)["code"],
+            "InvalidInput"
+        );
+    }
+    for args in [
+        vec![
+            "team", "session", "inspect", "s", "--work", "", "--remote", "test",
+        ],
+        vec![
+            "team",
+            "claim",
+            "inspect",
+            "c",
+            "--session",
+            "s\n",
+            "--remote",
+            "test",
+        ],
+        vec![
+            "team",
+            "execution",
+            "inspect",
+            "e",
+            "--work",
+            &long_id,
+            "--remote",
+            "test",
+        ],
+        vec![
+            "team",
+            "command",
+            "inspect",
+            "r",
+            "--work",
+            "w",
+            "--workstream",
+            "main",
+            "--remote",
+            "test",
+        ],
+        vec![
+            "team",
+            "work",
+            "recovery",
+            "--workstream",
+            STREAM,
+            "--remote",
+            "test",
+        ],
+        vec!["team", "command"],
+    ] {
+        assert_eq!(
+            error(&project.run(&args, true), 2)["code"],
+            "InvalidInput",
+            "{args:?}"
+        );
+    }
+    for args in [
+        vec!["team", "session", "inspect", "--help"],
+        vec!["team", "claim", "inspect", "--help"],
+        vec!["team", "execution", "inspect", "--help"],
+        vec!["team", "command", "--help"],
+        vec!["team", "command", "inspect", "--help"],
+        vec!["team", "work", "recovery", "--help"],
+    ] {
+        let out = project.run(&args, true);
+        assert!(out.status.success(), "{args:?}: {out:?}");
+        assert!(out.stderr.is_empty());
+        assert!(String::from_utf8_lossy(&out.stdout).contains("Usage:"));
+    }
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+    project.assert_no_personal_state();
+}
+
+#[test]
+fn unknown_command_and_empty_recovery_are_successful_reads_with_safe_human_output() {
+    let mut unknown = envelope(json!({"state":"unknown","request_id":"original-request",
+        "retry":"conditional","action_guidance":{"because":"No committed receipt is visible; an in-flight command may still commit."},
+        "extension":{"literal":"\u{1b}[31m\u{9b}31m","optional":null}}));
+    unknown["authority_version"] = json!("9007199254740993");
+    let mut empty = response("work.recovery");
+    empty["data"]["items"] = json!([]);
+    let mut expired = response("claim.inspect");
+    expired["data"]["state"] = json!("expired");
+    let mut settled = response("execution.inspect");
+    settled["data"]["state"] = json!("succeeded");
+    settled["data"]["effects_settled"] = json!(true);
+    settled["data"]["settlement_basis"] = json!("caller_asserted");
+    for (args, value, human_hint) in [
+        (
+            vec!["session", "inspect", "s"],
+            response("session.inspect"),
+            "Checkpoint actions are historical",
+        ),
+        (
+            vec!["command", "inspect", "original-request", "--work", "w"],
+            unknown,
+            "does not prove the original command failed or cannot still commit",
+        ),
+        (
+            vec!["work", "recovery", "w"],
+            empty,
+            "Checkpoint actions are historical",
+        ),
+        (
+            vec!["claim", "inspect", "claim", "--work", "w"],
+            expired,
+            "does not grant execution authority",
+        ),
+        (
+            vec!["execution", "inspect", "execution", "--work", "w"],
+            settled,
+            "does not grant execution authority",
+        ),
+    ] {
+        for json_output in [true, false] {
+            let server = Server::json(200, &value);
+            let project = Project::new(&server.endpoint(), "demo");
+            let mut all = vec!["team"];
+            all.extend(args.clone());
+            all.extend(["--remote", "test"]);
+            let out = project.run(&all, json_output);
+            assert!(out.status.success(), "{all:?}: {out:?}");
+            assert!(out.stderr.is_empty());
+            if json_output {
+                assert_eq!(serde_json::from_slice::<Value>(&out.stdout).unwrap(), value);
+            } else {
+                let text = String::from_utf8(out.stdout).unwrap();
+                assert!(text.contains(human_hint), "{text}");
+                assert!(!text.chars().any(|c| c.is_control() && c != '\n'));
+            }
+            server.finish();
+            project.assert_no_personal_state();
+        }
+    }
+}
+
+#[test]
+fn runtime_reads_reject_unrelated_results_and_malformed_command_variants() {
+    for (args, value) in [
+        (vec!["session", "inspect", "s"], response("work.list")),
+        (
+            vec!["claim", "inspect", "c", "--work", "w"],
+            response("execution.inspect"),
+        ),
+        (
+            vec!["execution", "inspect", "e", "--work", "w"],
+            response("claim.inspect"),
+        ),
+        (
+            vec!["command", "inspect", "r", "--work", "w"],
+            envelope(json!({"state":"committed","receipt":null})),
+        ),
+        (
+            vec!["command", "inspect", "r", "--work", "w"],
+            envelope(json!({"state":"unknown"})),
+        ),
+        (vec!["work", "recovery", "w"], response("work.observe")),
+    ] {
+        let server = Server::json(200, &value);
+        let project = Project::new(&server.endpoint(), "demo");
+        let mut all = vec!["team"];
+        all.extend(args);
+        all.extend(["--remote", "test"]);
+        assert_eq!(
+            error(&project.run(&all, true), 1)["code"],
+            "TeamResponseInvalid"
+        );
+        server.finish();
     }
 }
 
@@ -731,6 +1101,17 @@ fn human_output_keeps_incomplete_context_continuations_and_advisory_boundaries()
         if op == "work.observe" {
             assert!(text.contains("no_session"));
             assert!(text.contains("does not grant execution authority"));
+        }
+        if op == "capabilities" {
+            for query in [
+                "session.inspect",
+                "claim.inspect",
+                "execution.inspect",
+                "command.inspect",
+                "work.recovery",
+            ] {
+                assert!(text.contains(query), "{text}");
+            }
         }
         server.finish();
     }
