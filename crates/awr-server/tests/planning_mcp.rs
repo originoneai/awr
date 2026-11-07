@@ -109,6 +109,111 @@ fn draft(id: &str) -> TaskDraft {
 }
 
 #[tokio::test]
+async fn planning_input_correction_and_reserved_outcome_have_transport_parity() {
+    let (_g, admin, _db, store) = setup().await;
+    admin.batch_execute(
+        "UPDATE awr_team.project_memberships SET role='maintainer', membership_version=membership_version+1 WHERE actor_id='agent';
+         UPDATE awr_team.workstream_grants SET can_write=true, grant_version=grant_version+1 WHERE client_id='cli-a';"
+    ).await.unwrap();
+    let server = start(store).await;
+    let client = connect(&server, A).await;
+    let tools = client.list_tools(Default::default()).await.unwrap();
+    for name in [
+        "awr_team_planning_suggest",
+        "awr_team_planning_draft",
+        "awr_team_planning_approve",
+    ] {
+        let tool = tools.tools.iter().find(|tool| tool.name == name).unwrap();
+        assert!(
+            tool.input_schema["properties"]["author_person_id"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("normally omit")
+        );
+    }
+    let mut input = json!({
+        "protocol_version":1,"request_id":"correctable-input","mode":"create",
+        "changes":[{"op":"create_task","after":draft("FILTER-PLAN")}],
+        "allowed_spec_roots":["specs"],"project_goal_keys":["delivery"],
+        "author_person_id":"member-assertion-must-not-be-echoed"
+    });
+    let denied = call(&client, "awr_team_planning_draft", input.clone(), true).await;
+    assert_eq!(denied["code"], "Forbidden");
+    assert_eq!(denied["invalid_field"], "/author_person_id");
+    assert_eq!(denied["request_reserved"], false);
+    assert!(
+        !denied
+            .to_string()
+            .contains("member-assertion-must-not-be-echoed")
+    );
+    let response = http()
+        .post(format!("{}/one/planning/draft", server.url))
+        .bearer_auth(A)
+        .json(&input)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+    assert_eq!(response.json::<Value>().await.unwrap(), denied);
+    let count: i64 = admin.query_one("SELECT count(*) FROM awr_team.planning_command_receipts WHERE request_id='correctable-input'", &[]).await.unwrap().get(0);
+    assert_eq!(count, 0);
+    input.as_object_mut().unwrap().remove("author_person_id");
+    let created = call(&client, "awr_team_planning_draft", input.clone(), false).await;
+    let hash: String = admin.query_one("SELECT request_hash FROM awr_team.planning_command_receipts WHERE request_id='correctable-input'", &[]).await.unwrap().get(0);
+    admin.execute(
+        "UPDATE awr_team.planning_command_receipts SET status='reserved',result_json=$1 WHERE request_id='correctable-input'",
+        &[&json!({"domain_id":created["result"]["candidate_id"],"private_payload":"not-for-the-outcome"})],
+    ).await.unwrap();
+    let args = json!({"protocol_version":1,"request_id":"correctable-input"});
+    let pending = call(&client, "awr_team_planning_outcome", args.clone(), false).await;
+    assert_eq!(pending["status"], "reserved");
+    assert_eq!(pending["request_hash"], hash);
+    assert_eq!(pending["already_recorded"], false);
+    assert!(pending["result"].is_null());
+    assert!(pending.get("domain_id").is_none());
+    assert!(!pending.to_string().contains("not-for-the-outcome"));
+    let via_http = http()
+        .post(format!("{}/one/planning/outcome", server.url))
+        .bearer_auth(A)
+        .json(&args)
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(via_http, pending);
+    let generic = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"planning.outcome","request_id":"correctable-input"}),
+        false,
+    )
+    .await;
+    assert_eq!(generic["data"], pending);
+    let mut changed = input.clone();
+    changed["changes"][0]["after"]["title"] = json!("Different intent");
+    let conflict = call(&client, "awr_team_planning_draft", changed, true).await;
+    assert_eq!(conflict["code"], "IdempotencyConflict");
+    let resumed = call(&client, "awr_team_planning_draft", input.clone(), false).await;
+    assert_eq!(
+        resumed["result"]["candidate_id"],
+        created["result"]["candidate_id"]
+    );
+    let replay = call(&client, "awr_team_planning_draft", input, false).await;
+    assert_eq!(replay["already_recorded"], true);
+    let unknown = call(
+        &client,
+        "awr_team_planning_outcome",
+        json!({"protocol_version":1,"request_id":"not-submitted"}),
+        false,
+    )
+    .await;
+    assert!(unknown["result"].is_null());
+    assert!(unknown.get("status").is_none());
+}
+
+#[tokio::test]
 async fn planning_tools_catalog_and_suggest_idempotent_http_mcp_parity() {
     let (_g, admin, db, store) = setup().await;
     admin

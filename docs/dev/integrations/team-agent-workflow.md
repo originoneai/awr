@@ -109,6 +109,22 @@ Assigning or claiming existing work keeps its published requirements unchanged.
 Use a planning draft when the goal, scope, acceptance criteria or dependencies
 need to change; discover that tool's schema before editing a candidate.
 
+Planning derives authorship from the authenticated credential. Normally omit
+`author_person_id`; it is a compatibility assertion of `actor_id`, not the
+responsible member ID and never an authority grant. A mismatched assertion is
+rejected before a fresh request is reserved, with field-specific guidance.
+Draft creation/editing also validates definitions before reserving a fresh
+request. Supply the current goal keys and specification roots when creating a
+candidate; edits retain the candidate's bounds. The domain rechecks validation
+and live authority when applying the request.
+
+On a disconnect, query `planning.outcome` using the original `request_id`.
+`status="reserved"`, `already_recorded=false`, `result=null` means the request
+exists but its effect is unconfirmed. Retry the identical operation and payload
+under that ID; do not change it or repeat the effect under a fresh ID. An absent
+receipt is still unknown. Completed receipts can be reused. Existing reservations
+remain immutable, including reservations made by older service versions.
+
 `work.prepare`, `work.snapshot` and `work.observe` share the inbox's current
 repository-neutral candidate, check, review, integration and source-publication
 facts. Each returns one short `guidance` item: condition (`when`), at most three
