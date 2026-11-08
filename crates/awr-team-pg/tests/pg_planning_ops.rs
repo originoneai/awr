@@ -457,6 +457,143 @@ async fn reserved_edit_resume_does_not_bump_revision_again() {
 }
 
 #[tokio::test]
+async fn stale_approval_records_known_rejection_and_recovers_on_fresh_draft() {
+    let (_guard, admin, db, read) = setup().await;
+    elev_maintainer(&admin).await;
+    let store = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let created = store
+        .planning_draft(
+            TENANT,
+            PROJECT,
+            A,
+            &create_req("before-source-change", "RECOVER-PLAN"),
+        )
+        .await
+        .unwrap();
+    let candidate_id = created["result"]["candidate_id"].as_str().unwrap();
+    let candidate_digest = created["result"]["candidate_digest"].as_str().unwrap();
+    admin
+        .batch_execute(
+            "UPDATE awr_team.source_snapshots
+             SET manifest_digest='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+             WHERE tenant_id='reader-tenant' AND project_id='reader-project'
+               AND id=(SELECT active_snapshot_id FROM awr_team.projects
+                       WHERE tenant_id='reader-tenant' AND id='reader-project')",
+        )
+        .await
+        .unwrap();
+    let request = PlanningApproveRequest {
+        protocol_version: 1,
+        request_id: "approve-stale-plan".into(),
+        candidate_id: candidate_id.into(),
+        candidate_digest: candidate_digest.into(),
+        author_person_id: Some("agent".into()),
+    };
+    let (left, right) = tokio::join!(
+        store.planning_approve(TENANT, PROJECT, A, &request),
+        store.planning_approve(TENANT, PROJECT, A, &request),
+    );
+    let first = left.expect("a verified pre-write refusal must have a durable outcome");
+    let replay = right.unwrap();
+    assert_eq!(first["result"]["outcome"], "known_rejection");
+    assert_eq!(first["result"]["code"], "PlanningBaselineChanged");
+    assert_eq!(first["result"]["approval_written"], false);
+    assert_eq!(
+        first["result"]["guidance"]["action"]["op"],
+        "planning.preview"
+    );
+    assert_eq!(
+        first["result"]["guidance"]["action"]["candidate_id"],
+        candidate_id
+    );
+    assert!(first["result"].to_string().len() < 2000);
+    assert_eq!(first["result"], replay["result"]);
+    assert_eq!(first["request_hash"], replay["request_hash"]);
+    let state = admin
+        .query_one(
+            "SELECT state,(SELECT count(*) FROM awr_team.planning_approvals WHERE candidate_id=$1)
+             FROM awr_team.planning_candidates WHERE id=$1",
+            &[&candidate_id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(state.get::<_, String>(0), "drafting");
+    assert_eq!(state.get::<_, i64>(1), 0);
+    let query: WorkstreamQuery = serde_json::from_value(json!({
+        "protocol_version":1,"op":"planning.outcome","request_id":request.request_id
+    }))
+    .unwrap();
+    let observed = read.query(TENANT, PROJECT, A, query).await.unwrap();
+    assert_eq!(observed["data"]["already_recorded"], true);
+    assert_eq!(observed["data"]["result"]["result"], first["result"]);
+    let mut changed = request.clone();
+    changed.candidate_digest = "b".repeat(64);
+    assert!(matches!(
+        store.planning_approve(TENANT, PROJECT, A, &changed).await,
+        Err(PgError::IdempotencyConflict)
+    ));
+
+    // A new draft binds the current source; the rejected attempt cannot approve it.
+    let fresh = store
+        .planning_draft(
+            TENANT,
+            PROJECT,
+            A,
+            &create_req("after-source-change", "RECOVER-PLAN"),
+        )
+        .await
+        .unwrap();
+    let fresh_id = fresh["result"]["candidate_id"].as_str().unwrap();
+    let fresh_request = PlanningApproveRequest {
+        request_id: "approve-current-plan".into(),
+        candidate_id: fresh_id.into(),
+        candidate_digest: fresh["result"]["candidate_digest"].as_str().unwrap().into(),
+        ..request.clone()
+    };
+    let approved = store
+        .planning_approve(TENANT, PROJECT, A, &fresh_request)
+        .await
+        .unwrap();
+    assert_eq!(approved["result"]["state"], "approved");
+    assert!(approved["result"]["approval_id"].is_string());
+
+    // Lost response after an actual approval still recovers that proof, even
+    // when a later source change would prevent another approval now.
+    rewind_receipt(
+        &admin,
+        &fresh_request.request_id,
+        "planning.approve",
+        fresh_id,
+        None,
+    )
+    .await;
+    admin
+        .batch_execute(
+            "UPDATE awr_team.source_snapshots
+             SET manifest_digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+             WHERE tenant_id='reader-tenant' AND project_id='reader-project'
+               AND id=(SELECT active_snapshot_id FROM awr_team.projects
+                       WHERE tenant_id='reader-tenant' AND id='reader-project')",
+        )
+        .await
+        .unwrap();
+    let recovered = store
+        .planning_approve(TENANT, PROJECT, A, &fresh_request)
+        .await
+        .unwrap();
+    assert_eq!(
+        recovered["result"]["approval_id"],
+        approved["result"]["approval_id"]
+    );
+    assert_eq!(recovered["result"]["state"], "approved");
+    let old = store
+        .planning_approve(TENANT, PROJECT, A, &request)
+        .await
+        .unwrap();
+    assert_eq!(old["result"], first["result"]);
+}
+
+#[tokio::test]
 async fn reserved_approve_and_publish_resume_do_not_duplicate_rows() {
     let (_g, admin, db, _read) = setup().await;
     elev_maintainer(&admin).await;

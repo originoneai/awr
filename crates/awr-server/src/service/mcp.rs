@@ -1569,7 +1569,7 @@ fn catalog() -> Vec<Tool> {
             planning_preview.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_planning_approve",
-            "Approve a planning candidate bound to its current digest (planning.approve). Edited drafts cannot reuse old approvals.",
+            "Approve a digest-bound current-baseline draft (planning.approve). Edits invalidate old approvals. A known_rejection is final for that request: inspect planning.preview, then prepare a fresh draft before a new intent.",
             planning_approve.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_planning_publish",
@@ -1577,7 +1577,7 @@ fn catalog() -> Vec<Tool> {
             planning_publish.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(true).idempotent(true).open_world(false)),
         Tool::new("awr_team_planning_outcome",
-            "Query the receipt for an original planning request_id before retrying. Absent receipt is unknown — never resubmit with a new ID.",
+            "Inspect the original planning request_id before retrying. Reserved or absent means unconfirmed; follow its recovery step. A stored known_rejection is a final refusal, not approval; follow its guidance. Never repeat the original intent with a new ID.",
             planning_outcome.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(true).destructive(false).idempotent(true).open_world(false)),
     ]
