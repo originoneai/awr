@@ -109,6 +109,86 @@ fn draft(id: &str) -> TaskDraft {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::await_holding_lock,
+    reason = "The guard serializes the shared PostgreSQL fixture for this entire async test."
+)]
+async fn missing_activation_confirmation_refuses_before_publication_on_http_and_mcp() {
+    let (_guard, admin, _db, store) = setup().await;
+    admin.batch_execute(
+        "UPDATE awr_team.project_memberships SET role='maintainer', membership_version=membership_version+1 WHERE actor_id='agent';
+         UPDATE awr_team.workstream_grants SET can_write=true, grant_version=grant_version+1 WHERE client_id='cli-a';"
+    ).await.unwrap();
+    let server = start(store).await;
+    let client = connect(&server, A).await;
+    let created = call(
+        &client,
+        "awr_team_planning_draft",
+        json!({
+            "protocol_version":1, "request_id":"confirmation-draft", "mode":"create",
+            "changes":[{"op":"create_task", "after":draft("SHARED-1")}],
+            "allowed_spec_roots":["specs"], "project_goal_keys":["delivery"],
+            "self_approve_policy":OrdinaryPlanningSelfApprovePolicy::ordinary_default()
+        }),
+        false,
+    )
+    .await;
+    let selection = &created["result"];
+    call(&client, "awr_team_planning_approve", json!({
+        "protocol_version":1, "request_id":"confirmation-approve",
+        "candidate_id":selection["candidate_id"], "candidate_digest":selection["candidate_digest"]
+    }), false).await;
+    let mut input = json!({
+        "protocol_version":1, "request_id":"confirmation-publish",
+        "candidate_id":selection["candidate_id"], "candidate_digest":selection["candidate_digest"],
+        "activate":true
+    });
+    let denied = call(&client, "awr_team_planning_publish", input.clone(), true).await;
+    assert_eq!(denied["code"], "InvalidInput");
+    assert_eq!(denied["invalid_field"], "/impact_proven");
+    assert_eq!(denied["request_reserved"], false);
+    assert_eq!(denied["publication_performed"], false);
+    assert_eq!(denied["activation_performed"], false);
+    let response = http()
+        .post(format!("{}/one/planning/publish", server.url))
+        .bearer_auth(A)
+        .json(&input)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(response.json::<Value>().await.unwrap(), denied);
+
+    let candidate = selection["candidate_id"].as_str().unwrap();
+    let counts = admin.query_one(
+        "SELECT
+          (SELECT count(*) FROM awr_team.planning_command_receipts WHERE tenant_id=$1 AND project_id=$2 AND request_id=$3),
+          (SELECT count(*) FROM awr_team.planning_publish_receipts WHERE tenant_id=$1 AND project_id=$2 AND candidate_id=$4)",
+        &[&TENANT, &PROJECT, &"confirmation-publish", &candidate]
+    ).await.unwrap();
+    assert_eq!(
+        counts.get::<_, i64>(0),
+        0,
+        "invalid input must not consume its retry ID"
+    );
+    assert_eq!(
+        counts.get::<_, i64>(1),
+        0,
+        "invalid activation must not publish first"
+    );
+
+    // The unused retry ID may be corrected. Publish-only omission keeps its
+    // existing behavior; exact replay still returns the one durable receipt.
+    input.as_object_mut().unwrap().remove("activate");
+    let published = call(&client, "awr_team_planning_publish", input.clone(), false).await;
+    assert!(published["result"]["publish"]["receipt_id"].is_string());
+    let replay = call(&client, "awr_team_planning_publish", input, false).await;
+    assert_eq!(replay["already_recorded"], true);
+    assert_eq!(replay["request_hash"], published["request_hash"]);
+    assert_eq!(replay["result"], published["result"]);
+}
+
+#[tokio::test]
 async fn planning_scope_rejection_explains_bounds_and_allows_corrected_retry() {
     let (_g, admin, _db, store) = setup().await;
     admin.batch_execute(

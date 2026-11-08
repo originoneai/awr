@@ -817,7 +817,7 @@ async fn planning_dispatch(
             }
             PlanningOp::Publish => {
                 let req: PlanningPublishRequest = serde_json::from_slice(&body)
-                    .map_err(|_| PgError::Protocol("invalid planning publish".into()))?;
+                    .map_err(PlanningPublishRequest::decode_error)?;
                 source
                     .planning_publish(&project.tenant_id, &project.project_id, token, &req)
                     .await
