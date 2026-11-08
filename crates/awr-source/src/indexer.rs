@@ -60,6 +60,25 @@ impl IndexReport {
             details: error.report().details,
         });
     }
+    /// Records a non-blocking advisory. Unlike `issue`, advisories never flip
+    /// the report to failed: they make mechanical defects explicit without
+    /// rejecting the write or blocking the flow.
+    fn advisory(
+        &mut self,
+        mapping: &str,
+        locator: Option<&str>,
+        code: &str,
+        message: String,
+        details: Option<serde_json::Value>,
+    ) {
+        self.issues.push(IndexIssue {
+            mapping: awr_core::safe_diagnostic(mapping),
+            locator: locator.map(awr_core::safe_diagnostic),
+            code: awr_core::safe_diagnostic(code),
+            message,
+            details,
+        });
+    }
     fn source(&mut self, source: Source, action: &str, warnings: Vec<String>) {
         self.sources.push(IndexedSource {
             source_id: source.id,
@@ -315,7 +334,7 @@ fn process_project(
                 break result;
             };
             match outcome {
-                Ok((source, indexed, warnings)) => {
+                Ok((source, indexed, warnings, advisories)) => {
                     seen.insert(source.id);
                     let action = match indexed {
                         Some(true) => {
@@ -331,6 +350,15 @@ fn process_project(
                             "pending"
                         }
                     };
+                    for advisory in advisories {
+                        report.advisory(
+                            &key,
+                            advisory.locator.as_deref(),
+                            &advisory.code,
+                            advisory.message,
+                            advisory.details,
+                        );
+                    }
                     report.source(source, action, warnings);
                 }
                 Err(error) => {
@@ -390,7 +418,7 @@ fn index_one(
     mode: Option<bool>,
     minimal_context: bool,
     captured: Option<&crate::SourceSnapshot>,
-) -> Result<(Source, Option<bool>, Vec<String>)> {
+) -> Result<(Source, Option<bool>, Vec<String>, Vec<IndexIssue>)> {
     let project = store.project_by_root(root)?;
     let source = store.register_source(
         project.id,
@@ -450,11 +478,11 @@ fn index_one(
         && store.source_review_matches(&source, snapshot.content_review.as_ref())?
     {
         let warnings = store.source_warnings(&source)?;
-        return Ok((source, Some(false), warnings));
+        return Ok((source, Some(false), warnings, vec![]));
     }
     if mode.is_none() {
         let warnings = store.source_warnings(&source)?;
-        return Ok((source, None, warnings));
+        return Ok((source, None, warnings, vec![]));
     }
     source = store.mark_source_freshness(&source, Freshness::Stale)?;
     let context = ParseContext {
@@ -471,6 +499,49 @@ fn index_one(
             "source changed while parsing; reindex required".into(),
         ));
     }
+    let advisories = acceptance_advisories(&batch, spec, identity);
     adapter.project(store, &source, &snapshot, batch)?;
-    Ok((store.source(project.id, source.id)?, Some(true), warnings))
+    Ok((
+        store.source(project.id, source.id)?,
+        Some(true),
+        warnings,
+        advisories,
+    ))
+}
+
+/// Mechanical, non-blocking lint advisories for parsed work items. Advisories
+/// only run when a source is actually projected; the lint never rejects a
+/// write, never blocks indexing and never affects the report's ok flag.
+fn acceptance_advisories(
+    batch: &awr_core::ProjectionBatch,
+    spec: &SourceSpec,
+    identity: &str,
+) -> Vec<IndexIssue> {
+    let mut issues = Vec::new();
+    for work in &batch.work_items {
+        let findings = crate::acceptance_lint::lint_work_item(work);
+        if findings.is_empty() {
+            continue;
+        }
+        let pointer = work
+            .meta
+            .source_ref
+            .pointer
+            .clone()
+            .unwrap_or_else(|| format!("/work_items/{}", work.meta.external_key));
+        for finding in findings {
+            issues.push(IndexIssue {
+                mapping: mapping_key(spec),
+                locator: Some(format!("{identity}#{pointer}/acceptance/{}", finding.index)),
+                code: finding.code.to_string(),
+                message: finding.message,
+                details: Some(serde_json::json!({
+                    "pointer": format!("{pointer}/acceptance/{}", finding.index),
+                    "work_item": work.meta.external_key,
+                    "matched": finding.matched,
+                })),
+            });
+        }
+    }
+    issues
 }
