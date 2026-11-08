@@ -207,7 +207,7 @@ export interface WorkStateSnapshot {
     reporting?: { client_reported_at_unix_ms?: unknown; client_stale?: unknown } | null;
     runtime?: { state?: unknown; selected_completion_id?: unknown } | null;
     /** The reporter's own checkpoint; `next_action` is what the reporter says comes next. */
-    progress?: { next_action?: unknown; phase?: unknown } | null;
+    progress?: { next_action?: unknown; phase?: unknown; reported_at_unix_ms?: unknown; stale?: unknown } | null;
     /** Who the service holds responsible for this work, when it says. */
     responsibility?: { owner_name?: unknown; owner?: unknown } | null;
     /** What the service measured about this work's collaboration (integration, review). */

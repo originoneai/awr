@@ -236,9 +236,9 @@ describe('project workstream progress', () => {
     setupOverview({
       snapshot: (workId) => {
         const response = demoWorkSnapshot(workId) as {
-          result: { data: { runtime: { state: string }; observation: { reporting: Record<string, unknown> } } };
+          result: { data: { runtime: { state: string }; observation: { progress: Record<string, unknown> } } };
         };
-        response.result.data.observation.reporting.client_stale = true;
+        response.result.data.observation.progress.stale = true;
         if (workId === 'W1') response.result.data.runtime.state = 'completed';
         return response;
       },
@@ -302,9 +302,9 @@ describe('project workstream progress', () => {
     setupOverview({
       snapshot: (workId) => {
         const response = demoWorkSnapshot(workId) as {
-          result: { data: { observation: { reporting: Record<string, unknown> } } };
+          result: { data: { observation: { progress: Record<string, unknown> } } };
         };
-        response.result.data.observation.reporting.client_stale = workId === 'W1';
+        response.result.data.observation.progress.stale = workId === 'W1';
         return response;
       },
     });
@@ -321,9 +321,9 @@ describe('project workstream progress', () => {
       snapshot: (workId) => {
         if (workId === 'W2') return { ok: false, error: { code: 'ReadTimeout', message: 'slow' } };
         const response = demoWorkSnapshot(workId) as {
-          result: { data: { observation: { reporting: { client_reported_at_unix_ms?: number } } } };
+          result: { data: { observation: { progress: { reported_at_unix_ms?: number } } } };
         };
-        delete response.result.data.observation.reporting.client_reported_at_unix_ms;
+        delete response.result.data.observation.progress.reported_at_unix_ms;
         return response;
       },
     });

@@ -82,14 +82,59 @@ describe('deriveWorkState: next step', () => {
 });
 
 describe('deriveWorkState: last report', () => {
+  // Synthetic timing fields extend the retained historical fixtures without changing their raw values.
+  const IN_PROGRESS = { ...SNAPSHOTS['api-in-progress-with-live-report'], observation: {
+    ...SNAPSHOTS['api-in-progress-with-live-report'].observation,
+    progress: { reported_at_unix_ms: 1793474474920, stale: true },
+  } };
+  const IN_REVIEW = { ...SNAPSHOTS['api-in-review-owned-by-other'], observation: {
+    ...SNAPSHOTS['api-in-review-owned-by-other'].observation,
+    progress: { ...SNAPSHOTS['api-in-review-owned-by-other'].observation.progress, reported_at_unix_ms: 1793513588923, stale: false },
+  } };
+  const DELIVERED = { ...SNAPSHOTS['api-delivered'], observation: {
+    ...SNAPSHOTS['api-delivered'].observation,
+    progress: { ...SNAPSHOTS['api-delivered'].observation.progress, reported_at_unix_ms: 1793513588923, stale: true },
+  } };
+
+  it('uses the latest progress clock even when the client declaration is old', () => {
+    const snapshot = { observation: {
+      reporting: { client_reported_at_unix_ms: 1761836100000, client_stale: true },
+      progress: { phase: 'ready_for_review', reported_at_unix_ms: 1761839700000, stale: false },
+    } };
+    expect(deriveWorkState({ ...zh, snapshot }).lastReport).toMatchObject({
+      kind: 'measured', atUnixMs: 1761839700000, stale: false, staleText: null,
+    });
+  });
+
+  it('does not refresh an old progress report when client metadata is updated', () => {
+    const snapshot = { observation: {
+      reporting: { client_reported_at_unix_ms: 1761839700000, client_stale: false },
+      progress: { reported_at_unix_ms: 1761836100000, stale: true },
+    } };
+    expect(deriveWorkState({ ...zh, snapshot }).lastReport).toMatchObject({
+      kind: 'measured', atUnixMs: 1761836100000, stale: true, staleText: '可能已过期',
+    });
+  });
+
+  it('never presents a client declaration as a progress report', () => {
+    for (const progress of [undefined, null, { phase: 'ready_for_review' }]) {
+      const snapshot = { observation: {
+        reporting: { client_reported_at_unix_ms: 1761839700000, client_stale: false }, progress,
+      } };
+      expect(deriveWorkState({ ...zh, snapshot }).lastReport).toMatchObject({
+        kind: 'not_measured', atUnixMs: null, staleText: null,
+      });
+    }
+  });
+
   it('shows the reported time and marks a report the service itself declared stale', () => {
     const stale = deriveWorkState({ ...zh, snapshot: IN_PROGRESS }).lastReport;
-    const at = IN_PROGRESS.observation.reporting.client_reported_at_unix_ms;
+    const at = IN_PROGRESS.observation.progress.reported_at_unix_ms;
     const time = absoluteTimeText(at, { language: 'zh-CN' }).text;
     expect(stale).toMatchObject({ kind: 'measured', atUnixMs: at, stale: true, timeText: time, staleText: '可能已过期' });
     expect(stale.text).toBe(`${time}（可能已过期）`);
     const fresh = deriveWorkState({ ...zh, snapshot: IN_REVIEW }).lastReport;
-    const freshTime = absoluteTimeText(IN_REVIEW.observation.reporting.client_reported_at_unix_ms, { language: 'zh-CN' }).text;
+    const freshTime = absoluteTimeText(IN_REVIEW.observation.progress.reported_at_unix_ms, { language: 'zh-CN' }).text;
     expect(fresh).toMatchObject({ kind: 'measured', stale: false, timeText: freshTime, staleText: null, text: freshTime });
     const english = deriveWorkState({ language: 'en-US', readState: 'ready', snapshot: IN_PROGRESS }).lastReport;
     expect(english.staleText).toBe('May be outdated');
@@ -97,9 +142,9 @@ describe('deriveWorkState: last report', () => {
   });
 
   it('never puts a stale note on a finished work, by the runtime or by the reporter\'s phase, but keeps the service\'s flag verbatim', () => {
-    const at = DELIVERED.observation.reporting.client_reported_at_unix_ms;
+    const at = DELIVERED.observation.progress.reported_at_unix_ms;
     const time = absoluteTimeText(at, { language: 'zh-CN' }).text;
-    expect(DELIVERED.observation.reporting.client_stale).toBe(true);
+    expect(DELIVERED.observation.progress.stale).toBe(true);
     const finishedByRuntime = deriveWorkState({ ...zh, snapshot: DELIVERED }).lastReport;
     expect(finishedByRuntime).toMatchObject({ kind: 'measured', stale: true, finished: true, staleText: null, text: time, timeText: time });
     expect(finishedByRuntime.technical).toMatchObject({ atUnixMs: at, runtimeState: 'completed', phase: 'delivered' });
@@ -108,7 +153,7 @@ describe('deriveWorkState: last report', () => {
     expect(deriveWorkState({ ...zh, snapshot: byPhase }).lastReport).toMatchObject({ finished: true, staleText: null, text: time });
     // the runtime state is enough when there is no checkpoint at all
     const byRuntime = { ...DELIVERED, observation: { ...DELIVERED.observation, progress: null } };
-    expect(deriveWorkState({ ...zh, snapshot: byRuntime }).lastReport).toMatchObject({ finished: true, staleText: null, text: time });
+    expect(deriveWorkState({ ...zh, snapshot: byRuntime }).lastReport).toMatchObject({ kind: 'not_measured', finished: true, staleText: null, atUnixMs: null });
     // a report on open work stays marked; the observation block's runtime state is read when the top level has none
     const open = { ...IN_PROGRESS, runtime: undefined, observation: { ...IN_PROGRESS.observation, runtime: { state: 'claimed' } } };
     expect(deriveWorkState({ ...zh, snapshot: open }).lastReport).toMatchObject({ finished: false, staleText: '可能已过期' });
@@ -117,18 +162,18 @@ describe('deriveWorkState: last report', () => {
   });
 
   it('does not mark a report stale when the service said nothing about it, or said something that is not a yes or no', () => {
-    const at = IN_REVIEW.observation.reporting.client_reported_at_unix_ms;
+    const at = IN_REVIEW.observation.progress.reported_at_unix_ms;
     const time = absoluteTimeText(at, { language: 'zh-CN' }).text;
-    for (const reporting of [{ client_reported_at_unix_ms: at }, { client_reported_at_unix_ms: at, client_stale: null }, { client_reported_at_unix_ms: at, client_stale: 'yes' }]) {
-      const report = deriveWorkState({ ...zh, snapshot: { observation: { reporting } } }).lastReport;
-      expect(report, JSON.stringify(reporting)).toMatchObject({ kind: 'measured', stale: null, staleText: null, text: time });
+    for (const progress of [{ reported_at_unix_ms: at }, { reported_at_unix_ms: at, stale: null }, { reported_at_unix_ms: at, stale: 'yes' }]) {
+      const report = deriveWorkState({ ...zh, snapshot: { observation: { progress } } }).lastReport;
+      expect(report, JSON.stringify(progress)).toMatchObject({ kind: 'measured', stale: null, staleText: null, text: time });
     }
   });
 
   it('says not read, with the freshness word, when no report time exists or the read failed, and never uses the snapshot of a failed read', () => {
-    for (const reporting of [undefined, null, {}, { client_reported_at_unix_ms: null }, { client_reported_at_unix_ms: 'soon' }, { client_reported_at_unix_ms: Number.NaN }]) {
-      const result = deriveWorkState({ ...zh, snapshot: { observation: { reporting } } }).lastReport;
-      expect(result, JSON.stringify(reporting)).toMatchObject({ kind: 'not_measured', text: '尚未读取', timeText: null, staleText: null, atUnixMs: null });
+    for (const progress of [undefined, null, {}, { reported_at_unix_ms: null }, { reported_at_unix_ms: 'soon' }, { reported_at_unix_ms: Number.NaN }]) {
+      const result = deriveWorkState({ ...zh, snapshot: { observation: { progress } } }).lastReport;
+      expect(result, JSON.stringify(progress)).toMatchObject({ kind: 'not_measured', text: '尚未读取', timeText: null, staleText: null, atUnixMs: null });
     }
     expect(deriveWorkState({ language: 'zh-CN', readState: 'failed', snapshot: IN_REVIEW }).lastReport).toMatchObject({ kind: 'not_measured', text: '尚未读取', atUnixMs: null });
     expect(deriveWorkState({ language: 'zh-CN', readState: 'loading', snapshot: IN_REVIEW }).lastReport).toMatchObject({ kind: 'loading', text: '加载中…' });
