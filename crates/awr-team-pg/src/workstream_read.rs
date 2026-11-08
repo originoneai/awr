@@ -1539,13 +1539,19 @@ pub(crate) async fn read(
             } else {
                 Value::Null
             };
+            let state = crate::DeliverySyncStore::task_route_state_in_tx(
+                tx,
+                tenant,
+                project,
+                work,
+                &stream,
+                &auth.epoch,
+            )
+            .await?;
+            let guidance = state.guidance(!items.is_empty(), q.cursor.is_some());
             let value = json!({"items":items,"next_cursor":next,"registration_only":true,
                 "execution_authorized":false,"grants_created":false,
-                "guidance":{"when":"Before assignment or claim of unconfigured repository work",
-                    "because":"Templates are administrator-authorized registrations, not permission grants",
-                    "action":{"op":"delivery.route.reuse","role":"supervisor",
-                        "note":"Select one listed template and its exact versions; use a fresh work.prepare header."},
-                    "recheck_on":"Template, connector, task or authority change; inspect delivery.neutral.outcome after an uncertain response"}});
+                "task_route_state":state.label(),"guidance":guidance});
             if serde_json::to_vec(&value)
                 .map_err(|_| PgError::SourceDivergence)?
                 .len()

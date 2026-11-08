@@ -977,6 +977,9 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
     if let Some(diagnostic) = error.integration_not_confirmed_diagnostic() {
         return (StatusCode::CONFLICT, diagnostic);
     }
+    if let Some(diagnostic) = error.delivery_route_reuse_diagnostic() {
+        return (StatusCode::CONFLICT, diagnostic);
+    }
     if error.is_review_submission_incomplete() {
         if let Some(diagnostic) = error.review_submission_incomplete_diagnostic() {
             return (StatusCode::CONFLICT, diagnostic);

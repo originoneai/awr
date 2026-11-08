@@ -50,23 +50,35 @@ impl DeliverySyncStore {
             &set.work_id,
         )
         .await?;
-        let task = crate::responsibility::current(&tx, tenant, project, &set.work_id).await?;
-        if task.owner.is_some() || task.current_executor.is_some() || task.pending.is_some() {
-            return Err(PgError::PreconditionsChanged);
+        use super::route_state::TaskRouteState;
+        let state = Self::task_route_state_in_tx(
+            &tx,
+            tenant,
+            project,
+            &set.work_id,
+            &set.workstream_id.to_string(),
+            &auth.epoch,
+        )
+        .await?;
+        if state != TaskRouteState::Missing {
+            return Err(PgError::DeliveryRouteReuseBlocked {
+                reason: if state == TaskRouteState::Entered {
+                    "work_entered"
+                } else {
+                    "existing_mapping"
+                },
+            });
         }
-        // Existing mappings and entered work require their established administration path.
-        let busy: bool = tx.query_one("SELECT
-            EXISTS(SELECT 1 FROM awr_team.delivery_connectors WHERE tenant_id=$1 AND project_id=$2
-                AND (work_id=$3 OR id=$4)) OR
-            EXISTS(SELECT 1 FROM awr_team.claims WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND state='active') OR
-            EXISTS(SELECT 1 FROM awr_team.executions WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3) OR
-            EXISTS(SELECT 1 FROM awr_team.evidence WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3) OR
-            EXISTS(SELECT 1 FROM awr_team.delivery_selections WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3) OR
-            EXISTS(SELECT 1 FROM awr_team.review_rounds WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3) OR
-            EXISTS(SELECT 1 FROM awr_team.work_runtime WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3
-                AND (recovery_blocked OR state NOT IN ('ready','planned') OR selected_completion_id IS NOT NULL))",
-            &[&tenant,&project,&set.work_id,&request.connector_id]).await?.get(0);
-        if busy {
+        // A conflicting identifier may belong to another work; disclose no details about it.
+        let occupied: bool = tx
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM awr_team.delivery_connectors
+            WHERE tenant_id=$1 AND project_id=$2 AND id=$3)",
+                &[&tenant, &project, &request.connector_id],
+            )
+            .await?
+            .get(0);
+        if occupied {
             return Err(PgError::PreconditionsChanged);
         }
         let row = tx.query_opt("SELECT t.workstream_id,t.version,t.enabled,t.coordinator_epoch,
