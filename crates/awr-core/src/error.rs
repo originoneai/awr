@@ -29,6 +29,17 @@ pub enum Error {
     CheckpointRevisionConflict { expected: u64, actual: u64 },
     #[error("dependency blocked: {0}")]
     DependencyBlocked(String),
+    /// A work's goal section changed after the work was claimed. `drifts` maps each
+    /// drifted goal key to its claimed and current section fingerprints (either side
+    /// may be null when the fingerprint is unknown or the goal disappeared).
+    #[error(
+        "goal drift detected for work {work}: {} re-confirm the current goal by releasing and re-claiming the work, or record `awr work reassess {work} ...`, then retry",
+        .drifts.iter().map(|(goal, expected, actual)| format!("goal {goal} changed since the work was claimed (claimed fingerprint: {expected}, current fingerprint: {actual});")).collect::<Vec<_>>().join(" ")
+    )]
+    GoalDrift {
+        work: String,
+        drifts: Vec<(String, String, String)>,
+    },
     #[error("claim conflict: {0}")]
     ClaimConflict(String),
     /// Governed work needs a current approved admission decision. `code` is the primary reason;
@@ -189,6 +200,7 @@ impl Error {
                 "RevisionConflict"
             }
             Self::DependencyBlocked(_) => "DependencyBlocked",
+            Self::GoalDrift { .. } => "GoalDrift",
             Self::ClaimConflict(_) => "ClaimConflict",
             Self::Admission { .. } => "AdmissionRequired",
             Self::RuleViolation(_) | Self::SensitiveSource { .. } => "RuleViolation",
@@ -287,6 +299,13 @@ impl Error {
                 } => Some(
                     serde_json::json!({"proposal_id":proposal_id,"stage":stage,"reason":reason,"source_write_performed":null}),
                 ),
+                Self::GoalDrift { work, drifts } => Some(serde_json::json!({
+                    "work": work,
+                    "drifts": drifts.iter().map(|(goal, expected, actual)| serde_json::json!({
+                        "goal": goal, "claimed_fingerprint": expected, "current_fingerprint": actual,
+                    })).collect::<Vec<_>>(),
+                    "source_write_performed": false,
+                })),
                 Self::SourceConflict(message) => project_locator_mismatch_details(message),
                 _ => None,
             }).map(crate::redact_sensitive_value),

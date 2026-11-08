@@ -178,6 +178,7 @@ pub fn complete_work(
     };
     verify_mutation_source(&root, &target.source, &patch)?;
     store.check_completion_dependencies(project.id, &work.meta.external_key, session.branch_id)?;
+    store.check_goal_currency(project.id, &work.meta.external_key, session.branch_id)?;
     verify_required_sources(
         store,
         &root,
