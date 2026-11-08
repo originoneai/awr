@@ -279,10 +279,10 @@ describe('work detail requirements and source state', () => {
     setupPlan({
       snapshot: (workId) => {
         const response = demoWorkSnapshot(workId) as {
-          result: { data: { observation: { progress: Record<string, unknown> | null; reporting: Record<string, unknown> } } };
+          result: { data: { observation: { progress: Record<string, unknown> } } };
         };
-        response.result.data.observation.progress = { next_action: 'Review the contract first' };
-        response.result.data.observation.reporting.client_stale = true;
+        response.result.data.observation.progress = { ...response.result.data.observation.progress, next_action: 'Review the contract first' };
+        response.result.data.observation.progress.stale = true;
         return response;
       },
     });
@@ -596,13 +596,13 @@ describe('work-plan review round 2: sub-read failures and behavior pins', () => 
     expect(await within(partial).findByText('Forbidden')).toBeTruthy();
   });
 
-  it('a missing client_reported_at reads 尚未读取, never the current clock', async () => {
+  it('a missing progress report time reads 尚未读取, never the current clock', async () => {
     setupPlan({
       snapshot: (workId) => {
         const response = demoWorkSnapshot(workId) as {
-          result: { data: { observation: { reporting: { client_reported_at_unix_ms?: number } } } };
+          result: { data: { observation: { progress: { reported_at_unix_ms?: number } } } };
         };
-        delete response.result.data.observation.reporting.client_reported_at_unix_ms;
+        delete response.result.data.observation.progress.reported_at_unix_ms;
         return response;
       },
     });

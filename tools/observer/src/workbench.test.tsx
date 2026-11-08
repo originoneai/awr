@@ -472,7 +472,7 @@ describe('visible-row snapshot hydration', () => {
     expect(maximumActive).toBeLessThanOrEqual(4);
   });
 
-  it('uses not measured for a missing client report or failed snapshot, never last activity', async () => {
+  it('uses not measured for a missing progress report or failed snapshot, never last activity', async () => {
     const listRead = formatUnixMs(1761840000000, 'zh-CN');
     const observedAt = formatUnixMs(1761839999000, 'zh-CN');
     const lastActivity = formatUnixMs(1761839900000, 'zh-CN');
@@ -480,9 +480,9 @@ describe('visible-row snapshot hydration', () => {
       snapshot: (workId) => {
         if (workId === 'W2') return { ok: false, error: { code: 'ReadTimeout', message: 'slow' } };
         const response = demoWorkSnapshot(workId) as {
-          result: { data: { observation: { reporting: { client_reported_at_unix_ms?: number } } } };
+          result: { data: { observation: { progress: { reported_at_unix_ms?: number } } } };
         };
-        delete response.result.data.observation.reporting.client_reported_at_unix_ms;
+        delete response.result.data.observation.progress.reported_at_unix_ms;
         return response;
       },
     });
@@ -502,7 +502,7 @@ describe('visible-row snapshot hydration', () => {
     expect(screen.queryByTestId('state-partial')).toBeNull();
   });
 
-  it('formats the client report time, not last activity or either other clock', async () => {
+  it('formats the progress report time, not last activity or either other clock', async () => {
     setupWorkbench();
     const cell = await screen.findByTestId('last-report-W1');
     await waitFor(() => expect(cell.textContent).toBe(formatUnixMs(1761839800000, 'zh-CN')));
@@ -519,13 +519,13 @@ describe('visible-row snapshot hydration', () => {
     await waitFor(() => expect(screen.getByTestId('last-report-W1').textContent).toBe(formatUnixMs(1761839800000, 'zh-CN')));
   });
 
-  it('marks a client report the service itself declared stale, and leaves a current one unmarked', async () => {
+  it('marks a progress report the service itself declared stale, and leaves a current one unmarked', async () => {
     setupWorkbench({
       snapshot: (workId) => {
         const response = demoWorkSnapshot(workId) as {
-          result: { data: { observation: { reporting: Record<string, unknown> } } };
+          result: { data: { observation: { progress: Record<string, unknown> } } };
         };
-        response.result.data.observation.reporting.client_stale = workId === 'W1';
+        response.result.data.observation.progress.stale = workId === 'W1';
         return response;
       },
     });
@@ -599,7 +599,7 @@ describe('My work states, detail, and localization', () => {
         const response = demoWorkSnapshot(workId) as {
           result: { data: { next_step: string | null; observation: { progress: Record<string, unknown> | null } } };
         };
-        response.result.data.observation.progress = { next_action: 'Review the contract first' };
+        response.result.data.observation.progress = { ...response.result.data.observation.progress, next_action: 'Review the contract first' };
         response.result.data.next_step = 'Call work.prepare to restore the context.';
         return response;
       },

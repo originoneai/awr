@@ -272,7 +272,7 @@ export function demoWorkSnapshot(workId = 'W1') {
         observation: {
           last_activity_at_unix_ms: 1761839900000,
           observed_at_unix_ms: 1761839999000,
-          progress: null,
+          progress: { reported_at_unix_ms: 1761839800000, stale: false },
           reporting: { version: 1, client_reported_at_unix_ms: 1761839800000 },
           runtime: { state: 'claimed', work_version: '1' },
           responsibility: { relation: 'owned_by_me', owner: 'lin', version: '1' },

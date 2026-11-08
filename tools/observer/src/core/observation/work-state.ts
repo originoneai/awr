@@ -34,9 +34,9 @@ export function deriveWorkState(input: WorkStateInput): WorkStateResult {
       ? { kind: 'reported', text: readableSentence(reportedNext, language), fullText: reportedNext, technical }
       : { kind: 'missing', text: humanText('nextStepMissing', language), fullText: null, technical };
 
-  const reporting = readState === 'ready' ? snapshot?.observation?.reporting : null;
-  const at = finiteTime(reporting?.client_reported_at_unix_ms);
-  const stale = typeof reporting?.client_stale === 'boolean' ? reporting.client_stale : null;
+  // Client declarations and progress reports have independent clocks.
+  const at = finiteTime(progress?.reported_at_unix_ms);
+  const stale = typeof progress?.stale === 'boolean' ? progress.stale : null;
   const runtimeState = readState === 'ready' ? rawObservationText(snapshot?.runtime?.state ?? snapshot?.observation?.runtime?.state).text : null;
   const phase = rawObservationText(progress?.phase).text;
   const finished = runtimeState === 'completed' || phase === 'delivered';
