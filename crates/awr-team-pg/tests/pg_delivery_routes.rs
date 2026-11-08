@@ -372,6 +372,60 @@ async fn competing_updates_keep_one_version_and_reject_the_other() {
 }
 
 #[tokio::test]
+async fn competing_first_publications_serialize_before_the_template_row_exists() {
+    let f = setup_routes().await;
+    let p = prepare(&f.reads, A, "a").await;
+    let commands = f.reads.commands();
+    let (left, right) = tokio::join!(
+        commands.execute(
+            TENANT,
+            PROJECT,
+            A,
+            configure(&p, "first-left", "new-template", "0", true)
+        ),
+        commands.execute(
+            TENANT,
+            PROJECT,
+            A,
+            configure(&p, "first-right", "new-template", "0", true)
+        ),
+    );
+    assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
+    let refused = if left.is_err() { left } else { right };
+    assert!(matches!(refused, Err(PgError::PreconditionsChanged)));
+    commands
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            configure(&p, "disable-created", "new-template", "1", false),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        commands
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                configure(&p, "late-first", "new-template", "0", true)
+            )
+            .await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    let stored = f
+        .admin
+        .query_one(
+            "SELECT version,enabled FROM awr_team.delivery_route_templates WHERE id='new-template'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored.get::<_, i64>(0), 2);
+    assert!(!stored.get::<_, bool>(1));
+}
+
+#[tokio::test]
 async fn discovery_pages_are_bound_to_the_callers_work_scope() {
     let f = setup_routes().await;
     let p = prepare(&f.reads, A, "a").await;
