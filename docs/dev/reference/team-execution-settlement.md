@@ -35,6 +35,13 @@ accessible artifact bytes and an independent Agent review before completion.
 Selecting the workspace policy grants neither trusted executor authority nor
 human approval, and cannot select self-review or `ordinary_confirm` instead.
 
+Before preparing an update after a stale-target integration rejection, compare
+the target and workspace. Include imported baseline paths in the intended
+effects, as well as edited paths. If any exceed the current task scope, stop
+and ask the supervisor for a separately source-reviewed exact-path baseline
+task before importing. `baseline_transition` records provenance only; neither
+it nor an update instruction expands scope or settles an unknown execution.
+
 The workspace policy, completion policy, scope and verification requirements
 are part of the canonical contract hash. Changing them creates a new contract
 basis; it cannot reinterpret a previous run or receipt.

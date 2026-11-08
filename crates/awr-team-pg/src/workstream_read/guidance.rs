@@ -362,7 +362,7 @@ pub(crate) fn with_execution_prepare_command_base(
         selected,
         execution_prepare_command_base(&inputs),
         json!(["request_id", "args.input_digest", "args.declared_scope"]),
-        "Use command_base unchanged. Fill exactly request_id, args.input_digest and args.declared_scope; measure input_digest from consumed inputs and choose your intended declared_scope subset from work.prepare.data.visible_contract.scope_paths under the same expected_contract_hash.",
+        "Use command_base unchanged. Fill exactly request_id, args.input_digest and args.declared_scope; measure consumed inputs and include all intended effects, including baseline imports, within work.prepare.data.visible_contract.scope_paths under the same expected_contract_hash.",
     )
 }
 
@@ -522,15 +522,15 @@ fn rejected_integration(data: &Value, owns_session: bool, fallback: Value) -> Va
     let revised = execution["state"] == "succeeded"
         && execution["execution_id"] != integration["reviewed_execution_id"];
     json!({"code":if revised {"submission"}else{"prepare_execution"},
-        "when":if revised {"your revision execution is settled"}else{"the selected integration was rejected and your prior execution is settled"},
+        "when":if revised {"your revision execution is settled"}else{"the selected integration was rejected, your prior execution is settled and all intended effects including baseline imports fit current scope"},
         "because":["the rejection still matches the selected candidate"],
         "action":{"op":if revised {"delivery.submission.describe"}else{"execution.prepare"},
             "note":if revised {
                 "Publish the revised result through the authorized channel; select a new candidate bound to the actual target, submit fresh evidence and request independent review. Do not reuse the rejected candidate's approval."
             } else {
-                "Prepare a new execution with current versions, measured input_digest and contract scope, then execution.start before edits. Update against the current repository target and retest; preserve the rejected attempt and its approval as history."
+                "Compare the target/workspace diff before preparing. Out-of-scope imports need a separately source-reviewed exact-path baseline task first; baseline_transition is provenance only. Otherwise prepare/start with current versions and measured input_digest, update and retest. Preserve rejected history."
             }},
-        "recheck_on":"execution, target, candidate, blocker, ownership or permission changes"})
+        "recheck_on":"execution, target, candidate, scope, blocker, ownership or permission changes"})
 }
 
 /// Preserve legacy action.op while keeping one bounded factual basis. A read
@@ -947,10 +947,16 @@ mod tests {
         data["execution"] =
             json!({"execution_id":"old","state":"succeeded","effects_settled":true});
         let hint = json!({"code":"integration_rejected"});
-        assert_eq!(
-            with_collaboration(&data, true, true, Some(hint.clone()))["code"],
-            "prepare_execution"
-        );
+        let preparation = with_collaboration(&data, true, true, Some(hint.clone()));
+        assert_eq!(preparation["code"], "prepare_execution");
+        for identity in ["\"".repeat(128), "é".repeat(64)] {
+            let packet =
+                with_execution_prepare_command_base(preparation.clone(), prepare_inputs(&identity));
+            assert!(packet["action"]["command_base"].is_object());
+            assert!(
+                serde_json::to_vec(&packet).unwrap().len() <= EXECUTION_PREPARE_GUIDANCE_MAX_BYTES
+            );
+        }
         for (path, value, code) in [
             ("/runtime/recovery_blocked", json!(true), "inspect_recovery"),
             ("/execution/state", json!("unknown"), "reconcile_execution"),
