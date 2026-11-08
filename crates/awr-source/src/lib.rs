@@ -1,4 +1,5 @@
 //! Authoritative project source configuration and adapter contracts.
+mod acceptance_lint;
 mod adapter;
 mod assessment_policy_file;
 mod delivery_writeback;
