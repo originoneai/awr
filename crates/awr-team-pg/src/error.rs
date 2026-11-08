@@ -151,22 +151,45 @@ impl PgError {
         ))
     }
 
+    pub(crate) fn review_resolution_reference(index: usize) -> Self {
+        if index >= 32 {
+            return Self::invalid_command_fields();
+        }
+        Self::Protocol(format!(
+            "review_input/resolutions/{index}/finding_key/open_blocking_reference"
+        ))
+    }
+
     /// Closed field identifiers only: neither submitted text nor source content
     /// may become a public validation diagnostic.
     pub fn review_finding_input_diagnostic(&self) -> Option<serde_json::Value> {
         let Self::Protocol(message) = self else {
             return None;
         };
-        let (index, field) = message
-            .strip_prefix("review_input/findings/")?
-            .split_once('/')?;
+        let (collection, reference) = message.strip_prefix("review_input/")?.split_once('/')?;
+        let (index, field) = reference.split_once('/')?;
         let number: usize = index.parse().ok()?;
         if number >= 32 || number.to_string() != index {
             return None;
         }
-        let (field, source) = match field {
-            "criterion/contract_reference" => ("criterion", "acceptance"),
-            "rule/contract_reference" => ("rule", "hard_rules"),
+        let (field, source) = match (collection, field) {
+            ("resolutions", "finding_key/open_blocking_reference") => {
+                return Some(serde_json::json!({
+                    "code":"InvalidInput",
+                    "message":"resolution must reference a blocking finding already open before this decision",
+                    "invalid_field":format!("/args/resolutions/{number}/finding_key"),
+                    "constraint":"existing_open_blocking_finding",
+                    "request_reserved":false,
+                    "action_guidance":{
+                        "when":"A resolution names a new, unknown, resolved or nonblocking finding.",
+                        "because":"Only a previously open blocking finding can be resolved; a new finding cannot resolve itself in the same decision.",
+                        "action":"Read review.inspect for the current round. Resolve existing blocking findings only after verifying their fixes. Return unmet blocking findings with review.return instead of approving them. This refusal recorded no decision or findings; correct the unused request and retry.",
+                        "recheck_on":"After evidence, findings, contract or round changes; review authority and independence still apply."
+                    }
+                }));
+            }
+            ("findings", "criterion/contract_reference") => ("criterion", "acceptance"),
+            ("findings", "rule/contract_reference") => ("rule", "hard_rules"),
             _ => return None,
         };
         Some(serde_json::json!({

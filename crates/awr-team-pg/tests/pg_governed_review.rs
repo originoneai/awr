@@ -466,6 +466,62 @@ async fn a_mismatched_finding_reference_names_its_field_and_keeps_the_request_co
 }
 
 #[tokio::test]
+#[expect(
+    clippy::await_holding_lock,
+    reason = "The guard serializes the shared PostgreSQL fixture for this entire async test."
+)]
+async fn a_new_finding_cannot_be_resolved_in_the_same_decision_and_the_request_is_correctable() {
+    let governed = candidate("governed_enforce", complete());
+    let (_guard, admin, _, store) = setup_with_specs(files(&governed)).await;
+    seed_review_actors(&admin).await;
+    let evidence = submitted(&admin, &store, "exec-new", "ev-new", b"new-finding").await;
+    let round = open_round(&store, "open-new", &evidence).await["round_id"].clone();
+    let error = run_err(
+        &store,
+        REVIEWER_TOKEN,
+        "decide-new",
+        "review.accept",
+        decision_args(
+            &round,
+            json!({
+                "findings": [blocking_finding("NEW")],
+                "resolutions": [{"finding_key": "NEW", "resolution": "A future task will fix it"}]
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        error.to_string(),
+        "review_input/resolutions/0/finding_key/open_blocking_reference"
+    );
+    let diagnostic = error.review_finding_input_diagnostic().unwrap();
+    assert_eq!(
+        diagnostic["invalid_field"],
+        "/args/resolutions/0/finding_key"
+    );
+    assert_eq!(diagnostic["constraint"], "existing_open_blocking_finding");
+    assert_eq!(diagnostic["request_reserved"], false);
+    let count: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.review_findings", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 0, "the refused approval rolls back its new finding");
+
+    // A refusal does not consume the request ID or prevent a real return.
+    let returned = run(
+        &store,
+        REVIEWER_TOKEN,
+        "decide-new",
+        "review.return",
+        decision_args(&round, json!({"findings": [blocking_finding("NEW")]})),
+    )
+    .await;
+    assert_eq!(returned["state"], "rejected");
+    assert_eq!(returned["findings"]["open_blocking"], json!(["NEW"]));
+}
+
+#[tokio::test]
 async fn a_return_of_governed_work_needs_a_blocking_finding_and_everything_else_is_deferred() {
     let governed = candidate("governed_enforce", complete());
     let (_g, admin, _, store) = setup_with_specs(files(&governed)).await;
@@ -721,6 +777,13 @@ async fn only_an_approval_resolves_a_finding_and_only_one_that_is_open() {
     )
     .await;
     assert!(matches!(unknown, PgError::Protocol(_)), "{unknown:?}");
+    let diagnostic = unknown.review_finding_input_diagnostic().unwrap();
+    assert_eq!(
+        diagnostic["invalid_field"],
+        "/args/resolutions/1/finding_key"
+    );
+    assert_eq!(diagnostic["constraint"], "existing_open_blocking_finding");
+    assert_eq!(diagnostic["request_reserved"], false);
     let resolved: i64 = admin
         .query_one(
             "SELECT count(*) FROM awr_team.review_findings WHERE action='resolve'",
