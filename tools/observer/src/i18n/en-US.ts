@@ -131,6 +131,7 @@ const enUS: Messages = {
     notObserved: 'No records found yet',
     currentApproval: 'This review passed',
     historical: 'Earlier review does not apply to this version',
+    integrationHistorical: 'Earlier integration attempt does not apply to this version',
     selfReport: 'Reported by the submitter',
     nonIndependent: 'Not independently checked yet',
     conflict: 'Records conflict; completion cannot be confirmed',
