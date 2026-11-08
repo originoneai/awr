@@ -64,6 +64,7 @@ async fn admit_authority(
         let op = match action {
             Action::DeliverySubmitAndRequestReview => "delivery.register_pr",
             Action::DeliveryFinalize => "delivery.finalize",
+            Action::WorkAssign => "delivery.route.reuse",
             _ => return Err(PgError::Forbidden),
         };
         crate::delegation_auth::resolve_agent_delegation(

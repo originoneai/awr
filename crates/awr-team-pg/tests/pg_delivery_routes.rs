@@ -19,7 +19,7 @@ struct Fixture {
 }
 
 async fn setup_routes() -> Fixture {
-    let (guard, admin, db, reads) = setup().await;
+    let (guard, admin, db, reads) = setup_with_assigned_tasks().await;
     enable_writes(&admin).await;
     admin
         .batch_execute(
@@ -97,6 +97,472 @@ async fn routes(f: &Fixture, token: &str, work: &str) -> Result<Value, PgError> 
         serde_json::from_value(json!({"protocol_version":1,"op":"delivery.routes","work_id":work}))
             .unwrap();
     f.reads.query(TENANT, PROJECT, token, q).await
+}
+
+async fn publish_route(f: &Fixture) {
+    let p = prepare(&f.reads, A, "a").await;
+    f.reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            configure(&p, "publish-template", "repository", "0", true),
+        )
+        .await
+        .unwrap();
+}
+
+fn reuse_route(p: &Value, request: &str, connector: &str) -> WorkstreamCommand {
+    command(
+        p,
+        request,
+        "delivery.route.reuse",
+        json!({
+            "source_snapshot_id":p["source_snapshot_id"],"template_id":"repository",
+            "template_version":"1","source_connector_version":"1","connector_id":connector
+        }),
+    )
+}
+
+async fn supervisor(f: &Fixture) {
+    f.admin.batch_execute("UPDATE awr_team.project_memberships SET business_roles='[\"supervisor\"]',assignment_grant=true
+        WHERE actor_id='agent'; UPDATE awr_team.workstream_grants SET can_manage=false WHERE client_id='cli-a'")
+        .await.unwrap();
+}
+
+#[tokio::test]
+async fn delegated_supervisor_can_reuse_but_a_revoked_delegation_cannot_replay() {
+    let f = setup_routes().await;
+    publish_route(&f).await;
+    supervisor(&f).await;
+    f.admin.batch_execute("UPDATE awr_team.actors SET kind='agent' WHERE id='agent';
+        INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+        VALUES('reader-tenant','reader-project','supervisor-person','Supervisor','active');
+        INSERT INTO awr_team.person_agent_bindings(tenant_id,project_id,id,person_id,agent_id,status)
+        VALUES('reader-tenant','reader-project','supervisor-binding','supervisor-person','agent','active')")
+        .await.unwrap();
+    let grant = awr_core::AgentAuthorization {
+        id: "route-delegation".into(),
+        authorizer_person_id: awr_core::PersonId::new("supervisor-person").unwrap(),
+        responsible_person_id: awr_core::PersonId::new("supervisor-person").unwrap(),
+        subject_kind: awr_core::ExecutionSubjectKind::Agent,
+        subject_id: "agent".into(),
+        client_id: "cli-a".into(),
+        session_id: None,
+        model_id: None,
+        scope: awr_core::AuthorizationScope::Workstream {
+            project_id: PROJECT.into(),
+            workstream_id: awr_core::Id::from(1).to_string(),
+        },
+        actions: std::collections::BTreeSet::from([
+            awr_core::AuthorizedAction::Inspect,
+            awr_core::AuthorizedAction::AssignWork,
+        ]),
+        expires_at_ms: None,
+        status: awr_core::AuthorizationStatus::Active,
+        revoked_at_ms: None,
+        revoked_by: None,
+        verifiable_capabilities: vec![],
+        self_reported_skill_hints: vec![],
+        parent_authorization_id: None,
+        maintainer_person_id: None,
+        created_at_ms: 1000,
+        binding_id: Some("supervisor-binding".into()),
+    };
+    AuthorizationStore::from_config(f.config.clone())
+        .issue(
+            TENANT,
+            PROJECT,
+            &awr_core::IssueAuthorizationRequest {
+                request_key: "issue-supervisor-route-delegation".into(),
+                authorization: grant,
+            },
+        )
+        .await
+        .unwrap();
+    let p = prepare(&f.reads, A, "aa-assigned").await;
+    let original = reuse_route(&p, "delegated-reuse", "target");
+    f.reads
+        .commands()
+        .execute(TENANT, PROJECT, A, original.clone())
+        .await
+        .unwrap();
+    f.admin
+        .batch_execute(
+            "UPDATE awr_team.agent_authorizations SET status='revoked' WHERE id='route-delegation'",
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.reads
+            .commands()
+            .execute(TENANT, PROJECT, A, original)
+            .await,
+        Err(PgError::Forbidden)
+    ));
+    let count: i64 = f
+        .admin
+        .query_one(
+            "SELECT count(*) FROM awr_team.delivery_connectors WHERE work_id='aa-assigned'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn route_reuse_rechecks_assignment_authority_and_target_workstream() {
+    let f = setup_routes().await;
+    publish_route(&f).await;
+    let p = prepare(&f.reads, A, "aa-assigned").await;
+    assert!(matches!(
+        f.reads
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                reuse_route(&p, "without-assignment", "target")
+            )
+            .await,
+        Err(PgError::Forbidden)
+    ));
+    supervisor(&f).await;
+    f.admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_grants SET can_write=true WHERE client_id='cli-b'",
+        )
+        .await
+        .unwrap();
+    let other = prepare(&f.reads, B, "b-private").await;
+    assert!(matches!(
+        f.reads
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                B,
+                reuse_route(&other, "wrong-stream", "target")
+            )
+            .await,
+        Err(PgError::Forbidden)
+    ));
+    f.admin.batch_execute("UPDATE awr_team.project_memberships SET business_roles='[\"developer\"]' WHERE actor_id='agent'").await.unwrap();
+    assert!(matches!(
+        f.reads
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                reuse_route(&p, "developer-selection", "target")
+            )
+            .await,
+        Err(PgError::Forbidden)
+    ));
+    let count: i64 = f
+        .admin
+        .query_one("SELECT count(*) FROM awr_team.delivery_connectors", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn reuse_replay_preserves_original_mapping_after_template_revocation() {
+    let f = setup_routes().await;
+    publish_route(&f).await;
+    supervisor(&f).await;
+    let p = prepare(&f.reads, A, "aa-assigned").await;
+    let original = reuse_route(&p, "stable-reuse", "target");
+    let first = f
+        .reads
+        .commands()
+        .execute(TENANT, PROJECT, A, original.clone())
+        .await
+        .unwrap();
+    f.admin
+        .batch_execute(
+            "UPDATE awr_team.delivery_route_templates SET enabled=false,version=version+1",
+        )
+        .await
+        .unwrap();
+    let replay = f
+        .reads
+        .commands()
+        .execute(TENANT, PROJECT, A, original.clone())
+        .await
+        .unwrap();
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(first["receipt"]["data"], replay["receipt"]["data"]);
+    let mut changed = original;
+    changed.args["connector_id"] = json!("another");
+    assert!(
+        f.reads
+            .commands()
+            .execute(TENANT, PROJECT, A, changed)
+            .await
+            .is_err()
+    );
+    let q = serde_json::from_value(json!({"protocol_version":1,"op":"delivery.neutral.outcome",
+        "work_id":"aa-assigned","request_id":"stable-reuse"}))
+    .unwrap();
+    let outcome = f.reads.query(TENANT, PROJECT, A, q).await.unwrap();
+    assert_eq!(outcome["data"]["outcome"], "committed");
+    assert_eq!(outcome["data"]["receipt"]["data"], first["receipt"]["data"]);
+    let p2 = prepare(&f.reads, A, "ab-assigned").await;
+    assert!(matches!(
+        f.reads
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                reuse_route(&p2, "revoked-template", "new-target")
+            )
+            .await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    let count: i64 = f.admin.query_one("SELECT count(*) FROM awr_team.delivery_connectors WHERE work_id IN ('aa-assigned','ab-assigned')", &[])
+        .await.unwrap().get(0);
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn competing_route_selections_create_exactly_one_independent_mapping() {
+    let f = setup_routes().await;
+    publish_route(&f).await;
+    supervisor(&f).await;
+    let p = prepare(&f.reads, A, "aa-assigned").await;
+    let commands = f.reads.commands();
+    let (left, right) = tokio::join!(
+        commands.execute(TENANT, PROJECT, A, reuse_route(&p, "reuse-left", "left")),
+        commands.execute(TENANT, PROJECT, A, reuse_route(&p, "reuse-right", "right"))
+    );
+    assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
+    assert!(matches!(
+        if left.is_err() { left } else { right },
+        Err(PgError::PreconditionsChanged)
+    ));
+    let count: i64 = f
+        .admin
+        .query_one(
+            "SELECT count(*) FROM awr_team.delivery_connectors WHERE work_id='aa-assigned'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn route_selection_refuses_changed_versions_and_current_source_authority() {
+    let f = setup_routes().await;
+    publish_route(&f).await;
+    supervisor(&f).await;
+    let p = prepare(&f.reads, A, "aa-assigned").await;
+    let mut stale = reuse_route(&p, "stale-template", "target");
+    stale.args["template_version"] = json!("2");
+    assert!(matches!(
+        f.reads.commands().execute(TENANT, PROJECT, A, stale).await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    for (index, mutation) in [
+        "UPDATE awr_team.delivery_connectors SET version=2 WHERE id='repo-source'",
+        "UPDATE awr_team.delivery_connectors SET enabled=false WHERE id='repo-source'",
+        "UPDATE awr_team.delivery_connectors SET coordinator_epoch='old' WHERE id='repo-source'",
+        "UPDATE awr_team.actors SET status='disabled' WHERE id='route-worker'",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        f.admin.batch_execute(mutation).await.unwrap();
+        assert!(matches!(
+            f.reads
+                .commands()
+                .execute(
+                    TENANT,
+                    PROJECT,
+                    A,
+                    reuse_route(&p, &format!("stale-source-{index}"), "target")
+                )
+                .await,
+            Err(PgError::PreconditionsChanged)
+        ));
+        f.admin.batch_execute("UPDATE awr_team.delivery_connectors SET version=1,enabled=true,coordinator_epoch='epoch-a'
+            WHERE id='repo-source'; UPDATE awr_team.actors SET status='active' WHERE id='route-worker'").await.unwrap();
+    }
+    f.admin
+        .batch_execute("DELETE FROM awr_team.workstream_snapshot_ownership WHERE work_id='a'")
+        .await
+        .unwrap();
+    assert!(matches!(
+        f.reads
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                reuse_route(&p, "retired-source", "target")
+            )
+            .await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    let count: i64 = f
+        .admin
+        .query_one("SELECT count(*) FROM awr_team.delivery_connectors", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn route_selection_preserves_owned_claimed_and_preconfigured_work() {
+    let f = setup_routes().await;
+    publish_route(&f).await;
+    supervisor(&f).await;
+    let owned = prepare(&f.reads, A, "aa-assigned").await;
+    f.admin.batch_execute("INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+        VALUES('reader-tenant','reader-project','owner','Owner','active');
+        INSERT INTO awr_team.task_responsibilities(tenant_id,project_id,work_id,owner_person_id,version)
+        VALUES('reader-tenant','reader-project','aa-assigned','owner',1)").await.unwrap();
+    assert!(matches!(
+        f.reads
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                reuse_route(&owned, "owned-task", "owned-mapping")
+            )
+            .await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    let busy = prepare(&f.reads, A, "ab-assigned").await;
+    f.admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
+        VALUES('reader-tenant','reader-project','busy-session','main','ab-assigned','agent','cli-a','busy','active',$1,1)",
+        &[&busy["workstream_id"].as_str().unwrap()]).await.unwrap();
+    f.admin.execute("INSERT INTO awr_team.claims(tenant_id,project_id,id,scope_id,work_id,session_id,actor_id,
+        fence,lease_version,expires_at,state,workstream_id,ownership_version,coordinator_epoch)
+        VALUES('reader-tenant','reader-project','busy-claim','main','ab-assigned','busy-session','agent',
+            1,1,clock_timestamp()+interval '1 minute','active',$1,1,'epoch-a')",
+        &[&busy["workstream_id"].as_str().unwrap()]).await.unwrap();
+    assert!(matches!(
+        f.reads
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                reuse_route(&busy, "claimed-task", "claimed-mapping")
+            )
+            .await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    let configured = prepare(&f.reads, A, "a").await;
+    assert!(matches!(
+        f.reads
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                reuse_route(&configured, "existing-task", "replacement")
+            )
+            .await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    let count: i64 = f
+        .admin
+        .query_one("SELECT count(*) FROM awr_team.delivery_connectors", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn reuse_does_not_rebind_a_retained_locator_to_a_new_connector_version() {
+    let f = setup_routes().await;
+    publish_route(&f).await;
+    f.admin
+        .batch_execute(
+            "UPDATE awr_team.delivery_connectors SET version=2 WHERE id='repo-source';
+        UPDATE awr_team.delivery_route_templates SET version=2,source_connector_version=2",
+        )
+        .await
+        .unwrap();
+    supervisor(&f).await;
+    let p = prepare(&f.reads, A, "aa-assigned").await;
+    let mut request = reuse_route(&p, "stale-locator-copy", "target");
+    request.args["template_version"] = json!("2");
+    request.args["source_connector_version"] = json!("2");
+    f.reads
+        .commands()
+        .execute(TENANT, PROJECT, A, request)
+        .await
+        .unwrap();
+    let locator = f
+        .admin
+        .query_one(
+            "SELECT source_locator_contract,source_locator_url,source_locator_connector_version
+        FROM awr_team.delivery_connectors WHERE id='target'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(locator.get::<_, Option<String>>(0).is_none());
+    assert!(locator.get::<_, Option<String>>(1).is_none());
+    assert!(locator.get::<_, Option<i64>>(2).is_none());
+}
+
+#[tokio::test]
+async fn supervisor_reuses_authorized_route_without_management_or_new_grants() {
+    let f = setup_routes().await;
+    publish_route(&f).await;
+    f.admin
+        .batch_execute(
+            "UPDATE awr_team.project_memberships SET business_roles='[\"supervisor\"]',assignment_grant=true;
+        UPDATE awr_team.workstream_grants SET can_manage=false WHERE client_id='cli-a'",
+        )
+        .await
+        .unwrap();
+    let p = prepare(&f.reads, A, "aa-assigned").await;
+    let grants: Value = f.admin.query_one("SELECT jsonb_agg(to_jsonb(g) ORDER BY client_id,workstream_id) FROM awr_team.workstream_grants g", &[])
+        .await.unwrap().get(0);
+    let result = f
+        .reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            reuse_route(&p, "new-task-route", "task-repository"),
+        )
+        .await
+        .expect("supervisors can select an administrator-authorized same-stream route");
+    assert_eq!(result["receipt"]["data"]["connector_version"], "1");
+    assert_eq!(result["receipt"]["data"]["grants_created"], false);
+    let mapping = f.admin.query_one("SELECT work_id,provider,resource,principal_actor_id,principal_client_id,
+        source_locator_connector_version,version FROM awr_team.delivery_connectors WHERE id='task-repository'", &[])
+        .await.unwrap();
+    assert_eq!(mapping.get::<_, String>(0), "aa-assigned");
+    assert_eq!(mapping.get::<_, String>(1), "neutral-git");
+    assert_eq!(mapping.get::<_, String>(2), "fixture://shared-repository");
+    assert_eq!(mapping.get::<_, String>(3), "route-worker");
+    assert_eq!(mapping.get::<_, String>(4), "route-worker-client");
+    assert_eq!(mapping.get::<_, Option<i64>>(5), Some(1));
+    assert_eq!(mapping.get::<_, i64>(6), 1);
+    let after: Value = f.admin.query_one("SELECT jsonb_agg(to_jsonb(g) ORDER BY client_id,workstream_id) FROM awr_team.workstream_grants g", &[])
+        .await.unwrap().get(0);
+    assert_eq!(grants, after);
+    assert!(!result.to_string().contains("route-worker-client"));
 }
 
 #[tokio::test]

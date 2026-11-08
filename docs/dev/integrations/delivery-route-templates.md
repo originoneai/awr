@@ -2,8 +2,9 @@
 
 Development on `main` adds an administrator-maintained registry for reusing
 provider-neutral delivery configuration within one workstream. This registry
-does not create a connector for another task or grant repository, execution,
-review or access-management permissions. Per-task reuse is a separate operation.
+does not grant repository, execution, review or access-management permissions.
+Supervisors can select an authorized template for an unconfigured task before
+assignment or self-claim.
 
 Use `awr_team_command` with `op: delivery.route.configure` and the current
 `work.prepare` header. Its arguments are:
@@ -34,6 +35,39 @@ Disabling a template stops future reuse and remains possible after its source
 connector changes. It does not silently reconfigure existing task mappings.
 Those mappings, their versions and their existing authority checks remain
 independent. Report-only task completion retains its current behavior.
+
+## Select a route for a new task
+
+For work that needs repository integration, discover `delivery.routes` for the
+target task. Choose one template from that response and call
+`delivery.route.reuse` with a fresh `work.prepare` header and these arguments:
+
+| Argument | Meaning |
+| --- | --- |
+| `source_snapshot_id` | The target task's prepared source snapshot. |
+| `template_id` | The selected authorized template. |
+| `template_version` | Its exact current version from discovery. |
+| `source_connector_version` | The source connector version from the same item. |
+| `connector_id` | A new stable, project-unique name for this task's mapping. |
+
+Reuse requires current `work.assign` authority and workstream write access,
+including an appropriate live delegation for an Agent. It creates one independent
+per-task mapping atomically, using the registered worker and resource without
+disclosing or copying credentials. It does not assign, claim, execute, approve
+or deliver the task. Bindings, review and integration still use their existing
+gates.
+
+An assigned, claimed, executed, reviewed or completed task, or any existing
+mapping, is refused. Manage existing mappings through their original explicit
+administration path. Competing new selections cannot overwrite each other.
+Disabling or changing a template stops new selections; it does not retroactively
+rewrite mappings already committed. A retained source locator is copied only
+when its version matches the selected connector.
+
+Use the same `request_id` and mapping name after an uncertain response and query
+`delivery.neutral.outcome` before an exact retry. A committed receipt is historical
+and does not prove the template or task is still current. Report-only work does
+not need a route, and a Git revision or check list alone does not require one.
 
 The registry requires Team PostgreSQL schema 60. Use the normal owner-side
 migration and application-role bootstrap procedure before starting a matching

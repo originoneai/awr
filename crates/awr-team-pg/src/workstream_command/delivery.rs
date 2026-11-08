@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 pub(super) const OPERATIONS: &[&str] = &[
     "delivery.connector.configure",
     "delivery.route.configure",
+    "delivery.route.reuse",
     "delivery.candidate.select",
     "delivery.inspection.reserve",
     "delivery.facts.ingest",
@@ -25,6 +26,7 @@ pub(super) const OPERATIONS: &[&str] = &[
 pub(super) enum Action {
     Configure(ConfigureDeliveryConnector),
     ConfigureRoute(ConfigureDeliveryRouteTemplate),
+    ReuseRoute(ReuseDeliveryRouteTemplate),
     Select(SelectDeliveryCandidate),
     Reserve(ReserveDeliveryInspection),
     Ingest(IngestDeliveryFacts),
@@ -83,6 +85,7 @@ impl Action {
         Ok(match command.op.as_str() {
             "delivery.connector.configure" => Self::Configure(decode(value)?),
             "delivery.route.configure" => Self::ConfigureRoute(decode(value)?),
+            "delivery.route.reuse" => Self::ReuseRoute(decode(value)?),
             "delivery.candidate.select" => Self::Select(decode(value)?),
             "delivery.inspection.reserve" => Self::Reserve(decode(value)?),
             "delivery.facts.ingest" => Self::Ingest(decode(value)?),
@@ -110,6 +113,7 @@ impl Action {
                     .configure_route_template(tenant, project, bearer, r)
                     .await
             }
+            Self::ReuseRoute(r) => store.reuse_route_template(tenant, project, bearer, r).await,
             Self::Select(r) => store.select_candidate(tenant, project, bearer, r).await,
             Self::Reserve(r) => store.reserve_inspection(tenant, project, bearer, r).await,
             Self::Ingest(r) => store.ingest_facts(tenant, project, bearer, r).await,

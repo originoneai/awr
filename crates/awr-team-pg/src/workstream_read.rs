@@ -1540,7 +1540,12 @@ pub(crate) async fn read(
                 Value::Null
             };
             let value = json!({"items":items,"next_cursor":next,"registration_only":true,
-                "execution_authorized":false,"grants_created":false});
+                "execution_authorized":false,"grants_created":false,
+                "guidance":{"when":"Before assignment or claim of unconfigured repository work",
+                    "because":"Templates are administrator-authorized registrations, not permission grants",
+                    "action":{"op":"delivery.route.reuse","role":"supervisor",
+                        "note":"Select one listed template and its exact versions; use a fresh work.prepare header."},
+                    "recheck_on":"Template, connector, task or authority change; inspect delivery.neutral.outcome after an uncertain response"}});
             if serde_json::to_vec(&value)
                 .map_err(|_| PgError::SourceDivergence)?
                 .len()

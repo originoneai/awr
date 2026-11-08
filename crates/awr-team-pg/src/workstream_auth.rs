@@ -541,7 +541,7 @@ fn membership_allows_manage(role: &str) -> bool {
 pub fn command_business_action(op: &str) -> Option<awr_team::Action> {
     use awr_team::Action::*;
     Some(match op {
-        "task.assign" => WorkAssign,
+        "task.assign" | "delivery.route.reuse" => WorkAssign,
         "task.accept_assignment" | "task.claim_available" => ClaimManageOwn,
         "session.start" | "session.checkpoint" | "session.end" => SessionMaintainOwn,
         "claim.acquire" | "claim.renew" | "claim.release" | "handoff.propose"
@@ -758,6 +758,7 @@ pub(crate) fn command_authority(op: &str) -> Option<DomainAuthority> {
         "session.start"
         | "admission.decide"
         | "task.assign"
+        | "delivery.route.reuse"
         | "task.accept_assignment"
         | "task.claim_available"
         | "claim.acquire"
@@ -925,6 +926,10 @@ pub(crate) fn workstream_boundary_capabilities() -> serde_json::Value {
         "action_authorization": "tmcp_010_shared_decision",
         "delegation_action_intersection": "tmcp_030_ws016_intersect",
         "trusted_executor_upgrade": "never_from_product_roles",
+        "delivery_routes": {"discover":"delivery.routes","configure":"delivery.route.configure",
+            "reuse":"delivery.route.reuse","reuse_action":"work.assign",
+            "when":"Before dispatch or claim of unconfigured repository work; report-only work needs no route.",
+            "rights_created":false},
         "permission_policy_id": awr_team::PERMISSION_POLICY_ID,
         "permission_policy_version": awr_team::PERMISSION_POLICY_VERSION,
         "write_authorization_phases": ["admission_write_grant", "effect_active_or_special"],
