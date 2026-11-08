@@ -1211,7 +1211,8 @@ async fn both_intake_paths_guide_owned_preparation_and_exact_execution_admission
         let note = pointed["data"]["guidance"]["action"]["note"]
             .as_str()
             .unwrap();
-        assert!(note.contains("intended declared_scope subset"));
+        assert!(note.contains("all intended effects"));
+        assert!(note.contains("including baseline imports"));
         assert!(note.contains("work.prepare.data.visible_contract.scope_paths"));
         assert!(note.contains("same expected_contract_hash"));
         prepare_command["args"]["declared_scope"] = json!(["src"]);
