@@ -328,8 +328,10 @@ fn add_review_input_schema(command: &mut Value) {
             "properties":{
                 "finding_key":identity,
                 "summary":{"type":"string","minLength":1,"maxLength":2048},
-                "criterion":{"type":"string","minLength":1,"maxLength":2048},
-                "rule":{"type":"string","minLength":1,"maxLength":2048},
+                "criterion":{"type":"string","minLength":1,"maxLength":2048,
+                    "description":"Copy exactly one complete work.prepare data.published_contract.acceptance entry, including punctuation. Put explanation or combined references in summary/counterexample; omit when not applicable."},
+                "rule":{"type":"string","minLength":1,"maxLength":2048,
+                    "description":"Copy exactly one complete work.prepare data.published_contract.hard_rules entry, including punctuation. Put explanation in summary/counterexample; omit when not applicable."},
                 "counterexample":{"type":"object","additionalProperties":false,"required":["given","when","then"],
                     "properties":{
                         "given":{"type":"string","minLength":1,"maxLength":2048},
@@ -1979,6 +1981,50 @@ impl ServerHandler for Endpoint {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn review_contract_reference_errors_are_specific_bounded_and_do_not_echo_values() {
+        for (field, source) in [("criterion", "acceptance"), ("rule", "hard_rules")] {
+            let (status, response) = public_error(PgError::Protocol(format!(
+                "review_input/findings/1/{field}/contract_reference"
+            )));
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(response["code"], "InvalidInput");
+            assert_eq!(
+                response["invalid_field"],
+                format!("/args/findings/1/{field}")
+            );
+            assert_eq!(response["constraint"], "exact_current_contract_reference");
+            assert_eq!(response["request_reserved"], false);
+            assert!(
+                response["action_guidance"]["action"]
+                    .as_str()
+                    .unwrap()
+                    .contains(source)
+            );
+            assert!(serde_json::to_vec(&response).unwrap().len() < 1200);
+        }
+        for message in [
+            "review_input/findings/32/criterion/contract_reference",
+            "review_input/findings/01/criterion/contract_reference",
+            "review_input/findings/1/operator-note-sentinel/contract_reference",
+            "review_input/findings/1/criterion/contract_reference/operator-note-sentinel",
+        ] {
+            let (_, response) = public_error(PgError::Protocol(message.into()));
+            assert!(response.get("invalid_field").is_none());
+            assert!(!response.to_string().contains("operator-note-sentinel"));
+        }
+        let command = catalog()
+            .into_iter()
+            .find(|t| t.name == "awr_team_command")
+            .unwrap();
+        let fields = &command.input_schema["properties"]["args"]["properties"]["findings"]["items"]
+            ["properties"];
+        for field in ["criterion", "rule"] {
+            let description = fields[field]["description"].as_str().unwrap();
+            assert!(description.contains("exactly one complete work.prepare"));
+        }
+    }
 
     #[test]
     fn manifest_mismatch_has_specific_bounded_guidance_without_echoing_content() {
