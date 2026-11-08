@@ -9,6 +9,7 @@ mod integration;
 mod publisher;
 mod pump;
 pub(crate) mod review_submission;
+mod route_templates;
 mod scheduling;
 mod snapshots;
 mod submission_contract;
@@ -84,6 +85,18 @@ pub struct ConfigureDeliveryConnector {
     /// Zero creates a new mapping; every replacement/revocation requires its version.
     pub expected_connector_version: String,
     pub mapping: DeliveryConnectorMapping,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigureDeliveryRouteTemplate {
+    pub request_id: String,
+    pub read_set: DeliveryReadSet,
+    pub template_id: String,
+    pub expected_template_version: String,
+    pub source_connector_id: String,
+    pub source_connector_version: String,
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

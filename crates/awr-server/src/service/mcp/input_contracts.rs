@@ -596,7 +596,7 @@ mod tests {
         let catalog = super::super::catalog();
         assert_eq!(
             WorkstreamQuery::OPERATIONS.len() + WorkstreamCommand::OPERATIONS.len(),
-            85
+            87
         );
         for (tool, operations) in [
             ("awr_team_query", WorkstreamQuery::OPERATIONS),
@@ -1101,6 +1101,12 @@ mod tests {
                         "fact_source":"caller_declared","enabled":true,"source_locator":null}}),
             ),
             (
+                "delivery.route.configure",
+                json!({"source_snapshot_id":"snapshot","template_id":"team-repository",
+                    "expected_template_version":"0","source_connector_id":"connector",
+                    "source_connector_version":"1","enabled":true}),
+            ),
+            (
                 "delivery.candidate.select",
                 json!({"source_snapshot_id":"snapshot","session_id":"session","claim_id":"claim",
                     "fence":"1","lease_version":"1","expected_selected_digest":null,
@@ -1257,6 +1263,54 @@ mod tests {
                 .to_string()
                 .contains("actual claim receipt")
         );
+    }
+
+    #[test]
+    fn route_registry_discovery_and_configuration_keep_runtime_selectors_and_closed_args() {
+        let configure = contract("awr_team_command", "delivery.route.configure");
+        let args = &configure["schema"]["properties"]["args"];
+        let valid = json!({"source_snapshot_id":"snapshot","template_id":"repository",
+            "expected_template_version":"0","source_connector_id":"connector",
+            "source_connector_version":"1","enabled":true});
+        assert_eq!(args["additionalProperties"], false);
+        for missing in [
+            "source_snapshot_id",
+            "template_id",
+            "expected_template_version",
+            "source_connector_id",
+            "source_connector_version",
+            "enabled",
+        ] {
+            let mut incomplete = valid.clone();
+            incomplete.as_object_mut().unwrap().remove(missing);
+            assert!(
+                super::super::input_diagnostics::shape_issue(&incomplete, args, "/args").is_some(),
+                "{missing}"
+            );
+        }
+        let mut extra = valid;
+        extra["principal_actor_id"] = json!("invented-worker");
+        assert!(super::super::input_diagnostics::shape_issue(&extra, args, "/args").is_some());
+        let query = contract("awr_team_query", "delivery.routes");
+        let schema = &query["schema"];
+        let valid_query = json!({"protocol_version":1,"op":"delivery.routes","work_id":"work","limit":1,
+            "max_context_bytes":4096});
+        assert!(super::super::input_diagnostics::shape_issue(&valid_query, schema, "").is_none());
+        assert!(schema["allOf"].as_array().unwrap().iter().any(|branch| {
+            branch["required"] == json!(["work_id"])
+                && branch["not"]["required"] == json!(["session_id"])
+        }));
+        for invalid in [
+            json!({"protocol_version":1,"op":"delivery.routes"}),
+            json!({"protocol_version":1,"op":"delivery.routes","work_id":"work","session_id":"session"}),
+        ] {
+            assert!(
+                serde_json::from_value::<WorkstreamQuery>(invalid)
+                    .unwrap()
+                    .validate()
+                    .is_err()
+            );
+        }
     }
 
     #[test]

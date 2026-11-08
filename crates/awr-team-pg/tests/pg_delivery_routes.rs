@@ -1,0 +1,510 @@
+#![cfg(feature = "pg-tests")]
+//! Synthetic route mechanisms; these tests do not establish native acceptance.
+mod common;
+#[path = "fixtures/workstream_access.rs"]
+mod fixture;
+
+use awr_team::delivery::FactSource;
+use awr_team_pg::*;
+use fixture::*;
+use serde_json::{Value, json};
+use std::sync::MutexGuard;
+use tokio_postgres::Client;
+
+struct Fixture {
+    _guard: MutexGuard<'static, ()>,
+    admin: Client,
+    reads: WorkstreamReadStore,
+    config: tokio_postgres::Config,
+}
+
+async fn setup_routes() -> Fixture {
+    let (guard, admin, db, reads) = setup().await;
+    enable_writes(&admin).await;
+    admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_grants SET can_manage=true WHERE client_id='cli-a';
+        INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status)
+        VALUES('reader-tenant','route-worker','system','Synthetic delivery worker','active')",
+        )
+        .await
+        .unwrap();
+    let config = common::with_app_role(&common::test_config(), &db);
+    let p = prepare(&reads, A, "a").await;
+    let set = serde_json::from_value(json!({
+        "work_id":"a","workstream_id":p["workstream_id"],
+        "coordinator_epoch":p["coordinator_epoch"],"source_snapshot_id":p["source_snapshot_id"],
+        "authority_version":p["authority_version"],"ownership_version":p["data"]["ownership_version"],
+        "contract_hash":p["data"]["contract_hash"]
+    })).unwrap();
+    DeliverySyncStore::from_config(config.clone())
+        .configure_connector(
+            TENANT,
+            PROJECT,
+            A,
+            ConfigureDeliveryConnector {
+                request_id: "seed-route-connector".into(),
+                read_set: set,
+                expected_connector_version: "0".into(),
+                mapping: DeliveryConnectorMapping {
+                    connector_id: "repo-source".into(),
+                    provider: "neutral-git".into(),
+                    resource: "fixture://shared-repository".into(),
+                    principal_actor_id: "route-worker".into(),
+                    principal_client_id: "route-worker-client".into(),
+                    fact_source: FactSource::AdapterObservation,
+                    enabled: true,
+                    source_locator: Some(DeliverySourceLocatorUpdate::Set {
+                        locator: DeliverySourceLocator {
+                            contract: "awr-git-source-v1".into(),
+                            url: "https://git.example.invalid/team/project.git".into(),
+                        },
+                    }),
+                },
+            },
+        )
+        .await
+        .unwrap();
+    Fixture {
+        _guard: guard,
+        admin,
+        reads,
+        config,
+    }
+}
+
+fn configure(
+    p: &Value,
+    request: &str,
+    id: &str,
+    expected: &str,
+    enabled: bool,
+) -> WorkstreamCommand {
+    command(
+        p,
+        request,
+        "delivery.route.configure",
+        json!({
+            "source_snapshot_id":p["source_snapshot_id"],"template_id":id,
+            "expected_template_version":expected,"source_connector_id":"repo-source",
+            "source_connector_version":"1","enabled":enabled
+        }),
+    )
+}
+
+async fn routes(f: &Fixture, token: &str, work: &str) -> Result<Value, PgError> {
+    let q =
+        serde_json::from_value(json!({"protocol_version":1,"op":"delivery.routes","work_id":work}))
+            .unwrap();
+    f.reads.query(TENANT, PROJECT, token, q).await
+}
+
+#[tokio::test]
+async fn administrative_template_is_discoverable_only_in_its_workstream() {
+    let f = setup_routes().await;
+    let p = prepare(&f.reads, A, "a").await;
+    let result = f
+        .reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            configure(&p, "publish-route", "team-repository", "0", true),
+        )
+        .await
+        .expect("an administrator can publish a reusable version-bound route");
+    assert_eq!(result["receipt"]["data"]["template_version"], "1");
+    let listed = routes(&f, A, "a").await.unwrap();
+    let items = listed["data"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["template_id"], "team-repository");
+    assert_eq!(items[0]["template_version"], "1");
+    assert_eq!(items[0]["resource"], "fixture://shared-repository");
+    assert_eq!(
+        items[0]["source_locator"]["url"],
+        "https://git.example.invalid/team/project.git"
+    );
+    for private in [
+        "route-worker-client",
+        "principal_actor_id",
+        "principal_client_id",
+        A,
+    ] {
+        assert!(!listed.to_string().contains(private));
+    }
+    assert!(
+        routes(&f, B, "b-private").await.unwrap()["data"]["items"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(routes(&f, B, "a").await.is_err());
+    assert!(routes(&f, NONE, "a").await.is_err());
+}
+
+#[tokio::test]
+async fn replay_does_not_restore_a_disabled_template_and_changed_intent_conflicts() {
+    let f = setup_routes().await;
+    let p = prepare(&f.reads, A, "a").await;
+    let original = configure(&p, "route-original", "repo", "0", true);
+    let first = f
+        .reads
+        .commands()
+        .execute(TENANT, PROJECT, A, original.clone())
+        .await
+        .unwrap();
+    let disabled = f
+        .reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            configure(&p, "route-disable", "repo", "1", false),
+        )
+        .await
+        .unwrap();
+    assert_eq!(disabled["receipt"]["data"]["template_version"], "2");
+    let replay = f
+        .reads
+        .commands()
+        .execute(TENANT, PROJECT, A, original.clone())
+        .await
+        .unwrap();
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(first["receipt"]["data"], replay["receipt"]["data"]);
+    assert!(
+        routes(&f, A, "a").await.unwrap()["data"]["items"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let mut changed = original;
+    changed.args["enabled"] = json!(false);
+    assert!(matches!(
+        f.reads
+            .commands()
+            .execute(TENANT, PROJECT, A, changed)
+            .await,
+        Err(PgError::IdempotencyConflict)
+    ));
+    let q = serde_json::from_value(json!({"protocol_version":1,"op":"delivery.neutral.outcome",
+        "work_id":"a","request_id":"route-original"}))
+    .unwrap();
+    let outcome = f.reads.query(TENANT, PROJECT, A, q).await.unwrap();
+    assert_eq!(outcome["data"]["outcome"], "committed");
+    assert_eq!(outcome["data"]["receipt"]["data"]["template_version"], "1");
+}
+
+#[tokio::test]
+async fn retained_source_locator_is_not_disclosed_for_a_different_connector_version() {
+    let f = setup_routes().await;
+    let p = prepare(&f.reads, A, "a").await;
+    // Connector updates may intentionally retain a locator bound to an older version.
+    f.admin
+        .execute(
+            "UPDATE awr_team.delivery_connectors SET version=2 WHERE id='repo-source'",
+            &[],
+        )
+        .await
+        .unwrap();
+    let mut publish = configure(&p, "publish-new-version", "repo", "0", true);
+    publish.args["source_connector_version"] = json!("2");
+    f.reads
+        .commands()
+        .execute(TENANT, PROJECT, A, publish)
+        .await
+        .unwrap();
+    let listed = routes(&f, A, "a").await.unwrap();
+    assert_eq!(listed["data"]["items"].as_array().unwrap().len(), 1);
+    assert!(listed["data"]["items"][0]["source_locator"].is_null());
+}
+
+#[tokio::test]
+async fn stale_or_disabled_connectors_are_hidden_but_their_template_can_be_disabled() {
+    let f = setup_routes().await;
+    let p = prepare(&f.reads, A, "a").await;
+    f.reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            configure(&p, "seed-template", "repo", "0", true),
+        )
+        .await
+        .unwrap();
+    f.admin
+        .batch_execute(
+            "UPDATE awr_team.delivery_connectors SET version=2,enabled=false
+        WHERE id='repo-source'",
+        )
+        .await
+        .unwrap();
+    assert!(
+        routes(&f, A, "a").await.unwrap()["data"]["items"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(matches!(
+        f.reads
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                configure(&p, "stale-enable", "second", "0", true)
+            )
+            .await,
+        Err(PgError::PreconditionsChanged)
+    ));
+    let disabled = f
+        .reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            configure(&p, "disable-stale", "repo", "1", false),
+        )
+        .await
+        .unwrap();
+    assert_eq!(disabled["receipt"]["data"]["enabled"], false);
+    let count: i64 = f
+        .admin
+        .query_one("SELECT count(*) FROM awr_team.delivery_connectors", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        count, 1,
+        "template maintenance must not create task connectors"
+    );
+}
+
+#[tokio::test]
+async fn non_administrators_cannot_maintain_templates_but_retain_scoped_discovery() {
+    let f = setup_routes().await;
+    let p = prepare(&f.reads, A, "a").await;
+    f.reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            configure(&p, "seed-template", "repo", "0", true),
+        )
+        .await
+        .unwrap();
+    f.admin
+        .batch_execute(
+            "UPDATE awr_team.project_memberships SET role='developer' WHERE actor_id='agent'",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        routes(&f, A, "a").await.unwrap()["data"]["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(matches!(
+        f.reads
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                configure(&p, "developer-disable", "repo", "1", false)
+            )
+            .await,
+        Err(PgError::Forbidden)
+    ));
+    let unchanged: bool = f
+        .admin
+        .query_one(
+            "SELECT enabled FROM awr_team.delivery_route_templates WHERE id='repo'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(unchanged);
+}
+
+#[tokio::test]
+async fn competing_updates_keep_one_version_and_reject_the_other() {
+    let f = setup_routes().await;
+    let p = prepare(&f.reads, A, "a").await;
+    f.reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            configure(&p, "seed-template", "repo", "0", true),
+        )
+        .await
+        .unwrap();
+    let left = configure(&p, "left-update", "repo", "1", false);
+    let right = configure(&p, "right-update", "repo", "1", true);
+    let commands = f.reads.commands();
+    let (a, b) = tokio::join!(
+        commands.execute(TENANT, PROJECT, A, left),
+        commands.execute(TENANT, PROJECT, A, right),
+    );
+    assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
+    let refused = if a.is_err() { a } else { b };
+    assert!(matches!(refused, Err(PgError::PreconditionsChanged)));
+    let version: i64 = f
+        .admin
+        .query_one(
+            "SELECT version FROM awr_team.delivery_route_templates WHERE id='repo'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(version, 2);
+}
+
+#[tokio::test]
+async fn discovery_pages_are_bound_to_the_callers_work_scope() {
+    let f = setup_routes().await;
+    let p = prepare(&f.reads, A, "a").await;
+    for id in ["first", "second"] {
+        f.reads
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                configure(&p, &format!("seed-{id}"), id, "0", true),
+            )
+            .await
+            .unwrap();
+    }
+    let mut q: WorkstreamQuery = serde_json::from_value(json!({"protocol_version":1,
+        "op":"delivery.routes","work_id":"a","limit":1}))
+    .unwrap();
+    let page = f.reads.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(page["data"]["items"][0]["template_id"], "first");
+    q.cursor = Some(page["data"]["next_cursor"].as_str().unwrap().into());
+    let next = f.reads.query(TENANT, PROJECT, A, q.clone()).await.unwrap();
+    assert_eq!(next["data"]["items"][0]["template_id"], "second");
+    assert!(next["data"]["next_cursor"].is_null());
+    q.work_id = Some("b".into());
+    assert!(f.reads.query(TENANT, PROJECT, B, q).await.is_err());
+}
+
+#[tokio::test]
+async fn route_table_forces_tenant_and_project_isolation() {
+    let f = setup_routes().await;
+    let p = prepare(&f.reads, A, "a").await;
+    f.reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            configure(&p, "seed-template", "repo", "0", true),
+        )
+        .await
+        .unwrap();
+    let mut app = common::connect_config(&f.config).await;
+    let insert_allowed: bool = app
+        .query_one(
+            "SELECT has_table_privilege(current_user,'awr_team.delivery_route_templates','INSERT')",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(
+        insert_allowed,
+        "the RLS write test must not fail at the table privilege gate"
+    );
+    let count: i64 = app
+        .query_one(
+            "SELECT count(*) FROM awr_team.delivery_route_templates",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 0);
+    let tx = app.transaction().await.unwrap();
+    tx.batch_execute(
+        "SET LOCAL awr.tenant_id='reader-tenant'; SET LOCAL awr.project_id='other-project'",
+    )
+    .await
+    .unwrap();
+    let count: i64 = tx
+        .query_one(
+            "SELECT count(*) FROM awr_team.delivery_route_templates",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 0);
+    let denied = tx.execute("INSERT INTO awr_team.delivery_route_templates
+        (tenant_id,project_id,id,workstream_id,source_connector_id,source_connector_version,
+         version,coordinator_epoch,enabled,configured_by_actor_id)
+        VALUES('reader-tenant','reader-project','injected',$1,'repo-source',1,1,'epoch-a',true,'agent')",
+        &[&p["workstream_id"].as_str().unwrap()]).await.unwrap_err();
+    assert_eq!(
+        denied.as_db_error().unwrap().code(),
+        &tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE
+    );
+    tx.rollback().await.unwrap();
+    let count: i64 = f
+        .admin
+        .query_one(
+            "SELECT count(*) FROM awr_team.delivery_route_templates",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn discovery_rechecks_source_epoch_actor_and_observation_kind() {
+    let f = setup_routes().await;
+    let p = prepare(&f.reads, A, "a").await;
+    f.reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            configure(&p, "seed-template", "repo", "0", true),
+        )
+        .await
+        .unwrap();
+    for (index, mutation) in [
+        "UPDATE awr_team.delivery_connectors SET coordinator_epoch='old-epoch' WHERE id='repo-source'",
+        "UPDATE awr_team.actors SET status='disabled' WHERE id='route-worker'",
+        "UPDATE awr_team.delivery_connectors SET fact_source='operator_recorded' WHERE id='repo-source'",
+    ].into_iter().enumerate() {
+        f.admin.batch_execute(mutation).await.unwrap();
+        assert!(routes(&f, A, "a").await.unwrap()["data"]["items"].as_array().unwrap().is_empty());
+        assert!(matches!(f.reads.commands().execute(TENANT, PROJECT, A,
+            configure(&p, &format!("invalid-source-{index}"), "other", "0", true)).await,
+            Err(PgError::PreconditionsChanged)));
+        f.admin.batch_execute("UPDATE awr_team.delivery_connectors SET coordinator_epoch='epoch-a',fact_source='adapter_observation'
+            WHERE id='repo-source'; UPDATE awr_team.actors SET status='active' WHERE id='route-worker'").await.unwrap();
+    }
+    assert_eq!(
+        routes(&f, A, "a").await.unwrap()["data"]["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}

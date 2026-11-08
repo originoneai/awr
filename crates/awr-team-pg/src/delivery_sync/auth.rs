@@ -311,6 +311,7 @@ pub(super) async fn finish(
         .get("candidate_digest")
         .or_else(|| data.get("inspection_id"))
         .or_else(|| data.get("connector_id"))
+        .or_else(|| data.get("template_id"))
         .or_else(|| {
             data.get("observation_receipt")
                 .and_then(|r| r.get("receipt_id"))

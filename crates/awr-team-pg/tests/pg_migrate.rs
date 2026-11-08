@@ -4,6 +4,79 @@ use awr_team_pg::{EXPECTED_SCHEMA_VERSION, check_schema, migrate};
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn schema60_route_registry_is_atomic_repeatable_and_preserves_existing_connectors() {
+    let (_g, admin, _) = common::historical_team_schema(59).await;
+    assert!(matches!(
+        check_schema(&admin).await,
+        Err(awr_team_pg::PgError::SchemaIncompatible(_))
+    ));
+    admin.batch_execute("INSERT INTO awr_team.tenants(id,name,status) VALUES('route-tenant','Routes','active');
+        INSERT INTO awr_team.actors(tenant_id,id,kind,display_name,status)
+          VALUES('route-tenant','worker','system','Worker','active');
+        INSERT INTO awr_team.projects(tenant_id,id,key,mode,coordinator_epoch,status)
+          VALUES('route-tenant','route-project','routes','team','epoch','active');
+        INSERT INTO awr_team.work_items(tenant_id,project_id,id,external_key)
+          VALUES('route-tenant','route-project','work','work');
+        INSERT INTO awr_team.delivery_connectors(tenant_id,project_id,id,scope_id,workstream_id,work_id,
+          provider,resource,principal_actor_id,principal_client_id,fact_source,version,coordinator_epoch,enabled,configured_by_actor_id)
+          VALUES('route-tenant','route-project','connector','main','stream','work',
+            'neutral-git','fixture://repository','worker','worker-client','adapter_observation',3,'epoch',true,'worker')").await.unwrap();
+    let before: Value = admin
+        .query_one(
+            "SELECT to_jsonb(c) FROM awr_team.delivery_connectors c",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let ddl = include_str!("../migrations/20261108000060_delivery_route_templates.sql");
+    assert!(
+        admin
+            .batch_execute(&ddl.replace(
+                "UPDATE awr_team.schema_state",
+                "SELECT 1/0; UPDATE awr_team.schema_state"
+            ))
+            .await
+            .is_err()
+    );
+    admin.batch_execute("ROLLBACK").await.unwrap();
+    let rolled_back = admin
+        .query_one(
+            "SELECT (SELECT version FROM awr_team.schema_state),
+        to_regclass('awr_team.delivery_route_templates')::text",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rolled_back.get::<_, i32>(0), 59);
+    assert!(rolled_back.get::<_, Option<String>>(1).is_none());
+    migrate(&admin).await.unwrap();
+    migrate(&admin).await.unwrap();
+    check_schema(&admin).await.unwrap();
+    let after: Value = admin
+        .query_one(
+            "SELECT to_jsonb(c) FROM awr_team.delivery_connectors c",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(after, before);
+    let registry = admin
+        .query_one(
+            "SELECT relrowsecurity,relforcerowsecurity,
+        (SELECT count(*) FROM awr_team.delivery_route_templates)
+        FROM pg_class WHERE oid='awr_team.delivery_route_templates'::regclass",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(registry.get::<_, bool>(0));
+    assert!(registry.get::<_, bool>(1));
+    assert_eq!(registry.get::<_, i64>(2), 0);
+}
+
+#[tokio::test]
 async fn schema55_adds_nullable_version_bound_source_locator_atomically() {
     let (_g, admin, _) = common::historical_team_schema(54).await;
     let ddl = include_str!("../migrations/20261010000055_delivery_source_locator.sql");
@@ -589,7 +662,7 @@ async fn schema49_delivery_requests_upgrade_atomically_without_fabricating_legac
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
     migrate(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 59);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 60);
     for (table, original) in tables.into_iter().zip(originals) {
         let mut rows = admin.query_one(&format!("SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM awr_team.{table} t"), &[])
             .await.unwrap().get::<_,Value>(0);
@@ -1292,7 +1365,7 @@ async fn schema40_upgrade_preserves_legacy_provenance_and_is_atomic_and_repeatab
     assert_eq!(before, unchanged);
     migrate(&admin).await.unwrap();
     check_schema(&admin).await.unwrap();
-    assert_eq!(EXPECTED_SCHEMA_VERSION, 59);
+    assert_eq!(EXPECTED_SCHEMA_VERSION, 60);
     let after: Value = admin
         .query_one(
             "SELECT to_jsonb(e) FROM awr_team.executions e WHERE id='legacy-run'",

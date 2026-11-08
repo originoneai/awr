@@ -675,6 +675,16 @@ fn add_neutral_delivery_schema(command: &mut Value) {
     let fields = command["properties"]["args"]["properties"]
         .as_object_mut()
         .unwrap();
+    fields.extend(
+        json!({
+            "template_id":identity,"expected_template_version":version,
+            "source_connector_id":identity,"source_connector_version":version,
+            "enabled":{"type":"boolean"}
+        })
+        .as_object()
+        .unwrap()
+        .clone(),
+    );
     fields.extend(json!({
         "source_snapshot_id":identity,
         "expected_connector_version":version,
@@ -720,6 +730,17 @@ fn add_neutral_delivery_schema(command: &mut Value) {
         (
             "delivery.connector.configure",
             vec!["expected_connector_version", "mapping"],
+            vec![],
+        ),
+        (
+            "delivery.route.configure",
+            vec![
+                "template_id",
+                "expected_template_version",
+                "source_connector_id",
+                "source_connector_version",
+                "enabled",
+            ],
             vec![],
         ),
         (
@@ -1168,7 +1189,7 @@ fn catalog() -> Vec<Tool> {
         {"if":{"properties":{"op":{"const":"artifact.content"}},"required":["op"]},
             "then":{"properties":{"max_context_bytes":{"maximum":WorkstreamQuery::MAX_ARTIFACT_BYTES}}},
             "else":{"properties":{"max_context_bytes":{"maximum":262144}}}},
-        {"if":{"properties":{"op":{"enum":["delivery.neutral.inspect","delivery.submission.describe","delivery.neutral.outcome","delivery.source.status","delivery.integration.inspect"]}},"required":["op"]},
+        {"if":{"properties":{"op":{"enum":["delivery.neutral.inspect","delivery.routes","delivery.submission.describe","delivery.neutral.outcome","delivery.source.status","delivery.integration.inspect"]}},"required":["op"]},
             "then":{"required":["work_id"],"not":{"required":["session_id"]}}},
         {"if":{"properties":{"op":{"enum":["delivery.neutral.outcome","delivery.integration.inspect"]}},"required":["op"]},
             "then":{"required":["request_id"]}},
