@@ -197,8 +197,11 @@ pub(crate) fn acquire(
     // Snapshot the work's goal section fingerprints at claim time. Completion and
     // reopening compare against this map; re-claiming refreshes it, which is the
     // lightweight re-confirmation path after a goal drift rejection.
-    event.payload["goal_fingerprints"] =
-        serde_json::json!(crate::work::goal_fingerprints(conn, session.project_id, &key)?);
+    event.payload["goal_fingerprints"] = serde_json::json!(crate::work::goal_fingerprints(
+        conn,
+        session.project_id,
+        &key
+    )?);
     Ok(claim)
 }
 

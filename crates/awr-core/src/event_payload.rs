@@ -453,16 +453,16 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
                         .is_some_and(|ids| ids.iter().all(id))
             }
             "agent_id" => value.is_string(),
-            "goal_fingerprints" if kind == "work.claimed" || kind == "session.started" => value
-                .as_object()
-                .is_some_and(|m| {
+            "goal_fingerprints" if kind == "work.claimed" || kind == "session.started" => {
+                value.as_object().is_some_and(|m| {
                     m.len() <= 64
                         && m.iter().all(|(k, v)| {
                             !k.is_empty()
                                 && k.len() <= 256
                                 && (v.is_null() || v.as_str().is_some_and(|s| s.len() <= 128))
                         })
-                }),
+                })
+            }
             key if key.ends_with("_id") => id(value),
             key if key.ends_with("_ids") => value.as_array().is_some_and(|v| v.iter().all(id)),
             key if key.ends_with("_revision") => value.as_u64().is_some(),

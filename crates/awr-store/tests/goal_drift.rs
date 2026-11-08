@@ -193,7 +193,10 @@ fn a_changed_goal_section_is_rejected_with_both_fingerprints() {
     assert_eq!(work, "W");
     assert_eq!(drifts, &[("G".into(), "fp-1".into(), "fp-2".into())]);
     let message = error.to_string();
-    assert!(message.contains("fp-1") && message.contains("fp-2"), "{message}");
+    assert!(
+        message.contains("fp-1") && message.contains("fp-2"),
+        "{message}"
+    );
     assert!(message.contains("reassess"), "{message}");
 }
 
@@ -215,7 +218,11 @@ fn reclaiming_the_work_refreshes_the_snapshot_and_clears_the_rejection() {
         edges: vec![supports(f, "W", "G")],
         ..Default::default()
     });
-    assert!(f.store.check_goal_currency(f.project.id, "W", None).is_err());
+    assert!(
+        f.store
+            .check_goal_currency(f.project.id, "W", None)
+            .is_err()
+    );
     reclaim(&mut f, session);
     f.store
         .check_goal_currency(f.project.id, "W", None)
