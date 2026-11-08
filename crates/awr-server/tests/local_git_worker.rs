@@ -53,6 +53,7 @@ fn config(repo: &git::GitFixture, name: &str, enabled: bool) -> LocalGitWorkerCo
             worker_id: name.into(),
             credential_env: "AWR_SYNTHETIC_GIT_WORKER".into(),
             integration_enabled: enabled,
+            follow_resource_mappings: false,
             repository,
             poll_interval_ms: 100,
             lease_seconds: 10,
@@ -183,6 +184,171 @@ async fn setup_local(repo: &git::GitFixture) -> integration_fixture::Fixture {
         .await
         .unwrap();
     f
+}
+
+#[tokio::test]
+async fn resource_worker_admits_a_late_mapping_and_integrates_without_restart() {
+    let repo = git::GitFixture::integration(false);
+    repo.bare(&["config", "core.logAllRefUpdates", "true"]);
+    let f = setup_local(&repo).await;
+    let mapping = |connector: &str, enabled| DeliveryConnectorMapping {
+        connector_id: connector.into(),
+        provider: "local_git".into(),
+        resource: repo.config.resource.clone(),
+        principal_actor_id: "integrator".into(),
+        principal_client_id: "cli-worker".into(),
+        fact_source: FactSource::AdapterObservation,
+        enabled,
+        source_locator: None,
+    };
+    f.store
+        .configure_connector(
+            TENANT,
+            PROJECT,
+            WORKER,
+            ConfigureDeliveryConnector {
+                request_id: "disable-initial-mapping".into(),
+                read_set: f.set.clone(),
+                expected_connector_version: "2".into(),
+                mapping: mapping("git", false),
+            },
+        )
+        .await
+        .unwrap();
+    let mut cfg = config(&repo, "resource-worker", true);
+    cfg.workers[0].follow_resource_mappings = true;
+    // These configuration labels have no task mapping. The fixed repository stays unchanged.
+    cfg.workers[0].repository.work_id = "unmapped-configuration-label".into();
+    cfg.workers[0].repository.connector_id = "unmapped-configuration-label".into();
+    let runtime = start(&f, cfg.clone()).await;
+    let monitor = runtime.monitor();
+    wait(&monitor, |s| s.polls >= 2).await;
+    assert_eq!(repo.bare(&["rev-parse", "refs/heads/main"]), repo.base);
+    f.store
+        .configure_connector(
+            TENANT,
+            PROJECT,
+            WORKER,
+            ConfigureDeliveryConnector {
+                request_id: "publish-late-mapping".into(),
+                read_set: f.set.clone(),
+                expected_connector_version: "0".into(),
+                mapping: mapping("late-git", true),
+            },
+        )
+        .await
+        .unwrap();
+    let inspected = f
+        .store
+        .reserve_inspection(
+            TENANT,
+            PROJECT,
+            WORKER,
+            ReserveDeliveryInspection {
+                request_id: "inspect-late-report".into(),
+                read_set: f.set.clone(),
+                connector_id: "late-git".into(),
+                connector_version: "1".into(),
+                candidate_digest: f.request.candidate_digest.clone(),
+                lease_seconds: 60,
+            },
+        )
+        .await
+        .unwrap();
+    f.store
+        .ingest_facts(
+            TENANT,
+            PROJECT,
+            WORKER,
+            IngestDeliveryFacts {
+                request_id: "late-report-fact".into(),
+                read_set: f.set.clone(),
+                connector_id: "late-git".into(),
+                inspection_id: inspected["data"]["inspection_id"].as_str().unwrap().into(),
+                event_id: "late-report".into(),
+                records: vec![DeliveryEnvelope {
+                    protocol: DELIVERY_PROTOCOL.into(),
+                    protocol_version: DELIVERY_PROTOCOL_VERSION,
+                    record: DeliveryRecord::Verification(VerificationRun {
+                        binding: f.selection.candidate.binding.clone(),
+                        run_id: "late-report".into(),
+                        check: "report".into(),
+                        outcome: VerificationOutcome::Passed,
+                        result_artifact: Some(f.selection.candidate.manifest.entries[0].clone()),
+                        provenance: FactProvenance {
+                            source: FactSource::AdapterObservation,
+                            reference: "fixture://late-report".into(),
+                            observed_at_unix_ms: None,
+                            recorded_at_unix_ms: 1,
+                        },
+                    }),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+    let mut request = f.request.clone();
+    request.request_id = "integrate-late-mapping".into();
+    request.connector_id = "late-git".into();
+    request.connector_version = "1".into();
+    f.store
+        .prepare_integration(TENANT, PROJECT, SUPERVISOR, request)
+        .await
+        .unwrap();
+    wait(&monitor, |s| s.confirmed == 1).await;
+    runtime.shutdown().await;
+    assert_eq!(repo.bare(&["rev-parse", "refs/heads/main"]), repo.source);
+    let restarted = start(&f, cfg).await;
+    let monitor = restarted.monitor();
+    wait(&monitor, |s| s.terminal_intents_observed > 0).await;
+    restarted.shutdown().await;
+    assert_eq!(
+        repo.bare(&["reflog", "show", "--format=%H", "refs/heads/main"])
+            .lines()
+            .count(),
+        1
+    );
+    assert_eq!(
+        count(&f, "SELECT count(*) FROM awr_team.completion_receipts").await,
+        0
+    );
+    no_secret(monitor.snapshots());
+}
+
+#[tokio::test]
+async fn resource_worker_queries_original_unknown_intents_after_selection_disappears() {
+    let repo = git::GitFixture::integration(false);
+    let f = setup_local(&repo).await;
+    let id = dispatched_without_effect(&f).await;
+    f.admin
+        .batch_execute("DELETE FROM awr_team.delivery_selections WHERE work_id='a'")
+        .await
+        .unwrap();
+    let mut cfg = config(&repo, "resource-recovery", true);
+    cfg.workers[0].follow_resource_mappings = true;
+    let runtime = start(&f, cfg.clone()).await;
+    let monitor = runtime.monitor();
+    wait(&monitor, |s| s.original_unchanged >= 2).await;
+    runtime.shutdown().await;
+    assert_eq!(repo.bare(&["rev-parse", "refs/heads/main"]), repo.base);
+    let restarted = start(&f, cfg).await;
+    let monitor = restarted.monitor();
+    wait(&monitor, |s| s.original_unchanged > 0).await;
+    repo.bare(&["update-ref", "refs/heads/main", &repo.source, &repo.base]);
+    wait(&monitor, |s| s.historical_confirmations == 1).await;
+    restarted.shutdown().await;
+    let view = f
+        .store
+        .inspect_integration(TENANT, PROJECT, WORKER, "a", &id)
+        .await
+        .unwrap();
+    assert_eq!(view["state"], "confirmed");
+    assert_eq!(view["confirmation_current"], false);
+    assert_eq!(f.guards().await, 0);
+    assert_eq!(
+        count(&f, "SELECT count(*) FROM awr_team.completion_receipts").await,
+        0
+    );
 }
 
 async fn dispatched_without_effect(f: &integration_fixture::Fixture) -> String {

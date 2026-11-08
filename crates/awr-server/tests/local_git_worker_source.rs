@@ -70,6 +70,7 @@ async fn start(
             worker_id: format!("git-{name}"),
             credential_env: "AWR_SYNTHETIC_WORKER".into(),
             integration_enabled: integrate,
+            follow_resource_mappings: false,
             repository,
             poll_interval_ms: 100,
             lease_seconds: 10,

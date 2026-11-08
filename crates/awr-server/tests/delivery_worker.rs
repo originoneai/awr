@@ -231,6 +231,7 @@ async fn denied_git_group_cannot_start_an_already_admitted_source_group() {
             worker_id: "denied-git".into(),
             credential_env: "DENIED_GIT_CREDENTIAL".into(),
             integration_enabled: true,
+            follow_resource_mappings: false,
             repository,
             poll_interval_ms: 100,
             lease_seconds: 10,
