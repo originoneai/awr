@@ -56,7 +56,7 @@ pub use delivery_sync::{
     DispatchDeliveryIntegration, IngestDeliveryFacts, LeaseDeliveryIntegration,
     PrepareDeliveryIntegration, PrepareDeliverySourcePublication,
     RejectPreparedDeliveryIntegration, RenewDeliveryPublicationLease, ReserveDeliveryInspection,
-    SelectDeliveryCandidate,
+    ReuseDeliveryRouteTemplate, SelectDeliveryCandidate,
 };
 pub use error::{PgError, PgResult};
 pub use execution::{

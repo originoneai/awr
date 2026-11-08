@@ -313,6 +313,26 @@ fn value_sources(tool: &str, op: &str, schema: &Value) -> Value {
     let has = |names: &[&str]| names.iter().any(|name| fields.contains(*name));
     let mut sources = Vec::new();
     let mut classified = std::collections::BTreeSet::new();
+    if tool == "awr_team_command" && op == "delivery.route.reuse" {
+        classified.extend(
+            [
+                "template_id",
+                "template_version",
+                "source_connector_version",
+                "connector_id",
+            ]
+            .map(str::to_owned),
+        );
+        sources.push(json!({
+            "fields":["template_id","template_version","source_connector_version"],
+            "read_op":"delivery.routes",
+            "pointers":{"template_id":"/data/items/*/template_id","template_version":"/data/items/*/template_version",
+                "source_connector_version":"/data/items/*/source_connector_version"},
+            "freshness":"Select one current template for this exact work; refresh after version or authority changes."
+        }));
+        sources.push(json!({"fields":["connector_id"],"source":"caller_stable_identifier",
+            "rule":"Choose one new project-unique connector name for this task. Preserve it and request_id after an uncertain response; inspect delivery.neutral.outcome before retry."}));
+    }
     if tool == "awr_team_command" {
         sources.push(json!({
             "fields":["workstream_id","work_id","coordinator_epoch","expected_project_revision",
@@ -596,7 +616,7 @@ mod tests {
         let catalog = super::super::catalog();
         assert_eq!(
             WorkstreamQuery::OPERATIONS.len() + WorkstreamCommand::OPERATIONS.len(),
-            87
+            88
         );
         for (tool, operations) in [
             ("awr_team_query", WorkstreamQuery::OPERATIONS),
@@ -1311,6 +1331,35 @@ mod tests {
                     .is_err()
             );
         }
+    }
+
+    #[test]
+    fn route_reuse_contract_sources_versions_from_discovery_and_never_accepts_worker_identity() {
+        let reuse = contract("awr_team_command", "delivery.route.reuse");
+        assert_eq!(
+            reuse["value_sources"]["unclassified_required_fields"],
+            json!([])
+        );
+        assert!(
+            reuse["value_sources"]
+                .to_string()
+                .contains("delivery.routes")
+        );
+        let args = &reuse["schema"]["properties"]["args"];
+        let valid = json!({"source_snapshot_id":"snapshot","template_id":"route","template_version":"1",
+            "source_connector_version":"1","connector_id":"new-task-mapping"});
+        assert!(super::super::input_diagnostics::shape_issue(&valid, args, "/args").is_none());
+        let mut forged = valid;
+        forged["principal_actor_id"] = json!("forged-worker");
+        assert!(super::super::input_diagnostics::shape_issue(&forged, args, "/args").is_some());
+        let description = super::super::catalog()
+            .into_iter()
+            .find(|t| t.name == "awr_team_command")
+            .unwrap()
+            .description
+            .unwrap();
+        assert!(description.contains("before dispatch or self-claim"));
+        assert!(description.contains("report-only work needs no route"));
     }
 
     #[test]

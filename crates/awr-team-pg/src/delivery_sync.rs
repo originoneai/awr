@@ -9,6 +9,7 @@ mod integration;
 mod publisher;
 mod pump;
 pub(crate) mod review_submission;
+mod route_reuse;
 mod route_templates;
 mod scheduling;
 mod snapshots;
@@ -97,6 +98,17 @@ pub struct ConfigureDeliveryRouteTemplate {
     pub source_connector_id: String,
     pub source_connector_version: String,
     pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReuseDeliveryRouteTemplate {
+    pub request_id: String,
+    pub read_set: DeliveryReadSet,
+    pub template_id: String,
+    pub template_version: String,
+    pub source_connector_version: String,
+    pub connector_id: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

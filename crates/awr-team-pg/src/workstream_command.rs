@@ -63,6 +63,7 @@ pub(crate) const COMMANDS: &[&str] = &[
     "delivery.adopt",
     "delivery.connector.configure",
     "delivery.route.configure",
+    "delivery.route.reuse",
     "delivery.candidate.select",
     "delivery.inspection.reserve",
     "delivery.facts.ingest",
