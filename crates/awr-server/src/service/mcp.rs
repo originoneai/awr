@@ -371,7 +371,7 @@ fn add_review_input_schema(command: &mut Value) {
         ),
         (
             "resolutions",
-            "review.accept / review.decide with approve: how the approval deals with each blocking finding that was open. For governed work an approval must resolve all of them.",
+            "review.accept / review.decide with approve: resolve verified blocking findings already open before this decision. New findings cannot resolve themselves in the same decision; return unmet blocking findings instead. For governed work an approval must resolve every existing blocking finding.",
         ),
         (
             "context_complete",
@@ -2068,6 +2068,50 @@ mod tests {
             let description = fields[field]["description"].as_str().unwrap();
             assert!(description.contains("exactly one complete work.prepare"));
         }
+    }
+
+    #[test]
+    fn review_resolution_reference_errors_name_the_field_without_echoing_values() {
+        for index in [0, 1, 31] {
+            let (status, response) = public_error(PgError::Protocol(format!(
+                "review_input/resolutions/{index}/finding_key/open_blocking_reference"
+            )));
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(response["code"], "InvalidInput");
+            assert_eq!(
+                response["invalid_field"],
+                format!("/args/resolutions/{index}/finding_key")
+            );
+            assert_eq!(response["constraint"], "existing_open_blocking_finding");
+            assert_eq!(response["request_reserved"], false);
+            for field in ["when", "because", "action", "recheck_on"] {
+                assert!(response["action_guidance"][field].as_str().is_some());
+            }
+            assert!(serde_json::to_vec(&response).unwrap().len() < 1200);
+        }
+        for message in [
+            "review_input/resolutions/32/finding_key/open_blocking_reference",
+            "review_input/resolutions/01/finding_key/open_blocking_reference",
+            "review_input/resolutions/-1/finding_key/open_blocking_reference",
+            "review_input/resolutions/1/operator-note-sentinel/open_blocking_reference",
+            "review_input/resolutions/1/finding_key/open_blocking_reference/operator-note-sentinel",
+            "review_input/findings/1/finding_key/open_blocking_reference",
+            "review_input/resolutions/1/criterion/contract_reference",
+        ] {
+            let (_, response) = public_error(PgError::Protocol(message.into()));
+            assert!(response.get("invalid_field").is_none());
+            assert!(!response.to_string().contains("operator-note-sentinel"));
+        }
+        let command = catalog()
+            .into_iter()
+            .find(|t| t.name == "awr_team_command")
+            .unwrap();
+        let description =
+            command.input_schema["properties"]["args"]["properties"]["resolutions"]["description"]
+                .as_str()
+                .unwrap();
+        assert!(description.contains("already open before this decision"));
+        assert!(description.contains("New findings cannot resolve themselves"));
     }
 
     #[test]

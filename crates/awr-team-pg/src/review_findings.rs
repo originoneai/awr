@@ -172,10 +172,12 @@ pub(crate) async fn record(
         // Only an approval can say that a blocking finding was dealt with.
         return Err(invalid());
     }
-    for item in resolutions {
+    for (index, item) in resolutions.iter().enumerate() {
         let text = item.resolution.as_str();
-        if !unresolved.contains(&item.finding_key)
-            || resolved.contains(&item.finding_key)
+        if !unresolved.contains(&item.finding_key) {
+            return Err(PgError::review_resolution_reference(index));
+        }
+        if resolved.contains(&item.finding_key)
             || text.trim().is_empty()
             || text.len() > 2048
             || text.chars().any(char::is_control)
