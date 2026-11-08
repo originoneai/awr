@@ -589,6 +589,48 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
     expect(screen.queryByText(/尚未交付/)).toBeNull();
   });
 
+  describe('integration version binding', () => {
+    it('shows the current confirmed integration and matching completion as delivered', async () => {
+      setupAcceptance();
+      await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+      const chain = screen.getByTestId('acceptance-evidence-chain');
+      expect(chain.textContent).toContain('已并入主线');
+      expect(chain.textContent).toContain('业务验收已完成');
+      expect(screen.queryByTestId('acceptance-integration-history')).toBeNull();
+    });
+
+    it.each([
+      { state: 'rejected', snapshotCurrent: false, inspectedCurrent: false, confirmationCurrent: true, historical: true, status: '还没准备' },
+      { state: 'confirmed', snapshotCurrent: false, inspectedCurrent: false, confirmationCurrent: true, historical: true, status: '还没准备' },
+      { state: 'dispatched', snapshotCurrent: false, inspectedCurrent: false, confirmationCurrent: false, historical: true, status: '结果未知' },
+      { state: 'unknown', snapshotCurrent: false, inspectedCurrent: false, confirmationCurrent: false, historical: true, status: '结果未知' },
+      { state: 'confirmed', snapshotCurrent: false, inspectedCurrent: true, confirmationCurrent: true, historical: false, status: '结果未知' },
+      { state: 'rejected', snapshotCurrent: true, inspectedCurrent: false, confirmationCurrent: true, historical: false, status: '结果未知' },
+      { state: 'confirmed', snapshotCurrent: true, inspectedCurrent: undefined, confirmationCurrent: true, historical: false, status: '结果未知' },
+      { state: 'confirmed', snapshotCurrent: true, inspectedCurrent: true, confirmationCurrent: false, historical: false, status: '结果未知' },
+    ])('keeps $state with snapshot=$snapshotCurrent and inspection=$inspectedCurrent out of the current verdict', async ({ state, snapshotCurrent, inspectedCurrent, confirmationCurrent, historical, status }) => {
+      const { payloads } = setupAcceptance();
+      Object.assign(payloads.snapshots[WORK].observation.collaboration.integration!, { state, current_binding: snapshotCurrent });
+      Object.assign(payloads.integration, { state, current_binding: inspectedCurrent, confirmation_current: confirmationCurrent });
+      await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+      const chain = screen.getByTestId('acceptance-evidence-chain');
+      expect(chain.textContent).toContain(status);
+      expect(screen.queryByTestId('acceptance-integration-rejected')).toBeNull();
+      expect(Boolean(screen.queryByTestId('acceptance-integration-history'))).toBe(historical);
+      // The original attempt remains inspectable even when it cannot decide the current version.
+      expect(screen.getByTestId('acceptance-integration-state').textContent).toBeTruthy();
+      expect(chain.textContent).not.toContain('已完成');
+    });
+
+    it('treats a mismatched inspected request as unknown even when both replies claim current', async () => {
+      const { payloads } = setupAcceptance();
+      payloads.integration.integration_id = 'another-integration';
+      await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+      expect(screen.getByTestId('acceptance-evidence-chain').textContent).toContain('结果未知');
+      expect(screen.queryByTestId('acceptance-integration-history')).toBeNull();
+    });
+  });
+
   it('keeps a child read timeout local to its card', async () => {
     setupAcceptance({ failOps: ['evidence.inspect'] });
     await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');

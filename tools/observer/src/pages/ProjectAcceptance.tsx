@@ -183,8 +183,23 @@ export function ProjectAcceptance({ project }: { project: string }) {
     || at(reviewObject, ['evidence_provenance', 'review_contract_matches_current']) === false;
   const integrationState = asText(integrationData?.state ?? collaboration?.integration?.state);
   const integrationOutcome = asText(at(integrationData, ['confirmation', 'envelope', 'record', 'data', 'outcome']));
-  const integrationConfirmed = integrationState === 'confirmed' && integrationOutcome === 'applied';
-  const integrationRejected = integrationState === 'rejected' || integrationOutcome === 'rejected';
+  const integrationMatches = Boolean(integrationId) && integrationData?.integration_id === integrationId;
+  const integrationIsCurrent = integrationMatches
+    && collaboration?.integration?.current_binding === true && integrationData?.current_binding === true;
+  const integrationIsHistorical = integrationMatches
+    && collaboration?.integration?.current_binding === false && integrationData?.current_binding === false;
+  const integrationPrepared = Boolean(integrationId) && !integrationIsHistorical;
+  const integrationConfirmed = integrationIsCurrent && integrationData?.confirmation_current === true
+    && integrationState === 'confirmed' && integrationOutcome === 'applied';
+  const integrationRejected = integrationIsCurrent && (integrationState === 'rejected' || integrationOutcome === 'rejected');
+  // Historical attempts remain inspectable. Missing or disagreeing bindings cannot
+  // decide this version, and unsettled effects must never look like no attempt.
+  const integrationUnknown = Boolean(integrationId) && (
+    (!integrationIsCurrent && !integrationIsHistorical)
+    || integrationState === 'unknown'
+    || (integrationIsHistorical && integrationState === 'dispatched')
+    || (integrationIsCurrent && integrationState === 'confirmed' && integrationData?.confirmation_current !== true)
+  );
   const deliveryComplete = at(deliveryObject, ['awr_acceptance', 'complete']) === true
     && at(deliveryObject, ['awr_acceptance', 'runtime_state']) === 'completed';
   const completionKnown = completionSelected != null && completionReceipt != null;
@@ -234,19 +249,19 @@ export function ProjectAcceptance({ project }: { project: string }) {
     },
     {
       key: 'integration', title: t('acceptance.stepIntegration'),
-      text: integrationConfirmed
-        ? t('acceptance.statusIntegrated')
-        : integrationRejected
-          ? t('acceptance.statusIntegrationRejected')
-          : snapshotLoading || integrationLoading
-            ? t('common.loading')
-            : snapshotFailed || integration.isError
-              ? t('acceptance.statusUnknown')
-              : integrationId
+      text: snapshotLoading || integrationLoading
+        ? t('common.loading')
+        : snapshotFailed || integration.isError || integrationUnknown
+          ? t('acceptance.statusUnknown')
+          : integrationConfirmed
+            ? t('acceptance.statusIntegrated')
+            : integrationRejected
+              ? t('acceptance.statusIntegrationRejected')
+              : integrationPrepared
                 ? t('acceptance.statusIntegrationPending')
                 : t('acceptance.statusIntegrationNotPrepared'),
-      tone: integrationConfirmed ? 'positive' : integrationRejected ? 'negative' : snapshotFailed || integration.isError ? 'warning' : snapshotLoading || integrationLoading ? 'neutral' : integrationId ? 'warning' : 'neutral',
-      testId: integrationRejected ? 'acceptance-integration-rejected' : undefined,
+      tone: snapshotLoading || integrationLoading ? 'neutral' : snapshotFailed || integration.isError || integrationUnknown ? 'warning' : integrationConfirmed ? 'positive' : integrationRejected ? 'negative' : integrationPrepared ? 'warning' : 'neutral',
+      testId: integrationRejected && !snapshotFailed && !integration.isError ? 'acceptance-integration-rejected' : undefined,
     },
     {
       key: 'acceptance', title: t('acceptance.stepAcceptance'),
@@ -368,6 +383,9 @@ export function ProjectAcceptance({ project }: { project: string }) {
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
             <Card size="small" title={selectedWork?.title ?? t('acceptance.title')}>
               <DeliverySteps steps={steps} testId="acceptance-evidence-chain" />
+              {integrationIsHistorical ? (
+                <Typography.Text type="secondary" data-testid="acceptance-integration-history">{t('acceptance.integrationHistorical')}</Typography.Text>
+              ) : null}
             </Card>
 
             {verificationRows.length > 0 ? (

@@ -127,6 +127,7 @@ const zhCN = {
     notObserved: '暂时没看到记录',
     currentApproval: '这次检查已通过',
     historical: '早期检查不适用于当前成果',
+    integrationHistorical: '早期并入记录不适用于当前成果',
     selfReport: '由提交者自己说明',
     nonIndependent: '尚未由他人独立检查',
     conflict: '记录不一致，不能确认完成',
