@@ -3262,6 +3262,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn missing_execution_input_binding_names_the_evidence_field_without_echoing_values() {
+        for reason in [
+            "evidence_input_digest_not_declared",
+            "execution_input_digest_mismatch",
+            "execution_input_digest_not_recorded",
+        ] {
+            let error = || PgError::Protocol(format!("evidence_input_binding/{reason}"));
+            let http = error_response(error());
+            assert_eq!(http.status(), StatusCode::CONFLICT);
+            let bytes = axum::body::to_bytes(http.into_body(), 4096).await.unwrap();
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["code"], "EvidenceInvalid");
+            assert_eq!(body["reason"], reason);
+            assert_eq!(body["invalid_field"], "/args/input_digest");
+            assert_eq!(body["constraint"], "execution_input_binding");
+            assert!(
+                body["next_step"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Submit new evidence with args.input_digest")
+            );
+            assert_eq!(public_error(error()).1, body);
+            assert!(bytes.len() < 2200);
+        }
+        let (_, unknown) = public_error(PgError::Protocol(
+            "evidence_input_binding/private-value".into(),
+        ));
+        assert!(!unknown.to_string().contains("private-value"));
+    }
+
+    #[tokio::test]
     async fn evidence_that_cannot_bind_to_the_settled_result_is_a_bounded_http_conflict_naming_every_reason_and_the_repair()
      {
         let reasons = vec![

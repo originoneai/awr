@@ -240,6 +240,12 @@ Agent-reviewed caller completion, provide `execution_id`, the `input_digest`
 from `execution.prepare`, and a payload object with `passed: true` and
 `output_digest` matching the successful `execution.report`. These bindings are
 checked again at completion against the reconciled execution and review.
+For workspace-settled Agent executions, review opening and approval also require
+the same top-level `args.input_digest`. An `input_digest` inside `payload` or
+`delivery_payload` does not establish that binding. Missing or changed input
+bindings return `EvidenceInvalid` with a field-specific repair before approval;
+auxiliary evidence remains storable. Submit corrected evidence and open a new
+review instead of rewriting an old evidence record.
 
 For selected delivery candidates, use `delivery.evidence.submit` with
 `args.delivery_payload` instead of `args.payload`. Supply a JSON object with the

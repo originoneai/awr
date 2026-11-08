@@ -1037,6 +1037,7 @@ async fn submit(
             policy: &contract.completion_policy,
             execution_id: a.execution_id.as_deref(),
             submitter: &auth.actor_id,
+            input: a.input_digest.as_deref(),
             declared: execution_result_digest.as_deref(),
             artifact: output_digest.as_deref(),
         },
@@ -1148,7 +1149,7 @@ async fn open(
     }
     let row = tx
         .query_opt(
-            "SELECT work_id, contract_hash, digest, execution_id, output_digest, execution_result_digest, member_origins_json, created_by
+            "SELECT work_id, contract_hash, digest, execution_id, output_digest, execution_result_digest, member_origins_json, created_by, input_digest
              FROM awr_team.evidence WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
             &[&tenant, &project, &a.evidence_id],
         )
@@ -1174,6 +1175,7 @@ async fn open(
             policy: &contract.completion_policy,
             execution_id: execution_id.as_deref(),
             submitter: &submitter,
+            input: row.get::<_, Option<String>>(8).as_deref(),
             declared: execution_result_digest.as_deref(),
             artifact: artifact_digest.as_deref(),
         },
@@ -1496,7 +1498,7 @@ async fn decide(
         // A round opened before the check existed, or whose execution record has drifted, can still be returned.
         if let Some(bound) = tx
             .query_opt(
-                "SELECT execution_id, output_digest, execution_result_digest, created_by FROM awr_team.evidence
+                "SELECT execution_id, output_digest, execution_result_digest, created_by, input_digest FROM awr_team.evidence
                  WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
                 &[&tenant, &project, &evidence_id],
             )
@@ -1510,6 +1512,7 @@ async fn decide(
                     policy: &live_policy,
                     execution_id: bound.get::<_, Option<String>>(0).as_deref(),
                     submitter: &bound.get::<_, String>(3),
+                    input: bound.get::<_, Option<String>>(4).as_deref(),
                     declared: bound.get::<_, Option<String>>(2).as_deref(),
                     artifact: bound.get::<_, Option<String>>(1).as_deref(),
                 },
