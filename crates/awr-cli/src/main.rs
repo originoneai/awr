@@ -166,6 +166,11 @@ enum Command {
         #[command(subcommand)]
         command: query::WorkCommand,
     },
+    /// Read-only goal views: coverage, uncovered goals and orphan references.
+    Goal {
+        #[command(subcommand)]
+        command: query::GoalCommand,
+    },
     /// Start, inspect, checkpoint or end an explicitly identified agent session.
     Session {
         #[command(subcommand)]
@@ -304,6 +309,7 @@ fn run(cli: &Cli) -> cli_failure::CliResult<()> {
         }) => query::ready(&cli.project, *limit, branch.as_deref(), cli.json, *cached),
         Some(Command::Assessment { command }) => assessment::run(&cli.project, command, cli.json),
         Some(Command::Work { command }) => query::work(&cli.project, command, cli.json),
+        Some(Command::Goal { command }) => query::goal(&cli.project, command, cli.json),
         Some(Command::Session { command }) => session::run(&cli.project, command, cli.json),
         Some(Command::Evidence { command }) => records::evidence(&cli.project, command, cli.json),
         Some(Command::Decision { command }) => records::decision(&cli.project, command, cli.json),
