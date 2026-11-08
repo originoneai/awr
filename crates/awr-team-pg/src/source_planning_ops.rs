@@ -80,7 +80,7 @@ pub struct PlanningApproveRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "PlanningPublishWire")]
 pub struct PlanningPublishRequest {
     #[serde(default = "planning_protocol_v1")]
     pub protocol_version: u32,
@@ -98,6 +98,70 @@ pub struct PlanningPublishRequest {
     pub impact_proven: bool,
     #[serde(default)]
     pub stopped_work_ids: Vec<String>,
+}
+
+const MISSING_ACTIVATION_CONFIRMATION: &str = "planning_input/impact_proven/required";
+
+/// Preserve omitted publish-only defaults, but never turn a missing activation
+/// confirmation into an intentional refusal after publication has already run.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PlanningPublishWire {
+    #[serde(default = "planning_protocol_v1")]
+    protocol_version: u32,
+    request_id: String,
+    candidate_id: String,
+    candidate_digest: String,
+    #[serde(default)]
+    activate: bool,
+    #[serde(default)]
+    publish_receipt_id: Option<String>,
+    #[serde(default, deserialize_with = "present_impact_confirmation")]
+    impact_proven: Option<bool>,
+    #[serde(default)]
+    stopped_work_ids: Vec<String>,
+}
+
+fn present_impact_confirmation<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<bool>, D::Error> {
+    bool::deserialize(deserializer).map(Some)
+}
+
+impl TryFrom<PlanningPublishWire> for PlanningPublishRequest {
+    type Error = &'static str;
+
+    fn try_from(wire: PlanningPublishWire) -> Result<Self, Self::Error> {
+        if wire.activate && wire.impact_proven.is_none() {
+            return Err(MISSING_ACTIVATION_CONFIRMATION);
+        }
+        Ok(Self {
+            protocol_version: wire.protocol_version,
+            request_id: wire.request_id,
+            candidate_id: wire.candidate_id,
+            candidate_digest: wire.candidate_digest,
+            activate: wire.activate,
+            publish_receipt_id: wire.publish_receipt_id,
+            impact_proven: wire.impact_proven.unwrap_or(false),
+            stopped_work_ids: wire.stopped_work_ids,
+        })
+    }
+}
+
+impl PlanningPublishRequest {
+    /// Only the fixed validation marker crosses the transport boundary. Other
+    /// Serde messages can contain caller values and retain the generic error.
+    pub fn decode_error(error: serde_json::Error) -> PgError {
+        if error.is_data()
+            && error
+                .to_string()
+                .starts_with(MISSING_ACTIVATION_CONFIRMATION)
+        {
+            PgError::Protocol(MISSING_ACTIVATION_CONFIRMATION.into())
+        } else {
+            PgError::Protocol("invalid planning publish".into())
+        }
+    }
 }
 
 fn identity(s: &str) -> bool {

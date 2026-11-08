@@ -1514,9 +1514,13 @@ fn catalog() -> Vec<Tool> {
             "candidate_id":{"type":"string","maxLength":128},
             "candidate_digest":{"type":"string","pattern":"^[0-9a-f]{64}$"},
             "activate":{"type":"boolean","default":false},
-            "impact_proven":{"type":"boolean","default":false},
+            "impact_proven":{"type":"boolean","description":"Required when activate=true. Set true only after inspecting and proving the current activation impact. Explicit false retains the intentional refusal path; omission is rejected before publication or request reservation."},
             "publish_receipt_id":{"type":["string","null"],"maxLength":128},"stopped_work_ids":{"type":"array","maxItems":256,"items":{"type":"string","maxLength":128}}
-        }
+        },
+        "allOf":[{
+            "if":{"properties":{"activate":{"const":true}},"required":["activate"]},
+            "then":{"required":["impact_proven"]}
+        }]
     });
     let planning_outcome = json!({
         "type":"object","additionalProperties":false,
@@ -1616,12 +1620,20 @@ impl CatalogProfile {
     }
 }
 
-/// One tool of the compact view: the closed per-operation branches (`allOf`) of its input schema
-/// are not published. Everything else stays, so every operation is still addressable by
+/// One tool of the compact view: the closed per-operation branches (`allOf`) of an
+/// `op`-selected input schema are not published. Small single-operation conditions
+/// remain visible. Everything else stays, so every operation is still addressable by
 /// `properties.op.enum`; the exact input of one operation is read on demand with
 /// `awr_team_input_contract`; that tool and every call check keep using the full catalog.
 fn compact_tool(tool: &mut Tool) {
     let mut schema = (*tool.input_schema).clone();
+    if schema
+        .get("properties")
+        .and_then(|properties| properties.get("op"))
+        .is_none()
+    {
+        return;
+    }
     if schema.remove("allOf").is_none() {
         return;
     }
@@ -1891,7 +1903,7 @@ impl ServerHandler for Endpoint {
                 }
                 "awr_team_planning_publish" => {
                     let req: awr_team_pg::PlanningPublishRequest = serde_json::from_value(args)
-                        .map_err(|_| PgError::Protocol("invalid planning publish".into()))?;
+                        .map_err(awr_team_pg::PlanningPublishRequest::decode_error)?;
                     self.state
                         .store
                         .source()
@@ -1981,6 +1993,38 @@ impl ServerHandler for Endpoint {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn planning_activation_confirmation_is_structural_and_has_bounded_input_guidance() {
+        for profile in [CatalogProfile::Full, CatalogProfile::Compact] {
+            let tool = catalog_for(profile)
+                .into_iter()
+                .find(|tool| tool.name == "awr_team_planning_publish")
+                .unwrap();
+            assert_eq!(
+                tool.input_schema["allOf"][0],
+                json!({
+                    "if":{"properties":{"activate":{"const":true}},"required":["activate"]},
+                    "then":{"required":["impact_proven"]}
+                })
+            );
+            assert!(tool.input_schema["properties"]["impact_proven"]["default"].is_null());
+        }
+        let error = serde_json::from_value::<awr_team_pg::PlanningPublishRequest>(json!({
+            "request_id":"example", "candidate_id":"candidate-example",
+            "candidate_digest":"a".repeat(64), "activate":true
+        }))
+        .unwrap_err();
+        let (status, response) =
+            public_error(awr_team_pg::PlanningPublishRequest::decode_error(error));
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(response["code"], "InvalidInput");
+        assert_eq!(response["invalid_field"], "/impact_proven");
+        assert_eq!(response["request_reserved"], false);
+        assert_eq!(response["publication_performed"], false);
+        assert_eq!(response["activation_performed"], false);
+        assert!(serde_json::to_vec(&response).unwrap().len() < 1200);
+    }
 
     #[test]
     fn review_contract_reference_errors_are_specific_bounded_and_do_not_echo_values() {
@@ -4169,7 +4213,13 @@ mod tests {
         assert!(command.input_schema.get("allOf").is_none());
         for (before, after) in full.iter().zip(&compact) {
             let mut expected = (*before.input_schema).clone();
-            expected.remove("allOf");
+            if expected
+                .get("properties")
+                .and_then(|properties| properties.get("op"))
+                .is_some()
+            {
+                expected.remove("allOf");
+            }
             assert_eq!(*after.input_schema, expected, "{}", before.name);
             assert_eq!(before.annotations, after.annotations, "{}", before.name);
         }

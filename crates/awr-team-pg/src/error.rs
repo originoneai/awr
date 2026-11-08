@@ -190,6 +190,20 @@ impl PgError {
 
     /// Fixed diagnostics for fresh planning input rejection; never echo the assertion.
     pub fn planning_input_diagnostic(&self) -> Option<serde_json::Value> {
+        if matches!(self, Self::Protocol(message) if message == "planning_input/impact_proven/required")
+        {
+            return Some(serde_json::json!({
+                "code": "InvalidInput",
+                "message": "activate=true requires an explicit impact_proven confirmation",
+                "invalid_field": "/impact_proven",
+                "related_fields": ["/activate"],
+                "constraint": "required_when_activating",
+                "request_reserved": false,
+                "publication_performed": false,
+                "activation_performed": false,
+                "next_step": "Inspect the candidate's current impact and supply impact_proven=true only after proving it. This call performed no publication, activation or reservation. Correct a new request and retry; if this ID was submitted before, inspect planning.outcome and retain its original intent. Recheck after candidate, source or execution changes."
+            }));
+        }
         if matches!(self, Self::Protocol(message) if message == "planning_input/scope_paths/bounds")
         {
             return Some(serde_json::json!({

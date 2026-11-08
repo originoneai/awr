@@ -11,6 +11,15 @@ for each mutation; inspect `awr_team_planning_outcome` after an unknown outcome
 before an exact retry. Publication and confirmed source writeback remain distinct
 facts. Discovery describes inputs and does not grant authority.
 
+With `activate: true`, explicitly supply `impact_proven` after inspecting the
+current candidate impact. Omission returns `InvalidInput` at `/impact_proven`
+before publication, activation or request reservation. Publish-only requests
+keep the existing omission defaults. Explicit `false` retains the intentional
+activation-refusal behavior; it does not approve impact. If an earlier request's
+outcome is unknown, inspect it first and preserve its original intent. Changing
+a previously recorded request's confirmation requires a new reviewed request,
+rather than reusing its ID with a different payload.
+
 ## Changes and task definitions
 
 `changes` contains closed objects with `op`, `after` and optional nullable
