@@ -53,8 +53,8 @@ pub use delivery_sync::{
     ConfirmDeliveryIntegration, DeliveryConnectorMapping, DeliveryIntegrationDispatch,
     DeliveryIntegrationPermit, DeliveryPublicationStep, DeliveryReadSet, DeliveryScheduleQuery,
     DeliverySourceLocator, DeliverySourceLocatorUpdate, DeliverySyncLease, DeliverySyncStore,
-    DispatchDeliveryIntegration, IngestDeliveryFacts, LeaseDeliveryIntegration,
-    PrepareDeliveryIntegration, PrepareDeliverySourcePublication,
+    DeliveryWorkerMappingsQuery, DispatchDeliveryIntegration, IngestDeliveryFacts,
+    LeaseDeliveryIntegration, PrepareDeliveryIntegration, PrepareDeliverySourcePublication,
     RejectPreparedDeliveryIntegration, RenewDeliveryPublicationLease, ReserveDeliveryInspection,
     ReuseDeliveryRouteTemplate, SelectDeliveryCandidate,
 };

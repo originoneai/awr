@@ -19,6 +19,7 @@ use std::{
 };
 use tokio::{sync::watch, task::JoinHandle};
 use zeroize::Zeroizing;
+mod resource_mappings;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -160,6 +161,11 @@ impl LocalGitWorkerRuntime {
                     .clone();
                 let admitted =
                     tokio::time::timeout(Duration::from_millis(spec.operation_timeout_ms), async {
+                        if spec.follow_resource_mappings {
+                            resource_mappings::discover(&spec, &binding, &credential, &store, None)
+                                .await?;
+                            return Ok::<_, LocalGitWorkerFailure>(());
+                        }
                         let schedule = store
                             .schedule(
                                 &binding.tenant_id,
@@ -648,10 +654,16 @@ async fn poll(
 
 async fn run(worker: Worker, store: Arc<DeliverySyncStore>, mut stop: watch::Receiver<bool>) {
     let mut cursor = None;
+    let mut resource_state = resource_mappings::State::default();
     let mut delay = worker.spec.poll_interval_ms;
     observe(&worker.snapshot, |s| s.state = WorkerState::Running);
     loop {
-        let Some(result) = poll(&worker, &store, &mut cursor, &mut stop).await else {
+        let result = if worker.spec.follow_resource_mappings {
+            resource_mappings::poll(&worker, &store, &mut resource_state, &mut stop).await
+        } else {
+            poll(&worker, &store, &mut cursor, &mut stop).await
+        };
+        let Some(result) = result else {
             return;
         };
         match result {

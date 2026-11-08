@@ -234,6 +234,36 @@ project/worker IDs and finite codes only, without raw errors, repository content
 private paths, credentials or environment-variable names. These observations
 are not approval, completion or delivery receipts.
 
+### Follow task mappings for one repository
+
+Development on `main` adds an optional `follow_resource_mappings = true`
+field on a worker entry. It defaults to `false`, preserving fixed-task workers.
+With it enabled, one worker discovers live task connectors for its configured
+workstream, `local_git` provider and exact resource. A supervisor can reuse an
+authorized [delivery route](delivery-route-templates.md) for later tasks without
+adding a worker configuration entry or restarting the service for every task.
+
+The configured repository, Git executable, target reference, report directory
+and credential stay fixed. Mappings supply task and connector identities, never
+a server path, remote or permission. The repository section's `work_id` and
+`connector_id` remain required configuration labels; follow mode obtains its
+actual task bindings from the current authenticated registry.
+
+Discovery requires a live system identity, workstream write access and the
+existing observation action, plus finalization authority when integration is
+enabled. It filters by the exact actor/client, current ownership and epoch.
+Each task still passes its own schedule, connector-version, inspection, review,
+lease and integration-permit checks. Registration does not prove repository
+availability or grant execution. Source publication remains a separate step.
+
+A discovery page contains at most eight mappings, with a cursor tied to the
+caller, authority and source binding. The worker keeps only that page and one
+task's original-intent cursor, and shares its existing job budget across the
+resource. Original-intent pages retain their fixed upper bound; a failed task
+does not replace another task's context or intent. Revocation, stale bindings,
+timeouts and unknown outcomes retain the existing refusal/recovery behavior.
+Restarting observes original receipts and does not repeat a dispatched effect.
+
 ## Opt-in fast-forward integration
 
 `LocalGitIntegrator::open(LocalGitIntegrationConfig { enabled: true,

@@ -14,6 +14,8 @@ mod route_templates;
 mod scheduling;
 mod snapshots;
 mod submission_contract;
+mod worker_mappings;
+pub use worker_mappings::DeliveryWorkerMappingsQuery;
 
 pub use integration::{
     ConfirmDeliveryIntegration, DeliveryIntegrationDispatch, DeliveryIntegrationPermit,

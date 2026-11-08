@@ -97,6 +97,7 @@ fn local_config(repo: &git::GitFixture, connector: &str) -> LocalGitWorkerConfig
             worker_id: "local".into(),
             credential_env: "SYNTHETIC_REPOSITORY_CREDENTIAL".into(),
             integration_enabled: false,
+            follow_resource_mappings: false,
             repository,
             poll_interval_ms: 100,
             lease_seconds: 10,

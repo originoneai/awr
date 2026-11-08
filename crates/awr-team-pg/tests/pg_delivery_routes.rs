@@ -131,6 +131,174 @@ async fn supervisor(f: &Fixture) {
         .await.unwrap();
 }
 
+const ROUTE_WORKER: &str =
+    "awr1.route-worker-credential.dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+
+async fn register_route_worker(f: &Fixture) {
+    f.admin
+        .execute(
+            "INSERT INTO awr_team.credentials(tenant_id,id,actor_id,client_id,secret_hash)
+        VALUES($1,'route-worker-credential','route-worker','route-worker-client',$2)",
+            &[&TENANT, &workstream_credential_hash(ROUTE_WORKER).unwrap()],
+        )
+        .await
+        .unwrap();
+    f.admin
+        .batch_execute(
+            "INSERT INTO awr_team.project_memberships(tenant_id,project_id,actor_id,role)
+        VALUES('reader-tenant','reader-project','route-worker','admin')",
+        )
+        .await
+        .unwrap();
+    f.admin.execute("INSERT INTO awr_team.workstream_grants(tenant_id,project_id,actor_id,client_id,workstream_id,authority_version,can_read,can_write)
+        VALUES($1,$2,'route-worker','route-worker-client',$3,1,true,true)",
+        &[&TENANT,&PROJECT,&awr_core::Id::from(1).to_string()]).await.unwrap();
+}
+
+fn mapping_query() -> DeliveryWorkerMappingsQuery {
+    DeliveryWorkerMappingsQuery {
+        workstream_id: awr_core::Id::from(1),
+        provider: "neutral-git".into(),
+        resource: "fixture://shared-repository".into(),
+        require_integration: true,
+        cursor: None,
+        limit: 1,
+    }
+}
+
+#[tokio::test]
+async fn resource_worker_discovers_new_mappings_without_new_credentials_or_configuration() {
+    let f = setup_routes().await;
+    publish_route(&f).await;
+    register_route_worker(&f).await;
+    let store = DeliverySyncStore::from_config(f.config.clone());
+    let first = store
+        .worker_mappings(TENANT, PROJECT, ROUTE_WORKER, mapping_query())
+        .await
+        .unwrap();
+    assert_eq!(first["items"].as_array().unwrap().len(), 1);
+    assert!(first["next_cursor"].is_null());
+    supervisor(&f).await;
+    let p = prepare(&f.reads, A, "aa-assigned").await;
+    f.reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            reuse_route(&p, "late-task-mapping", "task-repository"),
+        )
+        .await
+        .unwrap();
+    let second = store
+        .worker_mappings(TENANT, PROJECT, ROUTE_WORKER, mapping_query())
+        .await
+        .unwrap();
+    assert!(second["next_cursor"].is_string());
+    let mut query = mapping_query();
+    query.cursor = Some(second["next_cursor"].as_str().unwrap().into());
+    let last = store
+        .worker_mappings(TENANT, PROJECT, ROUTE_WORKER, query)
+        .await
+        .unwrap();
+    assert_eq!(last["items"][0]["work_id"], "aa-assigned");
+    assert_eq!(last["items"][0]["connector_id"], "task-repository");
+    assert!(last["next_cursor"].is_null());
+    assert_eq!(last["execution_authorized"], false);
+    for hidden in [ROUTE_WORKER, "route-worker-client", "principal_actor_id"] {
+        assert!(!last.to_string().contains(hidden));
+    }
+}
+
+#[tokio::test]
+async fn worker_mapping_pages_are_bound_to_live_scope_resource_and_authority() {
+    let f = setup_routes().await;
+    publish_route(&f).await;
+    register_route_worker(&f).await;
+    supervisor(&f).await;
+    let p = prepare(&f.reads, A, "aa-assigned").await;
+    f.reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            reuse_route(&p, "second-mapping", "task-repository"),
+        )
+        .await
+        .unwrap();
+    let store = DeliverySyncStore::from_config(f.config.clone());
+    let first = store
+        .worker_mappings(TENANT, PROJECT, ROUTE_WORKER, mapping_query())
+        .await
+        .unwrap();
+    let mut other = mapping_query();
+    other.cursor = Some(first["next_cursor"].as_str().unwrap().into());
+    other.resource = "fixture://other".into();
+    assert!(matches!(
+        store
+            .worker_mappings(TENANT, PROJECT, ROUTE_WORKER, other)
+            .await,
+        Err(PgError::CursorExpired)
+    ));
+    let mut other = mapping_query();
+    other.workstream_id = awr_core::Id::from(2);
+    assert!(
+        store
+            .worker_mappings(TENANT, PROJECT, ROUTE_WORKER, other)
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .worker_mappings(TENANT, PROJECT, A, mapping_query())
+            .await
+            .is_err()
+    );
+    f.admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_grants SET can_write=false WHERE actor_id='route-worker'",
+        )
+        .await
+        .unwrap();
+    assert!(
+        store
+            .worker_mappings(TENANT, PROJECT, ROUTE_WORKER, mapping_query())
+            .await
+            .is_err()
+    );
+    f.admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_grants SET can_write=true WHERE actor_id='route-worker';
+        UPDATE awr_team.project_memberships SET role='developer' WHERE actor_id='route-worker'",
+        )
+        .await
+        .unwrap();
+    assert!(
+        store
+            .worker_mappings(TENANT, PROJECT, ROUTE_WORKER, mapping_query())
+            .await
+            .is_err()
+    );
+    let mut observing = mapping_query();
+    observing.require_integration = false;
+    assert!(
+        store
+            .worker_mappings(TENANT, PROJECT, ROUTE_WORKER, observing)
+            .await
+            .is_ok()
+    );
+    f.admin.batch_execute("UPDATE awr_team.credentials SET revoked_at=clock_timestamp() WHERE id='route-worker-credential'").await.unwrap();
+    let mut stale = mapping_query();
+    stale.cursor = Some(first["next_cursor"].as_str().unwrap().into());
+    assert!(
+        store
+            .worker_mappings(TENANT, PROJECT, ROUTE_WORKER, stale)
+            .await
+            .is_err()
+    );
+}
+
 #[tokio::test]
 async fn delegated_supervisor_can_reuse_but_a_revoked_delegation_cannot_replay() {
     let f = setup_routes().await;

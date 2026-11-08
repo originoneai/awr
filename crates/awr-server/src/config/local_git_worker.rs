@@ -20,6 +20,9 @@ pub struct LocalGitWorkerSpec {
     /// Name only. The value is privately resolved once; rotation requires restart.
     pub credential_env: String,
     pub integration_enabled: bool,
+    /// Follow live mappings only for this fixed repository and workstream.
+    #[serde(default)]
+    pub follow_resource_mappings: bool,
     pub repository: LocalGitConfig,
     #[serde(default = "poll_ms")]
     pub poll_interval_ms: u64,
@@ -138,10 +141,23 @@ mod tests {
         config.validate(&service()).unwrap();
         assert_eq!(config.workers.len(), 1);
         assert!(!config.workers[0].integration_enabled);
+        assert!(!config.workers[0].follow_resource_mappings);
         assert_eq!(
             config.workers[0].credential_env,
             "AWR_LOCAL_GIT_WORKER_CREDENTIAL"
         );
+    }
+
+    #[test]
+    fn resource_mapping_discovery_is_an_explicit_opt_in() {
+        let document = EXAMPLE.replace(
+            "integration_enabled = false",
+            "integration_enabled = false\nfollow_resource_mappings = true",
+        );
+        let config: LocalGitWorkerConfig = toml::from_str(&document).unwrap();
+        config.validate(&service()).unwrap();
+        assert!(config.workers[0].follow_resource_mappings);
+        assert!(!config.workers[0].integration_enabled);
     }
 
     #[test]
