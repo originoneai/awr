@@ -590,6 +590,15 @@ describe('project acceptance evidence (AWR-OBS-006)', () => {
   });
 
   describe('integration version binding', () => {
+    it('shows the current confirmed integration and matching completion as delivered', async () => {
+      setupAcceptance();
+      await renderAcceptance('/projects/demo?tab=acceptance&work=issue-filter-api');
+      const chain = screen.getByTestId('acceptance-evidence-chain');
+      expect(chain.textContent).toContain('已并入主线');
+      expect(chain.textContent).toContain('业务验收已完成');
+      expect(screen.queryByTestId('acceptance-integration-history')).toBeNull();
+    });
+
     it.each([
       { state: 'rejected', snapshotCurrent: false, inspectedCurrent: false, confirmationCurrent: true, historical: true, status: '还没准备' },
       { state: 'confirmed', snapshotCurrent: false, inspectedCurrent: false, confirmationCurrent: true, historical: true, status: '还没准备' },
