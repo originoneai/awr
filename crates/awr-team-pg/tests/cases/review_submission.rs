@@ -601,6 +601,101 @@ async fn submission_discovery_is_lazy_read_only_scoped_bounded_and_provider_neut
 }
 
 #[tokio::test]
+async fn selected_delivery_distinguishes_binding_from_configured_repository_integration() {
+    async fn observed(reads: &WorkstreamReadStore) -> Value {
+        let mut q = query("work.observe");
+        q.work_id = Some("a".into());
+        q.session_id = Some("session-a".into());
+        reads.query(TENANT, PROJECT, A, q).await.unwrap()
+    }
+
+    let (_guard, admin, db, reads) = setup().await;
+    seed_review_actors(&admin).await;
+    let mut contract = current_contract(&admin).await;
+    contract.verification_requirements = vec!["local_git.manifest".into()];
+    put_contract(&admin, &contract).await;
+    let delivery =
+        DeliverySyncStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let initial = observed(&reads).await;
+    assert_eq!(initial["data"]["collaboration"]["delivery_required"], false);
+
+    select(&admin, &reads, &delivery).await;
+    let missing = observed(&reads).await;
+    assert_eq!(missing["data"]["collaboration"]["delivery_required"], true);
+    assert_eq!(
+        missing["data"]["collaboration"]["integration_required"],
+        false
+    );
+    assert_eq!(
+        missing["data"]["collaboration"]["delivery_channel"]["registered_for_candidate"],
+        false
+    );
+    assert_ne!(
+        missing["data"]["guidance"]["code"],
+        "delivery_configuration"
+    );
+    let mut inspection = query("delivery.neutral.inspect");
+    inspection.work_id = Some("a".into());
+    let inspection = reads.query(TENANT, PROJECT, A, inspection).await.unwrap();
+    assert_eq!(
+        missing["data"]["collaboration"]["delivery_required"],
+        inspection["data"]["submission"]["delivery_required"]
+    );
+
+    connector(&admin, &db, &reads, "register-channel", "0", true).await;
+    let registered = observed(&reads).await;
+    assert_eq!(
+        registered["data"]["collaboration"]["delivery_channel"]["registered_for_candidate"],
+        true
+    );
+    assert_ne!(
+        registered["data"]["guidance"]["code"],
+        "delivery_configuration"
+    );
+
+    connector(&admin, &db, &reads, "disable-channel", "1", false).await;
+    let disabled = observed(&reads).await;
+    assert_eq!(disabled["data"]["collaboration"]["delivery_required"], true);
+    assert_eq!(
+        disabled["data"]["guidance"]["code"],
+        "delivery_configuration"
+    );
+
+    configure_source_locator(
+        &reads,
+        "register-other-resource",
+        "0",
+        "other-resource-channel",
+        "fixture://other-repository",
+        true,
+        None,
+    )
+    .await
+    .unwrap();
+    let unrelated = observed(&reads).await;
+    assert_eq!(
+        unrelated["data"]["collaboration"]["delivery_channel"]["registered_for_candidate"],
+        false
+    );
+
+    connector(&admin, &db, &reads, "restore-channel", "2", true).await;
+    let restored = observed(&reads).await;
+    assert_eq!(
+        restored["data"]["collaboration"]["delivery_channel"]["registered_for_candidate"],
+        true
+    );
+    admin
+        .batch_execute("UPDATE awr_team.delivery_connectors SET coordinator_epoch='old-epoch' WHERE id='shared-delivery'")
+        .await
+        .unwrap();
+    let old_epoch = observed(&reads).await;
+    assert_eq!(
+        old_epoch["data"]["guidance"]["code"],
+        "delivery_configuration"
+    );
+}
+
+#[tokio::test]
 async fn submission_description_never_reads_artifact_evidence_review_or_fact_history() {
     let (_guard, admin, db, reads) = setup().await;
     seed_review_actors(&admin).await;
