@@ -44,6 +44,7 @@ pub(crate) const QUERIES: &[&str] = &[
     "completion.inspect",
     "delivery.inspect",
     "delivery.neutral.inspect",
+    "delivery.routes",
     "delivery.submission.describe",
     "delivery.neutral.outcome",
     "delivery.source.status",
@@ -114,6 +115,7 @@ impl WorkstreamQuery {
         "artifact.segment",
         "review.inspect",
         "delivery.neutral.inspect",
+        "delivery.routes",
         "delivery.submission.describe",
     ];
     /// Operations scoped by one work or session; workstream_id alone is not a
@@ -216,6 +218,7 @@ impl WorkstreamQuery {
                 | "work.inbox"
                 | "task.assignees"
                 | "delivery.exports"
+                | "delivery.routes"
         );
         let audit = matches!(
             self.op.as_str(),
@@ -383,6 +386,7 @@ impl WorkstreamQuery {
             self.op.as_str(),
             "task.assignees"
                 | "delivery.neutral.inspect"
+                | "delivery.routes"
                 | "delivery.submission.describe"
                 | "delivery.neutral.outcome"
                 | "delivery.source.status"
@@ -1509,6 +1513,43 @@ pub(crate) async fn read(
     let c = cursor(q, &binding)?;
     let limit = i64::from(q.limit.unwrap_or(50));
     let data = match q.op.as_str() {
+        "delivery.routes" => {
+            let work = resolved.work_item_id.as_deref().ok_or(PgError::Forbidden)?;
+            let mut items = crate::DeliverySyncStore::route_templates_in_tx(
+                tx,
+                tenant,
+                project,
+                auth,
+                work,
+                &c.key,
+                limit + 1,
+            )
+            .await?;
+            let more = items.len() > limit as usize;
+            items.truncate(limit as usize);
+            let next = if more {
+                next_cursor(
+                    &binding,
+                    items.last().expect("nonempty route page")["template_id"]
+                        .as_str()
+                        .ok_or(PgError::SourceDivergence)?,
+                    0,
+                    -1,
+                )
+            } else {
+                Value::Null
+            };
+            let value = json!({"items":items,"next_cursor":next,"registration_only":true,
+                "execution_authorized":false,"grants_created":false});
+            if serde_json::to_vec(&value)
+                .map_err(|_| PgError::SourceDivergence)?
+                .len()
+                > q.max_context_bytes.unwrap_or(262144)
+            {
+                return Err(PgError::ResponseTooLarge);
+            }
+            value
+        }
         "delivery.neutral.inspect"
         | "delivery.submission.describe"
         | "delivery.neutral.outcome"

@@ -62,6 +62,7 @@ pub(crate) const COMMANDS: &[&str] = &[
     "delivery.export.revoke",
     "delivery.adopt",
     "delivery.connector.configure",
+    "delivery.route.configure",
     "delivery.candidate.select",
     "delivery.inspection.reserve",
     "delivery.facts.ingest",

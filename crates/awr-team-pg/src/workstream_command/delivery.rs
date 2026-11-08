@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 pub(super) const OPERATIONS: &[&str] = &[
     "delivery.connector.configure",
+    "delivery.route.configure",
     "delivery.candidate.select",
     "delivery.inspection.reserve",
     "delivery.facts.ingest",
@@ -23,6 +24,7 @@ pub(super) const OPERATIONS: &[&str] = &[
 
 pub(super) enum Action {
     Configure(ConfigureDeliveryConnector),
+    ConfigureRoute(ConfigureDeliveryRouteTemplate),
     Select(SelectDeliveryCandidate),
     Reserve(ReserveDeliveryInspection),
     Ingest(IngestDeliveryFacts),
@@ -80,6 +82,7 @@ impl Action {
         let value = Value::Object(args);
         Ok(match command.op.as_str() {
             "delivery.connector.configure" => Self::Configure(decode(value)?),
+            "delivery.route.configure" => Self::ConfigureRoute(decode(value)?),
             "delivery.candidate.select" => Self::Select(decode(value)?),
             "delivery.inspection.reserve" => Self::Reserve(decode(value)?),
             "delivery.facts.ingest" => Self::Ingest(decode(value)?),
@@ -102,6 +105,11 @@ impl Action {
     ) -> PgResult<Value> {
         let receipt = match self {
             Self::Configure(r) => store.configure_connector(tenant, project, bearer, r).await,
+            Self::ConfigureRoute(r) => {
+                store
+                    .configure_route_template(tenant, project, bearer, r)
+                    .await
+            }
             Self::Select(r) => store.select_candidate(tenant, project, bearer, r).await,
             Self::Reserve(r) => store.reserve_inspection(tenant, project, bearer, r).await,
             Self::Ingest(r) => store.ingest_facts(tenant, project, bearer, r).await,

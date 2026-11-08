@@ -573,6 +573,7 @@ pub fn command_business_action(op: &str) -> Option<awr_team::Action> {
         "planning.publish" => PlanningPublish,
         "access.manage_project"
         | "delivery.connector.configure"
+        | "delivery.route.configure"
         | "delivery.source.prepare"
         | "delivery.source.renew"
         | "delivery.source.write"
@@ -613,6 +614,7 @@ pub fn query_business_action(op: &str) -> Option<awr_team::Action> {
         "completion.inspect",
         "delivery.inspect",
         "delivery.neutral.inspect",
+        "delivery.routes",
         "delivery.submission.describe",
         "delivery.neutral.outcome",
         "delivery.source.status",
@@ -783,6 +785,7 @@ pub(crate) fn command_authority(op: &str) -> Option<DomainAuthority> {
         | "delivery.inspection.reserve"
         | "delivery.facts.ingest" => DomainAuthority::WriteActive,
         "delivery.connector.configure"
+        | "delivery.route.configure"
         | "delivery.source.prepare"
         | "delivery.source.renew"
         | "delivery.source.write"
@@ -1146,6 +1149,7 @@ mod tests {
     fn neutral_management_requires_management_scope_and_eligible_identity_on_replay() {
         for op in [
             "delivery.connector.configure",
+            "delivery.route.configure",
             "delivery.source.prepare",
             "delivery.source.renew",
             "delivery.source.write",
