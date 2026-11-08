@@ -31,6 +31,17 @@ It returns registration metadata, not worker health, verified Git contents or
 permission to perform an effect. Connector changes, revocation or source
 ownership changes can remove a template from a later read.
 
+Discovery also reports the exact task's `task_route_state` and one conditional
+action. `registered` keeps the existing mapping and resumes `work.prepare`;
+`missing` offers reuse before intake, or requests operator configuration when
+no template is available. `requires_administration` inspects an existing stale
+or disabled mapping; `entered` continues the established task workflow instead
+of attempting pre-intake configuration. Existing caller-declared and
+operator-recorded mappings retain their own workflow. These are registration
+facts, not execution admission or worker-health checks.
+An empty continuation page restarts discovery without a cursor; it does not
+establish that no authorized template exists.
+
 Disabling a template stops future reuse and remains possible after its source
 connector changes. It does not silently reconfigure existing task mappings.
 Those mappings, their versions and their existing authority checks remain
@@ -60,6 +71,9 @@ gates.
 An assigned, claimed, executed, reviewed or completed task, or any existing
 mapping, is refused. Manage existing mappings through their original explicit
 administration path. Competing new selections cannot overwrite each other.
+Refusal keeps HTTP 409 `PreconditionsChanged` and adds a bounded
+`existing_mapping` or `work_entered` reason with its next action; repeating
+route reuse or refreshing a session checkpoint does not resolve either state.
 Disabling or changing a template stops new selections; it does not retroactively
 rewrite mappings already committed. A retained source locator is copied only
 when its version matches the selected connector.

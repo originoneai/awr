@@ -1358,7 +1358,8 @@ mod tests {
             .unwrap()
             .description
             .unwrap();
-        assert!(description.contains("before dispatch or self-claim"));
+        assert!(description.contains("keep registered mappings"));
+        assert!(description.contains("reuse only missing mappings before intake"));
         assert!(description.contains("report-only work needs no route"));
     }
 

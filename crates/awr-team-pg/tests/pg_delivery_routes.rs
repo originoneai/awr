@@ -167,6 +167,230 @@ fn mapping_query() -> DeliveryWorkerMappingsQuery {
 }
 
 #[tokio::test]
+async fn empty_continuation_does_not_infer_that_all_route_templates_are_missing() {
+    let f = setup_routes().await;
+    publish_route(&f).await;
+    let p = prepare(&f.reads, A, "a").await;
+    f.reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            configure(&p, "second-template", "second", "0", true),
+        )
+        .await
+        .unwrap();
+    let query = |cursor: Option<String>| {
+        serde_json::from_value(json!({
+        "protocol_version":1,"op":"delivery.routes","work_id":"aa-assigned",
+        "limit":1,"cursor":cursor}))
+        .unwrap()
+    };
+    let first = f
+        .reads
+        .query(TENANT, PROJECT, A, query(None))
+        .await
+        .unwrap();
+    let cursor = first["data"]["next_cursor"].as_str().unwrap().to_owned();
+    let p = prepare(&f.reads, A, "a").await;
+    f.reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            configure(&p, "disable-second", "second", "1", false),
+        )
+        .await
+        .unwrap();
+    let continuation = f
+        .reads
+        .query(TENANT, PROJECT, A, query(Some(cursor)))
+        .await
+        .unwrap();
+    assert!(continuation["data"]["items"].as_array().unwrap().is_empty());
+    assert_eq!(
+        continuation["data"]["guidance"]["action"]["op"],
+        "delivery.routes"
+    );
+    assert_eq!(
+        routes(&f, A, "aa-assigned").await.unwrap()["data"]["items"][0]["template_id"],
+        "repository"
+    );
+}
+
+#[tokio::test]
+async fn established_caller_and_operator_mappings_do_not_require_template_conversion() {
+    let f = setup_routes().await;
+    for (index, (source, actor, client)) in [
+        (FactSource::CallerDeclared, "agent", "cli-a"),
+        (
+            FactSource::OperatorRecorded,
+            "route-worker",
+            "route-worker-client",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let p = prepare(&f.reads, A, "a").await;
+        let set = serde_json::from_value(json!({"work_id":"a","workstream_id":p["workstream_id"],
+            "coordinator_epoch":p["coordinator_epoch"],"source_snapshot_id":p["source_snapshot_id"],
+            "authority_version":p["authority_version"],"ownership_version":p["data"]["ownership_version"],
+            "contract_hash":p["data"]["contract_hash"]})).unwrap();
+        DeliverySyncStore::from_config(f.config.clone())
+            .configure_connector(
+                TENANT,
+                PROJECT,
+                A,
+                ConfigureDeliveryConnector {
+                    request_id: format!("established-mapping-{index}"),
+                    read_set: set,
+                    expected_connector_version: (index + 1).to_string(),
+                    mapping: DeliveryConnectorMapping {
+                        connector_id: "repo-source".into(),
+                        provider: "neutral-git".into(),
+                        resource: "fixture://shared-repository".into(),
+                        principal_actor_id: actor.into(),
+                        principal_client_id: client.into(),
+                        fact_source: source,
+                        enabled: true,
+                        source_locator: None,
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        let found = routes(&f, A, "a").await.unwrap();
+        assert_eq!(found["data"]["task_route_state"], "registered");
+        assert_eq!(found["data"]["guidance"]["action"]["op"], "work.prepare");
+        assert!(found["data"]["items"].as_array().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn existing_route_registration_skips_reuse_and_refuses_duplicate_creation_explicitly() {
+    let f = setup_routes().await;
+    publish_route(&f).await;
+    supervisor(&f).await;
+    let found = routes(&f, A, "a").await.unwrap();
+    assert_eq!(found["data"]["task_route_state"], "registered");
+    assert_eq!(found["data"]["guidance"]["action"]["op"], "work.prepare");
+    assert_eq!(found["data"]["execution_authorized"], false);
+    let p = prepare(&f.reads, A, "a").await;
+    let error = f
+        .reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            reuse_route(&p, "duplicate-route", "replacement"),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("existing_mapping"), "{error}");
+    let count: i64 = f
+        .admin
+        .query_one("SELECT count(*) FROM awr_team.delivery_connectors", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn route_guidance_changes_after_mapping_creation_without_claiming_admission() {
+    let f = setup_routes().await;
+    publish_route(&f).await;
+    supervisor(&f).await;
+    let before = routes(&f, A, "aa-assigned").await.unwrap();
+    assert_eq!(before["data"]["task_route_state"], "missing");
+    assert_eq!(
+        before["data"]["guidance"]["action"]["op"],
+        "delivery.route.reuse"
+    );
+    let p = prepare(&f.reads, A, "aa-assigned").await;
+    f.reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            reuse_route(&p, "new-mapping", "new-task"),
+        )
+        .await
+        .unwrap();
+    let after = routes(&f, A, "aa-assigned").await.unwrap();
+    assert_eq!(after["data"]["task_route_state"], "registered");
+    assert_eq!(after["data"]["guidance"]["action"]["op"], "work.prepare");
+    assert_eq!(after["data"]["grants_created"], false);
+    assert_eq!(after["data"]["execution_authorized"], false);
+    assert!(
+        serde_json::to_vec(&after["data"]["guidance"])
+            .unwrap()
+            .len()
+            <= 1024
+    );
+}
+
+#[tokio::test]
+async fn stale_or_disabled_task_mappings_require_administration_instead_of_reuse() {
+    let f = setup_routes().await;
+    publish_route(&f).await;
+    for mutation in [
+        "UPDATE awr_team.delivery_connectors SET enabled=false WHERE id='repo-source'",
+        "UPDATE awr_team.delivery_connectors SET coordinator_epoch='old' WHERE id='repo-source'",
+        "UPDATE awr_team.actors SET status='disabled' WHERE id='route-worker'",
+    ] {
+        f.admin.batch_execute(mutation).await.unwrap();
+        let found = routes(&f, A, "a").await.unwrap();
+        assert_eq!(found["data"]["task_route_state"], "requires_administration");
+        assert_eq!(
+            found["data"]["guidance"]["action"]["op"],
+            "delivery.neutral.inspect"
+        );
+        let text = serde_json::to_string(&found).unwrap();
+        assert!(!text.contains("route-worker-client") && !text.contains("route-worker"));
+        f.admin
+            .batch_execute(
+                "UPDATE awr_team.delivery_connectors SET enabled=true,coordinator_epoch='epoch-a';
+            UPDATE awr_team.actors SET status='active' WHERE id='route-worker'",
+            )
+            .await
+            .unwrap();
+    }
+    assert!(matches!(routes(&f, B, "a").await, Err(PgError::Forbidden)));
+}
+
+#[tokio::test]
+async fn entered_unmapped_work_does_not_receive_pre_intake_reuse_guidance() {
+    let f = setup_routes().await;
+    publish_route(&f).await;
+    f.admin.batch_execute("INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
+        VALUES('reader-tenant','reader-project','owner','Owner','active');
+        INSERT INTO awr_team.task_responsibilities(tenant_id,project_id,work_id,owner_person_id,version)
+        VALUES('reader-tenant','reader-project','aa-assigned','owner',1)").await.unwrap();
+    let found = routes(&f, A, "aa-assigned").await.unwrap();
+    assert_eq!(found["data"]["task_route_state"], "entered");
+    assert_eq!(found["data"]["guidance"]["action"]["op"], "work.prepare");
+}
+
+#[tokio::test]
+async fn missing_route_templates_request_operator_configuration_without_inventing_a_mapping() {
+    let f = setup_routes().await;
+    let found = routes(&f, A, "aa-assigned").await.unwrap();
+    assert!(found["data"]["items"].as_array().unwrap().is_empty());
+    assert_eq!(found["data"]["task_route_state"], "missing");
+    assert_eq!(
+        found["data"]["guidance"]["action"]["kind"],
+        "request_operator"
+    );
+    assert_eq!(found["data"]["execution_authorized"], false);
+}
+
+#[tokio::test]
 async fn resource_worker_discovers_new_mappings_without_new_credentials_or_configuration() {
     let f = setup_routes().await;
     publish_route(&f).await;
@@ -514,7 +738,9 @@ async fn competing_route_selections_create_exactly_one_independent_mapping() {
     assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
     assert!(matches!(
         if left.is_err() { left } else { right },
-        Err(PgError::PreconditionsChanged)
+        Err(PgError::DeliveryRouteReuseBlocked {
+            reason: "existing_mapping"
+        })
     ));
     let count: i64 = f
         .admin
@@ -610,7 +836,9 @@ async fn route_selection_preserves_owned_claimed_and_preconfigured_work() {
                 reuse_route(&owned, "owned-task", "owned-mapping")
             )
             .await,
-        Err(PgError::PreconditionsChanged)
+        Err(PgError::DeliveryRouteReuseBlocked {
+            reason: "work_entered"
+        })
     ));
     let busy = prepare(&f.reads, A, "ab-assigned").await;
     f.admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
@@ -631,7 +859,9 @@ async fn route_selection_preserves_owned_claimed_and_preconfigured_work() {
                 reuse_route(&busy, "claimed-task", "claimed-mapping")
             )
             .await,
-        Err(PgError::PreconditionsChanged)
+        Err(PgError::DeliveryRouteReuseBlocked {
+            reason: "work_entered"
+        })
     ));
     let configured = prepare(&f.reads, A, "a").await;
     assert!(matches!(
@@ -644,7 +874,9 @@ async fn route_selection_preserves_owned_claimed_and_preconfigured_work() {
                 reuse_route(&configured, "existing-task", "replacement")
             )
             .await,
-        Err(PgError::PreconditionsChanged)
+        Err(PgError::DeliveryRouteReuseBlocked {
+            reason: "existing_mapping"
+        })
     ));
     let count: i64 = f
         .admin

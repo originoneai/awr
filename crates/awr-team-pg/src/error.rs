@@ -125,6 +125,8 @@ pub enum PgError {
     ResponseTooLarge,
     #[error("command preconditions changed; refresh the selected work or session")]
     PreconditionsChanged,
+    #[error("delivery route reuse is not applicable: {reason}")]
+    DeliveryRouteReuseBlocked { reason: &'static str },
     #[error("source divergence")]
     SourceDivergence,
     #[error("restore incomplete")]
@@ -142,6 +144,32 @@ pub enum PgError {
 }
 
 impl PgError {
+    pub fn delivery_route_reuse_diagnostic(&self) -> Option<serde_json::Value> {
+        let Self::DeliveryRouteReuseBlocked { reason } = self else {
+            return None;
+        };
+        let (condition, action) = match *reason {
+            "existing_mapping" => (
+                "This task already has a delivery mapping.",
+                "Do not retry delivery.route.reuse. Inspect delivery.neutral.inspect; keep a current enabled mapping and continue the dispatch/claim flow from work.prepare. Stale or disabled mappings require the established operator administration path.",
+            ),
+            "work_entered" => (
+                "This task has already entered the work lifecycle.",
+                "Do not retry delivery.route.reuse. Continue the current workflow from work.prepare; a mapping change needs its established operator administration path.",
+            ),
+            _ => return None,
+        };
+        Some(serde_json::json!({
+            "code":"PreconditionsChanged","reason":reason,
+            "message":"route reuse cannot replace an existing mapping or configure entered work",
+            "next_step":action,
+            "action_guidance":{"condition":condition,
+                "basis":"Current persisted task and mapping state; no mapping or permission was changed.",
+                "next_action":action,
+                "recheck":"After task, mapping or authority changes. Query delivery.neutral.outcome after an uncertain original response; a missing receipt does not prove no concurrent commit."}
+        }))
+    }
+
     pub(crate) fn review_finding_reference(index: usize, field: &'static str) -> Self {
         if index >= 32 || !matches!(field, "criterion" | "rule") {
             return Self::invalid_command_fields();
