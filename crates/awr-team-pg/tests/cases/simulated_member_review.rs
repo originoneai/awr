@@ -219,6 +219,28 @@ async fn simulated_review_open_refuses_the_authors_evidence_that_cannot_bind_to_
 }
 
 #[tokio::test]
+async fn simulated_supervisor_cannot_open_review_with_missing_input_binding() {
+    use sha2::Digest;
+    let (_g, admin, db, store) = setup().await;
+    seed_simulated_members(&admin, &db).await;
+    let original = simulated_evidence(&store).await;
+    let unbound = run(&store, A, "unbound-input", "evidence.submit", json!({
+        "session_id":"session-a","expected_session_version":"1",
+        "execution_id":original["execution_id"],"dirty_tree":false,
+        "artifact_text":"simulated artifact",
+        "payload":{"passed":true,"output_digest":hex_encode(&sha2::Sha256::digest(b"simulated artifact")),"input_digest":INPUT}
+    })).await;
+    let error = run_err(&store, RUNNER, "open-unbound-input", "review.open", json!({
+        "session_id":"session-runner","expected_session_version":"1","evidence_id":unbound["evidence_id"]
+    })).await;
+    assert_eq!(error.evidence_input_binding_diagnostic().unwrap()["reason"], "evidence_input_digest_not_declared");
+    let rounds: i64 = admin.query_one("SELECT count(*) FROM awr_team.review_rounds", &[]).await.unwrap().get(0);
+    assert_eq!(rounds, 0);
+    let opened = open_simulated(&store, &original, RUNNER, "session-runner", "open-bound-input").await;
+    assert!(opened["round_id"].is_string());
+}
+
+#[tokio::test]
 async fn simulated_auxiliary_evidence_recovery_guidance_preserves_attribution_and_atomicity() {
     async fn state(admin: &Client) -> Vec<i64> {
         let row = admin.query_one("SELECT (SELECT count(*) FROM awr_team.evidence),

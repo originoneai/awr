@@ -1,7 +1,8 @@
 //! The exact result binding that completion and repository integration need, checked when it is still cheap to repair.
 //!
 //! A work completed under an agent review policy is verified against the workspace-settled execution it names: the
-//! output digest the evidence declares and the sha256 of the artifact the evidence stored must both equal the output
+//! evidence input must match the execution input; the output digest the evidence declares and the sha256 of the
+//! artifact the evidence stored must both equal the output
 //! the execution reported. Completion and integration refuse otherwise (`complete`, `settlement::verify_receipt`).
 //! This module evaluates the same relations when evidence is submitted (reported, never refused: one execution can
 //! have auxiliary evidence), when a review round is bound to the evidence, and when that round is approved, so a
@@ -106,6 +107,8 @@ pub(super) struct Subject<'a> {
     pub(super) execution_id: Option<&'a str>,
     /// The actor that submitted the evidence.
     pub(super) submitter: &'a str,
+    /// The top-level evidence input binding, separate from its arbitrary payload.
+    pub(super) input: Option<&'a str>,
     /// `payload.output_digest` the evidence declares.
     pub(super) declared: Option<&'a str>,
     /// sha256 of the artifact the evidence stored.
@@ -122,19 +125,30 @@ pub(super) async fn evaluate(
     project: &str,
     subject: &Subject<'_>,
 ) -> PgResult<Option<Evaluation>> {
+    let recorded = recorded_execution(tx, tenant, project, subject).await?;
+    Ok(recorded.and_then(|row| {
+        row.get::<_, Option<String>>(0)
+            .map(|recorded| evaluate_digests(&recorded, subject.declared, subject.artifact))
+    }))
+}
+
+async fn recorded_execution(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    subject: &Subject<'_>,
+) -> PgResult<Option<tokio_postgres::Row>> {
     let Some(execution_id) = subject.execution_id.filter(|_| applies_to(subject.policy)) else {
         return Ok(None);
     };
-    let recorded: Option<String> = tx
+    Ok(tx
         .query_opt(
-            "SELECT result_digest FROM awr_team.executions
+            "SELECT result_digest,input_digest FROM awr_team.executions
              WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND executor_actor_id=$4
                AND state='succeeded' AND workspace_effects_settled",
             &[&tenant, &project, &execution_id, &subject.submitter],
         )
-        .await?
-        .and_then(|row| row.get(0));
-    Ok(recorded.map(|recorded| evaluate_digests(&recorded, subject.declared, subject.artifact)))
+        .await?)
 }
 
 /// Refuse to bind or approve evidence that completion would refuse for its digests.
@@ -144,10 +158,26 @@ pub(super) async fn require(
     project: &str,
     subject: &Subject<'_>,
 ) -> PgResult<()> {
-    match evaluate(tx, tenant, project, subject).await? {
-        Some(evaluation) if !evaluation.binds() => Err(evaluation.refusal()),
-        _ => Ok(()),
+    let Some(recorded) = recorded_execution(tx, tenant, project, subject).await? else {
+        return Ok(());
+    };
+    let input: Option<String> = recorded.get(1);
+    let reason = match (subject.input, input.as_deref()) {
+        (_, None) => Some("execution_input_digest_not_recorded"),
+        (None, Some(_)) => Some("evidence_input_digest_not_declared"),
+        (Some(a), Some(b)) if a != b => Some("execution_input_digest_mismatch"),
+        _ => None,
+    };
+    if let Some(reason) = reason {
+        return Err(PgError::evidence_input_binding(reason));
     }
+    if let Some(result) = recorded.get::<_, Option<String>>(0) {
+        let evaluation = evaluate_digests(&result, subject.declared, subject.artifact);
+        if !evaluation.binds() {
+            return Err(evaluation.refusal());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

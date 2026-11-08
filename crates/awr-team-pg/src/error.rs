@@ -628,6 +628,43 @@ impl PgError {
         }))
     }
 
+    pub(crate) fn evidence_input_binding(reason: &'static str) -> Self {
+        Self::Protocol(format!("evidence_input_binding/{reason}"))
+    }
+
+    /// Closed labels only; neither payload text nor input digests are exposed.
+    pub fn evidence_input_binding_diagnostic(&self) -> Option<serde_json::Value> {
+        let Self::Protocol(message) = self else {
+            return None;
+        };
+        let reason = message.strip_prefix("evidence_input_binding/")?;
+        let condition = match reason {
+            "evidence_input_digest_not_declared" => {
+                "The review evidence has no top-level input binding."
+            }
+            "execution_input_digest_mismatch" => {
+                "The evidence input differs from the settled execution input."
+            }
+            "execution_input_digest_not_recorded" => {
+                "The settled execution has no recorded input binding."
+            }
+            _ => return None,
+        };
+        let action = "Submit new evidence with args.input_digest matching the input_digest used by execution.prepare. A payload.input_digest or delivery_payload field does not bind the input. If the execution has no recorded input, prepare and report a new correctly scoped execution. Open a new review on the corrected evidence; retain the old records.";
+        Some(serde_json::json!({
+            "code":"EvidenceInvalid","reason":reason,
+            "message":"review evidence must bind the input of its settled execution",
+            "invalid_field":"/args/input_digest","constraint":"execution_input_binding",
+            "next_step":action,
+            "action_guidance":{
+                "condition":condition,
+                "basis":"Completion and repository integration require the same execution input binding, so this evidence cannot be approved yet.",
+                "next_action":action,
+                "recheck":"After corrected evidence is submitted. Current contract, session, authority and independent review requirements still apply."
+            }
+        }))
+    }
+
     /// Refusal shared by HTTP and MCP when evidence cannot satisfy the exact result binding of completion. It names every
     /// failing relation and the repair; only closed labels and validated digest prefixes are echoed.
     pub fn evidence_result_binding_diagnostic(&self) -> Option<serde_json::Value> {

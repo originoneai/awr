@@ -60,6 +60,54 @@ async fn evidence_that_binds_opens_a_round_unchanged() {
 }
 
 #[tokio::test]
+async fn review_requires_top_level_input_binding_and_preserves_auxiliary_evidence() {
+    let (admin, store, chain, _guard) = shaped(ChainShape::MatchingStopAfterEvidence).await;
+    for nested in [false, true] {
+        let key = if nested { "nested-input" } else { "missing-input" };
+        let evidence = run(&store, A, key, "evidence.submit", json!({
+            "session_id":"session-a","expected_session_version":"1",
+            "execution_id":chain["execution_id"],"dirty_tree":false,
+            "artifact_text":"caller artifact",
+            "payload":if nested {
+                json!({"passed":true,"output_digest":chain["result_digest"],"input_digest":INPUT})
+            } else {
+                json!({"passed":true,"output_digest":chain["result_digest"]})
+            }
+        })).await;
+        assert_eq!(evidence["execution_consistency"]["reason"], "evidence_input_digest_not_declared");
+        let error = run_err(&store, A, &format!("{key}-review"), "review.open", open_args(&evidence)).await;
+        assert!(matches!(error, PgError::Protocol(ref reason) if reason == "evidence_input_binding/evidence_input_digest_not_declared"), "{error:?}");
+        assert_eq!(round_count(&admin).await, 0);
+        let stored: Option<String> = admin.query_one(
+            "SELECT input_digest FROM awr_team.evidence WHERE id=$1",
+            &[&evidence["evidence_id"].as_str().unwrap()],
+        ).await.unwrap().get(0);
+        assert_eq!(stored, None, "a nested payload field must never be promoted into the binding");
+    }
+    // The correctly bound original evidence still opens and approves normally.
+    let opened = run(&store, A, "bound-review", "review.open", open_args(&chain)).await;
+    let approved = run(&store, REVIEWER_TOKEN, "bound-approval", "review.decide", args(&opened)).await;
+    assert_eq!(approved["state"], "approved");
+}
+
+#[tokio::test]
+async fn approval_rechecks_input_binding_but_still_allows_return() {
+    let (admin, store, chain, _guard) = shaped(ChainShape::MatchingStopAfterEvidence).await;
+    let opened = run(&store, A, "open-before-drift", "review.open", open_args(&chain)).await;
+    admin.execute("UPDATE awr_team.executions SET input_digest=$1 WHERE id=$2",
+        &[&"d".repeat(64), &chain["execution_id"].as_str().unwrap()]).await.unwrap();
+    let error = run_err(&store, REVIEWER_TOKEN, "approve-after-drift", "review.decide", args(&opened)).await;
+    assert!(matches!(error, PgError::Protocol(ref reason) if reason == "evidence_input_binding/execution_input_digest_mismatch"), "{error:?}");
+    let decisions: i64 = admin.query_one("SELECT count(*) FROM awr_team.review_decisions", &[]).await.unwrap().get(0);
+    assert_eq!(decisions, 0);
+    let returned = run(&store, REVIEWER_TOKEN, "return-after-drift", "review.decide", json!({
+        "session_id":"session-reviewer","expected_session_version":"1","round_id":opened["round_id"],
+        "decision":"reject","reason":"The input binding is no longer current"
+    })).await;
+    assert_eq!(returned["state"], "rejected");
+}
+
+#[tokio::test]
 async fn evidence_submit_reports_how_the_artifact_relates_to_the_reported_result() {
     for (shape, status, reasons) in [
         (ChainShape::MatchingStopAfterEvidence, "matches", vec![]),
