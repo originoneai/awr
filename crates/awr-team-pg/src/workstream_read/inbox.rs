@@ -34,9 +34,10 @@ pub(super) async fn facts(
             AND (c.coordinator_epoch IS DISTINCT FROM $5 OR c.workstream_id IS DISTINCT FROM $6
               OR c.ownership_version IS DISTINCT FROM $7 OR c.fence IS DISTINCT FROM r.last_fence))",
         &[&tenant,&project,&work,&contract,&auth.epoch,&binding.workstream_id.to_string(),&ownership]).await?;
-    let delivery_required =
+    let configured_delivery =
         crate::delivery_sync::review_submission::configured(tx, tenant, project, work).await?;
-    let mut data = json!({"review":null,"candidate":null,"verification":[],"delivery_required":delivery_required,
+    let mut data = json!({"review":null,"candidate":null,"verification":[],"delivery_required":configured_delivery,
+        "delivery_channel":null,
         "recovery":{"unsettled_execution":barriers.get::<_,bool>(0),"unknown_resource":barriers.get::<_,bool>(1),
             "expired_claim":barriers.get::<_,bool>(2),"claim_binding_changed":barriers.get::<_,bool>(4)},"claim_present":barriers.get::<_,bool>(3),
         "facts_truncated":false,"integration":null,"publication":null,
@@ -87,6 +88,10 @@ pub(super) async fn facts(
         let version: i64 = s.get(2);
         let current = s.get::<_, Option<bool>>(3).unwrap_or(false)
             && candidate.binding.contract_hash == contract;
+        // Selecting a candidate binds evidence to that delivery even when no
+        // connector was configured. Report-only work without a selection keeps
+        // its existing review path.
+        data["delivery_required"] = json!(true);
         data["candidate"] = json!({"digest":digest,"selection_version":version.to_string(),
             "current":current,"required_checks":candidate.binding.required_checks});
         if !data["review"].is_null() {
@@ -94,6 +99,26 @@ pub(super) async fn facts(
                 json!(current && data["review"]["candidate_digest"] == digest);
         }
         if current {
+            let registered: bool = tx
+                .query_one(
+                    "SELECT EXISTS(SELECT 1 FROM awr_team.delivery_connectors
+                 WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3
+                   AND workstream_id=$4 AND coordinator_epoch=$5 AND resource=$6 AND enabled)",
+                    &[
+                        &tenant,
+                        &project,
+                        &work,
+                        &binding.workstream_id.to_string(),
+                        &auth.epoch,
+                        &candidate.binding.target.resource,
+                    ],
+                )
+                .await?
+                .get(0);
+            // Registration is navigation metadata, not worker liveness,
+            // verified artifact content or permission to configure a channel.
+            data["delivery_channel"] = json!({"registered_for_candidate":registered,
+                "basis":"current_enabled_connector_registration"});
             let rows = tx.query("SELECT f.envelope_json FROM awr_team.delivery_fact_heads h
                 JOIN awr_team.delivery_facts f ON (f.tenant_id,f.project_id,f.id)=(h.tenant_id,h.project_id,h.fact_id)
                 JOIN awr_team.delivery_inbox i ON (i.tenant_id,i.project_id,i.id)=(f.tenant_id,f.project_id,f.inbox_id)
@@ -137,9 +162,9 @@ pub(super) async fn facts(
                 "metadata_revision":p.get::<_,i64>(2).to_string(),"basis":"recorded_publication_phase"});
         }
     }
-    // Completion of work that delivers a selected candidate waits for its confirmed integration.
+    // Repository integration keeps the existing configured-chain and policy gate.
     data["integration_required"] = json!(false);
-    if delivery_required && !data["candidate"].is_null() {
+    if configured_delivery && !data["candidate"].is_null() {
         let policy: Option<String> = tx
             .query_opt(
                 "SELECT contract_json->>'completion_policy' FROM awr_team.work_contracts
@@ -403,6 +428,20 @@ fn select(
             "the round is bound to this contract",
             "review.inspect",
             "Inspect the exact round; use a currently authorized independent reviewer for its decision.",
+        )
+    } else if involved
+        && !closed
+        && c["candidate"]["current"] == true
+        && c["delivery_channel"]["registered_for_candidate"] == false
+        && c["integration_required"] == true
+        && (supervisor || deliverer || developer && own)
+    {
+        (
+            "delivery_configuration",
+            "the selected delivery requires repository integration but has no registered channel",
+            "no enabled current-epoch connector covers this work and the selected resource",
+            "delivery.submission.describe",
+            "Record the missing delivery channel and coordinate its setup with the authorized project operator. Preserve the selected version and review; re-inspect after configuration changes. This guidance grants no configuration rights.",
         )
     } else if !closed
         && c["review"]["state"] == "approved"
