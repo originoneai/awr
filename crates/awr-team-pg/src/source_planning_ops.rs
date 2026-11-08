@@ -956,15 +956,34 @@ impl SourceStore {
         {
             existing
         } else {
-            self.approve_planning_candidate(
-                tenant_id,
-                project_id,
-                bearer,
-                &req.candidate_id,
-                &req.candidate_digest,
-                req.author_person_id.as_deref(),
-            )
-            .await?
+            match self
+                .approve_planning_attempt(
+                    tenant_id,
+                    project_id,
+                    bearer,
+                    &req.candidate_id,
+                    &req.candidate_digest,
+                    req.author_person_id.as_deref(),
+                )
+                .await?
+            {
+                super::planning::PlanningApprovalAttempt::Approved(result) => result,
+                super::planning::PlanningApprovalAttempt::SourceBaselineChanged => json!({
+                    "outcome":"known_rejection",
+                    "code":"PlanningBaselineChanged",
+                    "candidate_id":req.candidate_id,
+                    "candidate_digest":req.candidate_digest,
+                    "approval_written":false,
+                    "effect_basis":"this_approval_attempt",
+                    "guidance":{
+                        "when":"the retained draft is bound to an earlier source baseline",
+                        "because":["the authorized approval transaction rolled back before any approval write"],
+                        "action":{"op":"planning.preview","candidate_id":req.candidate_id,
+                            "note":"Review the retained draft against current sources, then create a fresh draft before a new approval intent. Do not retry this rejected request or treat it as approval."},
+                        "recheck_on":"a fresh draft, source change or authority change"
+                    }
+                }),
+            }
         };
         self.finalize_planning_receipt(
             tenant_id,

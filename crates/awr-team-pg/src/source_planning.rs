@@ -68,6 +68,11 @@ pub struct PlanningCommandBind {
 
 const PLANNING_RECEIPT_PROTOCOL: &str = "awr-planning-command-receipt-v1";
 
+pub(crate) enum PlanningApprovalAttempt {
+    Approved(Value),
+    SourceBaselineChanged,
+}
+
 async fn bind_planning_receipt_and_ops_audit(
     tx: &tokio_postgres::Transaction<'_>,
     tenant_id: &str,
@@ -664,6 +669,33 @@ impl SourceStore {
         candidate_digest: &str,
         author_person_id: Option<&str>,
     ) -> PgResult<Value> {
+        match self
+            .approve_planning_attempt(
+                tenant_id,
+                project_id,
+                bearer,
+                candidate_id,
+                candidate_digest,
+                author_person_id,
+            )
+            .await?
+        {
+            PlanningApprovalAttempt::Approved(result) => Ok(result),
+            PlanningApprovalAttempt::SourceBaselineChanged => Err(PgError::PreconditionsChanged),
+        }
+    }
+
+    /// Only a confirmed pre-write rollback is a definitive baseline refusal.
+    /// Database, authorization and commit failures remain ordinary errors.
+    pub(crate) async fn approve_planning_attempt(
+        &self,
+        tenant_id: &str,
+        project_id: &str,
+        bearer: &str,
+        candidate_id: &str,
+        candidate_digest: &str,
+        author_person_id: Option<&str>,
+    ) -> PgResult<PlanningApprovalAttempt> {
         let mut client = self.connect().await?;
         crate::check_schema(&client).await?;
         let tx = client
@@ -693,8 +725,6 @@ impl SourceStore {
         let policy: OrdinaryPlanningSelfApprovePolicy =
             serde_json::from_value(policy_json).map_err(|e| PgError::Protocol(e.to_string()))?;
         let mut candidate = load_candidate(&tx, tenant_id, project_id, candidate_id).await?;
-        let (live_digest, live_epoch) = current_baseline(&tx, tenant_id, project_id).await?;
-        ensure_baseline_current(&candidate, &live_digest, &live_epoch)?;
         authorize_candidate_readable_scope(&tx, &auth, tenant_id, project_id, &candidate).await?;
         // Do not copy a caller-supplied person into the approver scope. That
         // substitution both forges the receipt and clears the self-approve ban.
@@ -716,6 +746,15 @@ impl SourceStore {
             &delivery_policy,
         )
         .map_err(map_team)?;
+        let (live_digest, live_epoch) = current_baseline(&tx, tenant_id, project_id).await?;
+        match ensure_baseline_current(&candidate, &live_digest, &live_epoch) {
+            Ok(()) => {}
+            Err(PgError::PreconditionsChanged) => {
+                tx.rollback().await?;
+                return Ok(PlanningApprovalAttempt::SourceBaselineChanged);
+            }
+            Err(error) => return Err(error),
+        }
         let approval_id = new_id();
         tx.execute(
             "INSERT INTO awr_team.planning_approvals(
@@ -776,7 +815,7 @@ impl SourceStore {
             crate::ops_audit::record_in_tx(&tx, tenant_id, project_id, &audit).await?;
         }
         tx.commit().await?;
-        Ok(result)
+        Ok(PlanningApprovalAttempt::Approved(result))
     }
 
     /// Publish is separate from approve and also digest-bound. Does not write
