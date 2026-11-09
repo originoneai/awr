@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-DOC = ROOT.parents[3] / "docs" / "reference" / "assessment.md"
+DOC = ROOT.parents[3] / "docs" / "dev" / "reference" / "assessment.md"
 REQUIRED = [
     "manifest.json",
     "baseline-inventory.json",
@@ -36,7 +36,7 @@ def main() -> int:
     manifest = load("manifest.json")
     sha = manifest["verified_main_sha"]
     require(len(sha) == 40 and all(c in "0123456789abcdef" for c in sha), "verified_main_sha")
-    require(DOC.is_file(), "docs/reference/assessment.md missing")
+    require(DOC.is_file(), "docs/dev/reference/assessment.md missing")
     doc = DOC.read_text()
     require(sha in doc, "assessment.md must cite verified_main_sha")
     require("decision show" in doc and "not" in doc.lower(), "decision show boundary")

@@ -6,6 +6,11 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
+- A [documentation style guide](../STYLE.md) and CI checker for negative-term density,
+  opening paragraphs, limitation sections, and relative links. The baseline preserves
+  existing pages' four recorded metrics; updates accept equal or lower values and new
+  pages use absolute limits. Run `python3 scripts/check_docs_style.py --self-test`
+  for synthetic rule checks and mutation tests.
 - The generic Team read adapter (`POST /api/team/read`) now serves the real `work.next`
   response. Upstream's identity-scoped navigation read carries only
   `{ data, project_revision, protocol_version }` — no scope/snapshot attribution
