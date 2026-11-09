@@ -655,6 +655,8 @@ fn target_path(cwd: &Path, path: &Path) -> Result<PathBuf> {
     for component in absolute.components() {
         match component {
             Component::CurDir => (),
+            // A Windows drive or UNC prefix needs its root before it is a filesystem path.
+            Component::Prefix(prefix) => resolved.push(prefix.as_os_str()),
             Component::ParentDir => {
                 resolved.pop();
             }
@@ -1197,6 +1199,27 @@ mod tests {
     use super::*;
     use crate::client_dialect::{ClaudeDialect, HookDialect};
     use std::process::Command;
+
+    #[test]
+    fn criterion_3_write_targets_preserve_native_roots_and_missing_leaves() {
+        let native = std::env::temp_dir().join(format!("awr hook paths {}", Id::new()));
+        fs::create_dir_all(native.join("existing")).unwrap();
+        let root = native.canonicalize().unwrap();
+        let relative = Path::new("existing/new-directory/new.rs");
+        let expected = root.join(relative);
+        for target in [
+            relative.to_owned(),
+            native.join(relative),
+            root.join(relative),
+        ] {
+            assert_eq!(target_path(&root, &target).unwrap(), expected);
+        }
+        assert_eq!(
+            target_path(&root, Path::new("existing/../new.rs")).unwrap(),
+            root.join("new.rs")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 
     struct Fixture(PathBuf);
     impl Fixture {
