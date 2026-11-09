@@ -1592,6 +1592,44 @@ async fn a_prepared_integration_whose_evidence_stops_binding_gets_the_revalidati
     );
 }
 
+// Integration prepare names only the output digest relations. An input digest that differs between the execution and
+// the evidence (the early input check judged it at open and at approval, so this means the execution record changed
+// afterwards) still ends in the generic EvidenceInvalid there, as the settlement reference says (AWR-TFQ-016).
+#[tokio::test]
+async fn prepare_ends_an_input_digest_mismatch_in_the_generic_refusal() {
+    let f = setup_integration().await;
+    let execution: String = f
+        .admin
+        .query_one(
+            "SELECT execution_id FROM awr_team.evidence WHERE id=$1",
+            &[&f.request.evidence_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    f.admin
+        .execute(
+            "UPDATE awr_team.executions SET input_digest=$1 WHERE id=$2",
+            &[&"d".repeat(64), &execution],
+        )
+        .await
+        .unwrap();
+    let error = f
+        .store
+        .prepare_integration(TENANT, PROJECT, SUPERVISOR, f.request.clone())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, PgError::EvidenceInvalid),
+        "an input mismatch is not named at prepare: {error:?}"
+    );
+    assert_eq!(
+        f.guards().await,
+        0,
+        "a refused prepare leaves no intent or guard behind"
+    );
+}
+
 #[tokio::test]
 async fn forged_missing_or_caller_declared_eligibility_never_creates_an_intent() {
     let f = setup_integration().await;
