@@ -20,7 +20,7 @@ import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure 
 import { FieldLabel, ObservationValue } from './ObservationValue';
 import { deriveWorkState, describeProgressReport, documentLabel, rawObservationText } from '../core/observation';
 import { sourceStateTechnicalItems } from '../lib/source-technical';
-import { workStateTechnicalItems } from '../lib/work-state-technical';
+import { reviewTechnicalItems, workStateTechnicalItems } from '../lib/work-state-technical';
 import { RecentChanges } from './RecentChanges';
 import { TechnicalDetails } from './TechnicalDetails';
 import { pageTechnicalItems } from '../lib/activity-technical';
@@ -180,13 +180,7 @@ function ReviewOutcomes({ query, roundId, currentRoundId }: { query: ReviewQuery
           </List.Item>
         )}
       />
-      <TechnicalDetails items={[
-        { label: 'review.author_actor_id', value: review.author_actor_id },
-        { label: 'review.author_person_id', value: review.author_person_id },
-        { label: 'review.artifact_digest', value: review.artifact_digest },
-        { label: 'review.contract_hash', value: review.contract_hash },
-        { label: 'review.bundle_hash', value: review.bundle_hash },
-      ]} />
+      <TechnicalDetails items={reviewTechnicalItems(review)} />
       <Typography.Paragraph type="secondary">
         {t('state.placeholder.title')} — {t('plan.detail.deliveryPending')}
       </Typography.Paragraph>
