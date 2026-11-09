@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 const HELP: &[u8] = include_bytes!("fixtures/help/help.txt");
@@ -7,14 +8,38 @@ const WORK_HELP: &[u8] = include_bytes!("fixtures/help/work-help.txt");
 const STATUS_HELP: &[u8] = include_bytes!("fixtures/help/status-help.txt");
 const COMPLETE_HELP: &[u8] = include_bytes!("fixtures/help/work-complete-help.txt");
 
+struct BinaryDirectory(PathBuf);
+
+impl Drop for BinaryDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 fn run(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_awr"))
+    run_binary(Path::new(env!("CARGO_BIN_EXE_awr")), args)
+}
+
+fn run_binary(binary: &Path, args: &[&str]) -> Output {
+    Command::new(binary)
         .env("AWR_LOCAL_WEB", "0")
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
         .args(args)
         .output()
         .unwrap()
+}
+
+fn baseline_for_program(baseline: &[u8], program: &str) -> Vec<u8> {
+    // Only the expected invocation name varies; compare actual output byte-for-byte.
+    String::from_utf8(baseline.to_vec())
+        .unwrap()
+        .replacen("Usage: awr ", &format!("Usage: {program} "), 1)
+        .into_bytes()
+}
+
+fn native_baseline(baseline: &[u8]) -> Vec<u8> {
+    baseline_for_program(baseline, &format!("awr{}", std::env::consts::EXE_SUFFIX))
 }
 
 fn help(args: &[&str]) -> Vec<u8> {
@@ -46,20 +71,21 @@ fn ac1_default_overviews_are_short_and_point_to_all_commands() {
 #[test]
 fn ac2_full_lists_match_the_baseline_line_for_line() {
     assert_eq!(HELP, HELP_FLAG);
-    assert_eq!(help(&["help", "all"]), HELP);
-    assert_eq!(help(&["work", "help", "all"]), WORK_HELP);
+    assert_eq!(help(&["help", "all"]), native_baseline(HELP));
+    assert_eq!(help(&["work", "help", "all"]), native_baseline(WORK_HELP));
 }
 
 #[test]
 fn ac2_full_list_comparison_detects_an_omitted_command() {
     let output = help(&["help", "all"]);
-    assert_eq!(output, HELP);
+    let baseline = native_baseline(HELP);
+    assert_eq!(output, baseline);
     let text = String::from_utf8(output).unwrap();
     let omitted = text
         .split_inclusive('\n')
         .filter(|line| !line.starts_with("  status "))
         .collect::<String>();
-    assert_ne!(omitted.as_bytes(), HELP);
+    assert_ne!(omitted.as_bytes(), baseline);
     assert_eq!(text.lines().count(), omitted.lines().count() + 1);
 }
 
@@ -72,7 +98,7 @@ fn ac3_leaf_help_matches_the_baseline_byte_for_byte() {
         (vec!["help", "work", "complete"], COMPLETE_HELP),
         (vec!["work", "help", "complete"], COMPLETE_HELP),
     ] {
-        assert_eq!(help(&args), baseline, "{args:?}");
+        assert_eq!(help(&args), native_baseline(baseline), "{args:?}");
     }
 }
 
@@ -83,9 +109,38 @@ fn ac3_leaf_help_comparison_detects_a_single_byte_change() {
         (vec!["work", "complete", "--help"], COMPLETE_HELP),
     ] {
         let mut output = help(&args);
+        let baseline = native_baseline(baseline);
         assert_eq!(output, baseline, "{args:?}");
         output[0] ^= 1;
         assert_ne!(output, baseline, "{args:?}");
+    }
+}
+
+#[test]
+fn help_fixtures_preserve_the_invoked_executable_name() {
+    let directory = BinaryDirectory(
+        std::env::temp_dir().join(format!("awr-help-executable-{}", awr_core::Id::new())),
+    );
+    std::fs::create_dir(&directory.0).unwrap();
+    let binary = directory.0.join("awr.exe");
+    std::fs::copy(env!("CARGO_BIN_EXE_awr"), &binary).unwrap();
+    for (args, baseline) in [
+        (vec!["help", "all"], HELP),
+        (vec!["work", "help", "all"], WORK_HELP),
+        (vec!["status", "--help"], STATUS_HELP),
+        (vec!["work", "complete", "--help"], COMPLETE_HELP),
+        (vec!["help", "status"], STATUS_HELP),
+        (vec!["help", "work", "complete"], COMPLETE_HELP),
+        (vec!["work", "help", "complete"], COMPLETE_HELP),
+    ] {
+        let output = run_binary(&binary, &args);
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        assert!(output.stderr.is_empty(), "{args:?}: {output:?}");
+        assert_eq!(
+            output.stdout,
+            baseline_for_program(baseline, "awr.exe"),
+            "{args:?}"
+        );
     }
 }
 

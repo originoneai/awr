@@ -1,6 +1,9 @@
 use crate::Cli;
 use clap::{Arg, ArgAction, ArgMatches, Command, CommandFactory, FromArgMatches, error::ErrorKind};
-use std::{ffi::OsString, fmt::Write};
+use std::{
+    ffi::{OsStr, OsString},
+    fmt::Write,
+};
 
 struct Group {
     name: &'static str,
@@ -239,7 +242,8 @@ pub(crate) fn parse_from(args: &[OsString]) -> Result<Cli, clap::Error> {
         _ => None,
     };
     if let Some((work, help)) = request {
-        return Err(render_request(work, help));
+        let program = args.first().map_or(OsStr::new("awr"), OsString::as_os_str);
+        return Err(render_request(work, help, program));
     }
     Cli::from_arg_matches(&matches)
 }
@@ -251,13 +255,17 @@ fn display(text: String) -> clap::Error {
         .unwrap_err()
 }
 
-fn legacy_help(path: &[&str]) -> clap::Error {
+fn legacy_help(path: &[&str], program: &OsStr) -> clap::Error {
     Cli::command()
-        .try_get_matches_from(["awr", "help"].into_iter().chain(path.iter().copied()))
+        .try_get_matches_from(
+            [program, OsStr::new("help")]
+                .into_iter()
+                .chain(path.iter().map(OsStr::new)),
+        )
         .unwrap_err()
 }
 
-fn render_request(work: bool, matches: &ArgMatches) -> clap::Error {
+fn render_request(work: bool, matches: &ArgMatches, program: &OsStr) -> clap::Error {
     // Keep the derive command tree intact for legacy lists and detailed help.
     let mut command = Cli::command();
     let mut command_path = Vec::new();
@@ -278,7 +286,7 @@ fn render_request(work: bool, matches: &ArgMatches) -> clap::Error {
         if let Some(groups) = groups {
             if index + 1 == path.len() {
                 if *name == "all" {
-                    return legacy_help(&command_path);
+                    return legacy_help(&command_path, program);
                 }
                 if let Some(group) = groups.iter().find(|group| group.name == name.as_str()) {
                     return display(rows(group));
@@ -304,7 +312,7 @@ fn render_request(work: bool, matches: &ArgMatches) -> clap::Error {
     match command_path.as_slice() {
         [] => display(overview(false)),
         ["work"] => display(overview(true)),
-        _ => legacy_help(&command_path),
+        _ => legacy_help(&command_path, program),
     }
 }
 
