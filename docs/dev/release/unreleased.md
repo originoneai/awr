@@ -6,6 +6,9 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
+- Trust metadata in progress, session-label, evidence and admission JSON, with
+  the negotiable `output.trust_field` capability. Existing fields and entry text
+  remain available. See [Trust fields](../reference/trust.md).
 - The generic Team read adapter (`POST /api/team/read`) now serves the real `work.next`
   response. Upstream's identity-scoped navigation read carries only
   `{ data, project_revision, protocol_version }` — no scope/snapshot attribution

@@ -276,6 +276,54 @@ fn codes(status: &AdmissionStatus) -> Vec<&'static str> {
 }
 
 #[test]
+fn trust_admission_independent_session_approval_is_reviewed() {
+    let mut case = Case::new();
+    let mut decision = recorded(AdmissionDecision::Approved, case.current.clone());
+    decision.proposer_session = Some(Id::new());
+    case.latest = Some(decision);
+    assert_eq!(
+        serde_json::to_value(case.status()).unwrap()["trust"],
+        "reviewed"
+    );
+}
+
+#[test]
+fn trust_admission_self_inline_missing_or_denied_decisions_are_reported() {
+    let mut case = Case::new();
+    assert_eq!(
+        serde_json::to_value(case.status()).unwrap()["trust"],
+        "reported"
+    );
+    for decision in [
+        AdmissionDecision::Proposed,
+        AdmissionDecision::Denied,
+        AdmissionDecision::Approved,
+    ] {
+        let mut record = recorded(decision, case.current.clone());
+        record.proposer_session = record.decider_session;
+        case.latest = Some(record.clone());
+        assert_eq!(
+            serde_json::to_value(case.status()).unwrap()["trust"],
+            "reported"
+        );
+        record.proposer_session = None;
+        case.latest = Some(record.clone());
+        assert_eq!(
+            serde_json::to_value(case.status()).unwrap()["trust"],
+            "reported"
+        );
+        if decision != AdmissionDecision::Approved {
+            record.proposer_session = Some(Id::new());
+            case.latest = Some(record);
+            assert_eq!(
+                serde_json::to_value(case.status()).unwrap()["trust"],
+                "reported"
+            );
+        }
+    }
+}
+
+#[test]
 fn work_outside_the_policy_is_not_governed_and_owes_nothing() {
     let mut none = Case::new();
     none.policy = None;

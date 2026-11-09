@@ -81,7 +81,7 @@ pub enum ArtifactCommand {
 
 fn evidence_brief(record: &EvidenceRecord) -> Value {
     let item = &record.item;
-    json!({"id":item.id,"external_key":item.external_key,"type":item.evidence_type,"level":item.level,"summary":short(&item.summary),"locator":item.locator,"sha256":item.sha256,"source_sha":item.source_sha,"command":item.command.as_deref().map(short),"scope":item.scope.iter().take(20).collect::<Vec<_>>(),"scope_total":item.scope.len(),"work_item_id":item.work_item_id,"branch_id":item.branch_id,"verified_at":item.verified_at,"source_ref":item.source_ref,"freshness":record.source.as_ref().map(|s|s.freshness),"revision":item.revision})
+    json!({"id":item.id,"external_key":item.external_key,"type":item.evidence_type,"level":item.level,"summary":short(&item.summary),"locator":item.locator,"sha256":item.sha256,"source_sha":item.source_sha,"command":item.command.as_deref().map(short),"scope":item.scope.iter().take(20).collect::<Vec<_>>(),"scope_total":item.scope.len(),"work_item_id":item.work_item_id,"branch_id":item.branch_id,"verified_at":item.verified_at,"source_ref":item.source_ref,"freshness":record.source.as_ref().map(|s|s.freshness),"revision":item.revision,"trust":record.trust})
 }
 /// Report how a stored locator is meant to be resolved.
 fn locator_scheme(locator: &str) -> &'static str {
@@ -191,6 +191,7 @@ pub fn evidence(root: &Path, command: &EvidenceCommand, json_output: bool) -> Re
                 .record_evidence(*expected_revision, draft)?;
             let mut value = db.metadata(event.project_revision);
             value["evidence"] = serde_json::to_value(&item)?;
+            value["evidence"]["trust"] = json!(evidence_trust(&item, &[])?);
             value["event_id"] = json!(event.id);
             value["validation_basis"] = json!("caller_supplied_bindings");
             print(

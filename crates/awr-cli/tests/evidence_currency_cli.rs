@@ -313,6 +313,101 @@ fn completion_gap(value: &Value) -> &Value {
 }
 
 #[test]
+fn trust_evidence_manual_registration_is_reported() {
+    let project = Project::new("trust-manual", false);
+    let sha = project.current_sha();
+    let report = project.write_report("report.json", WORK_KEY, &sha);
+    let prepared = project.prepare(WORK_KEY, &report, "manual", &sha);
+    let input = project.write_prepared_evidence(&prepared, "manual.json");
+    let added = project.add_prepared_evidence(&prepared, &input);
+    assert_eq!(added["evidence"]["trust"], "reported");
+    assert_eq!(
+        project.evidence_show("manual", &sha)["evidence"]["trust"],
+        "reported"
+    );
+    assert_eq!(
+        project.work_show(WORK_KEY, &sha)["evidence"][0]["trust"],
+        "reported"
+    );
+}
+
+#[test]
+fn trust_evidence_caller_verification_bindings_do_not_imply_verified() {
+    let project = Project::new("trust-claimed-verification", false);
+    let sha = project.current_sha();
+    let report = project.write_report("report.json", WORK_KEY, &sha);
+    let prepared = project.prepare(WORK_KEY, &report, "claimed", &sha);
+    let input = project.write_prepared_evidence(&prepared, "claimed.json");
+    project.add_prepared_evidence(&prepared, &input);
+    let shown = project.evidence_show("claimed", &sha);
+    assert_eq!(shown["evidence"]["level"], "locally_verified");
+    assert!(shown["evidence"]["verified_at"].is_number());
+    assert_eq!(shown["evidence"]["trust"], "reported");
+    assert_ne!(shown["evidence"]["trust"], "verified");
+}
+
+#[test]
+fn trust_evidence_completion_byte_check_is_verified() {
+    let project = Project::new("trust-completion", false);
+    project.organize();
+    let session = project.start_session(WORK_KEY, "worker", true);
+    let sha = project.current_sha();
+    let report = project.write_report("report.json", WORK_KEY, &sha);
+    let prepared = project.prepare(WORK_KEY, &report, "checked", &sha);
+    let input = project.write_prepared_evidence(&prepared, "checked.json");
+    project.add_prepared_evidence(&prepared, &input);
+    project.complete(WORK_KEY, &session, &prepared);
+    assert_eq!(
+        project.evidence_show("checked", &sha)["evidence"]["trust"],
+        "verified"
+    );
+    let work = project.work_show(WORK_KEY, &sha);
+    let evidence = work["evidence"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["external_key"] == "checked")
+        .unwrap();
+    assert_eq!(evidence["trust"], "verified");
+}
+
+#[test]
+fn trust_evidence_check_run_is_recorded() {
+    let project = Project::new("trust-check-run", false);
+    let sha = project.current_sha();
+    let report = project.write_report("run.json", WORK_KEY, &sha);
+    let mut prepared = project.prepare(WORK_KEY, &report, "run", &sha);
+    prepared["evidence"]["evidence_type"] = json!("check_run");
+    let input = project.write_prepared_evidence(&prepared, "run-evidence.json");
+    assert_eq!(
+        project.add_prepared_evidence(&prepared, &input)["evidence"]["trust"],
+        "recorded"
+    );
+    assert_eq!(
+        project.evidence_show("run", &sha)["evidence"]["trust"],
+        "recorded"
+    );
+}
+
+#[test]
+fn trust_evidence_unselected_report_is_not_verified_by_another_completion() {
+    let project = Project::new("trust-unselected", false);
+    project.organize();
+    let session = project.start_session(WORK_KEY, "worker", true);
+    let sha = project.current_sha();
+    let report = project.write_report("selected.json", WORK_KEY, &sha);
+    let selected = project.prepare(WORK_KEY, &report, "selected", &sha);
+    let input = project.write_prepared_evidence(&selected, "selected-evidence.json");
+    project.add_prepared_evidence(&selected, &input);
+    let other = project.prepare(WORK_KEY, &report, "other", &sha);
+    let other_input = project.write_prepared_evidence(&other, "other-evidence.json");
+    project.add_prepared_evidence(&other, &other_input);
+    project.complete(WORK_KEY, &session, &selected);
+    let shown = project.evidence_show("other", &sha);
+    assert_eq!(shown["evidence"]["trust"], "reported");
+}
+
+#[test]
 fn cli_completion_receipt_cannot_be_replaced_by_a_passing_report_for_another_sha() {
     let project = Project::new("receipt-sha-replacement", false);
     project.organize();

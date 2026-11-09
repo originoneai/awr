@@ -733,7 +733,7 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
             value["missing_dependencies"] = json!(work.dependencies.missing_keys);
             value["dependency_cycles"] = json!(work.dependencies.cycle_keys);
             value["decisions"]=json!(decisions.iter().map(|d|json!({"external_key":d.decision.item.meta.external_key,"summary":short(&d.decision.item.decision),"relevance":d.relevance,"reasons":d.reasons,"source_ref":d.decision.item.meta.source_ref})).collect::<Vec<_>>());
-            value["evidence"]=json!(evidence.iter().map(|e|json!({"external_key":e.evidence.item.external_key,"summary":short(&e.evidence.item.summary),"level":e.evidence.item.level,"currency":e.currency,"missing_bindings":e.missing_bindings,"locator":e.evidence.item.locator,"source_sha":e.evidence.item.source_sha,"reasons":e.reasons})).collect::<Vec<_>>());
+            value["evidence"]=json!(evidence.iter().map(|e|json!({"external_key":e.evidence.item.external_key,"summary":short(&e.evidence.item.summary),"level":e.evidence.item.level,"currency":e.currency,"missing_bindings":e.missing_bindings,"locator":e.evidence.item.locator,"source_sha":e.evidence.item.source_sha,"reasons":e.reasons,"trust":e.evidence.trust})).collect::<Vec<_>>());
             value["evidence_groups"] = json!(awr_core::evidence_groups(&evidence));
             value["evidence_currency_basis"] =
                 json!({"requested_source_sha":source_sha,"branch_id":branch_id});

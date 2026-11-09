@@ -20,11 +20,11 @@ pub fn work_progress(
             "project_revision":c.project_revision,"session_status":session.status,
             "actor":metadata["actor"],
             "session_label":{"agent_id":short(&session.agent_id),"provider":short(&session.provider),"model":short(&session.model),"is_caller_proof":false},
-            "context_hash_verified":false,
+            "context_hash_verified":false,"trust":Trust::Reported,
             "details":{"cli":["session","show",c.session_id.to_string()],"mcp":"awr_session_get"}}))
     }).transpose()?;
     Ok(json!({
-        "source_next_action":{"text":short(&work.item.next_action),"truncated":work.item.next_action.chars().count()>240,
+        "source_next_action":{"text":short(&work.item.next_action),"truncated":work.item.next_action.chars().count()>240,"trust":Trust::Source,
             "source_id":source.source_id,"locator":source.locator,"pointer":source.pointer,"source_revision":source.source_revision,
             "projected_at":store.source_projected_at(project,source.source_id,source.source_revision)?,
             "timestamp_basis":"source projection receipt; source edit time is not recorded","freshness":work.source.freshness},

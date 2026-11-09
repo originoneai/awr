@@ -84,6 +84,71 @@ impl Project {
 }
 
 #[test]
+fn trust_progress_distinguishes_source_from_reported_next_actions() {
+    let p = Project::new();
+    let session = p.start("progress-reporter");
+    let sid = session["session"]["id"].as_str().unwrap();
+    p.checkpoint(sid, None);
+    for view in ["summary", "action"] {
+        let status = p.ok(&["status", "--view", view, "--work", "W"]);
+        let progress = &status["current"][0]["progress"];
+        assert_eq!(progress["source_next_action"]["trust"], "source");
+        assert_eq!(
+            progress["latest_checkpoint_next_action"]["trust"],
+            "reported"
+        );
+    }
+    let work = p.ok(&["work", "show", "W"]);
+    assert_eq!(work["progress"]["source_next_action"]["trust"], "source");
+    assert_eq!(
+        work["progress"]["latest_checkpoint_next_action"]["trust"],
+        "reported"
+    );
+}
+
+#[test]
+fn trust_progress_preserves_legacy_verification_and_boundary_fields() {
+    let p = Project::new();
+    let session = p.start("progress-reporter");
+    let sid = session["session"]["id"].as_str().unwrap();
+    p.checkpoint(sid, None);
+    let work = p.ok(&["work", "show", "W"]);
+    let progress = &work["progress"];
+    assert_eq!(
+        progress["latest_checkpoint_next_action"]["trust"],
+        "reported"
+    );
+    assert_eq!(
+        progress["latest_checkpoint_next_action"]["context_hash_verified"],
+        false
+    );
+    assert_eq!(
+        progress["boundary"],
+        "Checkpoint progress does not modify the authoritative source or establish completion."
+    );
+    assert_eq!(
+        progress["latest_checkpoint_next_action"]["session_label"]["is_caller_proof"],
+        false
+    );
+    assert_eq!(
+        progress["latest_checkpoint_next_action"]["actor"]["identity_verified"],
+        false
+    );
+}
+
+#[test]
+fn trust_session_label_is_reported_without_replacing_session_fields() {
+    let p = Project::new();
+    let session = p.start("label-reporter");
+    let sid = session["session"]["id"].as_str().unwrap();
+    let shown = p.ok(&["session", "show", sid]);
+    assert_eq!(shown["session_label"]["trust"], "reported");
+    assert_eq!(shown["session_label"]["agent_id"], "label-reporter");
+    assert_eq!(shown["session_label"]["is_caller_proof"], false);
+    assert_eq!(shown["session"], session["session"]);
+}
+
+#[test]
 fn checkpoint_progress_is_visible_without_rewriting_source_authority() {
     let p = Project::new();
     let source = fs::read(p.0.join("work.yaml")).unwrap();

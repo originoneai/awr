@@ -374,6 +374,7 @@ impl CompletionBinding {
                 item: e.clone(),
                 source: None,
                 project_revision: 0,
+                trust: crate::Trust::Reported,
             }
             .assess(Some(&self.source_sha), None, e.branch_id);
             if !assessment.missing_bindings.is_empty() {
