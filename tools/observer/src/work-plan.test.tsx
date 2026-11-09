@@ -462,6 +462,7 @@ describe('work detail review outcomes', () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole('tab', { name: '成果' }));
     expect(await screen.findByTestId('plan-review')).toBeTruthy();
+    expect(defaultVisibleText(screen.getByTestId('plan-review'))).not.toContain('artifact-digest-1');
     const reads = fetchMock.mock.calls
       .filter(([, init]) => String(init?.body ?? '').includes('"review.inspect"'))
       .map(([, init]) => JSON.parse(String(init?.body)).query);
@@ -520,9 +521,13 @@ describe('work detail review outcomes', () => {
     expect(within(decision).getByTestId('review-decision-code').textContent).toBe('批准');
     expect(decision.textContent).toContain('成员独立复核（模拟）');
     expect(decision.textContent).toContain('人工批准');
-    expect(review.textContent).toContain('author-agent-1');
-    expect(review.textContent).toContain('artifact-digest-1');
-    expect(review.textContent).toContain('bundle-hash-1');
+    expect(defaultVisibleText(review)).not.toContain('author-agent-1');
+    expect(defaultVisibleText(review)).not.toContain('artifact-digest-1');
+    expect(defaultVisibleText(review)).not.toContain('bundle-hash-1');
+    await user.click(within(review).getByRole('button', { name: '技术细节' }));
+    expect(within(review).getByText('author-agent-1')).toBeTruthy();
+    expect(within(review).getByText('artifact-digest-1')).toBeTruthy();
+    expect(within(review).getByText('bundle-hash-1')).toBeTruthy();
     expect(review.querySelector('[data-testid="review-narrative"]')).toBeNull();
     expect(review.textContent).toContain('尚未开放');
   });

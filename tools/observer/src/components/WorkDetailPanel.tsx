@@ -180,17 +180,13 @@ function ReviewOutcomes({ query, roundId, currentRoundId }: { query: ReviewQuery
           </List.Item>
         )}
       />
-      <Descriptions
-        size="small"
-        column={1}
-        items={[
-          { key: 'actor', label: <FieldLabel field="author_actor_id" />, children: <ObservationValue value={review.author_actor_id} /> },
-          { key: 'person', label: <FieldLabel field="author_person_id" />, children: <ObservationValue value={review.author_person_id} /> },
-          { key: 'artifact', label: <FieldLabel field="artifact_digest" />, children: <ObservationValue value={review.artifact_digest} /> },
-          { key: 'contract', label: <FieldLabel field="contract_hash" />, children: <ObservationValue value={review.contract_hash} /> },
-          { key: 'bundle', label: <FieldLabel field="bundle_hash" />, children: <ObservationValue value={review.bundle_hash} /> },
-        ]}
-      />
+      <TechnicalDetails items={[
+        { label: 'review.author_actor_id', value: review.author_actor_id },
+        { label: 'review.author_person_id', value: review.author_person_id },
+        { label: 'review.artifact_digest', value: review.artifact_digest },
+        { label: 'review.contract_hash', value: review.contract_hash },
+        { label: 'review.bundle_hash', value: review.bundle_hash },
+      ]} />
       <Typography.Paragraph type="secondary">
         {t('state.placeholder.title')} — {t('plan.detail.deliveryPending')}
       </Typography.Paragraph>
