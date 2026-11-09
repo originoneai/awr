@@ -566,9 +566,13 @@ impl YamlLedgerAdapter {
                             "definition does not match the work definition schema",
                             "Use version 1 with a purpose and only the documented fields; unknown fields are rejected.",
                         ))?;
-                        definition.validate().map_err(|_| invalid(
+                        definition.validate().map_err(|error| invalid(
                             &format!("{pointer}/definition"), "ledger.definition",
-                            "definition has invalid, unbounded or sensitive content",
+                            // Structural diagnostics contain field names and bounds, never source values.
+                            &match error {
+                                awr_core::Error::InvalidInput(reason) => reason,
+                                _ => "definition has invalid, unbounded or sensitive content".into(),
+                            },
                             "Keep every list at most 64 entries and text nonblank and public; user decisions and sourced facts need a decision key and a sha256 fingerprint.",
                         ))?;
                         Some(definition)
