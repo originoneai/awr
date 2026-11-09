@@ -8,6 +8,7 @@ pub(crate) use result_binding::{
 };
 
 use super::*;
+use crate::BindingStage;
 use crate::review::simulated_member;
 use crate::review::{
     evidence_digest, legacy_pr_snapshot, required_dependencies_covered, resolve_person_id,
@@ -1182,7 +1183,7 @@ async fn open(
             declared: execution_result_digest.as_deref(),
             artifact: artifact_digest.as_deref(),
         },
-        "open",
+        BindingStage::Open,
     )
     .await?;
     crate::delivery_sync::review_submission::require(
@@ -1520,7 +1521,7 @@ async fn decide(
                     declared: bound.get::<_, Option<String>>(2).as_deref(),
                     artifact: bound.get::<_, Option<String>>(1).as_deref(),
                 },
-                "decide",
+                BindingStage::Decide,
             )
             .await?;
         }

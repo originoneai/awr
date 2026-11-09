@@ -3457,7 +3457,7 @@ mod tests {
             "artifact_digest_differs_from_execution_result",
         ];
         let http = error_response(PgError::EvidenceResultBinding {
-            stage: "open",
+            stage: awr_team_pg::BindingStage::Open,
             reasons: reasons.clone(),
             execution_result: "bbbbbbbbbbbb".into(),
             declared: "none".into(),
@@ -3503,7 +3503,7 @@ mod tests {
         assert!(plain.get("reasons").is_none());
         // At the decision the caller is the reviewer: the guidance tells them to return the round.
         let at_decision = error_response(PgError::EvidenceResultBinding {
-            stage: "decide",
+            stage: awr_team_pg::BindingStage::Decide,
             reasons: vec!["artifact_digest_differs_from_execution_result"],
             execution_result: "bbbbbbbbbbbb".into(),
             declared: "bbbbbbbbbbbb".into(),
@@ -3520,6 +3520,38 @@ mod tests {
                 .contains("Do not approve this round")
         );
         assert!(body["next_step"].as_str().unwrap().contains("reject"));
+        assert_eq!(
+            body["invalid_field"], "/args/round_id",
+            "the decision names the round, not the evidence"
+        );
+        // An already prepared integration holds the target guard: the repair is to reject the prepared intent first.
+        for (stage, needle) in [
+            (
+                awr_team_pg::BindingStage::Prepare,
+                "Do not retry delivery.integration.prepare",
+            ),
+            (
+                awr_team_pg::BindingStage::Revalidate,
+                "delivery.integration.reject_prepared",
+            ),
+        ] {
+            let response = error_response(PgError::EvidenceResultBinding {
+                stage,
+                reasons: vec!["artifact_digest_differs_from_execution_result"],
+                execution_result: "bbbbbbbbbbbb".into(),
+                declared: "bbbbbbbbbbbb".into(),
+                artifact: "a7778cd982ea".into(),
+            });
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            assert!(
+                body["next_step"].as_str().unwrap().contains(needle),
+                "{stage:?}"
+            );
+            assert_eq!(body["invalid_field"], "/args/evidence_id", "{stage:?}");
+        }
     }
 
     #[test]

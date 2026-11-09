@@ -1532,7 +1532,7 @@ async fn prepare_names_the_digest_relation_of_evidence_that_cannot_bind() {
     else {
         panic!("expected EvidenceResultBinding, got {error:?}");
     };
-    assert_eq!(*stage, "prepare");
+    assert_eq!(*stage, awr_team_pg::BindingStage::Prepare);
     assert_eq!(
         *reasons,
         vec![
