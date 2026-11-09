@@ -20,6 +20,82 @@ fn content(snapshot: &LocalGitSnapshot) -> &IntegrationContentProof {
     records[0]
 }
 
+/// Write an executable script and return once it can be executed.
+///
+/// On Linux, executing a file that a concurrent `fork` still holds open for writing fails with ETXTBSY ("Text file
+/// busy"). The tests of this binary run on parallel threads that fork git all the time, so a script that is run the
+/// instant it was written intermittently could not be started, and the adapter reports every spawn failure as
+/// `RepositoryUnavailable` (AWR-TFQ-017). Returns how many times the script was busy.
+#[cfg(unix)]
+fn write_executable(path: &std::path::Path, script: &str) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(path, script).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    wait_until_executable(path)
+}
+
+/// Run the script with `--version` until it starts: the wrapper scripts of these tests hand their arguments to git.
+#[cfg(unix)]
+fn wait_until_executable(path: &std::path::Path) -> u32 {
+    let mut busy = 0;
+    loop {
+        match std::process::Command::new(path).arg("--version").output() {
+            Ok(output) => {
+                assert!(
+                    output.status.success(),
+                    "{} did not run git: {:?}",
+                    path.display(),
+                    output.status
+                );
+                return busy;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                busy += 1;
+                assert!(
+                    busy <= 500,
+                    "{} stayed busy for five seconds: {error}",
+                    path.display()
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(error) => panic!("{} cannot be executed: {error}", path.display()),
+        }
+    }
+}
+
+// A script that another handle still holds open for writing, as a forked child of a parallel test would, is waited for
+// and then runs. Linux refuses to execute such a file, so there the helper waits; other systems start it at once.
+#[cfg(unix)]
+#[test]
+fn a_script_still_open_for_writing_is_waited_for_and_then_runs() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir =
+        std::env::temp_dir().join(format!("awr wait until executable {}", awr_core::Id::new()));
+    std::fs::create_dir(&dir).unwrap();
+    let script = dir.join("version-script");
+    std::fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let writer = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&script)
+        .unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        drop(writer);
+    });
+    let busy = wait_until_executable(&script);
+    release.join().unwrap();
+    eprintln!("the script was busy {busy} times before it started");
+    assert!(
+        std::process::Command::new(&script)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 async fn observe(sha256: bool) {
     let f = GitFixture::new(sha256);
     let adapter = f.adapter().await;
@@ -462,7 +538,6 @@ async fn immutable_legacy_report_replays_without_inventing_a_content_witness() {
 #[cfg(unix)]
 #[tokio::test]
 async fn target_read_barrier_follows_complete_content_queries() {
-    use std::os::unix::fs::PermissionsExt;
     fn quote(value: &str) -> String {
         format!("'{}'", value.replace('\'', "'\\''"))
     }
@@ -476,8 +551,7 @@ async fn target_read_barrier_follows_complete_content_queries() {
         "#!/bin/sh\nfor last do :; done\nif [ \"$last\" = {trigger} ]; then\n  {executable} \"$@\"\n  command_status=$?\n  {executable} --git-dir=. update-ref refs/heads/main {} {}\n  exit \"$command_status\"\nfi\nexec {executable} \"$@\"\n",
         f.base, rewritten
     );
-    std::fs::write(&wrapper, script).unwrap();
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    write_executable(&wrapper, &script);
     f.config.git_executable = wrapper;
     let result = f
         .adapter()
@@ -502,7 +576,6 @@ async fn target_read_barrier_follows_complete_content_queries() {
 #[tokio::test]
 #[cfg(unix)]
 async fn target_read_barrier_follows_ancestor_artifact_comparison() {
-    use std::os::unix::fs::PermissionsExt;
     let mut f = GitFixture::new(false);
     f.commit("later.txt", b"Independent change\n");
     f.push_main();
@@ -514,10 +587,11 @@ async fn target_read_barrier_follows_ancestor_artifact_comparison() {
         .unwrap()
         .replace('\'', "'\\''");
     let wrapper = f.root.join("ancestor-target-race-git");
-    std::fs::write(&wrapper, format!(
-        "#!/bin/sh\nfor arg do\n  if [ \"$arg\" = diff-tree ]; then\n    '{real_git}' \"$@\"\n    command_status=$?\n    '{real_git}' --git-dir=. update-ref refs/heads/main {} {target}\n    exit \"$command_status\"\n  fi\ndone\nexec '{real_git}' \"$@\"\n", f.base
-    )).unwrap();
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let script = format!(
+        "#!/bin/sh\nfor arg do\n  if [ \"$arg\" = diff-tree ]; then\n    '{real_git}' \"$@\"\n    command_status=$?\n    '{real_git}' --git-dir=. update-ref refs/heads/main {} {target}\n    exit \"$command_status\"\n  fi\ndone\nexec '{real_git}' \"$@\"\n",
+        f.base
+    );
+    write_executable(&wrapper, &script);
     f.config.git_executable = wrapper;
     let result = f
         .adapter()
