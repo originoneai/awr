@@ -30,15 +30,37 @@ mod tests {
         );
     }
 
+    /// Write a script and wait until it can be executed. On Linux, executing a file that a concurrent fork still holds
+    /// open for writing fails with ETXTBSY ("Text file busy"), and a spawn failure reads as `RepositoryUnavailable`
+    /// (AWR-TFQ-017). Every script returns at once when its first argument is `--probe`.
+    #[cfg(unix)]
+    fn write_script(path: &std::path::Path, script: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(path, script).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        for attempt in 0..=500 {
+            match std::process::Command::new(path).arg("--probe").status() {
+                Ok(_) => return,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::ExecutableFileBusy && attempt < 500 =>
+                {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("{} cannot be executed: {error}", path.display()),
+            }
+        }
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn configured_process_timeout_and_stderr_never_become_success_or_diagnostics() {
-        use std::os::unix::fs::PermissionsExt;
         let root = std::env::temp_dir().join(format!("awr-git-process-{}", awr_core::Id::new()));
         std::fs::create_dir(&root).unwrap();
         let executable = root.join("synthetic-git");
-        std::fs::write(&executable, "#!/bin/sh\nprintf 0123456789\n").unwrap();
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        write_script(
+            &executable,
+            "#!/bin/sh\n[ \"$1\" = --probe ] && exit 0\nprintf 0123456789\n",
+        );
         let mut git = GitProcess {
             executable: executable.clone(),
             repository: root.clone(),
@@ -50,13 +72,15 @@ mod tests {
             "unexpected finite error: {:?}",
             result.err()
         );
-        std::fs::write(
+        write_script(
             &executable,
-            "#!/bin/sh\nprintf synthetic-private-stderr >&2\nexit 1\n",
-        )
-        .unwrap();
+            "#!/bin/sh\n[ \"$1\" = --probe ] && exit 0\nprintf synthetic-private-stderr >&2\nexit 1\n",
+        );
         assert_eq!(git.text(&[]).await.unwrap(), None);
-        std::fs::write(&executable, "#!/bin/sh\nexec sleep 2\n").unwrap();
+        write_script(
+            &executable,
+            "#!/bin/sh\n[ \"$1\" = --probe ] && exit 0\nexec sleep 2\n",
+        );
         git.timeout_ms = 100;
         let started = std::time::Instant::now();
         assert!(matches!(git.text(&[]).await, Err(LocalGitError::TimedOut)));
