@@ -486,6 +486,69 @@ async fn reviewed_unmapped_result_can_attach_a_route_without_restarting_work_or_
 }
 
 #[tokio::test]
+async fn missing_route_guidance_requires_a_current_matching_template() {
+    let f = integration_fixture::setup_unmapped_integration().await;
+    let observed = || async {
+        let mut q = query("work.observe");
+        q.work_id = Some("a".into());
+        f.reads
+            .query(TENANT, PROJECT, integration_fixture::SUPERVISOR, q)
+            .await
+            .unwrap()
+    };
+    let missing = observed().await;
+    assert_ne!(
+        missing["data"]["guidance"]["action"]["op"],
+        "delivery.routes"
+    );
+    assert_eq!(
+        missing["data"]["collaboration"]["integration_required"],
+        false
+    );
+    late_template(&f, integration_fixture::RESOURCE).await;
+    let ready = observed().await;
+    assert_eq!(ready["data"]["guidance"]["action"]["op"], "delivery.routes");
+    for (change, restore) in [
+        (
+            "UPDATE awr_team.delivery_route_templates SET enabled=false",
+            "UPDATE awr_team.delivery_route_templates SET enabled=true",
+        ),
+        (
+            "UPDATE awr_team.delivery_route_templates SET source_connector_version=2",
+            "UPDATE awr_team.delivery_route_templates SET source_connector_version=1",
+        ),
+        (
+            "UPDATE awr_team.delivery_connectors SET resource='other-repository' WHERE id='late-source'",
+            "UPDATE awr_team.delivery_connectors SET resource='fixture://integration-repository' WHERE id='late-source'",
+        ),
+        (
+            "UPDATE awr_team.actors SET status='disabled' WHERE id='integrator'",
+            "UPDATE awr_team.actors SET status='active' WHERE id='integrator'",
+        ),
+    ] {
+        f.admin.batch_execute(change).await.unwrap();
+        let unavailable = observed().await;
+        assert_ne!(
+            unavailable["data"]["guidance"]["action"]["op"], "delivery.routes",
+            "{change}"
+        );
+        assert_eq!(
+            unavailable["data"]["collaboration"]["integration_required"],
+            false
+        );
+        f.admin.batch_execute(restore).await.unwrap();
+    }
+    assert_eq!(
+        observed().await["data"]["guidance"]["action"]["op"],
+        "delivery.routes"
+    );
+    assert_eq!(
+        observed().await["data"]["collaboration"]["review"],
+        ready["data"]["collaboration"]["review"]
+    );
+}
+
+#[tokio::test]
 async fn late_registration_cannot_reinterpret_the_reviewed_candidate_resource() {
     let f = integration_fixture::setup_unmapped_integration().await;
     late_template(&f, "fixture://another-repository").await;

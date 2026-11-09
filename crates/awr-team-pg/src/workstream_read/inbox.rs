@@ -117,8 +117,34 @@ pub(super) async fn facts(
                 .get(0);
             // Registration is navigation metadata, not worker liveness,
             // verified artifact content or permission to configure a channel.
+            let matching_template_available = if !configured_delivery
+                && candidate
+                    .binding
+                    .source_revision
+                    .as_ref()
+                    .is_none_or(|r| r.resource == candidate.binding.target.resource)
+            {
+                tx.query_one("SELECT EXISTS(
+                    SELECT 1 FROM awr_team.delivery_route_templates t
+                    JOIN awr_team.delivery_connectors c
+                      ON c.tenant_id=t.tenant_id AND c.project_id=t.project_id AND c.id=t.source_connector_id
+                    JOIN awr_team.actors a ON a.tenant_id=c.tenant_id AND a.id=c.principal_actor_id
+                    JOIN awr_team.workstream_snapshot_ownership o
+                      ON o.tenant_id=c.tenant_id AND o.project_id=c.project_id AND o.work_id=c.work_id
+                        AND o.scope_id='main' AND o.snapshot_id=$5 AND o.workstream_id=t.workstream_id
+                    WHERE t.tenant_id=$1 AND t.project_id=$2 AND t.workstream_id=$3
+                      AND t.enabled AND c.enabled AND t.coordinator_epoch=$4 AND c.coordinator_epoch=$4
+                      AND c.workstream_id=t.workstream_id AND c.version=t.source_connector_version
+                      AND c.fact_source='adapter_observation' AND a.kind='system' AND a.status='active'
+                      AND c.resource=$6)",
+                    &[&tenant,&project,&binding.workstream_id.to_string(),&auth.epoch,&auth.snapshot,
+                      &candidate.binding.target.resource]).await?.get::<_,bool>(0)
+            } else {
+                false
+            };
             data["delivery_channel"] = json!({"registered_for_candidate":registered,
                 "mapping_present":configured_delivery,
+                "matching_template_available":matching_template_available,
                 "basis":"current_enabled_connector_registration"});
             let rows = tx.query("SELECT f.envelope_json FROM awr_team.delivery_fact_heads h
                 JOIN awr_team.delivery_facts f ON (f.tenant_id,f.project_id,f.id)=(h.tenant_id,h.project_id,h.fact_id)
@@ -430,13 +456,14 @@ fn select(
         && c["candidate"]["current"] == true
         && c["delivery_channel"]["registered_for_candidate"] == false
         && c["delivery_channel"]["mapping_present"] == false
+        && c["delivery_channel"]["matching_template_available"] == true
         && c["repository_integration_policy"] == true
         && (supervisor || deliverer)
     {
         (
             "delivery_configuration",
-            "a current repository-capable candidate has no registered delivery channel",
-            "no enabled current-epoch connector covers this work and its selected resource",
+            "a current candidate has an available repository route but no task delivery channel",
+            "an authorized current template matches the selected resource; no task mapping is registered",
             "delivery.routes",
             "For repository delivery, discover an authorized matching template and attach it before requesting delivery checks. Preserve the candidate and review. Existing mappings or unsettled effects retain their established recovery path; report-only completion keeps its current contract.",
         )
