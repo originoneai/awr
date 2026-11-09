@@ -51,8 +51,10 @@ impl Evaluation {
         })
     }
 
-    pub(super) fn refusal(&self) -> PgError {
+    /// `stage` is where the refusal happens, `open` for the author binding a round and `decide` for the reviewer approving one.
+    pub(super) fn refusal(&self, stage: &'static str) -> PgError {
         PgError::EvidenceResultBinding {
+            stage,
             reasons: self.reasons.clone(),
             execution_result: prefix(Some(&self.execution_result)),
             declared: prefix(self.declared.as_deref()),
@@ -61,7 +63,8 @@ impl Evaluation {
     }
 }
 
-/// First 12 characters of a lowercase 64-digit sha256, or `none`: only validated hex is ever echoed.
+/// First 12 characters of a lowercase 64-digit sha256; `none` when nothing is recorded and `invalid` when a value is
+/// present but is not a sha256: only validated hex is ever echoed.
 fn prefix(digest: Option<&str>) -> String {
     match digest {
         Some(d)
@@ -71,7 +74,8 @@ fn prefix(digest: Option<&str>) -> String {
         {
             d[..12].to_owned()
         }
-        _ => "none".to_owned(),
+        Some(_) => "invalid".to_owned(),
+        None => "none".to_owned(),
     }
 }
 
@@ -101,18 +105,18 @@ pub(super) fn evaluate_digests(
 }
 
 /// The evidence whose digests are judged, as the three callers know it.
-pub(super) struct Subject<'a> {
+pub(crate) struct Subject<'a> {
     /// Completion policy of the work contract.
-    pub(super) policy: &'a str,
-    pub(super) execution_id: Option<&'a str>,
+    pub(crate) policy: &'a str,
+    pub(crate) execution_id: Option<&'a str>,
     /// The actor that submitted the evidence.
-    pub(super) submitter: &'a str,
+    pub(crate) submitter: &'a str,
     /// The top-level evidence input binding, separate from its arbitrary payload.
-    pub(super) input: Option<&'a str>,
+    pub(crate) input: Option<&'a str>,
     /// `payload.output_digest` the evidence declares.
-    pub(super) declared: Option<&'a str>,
+    pub(crate) declared: Option<&'a str>,
     /// sha256 of the artifact the evidence stored.
-    pub(super) artifact: Option<&'a str>,
+    pub(crate) artifact: Option<&'a str>,
 }
 
 /// Evaluate evidence that `submitter` attaches to an execution. `None` when the policy does not verify an exact
@@ -157,6 +161,7 @@ pub(super) async fn require(
     tenant: &str,
     project: &str,
     subject: &Subject<'_>,
+    stage: &'static str,
 ) -> PgResult<()> {
     let Some(recorded) = recorded_execution(tx, tenant, project, subject).await? else {
         return Ok(());
@@ -174,10 +179,24 @@ pub(super) async fn require(
     if let Some(result) = recorded.get::<_, Option<String>>(0) {
         let evaluation = evaluate_digests(&result, subject.declared, subject.artifact);
         if !evaluation.binds() {
-            return Err(evaluation.refusal());
+            return Err(evaluation.refusal(stage));
         }
     }
     Ok(())
+}
+
+/// Integration prepare: the same digest relations, refused with their reasons and the repair before the generic late refusal.
+/// Only the output relations are judged here; the input binding keeps its own refusal.
+pub(crate) async fn require_for_prepare(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    subject: &Subject<'_>,
+) -> PgResult<()> {
+    match evaluate(tx, tenant, project, subject).await? {
+        Some(evaluation) if !evaluation.binds() => Err(evaluation.refusal("prepare")),
+        _ => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -218,11 +237,11 @@ mod tests {
         let fact = evaluation.report();
         assert_eq!(fact["status"], "differs");
         assert_eq!(fact["execution_result_digest"], "bbbbbbbbbbbb");
-        assert_eq!(fact["declared_output_digest"], "none");
+        assert_eq!(fact["declared_output_digest"], "invalid");
         assert_eq!(fact["artifact_digest"], "aaaaaaaaaaaa");
-        let PgError::EvidenceResultBinding { declared, .. } = evaluation.refusal() else {
+        let PgError::EvidenceResultBinding { declared, .. } = evaluation.refusal("open") else {
             panic!("a failing evaluation refuses with EvidenceResultBinding");
         };
-        assert_eq!(declared, "none");
+        assert_eq!(declared, "invalid");
     }
 }

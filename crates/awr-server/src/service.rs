@@ -265,6 +265,25 @@ async fn command(
     dispatch(state, key, headers, body, true).await
 }
 
+/// The audit result of a request: a refusal the service decided on itself is `denied` or `failed`; an error whose effect
+/// on the stored state is not certain stays `unknown` until command.inspect resolves it.
+fn audit_status(result: &Result<Value, PgError>) -> &'static str {
+    match result {
+        Ok(_) => "succeeded",
+        Err(PgError::Forbidden) => "denied",
+        Err(error) if error.is_expired_agent_authorization() => "denied",
+        Err(error) if error.source_storage_reason().is_some() => "unknown",
+        Err(
+            PgError::Protocol(_)
+            | PgError::Unsupported(_)
+            | PgError::PreconditionsChanged
+            | PgError::IdempotencyConflict
+            | PgError::EvidenceResultBinding { .. },
+        ) => "failed",
+        Err(_) => "unknown",
+    }
+}
+
 async fn dispatch(
     state: Arc<StateData>,
     key: String,
@@ -397,19 +416,7 @@ pub(crate) async fn audited(
         .request_audit_begin(&project.tenant_id, &project.project_id, token, action, work)
         .await?;
     let result = future.await;
-    let status = match &result {
-        Ok(_) => "succeeded",
-        Err(PgError::Forbidden) => "denied",
-        Err(error) if error.is_expired_agent_authorization() => "denied",
-        Err(error) if error.source_storage_reason().is_some() => "unknown",
-        Err(
-            PgError::Protocol(_)
-            | PgError::Unsupported(_)
-            | PgError::PreconditionsChanged
-            | PgError::IdempotencyConflict,
-        ) => "failed",
-        Err(_) => "unknown",
-    };
+    let status = audit_status(&result);
     // Do not turn a committed command into a retryable failure. Its access record
     // stays unknown if the final metadata write fails; command.inspect resolves it.
     let _ = state
@@ -1448,6 +1455,22 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod retryable_tests {
     use super::*;
+
+    #[test]
+    fn a_digest_binding_refusal_is_audited_as_failed_while_other_errors_stay_unknown() {
+        let refusal = PgError::EvidenceResultBinding {
+            stage: "open",
+            reasons: vec!["artifact_digest_differs_from_execution_result"],
+            execution_result: "bbbbbbbbbbbb".into(),
+            declared: "bbbbbbbbbbbb".into(),
+            artifact: "a7778cd982ea".into(),
+        };
+        assert_eq!(audit_status(&Err(refusal)), "failed");
+        assert_eq!(audit_status(&Ok(json!({}))), "succeeded");
+        assert_eq!(audit_status(&Err(PgError::Forbidden)), "denied");
+        // An error whose effect on stored state is not certain keeps the conservative class.
+        assert_eq!(audit_status(&Err(PgError::EvidenceInvalid)), "unknown");
+    }
 
     #[test]
     fn a_retryable_conflict_says_nothing_was_committed_and_how_to_repeat_the_request() {

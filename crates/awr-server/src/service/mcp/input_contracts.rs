@@ -465,7 +465,7 @@ fn value_sources(tool: &str, op: &str, schema: &Value) -> Value {
         sources.push(json!({
             "fields":["dirty_tree","artifact_text or artifact_hex","input_digest","execution_id"],
             "source":"caller-observed workspace plus the exact current execution",
-            "freshness":"Submit actual bytes and state. Simulated-member evidence requires the actual execution_id; do not invent digests or artifact identifiers."
+            "freshness":"Submit actual bytes and state. Simulated-member evidence requires the actual execution_id; do not invent digests or artifact identifiers. For a workspace-settled execution, evidence you want reviewed must declare payload.output_digest and store an artifact whose sha256 both equal the output digest the execution reported."
         }));
     }
     if op == "delivery.evidence.submit" {
@@ -482,7 +482,7 @@ fn value_sources(tool: &str, op: &str, schema: &Value) -> Value {
         sources.push(json!({
             "fields":["evidence_id"],"source":"successful evidence submission receipt",
             "pointer":"/receipt/data/evidence_id",
-            "freshness":"Use the primary evidence under review, then refresh the session version. Do not resend the evidence payload as review args."
+            "freshness":"Use the primary evidence under review, then refresh the session version. Do not resend the evidence payload as review args. Evidence from the executor of a workspace-settled execution is refused here, with the failing reasons, unless its declared output digest and stored artifact sha256 both equal the output the execution reported."
         }));
     }
     if tool == "awr_team_query" && op == "claim.inspect" {

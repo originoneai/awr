@@ -3457,6 +3457,7 @@ mod tests {
             "artifact_digest_differs_from_execution_result",
         ];
         let http = error_response(PgError::EvidenceResultBinding {
+            stage: "open",
             reasons: reasons.clone(),
             execution_result: "bbbbbbbbbbbb".into(),
             declared: "none".into(),
@@ -3500,6 +3501,25 @@ mod tests {
         let plain: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(plain["code"], "EvidenceInvalid");
         assert!(plain.get("reasons").is_none());
+        // At the decision the caller is the reviewer: the guidance tells them to return the round.
+        let at_decision = error_response(PgError::EvidenceResultBinding {
+            stage: "decide",
+            reasons: vec!["artifact_digest_differs_from_execution_result"],
+            execution_result: "bbbbbbbbbbbb".into(),
+            declared: "bbbbbbbbbbbb".into(),
+            artifact: "a7778cd982ea".into(),
+        });
+        let bytes = axum::body::to_bytes(at_decision.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            body["next_step"]
+                .as_str()
+                .unwrap()
+                .contains("Do not approve this round")
+        );
+        assert!(body["next_step"].as_str().unwrap().contains("reject"));
     }
 
     #[test]
