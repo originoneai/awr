@@ -155,7 +155,7 @@ impl PgError {
             ),
             "work_entered" => (
                 "This task has unsettled execution, prior delivery effects or a closed outcome.",
-                "Inspect work.prepare and the original effects. Settle active execution normally; unknown effects, prior delivery and closed work retain their established recovery or administration path. Do not reset work or replay effects to obtain a route.",
+                "Do not retry delivery.route.reuse until the blocking state changes. Inspect work.prepare and the original effects. Settle active execution normally; unknown effects, prior delivery and closed work retain their established recovery or administration path. Do not reset work or replay effects to obtain a route.",
             ),
             "candidate_resource" => (
                 "The selected candidate does not use the template's repository resource.",

@@ -1359,7 +1359,7 @@ mod tests {
             .description
             .unwrap();
         assert!(description.contains("keep registered mappings"));
-        assert!(description.contains("reuse only missing mappings before intake"));
+        assert!(description.contains("Reuse missing mappings before delivery effects"));
         assert!(description.contains("report-only work needs no route"));
     }
 
