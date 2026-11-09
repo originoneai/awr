@@ -98,6 +98,13 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Changed
 
+- Follow-ups of the early digest check: `delivery.integration.prepare` now refuses evidence whose declared output digest or
+  stored artifact digest differs from the settled execution's reported output with the same 409 `EvidenceInvalid` reasons,
+  digest prefixes and repair as `review.open` (stage `prepare`), instead of the generic refusal; the refusal at an approving
+  `review.decide` is written for the reviewer (return the round); a present but malformed declared digest is shown as
+  `invalid` instead of `none`; the input contracts of `evidence.submit`, `delivery.evidence.submit`, `review.open` and
+  `delivery.submit_and_request_review` state the rule; and such a refusal is audited as `failed` instead of `unknown`.
+  No schema change.
 - Evidence for a workspace-settled execution is checked against the execution's reported result when a review
   round is bound to it, not only at completion and integration. `review.open` and an approving `review.decide`
   refuse it with HTTP 409 `EvidenceInvalid` when the `payload.output_digest` it declares or the sha256 of its stored

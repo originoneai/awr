@@ -23,9 +23,9 @@ const NO_DECLARED: &str = "evidence_declares_no_output_digest";
 const DECLARED_DIFFERS: &str = "declared_output_digest_differs_from_execution_result";
 const ARTIFACT_DIFFERS: &str = "artifact_digest_differs_from_execution_result";
 
-fn binding_refusal(error: PgError, shape: ChainShape) -> (Vec<&'static str>, String, String, String) {
+fn binding_refusal(error: PgError, shape: ChainShape) -> (&'static str, Vec<&'static str>, String, String, String) {
     match error {
-        PgError::EvidenceResultBinding { reasons, execution_result, declared, artifact } => (reasons, execution_result, declared, artifact),
+        PgError::EvidenceResultBinding { stage, reasons, execution_result, declared, artifact } => (stage, reasons, execution_result, declared, artifact),
         other => panic!("{shape:?}: expected EvidenceResultBinding, got {other:?}"),
     }
 }
@@ -41,7 +41,8 @@ async fn review_open_refuses_evidence_that_cannot_match_the_reported_execution_r
     ] {
         let (admin, store, chain, _guard) = shaped(shape).await;
         let error = run_err(&store, A, "open-refused", "review.open", open_args(&chain)).await;
-        let (reasons, recorded, declared, artifact) = binding_refusal(error, shape);
+        let (stage, reasons, recorded, declared, artifact) = binding_refusal(error, shape);
+        assert_eq!(stage, "open", "{shape:?}");
         assert_eq!(reasons, expected, "{shape:?}");
         let reported = chain["result_digest"].as_str().unwrap();
         assert_eq!(recorded, &reported[..12], "{shape:?}: the refusal shows the reported digest");
@@ -140,7 +141,8 @@ async fn review_decide_rechecks_the_result_binding_of_a_round_opened_earlier() {
         .await
         .unwrap();
     let error = run_err(&store, REVIEWER_TOKEN, "decide-refused", "review.decide", args(&opened)).await;
-    let (reasons, ..) = binding_refusal(error, ChainShape::MatchingStopAfterEvidence);
+    let (stage, reasons, ..) = binding_refusal(error, ChainShape::MatchingStopAfterEvidence);
+    assert_eq!(stage, "decide", "the approving reviewer is refused at the decision, not at open");
     assert_eq!(reasons, vec![DECLARED_DIFFERS, ARTIFACT_DIFFERS]);
     let decisions: i64 = admin.query_one("SELECT count(*) FROM awr_team.review_decisions", &[]).await.unwrap().get(0);
     assert_eq!(decisions, 0, "an approval of a round that can never complete must not be recorded");

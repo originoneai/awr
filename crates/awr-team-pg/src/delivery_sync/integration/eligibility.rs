@@ -177,6 +177,22 @@ pub(super) async fn resolve(
          FROM awr_team.executions WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
         &[&tenant,&project,&execution_id],
     ).await?.ok_or(PgError::EvidenceInvalid)?;
+    // The digest relations the review rule checks, with their reasons, before the generic refusal below.
+    let submitter: String = ev.get("created_by");
+    crate::workstream_command::reviews::require_result_binding_for_prepare(
+        tx,
+        tenant,
+        project,
+        &crate::workstream_command::reviews::ResultBindingSubject {
+            policy,
+            execution_id: Some(execution_id.as_str()),
+            submitter: submitter.as_str(),
+            input: input.as_deref(),
+            declared: result.as_deref(),
+            artifact: output.as_deref(),
+        },
+    )
+    .await?;
     if exec.get::<_, String>("state") != "succeeded"
         || exec.get::<_, String>("contract_hash") != set.contract_hash
         || exec.get::<_, String>("scope_id") != "main"

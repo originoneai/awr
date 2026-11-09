@@ -3,6 +3,9 @@ mod agent_completion;
 pub(crate) use agent_completion::verify_execution as verify_integration_execution;
 mod artifact_input;
 mod result_binding;
+pub(crate) use result_binding::{
+    Subject as ResultBindingSubject, require_for_prepare as require_result_binding_for_prepare,
+};
 
 use super::*;
 use crate::review::simulated_member;
@@ -1179,6 +1182,7 @@ async fn open(
             declared: execution_result_digest.as_deref(),
             artifact: artifact_digest.as_deref(),
         },
+        "open",
     )
     .await?;
     crate::delivery_sync::review_submission::require(
@@ -1516,6 +1520,7 @@ async fn decide(
                     declared: bound.get::<_, Option<String>>(2).as_deref(),
                     artifact: bound.get::<_, Option<String>>(1).as_deref(),
                 },
+                "decide",
             )
             .await?;
         }

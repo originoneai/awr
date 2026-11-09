@@ -146,6 +146,9 @@ repair is new evidence whose declared digest and stored artifact both have the
 reported hash, or a new execution that reports the hash of the stored artifact;
 a review round opened on the new evidence then completes as before.
 
+Integration prepare applies the same relations with the same reasons (stage `prepare`) before its generic refusal, and tells the
+supervisor to ask the author for new evidence; an approving `review.decide` is told to return the round instead.
+
 Settlement requires a running caller-managed V3 execution, a current matching
 contract, the original current claim and fence, and the exact admitted path
 reservations. The `independent_workspace_v1` policy also requires a live lease.

@@ -101,9 +101,11 @@ pub enum PgError {
     /// Evidence for a workspace-settled execution cannot satisfy the exact result binding that completion and
     /// repository integration verify, so no review round may be bound to it or approve it. `reasons` are the
     /// closed labels of [`PgError::evidence_result_binding_diagnostic`], in the order completion checks them; the
-    /// digests are validated 12-character prefixes or `none`.
+    /// digests are validated 12-character prefixes, `none` or `invalid`.
     #[error("evidence does not bind to the settled execution result ({})", .reasons.first().copied().unwrap_or("unknown"))]
     EvidenceResultBinding {
+        /// `open` when the author binds a review round to the evidence, `decide` when a reviewer approves one.
+        stage: &'static str,
         reasons: Vec<&'static str>,
         execution_result: String,
         declared: String,
@@ -734,6 +736,7 @@ impl PgError {
     /// failing relation and the repair; only closed labels and validated digest prefixes are echoed.
     pub fn evidence_result_binding_diagnostic(&self) -> Option<serde_json::Value> {
         let Self::EvidenceResultBinding {
+            stage,
             reasons,
             execution_result,
             declared,
@@ -761,7 +764,13 @@ impl PgError {
                 _ => None,
             })
             .collect();
-        let next_action = "Submit new evidence for this execution whose payload.output_digest and stored artifact (artifact_text or artifact_hex) both have the sha256 shown as execution_result_digest, or report a new execution whose output_digest is the sha256 of the artifact you stored and submit evidence for that execution. Then open the review on the new evidence.";
+        let next_action = if *stage == "prepare" {
+            "Do not retry delivery.integration.prepare for this round: its evidence can never be integrated. Ask the author of this work to submit new evidence whose payload.output_digest and stored artifact both have the sha256 shown as execution_result_digest, or to report a new execution for the stored artifact, and have it reviewed and approved again."
+        } else if *stage == "decide" {
+            "Do not approve this round: its evidence can never complete. Return it with review.decide and decision reject, naming the failing digest relation, so the author can submit new evidence whose payload.output_digest and stored artifact both have the sha256 shown as execution_result_digest, or report a new execution for the stored artifact."
+        } else {
+            "Submit new evidence for this execution whose payload.output_digest and stored artifact (artifact_text or artifact_hex) both have the sha256 shown as execution_result_digest, or report a new execution whose output_digest is the sha256 of the artifact you stored and submit evidence for that execution. Then open the review on the new evidence."
+        };
         Some(serde_json::json!({
             "code":"EvidenceInvalid",
             "reason":primary,

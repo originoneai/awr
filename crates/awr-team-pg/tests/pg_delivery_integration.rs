@@ -1496,6 +1496,58 @@ async fn cancelling_a_pre_dispatch_intent_releases_target_without_authorizing_ef
     ));
 }
 
+// A round whose evidence cannot bind to the settled execution result (opened before the early check existed, or whose
+// execution record drifted) is refused at integration prepare with the failing digest relations and the repair, not with
+// the generic EvidenceInvalid (AWR-TFQ-015).
+#[tokio::test]
+async fn prepare_names_the_digest_relation_of_evidence_that_cannot_bind() {
+    let f = setup_integration().await;
+    let execution: String = f
+        .admin
+        .query_one(
+            "SELECT execution_id FROM awr_team.evidence WHERE id=$1",
+            &[&f.request.evidence_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    f.admin
+        .execute(
+            "UPDATE awr_team.executions SET result_digest=$1 WHERE id=$2",
+            &[&"f".repeat(64), &execution],
+        )
+        .await
+        .unwrap();
+    let error = f
+        .store
+        .prepare_integration(TENANT, PROJECT, SUPERVISOR, f.request.clone())
+        .await
+        .unwrap_err();
+    let PgError::EvidenceResultBinding {
+        stage,
+        reasons,
+        execution_result,
+        ..
+    } = &error
+    else {
+        panic!("expected EvidenceResultBinding, got {error:?}");
+    };
+    assert_eq!(*stage, "prepare");
+    assert_eq!(
+        *reasons,
+        vec![
+            "declared_output_digest_differs_from_execution_result",
+            "artifact_digest_differs_from_execution_result"
+        ]
+    );
+    assert_eq!(execution_result, "ffffffffffff");
+    assert_eq!(
+        f.guards().await,
+        0,
+        "a refused prepare leaves no intent or guard behind"
+    );
+}
+
 #[tokio::test]
 async fn forged_missing_or_caller_declared_eligibility_never_creates_an_intent() {
     let f = setup_integration().await;
