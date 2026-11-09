@@ -16,6 +16,12 @@ pub(crate) fn supports_integration(policy: &str) -> bool {
         )
 }
 
+impl DeliverySyncStore {
+    pub(crate) fn repository_integration_policy(policy: &str) -> bool {
+        supports_integration(policy)
+    }
+}
+
 pub(super) async fn resolve(
     tx: &Transaction<'_>,
     tenant: &str,

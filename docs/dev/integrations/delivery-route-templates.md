@@ -4,7 +4,8 @@ Development on `main` adds an administrator-maintained registry for reusing
 provider-neutral delivery configuration within one workstream. This registry
 does not grant repository, execution, review or access-management permissions.
 Supervisors can select an authorized template for an unconfigured task before
-assignment or self-claim.
+assignment or self-claim, or after implementation and review when execution is
+settled and repository delivery has not begun.
 
 Use `awr_team_command` with `op: delivery.route.configure` and the current
 `work.prepare` header. Its arguments are:
@@ -33,10 +34,12 @@ ownership changes can remove a template from a later read.
 
 Discovery also reports the exact task's `task_route_state` and one conditional
 action. `registered` keeps the existing mapping and resumes `work.prepare`;
-`missing` offers reuse before intake, or requests operator configuration when
+`missing` offers safe registration, or requests operator configuration when
 no template is available. `requires_administration` inspects an existing stale
-or disabled mapping; `entered` continues the established task workflow instead
-of attempting pre-intake configuration. Existing caller-declared and
+or disabled mapping; `entered` preserves unsettled execution, delivery history
+or a closed outcome and directs callers to the established work/recovery path.
+Assignment, an active claim, evidence and review alone do not close registration.
+Existing caller-declared and
 operator-recorded mappings retain their own workflow. These are registration
 facts, not execution admission or worker-health checks.
 An empty continuation page restarts discovery without a cursor; it does not
@@ -68,12 +71,23 @@ disclosing or copying credentials. It does not assign, claim, execute, approve
 or deliver the task. Bindings, review and integration still use their existing
 gates.
 
-An assigned, claimed, executed, reviewed or completed task, or any existing
-mapping, is refused. Manage existing mappings through their original explicit
-administration path. Competing new selections cannot overwrite each other.
+Registration can follow a settled implementation or independent review. The
+current selected candidate must retain its exact contract, source snapshot,
+ownership, fence and repository resource; the selected template cannot redirect
+approved content to a different repository. Registration preserves claims,
+responsibility, candidate bytes and review records, and supplies no verification,
+integration or completion fact. Workers discover the new mapping through their
+existing resource-scoped configuration.
+
+Any existing mapping is refused. Unsettled execution, unknown resource effects,
+reference-writer execution, prior delivery inspection/integration/publication,
+and completed work retain their recovery or administration path. Manage existing
+mappings through their original explicit administration path. Competing new
+selections cannot overwrite each other.
 Refusal keeps HTTP 409 `PreconditionsChanged` and adds a bounded
-`existing_mapping` or `work_entered` reason with its next action; repeating
-route reuse or refreshing a session checkpoint does not resolve either state.
+`existing_mapping`, `work_entered` or `candidate_resource` reason with its next
+action. Repeating route reuse or refreshing a checkpoint does not resolve a
+mapping conflict, unknown effect or mismatched candidate resource.
 Disabling or changing a template stops new selections; it does not retroactively
 rewrite mappings already committed. A retained source locator is copied only
 when its version matches the selected connector.
@@ -82,6 +96,9 @@ Use the same `request_id` and mapping name after an uncertain response and query
 `delivery.neutral.outcome` before an exact retry. A committed receipt is historical
 and does not prove the template or task is still current. Report-only work does
 not need a route, and a Git revision or check list alone does not require one.
+For a current candidate with an integration-capable review policy and no matching
+channel, supervisor guidance offers `delivery.routes` before repeating review or
+finalization advice. This discovery does not change report-only completion policy.
 
 The registry requires Team PostgreSQL schema 60. Use the normal owner-side
 migration and application-role bootstrap procedure before starting a matching
