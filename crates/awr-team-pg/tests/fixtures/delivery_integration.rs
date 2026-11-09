@@ -61,14 +61,19 @@ pub async fn setup_integration() -> Fixture {
     setup_integration_with_candidate(None).await
 }
 
+/// Implementation and independent approval precede optional route registration.
+pub async fn setup_unmapped_integration() -> Fixture {
+    setup_integration_inner(None, None, None, false, false, &[], None, false).await
+}
+
 /// Synthetic exact-base setup; all execution, evidence and review commands still run.
 pub async fn setup_content_integration() -> Fixture {
-    setup_integration_inner(None, None, None, false, true, &[], None).await
+    setup_integration_inner(None, None, None, false, true, &[], None, true).await
 }
 
 /// Bind an actual repository candidate before submitting evidence or approval.
 pub async fn setup_integration_with_candidate(actual: Option<DeliveryCandidate>) -> Fixture {
-    setup_integration_inner(actual, None, None, false, false, &[], None).await
+    setup_integration_inner(actual, None, None, false, false, &[], None, true).await
 }
 
 /// Activate the physical contract before execution or business review. No delivery
@@ -93,6 +98,7 @@ pub async fn setup_source_integration_with_checks(
         false,
         &[],
         None,
+        true,
     )
     .await
 }
@@ -112,6 +118,7 @@ pub async fn setup_source_simulated_member_integration(
         false,
         &[],
         None,
+        true,
     )
     .await
 }
@@ -133,6 +140,7 @@ pub async fn setup_source_integration_with_artifacts(
         false,
         additional,
         None,
+        true,
     )
     .await
 }
@@ -148,7 +156,8 @@ pub async fn setup_simulated_content_integration() -> Fixture {
 }
 
 async fn setup_simulated_integration(exact_base: bool) -> Fixture {
-    let fixture = setup_integration_inner(None, None, None, true, exact_base, &[], None).await;
+    let fixture =
+        setup_integration_inner(None, None, None, true, exact_base, &[], None, true).await;
     fixture.admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
         VALUES($1,$2,'session-supervisor','main','a','supervisor','cli-supervisor','supervisor-conversation','active',$3,1)",
         &[&TENANT,&PROJECT,&awr_core::Id::from(1).to_string()]).await.unwrap();
@@ -157,13 +166,15 @@ async fn setup_simulated_integration(exact_base: bool) -> Fixture {
 
 /// The execution report is stored in AWR; the repository contains only CONTENT.
 pub async fn setup_simulated_report_integration(report: &str) -> Fixture {
-    let fixture = setup_integration_inner(None, None, None, true, false, &[], Some(report)).await;
+    let fixture =
+        setup_integration_inner(None, None, None, true, false, &[], Some(report), true).await;
     fixture.admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
         VALUES($1,$2,'session-supervisor','main','a','supervisor','cli-supervisor','supervisor-conversation','active',$3,1)",
         &[&TENANT,&PROJECT,&awr_core::Id::from(1).to_string()]).await.unwrap();
     fixture
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn setup_integration_inner(
     actual: Option<DeliveryCandidate>,
     source_root: Option<&Path>,
@@ -172,6 +183,7 @@ async fn setup_integration_inner(
     exact_base: bool,
     additional: &[&str],
     primary_report: Option<&str>,
+    configure_route: bool,
 ) -> Fixture {
     let (guard, admin, db, reads) = setup().await;
     let config = common::with_app_role(&common::test_config(), &db);
@@ -261,7 +273,7 @@ async fn setup_integration_inner(
             VALUES($1,$2,$3,$4,$5,$6,true,true,$7)",
             &[&TENANT,&PROJECT,&actor,&client,&awr_core::Id::from(1).to_string(),&authority,&(actor=="integrator")]).await.unwrap();
     }
-    for (actor, client, member, actions) in [
+    for (actor, client, member, mut actions) in [
         (
             "agent",
             "cli-a",
@@ -292,6 +304,17 @@ async fn setup_integration_inner(
             ],
         ),
     ] {
+        if actor == "supervisor" && !configure_route {
+            admin
+                .batch_execute(
+                    "UPDATE awr_team.project_memberships
+                SET business_roles='[\"supervisor\",\"deliverer\"]',assignment_grant=true
+                WHERE actor_id='supervisor'",
+                )
+                .await
+                .unwrap();
+            actions.push(AuthorizedAction::AssignWork);
+        }
         let binding = format!("bind-{actor}");
         admin.execute("INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status,member_identity)
             VALUES($1,$2,$3,$3,'active','{\"kind\":\"simulated_member\",\"controller_ref\":\"shared-test-controller\"}')",
@@ -438,34 +461,36 @@ async fn setup_integration_inner(
         .await
         .unwrap();
     let candidate_digest = selection.candidate.binding.digest().unwrap();
-    store
-        .configure_connector(
-            TENANT,
-            PROJECT,
-            WORKER,
-            ConfigureDeliveryConnector {
-                request_id: "configure".into(),
-                read_set: set.clone(),
-                expected_connector_version: "0".into(),
-                mapping: DeliveryConnectorMapping {
-                    connector_id: "git".into(),
-                    provider: if source_root.is_some() {
-                        "local_git"
-                    } else {
-                        "reference"
-                    }
-                    .into(),
-                    resource: selection.candidate.binding.target.resource.clone(),
-                    principal_actor_id: "integrator".into(),
-                    principal_client_id: "cli-worker".into(),
-                    fact_source: FactSource::AdapterObservation,
-                    enabled: true,
-                    source_locator: None,
+    if configure_route {
+        store
+            .configure_connector(
+                TENANT,
+                PROJECT,
+                WORKER,
+                ConfigureDeliveryConnector {
+                    request_id: "configure".into(),
+                    read_set: set.clone(),
+                    expected_connector_version: "0".into(),
+                    mapping: DeliveryConnectorMapping {
+                        connector_id: "git".into(),
+                        provider: if source_root.is_some() {
+                            "local_git"
+                        } else {
+                            "reference"
+                        }
+                        .into(),
+                        resource: selection.candidate.binding.target.resource.clone(),
+                        principal_actor_id: "integrator".into(),
+                        principal_client_id: "cli-worker".into(),
+                        fact_source: FactSource::AdapterObservation,
+                        enabled: true,
+                        source_locator: None,
+                    },
                 },
-            },
-        )
-        .await
-        .unwrap();
+            )
+            .await
+            .unwrap();
+    }
     let execution=run(&reads,A,"prepare-execution","execution.prepare",json!({"session_id":"session-a","expected_session_version":"1",
         "claim_id":claim["claim_id"],"expected_fence":claim["fence"],"expected_lease_version":claim["lease_version"],
         "expected_work_version":prepare(&reads,A,"a").await["data"]["runtime"]["work_version"],"input_digest":INPUT,"declared_scope":["src/api"]})).await;
@@ -544,7 +569,7 @@ async fn setup_integration_inner(
         request,
         evidence,
     };
-    if source_root.is_none() {
+    if source_root.is_none() && configure_route {
         f.check("initial-check", VerificationOutcome::Passed).await;
     }
     f

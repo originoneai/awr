@@ -3,6 +3,8 @@
 mod common;
 #[path = "fixtures/workstream_access.rs"]
 mod fixture;
+#[path = "fixtures/delivery_integration.rs"]
+mod integration_fixture;
 
 use awr_team::delivery::FactSource;
 use awr_team_pg::*;
@@ -365,7 +367,7 @@ async fn stale_or_disabled_task_mappings_require_administration_instead_of_reuse
 }
 
 #[tokio::test]
-async fn entered_unmapped_work_does_not_receive_pre_intake_reuse_guidance() {
+async fn owned_unmapped_work_retains_a_route_registration_path() {
     let f = setup_routes().await;
     publish_route(&f).await;
     f.admin.batch_execute("INSERT INTO awr_team.persons(tenant_id,project_id,id,display_name,status)
@@ -373,8 +375,178 @@ async fn entered_unmapped_work_does_not_receive_pre_intake_reuse_guidance() {
         INSERT INTO awr_team.task_responsibilities(tenant_id,project_id,work_id,owner_person_id,version)
         VALUES('reader-tenant','reader-project','aa-assigned','owner',1)").await.unwrap();
     let found = routes(&f, A, "aa-assigned").await.unwrap();
-    assert_eq!(found["data"]["task_route_state"], "entered");
-    assert_eq!(found["data"]["guidance"]["action"]["op"], "work.prepare");
+    assert_eq!(found["data"]["task_route_state"], "missing");
+    assert_eq!(
+        found["data"]["guidance"]["action"]["op"],
+        "delivery.route.reuse"
+    );
+}
+
+async fn late_template(f: &integration_fixture::Fixture, resource: &str) {
+    let p = prepare(&f.reads, integration_fixture::WORKER, "c").await;
+    let set = serde_json::from_value(json!({"work_id":"c","workstream_id":p["workstream_id"],
+        "coordinator_epoch":p["coordinator_epoch"],"source_snapshot_id":p["source_snapshot_id"],
+        "authority_version":p["authority_version"],"ownership_version":p["data"]["ownership_version"],
+        "contract_hash":p["data"]["contract_hash"]})).unwrap();
+    f.store
+        .configure_connector(
+            TENANT,
+            PROJECT,
+            integration_fixture::WORKER,
+            ConfigureDeliveryConnector {
+                request_id: "late-template-source".into(),
+                read_set: set,
+                expected_connector_version: "0".into(),
+                mapping: DeliveryConnectorMapping {
+                    connector_id: "late-source".into(),
+                    provider: "reference".into(),
+                    resource: resource.into(),
+                    principal_actor_id: "integrator".into(),
+                    principal_client_id: "cli-worker".into(),
+                    fact_source: FactSource::AdapterObservation,
+                    enabled: true,
+                    source_locator: None,
+                },
+            },
+        )
+        .await
+        .unwrap();
+    f.admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_grants SET can_manage=true WHERE actor_id='integrator'",
+        )
+        .await
+        .unwrap();
+    let p = prepare(&f.reads, integration_fixture::WORKER, "c").await;
+    f.reads.commands().execute(TENANT, PROJECT, integration_fixture::WORKER,
+        command(&p,"late-template","delivery.route.configure",json!({
+            "source_snapshot_id":p["source_snapshot_id"],"template_id":"repository","expected_template_version":"0",
+            "source_connector_id":"late-source","source_connector_version":"1","enabled":true
+        }))).await.unwrap();
+}
+
+#[tokio::test]
+async fn reviewed_unmapped_result_can_attach_a_route_without_restarting_work_or_review() {
+    let f = integration_fixture::setup_unmapped_integration().await;
+    late_template(&f, integration_fixture::RESOURCE).await;
+    let mut q = query("work.observe");
+    q.work_id = Some("a".into());
+    let before = f
+        .reads
+        .query(TENANT, PROJECT, integration_fixture::SUPERVISOR, q.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        before["data"]["collaboration"]["review"]["state"],
+        "approved"
+    );
+    let prepared = prepare(&f.reads, integration_fixture::SUPERVISOR, "a").await;
+    assert_eq!(
+        prepared["data"]["guidance"]["action"]["op"],
+        "delivery.routes"
+    );
+    let result = f
+        .reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            integration_fixture::SUPERVISOR,
+            reuse_route(&prepared, "reviewed-route", "reviewed-repository"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result["receipt"]["data"]["grants_created"], false);
+    let after = f
+        .reads
+        .query(TENANT, PROJECT, integration_fixture::SUPERVISOR, q)
+        .await
+        .unwrap();
+    for field in ["review", "candidate"] {
+        assert_eq!(
+            before["data"]["collaboration"][field],
+            after["data"]["collaboration"][field]
+        );
+    }
+    assert_eq!(
+        before["data"]["responsibility"],
+        after["data"]["responsibility"]
+    );
+    assert_eq!(
+        after["data"]["collaboration"]["delivery_channel"]["registered_for_candidate"],
+        true
+    );
+    assert!(
+        after["data"]["collaboration"]["verification"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(after["data"]["collaboration"]["integration"].is_null());
+}
+
+#[tokio::test]
+async fn late_registration_cannot_reinterpret_the_reviewed_candidate_resource() {
+    let f = integration_fixture::setup_unmapped_integration().await;
+    late_template(&f, "fixture://another-repository").await;
+    let p = prepare(&f.reads, integration_fixture::SUPERVISOR, "a").await;
+    let error = f
+        .reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            integration_fixture::SUPERVISOR,
+            reuse_route(&p, "wrong-reviewed-route", "wrong-repository"),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            PgError::DeliveryRouteReuseBlocked {
+                reason: "candidate_resource"
+            }
+        ),
+        "{error:?}"
+    );
+    let count: i64 = f
+        .admin
+        .query_one(
+            "SELECT count(*) FROM awr_team.delivery_connectors WHERE work_id='a'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 0);
+    let after = prepare(&f.reads, integration_fixture::SUPERVISOR, "a").await;
+    assert_eq!(
+        p["data"]["collaboration"]["review"],
+        after["data"]["collaboration"]["review"]
+    );
+}
+
+#[tokio::test]
+async fn reviewed_work_cannot_attach_through_unsettled_effects_or_recovery() {
+    let f = integration_fixture::setup_unmapped_integration().await;
+    late_template(&f, integration_fixture::RESOURCE).await;
+    for (index, sql) in [
+        "UPDATE awr_team.executions SET state='running',workspace_effects_settled=false WHERE work_id='a'",
+        "UPDATE awr_team.executions SET state='succeeded',workspace_effects_settled=false WHERE work_id='a'",
+        "UPDATE awr_team.work_runtime SET recovery_blocked=true WHERE work_id='a'",
+    ].into_iter().enumerate() {
+        f.admin.batch_execute(sql).await.unwrap();
+        let p = prepare(&f.reads, integration_fixture::SUPERVISOR, "a").await;
+        let error = f.reads.commands().execute(TENANT, PROJECT, integration_fixture::SUPERVISOR,
+            reuse_route(&p,&format!("unsettled-route-{index}"),"unsafe-route")).await.unwrap_err();
+        assert!(matches!(error, PgError::DeliveryRouteReuseBlocked {reason:"work_entered"}));
+        let count:i64 = f.admin.query_one("SELECT count(*) FROM awr_team.delivery_connectors WHERE work_id='a'",&[])
+            .await.unwrap().get(0);
+        assert_eq!(count,0);
+        f.admin.batch_execute("UPDATE awr_team.executions SET state='succeeded',workspace_effects_settled=true WHERE work_id='a';
+            UPDATE awr_team.work_runtime SET recovery_blocked=false WHERE work_id='a'").await.unwrap();
+    }
 }
 
 #[tokio::test]
@@ -826,20 +998,16 @@ async fn route_selection_preserves_owned_claimed_and_preconfigured_work() {
         VALUES('reader-tenant','reader-project','owner','Owner','active');
         INSERT INTO awr_team.task_responsibilities(tenant_id,project_id,work_id,owner_person_id,version)
         VALUES('reader-tenant','reader-project','aa-assigned','owner',1)").await.unwrap();
-    assert!(matches!(
-        f.reads
-            .commands()
-            .execute(
-                TENANT,
-                PROJECT,
-                A,
-                reuse_route(&owned, "owned-task", "owned-mapping")
-            )
-            .await,
-        Err(PgError::DeliveryRouteReuseBlocked {
-            reason: "work_entered"
-        })
-    ));
+    f.reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            reuse_route(&owned, "owned-task", "owned-mapping"),
+        )
+        .await
+        .unwrap();
     let busy = prepare(&f.reads, A, "ab-assigned").await;
     f.admin.execute("INSERT INTO awr_team.sessions(tenant_id,project_id,id,scope_id,work_id,actor_id,client_id,conversation_id,state,workstream_id,ownership_version)
         VALUES('reader-tenant','reader-project','busy-session','main','ab-assigned','agent','cli-a','busy','active',$1,1)",
@@ -849,20 +1017,16 @@ async fn route_selection_preserves_owned_claimed_and_preconfigured_work() {
         VALUES('reader-tenant','reader-project','busy-claim','main','ab-assigned','busy-session','agent',
             1,1,clock_timestamp()+interval '1 minute','active',$1,1,'epoch-a')",
         &[&busy["workstream_id"].as_str().unwrap()]).await.unwrap();
-    assert!(matches!(
-        f.reads
-            .commands()
-            .execute(
-                TENANT,
-                PROJECT,
-                A,
-                reuse_route(&busy, "claimed-task", "claimed-mapping")
-            )
-            .await,
-        Err(PgError::DeliveryRouteReuseBlocked {
-            reason: "work_entered"
-        })
-    ));
+    f.reads
+        .commands()
+        .execute(
+            TENANT,
+            PROJECT,
+            A,
+            reuse_route(&busy, "claimed-task", "claimed-mapping"),
+        )
+        .await
+        .unwrap();
     let configured = prepare(&f.reads, A, "a").await;
     assert!(matches!(
         f.reads
@@ -884,7 +1048,28 @@ async fn route_selection_preserves_owned_claimed_and_preconfigured_work() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(count, 1);
+    assert_eq!(count, 3);
+    let owner: String = f
+        .admin
+        .query_one(
+            "SELECT owner_person_id FROM awr_team.task_responsibilities
+        WHERE work_id='aa-assigned'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(owner, "owner");
+    let claim_state: String = f
+        .admin
+        .query_one(
+            "SELECT state FROM awr_team.claims WHERE id='busy-claim'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(claim_state, "active");
 }
 
 #[tokio::test]

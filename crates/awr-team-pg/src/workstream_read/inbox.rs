@@ -118,6 +118,7 @@ pub(super) async fn facts(
             // Registration is navigation metadata, not worker liveness,
             // verified artifact content or permission to configure a channel.
             data["delivery_channel"] = json!({"registered_for_candidate":registered,
+                "mapping_present":configured_delivery,
                 "basis":"current_enabled_connector_registration"});
             let rows = tx.query("SELECT f.envelope_json FROM awr_team.delivery_fact_heads h
                 JOIN awr_team.delivery_facts f ON (f.tenant_id,f.project_id,f.id)=(h.tenant_id,h.project_id,h.fact_id)
@@ -164,7 +165,8 @@ pub(super) async fn facts(
     }
     // Repository integration keeps the existing configured-chain and policy gate.
     data["integration_required"] = json!(false);
-    if configured_delivery && !data["candidate"].is_null() {
+    data["repository_integration_policy"] = json!(false);
+    if !data["candidate"].is_null() {
         let policy: Option<String> = tx
             .query_opt(
                 "SELECT contract_json->>'completion_policy' FROM awr_team.work_contracts
@@ -174,16 +176,22 @@ pub(super) async fn facts(
             )
             .await?
             .and_then(|row| row.get(0));
-        data["integration_required"] = json!(
-            crate::DeliverySyncStore::delivers_into_repository_in_tx(
-                tx,
-                tenant,
-                project,
-                work,
-                policy.as_deref().unwrap_or("trusted_execution_and_review"),
-            )
-            .await?
-        );
+        data["repository_integration_policy"] =
+            json!(crate::DeliverySyncStore::repository_integration_policy(
+                policy.as_deref().unwrap_or("trusted_execution_and_review")
+            ));
+        if configured_delivery {
+            data["integration_required"] = json!(
+                crate::DeliverySyncStore::delivers_into_repository_in_tx(
+                    tx,
+                    tenant,
+                    project,
+                    work,
+                    policy.as_deref().unwrap_or("trusted_execution_and_review"),
+                )
+                .await?
+            );
+        }
     }
     // Historical unsettled effects must remain visible even after reselection.
     data["integration"] =
@@ -416,6 +424,21 @@ fn select(
             "this task has a configured delivery chain",
             "delivery.neutral.inspect",
             "Inspect submission context; publish actual code and report through the authorized project channel, then bind a candidate and readable manifest evidence before review.",
+        )
+    } else if involved
+        && !closed
+        && c["candidate"]["current"] == true
+        && c["delivery_channel"]["registered_for_candidate"] == false
+        && c["delivery_channel"]["mapping_present"] == false
+        && c["repository_integration_policy"] == true
+        && (supervisor || deliverer)
+    {
+        (
+            "delivery_configuration",
+            "a current repository-capable candidate has no registered delivery channel",
+            "no enabled current-epoch connector covers this work and its selected resource",
+            "delivery.routes",
+            "For repository delivery, discover an authorized matching template and attach it before requesting delivery checks. Preserve the candidate and review. Existing mappings or unsettled effects retain their established recovery path; report-only completion keeps its current contract.",
         )
     } else if !closed
         && c["review"]["state"] == "open"
