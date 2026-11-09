@@ -598,7 +598,7 @@ fn work(view: &ReadProject, args: WorkArgs) -> Result<Value> {
         "required_dependencies":work.dependencies.dependencies.iter().map(|d| json!({"external_key":d.item.meta.external_key,"status":d.item.status,"revision":d.item.meta.revision,"source_revision":d.item.meta.source_ref.source_revision,"freshness":d.source.freshness})).collect::<Vec<_>>(),
         "missing_dependencies":work.dependencies.missing_keys,"dependency_cycles":work.dependencies.cycle_keys,
         "decisions":decisions.iter().map(|d| json!({"external_key":d.decision.item.meta.external_key,"summary":short(&d.decision.item.decision),"relevance":d.relevance,"reasons":d.reasons,"source_ref":d.decision.item.meta.source_ref})).collect::<Vec<_>>(),
-        "evidence":evidence.iter().map(|e| json!({"external_key":e.evidence.item.external_key,"summary":short(&e.evidence.item.summary),"level":e.evidence.item.level,"currency":e.currency,"missing_bindings":e.missing_bindings,"locator":e.evidence.item.locator,"source_sha":e.evidence.item.source_sha,"reasons":e.reasons})).collect::<Vec<_>>(),
+        "evidence":evidence.iter().map(|e| json!({"external_key":e.evidence.item.external_key,"summary":short(&e.evidence.item.summary),"level":e.evidence.item.level,"currency":e.currency,"missing_bindings":e.missing_bindings,"locator":e.evidence.item.locator,"source_sha":e.evidence.item.source_sha,"reasons":e.reasons,"trust":e.evidence.trust})).collect::<Vec<_>>(),
         "evidence_groups":awr_core::evidence_groups(&evidence),
         "evidence_currency_basis":{"requested_source_sha":args.source_sha,"branch_id":branch}}),
     )
@@ -777,6 +777,9 @@ fn evidence(root: &Path, args: EvidenceArgs) -> Result<CallToolResult> {
             verified_at: args.verified_at,
         },
     )?;
+    let trust = evidence_trust(&evidence, &[])?;
+    let mut evidence = serde_json::to_value(evidence)?;
+    evidence["trust"] = json!(trust);
     Ok(CallToolResult::structured(
         json!({"ok":true,"project_revision":event.project_revision,"evidence":evidence,"event_id":event.id,"validation_basis":"caller_supplied_bindings","freshness_basis":"source_refresh","source_refresh_performed":true}),
     ))
