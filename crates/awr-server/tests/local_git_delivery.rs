@@ -64,11 +64,16 @@ fn wait_until_executable(path: &std::path::Path) -> u32 {
 }
 
 // A script that another handle still holds open for writing, as a forked child of a parallel test would, is waited for
-// and then runs. Linux refuses to execute such a file, so there the helper waits; other systems start it at once.
+// and then runs. Linux refuses to execute such a file (the premise of the helper, asserted below), so there the helper
+// waits; other systems start it at once.
 #[cfg(unix)]
 #[test]
 fn a_script_still_open_for_writing_is_waited_for_and_then_runs() {
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
     let dir =
         std::env::temp_dir().join(format!("awr wait until executable {}", awr_core::Id::new()));
     std::fs::create_dir(&dir).unwrap();
@@ -79,13 +84,34 @@ fn a_script_still_open_for_writing_is_waited_for_and_then_runs() {
         .append(true)
         .open(&script)
         .unwrap();
+    #[cfg(target_os = "linux")]
+    {
+        let refused = std::process::Command::new(&script)
+            .arg("--version")
+            .output()
+            .expect_err("Linux must refuse to execute a file that is open for writing");
+        assert_eq!(refused.kind(), std::io::ErrorKind::ExecutableFileBusy);
+    }
+    let released = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&released);
     let release = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(100));
+        // Set before the handle is dropped: a helper that returns after the exec was accepted cannot have seen it unset.
+        flag.store(true, Ordering::SeqCst);
         drop(writer);
     });
     let busy = wait_until_executable(&script);
+    let writer_given_up = released.load(Ordering::SeqCst);
     release.join().unwrap();
     eprintln!("the script was busy {busy} times before it started");
+    // Where the kernel refuses the exec, the helper cannot return before the writer has been given up.
+    #[cfg(target_os = "linux")]
+    assert!(
+        writer_given_up && busy >= 1,
+        "the helper returned while the script was still open for writing (busy {busy} times)"
+    );
+    #[cfg(not(target_os = "linux"))]
+    let _ = writer_given_up;
     assert!(
         std::process::Command::new(&script)
             .output()
