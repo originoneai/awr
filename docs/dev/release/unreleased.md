@@ -6,6 +6,15 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
+- CLI recovery guidance now includes executable next commands for creation revision
+  conflicts, draft claims and context budget errors. Work creation accepts source
+  fields directly and can attempt activation in its acceptance call; `work activate`
+  provides a reviewed shortcut for existing drafts. Request-key aliases and JSON
+  shape diagnostics cover creation and batch recovery. Omitted context budgets
+  grow to required facts up to 10000 tokens; explicit budgets remain strict.
+  Creation with unchanged sources and an advanced project revision now reports
+  `RevisionConflict` with `preview_still_valid=true` instead of `SourceStale`.
+
 - The generic Team read adapter (`POST /api/team/read`) now serves the real `work.next`
   response. Upstream's identity-scoped navigation read carries only
   `{ data, project_revision, protocol_version }` — no scope/snapshot attribution

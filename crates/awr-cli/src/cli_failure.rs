@@ -54,6 +54,7 @@ impl CliFailure {
                         report.message,
                         awr_core::render_diagnostic_details(report.details.as_ref())
                     );
+                    print_next(report.details.as_ref());
                 }
             }
             Self::TeamRemote { report, status } => {
@@ -75,9 +76,26 @@ impl CliFailure {
                             eprintln!("{}", terminal_json(&extra, true));
                         }
                     }
+                    print_next(report.get("details"));
                 }
             }
         }
+    }
+}
+
+fn print_next(details: Option<&Value>) {
+    if let Some(next) = details.and_then(|v| v["next_action"].as_str()) {
+        let next = awr_core::safe_diagnostic(next)
+            .chars()
+            .map(|c| {
+                if c.is_control() {
+                    format!("\\u{:04x}", c as u32)
+                } else {
+                    c.to_string()
+                }
+            })
+            .collect::<String>();
+        eprintln!("Next: {next}");
     }
 }
 
