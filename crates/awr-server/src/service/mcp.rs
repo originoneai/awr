@@ -3524,15 +3524,23 @@ mod tests {
             body["invalid_field"], "/args/round_id",
             "the decision names the round, not the evidence"
         );
-        // An already prepared integration holds the target guard: the repair is to reject the prepared intent first.
-        for (stage, needle) in [
+        // An already prepared integration holds the target guard: while it is prepared or leased the repair is to reject
+        // the prepared intent first; once it is dispatched that is refused and the integration is inspected instead. The
+        // lease and dispatch of a prepared intent carry integration_id, not evidence_id.
+        for (stage, needles, field) in [
             (
                 awr_team_pg::BindingStage::Prepare,
-                "Do not retry delivery.integration.prepare",
+                vec!["Do not retry delivery.integration.prepare"],
+                "/args/evidence_id",
             ),
             (
                 awr_team_pg::BindingStage::Revalidate,
-                "delivery.integration.reject_prepared",
+                vec![
+                    "While the intent is still prepared or leased, reject it with delivery.integration.reject_prepared",
+                    "Once the intent is dispatched, reject_prepared is refused: inspect it with delivery.integration.inspect",
+                    "must not be redispatched",
+                ],
+                "/args/integration_id",
             ),
         ] {
             let response = error_response(PgError::EvidenceResultBinding {
@@ -3546,11 +3554,13 @@ mod tests {
                 .await
                 .unwrap();
             let body: Value = serde_json::from_slice(&bytes).unwrap();
-            assert!(
-                body["next_step"].as_str().unwrap().contains(needle),
-                "{stage:?}"
-            );
-            assert_eq!(body["invalid_field"], "/args/evidence_id", "{stage:?}");
+            for needle in needles {
+                assert!(
+                    body["next_step"].as_str().unwrap().contains(needle),
+                    "{stage:?}: {needle}"
+                );
+            }
+            assert_eq!(body["invalid_field"], field, "{stage:?}");
         }
     }
 
