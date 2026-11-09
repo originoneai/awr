@@ -10,6 +10,7 @@
 //! execution's own executor is judged: notes that another actor attaches to the execution (a reviewer's feedback, say)
 //! are auxiliary and keep their former behaviour.
 use super::*;
+use crate::BindingStage;
 
 pub(super) const DECLARES_NO_OUTPUT_DIGEST: &str = "evidence_declares_no_output_digest";
 pub(super) const DECLARED_DIFFERS: &str = "declared_output_digest_differs_from_execution_result";
@@ -51,8 +52,7 @@ impl Evaluation {
         })
     }
 
-    /// `stage` is where the refusal happens, `open` for the author binding a round and `decide` for the reviewer approving one.
-    pub(super) fn refusal(&self, stage: &'static str) -> PgError {
+    pub(super) fn refusal(&self, stage: BindingStage) -> PgError {
         PgError::EvidenceResultBinding {
             stage,
             reasons: self.reasons.clone(),
@@ -161,7 +161,7 @@ pub(super) async fn require(
     tenant: &str,
     project: &str,
     subject: &Subject<'_>,
-    stage: &'static str,
+    stage: BindingStage,
 ) -> PgResult<()> {
     let Some(recorded) = recorded_execution(tx, tenant, project, subject).await? else {
         return Ok(());
@@ -192,9 +192,10 @@ pub(crate) async fn require_for_prepare(
     tenant: &str,
     project: &str,
     subject: &Subject<'_>,
+    stage: BindingStage,
 ) -> PgResult<()> {
     match evaluate(tx, tenant, project, subject).await? {
-        Some(evaluation) if !evaluation.binds() => Err(evaluation.refusal("prepare")),
+        Some(evaluation) if !evaluation.binds() => Err(evaluation.refusal(stage)),
         _ => Ok(()),
     }
 }
@@ -239,7 +240,9 @@ mod tests {
         assert_eq!(fact["execution_result_digest"], "bbbbbbbbbbbb");
         assert_eq!(fact["declared_output_digest"], "invalid");
         assert_eq!(fact["artifact_digest"], "aaaaaaaaaaaa");
-        let PgError::EvidenceResultBinding { declared, .. } = evaluation.refusal("open") else {
+        let PgError::EvidenceResultBinding { declared, .. } =
+            evaluation.refusal(BindingStage::Open)
+        else {
             panic!("a failing evaluation refuses with EvidenceResultBinding");
         };
         assert_eq!(declared, "invalid");

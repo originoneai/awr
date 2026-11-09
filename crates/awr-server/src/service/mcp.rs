@@ -3457,7 +3457,7 @@ mod tests {
             "artifact_digest_differs_from_execution_result",
         ];
         let http = error_response(PgError::EvidenceResultBinding {
-            stage: "open",
+            stage: awr_team_pg::BindingStage::Open,
             reasons: reasons.clone(),
             execution_result: "bbbbbbbbbbbb".into(),
             declared: "none".into(),
@@ -3503,7 +3503,7 @@ mod tests {
         assert!(plain.get("reasons").is_none());
         // At the decision the caller is the reviewer: the guidance tells them to return the round.
         let at_decision = error_response(PgError::EvidenceResultBinding {
-            stage: "decide",
+            stage: awr_team_pg::BindingStage::Decide,
             reasons: vec!["artifact_digest_differs_from_execution_result"],
             execution_result: "bbbbbbbbbbbb".into(),
             declared: "bbbbbbbbbbbb".into(),
@@ -3520,6 +3520,48 @@ mod tests {
                 .contains("Do not approve this round")
         );
         assert!(body["next_step"].as_str().unwrap().contains("reject"));
+        assert_eq!(
+            body["invalid_field"], "/args/round_id",
+            "the decision names the round, not the evidence"
+        );
+        // An already prepared integration holds the target guard: while it is prepared or leased the repair is to reject
+        // the prepared intent first; once it is dispatched that is refused and the integration is inspected instead. The
+        // lease and dispatch of a prepared intent carry integration_id, not evidence_id.
+        for (stage, needles, field) in [
+            (
+                awr_team_pg::BindingStage::Prepare,
+                vec!["Do not retry delivery.integration.prepare"],
+                "/args/evidence_id",
+            ),
+            (
+                awr_team_pg::BindingStage::Revalidate,
+                vec![
+                    "While the intent is still prepared or leased, reject it with delivery.integration.reject_prepared",
+                    "Once the intent is dispatched, reject_prepared is refused: inspect it with delivery.integration.inspect",
+                    "must not be redispatched",
+                ],
+                "/args/integration_id",
+            ),
+        ] {
+            let response = error_response(PgError::EvidenceResultBinding {
+                stage,
+                reasons: vec!["artifact_digest_differs_from_execution_result"],
+                execution_result: "bbbbbbbbbbbb".into(),
+                declared: "bbbbbbbbbbbb".into(),
+                artifact: "a7778cd982ea".into(),
+            });
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            for needle in needles {
+                assert!(
+                    body["next_step"].as_str().unwrap().contains(needle),
+                    "{stage:?}: {needle}"
+                );
+            }
+            assert_eq!(body["invalid_field"], field, "{stage:?}");
+        }
     }
 
     #[test]

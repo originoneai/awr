@@ -22,6 +22,7 @@ pub(super) async fn resolve(
     project: &str,
     auth: &ReaderAuthority,
     request: &PrepareDeliveryIntegration,
+    stage: crate::BindingStage,
 ) -> PgResult<Eligibility> {
     if request.operation != IntegrationOperation::FastForward {
         return Err(PgError::Unsupported(
@@ -191,6 +192,7 @@ pub(super) async fn resolve(
             declared: result.as_deref(),
             artifact: output.as_deref(),
         },
+        stage,
     )
     .await?;
     if exec.get::<_, String>("state") != "succeeded"

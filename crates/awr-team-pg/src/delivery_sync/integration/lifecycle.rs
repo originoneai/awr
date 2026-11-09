@@ -119,7 +119,15 @@ async fn revalidate(
     if authority_binding(tx, tenant, project, &issuer, set).await? != intent.issuer_binding {
         return Err(PgError::Forbidden);
     }
-    let eligibility = eligibility::resolve(tx, tenant, project, &issuer, &intent.prepare).await?;
+    let eligibility = eligibility::resolve(
+        tx,
+        tenant,
+        project,
+        &issuer,
+        &intent.prepare,
+        crate::BindingStage::Revalidate,
+    )
+    .await?;
     if hash(&eligibility.binding)? != intent.eligibility_digest {
         return Err(PgError::PreconditionsChanged);
     }
@@ -261,7 +269,15 @@ impl DeliverySyncStore {
             tx.commit().await?;
             return Ok(receipt);
         }
-        let eligibility = eligibility::resolve(&tx, tenant, project, &auth, &request).await?;
+        let eligibility = eligibility::resolve(
+            &tx,
+            tenant,
+            project,
+            &auth,
+            &request,
+            crate::BindingStage::Prepare,
+        )
+        .await?;
         let id = crate::tx::new_id();
         let neutral = IntegrationRequest {
             binding: eligibility.candidate.binding.clone(),

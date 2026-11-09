@@ -177,7 +177,7 @@ async fn open_simulated(
     run(store,token,key,"review.open",json!({"session_id":session,"expected_session_version":"1","evidence_id":evidence["evidence_id"]})).await
 }
 
-// Run 14's page: the author's evidence for a settled execution stored another artifact than the one the execution
+// Run 14's page (rounds 1 to 3): the author's evidence for a settled execution stored another artifact than the one the execution
 // reported. Under the simulated-member policy it must be refused when a round would be bound to it (AWR-TFQ-014),
 // while the evidence that binds, and auxiliary evidence nobody asks to review, are untouched.
 #[tokio::test]

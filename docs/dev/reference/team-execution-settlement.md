@@ -148,6 +148,11 @@ a review round opened on the new evidence then completes as before.
 
 Integration prepare applies the same relations with the same reasons (stage `prepare`) before its generic refusal, and tells the
 supervisor to ask the author for new evidence; an approving `review.decide` is told to return the round instead.
+Integration prepare names only these output relations; an input digest mismatch still ends in its generic refusal there.
+
+Not caught early, and left to the late checks at integration prepare and completion: evidence submitted by an actor other than the execution's
+executor, evidence that names no execution, an execution with no recorded result digest or that is not workspace-settled, a receipt output
+digest that differs from the recorded result digest after a recovery or a late report, and the coverage of `artifact_refs`.
 
 Settlement requires a running caller-managed V3 execution, a current matching
 contract, the original current claim and fence, and the exact admitted path

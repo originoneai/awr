@@ -104,7 +104,9 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   `review.decide` is written for the reviewer (return the round); a present but malformed declared digest is shown as
   `invalid` instead of `none`; the input contracts of `evidence.submit`, `delivery.evidence.submit`, `review.open` and
   `delivery.submit_and_request_review` state the rule; and such a refusal is audited as `failed` instead of `unknown`.
-  No schema change.
+  An already prepared integration whose evidence no longer binds is refused at its lease, dispatch or recheck with guidance
+  of its own (reject the prepared intent while it is prepared or leased; inspect it once it is dispatched), and the refusal at
+  `review.decide` names `/args/round_id`. No schema change.
 - Evidence for a workspace-settled execution is checked against the execution's reported result when a review
   round is bound to it, not only at completion and integration. `review.open` and an approving `review.decide`
   refuse it with HTTP 409 `EvidenceInvalid` when the `payload.output_digest` it declares or the sha256 of its stored

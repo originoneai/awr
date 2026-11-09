@@ -1459,7 +1459,7 @@ mod retryable_tests {
     #[test]
     fn a_digest_binding_refusal_is_audited_as_failed_while_other_errors_stay_unknown() {
         let refusal = PgError::EvidenceResultBinding {
-            stage: "open",
+            stage: awr_team_pg::BindingStage::Open,
             reasons: vec!["artifact_digest_differs_from_execution_result"],
             execution_result: "bbbbbbbbbbbb".into(),
             declared: "bbbbbbbbbbbb".into(),

@@ -1364,6 +1364,24 @@ mod tests {
     }
 
     #[test]
+    fn evidence_and_review_contracts_state_the_digest_binding_rule() {
+        for op in ["evidence.submit", "delivery.evidence.submit"] {
+            let sources = contract("awr_team_command", op)["value_sources"].to_string();
+            assert!(
+                sources.contains("store an artifact whose sha256 both equal the output digest the execution reported"),
+                "{op}"
+            );
+        }
+        for op in ["review.open", "delivery.submit_and_request_review"] {
+            let sources = contract("awr_team_command", op)["value_sources"].to_string();
+            assert!(
+                sources.contains("declared output digest and stored artifact sha256 both equal the output the execution reported"),
+                "{op}"
+            );
+        }
+    }
+
+    #[test]
     fn query_projection_selects_both_then_and_else_constraints() {
         let artifact = contract("awr_team_query", "artifact.content");
         assert!(

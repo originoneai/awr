@@ -1532,7 +1532,7 @@ async fn prepare_names_the_digest_relation_of_evidence_that_cannot_bind() {
     else {
         panic!("expected EvidenceResultBinding, got {error:?}");
     };
-    assert_eq!(*stage, "prepare");
+    assert_eq!(*stage, awr_team_pg::BindingStage::Prepare);
     assert_eq!(
         *reasons,
         vec![
@@ -1541,6 +1541,88 @@ async fn prepare_names_the_digest_relation_of_evidence_that_cannot_bind() {
         ]
     );
     assert_eq!(execution_result, "ffffffffffff");
+    assert_eq!(
+        f.guards().await,
+        0,
+        "a refused prepare leaves no intent or guard behind"
+    );
+}
+
+// An already prepared integration holds the target guard. When its evidence stops binding to the execution result, the
+// refusal says so with the revalidation guidance (reject the prepared intent first), not the prepare guidance (AWR-TFQ-016).
+#[tokio::test]
+async fn a_prepared_integration_whose_evidence_stops_binding_gets_the_revalidation_guidance() {
+    let f = setup_integration().await;
+    let p = f.prepared().await;
+    let id = p["integration_id"].as_str().unwrap();
+    let execution: String = f
+        .admin
+        .query_one(
+            "SELECT execution_id FROM awr_team.evidence WHERE id=$1",
+            &[&f.request.evidence_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    f.admin
+        .execute(
+            "UPDATE awr_team.executions SET result_digest=$1 WHERE id=$2",
+            &[&"f".repeat(64), &execution],
+        )
+        .await
+        .unwrap();
+    let error = f
+        .store
+        .lease_integration(
+            TENANT,
+            PROJECT,
+            WORKER,
+            f.lease_request("lease-after-drift", id),
+        )
+        .await
+        .unwrap_err();
+    let PgError::EvidenceResultBinding { stage, .. } = &error else {
+        panic!("expected EvidenceResultBinding, got {error:?}");
+    };
+    assert_eq!(*stage, awr_team_pg::BindingStage::Revalidate);
+    assert_eq!(
+        f.guards().await,
+        1,
+        "the prepared intent keeps its target guard until it is rejected"
+    );
+}
+
+// Integration prepare names only the output digest relations. An input digest that differs between the execution and
+// the evidence (the early input check judged it at open and at approval, so this means the execution record changed
+// afterwards) still ends in the generic EvidenceInvalid there, as the settlement reference says (AWR-TFQ-016).
+#[tokio::test]
+async fn prepare_ends_an_input_digest_mismatch_in_the_generic_refusal() {
+    let f = setup_integration().await;
+    let execution: String = f
+        .admin
+        .query_one(
+            "SELECT execution_id FROM awr_team.evidence WHERE id=$1",
+            &[&f.request.evidence_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    f.admin
+        .execute(
+            "UPDATE awr_team.executions SET input_digest=$1 WHERE id=$2",
+            &[&"d".repeat(64), &execution],
+        )
+        .await
+        .unwrap();
+    let error = f
+        .store
+        .prepare_integration(TENANT, PROJECT, SUPERVISOR, f.request.clone())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, PgError::EvidenceInvalid),
+        "an input mismatch is not named at prepare: {error:?}"
+    );
     assert_eq!(
         f.guards().await,
         0,

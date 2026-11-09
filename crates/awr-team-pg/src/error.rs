@@ -2,6 +2,19 @@ use thiserror::Error;
 
 pub type PgResult<T> = Result<T, PgError>;
 
+/// Where a refusal for evidence that cannot bind to the settled execution result happens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingStage {
+    /// The author binds a review round to the evidence.
+    Open,
+    /// A reviewer approves a round.
+    Decide,
+    /// The supervisor prepares the integration.
+    Prepare,
+    /// An already prepared integration is re-checked (it holds the target guard).
+    Revalidate,
+}
+
 #[derive(Debug, Error)]
 pub enum PgError {
     #[error(transparent)]
@@ -104,8 +117,7 @@ pub enum PgError {
     /// digests are validated 12-character prefixes, `none` or `invalid`.
     #[error("evidence does not bind to the settled execution result ({})", .reasons.first().copied().unwrap_or("unknown"))]
     EvidenceResultBinding {
-        /// `open` when the author binds a review round to the evidence, `decide` when a reviewer approves one.
-        stage: &'static str,
+        stage: BindingStage,
         reasons: Vec<&'static str>,
         execution_result: String,
         declared: String,
@@ -764,19 +776,33 @@ impl PgError {
                 _ => None,
             })
             .collect();
-        let next_action = if *stage == "prepare" {
-            "Do not retry delivery.integration.prepare for this round: its evidence can never be integrated. Ask the author of this work to submit new evidence whose payload.output_digest and stored artifact both have the sha256 shown as execution_result_digest, or to report a new execution for the stored artifact, and have it reviewed and approved again."
-        } else if *stage == "decide" {
-            "Do not approve this round: its evidence can never complete. Return it with review.decide and decision reject, naming the failing digest relation, so the author can submit new evidence whose payload.output_digest and stored artifact both have the sha256 shown as execution_result_digest, or report a new execution for the stored artifact."
-        } else {
-            "Submit new evidence for this execution whose payload.output_digest and stored artifact (artifact_text or artifact_hex) both have the sha256 shown as execution_result_digest, or report a new execution whose output_digest is the sha256 of the artifact you stored and submit evidence for that execution. Then open the review on the new evidence."
+        let next_action = match stage {
+            BindingStage::Revalidate => {
+                "The integration of this round is already prepared and holds the target guard, but its evidence no longer binds to the execution result. While the intent is still prepared or leased, reject it with delivery.integration.reject_prepared to release the guard, ask the author of this work for new evidence whose payload.output_digest and stored artifact both have the sha256 shown as execution_result_digest (or a new execution for the stored artifact), have it reviewed and approved again, then prepare again. Once the intent is dispatched, reject_prepared is refused: inspect it with delivery.integration.inspect and follow its guidance (a dispatched integration is reconciled from its original attempt and must not be redispatched)."
+            }
+            BindingStage::Prepare => {
+                "Do not retry delivery.integration.prepare for this round: its evidence can never be integrated. Ask the author of this work to submit new evidence whose payload.output_digest and stored artifact both have the sha256 shown as execution_result_digest, or to report a new execution for the stored artifact, and have it reviewed and approved again."
+            }
+            BindingStage::Decide => {
+                "Do not approve this round: its evidence can never complete. Return it with review.decide and decision reject, naming the failing digest relation, so the author can submit new evidence whose payload.output_digest and stored artifact both have the sha256 shown as execution_result_digest, or report a new execution for the stored artifact."
+            }
+            BindingStage::Open => {
+                "Submit new evidence for this execution whose payload.output_digest and stored artifact (artifact_text or artifact_hex) both have the sha256 shown as execution_result_digest, or report a new execution whose output_digest is the sha256 of the artifact you stored and submit evidence for that execution. Then open the review on the new evidence."
+            }
+        };
+        // The argument the caller can change: the round at the decision, the integration for the lease and dispatch of a
+        // prepared intent, the evidence everywhere else.
+        let invalid_field = match stage {
+            BindingStage::Decide => "/args/round_id",
+            BindingStage::Revalidate => "/args/integration_id",
+            BindingStage::Open | BindingStage::Prepare => "/args/evidence_id",
         };
         Some(serde_json::json!({
             "code":"EvidenceInvalid",
             "reason":primary,
             "reasons":reasons,
             "message":"this evidence cannot complete the work: its digests do not match the output the settled execution reported",
-            "invalid_field":"/args/evidence_id",
+            "invalid_field":invalid_field,
             "constraint":"exact_result_binding",
             "execution_result_digest":execution_result,
             "declared_output_digest":declared,

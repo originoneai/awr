@@ -26,7 +26,7 @@ enum ChainShape {
     DeclaresNothing,
     /// The stored artifact is the reported one but the payload declares a different output_digest.
     DeclaresOther,
-    /// Run 14 page shape: another artifact and no declared output_digest.
+    /// Rounds 1 and 2 of run 14's page: another artifact and no declared output_digest (round 3 was `ArtifactDiffers`).
     ArtifactDiffersAndDeclaresNothing,
 }
 
