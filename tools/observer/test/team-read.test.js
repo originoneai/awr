@@ -483,7 +483,7 @@ test('read adapter registry stays in sync with the service query list (drift gua
   assert.ok(match, 'QUERIES list not found in workstream_read.rs');
   const serviceOps = [...match[1].matchAll(/"([a-z_.]+)"/g)].map((m) => m[1]);
   assert.ok(serviceOps.length > 30, `expected the full service query list, got ${serviceOps.length}`);
-  assert.deepEqual([...READ_DEFERRED_OPS].sort(), ['audit.count', 'audit.export', 'audit.history']);
+  assert.deepEqual([...READ_DEFERRED_OPS].sort(), ['audit.count', 'audit.export', 'audit.history', 'delivery.routes']);
   for (const op of serviceOps) {
     assert.ok(READ_OPS.has(op) || READ_DEFERRED_OPS.has(op),
       `service query ${op} is neither exposed by the read adapter nor explicitly deferred`);

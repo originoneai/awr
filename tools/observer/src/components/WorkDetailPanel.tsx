@@ -143,7 +143,7 @@ function Requirements({ query }: { query: SnapshotQuery }) {
   );
 }
 
-function ReviewOutcomes({ query, roundId }: { query: ReviewQuery; roundId: string | null }) {
+function ReviewOutcomes({ query, roundId, currentRoundId }: { query: ReviewQuery; roundId: string | null; currentRoundId: string | null }) {
   const { t } = useTranslation();
   if (!roundId) {
     return <Empty data-testid="review-round-unavailable" description={t('plan.detail.reviewRoundUnavailable')} />;
@@ -158,6 +158,11 @@ function ReviewOutcomes({ query, roundId }: { query: ReviewQuery; roundId: strin
   }
   return (
     <div data-testid="plan-review">
+      {currentRoundId && roundId !== currentRoundId ? (
+        <Typography.Paragraph type="secondary" data-testid="plan-historical-review">
+          {t('plan.detail.historicalReviewSelected')}
+        </Typography.Paragraph>
+      ) : null}
       <List
         size="small"
         dataSource={review.decisions}
@@ -248,7 +253,11 @@ export function WorkDetailPanel({
     work?.workstream_id ?? '',
     revoked,
   ));
-  const review = useQuery(reviewQueryOptions(work ? project : null, workId, reviewRoundId, revoked));
+  const currentRoundId = snapshot.isSuccess && snapshot.data.result.data.work_id === workId
+    ? snapshot.data.result.data.observation?.collaboration?.review?.id ?? null
+    : null;
+  const selectedRoundId = reviewRoundId ?? currentRoundId;
+  const review = useQuery(reviewQueryOptions(work ? project : null, workId, selectedRoundId, revoked));
   const activity = useQuery(activityQueryOptions(work ? project : null, revoked, workId ?? undefined));
 
   // Only the work-level read decides the whole panel's access: a Forbidden
@@ -287,7 +296,7 @@ export function WorkDetailPanel({
               {
                 key: 'outcomes',
                 label: t('plan.detail.outcomes'),
-                children: <ReviewOutcomes query={review} roundId={reviewRoundId} />,
+                children: <ReviewOutcomes query={review} roundId={selectedRoundId} currentRoundId={currentRoundId} />,
               },
               {
                 key: 'history',
