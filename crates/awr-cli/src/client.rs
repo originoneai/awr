@@ -1,3 +1,4 @@
+use crate::client_dialect::{self, HookDecision, HookDialect, HookEvent, LifecycleEvent};
 use crate::query::QueryProject;
 use awr_context::{BootstrapRequest, bootstrap};
 use awr_core::*;
@@ -9,12 +10,12 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::{Read, Write},
-    path::Path,
+    path::{Component, Path, PathBuf},
 };
 
 #[derive(Debug, Args)]
 pub struct Identity {
-    /// Local hook dialect for the continuity record (`generic`, `codex` or `kimi`). This is not an authenticated MCP client principal.
+    /// Local hook dialect for the continuity record (`generic`, `codex`, `kimi` or `claude`). This is not an authenticated MCP client principal.
     #[arg(long)]
     client: String,
     /// Native host conversation/session ID stored as `ClientBinding.external_session`. Use `--session` on `client bind` to attach it to an existing AWR session.
@@ -60,7 +61,7 @@ pub enum ClientCommand {
         #[arg(long)]
         client: String,
         #[arg(long)]
-        work: String,
+        work: Option<String>,
     },
     /// Preview or install an L2 project-local lifecycle adapter. Currently Codex only; other hosts stay on the L0 generic receiver.
     Install {
@@ -75,12 +76,12 @@ pub enum ClientCommand {
 }
 
 fn validate_identity(client: &str, external: &str) -> Result<()> {
-    if !["codex", "kimi", "generic"].contains(&client)
+    if !["codex", "kimi", "generic", "claude"].contains(&client)
         || external.trim().is_empty()
         || external.len() > 512
     {
         return Err(Error::InvalidInput(
-            "client must be generic, or a documented native dialect (codex or kimi). Other hosts: use --client generic and prefix the conversation ID, e.g. --external-session cursor:<native-id>".into(),
+            "client must be generic, or a documented native dialect (codex, kimi or claude). Other hosts: use --client generic and prefix the conversation ID, e.g. --external-session cursor:<native-id>".into(),
         ));
     }
     Ok(())
@@ -315,63 +316,115 @@ fn new_binding(
     save(&mut db.store, project, binding, false)
 }
 
-fn native_hook(root: &Path, client: &str, work: &str) -> Result<Value> {
+fn native_hook(root: &Path, client: &str, work: Option<&str>) -> Result<Value> {
     let mut bytes = vec![];
     std::io::stdin()
         .take(1024 * 1024 + 1)
         .read_to_end(&mut bytes)?;
-    if bytes.len() > 1024 * 1024 {
-        return Err(Error::InvalidInput("client event exceeds 1 MiB".into()));
-    }
-    let input: Value = serde_json::from_slice(&bytes)
-        .map_err(|_| Error::InvalidInput("invalid client event JSON".into()))?;
-    let field = |name: &str| input.get(name).and_then(Value::as_str).unwrap_or("");
-    let external = field("session_id");
-    validate_identity(client, external)?;
-    let event = field("hook_event_name");
-    if ![
-        "SessionStart",
-        "PreCompact",
-        "PostCompact",
-        "Stop",
-        "SessionEnd",
-        "Interrupt",
-    ]
-    .contains(&event)
-    {
-        return Err(Error::Unsupported(
-            "unsupported client lifecycle event".into(),
-        ));
-    }
-    if !Path::new(field("cwd")).canonicalize()?.starts_with(root) {
+    let dialect = client_dialect::dialect(client)?;
+    // Envelope validation and existing lifecycle failures remain caller-visible.
+    let mut event = dialect.parse(&bytes)?;
+    event.cwd = event.cwd.canonicalize()?;
+    if !event.cwd.starts_with(root) {
         return Err(Error::RuleViolation(
             "client event belongs to a different project".into(),
         ));
     }
-    // An opt-in normalized host envelope, not fields assumed to exist in native hooks.
-    #[derive(serde::Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct CompactionInput {
-        observation: CompactionObservation,
-        #[serde(default)]
-        policy: CompactionPolicy,
+    let (decision, metadata) = process_hook(root, client, work, &event, dialect.as_ref())?;
+    let mut rendered = dialect.render(&decision, &event);
+    debug_assert_eq!(rendered.exit_code, 0);
+    if !metadata.is_null() {
+        let target = rendered
+            .stdout
+            .as_object_mut()
+            .unwrap()
+            .entry("awr")
+            .or_insert_with(|| json!({}));
+        target
+            .as_object_mut()
+            .unwrap()
+            .extend(metadata.as_object().unwrap().clone());
     }
-    let compaction: Option<CompactionInput> = input
-        .get("awr_compaction")
-        .map(|value| {
-            serde_json::from_value(value.clone())
-                .map_err(|_| Error::InvalidInput("invalid awr_compaction host envelope".into()))
-        })
-        .transpose()?;
-    if let Some(c) = &compaction {
-        if event != "PostCompact" {
-            return Err(Error::InvalidInput(
-                "awr_compaction is valid only after PostCompact".into(),
+    Ok(rendered.stdout)
+}
+
+fn gate_failure(error: Error) -> (HookDecision, Value) {
+    eprintln!(
+        "AWR hook continued after a gate error ({}); run awr doctor.",
+        error.code()
+    );
+    (
+        HookDecision::allow(),
+        json!({"internal_error":error.code()}),
+    )
+}
+
+fn process_hook(
+    root: &Path,
+    client: &str,
+    work: Option<&str>,
+    event: &HookEvent,
+    dialect: &dyn HookDialect,
+) -> Result<(HookDecision, Value)> {
+    if event.event == LifecycleEvent::PreToolUse {
+        return Ok(write_gate(root, client, event, dialect).unwrap_or_else(gate_failure));
+    }
+    if event.event == LifecycleEvent::Stop {
+        match completion_gate(root, client, event, dialect, &|_, _, _, _, _| Ok(false)) {
+            Ok(Some(result)) => return Ok(result),
+            Ok(None) => (),
+            Err(error) => return Ok(gate_failure(error)),
+        }
+    }
+    let cached = Store::open_readonly(&crate::source::runtime_dir(root, false)?.join("state.db"))?;
+    let project = cached.project_by_root(root)?;
+    let binding = cached.client_binding(project.id, client, &event.native_session)?;
+    let work = match work {
+        Some(work) => Some(work.to_owned()),
+        None => binding
+            .map(|binding| -> Result<String> {
+                let session = cached.session(project.id, binding.session_id)?;
+                Ok(cached
+                    .work_item_by_id(
+                        project.id,
+                        session.work_item_id.ok_or_else(|| {
+                            Error::InvalidInput("client session has no work".into())
+                        })?,
+                    )?
+                    .item
+                    .meta
+                    .external_key)
+            })
+            .transpose()?,
+    };
+    drop(cached);
+    let Some(work) = work else {
+        if matches!(
+            event.event,
+            LifecycleEvent::SessionStart | LifecycleEvent::PostCompact
+        ) {
+            return Ok((
+                HookDecision::Continue {
+                    context: Some(unbound_context(root, client, event)?),
+                },
+                json!({"bound":false,"checkpoint_saved":false}),
             ));
         }
-        c.observation.validate(now_millis()?)?;
-        c.policy.validate()?;
-    }
+        return Ok((
+            HookDecision::allow(),
+            json!({"bound":false,"checkpoint_saved":false}),
+        ));
+    };
+    let value = lifecycle_hook(root, client, &work, event)?;
+    let context = value["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .map(str::to_owned);
+    Ok((HookDecision::Continue { context }, value["awr"].clone()))
+}
+
+fn lifecycle_hook(root: &Path, client: &str, work: &str, hook: &HookEvent) -> Result<Value> {
+    let external = hook.native_session.as_str();
+    let event = hook.event.name();
     let _lock = lock(root, "clients", &format!("{client}:{external}"))?;
     // Other machines publish while this one is idle, so a session that is
     // starting is the cheapest place to notice it. This runs before the project
@@ -387,13 +440,11 @@ fn native_hook(root: &Path, client: &str, work: &str) -> Result<Value> {
     };
     let mut db = QueryProject::open(root)?;
     let project = db.project.id;
-    let model = if field("model").is_empty() {
-        "not-reported"
-    } else {
-        field("model")
-    };
+    let model = hook.model.as_deref().unwrap_or("not-reported");
     let mut binding = new_binding(root, &mut db, client, external, work, None, None, model)?;
-    let compaction = compaction
+    let compaction = hook
+        .compaction
+        .as_ref()
         .map(|c| {
             let expected_revision = db.store.project(project)?.project_revision;
             awr_runtime::observe_compaction(
@@ -402,8 +453,8 @@ fn native_hook(root: &Path, client: &str, work: &str) -> Result<Value> {
                 &awr_runtime::ObserveCompactionRequest {
                     session: binding.session_id,
                     expected_revision,
-                    observation: c.observation,
-                    policy: c.policy,
+                    observation: c.observation.clone(),
+                    policy: c.policy.clone(),
                 },
             )
         })
@@ -477,18 +528,14 @@ fn native_hook(root: &Path, client: &str, work: &str) -> Result<Value> {
         .iter()
         .map(|s| (&s.id, &s.fingerprint, &s.freshness))
         .collect();
-    let native_key = if !field("turn_id").is_empty() {
-        Some(field("turn_id"))
-    } else {
-        None
-    };
+    let native_key = hook.turn_id.as_deref();
     let basis = json!([
         client,
         external,
         event,
         native_key,
-        field("trigger"),
-        input.get("stop_hook_active"),
+        hook.trigger.as_deref().unwrap_or(""),
+        hook.reported_stop_hook_active,
         binding.progress_revision,
         source_state,
         db.store.client_work_revision(project, binding.session_id)?
@@ -530,6 +577,394 @@ fn native_hook(root: &Path, client: &str, work: &str) -> Result<Value> {
     // A shutdown notification is advisory. Save its evidence; explicit handoff/end still owns
     // releasing claims and ending work sessions, so another active executor is never interrupted.
     Ok(json!({"continue":true,"awr":{"checkpoint_saved":true,"duplicate":false,"binding":binding}}))
+}
+
+fn unbound_context(root: &Path, client: &str, event: &HookEvent) -> Result<String> {
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .arg("--project")
+        .arg(root)
+        .args(["status", "--view", "action"])
+        .env("AWR_LOCAL_WEB", "0")
+        .output()?;
+    if !output.status.success() {
+        return Err(Error::SourceUnavailable(
+            "cannot load the project action view".into(),
+        ));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut end = text.len().min(1536);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    Ok(format!(
+        "{}\nNext: Bind this conversation to selected work: awr client bind --client {} --external-session {} --work <KEY>. To reuse an active AWR session, add --session <SESSION>.",
+        &text[..end],
+        client,
+        shell_quote(&event.native_session)
+    ))
+}
+
+fn gates_enabled() -> bool {
+    std::env::var("AWR_HOOK_GATES").as_deref() != Ok("off")
+}
+
+fn claimed_work(
+    store: &Store,
+    project: &Project,
+    client: &str,
+    external: &str,
+) -> Result<Option<(Session, WorkItem)>> {
+    let Some(binding) = store.client_binding(project.id, client, external)? else {
+        return Ok(None);
+    };
+    let session = store.session(project.id, binding.session_id)?;
+    if session.status != "active" || session.branch_id != project.current_branch_id {
+        return Ok(None);
+    }
+    let Some(work_id) = session.work_item_id else {
+        return Ok(None);
+    };
+    let now = now_millis()?;
+    let claimed = store
+        .session_claims(project.id, session.id)?
+        .iter()
+        .any(|claim| {
+            claim.status == "active"
+                && claim.work_item_id == work_id
+                && claim.released_at.is_none()
+                && claim.expires_at.is_none_or(|expiry| expiry > now)
+        });
+    if !claimed {
+        return Ok(None);
+    }
+    let work = store.work_item_by_id(project.id, work_id)?.item;
+    if matches!(work.status, WorkStatus::Completed | WorkStatus::Cancelled) {
+        return Ok(None);
+    }
+    Ok(Some((session, work)))
+}
+
+/// Resolve existing symlinks before handling `..`, including a not-yet-created leaf.
+fn target_path(cwd: &Path, path: &Path) -> Result<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        cwd.join(path)
+    };
+    let mut resolved = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => (),
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            other => {
+                resolved.push(other);
+                match fs::symlink_metadata(&resolved) {
+                    Ok(meta) if meta.file_type().is_symlink() => {
+                        resolved = resolved.canonicalize()?;
+                    }
+                    Ok(_) => (),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+    }
+    // Canonicalize the existing ancestor as well, so native absolute paths and
+    // project roots use the same platform representation (including Windows prefixes).
+    let mut ancestor = resolved.as_path();
+    let mut suffix = Vec::new();
+    while !ancestor.try_exists()? {
+        suffix.push(
+            ancestor
+                .file_name()
+                .ok_or_else(|| Error::InvalidInput("write target has no existing ancestor".into()))?
+                .to_os_string(),
+        );
+        ancestor = ancestor
+            .parent()
+            .ok_or_else(|| Error::InvalidInput("write target has no existing ancestor".into()))?;
+    }
+    let mut resolved = ancestor.canonicalize()?;
+    for name in suffix.into_iter().rev() {
+        resolved.push(name);
+    }
+    Ok(resolved)
+}
+
+fn hash_key(value: &Value) -> Result<String> {
+    Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(value)?)))
+}
+
+struct GateCandidate {
+    decision: HookDecision,
+    gate: &'static str,
+    delivery_key: String,
+    turn_key: Option<String>,
+    path: Option<String>,
+    source_sha: Option<String>,
+    session: Option<Id>,
+}
+
+fn record_gate(
+    root: &Path,
+    client: &str,
+    event: &HookEvent,
+    dialect: &dyn HookDialect,
+    candidate: GateCandidate,
+) -> Result<(HookDecision, Value)> {
+    // Unsupported decisions are surfaced by the dialect without recording a gate that never ran.
+    if !dialect.supports(&candidate.decision) {
+        return Ok((candidate.decision, json!({})));
+    }
+    let database = crate::source::runtime_dir(root, false)?.join("state.db");
+    let cached = Store::open_readonly(&database)?;
+    let project = cached.project_by_root(root)?;
+    if cached.client_gate_seen(
+        project.id,
+        client,
+        &event.native_session,
+        &candidate.delivery_key,
+        candidate.turn_key.as_deref(),
+    )? {
+        return Ok((HookDecision::allow(), json!({"gate_duplicate":true})));
+    }
+    drop(cached);
+    // No lock file and no writable connection are opened on a pass-through decision.
+    let _lock = lock(
+        root,
+        "clients",
+        &format!("gate:{client}:{}", event.native_session),
+    )?;
+    let mut store = Store::open(&database)?;
+    if store.client_gate_seen(
+        project.id,
+        client,
+        &event.native_session,
+        &candidate.delivery_key,
+        candidate.turn_key.as_deref(),
+    )? {
+        return Ok((HookDecision::allow(), json!({"gate_duplicate":true})));
+    }
+    let mut receipt = EventDraft::new("client.gate", "Returned an opt-in hook decision");
+    receipt.session_id = candidate.session;
+    receipt.branch_id = project.current_branch_id;
+    receipt.payload = json!({"client":client,"external_session":event.native_session,"gate":candidate.gate,"decision":candidate.decision.name(),"reason":candidate.decision.reason(),"path":candidate.path,"delivery_key":candidate.delivery_key,"turn_key":candidate.turn_key,"source_sha":candidate.source_sha});
+    for _ in 0..8 {
+        let revision = store.project(project.id)?.project_revision;
+        match store.record_client_gate(project.id, revision, receipt.clone()) {
+            Ok(saved) => return Ok((candidate.decision, json!({"gate_event_id":saved.id}))),
+            Err(Error::RevisionConflict { .. }) => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(Error::Storage(
+        "project stayed busy while recording a hook decision".into(),
+    ))
+}
+
+fn write_gate(
+    root: &Path,
+    client: &str,
+    event: &HookEvent,
+    dialect: &dyn HookDialect,
+) -> Result<(HookDecision, Value)> {
+    let allow = || Ok((HookDecision::allow(), json!({})));
+    if !gates_enabled() {
+        return allow();
+    }
+    let hooks = awr_source::GatePolicy::load(root)?.hooks;
+    if hooks.write_gate == awr_source::WriteGate::Off {
+        return allow();
+    }
+    let Some(tool) = &event.tool else {
+        return allow();
+    };
+    if !dialect.write_tools().contains(&tool.name.as_str()) {
+        return allow();
+    }
+    let mut paths = Vec::new();
+    for path in &tool.paths {
+        let absolute = target_path(&event.cwd, path)?;
+        if let Ok(relative) = absolute.strip_prefix(root) {
+            if !hooks.is_exempt(relative)? {
+                paths.push(relative.to_owned());
+            }
+        }
+    }
+    if paths.is_empty() {
+        return allow();
+    }
+    let store = Store::open_readonly(&crate::source::runtime_dir(root, false)?.join("state.db"))?;
+    let project = store.project_by_root(root)?;
+    let claimed = claimed_work(&store, &project, client, &event.native_session)?;
+    let (decision, path) = if let Some((_, work)) = &claimed {
+        if !hooks.write_gate_paths {
+            return allow();
+        }
+        let mut outside = None;
+        for path in paths {
+            if !awr_source::hook_work_path_matches(&work.paths, &path)? {
+                outside = Some(path);
+                break;
+            }
+        }
+        let Some(path) = outside else {
+            return allow();
+        };
+        (
+            HookDecision::Ask {
+                reason: format!(
+                    "Target {} is outside the paths declared by {}. Review awr work show {} before writing.",
+                    path.display(),
+                    work.meta.external_key,
+                    work.meta.external_key
+                ),
+            },
+            path,
+        )
+    } else {
+        let reason = format!(
+            "No claimed work for this session. See what to continue: awr status. Then: awr session start --work <KEY> --claim --agent <AGENT> --provider <PROVIDER> --model <MODEL> --expected-revision <REV>. Bind it with awr client bind --client {client} --external-session {} --work <KEY> --session <SESSION>.",
+            shell_quote(&event.native_session)
+        );
+        let decision = match hooks.write_gate {
+            awr_source::WriteGate::Deny => HookDecision::Deny { reason },
+            _ => HookDecision::Ask { reason },
+        };
+        (decision, paths.remove(0))
+    };
+    // A host without turn IDs gets one interruption until saved continuity advances.
+    let binding = store.client_binding(project.id, client, &event.native_session)?;
+    let epoch = match &event.turn_id {
+        Some(turn) => json!(["native", turn]),
+        None => json!([
+            "saved",
+            binding
+                .as_ref()
+                .map(|b| (b.progress_revision, b.checkpoint_id))
+        ]),
+    };
+    let turn_key = hash_key(&json!([
+        client,
+        event.native_session,
+        project.current_branch_id,
+        "write",
+        epoch
+    ]))?;
+    let path = path.to_string_lossy().replace('\\', "/");
+    let delivery_key = hash_key(&json!([turn_key, path, decision.reason()]))?;
+    let session = claimed.as_ref().map(|(s, _)| s.id);
+    drop(store);
+    record_gate(
+        root,
+        client,
+        event,
+        dialect,
+        GateCandidate {
+            decision,
+            gate: "write",
+            delivery_key,
+            turn_key: Some(turn_key),
+            path: Some(path),
+            source_sha: None,
+            session,
+        },
+    )
+}
+
+// The completion gate will be supplied by the checks consumer. Until then production
+// always reports false; tests inject a result without a user-visible bypass switch.
+type CompletionCheck = dyn Fn(&Store, Id, &Session, &WorkItem, &str) -> Result<bool>;
+fn completion_gate(
+    root: &Path,
+    client: &str,
+    event: &HookEvent,
+    dialect: &dyn HookDialect,
+    check: &CompletionCheck,
+) -> Result<Option<(HookDecision, Value)>> {
+    if !gates_enabled() || event.stop_hook_active {
+        return Ok(None);
+    }
+    if !awr_source::GatePolicy::load(root)?
+        .hooks
+        .completion_reminder
+    {
+        return Ok(None);
+    }
+    let store = Store::open_readonly(&crate::source::runtime_dir(root, false)?.join("state.db"))?;
+    let project = store.project_by_root(root)?;
+    let Some((session, work)) = claimed_work(&store, &project, client, &event.native_session)?
+    else {
+        return Ok(None);
+    };
+    if work.status != WorkStatus::InProgress {
+        return Ok(None);
+    }
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--verify", "HEAD"])
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .output()?;
+    let sha = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if !output.status.success() || !is_source_sha(&sha) {
+        return Ok(None);
+    }
+    if !check(&store, project.id, &session, &work, &sha)? {
+        return Ok(None);
+    }
+    let delivery_key = hash_key(&json!([
+        client,
+        event.native_session,
+        "completion",
+        session.id,
+        work.meta.id,
+        sha
+    ]))?;
+    let turn_key = event
+        .turn_id
+        .as_ref()
+        .map(|turn| hash_key(&json!([client, event.native_session, "completion", turn])))
+        .transpose()?;
+    // A repeated Stop must continue into the ordinary checkpoint path.
+    if store.client_gate_seen(
+        project.id,
+        client,
+        &event.native_session,
+        &delivery_key,
+        turn_key.as_deref(),
+    )? {
+        return Ok(None);
+    }
+    let reason = format!(
+        "All checks for {} pass at {}. Complete it: awr work complete {} --session {} --reason <REASON> --input <COMPLETION_INPUT> --expected-revision <REV> --end-session. If it should stay open, tell the user why.",
+        work.meta.external_key, sha, work.meta.external_key, session.id
+    );
+    drop(store);
+    let result = record_gate(
+        root,
+        client,
+        event,
+        dialect,
+        GateCandidate {
+            decision: HookDecision::BlockStop { reason },
+            gate: "completion",
+            delivery_key,
+            turn_key,
+            path: None,
+            source_sha: Some(sha),
+            session: Some(session.id),
+        },
+    )?;
+    if matches!(result.0, HookDecision::Continue { .. }) {
+        return Ok(None);
+    }
+    Ok(Some(result))
 }
 
 fn shell_quote(s: &str) -> String {
@@ -652,7 +1087,7 @@ fn install(root: &Path, client: &str, work: &str, accept: bool) -> Result<Value>
 pub fn run(root: &Path, command: &ClientCommand, json_output: bool) -> Result<()> {
     let root = root.canonicalize()?;
     let mut value = match command {
-        ClientCommand::Hook { client, work } => native_hook(&root, client, work)?,
+        ClientCommand::Hook { client, work } => native_hook(&root, client, work.as_deref())?,
         ClientCommand::Install {
             client,
             work,
@@ -742,8 +1177,227 @@ pub fn run(root: &Path, command: &ClientCommand, json_output: bool) -> Result<()
         }
     };
     if matches!(command, ClientCommand::Hook { .. }) && !json_output {
+        let unsupported = value["awr"]["unsupported_decision"].clone();
         value.as_object_mut().unwrap().remove("awr");
+        if !unsupported.is_null() {
+            value["awr"] = json!({"unsupported_decision":unsupported});
+        }
+        if matches!(command, ClientCommand::Hook { client, .. } if client == "claude")
+            && value == json!({})
+        {
+            return Ok(());
+        }
     }
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client_dialect::{ClaudeDialect, HookDialect};
+    use std::process::Command;
+
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("awr-reminder-{}", Id::new()));
+            fs::create_dir_all(path.join(".awr")).unwrap();
+            let fixture = Self(path.canonicalize().unwrap());
+            for (name, contents) in [
+                (
+                    ".awr/project.toml",
+                    include_str!("../../../examples/basic/project.toml"),
+                ),
+                ("GOALS.md", include_str!("../../../examples/basic/GOALS.md")),
+                ("PLAN.md", include_str!("../../../examples/basic/PLAN.md")),
+                ("RULES.md", include_str!("../../../examples/basic/RULES.md")),
+                (
+                    "work-ledger.yaml",
+                    include_str!("../../../examples/basic/work-ledger.yaml"),
+                ),
+            ] {
+                fs::write(
+                    fixture.0.join(name),
+                    contents.replace("status: ready", "status: in_progress"),
+                )
+                .unwrap();
+            }
+            fs::write(
+                fixture.0.join(".awr/gates.toml"),
+                "version = 1\n[hooks]\ncompletion_reminder = true\n",
+            )
+            .unwrap();
+            // The indexed fixture is synthetic; no repository or real session state is reused.
+            let mut store = Store::open(&fixture.0.join(".awr/state.db")).unwrap();
+            awr_source::index_project(
+                &mut store,
+                &fixture.0,
+                &awr_source::Manifest::load(&fixture.0).unwrap(),
+                false,
+            )
+            .unwrap();
+            let project = store.project_by_root(&fixture.0).unwrap();
+            let session = store
+                .start_session(
+                    project.id,
+                    project.project_revision,
+                    SessionDraft {
+                        work_item_key: Some("EXAMPLE-001".into()),
+                        agent_id: "fixture".into(),
+                        provider: "fixture".into(),
+                        model: "test".into(),
+                        branch_id: None,
+                        claim: true,
+                        claim_ttl_ms: None,
+                    },
+                )
+                .unwrap()
+                .0
+                .session;
+            drop(store);
+            let mut query = QueryProject::open(&fixture.0).unwrap();
+            new_binding(
+                &fixture.0,
+                &mut query,
+                "claude",
+                "fixture-session",
+                "EXAMPLE-001",
+                Some(session.id),
+                None,
+                "test",
+            )
+            .unwrap();
+            drop(query);
+            fixture.git(&["init", "--quiet"]);
+            fixture.commit();
+            fixture
+        }
+        fn git(&self, args: &[&str]) {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&self.0)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        fn commit(&self) {
+            self.git(&[
+                "-c",
+                "user.name=Synthetic Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "Synthetic gate fixture",
+            ]);
+        }
+        fn stop(&self, turn: &str, active: bool) -> HookEvent {
+            ClaudeDialect.parse(&serde_json::to_vec(&json!({"session_id":"fixture-session","hook_event_name":"Stop","cwd":self.0,"turn_id":turn,"stop_hook_active":active})).unwrap()).unwrap()
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn criterion_4_passing_completion_gate_blocks_once_per_commit_then_checkpoints() {
+        let f = Fixture::new();
+        let event = f.stop("turn-one", false);
+        let check = |_: &Store, _: Id, _: &Session, _: &WorkItem, sha: &str| {
+            assert!(is_source_sha(sha));
+            Ok(true)
+        };
+        let (decision, receipt) = completion_gate(&f.0, "claude", &event, &ClaudeDialect, &check)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            ClaudeDialect.render(&decision, &event).stdout["decision"],
+            "block"
+        );
+        assert!(
+            decision
+                .reason()
+                .unwrap()
+                .contains("awr work complete EXAMPLE-001")
+        );
+        assert!(receipt["gate_event_id"].is_string());
+        assert!(
+            completion_gate(
+                &f.0,
+                "claude",
+                &f.stop("turn-two", false),
+                &ClaudeDialect,
+                &check
+            )
+            .unwrap()
+            .is_none()
+        );
+        let (second, metadata) =
+            process_hook(&f.0, "claude", None, &event, &ClaudeDialect).unwrap();
+        assert_eq!(second, HookDecision::allow());
+        assert_eq!(metadata["checkpoint_saved"], true);
+        f.commit();
+        assert!(
+            completion_gate(
+                &f.0,
+                "claude",
+                &f.stop("turn-three", false),
+                &ClaudeDialect,
+                &check
+            )
+            .unwrap()
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn criterion_4_active_stop_and_unsatisfied_checks_never_block() {
+        let f = Fixture::new();
+        assert!(
+            completion_gate(
+                &f.0,
+                "claude",
+                &f.stop("turn-one", true),
+                &ClaudeDialect,
+                &|_, _, _, _, _| panic!("recursive Stop must skip the gate")
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(
+            completion_gate(
+                &f.0,
+                "claude",
+                &f.stop("turn-two", false),
+                &ClaudeDialect,
+                &|_, _, _, _, _| Ok(false)
+            )
+            .unwrap()
+            .is_none()
+        );
+        let store = Store::open_readonly(&f.0.join(".awr/state.db")).unwrap();
+        let project = store.project_by_root(&f.0).unwrap();
+        let gates = store
+            .query_events(
+                project.id,
+                &awr_store::EventQuery {
+                    event_type: Some("client.gate".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(gates.events.is_empty());
+    }
 }

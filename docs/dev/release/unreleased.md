@@ -6,6 +6,15 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
+- Local hook dialects for Claude Code, Codex, Kimi and generic hosts. Claude
+  session starts receive AWR context, including after compaction; unbound
+  conversations receive the action view and a binding command. Optional project
+  write gates ask or deny when a conversation lacks a valid claim, or ask about
+  writes outside its declared work paths. The write check reads existing state
+  without refreshing sources; gate evaluation failures continue with a diagnostic,
+  while existing lifecycle errors retain their behavior.
+  Claude protocol coverage uses simulated events, without a named-version or
+  native-client verification. See [hook decisions](../reference/host-contract.md#hook-decisions).
 - The generic Team read adapter (`POST /api/team/read`) now serves the real `work.next`
   response. Upstream's identity-scoped navigation read carries only
   `{ data, project_revision, protocol_version }` — no scope/snapshot attribution
