@@ -1,0 +1,226 @@
+use serde_json::Value;
+use std::process::{Command, Output};
+
+const HELP: &[u8] = include_bytes!("fixtures/help/help.txt");
+const HELP_FLAG: &[u8] = include_bytes!("fixtures/help/help-flag.txt");
+const WORK_HELP: &[u8] = include_bytes!("fixtures/help/work-help.txt");
+const STATUS_HELP: &[u8] = include_bytes!("fixtures/help/status-help.txt");
+const COMPLETE_HELP: &[u8] = include_bytes!("fixtures/help/work-complete-help.txt");
+
+fn run(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_awr"))
+        .env("AWR_LOCAL_WEB", "0")
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+fn help(args: &[&str]) -> Vec<u8> {
+    let output = run(args);
+    assert!(output.status.success(), "{args:?}: {output:?}");
+    assert!(output.stderr.is_empty(), "{args:?}: {output:?}");
+    output.stdout
+}
+
+#[test]
+fn ac1_default_overviews_are_short_and_point_to_all_commands() {
+    for (args, limit, hint) in [
+        (vec!["--help"], 1536, "awr help all"),
+        (vec!["work", "--help"], 1280, "awr work help all"),
+    ] {
+        let output = help(&args);
+        assert!(output.len() <= limit, "{args:?}: {} bytes", output.len());
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains("Daily work"), "{text}");
+        assert!(text.contains(hint), "{text}");
+    }
+    assert_eq!(help(&[]), help(&["--help"]));
+    assert_eq!(help(&["help"]), help(&["--help"]));
+    assert_eq!(help(&["-h"]), help(&["--help"]));
+    assert_eq!(help(&["work", "help"]), help(&["work", "--help"]));
+    assert_eq!(help(&["help", "work"]), help(&["work", "--help"]));
+}
+
+#[test]
+fn ac2_full_lists_match_the_baseline_line_for_line() {
+    assert_eq!(HELP, HELP_FLAG);
+    assert_eq!(help(&["help", "all"]), HELP);
+    assert_eq!(help(&["work", "help", "all"]), WORK_HELP);
+}
+
+#[test]
+fn ac2_full_list_comparison_detects_an_omitted_command() {
+    let output = help(&["help", "all"]);
+    assert_eq!(output, HELP);
+    let text = String::from_utf8(output).unwrap();
+    let omitted = text
+        .split_inclusive('\n')
+        .filter(|line| !line.starts_with("  status "))
+        .collect::<String>();
+    assert_ne!(omitted.as_bytes(), HELP);
+    assert_eq!(text.lines().count(), omitted.lines().count() + 1);
+}
+
+#[test]
+fn ac3_leaf_help_matches_the_baseline_byte_for_byte() {
+    for (args, baseline) in [
+        (vec!["status", "--help"], STATUS_HELP),
+        (vec!["work", "complete", "--help"], COMPLETE_HELP),
+        (vec!["help", "status"], STATUS_HELP),
+        (vec!["help", "work", "complete"], COMPLETE_HELP),
+        (vec!["work", "help", "complete"], COMPLETE_HELP),
+    ] {
+        assert_eq!(help(&args), baseline, "{args:?}");
+    }
+}
+
+#[test]
+fn ac3_leaf_help_comparison_detects_a_single_byte_change() {
+    for (args, baseline) in [
+        (vec!["status", "--help"], STATUS_HELP),
+        (vec!["work", "complete", "--help"], COMPLETE_HELP),
+    ] {
+        let mut output = help(&args);
+        assert_eq!(output, baseline, "{args:?}");
+        output[0] ^= 1;
+        assert_ne!(output, baseline, "{args:?}");
+    }
+}
+
+#[test]
+fn ac4_planning_groups_list_members_and_short_descriptions() {
+    for (args, members) in [
+        (
+            vec!["help", "planning"],
+            vec![
+                "init",
+                "intake",
+                "source",
+                "batch",
+                "host",
+                "document",
+                "proposal",
+                "organization",
+            ],
+        ),
+        (
+            vec!["work", "help", "planning"],
+            vec!["create", "edit", "graph", "assess"],
+        ),
+    ] {
+        let text = String::from_utf8(help(&args)).unwrap();
+        assert!(text.contains("Planning"), "{text}");
+        for member in members {
+            let line = text
+                .lines()
+                .find(|line| {
+                    line.starts_with("  ") && line.split_whitespace().next() == Some(member)
+                })
+                .unwrap_or_else(|| panic!("missing {member}: {text}"));
+            let description = line.trim_start().strip_prefix(member).unwrap().trim();
+            assert!(!description.is_empty(), "{line}");
+            assert!(description.chars().count() <= 60, "{line}");
+        }
+        assert!(
+            !text
+                .lines()
+                .any(|line| line.split_whitespace().next() == Some("status")),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn ac4_unknown_groups_exit_two_and_list_available_groups() {
+    for (args, groups) in [
+        (
+            vec!["help", "nosuch"],
+            vec![
+                "daily", "planning", "records", "hosts", "runtime", "team", "all",
+            ],
+        ),
+        (
+            vec!["work", "help", "nosuch"],
+            vec![
+                "daily",
+                "planning",
+                "governance",
+                "lifecycle",
+                "recovery",
+                "all",
+            ],
+        ),
+    ] {
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty());
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(error.contains("Available groups:"), "{error}");
+        for group in groups {
+            assert!(error.contains(group), "{error}");
+        }
+    }
+}
+
+#[test]
+fn every_advertised_group_is_available_with_global_options() {
+    for (prefix, groups) in [
+        (
+            vec![],
+            vec!["daily", "planning", "records", "hosts", "runtime", "team"],
+        ),
+        (
+            vec!["work"],
+            vec!["daily", "planning", "governance", "lifecycle", "recovery"],
+        ),
+    ] {
+        for group in groups {
+            let mut args = prefix.clone();
+            args.extend(["help", group]);
+            let expected = help(&args);
+            assert!(!expected.is_empty());
+            args.extend(["--json", "--project", "a-project-that-does-not-exist"]);
+            assert_eq!(help(&args), expected, "{args:?}");
+        }
+    }
+}
+
+#[test]
+fn ac5_usage_errors_remain_invalid_input_json() {
+    for args in [
+        vec!["--json", "work", "show"],
+        vec!["ready", "--limit", "invalid", "--json"],
+        vec!["--json", "work", "ready"],
+    ] {
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty());
+        let error: Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(error["code"], "InvalidInput");
+        assert!(!error["message"].as_str().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn ac5_unknown_group_json_errors_never_fall_back_to_plain_text() {
+    for args in [
+        vec!["--json", "help", "nosuch"],
+        vec!["help", "nosuch", "--json"],
+        vec!["work", "help", "nosuch", "--json"],
+    ] {
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(output.stdout.is_empty());
+        let error: Value = serde_json::from_slice(&output.stderr)
+            .unwrap_or_else(|_| panic!("JSON usage error became plain text: {output:?}"));
+        assert_eq!(error["code"], "InvalidInput");
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap()
+                .contains("Available groups:")
+        );
+    }
+}

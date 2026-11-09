@@ -6,6 +6,9 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
+- Grouped CLI help: `awr --help` and `awr work --help` show daily commands and
+  point to purpose-specific groups. Use `awr help all` or `awr work help all`
+  for the original complete lists; detailed command help keeps its format.
 - The generic Team read adapter (`POST /api/team/read`) now serves the real `work.next`
   response. Upstream's identity-scoped navigation read carries only
   `{ data, project_revision, protocol_version }` — no scope/snapshot attribution

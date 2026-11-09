@@ -1,0 +1,18 @@
+Refresh source projections and summarize current project work
+
+Usage: awr status [OPTIONS]
+
+Options:
+      --project <PROJECT>        [default: .]
+      --queue <QUEUE>            Return one page of current queue items (does not include terminal history) [possible values: all, current, ready, waiting, blocked]
+      --json                     
+      --offset <OFFSET>          [default: 0]
+      --page-size <PAGE_SIZE>    [default: 20]
+      --view <VIEW>              Action is the daily queue; full/summary retain the earlier diagnostic views [default: action] [possible values: action, full, summary]
+      --work <WORK>              Exact work keys in the action/summary scope; repeat to select several
+      --goal <GOAL>              
+      --milestone <MILESTONE>    
+      --branch <BRANCH>          
+      --cached                   Use the last recorded snapshot without refreshing business sources
+      --source-sha <SOURCE_SHA>  Verify completion reports against this explicit full source SHA
+  -h, --help                     Print help

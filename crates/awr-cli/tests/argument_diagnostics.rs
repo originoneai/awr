@@ -206,6 +206,8 @@ fn issue_515_reporter_command_controls_keep_their_admission_behavior() {
                 assert!(output.stderr.is_empty(), "{args:?}");
                 let stdout = String::from_utf8(output.stdout).unwrap();
                 assert!(stdout.contains("Usage:"), "{args:?}: {stdout}");
+                assert!(stdout.contains("Daily work"), "{args:?}: {stdout}");
+                assert!(stdout.contains("awr help all"), "{args:?}: {stdout}");
             }
         }
     }

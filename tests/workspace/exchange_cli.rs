@@ -834,6 +834,13 @@ fn drop_after_untrack_does_not_restore_on_the_peer() {
 
 #[test]
 fn workspace_help_lists_drop() {
+    let group = Command::new(env!("CARGO_BIN_EXE_awr"))
+        .args(["help", "runtime"])
+        .output()
+        .unwrap();
+    assert!(group.status.success());
+    let group = String::from_utf8_lossy(&group.stdout);
+    assert!(group.contains("workspace"), "{group}");
     let out = Command::new(env!("CARGO_BIN_EXE_awr"))
         .args(["workspace", "--help"])
         .output()
