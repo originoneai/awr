@@ -1548,6 +1548,50 @@ async fn prepare_names_the_digest_relation_of_evidence_that_cannot_bind() {
     );
 }
 
+// An already prepared integration holds the target guard. When its evidence stops binding to the execution result, the
+// refusal says so with the revalidation guidance (reject the prepared intent first), not the prepare guidance (AWR-TFQ-016).
+#[tokio::test]
+async fn a_prepared_integration_whose_evidence_stops_binding_gets_the_revalidation_guidance() {
+    let f = setup_integration().await;
+    let p = f.prepared().await;
+    let id = p["integration_id"].as_str().unwrap();
+    let execution: String = f
+        .admin
+        .query_one(
+            "SELECT execution_id FROM awr_team.evidence WHERE id=$1",
+            &[&f.request.evidence_id],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    f.admin
+        .execute(
+            "UPDATE awr_team.executions SET result_digest=$1 WHERE id=$2",
+            &[&"f".repeat(64), &execution],
+        )
+        .await
+        .unwrap();
+    let error = f
+        .store
+        .lease_integration(
+            TENANT,
+            PROJECT,
+            WORKER,
+            f.lease_request("lease-after-drift", id),
+        )
+        .await
+        .unwrap_err();
+    let PgError::EvidenceResultBinding { stage, .. } = &error else {
+        panic!("expected EvidenceResultBinding, got {error:?}");
+    };
+    assert_eq!(*stage, awr_team_pg::BindingStage::Revalidate);
+    assert_eq!(
+        f.guards().await,
+        1,
+        "the prepared intent keeps its target guard until it is rejected"
+    );
+}
+
 #[tokio::test]
 async fn forged_missing_or_caller_declared_eligibility_never_creates_an_intent() {
     let f = setup_integration().await;
