@@ -275,6 +275,9 @@ pub struct AdmissionBinding {
     /// The declared examples and discrimination method, bound as one reviewed set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub examples_fingerprint: Option<String>,
+    /// Required examples' check commands and current file bytes; absent for legacy bindings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oracle_fingerprint: Option<String>,
     /// The effective policy of the owning source.
     pub policy_fingerprint: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -313,6 +316,7 @@ pub fn admission_binding(
             })
             .transpose()?,
         policy_fingerprint: binding_digest(policy)?,
+        oracle_fingerprint: None,
         purpose: definition.map(|d| d.purpose),
         tier: definition.and_then(|d| d.tier),
     })
@@ -333,6 +337,12 @@ impl AdmissionBinding {
         }
         if self.policy_fingerprint != current.policy_fingerprint {
             changed.push("policy");
+        }
+        // A legacy decision never froze an oracle, so only a recorded value is compared.
+        if self.oracle_fingerprint.is_some()
+            && self.oracle_fingerprint != current.oracle_fingerprint
+        {
+            changed.push("oracle");
         }
         changed
     }
@@ -368,6 +378,36 @@ pub struct AdmissionDiagnostic {
     pub detail: String,
 }
 
+/// The baseline obligation of one required, check-bound example at its current oracle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AdmissionBaseline {
+    pub example: String,
+    /// baseline_recorded, baseline_missing, baseline_passed or baseline_inconclusive.
+    pub state: &'static str,
+    pub example_oracle: Option<String>,
+    pub event: Option<Id>,
+    pub log_dir: Option<String>,
+    pub detail: String,
+}
+
+/// Baseline gaps share the existing admission obligation diagnostic and policy mode.
+pub fn baseline_diagnostic(baselines: &[AdmissionBaseline]) -> Option<AdmissionDiagnostic> {
+    let gaps: Vec<_> = baselines
+        .iter()
+        .filter(|baseline| baseline.state != "baseline_recorded")
+        .map(|baseline| {
+            format!(
+                "{} ({}): {}",
+                baseline.state, baseline.example, baseline.detail
+            )
+        })
+        .collect();
+    (!gaps.is_empty()).then(|| AdmissionDiagnostic {
+        code: "admission_obligations_unmet",
+        detail: format!("baseline_recorded obligation: {}", gaps.join("; ")),
+    })
+}
+
 /// Four facts that stay separate: a request or definition is recorded, its intent is adopted,
 /// the work is admitted and the work is completed. None of them implies another.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -390,6 +430,8 @@ pub struct AdmissionStatus {
     pub state: &'static str,
     pub independent_review_required: bool,
     pub diagnostics: Vec<AdmissionDiagnostic>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub baselines: Vec<AdmissionBaseline>,
     pub facts: AdmissionFacts,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current: Option<AdmissionBinding>,
@@ -410,6 +452,7 @@ impl AdmissionStatus {
             state: "not_governed",
             independent_review_required: false,
             diagnostics: vec![],
+            baselines: vec![],
             facts: AdmissionFacts {
                 recorded: false,
                 adopted: false,
@@ -435,6 +478,7 @@ impl AdmissionStatus {
                 code: "admission_policy_invalid",
                 detail: "the admission_policy option of the owning source cannot be used; repair it before claiming".into(),
             }],
+            baselines: vec![],
             facts: AdmissionFacts {
                 recorded: false,
                 adopted: false,
@@ -483,6 +527,7 @@ pub struct AdmissionInputs<'a> {
     pub current: &'a AdmissionBinding,
     pub latest: Option<&'a RecordedAdmission>,
     pub definition: &'a DefinitionSummary,
+    pub baselines: &'a [AdmissionBaseline],
 }
 
 pub fn evaluate_admission(inputs: &AdmissionInputs<'_>) -> AdmissionStatus {
@@ -506,6 +551,7 @@ pub fn evaluate_admission(inputs: &AdmissionInputs<'_>) -> AdmissionStatus {
                 state,
                 independent_review_required: review,
                 diagnostics,
+                baselines: inputs.baselines.to_vec(),
                 facts: facts(admitted),
                 current: Some(inputs.current.clone()),
                 decision_event: inputs.latest.map(|l| l.event),
@@ -580,6 +626,9 @@ pub fn evaluate_admission(inputs: &AdmissionInputs<'_>) -> AdmissionStatus {
             code: "admission_obligations_unmet",
             detail: format!("definition gaps: {}", gaps.join(", ")),
         });
+    }
+    if let Some(diagnostic) = baseline_diagnostic(inputs.baselines) {
+        diagnostics.push(diagnostic);
     }
     status(mode, true, enforced, state, review, diagnostics)
 }

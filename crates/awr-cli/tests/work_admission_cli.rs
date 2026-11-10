@@ -18,6 +18,64 @@ impl Drop for Project {
 }
 
 impl Project {
+    fn bind_checks(&self) {
+        fs::create_dir_all(self.0.join("tests")).unwrap();
+        fs::write(self.0.join("tests/save.rs"), "original test\n").unwrap();
+        fs::write(self.0.join("baseline-mode.txt"), "fail").unwrap();
+        let path = self.0.join("work.yaml");
+        let mut ledger: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        for (index, example) in ledger["work_items"][0]["definition"]["examples"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .enumerate()
+        {
+            example["id"] = json!(format!("save-{index}"));
+            example["check"] = json!({"run": [std::env::current_exe().unwrap().to_str().unwrap(), "--ignored", "--exact", "admission_check_process_fixture"], "files": ["tests/save.rs"]});
+        }
+        fs::write(path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
+        self.reindex();
+    }
+
+    fn baseline_session(&self) -> String {
+        self.ok(&[
+            "session",
+            "start",
+            "--work",
+            "W",
+            "--agent",
+            "baseline-runner",
+            "--provider",
+            "test",
+            "--model",
+            "m",
+            "--expected-revision",
+            &self.revision(),
+        ])["session"]["id"]
+            .as_str()
+            .unwrap()
+            .into()
+    }
+
+    fn baseline(&self, session: &str, example: Option<&str>) -> Value {
+        let revision = self.revision();
+        let mut args = vec![
+            "work",
+            "check",
+            "W",
+            "--phase",
+            "baseline",
+            "--session",
+            session,
+            "--expected-revision",
+            &revision,
+        ];
+        if let Some(example) = example {
+            args.extend(["--example", example]);
+        }
+        self.ok(&args)
+    }
+
     fn new(policy: &str) -> Self {
         let p = Self(std::env::temp_dir().join(format!("awr-work-admission-{}", Id::new())));
         fs::create_dir_all(p.0.join("decisions")).unwrap();
@@ -247,6 +305,182 @@ impl Project {
         assert!(success, "{value}");
         value
     }
+}
+
+#[test]
+#[ignore = "subprocess helper selected by example checks"]
+fn admission_check_process_fixture() {
+    assert_eq!(
+        fs::read_to_string("baseline-mode.txt").unwrap(),
+        "pass",
+        "Saving loses the draft before the change"
+    );
+}
+
+#[test]
+fn failed_baselines_freeze_oracles_and_file_changes_require_new_baselines_and_approval() {
+    let p = Project::new(&format!("mode='governed_enforce'\n{ALL}"));
+    p.bind_checks();
+    let session = p.baseline_session();
+    assert_eq!(p.baseline(&session, None)["met"], true);
+    let reviewer = p.reviewer("reviewer");
+    let approval = p.approve("W", &reviewer, "freeze-oracle");
+    assert!(approval.to_string().contains("oracle_fingerprint"));
+    for command in ["show", "prepare"] {
+        let report = if command == "prepare" {
+            p.ok(&["work", command, "W", "--budget", "9000"])
+        } else {
+            p.ok(&["work", command, "W"])
+        };
+        let admission = if command == "show" {
+            &report["work"]["admission"]
+        } else {
+            &report["admission"]
+        };
+        assert!(
+            admission["current"]["oracle_fingerprint"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:"),
+            "{report}"
+        );
+        assert_eq!(admission["baselines"][0]["state"], "baseline_recorded");
+    }
+    let (claimed, started) = p.claim("W", "worker");
+    assert!(claimed, "{started}");
+    p.ok(&[
+        "work",
+        "release",
+        "W",
+        "--session",
+        started["session"]["id"].as_str().unwrap(),
+        "--claim",
+        started["claim"]["id"].as_str().unwrap(),
+        "--expected-revision",
+        &p.revision(),
+    ]);
+    fs::write(p.0.join("tests/save.rs"), "Original test\n").unwrap();
+    let stale = refused(p.claim("W", "successor"), "admission_stale");
+    assert!(stale.to_string().contains("current oracle"), "{stale}");
+    let error = refused(
+        p.admit(
+            "W",
+            &reviewer,
+            "old-baseline",
+            "approved",
+            json!({"judgment": Project::judgment()}),
+        ),
+        "admission_obligations_unmet",
+    );
+    assert!(error.to_string().contains("baseline_missing"));
+    assert_eq!(p.baseline(&session, None)["met"], true);
+    p.approve("W", &reviewer, "renew-oracle");
+    assert_eq!(
+        p.ok(&["work", "show", "W"])["work"]["admission"]["facts"]["admitted"],
+        true
+    );
+}
+
+#[test]
+fn a_check_that_passes_before_the_change_cannot_be_approved() {
+    let p = Project::new(&format!("mode='governed_enforce'\n{ALL}"));
+    p.bind_checks();
+    fs::write(p.0.join("baseline-mode.txt"), "pass").unwrap();
+    if cfg!(unix) {
+        let path = p.0.join("work.yaml");
+        let mut ledger: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        for example in ledger["work_items"][0]["definition"]["examples"]
+            .as_array_mut()
+            .unwrap()
+        {
+            example["check"]["run"] = json!(["true"]);
+        }
+        fs::write(path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
+        p.reindex();
+    }
+    let session = p.baseline_session();
+    assert_eq!(p.baseline(&session, None)["met"], false);
+    let reviewer = p.reviewer("reviewer");
+    let error = refused(
+        p.admit(
+            "W",
+            &reviewer,
+            "passing-baseline",
+            "approved",
+            json!({"judgment": Project::judgment()}),
+        ),
+        "admission_obligations_unmet",
+    );
+    assert!(error.to_string().contains("baseline_passed"), "{error}");
+    assert!(
+        error.to_string().contains("passed before the change"),
+        "{error}"
+    );
+}
+
+#[test]
+fn observe_shows_missing_baselines_and_allows_claims_while_enforce_refuses_them() {
+    for mode in ["legacy_observe", "governed_enforce"] {
+        let p = Project::new(&format!("mode='{mode}'\n{ALL}"));
+        p.bind_checks();
+        let report = p.ok(&["work", "show", "W"]);
+        assert_eq!(
+            report["work"]["admission"]["baselines"][0]["state"],
+            "baseline_missing"
+        );
+        assert!(
+            report["work"]["admission"]["diagnostics"]
+                .to_string()
+                .contains("admission_obligations_unmet")
+        );
+        let result = p.claim("W", "worker");
+        if mode == "legacy_observe" {
+            assert!(result.0, "{}", result.1);
+        } else {
+            refused(result, "admission_missing");
+        }
+    }
+}
+
+#[test]
+fn adding_a_counterexample_keeps_existing_baselines_and_requires_only_the_new_one() {
+    let p = Project::new(&format!("mode='governed_enforce'\n{ALL}"));
+    p.bind_checks();
+    let session = p.baseline_session();
+    p.baseline(&session, None);
+    let reviewer = p.reviewer("reviewer");
+    p.approve("W", &reviewer, "two-baselines");
+    let path = p.0.join("work.yaml");
+    let mut ledger: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let mut extra = ledger["work_items"][0]["definition"]["examples"][1].clone();
+    extra["id"] = json!("save-extra");
+    extra["given"] = json!("the disk is full");
+    ledger["work_items"][0]["definition"]["examples"]
+        .as_array_mut()
+        .unwrap()
+        .push(extra);
+    fs::write(path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
+    p.reindex();
+    let report = p.ok(&["work", "show", "W"]);
+    let baselines = &report["work"]["admission"]["baselines"];
+    assert_eq!(baselines[0]["state"], "baseline_recorded");
+    assert_eq!(baselines[1]["state"], "baseline_recorded");
+    assert_eq!(baselines[2]["state"], "baseline_missing");
+    let error = refused(
+        p.admit(
+            "W",
+            &reviewer,
+            "missing-counterexample",
+            "approved",
+            json!({"judgment": Project::judgment()}),
+        ),
+        "admission_obligations_unmet",
+    );
+    assert!(error.to_string().contains("save-extra"));
+    let checked = p.baseline(&session, Some("save-extra"));
+    assert_eq!(checked["results"].as_array().unwrap().len(), 1);
+    p.approve("W", &reviewer, "three-baselines");
+    assert!(p.claim("W", "worker").0);
 }
 
 fn gap_codes(report: &Value) -> Vec<String> {

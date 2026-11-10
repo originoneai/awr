@@ -684,6 +684,9 @@ fn governed_acceptance_needs_both_current_admission_and_the_calling_sessions_cla
     d["discrimination"] = json!({"method":"fail_before_pass_after"});
     fs::write(path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
     f.ok(&["source", "reindex"]);
+    f.mode("fail");
+    assert_eq!(f.checked("baseline", &[])["met"], true);
+    f.mode("pass");
     let assessed = f.ok(&["work", "assess", "W"]);
     let request = json!({"work":"W","session":f.session,"expected_revision":f.revision().parse::<u64>().unwrap(),"request_key":"draft-admission","decision":"approved","contract_fingerprint":assessed["contract_fingerprint"],"judgment":{"contribution":"Keep the draft","necessity":"A failed save can lose input","alternatives":"Retain the existing buffer","deliverable":"Safe local saving","exit":"All draft checks pass","responsibility":"draft-storage"}});
     fs::write(

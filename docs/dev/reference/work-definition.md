@@ -174,13 +174,16 @@ fingerprint. Example identifiers and all check fields are included in the exampl
 changing a check argument makes an approved [admission](admission.md) stale. Work `summary` also
 remains part of the contract, while `next_action` and `priority` remain outside it.
 Like [specification coverage](specification-coverage.md), the report uses indexed sources.
+Admission also reads the files of required check-bound examples and freezes their current hashes.
+The effective `fail_before_pass_after` method requires a failed baseline per such example;
+see [check freezing and baselines](admission.md#freeze-checks-and-record-baselines).
 
 ## Limits
 
 - Definitions add no second goal, task, requirement or status system.
 - Semantic adequacy of contribution claims, granularity judgments and examples stays with the author and reviewer.
 - Declaring a definition grants no execution permission and changes no completion rule.
-- These commands neither execute `check.run` nor open `check.files`; `has_check` reports a declared binding.
+- Definition validation reports declared bindings; admission reads `check.files` and `work check` executes `check.run`.
 - File existence, file contents and symlink targets are not checked by definition validation.
 - Older readers reject `id` and `check`; upgrade every reader before adding these keys to a shared ledger.
 - `work create` and `batch change` do not author definitions; edit the authoritative YAML source.

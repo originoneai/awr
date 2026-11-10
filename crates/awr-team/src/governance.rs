@@ -138,6 +138,7 @@ pub fn admission_status(
 ) -> TeamResult<AdmissionStatus> {
     let current = work.binding(policy, contract_hash)?;
     Ok(evaluate_admission(&AdmissionInputs {
+        baselines: &[],
         work: &work.external_key,
         tags: &work.tags,
         completed,

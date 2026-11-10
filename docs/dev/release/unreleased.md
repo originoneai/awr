@@ -173,6 +173,11 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   An already prepared integration whose evidence no longer binds is refused at its lease, dispatch or recheck with guidance
   of its own (reject the prepared intent while it is prepared or leased; inspect it once it is dispatched), and the refusal at
   `review.decide` names `/args/round_id`. No schema change.
+- Admission freezes required examples' check commands and file hashes in `oracle_fingerprint`.
+  Changed or unreadable check files make a frozen approval stale. The effective
+  `fail_before_pass_after` method requires a failed baseline for each required check-bound
+  example before governed approval; observation mode reports gaps. Per-example baselines remain
+  current when another example is added, and legacy bindings retain their original comparison rules.
 - Evidence for a workspace-settled execution is checked against the execution's reported result when a review
   round is bound to it, not only at completion and integration. `review.open` and an approving `review.decide`
   refuse it with HTTP 409 `EvidenceInvalid` when the `payload.output_digest` it declares or the sha256 of its stored
