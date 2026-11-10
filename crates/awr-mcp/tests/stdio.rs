@@ -18,10 +18,54 @@ fn quickstart_installation(page: &str) -> bool {
     let Some(step) = page.split("### 3. ").nth(1) else {
         return false;
     };
-    let step = step.split("\n### ").next().unwrap();
-    step.contains("client install --client codex\n")
-        && step.contains("client install --client codex --accept --expected-preview PREVIEW_SHA256")
-        && !step.lines().any(|line| line.trim_start().starts_with('>'))
+    let step = step.split("\n### ").next().unwrap().replace("\\\n", " ");
+    if step.lines().any(|line| line.trim_start().starts_with('>')) {
+        return false;
+    }
+    let mut previewed = false;
+    for command in step
+        .lines()
+        .filter_map(|line| line.split_once("client install --client codex"))
+        .map(|(_, arguments)| arguments)
+        .filter(|arguments| {
+            arguments
+                .chars()
+                .next()
+                .is_none_or(|value| value.is_whitespace() || value == ')')
+        })
+    {
+        let arguments: Vec<_> = command.split_whitespace().collect();
+        if arguments.contains(&"--accept") {
+            let fingerprint = arguments
+                .windows(2)
+                .find(|pair| pair[0] == "--expected-preview")
+                .map(|pair| pair[1]);
+            return previewed && fingerprint.is_some_and(documented_preview_argument);
+        }
+        previewed = true;
+    }
+    false
+}
+
+fn documented_preview_argument(argument: &str) -> bool {
+    let argument = argument
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(argument);
+    if argument == "PREVIEW_SHA256" {
+        return true;
+    }
+    let Some(name) = argument.strip_prefix('$') else {
+        return false;
+    };
+    let name = name
+        .strip_prefix('{')
+        .and_then(|value| value.strip_suffix('}'))
+        .unwrap_or(name);
+    !name.is_empty()
+        && name.chars().enumerate().all(|(index, value)| {
+            value == '_' || value.is_ascii_alphabetic() || (index > 0 && value.is_ascii_digit())
+        })
 }
 
 fn fallback_agreement(page: &str) -> String {
@@ -80,6 +124,39 @@ fn quickstart_check_rejects_pasted_agreements_and_unreviewed_installation() {
     assert!(!quickstart_installation(&format!(
         "### 3. Install the adapter\n{accept}"
     )));
+}
+
+#[test]
+fn quickstart_check_accepts_captured_fingerprints_and_line_continuations() {
+    let page = "### 3. Install the adapter\n\
+PREVIEW=$(awr --json client install --client codex)\n\
+FINGERPRINT=$(printf '%s' \"$PREVIEW\" | jq -er '.preview_fingerprint')\n\
+awr client install --client codex --accept \\\n+  --expected-preview \"$FINGERPRINT\"\n";
+    assert!(quickstart_installation(page));
+}
+
+#[test]
+fn quickstart_check_requires_preview_before_accept_and_a_fingerprint_value() {
+    let preview = "awr client install --client codex\n";
+    let accept = "awr client install --client codex --accept --expected-preview PREVIEW_SHA256\n";
+    assert!(!quickstart_installation(&format!(
+        "### 3. Install the adapter\n{accept}{preview}"
+    )));
+    let invalid_preview = preview.replace("codex", "codex-extra");
+    assert!(!quickstart_installation(&format!(
+        "### 3. Install the adapter\n{invalid_preview}{accept}"
+    )));
+    for accept in [
+        "awr client install --client codex --accept\n",
+        "awr client install --client codex --accept --expected-preview\n",
+        "awr client install --client codex --accept --expected-preview --accept\n",
+        "awr client install --client codex --accept --expected-preview NOT_A_FINGERPRINT\n",
+        "awr client install --client codex --accept --expected-preview '$FINGERPRINT'\n",
+    ] {
+        assert!(!quickstart_installation(&format!(
+            "### 3. Install the adapter\n{preview}{accept}"
+        )));
+    }
 }
 
 #[tokio::test]

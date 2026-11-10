@@ -99,15 +99,21 @@ the report's ordered `actions` tell you what to add to your source files.
 Use a [current source build](../../CONTRIBUTING.md) for these installers. Preview
 the Codex adapter for the initialized project:
 
+<!-- doc-test: install-preview -->
 ```sh
-awr --project "$AWR_PROJECT" client install --client codex
+AWR_INSTALL_PREVIEW=$(awr --project "$AWR_PROJECT" --json client install --client codex)
+printf '%s\n' "$AWR_INSTALL_PREVIEW"
 ```
+<!-- expect: preview_fingerprint -->
 
-Review `configuration`, `path` and `preview_fingerprint`. Replace `PREVIEW_SHA256`
-with the returned fingerprint, then accept the same preview:
+Review `configuration`, `path` and `preview_fingerprint`. Capture the returned
+fingerprint, then accept the same preview:
 
+<!-- doc-test: install-accept -->
 ```sh
-awr --project "$AWR_PROJECT" client install --client codex --accept --expected-preview PREVIEW_SHA256
+AWR_INSTALL_FINGERPRINT=$(printf '%s\n' "$AWR_INSTALL_PREVIEW" | jq -er '.preview_fingerprint')
+awr --project "$AWR_PROJECT" client install --client codex --accept \
+  --expected-preview "$AWR_INSTALL_FINGERPRINT"
 awr --project "$AWR_PROJECT" client status --client codex
 ```
 

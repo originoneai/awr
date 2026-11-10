@@ -45,6 +45,12 @@ class DocCommandTests(unittest.TestCase):
         self.assertGreaterEqual(result['blocks'], 20)
         self.assertLess(time.monotonic() - started, 60)
 
+    def test_quickstart_installer_preview_and_accept_blocks_are_marked(self):
+        blocks = {block.name: block.text for block in runner.extract_blocks(runner.DOCUMENTS[0])}
+        for name in ('install-preview', 'install-accept'):
+            self.assertIn(name, blocks)
+            self.assertIn('client install', blocks[name])
+
     def test_invalid_document_flag_reports_file_and_command_line(self):
         source = runner.DOCUMENTS[0].read_text(encoding='utf-8')
         self.assertIn('context compile --work', source)
