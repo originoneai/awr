@@ -1,19 +1,21 @@
 # Work definitions
 
-A work definition records, next to the work item in a YAML ledger, what the work is for and what
-must be settled before it is built: the adopted intent, the outcome it advances, who is
-responsible, and how its tests will show they detect a wrong implementation. It reuses the
-existing goals, success criteria, acceptance, specification references, decisions and dependencies;
-it adds no goal, task or requirement system and no second status. It is optional. A work item
-without a definition is projected, shown and prepared exactly as before.
+A work definition records a work item's purpose, adopted intent, contribution, responsibility and
+acceptance examples in its YAML ledger. Optional example identifiers and check bindings connect
+each example to a command and a file list. Definition reports show the declared obligations,
+reference currency and whether each example has a check.
 
-The check is deterministic. It verifies that references resolve, that pinned versions are current
-and that the obligations of the declared purpose are present. It does not judge whether a
-contribution claim, a granularity judgment or an example is adequate; those stay attributed
-judgments of the author and reviewer. Declaring a definition grants no execution permission and
-changes no completion rule.
+## Use it
 
-## Declare one
+Check support in each reader, then inspect a work item's definition:
+
+```sh
+awr capabilities --require definition.example_checks
+awr work show SAVE-1 --json
+awr work prepare SAVE-1 --json
+```
+
+Author the definition beside the work item in its source ledger:
 
 ```yaml
 work_items:
@@ -47,10 +49,25 @@ work_items:
       evidence_method: Targeted tests compared before and after the change
       failure_recovery: A failed save keeps the previous data
       examples:
-        - {criterion: "Saving failure keeps the user's input", kind: positive,
-           given: the storage is read-only, when: the user saves, then: the input is still shown}
-        - {criterion: "Saving failure keeps the user's input", kind: negative,
-           given: the storage is read-only, when: the user saves, then: success is never reported}
+        - id: draft-remains
+          criterion: "Saving failure keeps the user's input"
+          kind: positive
+          given: the storage is read-only
+          when: the user saves
+          then: the input is still shown
+          check:
+            run: [cargo, test, -p, storage, draft_remains]
+            files: [crates/storage/tests/save.rs]
+        - id: success-withheld
+          criterion: "Saving failure keeps the user's input"
+          kind: negative
+          given: the storage is read-only
+          when: the user saves
+          then: success is never reported
+          check:
+            run: [cargo, test, -p, storage, success_withheld]
+            files: [crates/storage/tests/save.rs]
+            timeout_seconds: 300
       discrimination: {method: fail_before_pass_after}   # or diff_mutation, justified_alternative
       side_line:                      # optional: work spawned from another line (needs a parent)
         return_condition: The failure modes are listed and reviewed
@@ -64,20 +81,32 @@ work_items:
         active_effort_minutes: 240
 ```
 
-Only YAML ledgers support the field; a Markdown ledger rejects it with rule `ledger.definition`.
-The shape is strict: unknown fields are refused, every list holds at most 64 entries, text is
-nonblank and at most 4096 bytes, and the whole record stays within 64 KiB. Text is screened like
-other public content, so it must not contain secret values. User decisions and sourced facts need
-a decision key and a `sha256:` fingerprint; assumptions and suggestions are kept as such and are
-never treated as adopted facts. The first version is authored by editing the source; `work
-create` and `batch change` do not write it.
+## How it behaves
 
-## What is checked
+The deterministic check verifies reference resolution, pinned versions and the obligations of the
+declared purpose. Definitions reuse existing goals, success criteria, acceptance, specification
+references, decisions and dependencies. Work without a definition keeps its existing projection,
+display and preparation behavior. Legacy examples keep `id` and `check` absent when serialized.
+
+YAML ledgers support definitions; Markdown ledgers reject them with rule `ledger.definition`.
+Unknown definition, example and check fields are rejected. General lists hold at most 64 entries,
+descriptive text is nonblank and at most 4096 bytes, and the whole record stays within 64 KiB.
+Public-content screening applies to the complete definition. User decisions and sourced facts need
+a decision key and a `sha256:` fingerprint; assumptions and suggestions are kept as such and are
+never treated as adopted facts.
+
+| Example field | Rule |
+| --- | --- |
+| `id` | Optional; matches `[a-z0-9][a-z0-9-]{0,31}` and is unique within the definition. Required when a check is declared. |
+| `check.run` | An argument array with 1–64 entries, each at most 1024 bytes. It declares the command directly, with the project root as its working directory. |
+| `check.files` | 1–32 project-relative file paths. Parent components (`..`), absolute paths and the root `.awr` directory are rejected; both path separators are checked. |
+| `check.timeout_seconds` | Optional timeout budget of 1–7200 seconds; the default budget is 600 seconds. |
 
 `awr work show WORK` and `awr work prepare WORK` (and `awr_work_get`, `awr_work_prepare`) add a
 `definition` block only when one is declared. It lists each obligation as `satisfied`, `missing`,
 `unknown`, `stale` or `not_applicable`, a list of `gaps` that keeps the reason, and informational
-`notes`. `state` is `complete` or `gaps`.
+`notes`. `state` is `complete` or `gaps`. The `examples` array contains up to 64 summaries in source
+order, each with `id` (null when absent), `kind`, `criterion` and `has_check`.
 
 | Purpose | Obligations |
 | --- | --- |
@@ -97,6 +126,8 @@ create` and `batch change` do not write it.
 | `deliverable_missing`, `evidence_method_missing`, `failure_recovery_missing` | the corresponding statement is absent |
 | `acceptance_missing` | the work states no acceptance criterion, so nothing observable can be asserted |
 | `examples_missing`, `example_criterion_unknown` | a required criterion lacks a positive and a negative example, or an example names text that is not an acceptance criterion |
+| `example_id_missing` | an example declares a check without an identifier |
+| `example_id_duplicate` | an identifier repeats within the definition |
 | `discrimination_missing` | no method says how the tests will show they detect a wrong implementation |
 | `tier_conflicts_with_specification` | the work is marked required while every specification item it references is declared future |
 | `inherits_not_found` | the inherited work declares no definition |
@@ -109,9 +140,8 @@ assertions are the work's acceptance criteria (the examples refine them), and th
 its dependency links. A work without dependencies reports `prerequisites` as `not_applicable`; that
 is never a gap, and unfinished prerequisites stay the business of the readiness rules.
 
-The report reads project-wide facts, so shared workstream grants never receive it: for a project
-that uses workstreams, the shared service refuses `awr_work_get` and `awr_work_prepare` and points
-to `awr_workstream`, which carries no definition.
+The note `example_check_absent` identifies each example for a required criterion that has no check.
+It leaves the definition's `state` unchanged and adds no gap by itself.
 
 An outline keeps distant work visible without pretending it is ready: it owes only its purpose and the
 outcome it contributes to, plus a trigger that says when to elaborate it, and its constraints are kept
@@ -131,7 +161,7 @@ reference bound to exactly that criterion points at a `future` item; later crite
 examples or discrimination method. An empty or inherited obligation is satisfied only while the
 inherited definition is itself current.
 
-## Relation to other checks
+### Relation to other checks
 
 A source that opts in to [plan admission](admission.md) reads this report for the entry obligations
 of the declared purpose: a definition with gaps blocks admission, and work that declares none is
@@ -140,6 +170,27 @@ judged as an implementation.
 A declared definition is part of the management contract fingerprint (see
 [management intensity](management.md)): editing it requires a new assessment, while progress,
 next-action and evidence changes do not. Work without a definition keeps its existing
-fingerprint. Like [specification coverage](specification-coverage.md), the check reads indexed
-sources and never writes; a clean report does not establish that the work is correct, only that
-its declared obligations are present and current.
+fingerprint. Example identifiers and all check fields are included in the examples fingerprint;
+changing a check argument makes an approved [admission](admission.md) stale. Work `summary` also
+remains part of the contract, while `next_action` and `priority` remain outside it.
+Like [specification coverage](specification-coverage.md), the report uses indexed sources.
+
+## Limits
+
+- Definitions add no second goal, task, requirement or status system.
+- Semantic adequacy of contribution claims, granularity judgments and examples stays with the author and reviewer.
+- Declaring a definition grants no execution permission and changes no completion rule.
+- These commands neither execute `check.run` nor open `check.files`; `has_check` reports a declared binding.
+- File existence, file contents and symlink targets are not checked by definition validation.
+- Older readers reject `id` and `check`; upgrade every reader before adding these keys to a shared ledger.
+- `work create` and `batch change` do not author definitions; edit the authoritative YAML source.
+- Shared workstream grants cannot read this project-wide report; use `awr_workstream`, which carries no definition.
+- A complete report establishes present, current obligations; it does not establish correct work or accepted delivery.
+
+## Code and tests
+
+- Model and report: `crates/awr-core/src/work_definition.rs`.
+- Definition rules: `crates/awr-core/tests/work_definition.rs`.
+- Source parsing: `crates/awr-source/tests/ledger_definition.rs`.
+- Admission bindings: `crates/awr-runtime/tests/admission.rs`.
+- CLI reports and capability negotiation: `crates/awr-cli/tests/work_definition_cli.rs`.

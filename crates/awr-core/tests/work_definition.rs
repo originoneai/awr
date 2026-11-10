@@ -125,6 +125,232 @@ fn a_definition_that_meets_every_obligation_is_complete() {
     assert_eq!(report.effective_tier, Some(DeliveryTier::Required));
 }
 
+fn example_check() -> Value {
+    json!({"run": ["storage-check", "--case", "keeps-input"], "files": ["tests/save.rs"]})
+}
+
+#[test]
+fn checked_examples_are_listed_in_the_definition_report() {
+    let mut world = World::new();
+    world.change(|v| {
+        for (example, id) in v["examples"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .zip(["keeps-input", "never-reports-success"])
+        {
+            example["id"] = json!(id);
+            example["check"] = example_check();
+        }
+    });
+    world.works["W"]
+        .definition
+        .as_ref()
+        .unwrap()
+        .validate()
+        .unwrap();
+    let report = world.report();
+    assert_eq!(report.state, "complete");
+    assert_eq!(
+        serde_json::to_value(report).unwrap()["examples"],
+        json!([
+            {"id": "keeps-input", "kind": "positive", "criterion": ACC, "has_check": true},
+            {"id": "never-reports-success", "kind": "negative", "criterion": ACC, "has_check": true}
+        ])
+    );
+}
+
+#[test]
+fn duplicate_example_ids_have_an_explicit_gap_code() {
+    let mut world = World::new();
+    world.change(|v| {
+        v["examples"][0]["id"] = json!("same-id");
+        v["examples"][1]["id"] = json!("same-id");
+    });
+    let report = world.report();
+    assert_eq!(codes(&report), vec!["example_id_duplicate"]);
+    assert_eq!(report.state, "gaps");
+}
+
+#[test]
+fn a_check_without_an_example_id_has_an_explicit_gap_code() {
+    let mut world = World::new();
+    world.change(|v| v["examples"][0]["check"] = example_check());
+    world.works["W"]
+        .definition
+        .as_ref()
+        .unwrap()
+        .validate()
+        .unwrap();
+    let report = world.report();
+    assert_eq!(codes(&report), vec!["example_id_missing"]);
+    assert_eq!(report.state, "gaps");
+}
+
+#[test]
+fn absent_example_checks_are_notes_without_definition_gaps() {
+    let report = World::new().report();
+    assert_eq!(report.state, "complete");
+    assert!(report.gaps.is_empty());
+    assert_eq!(
+        report.notes.iter().map(|n| n.code).collect::<Vec<_>>(),
+        vec!["example_check_absent", "example_check_absent"]
+    );
+    let mut later = World::new();
+    later.change(|v| v["tier"] = json!("later"));
+    assert!(later.report().notes.is_empty());
+}
+
+#[test]
+fn legacy_examples_keep_optional_fields_absent() {
+    let value = implementation();
+    let definition = parse(&value);
+    definition.validate().unwrap();
+    let encoded = serde_json::to_value(&definition).unwrap();
+    assert_eq!(encoded["examples"], value["examples"]);
+    for example in encoded["examples"].as_array().unwrap() {
+        assert!(example.get("id").is_none());
+        assert!(example.get("check").is_none());
+    }
+    let report = serde_json::to_value(World::new().report()).unwrap();
+    assert!(
+        report["examples"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| { e["id"].is_null() && e["has_check"] == false })
+    );
+}
+
+#[test]
+fn definition_example_summaries_are_empty_when_absent_and_bounded_when_present() {
+    let mut world = World::new();
+    world.set("W", "api", WorkStatus::Ready, None);
+    assert_eq!(
+        serde_json::to_value(world.report()).unwrap()["examples"],
+        json!([])
+    );
+    let mut value = implementation();
+    value["examples"] = json!(
+        (0..65)
+            .map(|i| {
+                let mut example = value["examples"][0].clone();
+                example["id"] = json!(format!("case-{i}"));
+                example
+            })
+            .collect::<Vec<_>>()
+    );
+    assert!(parse(&value).validate().is_err());
+    // The pure report also stays bounded if a caller bypasses source validation.
+    world.set("W", "api", WorkStatus::Ready, Some(value));
+    assert_eq!(
+        serde_json::to_value(world.report()).unwrap()["examples"]
+            .as_array()
+            .unwrap()
+            .len(),
+        64
+    );
+}
+
+#[test]
+fn example_ids_enforce_the_character_set_and_byte_limit() {
+    for id in ["a".to_string(), "0".into(), "case-9".into(), "a".repeat(32)] {
+        let mut value = implementation();
+        value["examples"][0]["id"] = json!(id);
+        parse(&value).validate().unwrap();
+    }
+    for id in [
+        "".to_string(),
+        "-case".into(),
+        "Case".into(),
+        "case_1".into(),
+        " a".into(),
+        "é".into(),
+        "a".repeat(33),
+    ] {
+        let mut value = implementation();
+        value["examples"][0]["id"] = json!(id);
+        let error = parse(&value).validate().unwrap_err().to_string();
+        assert!(error.contains("examples[0].id"), "{error}");
+    }
+}
+
+#[test]
+fn example_checks_accept_exact_argument_file_and_timeout_bounds() {
+    for check in [
+        example_check(),
+        json!({"run": ["x"], "files": ["tests/file..rs"], "timeout_seconds": 1}),
+        json!({"run": vec!["x"; 64], "files": vec!["tests/save.rs"; 32], "timeout_seconds": 7200}),
+        json!({"run": ["x".repeat(1024)], "files": ["tests/save.rs"]}),
+        json!({"run": ["é".repeat(512)], "files": ["./tests/save.rs"]}),
+        json!({"run": ["storage-check", "", "a b", "; literal"], "files": ["tests/.awr/save.rs"]}),
+    ] {
+        let mut value = implementation();
+        value["examples"][0]["id"] = json!("keeps-input");
+        value["examples"][0]["check"] = check;
+        parse(&value).validate().unwrap();
+    }
+}
+
+#[test]
+fn invalid_example_checks_name_the_field_without_echoing_values() {
+    let mut cases = vec![
+        ("run", json!([])),
+        ("run", json!(vec!["x"; 65])),
+        ("run", json!(["x".repeat(1025)])),
+        ("run", json!(["é".repeat(513)])),
+        ("files", json!([])),
+        ("files", json!(vec!["tests/save.rs"; 33])),
+        ("timeout_seconds", json!(0)),
+        ("timeout_seconds", json!(7201)),
+    ];
+    for path in [
+        "",
+        ".",
+        "../PRIVATE-PATH-77",
+        "tests/../save.rs",
+        "tests\\..\\save.rs",
+        "/absolute.rs",
+        "C:\\save.rs",
+        "\\\\server\\save.rs",
+        ".awr/state.db",
+        "./.awr/state.db",
+        ".awr",
+        ".AWR/state.db",
+        "tests/",
+    ] {
+        cases.push(("files", json!([path])));
+    }
+    for (field, invalid) in cases {
+        let mut value = implementation();
+        value["examples"][0]["id"] = json!("keeps-input");
+        value["examples"][0]["check"] = example_check();
+        value["examples"][0]["check"][field] = invalid;
+        let error = parse(&value).validate().unwrap_err().to_string();
+        assert!(
+            error.contains(&format!("examples[0].check.{field}")),
+            "{error}"
+        );
+        assert!(!error.contains("PRIVATE-PATH-77"), "{error}");
+    }
+}
+
+#[test]
+fn examples_and_checks_reject_unknown_fields() {
+    for nested in [false, true] {
+        let mut value = implementation();
+        value["examples"][0]["id"] = json!("keeps-input");
+        value["examples"][0]["check"] = example_check();
+        let target = if nested {
+            &mut value["examples"][0]["check"]
+        } else {
+            &mut value["examples"][0]
+        };
+        target["unknown"] = json!(true);
+        assert!(serde_json::from_value::<WorkDefinition>(value).is_err());
+    }
+}
+
 #[test]
 fn a_minimal_definition_validates_and_unknown_or_invalid_values_do_not() {
     let minimal = json!({"version": 1, "purpose": "research"});
