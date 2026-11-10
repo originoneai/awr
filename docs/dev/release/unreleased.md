@@ -196,6 +196,16 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Fixed
 
+- `review.inspect` of an open round now ends its reading guidance with the reviewer's next step:
+  read what the delivery service observed in `delivery.neutral.inspect`, then record the decision
+  with `review.decide` (approve or reject, with a reason that states what was verified and what
+  could not be). A source revision that the reviewer cannot verify (no source locator disclosed)
+  is a limit to state in the decision, not a reason to withhold it; approval still integrates and
+  delivers nothing. For a candidate without a source revision the note says that
+  `delivery.integration.prepare` refuses it. Before, the reviewer was told only that the revision
+  needs an authorized-channel check "else version unverified", and a careful reviewer agent read
+  the review as blocked and made no decision. The neutral inspection and decided rounds are
+  unchanged (AWR-TFQ-019).
 - The next-action guidance after a repository target moved no longer tells the developer to
   update against the current target, or to rebuild, "in a new admitted execution"
   (AWR-TF-014AN). It appeared in the integration inspection of a rejected integration, in the work

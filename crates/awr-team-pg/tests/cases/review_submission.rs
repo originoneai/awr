@@ -831,6 +831,18 @@ async fn review_needs_every_bound_manifest_artifact_and_returns_exact_authorized
         )
     );
     assert!(note.contains("else version unverified"));
+    assert!(note.contains(
+        "The independent reviewer then records the decision with review.decide (approve or reject, with a reason that states what was verified and what could not be"
+    ));
+    assert!(note.contains(
+        "To check the source, read what the delivery service observed in delivery.neutral.inspect (the candidate, its adapter-observed facts and required checks)"
+    ));
+    assert!(note.contains("on governed work a rejection also needs a blocking finding"));
+    assert!(
+        note.contains("a limit to state in that reason, not a reason to withhold the decision")
+    );
+    assert!(note.contains("approval does not integrate or deliver anything"));
+    assert!(note.contains("(delivery.integration.prepare, then delivery.finalize)"));
     assert!(!note.contains("the revision is immutable"));
     assert!(
         note.contains("If segment_query exists, join contiguous pages; verify full length/sha256")
@@ -866,6 +878,23 @@ async fn review_needs_every_bound_manifest_artifact_and_returns_exact_authorized
     .await;
     assert_eq!(approved["state"], "approved");
     assert_eq!(approved["task_complete"], false);
+    // The decision step belongs to the reviewer of an open round: the same note reaches authors,
+    // supervisors and deliverers through the neutral inspection, and a decided round has nothing
+    // left to decide. Both keep the original cautions.
+    let mut neutral = query("delivery.neutral.inspect");
+    neutral.work_id = Some("a".into());
+    let neutral = reads.query(TENANT, PROJECT, A, neutral).await.unwrap();
+    let neutral_note = neutral["data"]["submission"]["guidance"]["action"]["note"]
+        .as_str()
+        .unwrap();
+    assert!(neutral_note.contains("authorized-channel immutability + candidate-binding check"));
+    assert!(!neutral_note.contains("review.decide"));
+    let decided = inspect_round(&reads, &round).await;
+    let decided_note = decided["submission"]["guidance"]["action"]["note"]
+        .as_str()
+        .unwrap();
+    assert!(decided_note.contains("authorized-channel immutability + candidate-binding check"));
+    assert!(!decided_note.contains("review.decide"));
     let mut limited = query("review.inspect");
     limited.work_id = Some("a".into());
     limited.review_round_id = Some(round["round_id"].as_str().unwrap().into());
@@ -906,6 +935,14 @@ async fn review_without_source_revision_requires_a_verifiable_binding_instead_of
     );
     let note = submission["guidance"]["action"]["note"].as_str().unwrap();
     assert!(note.contains("Extra content lacks submission.source_revision: do not guess"));
+    assert!(note.contains(
+        "The independent reviewer then records the decision with review.decide (approve or reject, with a reason that states what was verified and what could not be"
+    ));
+    assert!(note.contains(
+        "A candidate without a source revision cannot be integrated (delivery.integration.prepare refuses it)"
+    ));
+    assert!(note.contains("approval does not integrate or deliver anything"));
+    assert!(!note.contains("a limit to state in that reason"));
     assert!(
         note.contains("an authorized, verifiable binding shows immutability + candidate binding")
     );
@@ -1081,6 +1118,25 @@ async fn review_source_navigation_is_managed_versioned_exact_and_fail_closed() {
             .get("url")
             .is_none()
     );
+    // The state a local Git project is in: a Git revision, no source locator. The reviewer is told
+    // to decide and to state what could not be verified, not to wait for a check it cannot run.
+    let cleared_note = cleared["submission"]["guidance"]["action"]["note"]
+        .as_str()
+        .unwrap();
+    assert!(cleared_note.contains("authorized-channel immutability + candidate-binding check"));
+    assert!(
+        cleared_note
+            .contains("a limit to state in that reason, not a reason to withhold the decision")
+    );
+    let approved_without_locator = run(
+        &reads,
+        REVIEWER_TOKEN,
+        "approve-without-locator",
+        "review.decide",
+        decision(&round, "approve"),
+    )
+    .await;
+    assert_eq!(approved_without_locator["state"], "approved");
 
     let mut unauthorized = query("review.inspect");
     unauthorized.work_id = Some("a".into());
@@ -1177,6 +1233,18 @@ async fn opaque_artifact_revision_still_requires_immutability_and_candidate_bind
     let note = submission["guidance"]["action"]["note"].as_str().unwrap();
     assert!(note.contains("authorized-channel immutability + candidate-binding check"));
     assert!(note.contains("else version unverified"));
+    assert!(note.contains(
+        "The independent reviewer then records the decision with review.decide (approve or reject, with a reason that states what was verified and what could not be"
+    ));
+    assert!(note.contains(
+        "To check the source, read what the delivery service observed in delivery.neutral.inspect (the candidate, its adapter-observed facts and required checks)"
+    ));
+    assert!(note.contains("on governed work a rejection also needs a blocking finding"));
+    assert!(
+        note.contains("a limit to state in that reason, not a reason to withhold the decision")
+    );
+    assert!(note.contains("approval does not integrate or deliver anything"));
+    assert!(note.contains("(delivery.integration.prepare, then delivery.finalize)"));
     assert!(!note.contains("the revision is immutable"));
     assert!(!submission.to_string().contains("git-blob:"));
 }
@@ -1509,6 +1577,11 @@ async fn changed_selection_preserves_original_review_content_but_blocks_approval
         review["submission"]["guidance"]["action"]
             .get("query")
             .is_none()
+    );
+    assert!(
+        !review["submission"]["guidance"]
+            .to_string()
+            .contains("review.decide")
     );
     let before = rework_business_snapshot(&admin).await;
     assert!(
