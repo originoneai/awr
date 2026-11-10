@@ -143,15 +143,25 @@ awr intake inspect
 如果接入检查返回 `NeedsOrganization`，让 Agent 先补齐目标、任务和验收条件，再开始实施。
 已有台账、自定义字段等接入方式见[项目接管指南](docs/dev/TAKEOVER.md)。
 
-### 3. 告诉 Agent 如何开始工作
+### 3. 安装 Agent 生命周期钩子
 
-Agent 可以在已初始化的项目中调用 CLI 后，把这段指令发给它：
+这一步使用[当前源码构建](CONTRIBUTING.md)。在已初始化的项目目录中预览 Codex 配置：
 
-> 请使用 AWR 将当前项目从目标推进到经过验证的交付。开始前读取目标、共享规则、
-> 依赖和最近检查点，将本次需求拆成有明确验收条件、归属与下一步的工作。
-> 采用上游结果前，检查它的版本和验证证据；分别记录实现、验证、合并和发布事实。
-> 留存可获得的用量信息，并明确数据缺口。停止前保存检查点，让下一位 Agent
-> 核对当前来源后继续。使用已安装版本支持的能力，明确说明尚缺的接入。
+```sh
+awr client install --client codex
+```
+
+检查 `configuration`、`path` 和 `preview_fingerprint`，将 `PREVIEW_SHA256`
+替换为预览返回的指纹，再确认安装：
+
+```sh
+awr client install --client codex --accept --expected-preview PREVIEW_SHA256
+awr client status --client codex
+```
+
+Claude Code 用户将各处改为 `--client claude`。安装后打开新的受信任宿主会话，
+再用 `awr client status` 查看接收记录。使用 0.7.0 安装包或其他宿主时，
+采用[手动工作约定](docs/series/agents.md#hosts-without-lifecycle-hooks)。
 
 你可以随时用 `awr status` 查看进度。明确的“认领 → 获取上下文 → 保存检查点”步骤，
 见[会话工作流程](docs/dev/integrations/session-workflow.md)。

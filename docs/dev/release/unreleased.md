@@ -90,6 +90,12 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   retains its original format. Built-in help topics also preserve the invoked
   executable name. The work planning group includes `activate` alongside
   `create` and `edit`.
+- `awr verify` checks completed work for a Git commit using local observations or
+  database-free CI reruns. Baseline comparison checks fail-before/pass-after
+  behavior in a temporary worktree; `verify install-hook` previews and installs a
+  pre-push gate while preserving existing hooks. Includes `verify.commit`, an
+  optional required-work policy, and Git/CI examples. See
+  [commit verification](../reference/verify.md).
 - Team evidence keeps the caller's claim and the recorded outcome of an execution apart. `evidence.submit` compares a
   claim bound to an execution with the Team's record of it (same work, scope, contract and input digest; a claim of
   success against a recorded failure or cancellation, or the reverse) and refuses a provable contradiction as
@@ -183,6 +189,10 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   `fail_before_pass_after` method requires a failed baseline for each required check-bound
   example before governed approval; observation mode reports gaps. Per-example baselines remain
   current when another example is added, and legacy bindings retain their original comparison rules.
+- Quickstarts now preview and install project-local lifecycle hooks, then accept the
+  reviewed fingerprint. MCP instructions and the short manual-host fallback share
+  the core working agreement. These commands target current source builds; see
+  [connecting an agent](../../series/agents.md#hosts-without-lifecycle-hooks).
 - Evidence for a workspace-settled execution is checked against the execution's reported result when a review
   round is bound to it, not only at completion and integration. `review.open` and an approving `review.decide`
   refuse it with HTTP 409 `EvidenceInvalid` when the `payload.output_digest` it declares or the sha256 of its stored
@@ -213,6 +223,18 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Fixed
 
+- A work that was integrated, completed and written back to the source is no longer shown as stale
+  after a later plan activation that left its contract alone. Before, every activation made the
+  project snapshot differ from the one recorded with the selection and the source publication, so
+  `work.observe` reported the delivered work's candidate, review round and integration binding as
+  not current, `delivery.source.status` reported `source_synchronized` false,
+  `delivery.neutral.inspect` reported its selection and facts as not current, and the Observer
+  said the earlier integration record does not apply to the current result, although the delivered
+  bytes and the contract had not changed and nothing could repair it. A completed work now stays
+  current while its contract hash is the same in the current snapshot, and turns stale when an
+  activation changes it. The reads of a work that is not completed, integration preparation,
+  dispatch, the reservation of a new inspection, `delivery.schedule` and
+  `delivery.submission.describe` are unchanged (AWR-TFQ-021).
 - `awr_team_planning_draft` in `edit` mode without a `candidate_id`, or whose mode is neither
   `create` nor `edit`, is now refused before any command is reserved or candidate created:
   `InvalidInput` at `/candidate_id` (constraint `required_when_editing_a_draft`) or at `/mode`

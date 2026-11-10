@@ -86,7 +86,28 @@ least one task has a source-declared goal, acceptance criteria, a next action,
 and resolved prerequisites. `needs_organization` means something is missing —
 the report's ordered `actions` tell you what to add to your source files.
 
-### 3. Start a work session
+### 3. Install agent lifecycle hooks
+
+Use a [current source build](../../CONTRIBUTING.md) for these installers. Preview
+the Codex adapter for the initialized project:
+
+```sh
+awr --project "$AWR_PROJECT" client install --client codex
+```
+
+Review `configuration`, `path` and `preview_fingerprint`. Replace `PREVIEW_SHA256`
+with the returned fingerprint, then accept the same preview:
+
+```sh
+awr --project "$AWR_PROJECT" client install --client codex --accept --expected-preview PREVIEW_SHA256
+awr --project "$AWR_PROJECT" client status --client codex
+```
+
+Use `--client claude` throughout for Claude Code. Open a fresh trusted host session,
+then inspect receiver observations with `awr client status`. For the 0.7.0 packages
+or another host, use the [manual working agreement](agents.md#hosts-without-lifecycle-hooks).
+
+### 4. Start a work session
 
 A session is AWR's unit of work ownership. These commands use a small shell
 helper so every call carries the project path and JSON output:
@@ -123,7 +144,7 @@ jq -e '.completeness.complete and (.work_context != null)' "$AWR_NOTES/context.j
 
 Read the complete packet. On `BudgetExceeded`, widen `--budget`; on `SourceStale`, run `awrj source reindex` and compile again.
 
-### 4. Record progress with a checkpoint
+### 5. Record progress with a checkpoint
 
 Before you step away — or before a long host conversation compacts — save a
 checkpoint with the context hash you actually used, an honest digest, the exact
@@ -140,7 +161,7 @@ awrj session checkpoint --session "$AWR_SESSION" --agent "$AWR_AGENT" \
   --expected-project-revision "$AWR_REV" > "$AWR_NOTES/checkpoint.json"
 ```
 
-### 5. Continue the work in a new session
+### 6. Continue the work in a new session
 
 End the first session to release its claim, then create a successor through the same takeover path used by another agent, machine or host conversation:
 

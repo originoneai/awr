@@ -1,0 +1,16 @@
+#!/bin/sh
+# Verify every outgoing commit against local AWR observations.
+# To bypass this optional local hook for one push: AWR_VERIFY=off git push
+[ "${AWR_VERIFY:-on}" = off ] && exit 0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # Deleted refs have an all-zero local object ID (SHA-1 or SHA-256).
+    case "$local_sha" in *[!0]*) ;; *) continue ;; esac
+    case "$remote_sha" in
+        *[!0]*) commits=$(git rev-list "$remote_sha..$local_sha") || exit 1 ;;
+        *) commits=$(git rev-list "$local_sha" --not --remotes) || exit 1 ;;
+    esac
+    for commit in $commits; do
+        awr verify --commit "$commit" || exit $?
+    done
+done
