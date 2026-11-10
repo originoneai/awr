@@ -11,12 +11,26 @@ over MCP; see [MCP](mcp.md).
 
 Run `awr --help` to check the capabilities of your installed build.
 
+From your initialized project directory, set up once per shell so every command is project-bound and JSON-formatted:
+
+<!-- doc-test: session-config -->
+```sh
+AWR_BIN=$(command -v awr)
+AWR_PROJECT=$PWD
+AWR_WORK=INTAKE-001 # replace with a ready task key
+AWR_AGENT=agent-primary
+AWR_MODEL=your-current-model
+AWR_NOTES=$(mktemp -d "${TMPDIR:-/tmp}/awr-session.XXXXXX")
+awrj() { "$AWR_BIN" --project "$AWR_PROJECT" --json "$@"; }
+```
+
 ### 1. Start your day: find the next action
 
 Run a status check before doing anything else:
 
+<!-- doc-test: status -->
 ```sh
-awr status
+awr --project "$AWR_PROJECT" status
 ```
 
 ```text
@@ -45,9 +59,12 @@ five entries per queue plus exact total and omitted counts:
 
 Narrow the selection with repeatable selectors — they intersect:
 
+<!-- doc-test: scoped-status -->
 ```sh
-awr status --work GUIDE-1 --goal GOAL-1 --milestone M1
+awr --project "$AWR_PROJECT" status --work "$AWR_WORK"
 ```
+
+Add `--goal GOAL_KEY` or `--milestone MILESTONE_KEY` to intersect those scopes.
 
 `awr ready` selects work eligible for a new claim. Use the action queues for continuation and waiting.
 
@@ -62,20 +79,9 @@ awr status --work GUIDE-1 --goal GOAL-1 --milestone M1
 
 ### 2. Claim or resume the task
 
-Set up once per shell so every command is project-bound and JSON-formatted:
-
-```sh
-AWR_BIN=/absolute/path/to/awr
-AWR_PROJECT=/absolute/path/to/initialized/project
-AWR_WORK=EXAMPLE-001
-AWR_AGENT=agent-primary
-AWR_MODEL=your-current-model
-AWR_NOTES=$(mktemp -d "${TMPDIR:-/tmp}/awr-session.XXXXXX")
-awrj() { "$AWR_BIN" --project "$AWR_PROJECT" --json "$@"; }
-```
-
 New work, claimed under a new session:
 
+<!-- doc-test: start-session -->
 ```sh
 AWR_REV=$(awrj status | jq -er '.project_revision')
 awrj session start --work "$AWR_WORK" --agent "$AWR_AGENT" \
@@ -95,6 +101,7 @@ confirm ownership — a different agent or model continues through
 
 Before editing, build the context packet for the session:
 
+<!-- doc-test: compile-context -->
 ```sh
 awrj context bootstrap --session "$AWR_SESSION" --budget 1000 \
   > "$AWR_NOTES/bootstrap.json"
@@ -111,6 +118,7 @@ Read the complete packet. On `BudgetExceeded`, widen the budget or narrow the sc
 
 Record what really happened — failures, missing context, and open loops:
 
+<!-- doc-test: checkpoint -->
 ```sh
 AWR_CONTEXT_HASH=$(jq -er '.work_context.context_hash' "$AWR_NOTES/context.json")
 AWR_REV=$(awrj status | jq -er '.project_revision')
@@ -131,8 +139,9 @@ Use the top-level `project_revision` returned by `session show`. On conflict, in
 When the source plan needs a small correction — say the source says "Draft the
 guide" but the real next step is "Review the conclusion" — preview the edit:
 
+<!-- doc-test: preview-field-edit -->
 ```sh
-awr --json work edit GUIDE-1 --request-key guide-next-1 --actor writer \
+awrj work edit "$AWR_WORK" --request-key guide-next-1 --actor writer \
   --reason 'Clarify the review step' --next-action 'Review the conclusion'
 ```
 
@@ -150,6 +159,7 @@ Supported fields are `--title`, `--summary`, `--priority`, and `--next-action`. 
 
 When you stop for the day:
 
+<!-- doc-test: end-session -->
 ```sh
 AWR_REV=$(awrj status | jq -er '.project_revision')
 awrj session end --session "$AWR_SESSION" --outcome incomplete \
@@ -162,8 +172,9 @@ Ending releases the claim. The checkpoint from step 4 supplies the next recovery
 
 Later — or from a different agent — resume from the predecessor session:
 
+<!-- doc-test: resume-session -->
 ```sh
-AWR_PREDECESSOR=the-recorded-awr-session-id
+AWR_PREDECESSOR="$AWR_SESSION"
 awrj session show "$AWR_PREDECESSOR"
 AWR_REV=$(awrj status | jq -er '.project_revision')
 awrj session resume --from-session "$AWR_PREDECESSOR" \
@@ -215,5 +226,6 @@ vocabulary in this routine, see [Concepts](concepts.md).
 
 ## Code and tests
 
+- [Executable guide checks](../../tests/docs/run_doc_commands.py)
 - [Status output tests](../../crates/awr-cli/tests/checkpoint_progress.rs)
 - [Session lifecycle](../../crates/awr-cli/tests/session_cli.rs)

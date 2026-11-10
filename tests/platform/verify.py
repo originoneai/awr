@@ -105,6 +105,9 @@ def main():
 
     save()
     try:
+        required_gates = contract['required_gates'] + contract.get('platform_required_gates', {}).get(args.platform, [])
+        if args.platform == 'linux-x64':
+            require('doc_commands' in required_gates, 'Register doc_commands in the Linux x64 contract')
         require(not read_command('git', 'status', '--porcelain'), 'Native verification needs a clean source commit')
         source = read_command('git', 'rev-parse', 'HEAD')
         require(not os.environ.get('GITHUB_SHA') or os.environ['GITHUB_SHA'] == source, 'Checkout and Actions source SHA differ')
@@ -163,6 +166,9 @@ def main():
          rust_results, requires=('build',))
     gate('doctests', ['cargo', 'test', '--workspace', '--doc', '--no-fail-fast', '--locked'],
          rust_results, requires=('build',))
+    if args.platform == 'linux-x64':
+        gate('doc_commands', [sys.executable, 'tests/docs/run_doc_commands.py', '--awr', awr, '--self-test'],
+             requires=('build',))
     gate('crash_recovery', ['cargo', 'test', '-p', 'awr-runtime', '--lib', '--locked',
                           'mutation_apply::recovery_tests::cli_recovery_after_process_death_binds_original_attempt_and_resolves_once',
                           '--', '--ignored', '--exact', '--test-threads=1'], rust_results,
@@ -225,8 +231,8 @@ def main():
     unchanged = unchanged and read_command('git', 'rev-parse', 'HEAD') == source and not read_command('git', 'status', '--porcelain')
     report['gates'].append({'id': 'source_unchanged', 'passed': unchanged, 'tracked_files': len(fingerprints)})
     gate_ids = [row['id'] for row in report['gates']]
-    report.update(passed=sorted(gate_ids) == sorted(contract['required_gates']) and all(g['passed'] for g in report['gates']),
-                  gates_passed=sum(g['passed'] for g in report['gates']), target_gates=len(contract['required_gates']),
+    report.update(passed=sorted(gate_ids) == sorted(required_gates) and all(g['passed'] for g in report['gates']),
+                  gates_passed=sum(g['passed'] for g in report['gates']), target_gates=len(required_gates),
                   finished_at=now(), inputs_unchanged=unchanged)
     save()
     print(json.dumps({key: report[key] for key in ['platform_id', 'source_commit', 'passed', 'gates_passed', 'target_gates', 'e4_completed']}))
