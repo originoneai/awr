@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
-    io::{Read, Write},
+    io::Read,
     path::{Component, Path, PathBuf},
 };
 
@@ -62,16 +62,39 @@ pub enum ClientCommand {
         client: String,
         #[arg(long)]
         work: Option<String>,
+        /// Installer version recorded with receiver observations.
+        #[arg(long, hide = true)]
+        adapter_version: Option<u64>,
     },
-    /// Preview or install an L2 project-local lifecycle adapter. Currently Codex only; other hosts stay on the L0 generic receiver.
+    /// Preview or install project-local lifecycle hooks for Claude Code or Codex.
     Install {
-        /// Host dialect. Required. Only `codex` currently writes hook files.
+        #[arg(long)]
+        client: String,
+        /// Compatibility argument; ignored by project-wide installation.
+        #[arg(long)]
+        work: Option<String>,
+        /// Use portable Claude Code project settings shared through version control.
+        #[arg(long)]
+        shared: bool,
+        #[arg(long)]
+        accept: bool,
+        /// Require the exact configuration and proposal reviewed in a previous preview.
+        #[arg(long)]
+        expected_preview: Option<String>,
+    },
+    /// Preview or remove this adapter's hooks while retaining other project settings.
+    Uninstall {
         #[arg(long)]
         client: String,
         #[arg(long)]
-        work: String,
-        #[arg(long)]
         accept: bool,
+        #[arg(long)]
+        expected_preview: Option<String>,
+    },
+    /// Inspect project adapters and recorded receiver observations.
+    Status {
+        #[arg(long)]
+        client: Option<String>,
     },
 }
 
@@ -316,7 +339,12 @@ fn new_binding(
     save(&mut db.store, project, binding, false)
 }
 
-fn native_hook(root: &Path, client: &str, work: Option<&str>) -> Result<Value> {
+fn native_hook(
+    root: &Path,
+    client: &str,
+    work: Option<&str>,
+    adapter_version: Option<u64>,
+) -> Result<Value> {
     let mut bytes = vec![];
     std::io::stdin()
         .take(1024 * 1024 + 1)
@@ -331,6 +359,19 @@ fn native_hook(root: &Path, client: &str, work: Option<&str>) -> Result<Value> {
         ));
     }
     let (decision, metadata) = process_hook(root, client, work, &event, dialect.as_ref())?;
+    if ["codex", "claude"].contains(&client) {
+        if let Err(error) = awr_runtime::host_adapter::installation::record_hook_observation(
+            root,
+            client,
+            adapter_version,
+            event.event.name(),
+        ) {
+            eprintln!(
+                "AWR hook observation could not be saved ({}); run awr doctor.",
+                error.code()
+            );
+        }
+    }
     let mut rendered = dialect.render(&decision, &event);
     debug_assert_eq!(rendered.exit_code, 0);
     if !metadata.is_null() {
@@ -976,125 +1017,46 @@ fn shell_quote(s: &str) -> String {
         format!("'{}'", s.replace('\'', "'\"'\"'"))
     }
 }
-fn install(root: &Path, client: &str, work: &str, accept: bool) -> Result<Value> {
-    if client != "codex" {
-        return Err(Error::Unsupported("automatic L2 installation currently supports Codex only; other hosts use --client generic with a host-prefixed conversation ID and the lifecycle receiver, with manual checkpoints".into()));
-    }
-    let db = QueryProject::open(root)?;
-    db.finish()?;
-    db.store.work_item(db.project.id, work)?;
-    let exe = std::env::current_exe()?.canonicalize()?;
-    let command = format!(
-        "{}{} --project {} client hook --client codex --work {}",
-        if cfg!(windows) { "& " } else { "" },
-        shell_quote(&exe.to_string_lossy()),
-        shell_quote(&root.to_string_lossy()),
-        shell_quote(work)
-    );
-    let dir = root.join(".codex");
-    let path = dir.join("hooks.json");
-    if dir.exists() {
-        awr_source::open_dir_exact(&dir)?;
-    }
-    let original = if path.exists() {
-        Some(awr_source::read_source_capped(&path, 1024 * 1024)?)
-    } else {
-        None
-    };
-    let mut config: Value = original
-        .as_ref()
-        .map(|bytes| {
-            serde_json::from_slice(bytes).map_err(|_| {
-                Error::InvalidInput(
-                    "existing hooks.json is invalid; preserve and fix it before installation"
-                        .into(),
-                )
-            })
-        })
-        .transpose()?
-        .unwrap_or_else(|| json!({"hooks":{}}));
-    let object = config
-        .as_object_mut()
-        .ok_or_else(|| Error::InvalidInput("hooks configuration must be an object".into()))?;
-    let hooks = object
-        .entry("hooks")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .ok_or_else(|| Error::InvalidInput("hooks field must be an object".into()))?;
-    for event in [
-        "SessionStart",
-        "PreCompact",
-        "PostCompact",
-        "Stop",
-        "SessionEnd",
-        "Interrupt",
-    ] {
-        let entries = hooks
-            .entry(event)
-            .or_insert_with(|| json!([]))
-            .as_array_mut()
-            .ok_or_else(|| Error::InvalidInput("hook event handlers must be arrays".into()))?;
-        if !entries.iter().any(|v| {
-            v["hooks"]
-                .as_array()
-                .is_some_and(|v| v.iter().any(|h| h["command"] == command))
-        }) {
-            entries.push(json!({"hooks":[{"type":"command","command":command,"timeout":if ["SessionEnd","Interrupt"].contains(&event){3}else{15},"statusMessage":"AWR work continuity"}]}));
-        }
-    }
-    if accept {
-        if !dir.exists() {
-            fs::create_dir(&dir)?;
-        }
-        let _lock = lock(root, "clients", "hook-install")?;
-        let actual = if path.exists() {
-            Some(awr_source::read_source_capped(&path, 1024 * 1024)?)
-        } else {
-            None
-        };
-        if actual != original {
-            return Err(Error::SourceConflict(
-                "hook configuration changed during installation".into(),
-            ));
-        }
-        if actual
-            .as_ref()
-            .and_then(|b| serde_json::from_slice::<Value>(b).ok())
-            .as_ref()
-            != Some(&config)
-        {
-            let temp = dir.join(format!("awr-hooks-{}.json", Id::new()));
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temp)?;
-            file.write_all(&serde_json::to_vec_pretty(&config)?)?;
-            file.sync_all()?;
-            fs::rename(temp, &path)?;
-        }
-        let config_path = dir.join("config.toml");
-        if !config_path.exists() {
-            fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(config_path)?
-                .write_all(b"# Project-local Codex configuration; review AWR hooks in /hooks.\n")?;
-        }
-    }
-    Ok(
-        json!({"installed":accept,"path":path,"configuration":config,"activation_verified":false,"next_action":"Open a fresh trusted client session and review the exact AWR hook definitions in /hooks. A checkpoint receipt proves delivery; configuration alone does not."}),
-    )
-}
 
 pub fn run(root: &Path, command: &ClientCommand, json_output: bool) -> Result<()> {
     let root = root.canonicalize()?;
     let mut value = match command {
-        ClientCommand::Hook { client, work } => native_hook(&root, client, work.as_deref())?,
+        ClientCommand::Hook {
+            client,
+            work,
+            adapter_version,
+        } => native_hook(&root, client, work.as_deref(), *adapter_version)?,
         ClientCommand::Install {
             client,
             work,
+            shared,
             accept,
-        } => install(&root, client, work, *accept)?,
+            expected_preview,
+        } => crate::client_install::change(
+            &root,
+            client,
+            *shared,
+            false,
+            *accept,
+            expected_preview.as_deref(),
+            work.is_some(),
+        )?,
+        ClientCommand::Uninstall {
+            client,
+            accept,
+            expected_preview,
+        } => crate::client_install::change(
+            &root,
+            client,
+            false,
+            true,
+            *accept,
+            expected_preview.as_deref(),
+            false,
+        )?,
+        ClientCommand::Status { client } => {
+            return crate::client_install::status(&root, client.as_deref(), json_output);
+        }
         ClientCommand::Show { identity } => {
             let db = crate::session::RuntimeProject::open(&root, false)?;
             json!({"binding":db.store.client_binding(db.project.id,&identity.client,&identity.external_session)?})

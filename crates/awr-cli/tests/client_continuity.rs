@@ -425,7 +425,7 @@ fn generated_shell_hook_runs_with_documented_native_output() {
     );
     assert!(output.get("awr").is_none());
     assert!(
-        !p.ok(&[
+        p.ok(&[
             "client",
             "show",
             "--client",
@@ -434,6 +434,10 @@ fn generated_shell_hook_runs_with_documented_native_output() {
             "native-command"
         ])["binding"]
             .is_null()
+            && output["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .unwrap()
+                .contains("client bind")
     );
 }
 
@@ -454,7 +458,12 @@ fn l2_install_rejects_generic_host_identity() {
     assert!(!failed.status.success());
     let error: Value = serde_json::from_slice(&failed.stderr).unwrap();
     assert_eq!(error["code"], "Unsupported");
-    assert!(error["message"].as_str().unwrap().contains("Codex only"));
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("codex and claude")
+    );
 }
 
 #[test]

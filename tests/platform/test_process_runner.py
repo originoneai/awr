@@ -136,6 +136,17 @@ class ProcessRunnerTests(unittest.TestCase):
         self.assertIn('crash_recovery', contract['required_gates'])
         self.assertEqual(set(contract['ignored_tests']), set(contract['ignored_routes']))
 
+    def test_parity_receipt_requires_all_thirteen_tests_and_eleven_tools(self):
+        import verify
+        complete = {'passed': True, 'tests_run': 13,
+                    'tools_exercised': [f'fixture-tool-{i}' for i in range(11)]}
+        self.assertIsNone(verify.validate_parity(complete))
+        for changed in ({'passed': False}, {'tests_run': 12}, {'tests_run': 14},
+                        {'tools_exercised': complete['tools_exercised'][:-1]},
+                        {'tools_exercised': complete['tools_exercised'] + ['fixture-extra-tool']}):
+            with self.subTest(changed=changed), self.assertRaisesRegex(RuntimeError, 'CLI/MCP parity'):
+                verify.validate_parity({**complete, **changed})
+
     def test_unfinished_cleanup_stops_later_gates_and_has_no_final_log_digest(self):
         import verify
         contract = json.loads((Path(__file__).parent / 'contract.json').read_text())
