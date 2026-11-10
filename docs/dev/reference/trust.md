@@ -1,7 +1,9 @@
 # Trust fields
 
-Read `trust` beside an observation to identify its provenance. Negotiate support
-before depending on the field:
+Read `trust` beside an observation to identify its provenance, and negotiate field
+support before consuming it.
+
+## Use it
 
 ```sh
 awr capabilities --require output.trust_field --json
@@ -29,23 +31,28 @@ agent, provider and model, with `is_caller_proof: false`.
 
 ## Evidence and review
 
-Manual evidence registration starts with `reported`, including when the caller
-supplies a verification level, digest and timestamp. Caller-supplied types such as
-`check_run`, `test_run` and `review` do not grant `recorded`. That value is reserved
-for evidence backed by program-generated events; this version does not assign it
-to evidence. Evidence becomes `verified` when its exact stored snapshot
-matches a report binding in a successful completion receipt. Completion checks
-the report bytes against the registered digest; registering a report or preparing
-completion does not perform that promotion. Another record with the same locator
-does not inherit it.
-
-Evidence trust describes the recorded verification event. It does not reread the
-report on each metadata query. Check `currency`, source bindings and report
-content separately when deciding whether evidence still supports current work.
+| Evidence operation | Result |
+| --- | --- |
+| Manual registration, including types `check_run`, `test_run` and `review` | `reported`, including caller-supplied verification levels, digests and timestamps. |
+| Successful completion | `verified` when the exact stored evidence snapshot matches a report binding in the completion receipt, after report bytes match the registered digest. |
+| Report registration or completion preparation | `reported` until successful byte-checked completion records the matching snapshot. |
+| Another evidence record at the same locator | `reported` until that record receives its own matching, successful byte-checked completion receipt. |
 
 An approved admission decision uses `reviewed` when its proposer and decider are
 both recorded sessions with different IDs. Inline approvals, self approvals,
-proposals, denials and missing decisions use `reported`. Review provenance does
-not establish that a decision is current or that the work is complete.
+proposals, denials and missing decisions use `reported`.
 
-These fields are additive. Human-readable entry formatting is unchanged.
+## Limits
+
+- This version assigns evidence records only `reported` or `verified`; `recorded` remains reserved for program-generated evidence events.
+- Trust describes historical verification; assess `currency`, source bindings and current report content separately when deciding whether evidence supports current work.
+- Metadata queries derive trust from stored completion receipts; current report bytes require a separate read.
+- Review provenance describes the recorded approval; decision currency and work completion require separate checks.
+- Trust fields extend existing JSON; human-readable entry formatting stays unchanged.
+
+## Code and tests
+
+- [Canonical trust values and legend tests](../../../crates/awr-core/src/trust.rs)
+- [Evidence trust derivation](../../../crates/awr-core/src/query.rs)
+- [CLI evidence regression tests](../../../crates/awr-cli/tests/evidence_currency_cli.rs)
+- [CLI and MCP parity tests](../../../crates/awr-mcp/tests/cli_parity.py)
