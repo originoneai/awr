@@ -5,6 +5,8 @@ use std::process::{Command, Output};
 const HELP: &[u8] = include_bytes!("fixtures/help/help.txt");
 const HELP_FLAG: &[u8] = include_bytes!("fixtures/help/help-flag.txt");
 const WORK_HELP: &[u8] = include_bytes!("fixtures/help/work-help.txt");
+const HELP_HELP: &[u8] = include_bytes!("fixtures/help/help-help.txt");
+const WORK_HELP_HELP: &[u8] = include_bytes!("fixtures/help/work-help-help.txt");
 const STATUS_HELP: &[u8] = include_bytes!("fixtures/help/status-help.txt");
 const COMPLETE_HELP: &[u8] = include_bytes!("fixtures/help/work-complete-help.txt");
 
@@ -120,7 +122,6 @@ fn ac3_all_visible_command_help_paths_match_detailed_help() {
             .lines()
             .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
             .filter_map(|line| line.split_whitespace().next())
-            .filter(|name| *name != "help")
             .collect::<Vec<_>>();
         assert!(!names.is_empty(), "{full}");
         for name in names {
@@ -129,16 +130,32 @@ fn ac3_all_visible_command_help_paths_match_detailed_help() {
             let expected = if scope.is_empty() && name == "work" {
                 // The work overview is intentionally shorter; preserve its original help topic.
                 native_baseline(WORK_HELP)
+            } else if name == "help" {
+                // The original built-in help topic has no equivalent --help form.
+                native_baseline(if scope.is_empty() {
+                    HELP_HELP
+                } else {
+                    WORK_HELP_HELP
+                })
             } else {
                 let mut flag_args = scope.clone();
                 flag_args.extend([name, "--help"]);
                 help(&flag_args)
             };
-            if help(&help_args) != expected {
-                differences.push(format!("awr {} changed detailed help", help_args.join(" ")));
-            }
-            if !scope.is_empty() && help(&["help", "work", name]) != expected {
-                differences.push(format!("awr help work {name} changed detailed help"));
+            for args in std::iter::once(help_args)
+                .chain((!scope.is_empty()).then(|| vec!["help", "work", name]))
+            {
+                let output = run(&args);
+                if !output.status.success()
+                    || !output.stderr.is_empty()
+                    || output.stdout != expected
+                {
+                    differences.push(format!(
+                        "awr {} changed detailed help (exit {:?})",
+                        args.join(" "),
+                        output.status.code()
+                    ));
+                }
             }
         }
     }
@@ -170,6 +187,8 @@ fn help_fixtures_preserve_the_invoked_executable_name() {
     for (args, baseline) in [
         (vec!["help", "all"], HELP),
         (vec!["work", "help", "all"], WORK_HELP),
+        (vec!["help", "help"], HELP_HELP),
+        (vec!["work", "help", "help"], WORK_HELP_HELP),
         (vec!["help", "work"], WORK_HELP),
         (vec!["status", "--help"], STATUS_HELP),
         (vec!["work", "complete", "--help"], COMPLETE_HELP),

@@ -299,6 +299,7 @@ fn render_request(work: bool, matches: &ArgMatches, program: &OsStr) -> clap::Er
                 }
             }
         }
+        command.build();
         let Some(child) = command.find_subcommand(name).cloned() else {
             let available = groups
                 .map(|groups| {
