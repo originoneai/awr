@@ -227,7 +227,7 @@ async fn current_note(
           AND x.selection_version=$7 AND x.coordinator_epoch=$8 AND c.enabled
           AND c.version=x.connector_version AND c.coordinator_epoch=x.coordinator_epoch
         ORDER BY h.connector_id,h.slot LIMIT 33",
-        &[&tenant,&project,&set.work_id,&selected,&auth.snapshot,&ownership,&selection_version,&auth.epoch]).await?;
+        &[&tenant,&project,&set.work_id,&selected,&set.source_snapshot_id,&ownership,&selection_version,&auth.epoch]).await?;
     if rows.len() > 32 {
         return Err(PgError::ResponseTooLarge);
     }
@@ -251,7 +251,10 @@ async fn current_note(
         version: 1,
         publication_id: publication.into(),
         work_external_key: candidate.binding.work_id.as_str().to_owned(),
-        contract_snapshot_id: auth.snapshot.clone(),
+        // The note names the snapshot of the read set it describes. Publication requires that
+        // snapshot to be the current one; reading an earlier publication of a delivered work
+        // checks the note under the snapshot it was written for.
+        contract_snapshot_id: set.source_snapshot_id.clone(),
         candidate_id: candidate.binding.candidate_id.as_str().to_owned(),
         candidate_version: candidate.binding.candidate_version.clone(),
         candidate_digest: selected,
@@ -1273,10 +1276,33 @@ impl DeliverySyncStore {
         let truncated = rows.len() > 32;
         let mut history = Vec::new();
         let mut synchronized = false;
+        let mut carried: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
         for row in rows.into_iter().take(32) {
             let j = Journal::from_row(&row)?;
+            // A publication written under an earlier snapshot still describes a delivered work
+            // whose contract the later activations left alone.
+            let snapshot_current = if j.phase == "confirmed" {
+                match carried.get(&j.set.source_snapshot_id) {
+                    Some(known) => *known,
+                    None => {
+                        let known = completion::carried_across_snapshots(
+                            tx,
+                            tenant,
+                            project,
+                            work,
+                            &j.set.source_snapshot_id,
+                            &auth.snapshot,
+                        )
+                        .await?;
+                        carried.insert(j.set.source_snapshot_id.clone(), known);
+                        known
+                    }
+                }
+            } else {
+                false
+            };
             let current = j.phase == "confirmed"
-                && j.set.source_snapshot_id == auth.snapshot
+                && snapshot_current
                 && projection_current
                 && actual_fingerprint.as_deref() == Some(confirmed.as_str())
                 && physical.as_ref().is_some_and(|b| {
@@ -1291,6 +1317,9 @@ impl DeliverySyncStore {
                 .is_ok_and(|bytes| physical.as_ref() == Some(&bytes))
                 && j.require_note(tx, tenant, project, auth).await.is_ok();
             synchronized |= current;
+            if synchronized && !include_history {
+                break;
+            }
             if include_history {
                 let mut item = j.summary();
                 item["source_current"] = json!(current);
