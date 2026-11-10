@@ -7,6 +7,154 @@ use sha2::{Digest, Sha256};
 pub const CHECK_EVENT: &str = "work.check";
 pub const CHECK_PAYLOAD_CAP: usize = 16 * 1024;
 pub const CHECK_FILE_CAP: u64 = 4 * 1024 * 1024;
+pub const MUTATION_REPORT_CAP: usize = 4 * 1024 * 1024;
+pub const MUTATION_ENTRY_CAP: usize = 5000;
+pub const MUTATION_SURVIVOR_CAP: usize = 20;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MutantStatus {
+    Killed,
+    Survived,
+    Equivalent,
+    Timeout,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Mutant {
+    pub id: String,
+    pub file: String,
+    pub line: u32,
+    pub status: MutantStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub killed_by: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MutationReport {
+    pub version: u32,
+    pub source_sha: String,
+    pub tool: String,
+    pub mutants: Vec<Mutant>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MutationCounts {
+    pub killed: u32,
+    pub survived: u32,
+    pub equivalent: u32,
+    pub timeout: u32,
+    pub skipped: u32,
+}
+impl MutationCounts {
+    pub fn passed(self) -> bool {
+        self.survived == 0 && self.timeout == 0
+    }
+    fn total(self) -> u64 {
+        [
+            self.killed,
+            self.survived,
+            self.equivalent,
+            self.timeout,
+            self.skipped,
+        ]
+        .into_iter()
+        .map(u64::from)
+        .sum()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MutationSurvivor {
+    pub id: String,
+    pub file: String,
+    pub line: u32,
+}
+impl MutationSurvivor {
+    fn valid(&self) -> bool {
+        report_label(&self.id, 128) && report_label(&self.file, 512) && self.line > 0
+    }
+}
+
+fn report_label(value: &str, cap: usize) -> bool {
+    !value.trim().is_empty() && value.len() <= cap && !value.chars().any(char::is_control)
+}
+
+impl MutationReport {
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() > MUTATION_REPORT_CAP {
+            return Err(Error::InvalidInput("mutation report exceeds 4 MiB".into()));
+        }
+        let report: Self = serde_json::from_slice(bytes)
+            .map_err(|e| Error::InvalidInput(format!("invalid mutation report: {e}")))?;
+        if report.version != 1
+            || !crate::is_source_sha(&report.source_sha)
+            || !report_label(&report.tool, 256)
+            || report.mutants.len() > MUTATION_ENTRY_CAP
+        {
+            return Err(Error::InvalidInput("mutation report requires version 1, source_sha, a tool label and at most 5000 mutants".into()));
+        }
+        let mut ids = std::collections::BTreeSet::new();
+        for mutant in &report.mutants {
+            if !report_label(&mutant.id, 128)
+                || !report_label(&mutant.file, 512)
+                || mutant.line == 0
+                || !ids.insert(&mutant.id)
+            {
+                return Err(Error::InvalidInput(format!(
+                    "mutation entry {} needs a unique id (128 bytes), file (512 bytes) and positive line",
+                    mutant.id
+                )));
+            }
+            if mutant.status == MutantStatus::Equivalent
+                && mutant
+                    .note
+                    .as_ref()
+                    .is_none_or(|note| note.trim().is_empty())
+            {
+                return Err(Error::InvalidInput(format!(
+                    "equivalent mutation entry {} requires a nonblank note",
+                    mutant.id
+                )));
+            }
+        }
+        Ok(report)
+    }
+
+    pub fn counts(&self) -> MutationCounts {
+        let mut counts = MutationCounts::default();
+        for mutant in &self.mutants {
+            match mutant.status {
+                MutantStatus::Killed => counts.killed += 1,
+                MutantStatus::Survived => counts.survived += 1,
+                MutantStatus::Equivalent => counts.equivalent += 1,
+                MutantStatus::Timeout => counts.timeout += 1,
+                MutantStatus::Skipped => counts.skipped += 1,
+            }
+        }
+        counts
+    }
+
+    pub fn survivors(&self) -> Vec<MutationSurvivor> {
+        self.mutants
+            .iter()
+            .filter(|m| m.status == MutantStatus::Survived)
+            .take(MUTATION_SURVIVOR_CAP)
+            .map(|m| MutationSurvivor {
+                id: m.id.clone(),
+                file: m.file.clone(),
+                line: m.line,
+            })
+            .collect()
+    }
+}
 
 // Oracle identity: file sizes and execution observations never change the declared oracle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,9 +269,9 @@ pub struct CheckPayload {
     pub started_at: i64,
     pub finished_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mutants: Option<u32>,
+    pub mutants: Option<MutationCounts>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub survivors: Option<Vec<String>>,
+    pub survivors: Option<Vec<MutationSurvivor>>,
 }
 impl CheckPayload {
     pub fn validate(&self) -> Result<()> {
@@ -168,6 +316,21 @@ impl CheckPayload {
                     || f.size > CHECK_FILE_CAP
             })
             || serde_json::to_vec(self)?.len() > CHECK_PAYLOAD_CAP
+            || self
+                .mutants
+                .is_some_and(|c| c.total() > MUTATION_ENTRY_CAP as u64)
+            || self.survivors.as_ref().is_some_and(|s| {
+                s.len() > MUTATION_SURVIVOR_CAP
+                    || s.iter().any(|m| !m.valid())
+                    || self.mutants.is_none_or(|c| {
+                        s.len() as u32 != c.survived.min(MUTATION_SURVIVOR_CAP as u32)
+                    })
+            })
+            || (self.mutants.is_some()
+                && (self.phase != CheckPhase::Mutation || self.survivors.is_none()))
+            || (self.phase == CheckPhase::Mutation
+                && self.outcome == CheckOutcome::Passed
+                && self.mutants.is_some_and(|c| !c.passed()))
         {
             return Err(Error::InvalidInput(
                 "invalid or oversized work.check observation".into(),
@@ -203,6 +366,12 @@ pub enum SmallWorkChecks {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MutationCheck {
+    pub run: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CheckGatePolicy {
     pub mode: CheckGateMode,
@@ -210,6 +379,7 @@ pub struct CheckGatePolicy {
     pub small_work: SmallWorkChecks,
     pub require_clean_tree: bool,
     pub separate_approver: bool,
+    pub mutation: Option<MutationCheck>,
 }
 impl Default for CheckGatePolicy {
     fn default() -> Self {
@@ -219,11 +389,22 @@ impl Default for CheckGatePolicy {
             small_work: SmallWorkChecks::Reason,
             require_clean_tree: true,
             separate_approver: false,
+            mutation: None,
         }
     }
 }
 impl CheckGatePolicy {
     pub fn validate(&self) -> Result<()> {
+        if let Some(mutation) = &self.mutation
+            && (!(1..=64).contains(&mutation.run.len())
+                || mutation.run[0].trim().is_empty()
+                || mutation
+                    .run
+                    .iter()
+                    .any(|a| a.len() > 1024 || a.contains('\0')))
+        {
+            return Err(Error::InvalidInput(".awr/gates.toml: checks.mutation.run requires 1..64 arguments of at most 1024 bytes and a nonblank executable".into()));
+        }
         // Reuse the source-owned scope contract and its bounded tag validation.
         crate::AdmissionPolicy {
             version: 1,
@@ -247,6 +428,8 @@ pub struct UnmetCheck {
     pub example: Option<String>,
     pub criterion: Option<String>,
     pub reason: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub survivors: Vec<MutationSurvivor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -321,11 +504,13 @@ pub fn evaluate_check_gate(
     let approved = admission.filter(|a| a.decision == AdmissionDecision::Approved);
     let oracle_current = facts.oracle_fingerprint.is_some()
         && approved.and_then(|a| a.bound.oracle_fingerprint.as_deref()) == facts.oracle_fingerprint;
+    let mut survivor_details = std::collections::BTreeMap::new();
     let mut unmet = |example: Option<&str>, criterion: Option<&str>, reason: &str| {
         result.unmet.push(UnmetCheck {
             example: example.map(String::from),
             criterion: criterion.map(String::from),
             reason: reason.into(),
+            survivors: vec![],
         });
     };
     for criterion in facts.required_criteria {
@@ -398,10 +583,72 @@ pub fn evaluate_check_gate(
             }
             match definition.discrimination.as_ref().map(|d| d.method) {
                 Some(DiscriminationMethod::DiffMutation) => {
-                    unmet(id, Some(criterion), "mutation_missing")
+                    let mutations: Vec<_> = check_events
+                        .iter()
+                        .rev()
+                        .filter(matches)
+                        .filter(|event| {
+                            event.phase == CheckPhase::Mutation
+                                && event
+                                    .source_sha
+                                    .as_ref()
+                                    .is_some_and(|sha| sha.eq_ignore_ascii_case(source_sha))
+                        })
+                        .collect();
+                    let passed = |event: &&CheckPayload| {
+                        event.outcome == CheckOutcome::Passed
+                            && event.mutants.is_some_and(MutationCounts::passed)
+                            && (!policy.require_clean_tree
+                                || event.tree_state == CheckTreeState::Clean)
+                    };
+                    if !mutations.iter().any(passed) {
+                        match mutations.first() {
+                            None => unmet(id, Some(criterion), "mutation_missing"),
+                            Some(event) => {
+                                let counts = event.mutants.unwrap_or_default();
+                                if counts.survived > 0 {
+                                    unmet(id, Some(criterion), "mutants_survived");
+                                    survivor_details.insert(
+                                        event.example.clone(),
+                                        event.survivors.clone().unwrap_or_default(),
+                                    );
+                                }
+                                if counts.timeout > 0 || event.reason.as_deref() == Some("timeout")
+                                {
+                                    unmet(id, Some(criterion), "mutation_timeout");
+                                }
+                                if policy.require_clean_tree
+                                    && event.tree_state != CheckTreeState::Clean
+                                {
+                                    unmet(id, Some(criterion), "mutation_dirty_tree");
+                                }
+                                if counts.passed()
+                                    && event.reason.as_deref() != Some("timeout")
+                                    && (event.outcome != CheckOutcome::Passed
+                                        || event.mutants.is_none())
+                                {
+                                    unmet(id, Some(criterion), "mutation_failed");
+                                }
+                            }
+                        }
+                    }
                 }
                 Some(DiscriminationMethod::JustifiedAlternative) => {
-                    unmet(id, Some(criterion), "alternative_unreviewed")
+                    if definition
+                        .discrimination
+                        .as_ref()
+                        .and_then(|d| d.note.as_deref())
+                        .is_none_or(|note| note.trim().is_empty())
+                    {
+                        unmet(id, Some(criterion), "discrimination_note_missing");
+                    }
+                    if approved.is_none_or(|a| {
+                        a.proposer_session.is_none()
+                            || a.decider_session.is_none()
+                            || a.proposer_session == a.decider_session
+                    }) {
+                        unmet(id, Some(criterion), "alternative_unreviewed");
+                    }
                 }
                 _ => {
                     let baselines: Vec<_> = check_events
@@ -429,6 +676,16 @@ pub fn evaluate_check_gate(
         && approved.and_then(|a| a.decider_session) == facts.session
     {
         unmet(None, None, "approver_is_implementer");
+    }
+    for item in &mut result.unmet {
+        if item.reason == "mutants_survived" {
+            item.survivors = item
+                .example
+                .as_ref()
+                .and_then(|id| survivor_details.get(id))
+                .cloned()
+                .unwrap_or_default();
+        }
     }
     result.would_refuse = !result.unmet.is_empty();
     Ok(result)
@@ -484,6 +741,88 @@ mod tests {
             assert!(!phase.met(CheckOutcome::Unknown));
             assert!(!phase.met(CheckOutcome::Errored));
         }
+    }
+
+    fn mutation_document() -> Value {
+        json!({"version":1,"source_sha":"a".repeat(40),"tool":"synthetic-report 1",
+            "mutants":[{"id":"m1","file":"src/save.rs","line":42,"status":"killed","killed_by":["keeps-input"]}]})
+    }
+
+    fn mutation_report(document: Value) -> Result<MutationReport> {
+        MutationReport::parse(&serde_json::to_vec(&document).unwrap())
+    }
+
+    #[test]
+    fn check_mutation_report_counts_all_five_statuses_and_caps_survivors() {
+        let mut doc = mutation_document();
+        let mutants = doc["mutants"].as_array_mut().unwrap();
+        for (index, status) in ["survived", "equivalent", "timeout", "skipped"]
+            .iter()
+            .enumerate()
+        {
+            mutants.push(json!({"id":format!("m-{}",index),"file":"src/save.rs","line":12,"status":status,"note":"Guard excludes this branch"}));
+        }
+        let report = mutation_report(doc.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(report.counts()).unwrap(),
+            json!({"killed":1,"survived":1,"equivalent":1,"timeout":1,"skipped":1})
+        );
+        assert!(!report.counts().passed());
+        for index in 0..25 {
+            doc["mutants"].as_array_mut().unwrap().push(json!({"id":format!("live-{index}"),"file":"src/save.rs","line":index+1,"status":"survived"}));
+        }
+        let report = mutation_report(doc).unwrap();
+        assert_eq!(report.counts().survived, 26);
+        assert_eq!(report.survivors().len(), 20);
+    }
+
+    #[test]
+    fn check_mutation_equivalent_requires_a_nonblank_note_and_identifies_the_entry() {
+        for note in [Value::Null, json!(""), json!(" \n ")] {
+            let mut doc = mutation_document();
+            doc["mutants"][0]["status"] = json!("equivalent");
+            doc["mutants"][0]["note"] = note;
+            assert!(mutation_report(doc).unwrap_err().to_string().contains("m1"));
+        }
+        let mut doc = mutation_document();
+        doc["mutants"][0]["status"] = json!("equivalent");
+        doc["mutants"][0]["note"] = json!("The guard excludes this branch");
+        assert_eq!(mutation_report(doc).unwrap().counts().equivalent, 1);
+    }
+
+    #[test]
+    fn check_mutation_report_enforces_byte_entry_version_and_identity_bounds() {
+        let mut doc = mutation_document();
+        doc["mutants"] = json!((0..5000).map(|i| json!({"id":format!("m{i}"),"file":"src/save.rs","line":1,"status":"killed"})).collect::<Vec<_>>());
+        assert_eq!(mutation_report(doc.clone()).unwrap().counts().killed, 5000);
+        doc["mutants"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"extra","file":"src/save.rs","line":1,"status":"killed"}));
+        assert!(mutation_report(doc).is_err());
+        let bytes = serde_json::to_vec(&mutation_document()).unwrap();
+        let mut capped = bytes.clone();
+        capped.resize(4 * 1024 * 1024, b' ');
+        assert!(MutationReport::parse(&capped).is_ok());
+        capped.push(b' ');
+        assert!(MutationReport::parse(&capped).is_err());
+        for (pointer, value) in [
+            ("/version", json!(2)),
+            ("/source_sha", json!("unknown")),
+            ("/tool", json!("")),
+            ("/mutants/0/status", json!("unknown")),
+            ("/mutants/0/line", json!(0)),
+            ("/mutants/0/file", json!("")),
+            ("/mutants/0/id", json!("")),
+        ] {
+            let mut doc = mutation_document();
+            *doc.pointer_mut(pointer).unwrap() = value;
+            assert!(mutation_report(doc).is_err(), "{pointer}");
+        }
+        let mut doc = mutation_document();
+        let duplicate = doc["mutants"][0].clone();
+        doc["mutants"].as_array_mut().unwrap().push(duplicate);
+        assert!(mutation_report(doc).is_err());
     }
 }
 
@@ -685,6 +1024,118 @@ mod gate_tests {
                 [reason]
             );
         }
+    }
+
+    #[test]
+    fn check_gate_mutation_requires_current_source_oracle_and_successful_report() {
+        let mut d = definition();
+        d.discrimination = Some(Discrimination {
+            method: DiscriminationMethod::DiffMutation,
+            note: None,
+        });
+        let mut events = vec![observation(CheckPhase::Acceptance, CheckOutcome::Passed)];
+        let mut mutation = observation(CheckPhase::Mutation, CheckOutcome::Passed);
+        mutation.mutants = Some(MutationCounts {
+            killed: 2,
+            ..Default::default()
+        });
+        mutation.survivors = Some(vec![]);
+        events.push(mutation.clone());
+        assert!(!evaluate(&d, &events, &policy(), false).would_refuse);
+        for field in ["source", "oracle", "counts", "outcome", "tree"] {
+            let mut changed = mutation.clone();
+            match field {
+                "source" => changed.source_sha = Some("e".repeat(40)),
+                "oracle" => changed.example_oracle = Some("earlier-oracle".into()),
+                "counts" => changed.mutants = None,
+                "outcome" => changed.outcome = CheckOutcome::Errored,
+                "tree" => changed.tree_state = CheckTreeState::Dirty,
+                _ => unreachable!(),
+            }
+            events[1] = changed;
+            assert!(
+                evaluate(&d, &events, &policy(), false).would_refuse,
+                "{field}"
+            );
+        }
+        let mut failed = mutation.clone();
+        failed.outcome = CheckOutcome::Failed;
+        failed.mutants = Some(MutationCounts {
+            survived: 1,
+            timeout: 1,
+            ..Default::default()
+        });
+        failed.survivors = Some(vec![MutationSurvivor {
+            id: "m1".into(),
+            file: "src/save.rs".into(),
+            line: 42,
+        }]);
+        events[1] = failed;
+        let gate = evaluate(&d, &events, &policy(), false);
+        assert_eq!(reasons(&gate), ["mutants_survived", "mutation_timeout"]);
+        assert_eq!(gate.unmet[0].survivors[0].line, 42);
+        // A valid observation of the same source and oracle remains sufficient.
+        events.push(mutation);
+        assert!(!evaluate(&d, &events, &policy(), false).would_refuse);
+    }
+
+    #[test]
+    fn check_legacy_mutation_observations_remain_readable_without_report_proof() {
+        let mut legacy = observation(CheckPhase::Mutation, CheckOutcome::Passed);
+        legacy.example_oracle = Some(format!("sha256:{}", "e".repeat(64)));
+        legacy.validate().unwrap();
+        let mut d = definition();
+        d.discrimination = Some(Discrimination {
+            method: DiscriminationMethod::DiffMutation,
+            note: None,
+        });
+        legacy.example_oracle = Some("oracle".into());
+        let events = [
+            observation(CheckPhase::Acceptance, CheckOutcome::Passed),
+            legacy,
+        ];
+        assert_eq!(
+            reasons(&evaluate(&d, &events, &policy(), false)),
+            ["mutation_failed"]
+        );
+    }
+
+    #[test]
+    fn check_gate_alternative_requires_note_and_distinct_proposer_and_reviewer() {
+        let mut d = definition();
+        d.discrimination = Some(Discrimination {
+            method: DiscriminationMethod::JustifiedAlternative,
+            note: Some("Review the injected storage failure".into()),
+        });
+        let mut admission = approved(Id::new());
+        admission.proposer_session = Some(Id::new());
+        let run = |d: &WorkDefinition, admission: &RecordedAdmission| {
+            evaluate_check_gate(
+                &CheckGateDefinition {
+                    definition: Some(d),
+                    tags: &[],
+                    required_criteria: &["Retain the draft".into()],
+                    oracles: &[("retains-draft".into(), Some("oracle".into()))],
+                    oracle_fingerprint: Some("fingerprint"),
+                    session: None,
+                    check_waiver: None,
+                },
+                Some(admission),
+                &[observation(CheckPhase::Acceptance, CheckOutcome::Passed)],
+                &"b".repeat(40),
+                &policy(),
+            )
+            .unwrap()
+        };
+        assert!(!run(&d, &admission).would_refuse);
+        admission.proposer_session = admission.decider_session;
+        assert_eq!(reasons(&run(&d, &admission)), ["alternative_unreviewed"]);
+        admission.proposer_session = Some(Id::new());
+        d.discrimination.as_mut().unwrap().note = None;
+        assert_eq!(
+            reasons(&run(&d, &admission)),
+            ["discrimination_note_missing"]
+        );
     }
     #[test]
     fn check_gate_separate_approver_uses_actual_completion_session() {

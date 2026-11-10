@@ -412,10 +412,13 @@ impl WorkDefinition {
             || !opt_text(&self.deliverable)
             || !opt_text(&self.evidence_method)
             || !opt_text(&self.failure_recovery)
-            || self
-                .discrimination
-                .as_ref()
-                .is_some_and(|d| !opt_text(&d.note))
+            || self.discrimination.as_ref().is_some_and(|d| {
+                !opt_text(&d.note)
+                    && !(d.method == DiscriminationMethod::JustifiedAlternative
+                        && d.note
+                            .as_ref()
+                            .is_some_and(|note| note.len() <= MAX_TEXT && note.trim().is_empty()))
+            })
         {
             return Err(invalid(
                 "names and descriptive text must be nonblank and bounded",
@@ -1109,19 +1112,32 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
         },
         source: None,
     });
-    let discrimination_ok = me.discrimination.is_some()
-        || parent_def
-            .as_ref()
-            .is_some_and(|(_, d)| d.discrimination.is_some());
-    if examples_needed && !discrimination_ok {
+    let discrimination = me
+        .discrimination
+        .as_ref()
+        .or_else(|| parent_def.as_ref()?.1.discrimination.as_ref());
+    let note_missing = discrimination.is_some_and(|d| {
+        d.method == DiscriminationMethod::JustifiedAlternative
+            && d.note.as_ref().is_none_or(|note| note.trim().is_empty())
+    });
+    let discrimination_ok = discrimination.is_some() && !note_missing;
+    if examples_needed && discrimination.is_none() {
         run.gap(
             "discrimination_missing",
             "no method says how the tests will show they detect a wrong implementation",
         );
     }
+    if note_missing {
+        run.gap(
+            "discrimination_note_missing",
+            "justified_alternative requires a nonblank discrimination.note for independent review",
+        );
+    }
     run.obligations.push(ObligationStatus {
         obligation: "discrimination",
-        state: if !examples_needed {
+        state: if note_missing {
+            "missing"
+        } else if !examples_needed {
             "not_applicable"
         } else if discrimination_ok {
             "satisfied"

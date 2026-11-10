@@ -19,6 +19,7 @@ pub struct GatePolicy {
     pub verify: VerifyGates,
 }
 
+/// Check policy includes the optional project-owned `[checks.mutation]` command.
 pub type CheckGates = awr_core::CheckGatePolicy;
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -161,5 +162,34 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    #[test]
+    fn checks_mutation_accepts_a_direct_argument_vector_and_rejects_invalid_commands() {
+        let p = GatePolicy::parse(
+            "version=1\n[checks.mutation]\nrun=['python3','scripts/report.py','--json']\n",
+        )
+        .unwrap();
+        assert_eq!(
+            p.checks.mutation.unwrap().run,
+            ["python3", "scripts/report.py", "--json"]
+        );
+        assert!(GatePolicy::default().checks.mutation.is_none());
+        for command in [
+            "[]",
+            "['']",
+            "['   ']",
+            "'shell command'",
+            "['python3',true]",
+        ] {
+            assert!(
+                GatePolicy::parse(&format!("version=1\n[checks.mutation]\nrun={command}\n"))
+                    .is_err(),
+                "{command}"
+            );
+        }
+        assert!(
+            GatePolicy::parse("version=1\n[checks.mutation]\nrun=['report']\nextra=true").is_err()
+        );
     }
 }
