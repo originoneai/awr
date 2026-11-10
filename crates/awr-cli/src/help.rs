@@ -112,6 +112,7 @@ static WORK_GROUPS: &[Group] = &[
             ("progress", "Record progress in the source ledger"),
             ("block", "Record a concrete blocker"),
             ("unblock", "Clear a blocker and recheck dependencies"),
+            ("check", "Run example checks and record results"),
             (
                 "prepare-completion",
                 "Validate a report and prepare evidence metadata",

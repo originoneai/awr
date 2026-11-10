@@ -42,6 +42,7 @@ mod specification;
 mod team;
 mod work_action;
 mod work_activate;
+mod work_check;
 mod work_create;
 mod work_edit;
 mod work_prepare;

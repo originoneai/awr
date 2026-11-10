@@ -801,6 +801,7 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
         | WorkCommand::Finding(_)
         | WorkCommand::Prepare(_)
         | WorkCommand::PrepareCompletion(_)
+        | WorkCommand::Check(_)
         | WorkCommand::Create(_)
         | WorkCommand::CreateStatus(_)
         | WorkCommand::CreateRecover(_)

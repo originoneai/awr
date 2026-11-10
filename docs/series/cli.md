@@ -78,6 +78,7 @@ awr help environments
 awr help collaboration
 awr help all
 awr work help planning
+awr work help daily
 awr work help governance
 awr work help lifecycle
 awr work help recovery
@@ -86,11 +87,17 @@ awr help runtime
 awr help team
 awr status --help
 awr work activate --help
+awr work help check
+awr work check --help
 awr work complete --help
 ```
 
 The work planning group lists `create`, `activate`, `edit`, `graph` and `assess`.
 Use `awr work help planning` to read their one-line descriptions.
+
+The daily work group places `check` beside `prepare-completion` and `complete`.
+Use `awr work check` to run example checks and record their results; see
+[Running checks](../dev/reference/checks.md) for phases and completion evidence.
 
 `awr help daily` and `awr work help daily` list the daily commands.
 `awr help runtime` and `awr help team` show their commands' detailed help;

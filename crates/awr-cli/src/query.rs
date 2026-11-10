@@ -41,6 +41,8 @@ pub enum WorkCommand {
     Prepare(crate::work_prepare::PrepareArgs),
     /// Validate a real report and derive evidence metadata without registering or completing.
     PrepareCompletion(crate::work_prepare::CompletionArgs),
+    /// Run example checks directly and record results, or inspect their recorded status.
+    Check(crate::work_check::CheckArgs),
     /// Preview or accept a source-backed draft, optionally attempting activation.
     #[command(
         after_help = "Example: awr work create --title 'Review a report' --request-key review-report --acceptance 'The report is reviewed' --goal GUIDE --next-action 'Read the report' --activate"
@@ -746,6 +748,7 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
         WorkCommand::Gap(args) => crate::management::gap(root, args),
         WorkCommand::Finding(args) => crate::management::finding(root, args),
         WorkCommand::Prepare(args) => crate::work_prepare::prepare(root, args, json_output),
+        WorkCommand::Check(args) => crate::work_check::run(root, args, json_output),
         WorkCommand::PrepareCompletion(args) => {
             crate::work_prepare::completion(root, args, json_output)
         }

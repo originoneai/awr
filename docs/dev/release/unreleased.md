@@ -95,6 +95,14 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   they are read, and only after the work binding, the replay of the evidence digest, the current review contract and
   the current work binding of the execution; otherwise they say `unverifiable` with a reason and show no execution
   fact. Completion and integration keep their strict result binding. No schema change.
+- `awr work check` runs declared example checks directly, records oracle and log digests,
+  and generates registered reports and completion input after passing acceptance checks.
+  Baselines can run before admission; governed acceptance and mutation runs require admission
+  and the session's claim. Timeouts are recorded as unknown and their child processes are
+  terminated. Unchecked acceptance criteria remain unmapped. Evidence registration reports
+  the shared trust vocabulary in CLI and MCP receipts and reads: generated evidence starts as
+  `recorded` and becomes `verified` after completion checks its report bytes.
+  See [running checks](../reference/checks.md).
 - Governed work in a Team: a snapshot may declare governance (`governance.json`, written by
   `PublishPrepOptions::governance`), the Team reuses the Core admission rules on its own facts, and
   `admission.decide` records decisions attributed to the verified caller (`planning.approve`, a

@@ -77,6 +77,40 @@ fn ac1_default_overviews_are_short_and_point_to_all_commands() {
 }
 
 #[test]
+fn work_check_help_joins_completion_in_daily_and_preserves_detailed_help() {
+    let daily = String::from_utf8(help(&["work", "help", "daily"])).unwrap();
+    let members = daily
+        .lines()
+        .filter(|line| line.starts_with("  "))
+        .filter_map(|line| line.split_whitespace().next())
+        .collect::<Vec<_>>();
+    let check = members.iter().position(|name| *name == "check").unwrap();
+    assert_eq!(members[check + 1], "prepare-completion");
+    assert_eq!(members[check + 2], "complete");
+    let description = daily
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("check "))
+        .unwrap()
+        .trim();
+    assert!(description.chars().count() <= 60);
+    for group in ["planning", "governance", "lifecycle", "recovery"] {
+        let text = String::from_utf8(help(&["work", "help", group])).unwrap();
+        assert!(
+            !text
+                .lines()
+                .any(|line| line.split_whitespace().next() == Some("check")),
+            "check also appears in {group}: {text}"
+        );
+    }
+    let all = String::from_utf8(help(&["work", "help", "all"])).unwrap();
+    assert!(visible_command_names(&all).contains(&"check"));
+    assert_eq!(
+        help(&["work", "help", "check"]),
+        help(&["work", "check", "--help"])
+    );
+}
+
+#[test]
 fn ac2_full_lists_match_the_baseline_line_for_line() {
     assert_eq!(HELP, HELP_FLAG);
     assert_eq!(help(&["help", "all"]), native_baseline(HELP));

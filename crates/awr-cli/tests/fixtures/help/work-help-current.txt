@@ -15,6 +15,7 @@ Commands:
   finding             Record a review finding of a work, or close one; blocking findings return the work, the rest are deferred
   prepare             Prepare readiness and the required context together; does not acknowledge consumption
   prepare-completion  Validate a real report and derive evidence metadata without registering or completing
+  check               Run example checks directly and record results, or inspect their recorded status
   create              Preview or accept a source-backed draft, optionally attempting activation
   create-status       Read the durable outcome for a stable creation request without applying it
   create-recover      Explicitly recover a pending creation while retaining externally changed bytes

@@ -54,7 +54,7 @@ impl Drop for PendingFile {
     }
 }
 
-fn storage_directory(root: &Path) -> Result<Dir> {
+pub(crate) fn storage_directory(root: &Path) -> Result<Dir> {
     let mut parent = open_dir_exact(root)?;
     for name in [".awr", "artifacts"] {
         match parent.create_dir(name) {
