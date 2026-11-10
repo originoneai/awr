@@ -6,6 +6,12 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    /// Attach operation-specific recovery facts while retaining the original error code.
+    #[error("{error}")]
+    WithDetails {
+        error: Box<Error>,
+        details: serde_json::Value,
+    },
     #[error(transparent)]
     Workstream(#[from] crate::WorkstreamError),
     #[error("not found: {0}")]
@@ -177,8 +183,16 @@ fn project_locator_mismatch_details(message: &str) -> Option<serde_json::Value> 
 }
 
 impl Error {
+    pub fn with_details(self, details: serde_json::Value) -> Self {
+        Self::WithDetails {
+            error: Box::new(self),
+            details,
+        }
+    }
+
     pub fn code(&self) -> &'static str {
         match self {
+            Self::WithDetails { error, .. } => error.code(),
             Self::Workstream(error) => error.code(),
             Self::NotFound(_) => "NotFound",
             Self::SourceUnavailable(_) => "SourceUnavailable",
@@ -215,6 +229,18 @@ impl Error {
         }
     }
     pub fn report(&self) -> ErrorReport {
+        if let Self::WithDetails { error, details } = self {
+            let mut report = error.report();
+            let mut merged = report.details.unwrap_or_else(|| serde_json::json!({}));
+            if let Some(extra) = details.as_object() {
+                merged
+                    .as_object_mut()
+                    .expect("error details object")
+                    .extend(extra.clone());
+            }
+            report.details = Some(crate::redact_sensitive_value(merged));
+            return report;
+        }
         ErrorReport {
             code: self.code(),
             message: crate::safe_diagnostic(&self.to_string()),
@@ -256,6 +282,18 @@ impl Error {
                 Self::BudgetExceeded { required, budget } => {
                     Some(serde_json::json!({"required": required, "budget": budget}))
                 }
+                Self::DependencyBlocked(message) => dependency_details(message),
+                Self::ClaimConflict(message) => claim_details(message),
+                Self::Unsupported(capability) => {
+                    let command = cli_next_action(&["awr", "capabilities", "--require", capability]);
+                    Some(serde_json::json!({
+                        "next_action": if command.len() <= 300 && !command.chars().any(char::is_control) {
+                            command
+                        } else {
+                            "awr capabilities".into()
+                        }
+                    }))
+                },
                 Self::ProtocolUnsupported { requested, supported } => Some(serde_json::json!({
                     "requested": requested, "supported": supported,
                     "source_write_performed": false, "runtime_write_performed": false
@@ -296,10 +334,93 @@ impl Error {
     /// Add checkpoint-specific guidance without changing the public conflict code.
     pub fn for_checkpoint(self) -> Self {
         match self {
+            Self::WithDetails { error, details } => error.for_checkpoint().with_details(details),
             Self::RevisionConflict { expected, actual } => {
                 Self::CheckpointRevisionConflict { expected, actual }
             }
             other => other,
         }
     }
+}
+
+/// Quote literal argv values for a POSIX command line; never interpolate source text as code.
+pub fn cli_next_action(args: &[&str]) -> String {
+    args.iter()
+        .map(|arg| {
+            if !arg.is_empty()
+                && arg
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_=./:".contains(&b))
+            {
+                (*arg).to_owned()
+            } else {
+                format!("'{}'", arg.replace('\'', "'\\''"))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Require caller-supplied business facts before previewing a draft repair.
+pub fn draft_repair_error(error: Error, work: &crate::WorkItem, fields: &[&str]) -> Error {
+    let request = format!("repair-{}", crate::Id::new());
+    let command = |key: &str| {
+        let mut command = cli_next_action(&[
+            "awr",
+            "work",
+            "edit",
+            key,
+            "--request-key",
+            &request,
+            "--actor",
+            "awr-cli",
+            "--reason",
+            "Complete draft fields",
+        ]);
+        for field in fields {
+            command.push_str(match *field {
+                "title" => " --title \"${AWR_TITLE:?}\"",
+                "acceptance" => " --acceptance \"${AWR_ACCEPTANCE:?}\"",
+                "goal" => " --goal \"${AWR_GOAL:?}\"",
+                "kind" => " --kind \"${AWR_KIND:?}\"",
+                "milestone" => " --milestone \"${AWR_MILESTONE:?}\"",
+                "next_action" => " --next-action \"${AWR_NEXT_ACTION:?}\"",
+                _ => unreachable!("draft repair fields are defined by activation checks"),
+            });
+        }
+        command
+    };
+    let mut next = command(&work.meta.external_key);
+    if next.len() > 300 || next.chars().any(char::is_control) {
+        next = command(&work.meta.id.to_string());
+    }
+    error.with_details(serde_json::json!({"missing":fields,"next_action":next,
+        "repair":"Set the named AWR_* variables to the missing business facts, execute the edit preview, accept its reviewed values, then activate the repaired draft."}))
+}
+
+fn dependency_details(message: &str) -> Option<serde_json::Value> {
+    let diagnostics: serde_json::Value = serde_json::from_str(message).ok()?;
+    let draft = diagnostics.as_array()?.iter().find(|d| {
+        d["code"] == "status_not_selectable" && d["detail"] == "source status is draft"
+    })?;
+    let key = draft["work_item_key"].as_str()?;
+    let request = format!("activate-{}", crate::Id::new());
+    Some(serde_json::json!({"diagnostics":diagnostics,
+        "next_action":cli_next_action(&["awr", "work", "activate", key, "--request-key", &request])}))
+}
+
+fn claim_details(message: &str) -> Option<serde_json::Value> {
+    let claims: serde_json::Value = serde_json::from_str(message).ok()?;
+    let holder = claims.as_array()?.first()?;
+    let session = holder["session_id"].as_str()?;
+    let next = if let Some(expiry) = holder["expires_at"].as_i64() {
+        format!(
+            "Wait until Unix time {expiry} ms, or ask holding session {session} to hand off its claim."
+        )
+    } else {
+        format!("Ask holding session {session} to hand off its claim; this claim has no expiry.")
+    };
+    Some(
+        serde_json::json!({"holding_session":session,"expires_at":holder["expires_at"],"claims":claims,"next_action":next}),
+    )
 }

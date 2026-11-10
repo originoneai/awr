@@ -297,9 +297,14 @@ class Parity(unittest.TestCase):
                 self.assertEqual(cli["error"], error)
                 self.assertEqual(error["code"], "ContextIncomplete")
             mcp = self.tool("awr_context_compile", args, error=work != "W", readonly=True)
+            # Budget selection is CLI transport metadata; compare every context fact unchanged.
+            self.assertEqual(cli.pop("budget"), {"applied": 5000, "basis": "default"})
             self.equal_read(cli, mcp)  # No hash, rendered text or gap normalization.
         _, error = self.cli(["context", "compile", "--work", "W", "--detached", "--budget", "1"], code=1)
-        self.assertEqual(error, self.tool("awr_context_compile", {"work": "W", "detached": True, "budget": 1}, error=True, readonly=True))
+        mcp_error = self.tool("awr_context_compile", {"work": "W", "detached": True, "budget": 1}, error=True, readonly=True)
+        self.assertIn("--work W --detached", error["details"].pop("next_action"))
+        self.assertNotIn("next_action", mcp_error["details"])
+        self.assertEqual(error, mcp_error)
 
     def test_explicit_branch_reads_do_not_switch_defaults(self):
         branch = self.cli(["branch", "create", "review", "--actor", "fixture", "--reason", "Review shared work",

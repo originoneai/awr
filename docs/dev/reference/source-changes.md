@@ -73,6 +73,101 @@ Its preview returns compact changed fields and a normalized `change`, plus
 retain the reviewed source fingerprint. General create/batch/edit responses keep
 their existing full preview shape.
 
+### CLI and MCP request envelopes
+
+The CLI reads a complete request from `--input FILE`. MCP wraps the same change in
+its own request identity and supplies actor provenance from the connected client.
+Use the envelope for the selected entry point:
+
+| Operation | CLI | MCP |
+| --- | --- | --- |
+| Create | `work create --input create.json` | `awr_change_preview` / `awr_change_apply`, `change.kind="create"` |
+| Batch | `batch change --input batch.json` | `awr_change_preview` / `awr_change_apply`, `change.kind="batch"` |
+| Host edit | `host preview --input edit.json`, then `host save` | `awr_change_preview` / `awr_change_apply`, `change.kind="edit"` |
+
+CLI creation input:
+
+```json
+{"version":1,"request_key":"appendix-1","title":"Review appendix","fields":{"goal":"GUIDE","acceptance":["The conclusion is reviewed"],"next_action":"Read the source material"}}
+```
+
+CLI batch input (the `actor` and `reason` keys are required):
+
+```json
+{"version":1,"request_key":"batch-1","actor":{"host":"awr-cli","subject":"planner","origin":"delegated_agent"},"reason":"Refine the appendix plan","change":{"kind":"ledger","source_id":"<registered-source-id>","source_fingerprint":"<reviewed-source-fingerprint>","operations":[{"operation":"fields","target":"APPENDIX","fields":{"next_action":"Review the draft"}}]}}
+```
+
+The corresponding MCP batch envelope:
+
+```json
+{"request_id":"batch-1","reason":"Refine the appendix plan","change":{"kind":"batch","change":{"kind":"ledger","source_id":"<registered-source-id>","source_fingerprint":"<reviewed-source-fingerprint>","operations":[{"operation":"fields","target":"APPENDIX","fields":{"next_action":"Review the draft"}}]}}}
+```
+
+CLI host activation input:
+
+```json
+{"version":1,"request_key":"activate-1","actor":{"host":"awr-cli","subject":"planner","origin":"delegated_agent"},"reason":"Activate the reviewed appendix","change":{"operation":"activate_draft","work":"APPENDIX","source_fingerprint":"<reviewed-source-fingerprint>"}}
+```
+
+The MCP equivalent is `{"request_id":"activate-1","reason":"Activate the reviewed appendix","change":{"kind":"edit","change":{"operation":"activate_draft","work":"APPENDIX","source_fingerprint":"<reviewed-source-fingerprint>"}}}`.
+
+CLI creation also accepts repeated `--acceptance`, `--goal`, `--depends-on`, `--path`,
+`--tag`, and `--spec-ref` (one specification-reference JSON object), plus `--kind`,
+`--priority`, `--summary`, `--next-action`, `--owner` and `--milestone`. These map to
+`fields.acceptance`, `goal`, `depends_on`, `paths`, `tags`, `spec_refs`, `kind`,
+`priority`, `summary`, `next_action`, `owner` and `milestone`. `--input` and field
+flags are mutually exclusive. No omitted source facts are invented.
+
+Provide the title, acceptance, goal and a concrete `--next-action` before requesting
+activation. For JSON input, put the same next step in `fields.next_action`.
+Include any milestone required by the registered source policy.
+
+```sh
+awr work create --title "Review appendix" --request-key appendix-1 \
+  --acceptance "The conclusion is reviewed" --goal GUIDE \
+  --next-action "Read the source material" --activate
+```
+
+Repeat that request with `--accept`, `--expected-preview` and `--expected-revision`
+from the preview to create and attempt activation. If the activation checks refuse it, creation
+succeeds, `draft` stays true, and `activation.error` explains the reason. The
+creation receipt retains that outcome. Use a new activation request after repairing
+the draft. Creation and activation share a caller request but retain separate
+recoverable source operations.
+
+An activation refusal lists missing fields and suggests an edit preview instead of
+repeating the refused activation. Supply the actual business values in the named
+`AWR_*` variables before executing that command. Unset variables stop the shell;
+the command does not write placeholder criteria or select a goal for the caller.
+For example, repair a missing next step with:
+
+```sh
+export AWR_NEXT_ACTION="Read the source material"
+awr work edit APPENDIX --request-key repair-appendix --actor planner \
+  --reason "Complete draft fields" --next-action "${AWR_NEXT_ACTION:?}"
+```
+
+Accept the returned edit with its `source_fingerprint`, `preview_fingerprint` and
+`project_revision`, then preview and accept activation. Draft repairs also support
+repeated `--acceptance` and `--goal`, which replace the complete corresponding lists,
+and `--kind` / `--milestone`. Those planning-field repairs require a draft. Activation
+continues to validate the supplied criteria, goal, dependencies and source policy.
+
+Creation revision conflicts include `details.retry.expected_revision`. The caller
+can reuse its request with that revision. If a suggested command would exceed 300
+bytes or contain control characters, the CLI retains the exact request in a private
+project runtime input file and suggests `work create --input FILE` with the reviewed
+fingerprint, activation intent and new revision. Changed sources still require a
+fresh preview. Long context-budget recovery similarly uses
+`context compile --input FILE --budget N`, retaining all original selectors and the
+delta baseline; input and selection flags cannot be mixed.
+
+For an existing draft, `awr work activate APPENDIX --request-key activate-1`
+previews activation. Accept with the same arguments plus `--accept`,
+`--source-fingerprint`, `--expected-preview` and `--expected-revision` from that
+preview. `work create-status`, `work create-recover`, `batch status` and
+`batch recover` accept both `--key` and its visible alias `--request-key`.
+
 ### Create a draft
 
 ```json
@@ -92,9 +187,11 @@ their existing full preview shape.
 }
 ```
 
-`source_id` is optional when one primary ledger is unambiguous. Created work always
-starts as a draft; missing goals, criteria and results are never invented. Creation
-supports the same bounded fields as the CLI and preserves stable task identity.
+`source_id` is optional when one primary ledger is unambiguous. Creation first
+writes a draft; missing goals, criteria and results are never invented. The CLI can
+explicitly request activation as described above. MCP creation keeps its existing
+input shape and draft behavior. Both entries support the same bounded source
+fields and preserve stable task identity.
 
 ### Change several tasks together
 

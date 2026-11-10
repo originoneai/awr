@@ -253,7 +253,7 @@ fn interrupted_work_resumes_with_new_agent_rules_current_sources_and_saved_loops
     assert_eq!(context["session_id"], nid);
     assert_eq!(context["checkpoint_id"], cpid);
     assert!(pack["token_estimate"].as_u64().unwrap() <= 5000);
-    let repeated = f.ok(&[
+    let mut repeated = f.ok(&[
         "context",
         "compile",
         "--work",
@@ -267,6 +267,10 @@ fn interrupted_work_resumes_with_new_agent_rules_current_sources_and_saved_loops
         "--checkpoint",
         cpid,
     ]);
+    assert_eq!(
+        repeated.as_object_mut().unwrap().remove("budget"),
+        Some(json!({"applied": 5000, "basis": "default"}))
+    );
     assert_eq!(repeated, *context);
     let shown = f.ok(&["session", "show", nid]);
     assert_eq!(shown["inherited_checkpoint"]["id"], cpid);

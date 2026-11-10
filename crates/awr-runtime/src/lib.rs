@@ -39,6 +39,8 @@ mod fs_sync;
 mod management;
 mod mutation;
 mod mutation_apply;
+mod recovery_input;
+pub use recovery_input::save_cli_recovery_input;
 mod operation_readset;
 mod organization;
 mod planning_writeback;
@@ -183,7 +185,8 @@ pub use source_concurrency::{
 };
 pub use work_action::{WorkActionRequest, perform_work_action};
 pub use work_create::{
-    CreateWorkInput, CreationReport, create_work, creation_status, recover_creation,
+    CreateWorkInput, CreationReport, create_work, create_work_with_activation, creation_status,
+    recover_creation,
 };
 pub use work_definition::work_definition_report;
 pub use workflow::{

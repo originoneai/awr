@@ -786,7 +786,8 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
                 json_output,
             )
         }
-        WorkCommand::Edit(_)
+        WorkCommand::Activate(_)
+        | WorkCommand::Edit(_)
         | WorkCommand::Show { .. }
         | WorkCommand::Graph { .. }
         | WorkCommand::Assess(_)
