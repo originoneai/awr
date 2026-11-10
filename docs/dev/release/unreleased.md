@@ -6,11 +6,12 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
-- A [documentation style guide](../STYLE.md) and CI checker for negative-term density,
-  opening paragraphs, limitation sections, and relative links. The baseline preserves
-  existing pages' four recorded metrics; updates accept equal or lower values and new
-  pages use absolute limits. Run `python3 scripts/check_docs_style.py --self-test`
-  for synthetic rule checks and mutation tests.
+- Optional identifiers and check bindings for work-definition examples, advertised as
+  `definition.example_checks`. Definition reports show each example's check binding, validate
+  argument and path bounds, and identify missing or duplicate identifiers. Check metadata is
+  included in admission fingerprints. All readers must support the new keys before a shared
+  ledger uses them; this feature does not run commands or read the listed files. See
+  [work definitions](../reference/work-definition.md).
 - The generic Team read adapter (`POST /api/team/read`) now serves the real `work.next`
   response. Upstream's identity-scoped navigation read carries only
   `{ data, project_revision, protocol_version }` — no scope/snapshot attribution
@@ -31,6 +32,11 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   `awr_team_input_contract` still reads the exact input of one operation from the full catalog, and
   every call is still checked against the full schema. The default and `?catalog=full` are
   unchanged; any other value, or the parameter given twice, is refused when listing.
+- A [documentation style guide](../STYLE.md) and CI checker for negative-term density,
+  opening paragraphs, limitation sections, and relative links. The baseline preserves
+  existing pages' four recorded metrics; updates accept equal or lower values and new
+  pages use absolute limits. Run `python3 scripts/check_docs_style.py --self-test`
+  for synthetic rule checks and mutation tests.
 - One observation freshness and coverage contract for the Observer Team reads (AWR-OBS-002): every
   read (`POST /api/team/read`, `/api/team/inbox-detail`, `GET /api/team/inbox`, `GET /api/team/work`)
   carries a `freshness` envelope that presents the report-received clock, the authoritative

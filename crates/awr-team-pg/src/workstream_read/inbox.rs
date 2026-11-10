@@ -458,7 +458,7 @@ fn select(
         && c["delivery_channel"]["mapping_present"] == false
         && c["delivery_channel"]["matching_template_available"] == true
         && c["repository_integration_policy"] == true
-        && (supervisor || deliverer)
+        && supervisor
     {
         (
             "delivery_configuration",
@@ -466,6 +466,24 @@ fn select(
             "an authorized current template matches the selected resource; no task mapping is registered",
             "delivery.routes",
             "For repository delivery, discover an authorized matching template and attach it before requesting delivery checks. Preserve the candidate and review. Existing mappings or unsettled effects retain their established recovery path; report-only completion keeps its current contract.",
+        )
+    } else if involved
+        && !closed
+        && c["candidate"]["current"] == true
+        && c["delivery_channel"]["registered_for_candidate"] == false
+        && c["delivery_channel"]["mapping_present"] == false
+        && c["delivery_channel"]["matching_template_available"] == true
+        && c["repository_integration_policy"] == true
+        && deliverer
+    {
+        // Attaching a route (delivery.route.reuse) needs the authority to assign work, which delivery authority alone
+        // does not give: this role is pointed at a supervisor instead of at a step it would be refused (AWR-TFQ-018).
+        (
+            "delivery_configuration",
+            "a current candidate has an available repository route but no task delivery channel",
+            "an authorized current template matches the selected resource; attaching it needs a supervisor who may assign work",
+            "delivery.neutral.inspect",
+            "Attaching a route needs a supervisor who may assign work; delivery authority alone does not allow it. Inspect the candidate facts, ask a supervisor to attach the matching template, and preserve the candidate and review.",
         )
     } else if !closed
         && c["review"]["state"] == "open"
@@ -703,4 +721,69 @@ pub(super) async fn read(
         return Err(PgError::ResponseTooLarge);
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A current candidate with an available repository route and no task delivery channel, on open work.
+    fn route_available() -> Value {
+        json!({
+            "work_id": "a",
+            "workstream_id": "s",
+            "runtime": {"state": "ready"},
+            "responsibility": {"relation": "unknown"},
+            "progress": {},
+            "collaboration": {
+                "candidate": {"current": true},
+                "review": null,
+                "repository_integration_policy": true,
+                "delivery_channel": {
+                    "registered_for_candidate": false,
+                    "mapping_present": false,
+                    "matching_template_available": true
+                }
+            }
+        })
+    }
+
+    // Attaching a route (delivery.route.reuse) needs the authority to assign work. Delivery authority alone does not
+    // give it, so that role must not be told to attach (AWR-TFQ-018).
+    #[test]
+    fn only_a_supervisor_is_told_to_attach_the_route() {
+        let data = route_available();
+        let supervisor = select(&data, true, false, false, false, true).unwrap();
+        assert_eq!(supervisor["code"], "delivery_configuration");
+        assert_eq!(supervisor["action"]["op"], "delivery.routes");
+        assert!(
+            supervisor["action"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("attach it")
+        );
+        // A role with both authorities is a supervisor first.
+        let both = select(&data, true, false, false, true, true).unwrap();
+        assert_eq!(both["action"]["op"], "delivery.routes");
+    }
+
+    #[test]
+    fn a_deliverer_without_assign_authority_is_pointed_at_a_supervisor() {
+        let data = route_available();
+        let deliverer = select(&data, false, false, false, true, true).unwrap();
+        assert_eq!(deliverer["code"], "delivery_configuration");
+        assert_eq!(deliverer["action"]["op"], "delivery.neutral.inspect");
+        let note = deliverer["action"]["note"].as_str().unwrap();
+        assert!(note.contains("ask a supervisor"), "{note}");
+        assert!(
+            !note.contains("route.reuse") && !note.contains("discover"),
+            "{note}"
+        );
+    }
+
+    #[test]
+    fn a_role_with_neither_authority_gets_no_route_guidance() {
+        let data = route_available();
+        assert!(select(&data, false, false, false, false, true).is_none());
+    }
 }
