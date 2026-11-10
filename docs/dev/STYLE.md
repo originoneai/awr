@@ -57,7 +57,7 @@ After improving an existing page, run `python3 scripts/check_docs_style.py --upd
 | R3 | New openings stay within 60 words and zero negatives; existing openings stay within both recorded counts. |
 | R4 | New pages have at most one Limits, Known limits, Boundaries, 限制, or 边界 section; existing pages use max(recorded count, 1) as their ceiling. |
 | R5 | Relative Markdown links, images, reference links, and HTML targets resolve to existing local paths. |
-| Baseline | Each page records density, opening words, opening negatives, and limit sections. Updates accept equal or lower values individually. |
+| Baseline | Each page records density, opening words, opening negatives, and limit sections. Updates only lower values; higher values keep the recorded ceilings and remain subject to R1–R4 in regular checks. |
 
 Density uses English words or Han characters, whichever count is larger; Chinese negatives use the Han denominator. Opening length counts English words and individual Han characters.
 
