@@ -1,13 +1,14 @@
 # Using the CLI
 
-The `awr` command-line tool is the full management entry point for an AWR
-project: everything an agent can do through MCP, you can do from your terminal
-— plus the project administration that MCP does not expose.
+Use `awr` to inspect project work, compile context and record progress or evidence. The CLI also handles setup, source administration and recovery.
 
-## Install
+## Use it
 
-Both package channels install the same Rust CLI and MCP server; there is no
-separate JavaScript or Python SDK:
+The `awr` CLI manages project setup, work, context and evidence from the terminal.
+
+### Install
+
+Both package channels install the same native Rust CLI and MCP server:
 
 ```sh
 npm install -g @originoneai/awr@0.7.0
@@ -25,7 +26,7 @@ glibc with `ldd --version | head -n 1`. Git is required only for Git-bound
 operations; SQLite is bundled. For a first-project walkthrough, see
 [Quickstart](quickstart.md).
 
-## The shape of every command
+### The shape of every command
 
 CLI examples throughout the documentation share a common prefix:
 
@@ -38,7 +39,16 @@ machine-readable JSON object (details below). Drop `--json` when reading
 output yourself — the default human output is deliberately bounded: `status`
 shows at most one current suggestion and `ready` lists at most 10 items.
 
-## Finding commands
+## How it behaves
+
+| Operation | Result |
+| --- | --- |
+| `status` / `ready` | Action queues or claimable work |
+| `work show` / `context compile` | Task details or required context |
+| Work actions | Revision-checked source transitions |
+| Events and evidence | Recorded facts and report bindings |
+
+### Finding commands
 
 In development on `main`, `awr`, `awr help` and `awr --help` show daily work
 commands first. The overview groups the rest by purpose:
@@ -111,7 +121,7 @@ the original work help, while `awr work --help` and `awr work help` show the
 short overview. Detailed command help and JSON usage errors retain their
 existing format.
 
-## Checking where the project stands
+### Checking where the project stands
 
 `status` is your first stop. Its default `action` view shows the current
 continuation, claimable work, waits, actual blockers, and a history summary:
@@ -120,11 +130,10 @@ continuation, claimable work, waits, actual blockers, and a history summary:
 awr --project /absolute/project status --view full --branch main
 ```
 
-- `--view action/full/summary` — default is `action`; `full` gives the legacy
-  complete structure.
-- `--branch NAME_OR_ID` — read a branch by name, internal ID, or `main`
-  instead of the default branch. Selecting a branch for a read never changes
-  the default branch, sessions, claims, or your Git checkout.
+| Selector | Result |
+| --- | --- |
+| `--view action/full/summary` | `action` is default; `full` retains the legacy complete structure |
+| `--branch NAME_OR_ID` | Read a name, internal ID or `main` instead of the default branch |
 
 `ready` lists work items that can be picked up, with diagnostics, claim
 information, and truncation hints. `--limit` defaults to 10 and accepts 1 to
@@ -134,7 +143,7 @@ information, and truncation hints. `--limit` defaults to 10 and accepts 1 to
 awr --project /absolute/project ready --limit 25
 ```
 
-## Reading work items
+### Reading work items
 
 `work show` gives one item in full — task, acceptance criteria, dependencies,
 decisions, evidence, and provenance. `--source-sha SHA` reads it as of a
@@ -151,7 +160,7 @@ awr --project /absolute/project work show W-123 --source-sha abc123
 awr --project /absolute/project search "payment retry" --type work --limit 20
 ```
 
-## Compiling context for a task
+### Compiling context for a task
 
 `context compile` assembles the L1 execution context — the budgeted working
 set for a task — with completeness, gaps, provenance, and the Context hash:
@@ -173,13 +182,9 @@ switching your default branch:
 awr --project /absolute/project branch context feature-x --work W-123
 ```
 
-The default text output is the budget-constrained execution context with
-complete acceptance criteria and hard rules preserved. If required gaps exist,
-the JSON result has `ok=false` with `error.code=ContextIncomplete`; if hard
-facts exceed the budget you get `BudgetExceeded` — never silently truncated
-facts.
+The default text output is the budgeted execution context, including complete acceptance criteria and hard rules. Required gaps return `ok=false` and `error.code=ContextIncomplete`; oversized required facts return `BudgetExceeded`.
 
-## Moving work forward
+### Moving work forward
 
 Work items change state through `work` subcommands:
 
@@ -199,7 +204,7 @@ awr --project /absolute/project work complete W-123 \
   --input /absolute/completion.json --expected-revision 10
 ```
 
-## Recording events and evidence
+### Recording events and evidence
 
 `event append` writes to the project log:
 
@@ -209,12 +214,7 @@ awr --project /absolute/project event append \
   --expected-revision 11
 ```
 
-Optional flags: `--work`, `--session`, `--branch`, `--importance` (default
-`normal`), and `--payload FILE` (a JSON value file, `{}` when omitted). The
-default output shows the ID, type, short summary, and version — it does not
-echo the payload; use `event show --full` to expand an event explicitly. You
-cannot forge reserved domain events such as `work.completed`; those come only
-from the state-change commands.
+Optional flags are `--work`, `--session`, `--branch`, `--importance` (default `normal`), and `--payload FILE` (a JSON value file, `{}` when omitted). Default output shows ID, type, short summary and version; use `event show --full` to expand it.
 
 `evidence add` records evidence from a JSON input file:
 
@@ -223,14 +223,7 @@ awr --project /absolute/project evidence add \
   --input /absolute/evidence.json --expected-revision 11
 ```
 
-Input fields include `work_item_key`, `branch_id`, `external_key`,
-`evidence_type`, `level`, `summary`, `locator`, `sha256`, `source_sha`,
-`command`, `scope`, and `verified_at`. A successful write returns the saved
-record and an `event_id`, but recording is not execution:
-`validation_basis=caller_supplied_bindings` means AWR stored the bindings you
-submitted — not that it ran your command or that business acceptance passed.
-`evidence show` gives the summary read view of a record; it is not a write
-receipt.
+Input fields include `work_item_key`, `branch_id`, `external_key`, `evidence_type`, `level`, `summary`, `locator`, `sha256`, `source_sha`, `command`, `scope`, and `verified_at`. A write returns the saved record and `event_id`. `evidence show` returns a summary view.
 
 Path and size rules: relative paths in evidence input and event payloads
 resolve against the `--project` root; relative paths in a completion input
@@ -238,7 +231,7 @@ resolve against the process's current directory, so use absolute paths in
 automation. Evidence input and event payload files are capped at 1 MiB,
 completion inputs at 64 KiB.
 
-## Revisions and optimistic concurrency
+### Revisions and optimistic concurrency
 
 Writes take `--expected-revision R`, where `R` is the most recent
 `project_revision` you observed. If the project has moved on, the write fails
@@ -256,7 +249,7 @@ tracked file and nothing is auto-merged; `WorkspaceContended` means a
 `publish` or `drop` was preempted three commits in a row, and the remedy is
 simply to run the same command again.
 
-## JSON output, errors, and exit codes
+### JSON output, errors, and exit codes
 
 With `--json`, a successful command prints exactly one JSON object on stdout.
 Errors are typed JSON on stderr:
@@ -282,7 +275,7 @@ commands. Exit codes:
 - `2` — missing or invalid arguments or unknown nested subcommands;
   `InvalidInput` in `--json` mode.
 
-## Where the CLI ends and MCP begins
+### Where the CLI ends and MCP begins
 
 The CLI and the MCP server expose the same domain state: for the shared work
 and context tools, both return the same identifiers, versions, acceptance
@@ -302,3 +295,18 @@ In practice, you drive setup, administration, reindexing, and ad-hoc
 investigation from the terminal, while your agent client calls MCP tools
 during a session. See [MCP tools](mcp.md) for the agent side and
 [Troubleshooting](troubleshooting.md) when something goes wrong.
+
+## Limits
+
+- Project administration beyond the shared MCP catalog stays in the CLI.
+- The packages expose native executables; separate JavaScript and Python SDKs are outside their scope.
+- Read-time branch selection preserves the default branch, sessions, claims and Git checkout.
+- Required facts are retained in full or rejected for budget; truncated facts are never labeled complete.
+- Default event output omits payloads. Reserved events such as `work.completed` come from their domain state-change commands.
+- Manual evidence has `trust=reported` and `validation_basis=caller_supplied_bindings`; recording binds assertions rather than executing commands or proving business acceptance.
+- `evidence show` is a read view; use the write response as the registration receipt.
+
+## Code and tests
+
+- [CLI output tests](../../crates/awr-cli/tests/output_cli.rs)
+- [CLI/MCP parity](../../crates/awr-mcp/tests/cli_parity.py)

@@ -1,10 +1,12 @@
 # 跨机器 Workspace 交换平面
 
-两台机器上的 agent 服务同一个项目，但**不共享文件系统**。`awr workspace`
-把项目里被跟踪的源字节、证据产物和交接单元送到一台对象存储上，另一端拉回去。
+Workspace 在同一操作者的多台机器间交换跟踪文件、证据和交接单元；使用 publish 送出、sync 取回。
 
-它的定位是**交换平面（exchange plane）**，不是"共享一个 AWR 状态库"：权威源仍然只在拥有它的那台机器上权威，
-`.awr/`（运行时数据库、凭据、workspace 状态）永不外传。
+## Use it
+
+`awr workspace` 将跟踪的源字节、证据产物和交接单元发布到对象存储，供同一操作者的另一台机器取回。
+
+权威源在拥有它的机器上保持权威，交换平面传送源文件和产物字节。
 
 ```
 dev 机器 (Codex)                         peer 机器 (Hermes)
@@ -14,7 +16,7 @@ dev 机器 (Codex)                         peer 机器 (Hermes)
                         (R2 / S3 / OSS / MinIO)
 ```
 
-## 命令
+### 命令
 
 ```sh
 awr workspace status   [--pointers]        # 逐文件：本机 / 基准 / 工作区，各是什么状态
@@ -28,49 +30,45 @@ awr workspace credential set --input F | --stdin
 awr workspace credential status | clear
 ```
 
-`--config` 默认 `<项目根>/remote_workspace.toml`，可写在子命令前后。`sync` 的入站 handoff 默认落在 `<root>/infra/handoffs/<origin>/`；如果这个目录本身在 `track` 里，它会被当成普通被跟踪文件再发布出去，所以要么把它排除在 `track` 之外，要么用 `--handoff-outdir` 指到别处。
-停止共享某个路径是两步：先从 `project.track` 里拿掉（或收窄）它，再 `awr workspace drop --path P`。
-`drop` 从索引和指针镜像里去掉这条路径，不删本机文件，也不删内容对象；路径还被 `track` 覆盖时它会拒绝——否则会话开始的自愈会马上把它登记回去。
-`sync` 仍会取回索引里有、本机 `track` 没有的路径：那是新对端文件出现的方式。
-`--json` 输出额外带 `backend`、`backend_requests`、`elapsed_ms`，把"离存储有多远"变成可观测量。
+`--config` 默认 `<项目根>/remote_workspace.toml`，可放子命令前后。入站 handoff 默认 `<root>/infra/handoffs/<origin>/`；将该目录排除 `track` 或改用 `--handoff-outdir`，避免重复发布。停止共享先收窄 `project.track`，再 `drop --path P`。`sync` 会取回索引里新出现的路径。JSON 额外给出 `backend`、`backend_requests`、`elapsed_ms`。
 
-## 会话开始时的自动取回
+## How it behaves
+
+| 操作 | 结果 |
+| --- | --- |
+| publish | 内容对象与索引提交 |
+| sync | 取回文件与 handoff |
+| drop | 移除共享引用 |
+| status / verify-index | 冲突、竞争与漂移诊断 |
+
+### 会话开始时的自动取回
 
 `awr client hook` 收到 `SessionStart` 时，会先做一次 `sync`（取回对端文件与入站 handoff），
 再把结果写进本次会话上下文——所以"对端在我离线时改了东西"不依赖 agent 记得敲命令：
 
-- 只有项目根存在 `remote_workspace.toml` 才生效；没有这个文件时是完全无操作，零请求、零输出。
-- 取到东西时列出具体路径（最多 24 条，其余计数），并说明本机磁盘上的字节已经是新的。
-- **自愈也在这里发生**：本机发布过、却被对端"陈旧读提交"挤掉的条目，会在会话开始时被重新登记
-  （`repair_index`）。它只补这些条目——本地字节必须与当初发布的一模一样——所以不会把半成品发布出去。
-  没有东西要修时，代价是固定多读一次索引；万一连这次补登记都被对端连续抢先，上下文会明说
-  "这一轮没补上，跑一次 `awr workspace publish`"，而不是悄悄跳过——那意味着自愈这次没有发生。
-- 取不到时（没凭据、存储不可达）只报告一行，**不改变退出码**：hook 是会话入口，
-  不能因为对端离线就打不开会话。冲突同样只报不猜，逐条列进上下文，本地文件保持原样。
-- 只拉不推：会话开始时本地工作树常常是半成品，自动 `publish` 会把它登记成对端的新基准。
-- `PostCompact` 不触发：同一会话中途压缩没有"我不在时发生了什么"这层含义。
-- **取回在 AWR 自己的 source 刷新之前**，所以两条后果都发生在本会话而不是下一次：
-  对端推来一个解析不了的源，本会话按 AWR 自己的守卫退出 1 `SourceStale`（与手工改坏源文件同一条路径，
-  交换平面不绕过它）；对端随后补一份可解析的版本，本机就会在会话开始时被换回来、会话正常打开。
-  注意这**不等于**"对端能覆盖你的本地修改"：本机自己改过（本地 ≠ 基准）的文件仍然按冲突处理，
-  一个字都不动。
-- 代价是会话开始多一次存储往返（实测同区对象存储 200ms 上下）。**整个取回有一个 10 秒预算**：
-  它在自己的工作线程上跑，超时就不再等，并给该线程设取消标志：之后的本地写入与 state 保存会停止，
-  只在上下文里留一句 "left for later, run `awr workspace sync`"。之所以需要它，是因为存储自己的
-  请求超时是 60s——对盯着看的操作者合理，对会话入口不合理。超时前已写入的文件留在磁盘上，
-  下一次 `sync` 接着取；超时后不会继续覆盖 agent 已开始改的源文件。
+| SessionStart 条件 | 行为 |
+| --- | --- |
+| 存在 `remote_workspace.toml` | 自动 sync，然后刷新 AWR 来源并注入本次上下文 |
+| 取回文件 | 列出最多 24 条具体路径及其余数量，磁盘字节已更新 |
+| 原发布字节仍相同、索引条目被挤掉 | `repair_index` 重新登记；固定多读一次索引 |
+| 修复提交持续被抢先 | 上下文提示运行 `awr workspace publish` |
+| 凭据/存储故障 | 一行诊断，继续会话入口 |
+| 本地已修改、对端也变化 | 逐条报告冲突，保留本地字节 |
+| 对端源解析失败 | 本次 source 刷新按原守卫 exit 1 `SourceStale` |
+| 对端随后修好来源 | 下一次入口取回并正常打开 |
+| 存储往返 | 历史同区测量约 200 ms |
+| 整个取回 | 独立工作线程、10 秒预算；存储请求本身超时 60 秒 |
+| 预算到期 | 设置取消标志，提示 `left for later, run awr workspace sync` |
 
-## 功能边界：这层做什么，不做什么
+### 使用场景
 
-这是 **个人跨机器** 的字节交换平面，不是团队协作地基：
+此交换平面服务同一操作者的多台机器。
 
-1. **只做字节交换，不做治理。** 没有身份、没有权限、没有任务调度、没有语义合并。这些不是"待补全"，而是明确不属于这一层。
-2. **不是多人协作功能的地基。** 未来的多人/团队协作会构建在 AWR 内核的 claim/session/权限扩展上（中心或共享权威），而不是在这层 P2P 字节同步上叠身份。若未来需要多人共享传输，桶布局、per-actor 凭据、审计、权限模型都需要重新设计；当前单桶 CAS 不支撑。
-3. **不建议多人用这层同步同一份 work ledger。** 每人各自的 `.awr` 事件历史会分叉，没有统一回执与审计；多人场景应等待内核的协作扩展。
+团队协作采用 AWR 内核的 claim/session/权限扩展和共享权威。若引入多人传输，需重新设计桶布局、逐 actor 凭据、审计和权限。
 
 明确目标场景：同一操作者的笔记本 + 台式机 + 服务器，顺序使用（publish 在一台，sync 在另一台）。
 
-## 配置：只写这台机器才有的东西
+### 配置：只写这台机器才有的东西
 
 ```toml
 [project]
@@ -97,23 +95,15 @@ bucket   = "my-workspace"
 | `path` | 无 | 用目录代替对象存储（测试与单写者演示） |
 | `allow_insecure` | `false` | 仅当需要非 loopback 的 `http://` 实验端点时设为 `true`；默认只允许 `https://`，loopback `http://` 无需此标志 |
 
-未知键、拼错的键、未知的 `backend` 都是错误而不是静默默认：配置文件是要被复制、被提交的，
-一行拼错就意味着两台机器的行为不同，这是跨机交换平面最贵的故障类型。
+配置键和 backend 严格校验；拼写或值错误直接报错，便于复制配置时保持机器行为一致。
 
-## 凭据：每台机器一份，永远不进入配置文件
+### 每台机器的凭据
 
-`awr workspace credential set --stdin` 把 `{"access_key","secret_key"[,"session_token"]}`
-写到 `<项目根>/.awr/workspace-credentials.json`。Unix 上权限 600（不是 600 会在读取时被拒绝），
-并以 temp+rename 写入以免中断留下截断文件。Windows 上同一路径同样 temp+rename，但**没有**等价的
-mode 600 检查——请用 NTFS ACL 保证 `.awr/` 仅所有者可访问；这是当前平台限制，不是静默跳过安全模型。
-环境变量 `AWR_WORKSPACE_ACCESS_KEY` / `AWR_WORKSPACE_SECRET_KEY` / `AWR_WORKSPACE_SESSION_TOKEN`
-作为兜底，供无法写文件的作业执行器使用；文件优先。
+`credential set --stdin` 将 `{"access_key","secret_key"[,"session_token"]}` 写入 `<项目根>/.awr/workspace-credentials.json`，采用 temp+rename。Unix 读取要求权限 600。环境变量 `AWR_WORKSPACE_ACCESS_KEY` / `AWR_WORKSPACE_SECRET_KEY` / `AWR_WORKSPACE_SESSION_TOKEN` 供作业执行器兜底，文件优先。
 
-因此配置文件里出现 `ak` / `sk` / `access_key` / `secret_key` / `session_token` 会**直接报错**，
-并提示改用 `awr workspace credential set`；`status` 只报告哪些字段存在和文件权限，从不回显值。
-密钥也不能作为命令行参数传入：CLI 在参数解析前就拒绝含敏感值的 argv。
+配置中的 `ak`、`sk`、`access_key`、`secret_key`、`session_token` 报错并提示 `credential set`。CLI 在参数解析前拒绝敏感 argv。
 
-## 存储布局
+### 存储布局
 
 ```
 projects/<key>/manifest.json                       索引（CAS 提交）
@@ -122,23 +112,19 @@ projects/<key>/files/<url-encoded path>/current.json  逐文件指针镜像（�
 projects/<key>/handoffs/<origin host>/<name>.json  交接单元（if-none-match，一次写入）
 ```
 
-- **项目内相对路径整体作为单个 key 段做百分号编码**（`infra/a.json` → `infra%2Fa.json`），
-  这样存储侧无论怎么处理 `/` 都不能把两条不同路径折成一条。
-- **内容寻址**：同内容天然去重，断点续传只需补缺失的内容对象。
-- **manifest 是索引**：一次 GET 取代逐文件指针扇出；每一次发布只对 manifest 做一次 CAS，
-  所以被中断的发布不会半可见。指针镜像只为单文件读者保留，是派生数据，
-  写失败不影响发布结果（会记在 `pointer_mirror_failures`）。
-- **提交保证**：R2/S3/MinIO 用 `If-Match` 真 CAS（`commit_mode: "cas"`）；
-  OSS `PutObject` **没有条件写**，改用"写前查索引 + 写后读回校验"（`commit_mode: "guarded"`）——
-  仍是一次原子提交（manifest 单对象），缺的是互斥。写前 HEAD 能发现"提交前索引已变"并重读重试；
-  **不能**防止对端插在 HEAD 与 PUT 之间：本端后写会覆盖对端，readback 看到自己的 ETag 仍报成功。
-  因此 guarded 模式只适合**个人顺序使用**（一台 publish、另一台再 sync）。两台机器可能同时 publish 时，
-  请使用支持 `If-Match` 的存储（R2/S3/MinIO，`commit_mode: "cas"`），不要依赖 OSS guarded 做多写者互斥。
-  被挤掉的条目在失主那边可能报成 `index_missing_local`，重新 `publish` 可补回（内容对象仍在）。
-  提交前发现索引已变就重读、合并、重试，最多三次；三次都被对端抢先时，这批路径逐条列进
-  `contended`，`publish` / `drop` 以 exit 1 `WorkspaceContended` 退出并在正文里写"publish again"。
+| 存储机制 | 作用 |
+| --- | --- |
+| 相对路径整体编码成单个 key 段 | `infra/a.json` → `infra%2Fa.json`，保持路径身份 |
+| 内容寻址 | 同内容去重，续传补缺失对象 |
+| Manifest 索引 | 一次 GET 代替指针扇出，每次发布一次 manifest 提交 |
+| 指针镜像 | 服务单文件读者的派生数据，失败计入 `pointer_mirror_failures` |
+| R2/S3/MinIO | `If-Match`，`commit_mode: "cas"` |
+| OSS | HEAD 检查索引，PUT 提交，读回核验，`commit_mode: "guarded"` |
+| HEAD 已发现变化 | 重读、合并、重试，最多三次 |
+| 三次均被抢先 | 路径列入 `contended`，publish/drop exit 1 `WorkspaceContended`，提示 publish again |
+| 条目被后写挤掉 | 失主可见 `index_missing_local`，publish 重登，内容对象仍在 |
 
-## 状态与冲突
+### 状态与冲突
 
 | 状态 | 含义 | 建议动作 |
 |---|---|---|
@@ -149,33 +135,13 @@ projects/<key>/handoffs/<origin host>/<name>.json  交接单元（if-none-match�
 | `missing_local` | 工作区有、本机没有 | `sync` 取回，或确认它不该在这里 |
 | `conflicted` / `conflicted_first_sync` | 两端都变过、且没有共同基准 | 人工决定，工具不猜 |
 
-冲突**从不自动合并**：`sync` 与 `publish` 都会以 `WorkspaceConflict` 退出（exit 1），
-本地文件保持原样，正文里逐条列出冲突路径。`publish --dry-run` 是预览：同样列出冲突，
-但 exit 0，存储与本机都不动。
+`sync` / `publish` 遇冲突逐条列路径，exit 1 `WorkspaceConflict`。`publish --dry-run` 预览同样的冲突，exit 0。
 
-`contended` 不是状态，是"这一轮对索引的提交一次都没成功"的报告，来自 `publish`、`drop`
-（以及会话开始时的自愈补登记）——取回不写索引，所以不会产生它。CLI 把它报成
-`WorkspaceContended`，和 `WorkspaceConflict` 分开：冲突要人去调解，`contended` 只要再执行一次同一命令。
+`contended` 表示本轮三次索引提交均被抢先，来自 publish、drop 或入口 repair_index；CLI 返回 `WorkspaceContended`，重跑同一命令即可。
 
-三个跟踪文件必须满足 `track` 里的路径是**可移植名字**：项目内相对路径，
-不含绝对路径、`..`、反斜杠、盘符或空路径段。这条规则同时守住两个方向——
-发布不会读到项目根之外，取回也不会写到项目根之外（索引是远端数据，不是事实）。
+`track` 使用可移植项目相对路径，发布与取回都检查项目根包含关系。
 
-## 边界
-
-- **跨机没有强互斥**：交换平面保证"一次发布要么全可见要么不可见"，不保证两台机器不会同时改同一个文件。
-  后者会被报成冲突，这正是不自动合并的原因；两台机器同时发布**不同**文件时也可能有一方连续三次
-  提交都晚一步，那是 `contended`（再发布一次，字节没丢也没被改写），不是冲突。
-- **`track` 就是边界**：被跟踪目录里的文件全部进工作区（含点文件，与参考实现一致），但树里出现 `.git` 或 `.awr` 目录会直接拒绝——Git 历史与本机 AWR 运行时永不外传，要发布就请把 `track` 收窄。
-- **`.awr/` 不参与**：`active_claim` 唯一索引与 revision CAS 的前提是单机单写者，
-  两台机器各改一份状态库只会互相判 stale。交换平面只传源字节、证据与交接单元。
-- **产物的秘密策略不覆盖这里传的字节**：`awr-core` 的秘密策略作用于 AWR 自己的输入/源/事件，
-  workspace 传的是被跟踪文件的原始字节。不要把凭据放进被跟踪的源里。
-- **`local` 后端只有进程内锁**：它服务测试套件和单写者演示；多于一个写者就需要真正的对象存储。
-- **同版本成对**：只跑旧版（只有指针、没有 manifest）的对端会让 manifest 变陈旧。
-  `verify-index` 用来发现漂移；删除 `manifest.json` 即回退到指针布局。
-
-## 实测：无 CAS 存储上被收窄的提交窗口
+### 实测：无 CAS 存储上被收窄的提交窗口
 
 同一份构建、同一个真实 OSS 桶，唯一变量是左边那份二进制里有没有"写前查索引"这一步。
 每轮：一台机器一次发布 40 个新文件（内容阶段约 1.4s），另一台在 200ms 后发布 1 个文件，
@@ -186,15 +152,11 @@ projects/<key>/handoffs/<origin host>/<name>.json  交接单元（if-none-match�
 | 写前不查索引 | 4/4 轮 | 83 | 5 |
 | 写前查索引 | 0/4 轮 | 86 | 6 |
 
-两条代价都看得见：每次 guarded 提交多一次 HEAD（小发布 5→6）；批量发布那 +3 是它**真的撞上了**
-——第一次提交在写之前发现索引已变，于是重读、合并、再提交。被挤掉的条目也不丢字节：
-失主 `status` 报 `index_missing_local`，再 `publish` 一次就补回（`content_uploaded: false`，内容对象还在）。
-所以这里说的是"窗口收窄到一个请求"，不是"窗口为零"；剩下的部分按"接受 + 自愈"处理。
+每次 guarded 提交多一次 HEAD（小发布 5→6）。批量发布增加 3 请求，因为写前发现索引变化后重读、合并和重试。被挤掉条目的内容对象保留；失主 status 报 `index_missing_local`，一次 publish 补回，`content_uploaded: false`。
 
-窗口内的极端交错仍然可能发生：两端同时读到同一份索引、又都在对方写回之前通过检查，
-后写的那次提交仍会挤掉对方刚登记的条目。它对两端都是可观测、可自愈的，工具不猜。
+极端交错时，两端读同一索引并都通过检查，后写仍会挤掉先前条目。双方可观察并通过重新发布恢复。
 
-### 实测：另外三条边界
+#### 实测：另外三条边界
 
 都在同一个真桶、跨真机（Mac 跑 Rust，mac mini 跑冻结的 Python 参考实现）跑过：
 
@@ -208,12 +170,9 @@ projects/<key>/handoffs/<origin host>/<name>.json  交接单元（if-none-match�
 - **会话开始的预算**：把 endpoint 指向一个"接受连接、永不回答"的本地端口，会话 10.4s 打开、
   exit 0，上下文里是 "was still answering after 10s and has been left for later"（存储自身的请求超时是 60s）。
 
-### 实测：三台 / 四台同时提交
+#### 实测：三台 / 四台同时提交
 
-同一真桶、跨真机：Mac 上跑两到三个 Rust 项目根，mac mini 上跑冻结的 Python 参考实现。
-每轮把各端的 `publish` 对齐到同一个瞬时（先测对端时钟偏移，再统一起跑），每端发布自己的新文件
-——三写者那组里最忙的一台每轮 20 个文件。**这是最坏情况**：真实协作里几台 agent 不会约在同一毫秒提交，
-所以下面的数字是上界，不是日常值。
+同一真桶跨机实测：Mac 两到三个 Rust 项目根和 mac mini 冻结 Python 对端。校正时钟偏移后对齐 publish，每端发布新文件；三写者最忙端每轮 20 文件。
 
 | 场景 | 轮数 | 提交条目 | 被挤掉（含报成 `contended` 的） | 自愈 |
 |---|---|---|---|---|
@@ -221,17 +180,16 @@ projects/<key>/handoffs/<origin host>/<name>.json  交接单元（if-none-match�
 | 三写者，最忙的一台每轮 20 个文件 | 6 | 132 | 0 | 不需要 |
 | 四写者，各 1 个文件 | 20 | 80 | 27（5 次报 `contended`） | 每条 1 次 `publish` |
 
-- 撞不撞取决于两端**提交时刻差多近**，不取决于数据量：同机三个根（时钟对齐）的四写者几乎每轮都撞，
-  20 文件那组反而一次没撞；跨机那台（SSH + 实测时钟偏移 ~370ms）在四写者里一次没输过。
-- **没有一次静默丢失**：每个被挤掉的条目，失主自己的 `status` 都报 `index_missing_local`；
-  走 `contended` 那几次本机报 `local_ahead`（"还欠一次发布"）。也没有反向的误报
-  （没有谁声称"我丢了"而索引里其实还在）。
-- **每条都靠一次 `publish` 补回**，没有出现要补第二次的；每轮结束后所有主机都收敛到 `in_sync`、
-  逐字节一致，索引里没有悬空条目（每个条目都能找到对应的内容对象）。
-- 那 5 次 `contended` 都如实 exit 1，并且**没有任何路径被改写**——这正是它和冲突的区别：
-  冲突要人决定，`contended` 只要再发布一次。
+| 历史观测 | 结果 |
+| --- | --- |
+| 提交时刻差 | 决定竞争；同机根对齐时常碰撞，20 文件组为零 |
+| 跨机 SSH 与时钟偏移 | 约 370 ms；四写者组中该端保持成功 |
+| 所有被挤掉条目 | 失主 status 均报 `index_missing_local`；contended 本机为 `local_ahead` |
+| 报警准确性 | 每条报告与索引缺失对应 |
+| 恢复 | 每条一次 publish 补回；每轮所有端 in_sync、逐字节一致、索引对象完整 |
+| 五次 contended | exit 1，所有路径字节保持原样，重跑 publish 恢复 |
 
-## Project-relative evidence locators
+### Project-relative evidence locators
 
 `project:///<project-relative-path>` is the legacy identity: one evidence row points at the same
 relative path inside whatever checkout each node holds. When `[project] external_key` is set in
@@ -276,12 +234,9 @@ relative path holds different bytes, and **never falls back to another copy on t
 cross-node contract is therefore "same relative path + same `sha256`", not "same machine".
 Evidence body reads (`evidence show --content`) verify against the stored `sha256`.
 
-Fingerprints stay `sha256(bytes)` for both `project://` forms. Identity lives only in the locator
-string, so two **different** projects with the same relative path and the same bytes are distinct
-once each has an authored `external_key`. Two checkouts of the **same** project still share that
-key and cannot be told apart by the locator.
+Both `project://` forms fingerprint content as `sha256(bytes)`. Authored `external_key` distinguishes projects even when paths and bytes match.
 
-## 验证入口
+### 验证入口
 
 ```sh
 cargo test -p awr-workspace --locked
@@ -293,3 +248,39 @@ cargo test -p awr-cli --test workspace_exchange --locked
 的报告与重试自愈；
 `workspace_exchange` 用两个项目根加一个目录存储，跑真实的 CLI、配置与提交路径，
 不需要网络和凭据。真实对象存储的双机联调按 `examples/workspace/README.md` 的步骤执行。
+
+## Limits
+
+- 每台机器保留自己的文件系统；交换由 publish 与 sync 显式完成。
+- 运行数据库、凭据和 workspace 状态属于本机 `.awr/`，保留在各自机器。
+- drop 只删除索引/指针镜像引用，本地文件与内容对象保留；仍被 track 覆盖的路径须先移出 track。
+- 缺少配置时入口保持零请求、零输出；自动取回仅 SessionStart 触发，PostCompact 沿用当前会话。
+- 入口执行取回和原字节修复；新的本地修改须显式 publish，避免把半成品登记为基准。
+- 取回故障保留 hook 退出码；冲突保留本地字节，来源解析错误仍由 AWR 守卫处理。
+- 10 秒后停止后续本地写入和状态保存；已写入文件保留，下次 sync 接续。
+- 此层仅为个人字节交换；身份、权限、任务调度和语义合并属于内核/宿主职责，单桶 CAS 不是多人协作基础。
+- 每台机器独立的事件历史会分叉；多人共用 ledger 应使用内核协作与统一回执。
+- Windows 凭据权限依赖 `.awr/` NTFS ACL；mode 600 检查仅适用于 Unix。
+- 凭据通过受保护文件或环境输入；status 只报告字段存在性与权限，保留秘密值。
+- Manifest 单对象提交保证整批可见性；派生指针镜像失败只记诊断，不改变发布结果。
+- OSS guarded 适合个人顺序使用；HEAD 与 PUT 间仍有竞争窗口，后写可覆盖条目且读回自己的 ETag。
+- 可能同时发布时采用支持 If-Match 的 CAS 存储；guarded 的写前检查和读回校验不提供多写者互斥。
+- 冲突保留本地字节并交给人调解；dry-run 同时保留本机与存储状态。
+- contended 是提交报告；sync 只取回，索引提交竞争与需要人工调解的文件冲突分开处理。
+- track 拒绝绝对路径、`..`、反斜杠、盘符和空路径段；远端索引按外部输入校验。
+- 一次发布保证整批可见性；跨机器同时改同文件仍按冲突处理，三次提交竞争按 contended 处理。
+- track 覆盖目录全部文件（含点文件）；出现 `.git` 或 `.awr` 目录即拒绝，应收窄跟踪范围。
+- 本机状态库的 active_claim 唯一索引和 revision CAS 要求单机单写者；跨机仅交换源字节、证据、handoff。
+- Workspace 原始字节由操作者审查；秘密策略作用于 AWR 输入/来源/事件，跟踪源须排除凭据。
+- local 后端仅有进程内锁，适用测试和单写者；多写者使用对象存储。
+- 两端使用同版本。旧指针版可使 manifest 陈旧；verify-index 检测漂移，删除 manifest.json 可退回指针布局。
+- 历史实测将竞争窗口收窄到一个请求；剩余窗口仍按可观测和重新发布恢复处理。
+- 这些测量刻意对齐提交时刻，描述压力下的观测上界；日常提交分布需单独测量。
+- 这组报告属于所列构建与存储现场的历史观测；文件冲突仍需人决定，提交竞争可重发恢复。
+- Project locators identify projects rather than individual checkouts; two checkouts sharing one project key retain the same identity.
+
+## Code and tests
+
+- [Workspace crate](../../../crates/awr-workspace/src/lib.rs)
+- [CLI exchange tests](../../../crates/awr-workspace/tests/pr29_boundaries.rs)
+- [Cross-machine example](../../../examples/workspace/README.md)

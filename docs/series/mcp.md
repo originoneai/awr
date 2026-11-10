@@ -1,10 +1,10 @@
 # The MCP service
 
-AWR exposes its work ledger through MCP (Model Context Protocol), the standard
-protocol that lets an agent host — such as a coding assistant or desktop AI
-client — discover and call tools. The MCP service is how your agent reads
-project status, compiles context, records evidence, and moves work forward
-without shelling out to the CLI itself. There are two ways to run it:
+Connect an agent host to AWR through local stdio or a shared HTTP service. MCP tools read project facts, compile context and record work or evidence.
+
+## Use it
+
+AWR exposes work, context, evidence and session operations through MCP (Model Context Protocol). Agent hosts discover tools and call them directly. Choose local stdio for one project or shared HTTP for several registered projects and independent clients.
 
 - **stdio** — a local process your client spawns directly, one project at a
   time. This is the classic setup and remains available.
@@ -17,7 +17,7 @@ more than one person or agent needs the same projects. For what agents do with
 these tools once connected, see [Agents](agents.md). For the human-facing
 equivalent of the same operations, see [The AWR CLI](cli.md).
 
-## How the shared service works
+### How the shared service works
 
 You initialize each project on the server with `awr init`, then register its
 canonical absolute root together with the `project_id` returned by:
@@ -26,16 +26,9 @@ canonical absolute root together with the `project_id` returned by:
 awr --json status
 ```
 
-AWR verifies that identity at startup and on every request. Source files and
-each project's `.awr` database stay separate — the service does not clone
-repositories, mount client filesystems, or merge project ledgers. Clients need
-network access to the service, not a local AWR executable, and project files
-must be readable on the server: a path on a client laptop does not become
-readable remotely. There is no shared "current project" — every project tool
-takes an explicit `project` argument, and there is no tool for opening an
-arbitrary server path.
+AWR verifies each registered project identity at startup and on every request. Each tool selects a registered `project`; files and databases stay separate. Clients connect over the network to files readable on the server.
 
-## Configuring the service
+### Configuring the service
 
 Create an operator-owned TOML file outside the public repository:
 
@@ -64,43 +57,29 @@ token_env = "AWR_REVIEWER_TOKEN"
 read = ["billing"]
 ```
 
-Each client entry names an environment variable that holds its bearer
-credential. Provide distinct, randomly generated credentials of at least 32
-characters. A `write` grant includes read access; a `read` grant cannot mutate
-projects. Keep client IDs stable across credential rotation — conversation and
-request bindings attach to the client ID, and changing it creates a distinct
-scope. Configuration changes take effect only after a service restart.
+Each client names an environment variable holding a distinct, randomly generated bearer credential of at least 32 characters. `write` includes read access. Keep client IDs stable through credential rotation; changing an ID creates a separate conversation/request scope. Restart to apply configuration changes.
 
-## Running the service
+### Running the service
 
 ```sh
 awr-mcp --registry /etc/awr/service.toml --listen 127.0.0.1:8080
 ```
 
-Every HTTP request is authenticated. The built-in mechanism is static bearer
-authentication — not an OAuth authorization server or an enterprise identity
-provider. For remote access, terminate HTTPS at an authenticated deployment
-boundary and restrict direct access to the backend. Additional access controls:
+Each HTTP request authenticates with a static bearer credential. For remote access, terminate HTTPS at an authenticated deployment boundary and restrict direct backend access. Additional access controls:
 
-- Origins are denied unless explicitly listed in `allowed_origins`; native
-  clients normally omit the `Origin` header.
-- The SDK checks `allowed_hosts`, defaulting to loopback hosts when none are
-  configured.
-- The service validates Origin but does not implement browser CORS preflight,
-  so a browser frontend needs an appropriate gateway.
+| Control | Rule |
+| --- | --- |
+| `allowed_origins` | Explicit allowlist; native clients usually omit Origin |
+| `allowed_hosts` | SDK enforcement, defaulting to loopback hosts |
+| Browser frontend | Gateway handles CORS preflight |
 
-On Unix, SIGTERM and Ctrl-C gracefully stop accepting requests and drain active
-HTTP work. Disconnecting a client or restarting the service never ends an AWR
-work session — protocol connections and persistent sessions are separate
-identities. AWR does not install a system daemon — use your deployment's
-process supervisor for startup and restart. For local, single-client use, the
-stdio command remains:
+On Unix, SIGTERM and Ctrl-C stop new requests and drain active HTTP work. Use your deployment’s process supervisor for startup and restart. For local, single-client use:
 
 ```sh
 awr-mcp --project /absolute/project
 ```
 
-## Connecting a client
+### Connecting a client
 
 Configure each MCP client for Streamable HTTP with the same service URL using
 the `/mcp` path, plus its own bearer credential in an `Authorization: Bearer …`
@@ -112,12 +91,20 @@ authorized for. Every project tool then requires `project`:
 {"project": "billing", "work": "INVOICE-001"}
 ```
 
-## The tools
+## How it behaves
+
+| Transport | Setup and result |
+| --- | --- |
+| stdio | Client spawns `awr-mcp` for one canonical project |
+| Shared HTTP | One endpoint serves registered projects and independently authenticated clients |
+| Discovery | Inspect the installed build’s catalog, then call a domain empty for child schemas and limits |
+
+### The tools
 
 The shared HTTP service exposes 21 tools in total (20 over stdio, which omits
 the project-listing tool). They fall into three groups.
 
-### Work and context tools
+#### Work and context tools
 
 These mirror the everyday CLI actions:
 
@@ -132,7 +119,7 @@ These mirror the everyday CLI actions:
 | `awr_evidence_record` | Record evidence bound to work and acceptance items |
 | `awr_search` | Search across the project ledger |
 
-### Session and continuation tools
+#### Session and continuation tools
 
 Sessions bind a conversation to a unit of work. Supply a stable `conversation`
 identifier from your host — not an HTTP connection identifier. The same
@@ -153,12 +140,9 @@ conversation string under another project or client is a separate binding.
 | `awr_operation_recover` | Record a committed outcome for an interrupted write when proof exists |
 | `awr_source_reindex` | Refresh the project's projections from its authoritative sources |
 
-A pending wait blocks work transitions and resume until the host records a
-reply. The reply clears that block but does not change work status or schedule
-the host's next turn — your host inspects the session, compiles fresh context,
-and decides whether to continue or create a successor.
+A pending wait blocks transitions and resume until the host records a reply. Then inspect the session, compile fresh context and choose continuation or a successor.
 
-## Writes, revisions, and uncertain outcomes
+### Writes, revisions, and uncertain outcomes
 
 Every shared HTTP write requires two things:
 
@@ -179,28 +163,13 @@ Every shared HTTP write requires two things:
 }
 ```
 
-Repeating exactly the same request ID and arguments returns the recorded result
-without executing the action again, so a retry after a timeout is safe. Changed
-arguments require a new ID. Save the returned `project_revision` for your next
-write, and never compute the next revision by adding one: the request journal
-and the domain operation both consume revisions.
+An exact request ID/argument replay returns the recorded result. Changed arguments require a new ID. Use the returned `project_revision` for the next write.
 
-After a timeout or disconnect, call `awr_operation_get` with the same project
-and request ID. An unfinished request reports `write_outcome: unknown`; an
-interrupted write may already have committed, so never infer failure from a
-closed HTTP response stream. `awr_operation_recover` can record a committed
-outcome only when an unambiguous terminal event is bound to the request — it
-never re-invokes the original tool. Reads can run concurrently; writes are
-serialized per project, and different projects have independent locks. A stale
-write returns a conflict — read the current state and reconsider before
-retrying.
+After timeout or disconnect, inspect `awr_operation_get` with the same project and request ID. Unfinished requests report `write_outcome: unknown`. Reads run concurrently; writes serialize per project with independent locks across projects. On stale-write conflict, read current state and reconsider.
 
-## Workstream reads (in development)
+### Workstream reads (in development)
 
-The development source adds a registry `version = 2` that grants clients
-read-only access to explicitly listed, immutable workstreams for projects using
-the YAML workstream ledger. These are operator-owned permissions: project-level
-`read`/`write` grants alone do not authorize any isolated workstream.
+Development registry `version = 2` grants reads for explicitly listed immutable workstreams in YAML workstream projects.
 
 ```toml
 [[clients.workstreams]]
@@ -209,15 +178,9 @@ workstream_id = "<actual immutable workstream ID>"
 authority_version = 1
 ```
 
-Authorized clients use the shared-only `awr_workstream` tool, starting with
-`action: "capabilities"` and `action: "list"` to discover what they may read.
-Be aware of the current limits: this extension grants reads only — no
-mutations, content-file reads, or Team PostgreSQL operations — and projects
-that enable it reject the legacy shared tools, including all writes, until an
-authorized implementation is available. Enablement and reindex are local
-operator actions at this stage.
+Authorized clients discover shared-only `awr_workstream` capabilities and listed scopes with `action: "capabilities"` and `action: "list"`. Enablement and reindex remain local operator actions.
 
-## Where to go next
+### Where to go next
 
 - [Agents](agents.md) — how an agent uses sessions, claims, and checkpoints
   over these tools.
@@ -225,3 +188,24 @@ operator actions at this stage.
   for operators and debugging.
 - [Troubleshooting](troubleshooting.md) — revision conflicts, stale sources,
   and recovery.
+
+## Limits
+
+- The service uses registered server roots; repository cloning, client filesystem mounts, ledger merging and arbitrary server-path opening are outside its scope.
+- Client-local paths remain local. Each project call carries its own selector; clients can connect independently of a local AWR executable.
+- Read grants authorize reads; mutations require a write grant.
+- Built-in authentication is static bearer authentication; OAuth authorization and enterprise identity services belong to the deployment.
+- Origin validation covers the request Origin; browser CORS preflight requires a gateway.
+- Disconnect and service restart preserve AWR work sessions. End those sessions explicitly; daemon installation belongs to the deployment.
+- Replies clear waits while preserving work status; the host schedules its next turn.
+- Request journaling and domain writes both consume revisions. Use observed revisions instead of computing the next number.
+- A closed response stream leaves execution outcome unknown. Recovery requires an unambiguous bound terminal event and never re-invokes the original tool.
+- Isolated workstreams require explicit operator-owned workstream grants; project-level read/write grants alone are insufficient.
+- Workstream access covers reads; mutations, content-file reads and Team PostgreSQL operations require separate implementations.
+- Enabling isolated workstreams rejects legacy shared tools, including writes, until an authorized implementation supports them.
+
+## Code and tests
+
+- [Stdio contract tests](../../crates/awr-mcp/tests/stdio.rs)
+- [Shared HTTP tests](../../crates/awr-mcp/tests/shared.rs)
+- [Description limits](../../crates/awr-mcp/tests/description_style.rs)
