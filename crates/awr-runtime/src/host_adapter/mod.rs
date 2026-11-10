@@ -7,6 +7,7 @@
 
 mod claude_code;
 mod codex_cli;
+pub mod installation;
 mod l0_manual;
 mod parallelism;
 mod registry;

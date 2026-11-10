@@ -10,7 +10,7 @@ Use three layers. Do not treat a deeper layer as a new product identity.
 | --- | --- | --- | --- |
 | **L0 — generic contract** | Any host that can run a CLI or speak MCP uses the same project state | [Session workflow](session-workflow.md), [MCP tools](../../../crates/awr-mcp/README.md), `awr client bind --client generic` | Default. This is the supported product. |
 | **L1 — host note** | A named host was checked against L0 | Short page: merge paths, native IDs, dated verification, limits | After a real host check. Record diffs only. |
-| **L2 — optional adapter** | Native lifecycle events can drive AWR checkpoints | `awr client install` and a documented hook dialect | Only when hooks are stable and someone maintains them. Today: Codex. |
+| **L2 — optional adapter** | Native lifecycle events can drive AWR checkpoints | `awr client install` and a documented hook dialect | Only when hooks are stable and someone maintains them. Codex and Claude Code; Claude coverage uses simulated events. |
 
 L0 is complete enough to observe work, start/resume sessions and persist
 checkpoints. L1 does not add runtime features. L2 does not make AWR that host's
@@ -38,17 +38,16 @@ or configure a coding agent.
 AWR session. `--from-session` **resumes** a predecessor and binds the new
 conversation to the successor.
 
-`--client` is **required** on every client subcommand. No dialect is a default,
-so omitting it fails loudly with a usage error instead of silently assuming
-one. `codex` and `kimi` are documented native dialects for hook field shapes.
+`--client` is **required** on binding, progress, show, hook, install and uninstall;
+`client status` inspects all supported adapters when the filter is omitted. No dialect is a default,
+so those commands require an explicit dialect. `codex`, `kimi` and `claude` are documented native dialects for hook field shapes.
 They are not the centre of the product. Unknown `--client` values are rejected;
 do not add a new enum for every editor.
 
-Compatibility: hook commands written by `awr client install` already pin
-`--client codex` explicitly, so installed adapters are unaffected. Operator
-scripts that omitted `--client` must now name their dialect; existing bindings,
-dedup keys and provider metadata are unchanged because explicit
-`--client codex` resolves to the same identity as before.
+Generated hook commands pin their dialect explicitly. Older Codex commands with
+`--work` appear as outdated in `client status`; reinstall to replace them with
+project-wide adapter commands. Existing bindings and provider metadata retain
+their identities.
 
 Host names travel inside the external session ID, not the client enum:
 `--client generic --external-session cursor:8f3a…`. The `<host>:` prefix keeps
@@ -67,6 +66,7 @@ events unreadable by older binaries; the namespaced ID avoids that. Use
 | Grok Build | L1 | [Grok note](grok.md) | Project MCP add, native `--continue` / `--resume`, dated check |
 | Kimi Code | L1 | [Kimi note](kimi.md) | `.kimi-code/mcp.json`, native session flags, dated check |
 | Codex | L1 + L2 | [Codex note and adapter](codex.md) | `.codex` grouped MCP merge, manual identity, `client install` hooks, AGENTS snippet |
+| Claude Code | L2 | [Claude Code lifecycle hooks](claude-code.md) | Project settings, install/uninstall/status; simulated events verified; native verification awaiting approval |
 | Named adapters (WS-024) | controlled | [Named agent host](named-agent-host.md) | Capability negotiation, L0 report, Codex + Claude Code, subtask parallelism |
 | Claude Code (WS-024) | named | [Claude Code adapter](claude-code-agent.md) | Status/forensics; not auto-startable |
 | Team MCP · Codex (TMCP-041) | remote Team | [team-mcp-codex-cli.md](team-mcp-codex-cli.md) | HTTPS Team MCP natural workflow for `codex_cli` |
@@ -74,7 +74,7 @@ events unreadable by older binaries; the namespaced ID avoids that. Use
 | Team Web entry (WS-044) | browser / Observer | [team-web-entry.md](team-web-entry.md) | Cookie Web entry distinct from MCP bearer; Team collaboration loop |
 | Cursor | L1 | [Cursor note](cursor.md) | `.cursor/mcp.json`, `type: stdio`, source-built grouped MCP, Cloud Agent HTTPS |
 | WorkBuddy | L1 | [WorkBuddy note](workbuddy.md) | `~/.workbuddy/mcp.json`, connector trust step, grouped MCP catalog |
-| Claude Code, Windsurf, … | L0 | [Session workflow](session-workflow.md) | None needed: `--client generic` with a `host:`-prefixed conversation ID |
+| Windsurf, … | L0 | [Session workflow](session-workflow.md) | None needed: `--client generic` with a `host:`-prefixed conversation ID |
 
 Application hosts that invoke `awr` over argv follow the
 [host application contract](../reference/host-contract.md) and
@@ -100,7 +100,7 @@ what was actually called and on which host version. An L2 adapter must keep
 5. Do not copy the session tutorial into the host page.
 6. Do not add L2 unless native hooks have a stable envelope and a maintainer.
 
-Cursor, Claude Code, Windsurf and similar hosts should enter at L0 or L1.
+Cursor, Windsurf and similar hosts can enter at L0 or L1.
 They do not need a Codex-shaped installer to “count” as supported.
 Cursor MCP merge paths are an [L1 note](cursor.md).
 

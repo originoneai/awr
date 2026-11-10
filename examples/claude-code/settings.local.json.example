@@ -1,0 +1,52 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/absolute/path/to/awr' --project '/absolute/path/to/project' client hook --client claude --adapter-version 1",
+            "timeout": 15,
+            "statusMessage": "AWR work continuity"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/absolute/path/to/awr' --project '/absolute/path/to/project' client hook --client claude --adapter-version 1",
+            "timeout": 15,
+            "statusMessage": "AWR work continuity"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/absolute/path/to/awr' --project '/absolute/path/to/project' client hook --client claude --adapter-version 1",
+            "timeout": 15,
+            "statusMessage": "AWR work continuity"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/absolute/path/to/awr' --project '/absolute/path/to/project' client hook --client claude --adapter-version 1",
+            "timeout": 3,
+            "statusMessage": "AWR work continuity"
+          }
+        ]
+      }
+    ]
+  }
+}
