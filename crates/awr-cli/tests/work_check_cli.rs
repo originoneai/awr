@@ -179,6 +179,7 @@ fn check_process_fixture() {
     eprintln!("Observed draft diagnostics");
     match mode["mode"].as_str().unwrap() {
         "fail" => panic!("The draft was lost"),
+        "pass_once" => fs::write("probe.json", r#"{"mode":"fail"}"#).unwrap(),
         "rewrite" => fs::write("oracle.txt", "changed oracle\n").unwrap(),
         "sleep" => {
             fs::write("child.pid", std::process::id().to_string()).unwrap();
@@ -282,8 +283,10 @@ fn passing_acceptance_generates_registered_evidence_and_completes_without_manual
 #[test]
 fn failed_acceptance_does_not_register_evidence_and_points_at_failed_logs() {
     let f = Fixture::new(2, true);
-    f.mode("fail");
+    f.mode("pass_once");
     let v = f.checked("acceptance", &["--write-input", "completion.json"]);
+    assert_eq!(v["results"][0]["outcome"], "passed");
+    assert_eq!(v["results"][1]["outcome"], "failed");
     assert_eq!(v["met"], false);
     assert_eq!(v["unmapped"], json!([C2]));
     assert!(v["evidence"].is_null());
@@ -293,7 +296,7 @@ fn failed_acceptance_does_not_register_evidence_and_points_at_failed_logs() {
         v["next_action"]
             .as_str()
             .unwrap()
-            .contains(v["results"][0]["log_dir"].as_str().unwrap())
+            .contains(v["results"][1]["log_dir"].as_str().unwrap())
     );
 }
 
