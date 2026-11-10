@@ -144,7 +144,9 @@ pub fn run(root: &Path, command: &ContextCommand, json_output: bool) -> Result<(
                 } else {
                     root.join(path)
                 };
-                serde_json::from_slice(&awr_source::read_capped(&path, 64 * 1024)?)?
+                serde_json::from_slice(&awr_source::read_capped(&path, 64 * 1024)?).map_err(
+                    |error| Error::InvalidInput(format!("invalid context input: {error}")),
+                )?
             } else {
                 ContextRequest {
                     work_item_key: work.clone(),

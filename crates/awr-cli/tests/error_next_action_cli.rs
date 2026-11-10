@@ -379,6 +379,20 @@ mod next_action_tests {
     }
 
     #[test]
+    fn rework_f3_malformed_saved_context_input_is_invalid_input() {
+        let f = Fixture::new();
+        let before = fs::read(f.0.join("work.yaml")).unwrap();
+        for text in ["not json", "[]", "{}"] {
+            f.write("bad-context.json", text);
+            f.error(
+                &["context", "compile", "--input", "bad-context.json"],
+                "InvalidInput",
+            );
+            assert_eq!(fs::read(f.0.join("work.yaml")).unwrap(), before);
+        }
+    }
+
+    #[test]
     fn rework_f3_long_retry_requires_repreview_after_source_change() {
         let f = Fixture::new();
         let title = "n".repeat(90);
