@@ -695,6 +695,19 @@ class Parity(unittest.TestCase):
             client.close()
 
     def test_check_path_matches_baseline_admission_acceptance_and_completion_and_detects_unmet_drift(self):
+        def normalize_generated_source(source, locator):
+            self.assertIn(locator, json.loads(source)["work_items"][0]["evidence"])
+            encoded_locator = json.dumps(locator)
+            self.assertIn(encoded_locator, source)
+            return source.replace(encoded_locator, json.dumps("<generated-check-report>"))
+
+        for locator in (".awr/artifacts/generated-report", r".awr\artifacts\generated-report"):
+            source = json.dumps({"work_items": [{"evidence": [locator]}]})
+            expected = json.dumps({"work_items": [{"evidence": ["<generated-check-report>"]}]})
+            self.assertEqual(normalize_generated_source(source, locator), expected)
+            with self.assertRaises(AssertionError, msg="a missing source reference must remain visible"):
+                normalize_generated_source(source, locator + "-missing")
+
         criterion = "A saved draft survives a failed save"
         decision = '---\n{"id":"scope","status":"accepted","affected_keys":["*"]}\n---\n# Scope\n\n## Decision\nKeep the local draft available.\n'
         (self.root / "decisions").mkdir()
@@ -797,8 +810,7 @@ class Parity(unittest.TestCase):
             report_bytes = (self.root / locator).read_bytes()
             self.assertEqual(hashlib.sha256(report_bytes).hexdigest(), acceptance["evidence"]["sha256"])
             source = (self.root / "work.yaml").read_text()
-            self.assertIn(locator, source)
-            trace["completed_source"] = source.replace(locator, "<generated-check-report>")
+            trace["completed_source"] = normalize_generated_source(source, locator)
             with closing(sqlite3.connect(f"file:{self.root / '.awr/state.db'}?mode=ro", uri=True)) as db:
                 events = [json.loads(row[0]) for row in db.execute("SELECT payload_json FROM events WHERE event_type='work.check' ORDER BY project_revision")]
             self.assertEqual(len(events), 4)
