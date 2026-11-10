@@ -1,6 +1,10 @@
 # CLI / MCP 输出与错误契约
 
-本页描述八个原有工作与上下文工具的 CLI/MCP 领域对照。0.3.3 新增十二个会话与接续工具；共享 HTTP 服务另有项目目录工具，总计 21 个，stdio 为 20 个。完整契约见[共享 MCP 服务](mcp-service.md)。CLI 继续提供完整项目管理入口。
+The default stdio catalog exposes eight domains. Their second-level manifests
+contain 39 Personal tools, including `awr_work_check`; flat names remain callable.
+Shared HTTP adds `awr_projects_list` for project discovery. Optional Team tools
+have their own catalog. See the [shared MCP service](mcp-service.md) for transport
+configuration. CLI provides the complete project management interface.
 
 ## 动作映射
 
@@ -13,6 +17,9 @@ CLI 示例统一以 `awr --project /absolute/project --json` 为前缀。表中�
 | `awr_project_status` | `status [--branch NAME_OR_ID] [--view action/full/summary]` | 默认 action：当前续接、可领取、等待、实际阻塞及历史汇总；旧完整结构显式传 full；[详细语义与兼容说明](daily-work.md) |
 | `awr_work_ready` | `ready [--limit N] [--branch NAME_OR_ID]` | `limit` 默认 10，范围 1..100；就绪项、诊断、认领与截断提示 |
 | `awr_work_get` | `work show WORK [--branch NAME_OR_ID] [--source-sha SHA]` | `work`、`branch`、`source_sha`；任务、验收、依赖、决策、证据及来源 |
+| `awr_work_prepare` | `work prepare WORK [--session SESSION] [--budget N]` | Read readiness, required context and policy-scoped `check_obligations` with runnable commands. |
+| `awr_work_check` | `work check WORK --session SESSION --phase baseline/acceptance/mutation --expected-revision R` | Write check observations; `examples` maps repeated `--example`, `timeout_seconds` maps `--timeout`, and `require_met` maps `--require-met`. Returns `results`, `met` and inline `completion_input`. |
+| `awr_completion_prepare` | `work prepare-completion WORK --report FILE --evidence-key KEY --source-sha SHA --level LEVEL` | Read report coverage and the same policy-scoped `checks` summary as work inspection. |
 | `awr_context_compile`，无 `branch` | `context compile --work WORK [--session SESSION] [--detached]` | L1、完整性、缺口、来源、预算和 Context hash |
 | `awr_context_compile`，显式 `branch` | `branch context NAME_OR_ID --work WORK [--session SESSION] [--detached]` | 同一命名分支自 fork 起的增量；不切换默认分支 |
 | `awr_work_transition` | `work progress/block/unblock/cancel/reopen WORK --session SESSION --reason TEXT --expected-revision R` | `action` 选择动作，`next_action` / `summary` / `blocker` 对应同名连字符参数；返回提案、源写入结果和事件回执 |
@@ -28,6 +35,30 @@ CLI 示例统一以 `awr --project /absolute/project --json` 为前缀。表中�
 查询的 `branch` 可以是名字、内部 ID 或 `main`；省略时读取项目当前默认分支。显式选择不会修改默认分支、既有会话、认领或 Git checkout。MCP 的 `null` 等同省略，选择主分支须传 `"main"`。
 
 ## 记录输入与回执
+
+### Example checks
+
+Discover `awr_work_check` by calling `awr_work` with empty arguments, then call
+the child through that domain or its flat name. The tool runs the same runtime
+checks as CLI and appends `work.check` events. Baseline runs precede governed
+admission; acceptance and mutation use the session's current admission and claim.
+Successful acceptance can register a report and evidence and return
+`completion_input`, ready for `awr_work_transition` with `action=complete`.
+That completion object also accepts the policy-scoped `check_waiver` for small work.
+`awr_work_get` exposes `checks` when the project's check policy is active.
+
+`request_id` enables durable replay and outcome inspection; shared HTTP requires
+it. A pending user wait must be resolved before starting a check. `require_met`
+returns a structured error alongside the recorded results when a phase expectation
+is missed. Default calls successfully record failed outcomes. Obligations are read
+through `awr_work_prepare`; CLI's `--status` and `--write-input` are file-oriented
+conveniences, while MCP returns the completion object inline.
+
+Negotiate the prerequisites with:
+
+```sh
+awr capabilities --require definition.example_checks --require gates.checks --require mcp.work_check
+```
 
 `awr_evidence_record` 与 CLI EvidenceDraft 的字段如下：
 
@@ -173,7 +204,13 @@ cargo test -p awr-mcp --test shared --locked
 
 对照程序使用临时 fixture，实际启动 CLI 与 MCP stdio。读取比较完整领域 JSON，逐表检查 MCP 未写入 DB，检查权威来源字节不变；写入从同一快照分别执行，并核对状态、源文件结果、revision、缺口、证据和认领回执。Context hash 和必需事实不做归一化。独立写入的生成 ID / 时间分别验证，不能作为两次执行内容相等的条件。
 
-HTTP 集成另外覆盖多客户端、多项目、会话、等待、重复请求、重启和未知结果恢复；官方 Rust MCP SDK 客户端还验证协议发现与调用。十一项 CLI 对照没有被扩充成全部新工具的逐项对照；其中两项（AWR-EVO-012）对同一组事实经两端核对结论、诊断与五层互不混用，并核对查询不授权。
+HTTP integration also covers clients, projects, session ownership, waits, replay,
+restart and outcome recovery. The Rust MCP SDK verifies discovery and calls.
+Fourteen CLI parity cases exercise fourteen tool contracts, including the complete
+baseline → admission → acceptance → completion path and a deliberate `unmet`
+mismatch. The platform gate checks those counts against its registered contract.
+Two cases compare readiness facts, diagnostics and the five result layers and
+verify that queries preserve authorization boundaries.
 
 这些属于本地接口与功能验证，不代表真实 Agent 客户端业务验收、性能测量或发布结果。
 

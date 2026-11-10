@@ -125,6 +125,11 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   while existing lifecycle errors retain their behavior.
   Claude protocol coverage uses simulated events, without a named-version or
   native-client verification. See [hook decisions](../reference/host-contract.md#hook-decisions).
+- MCP `awr_work_check` runs bound example checks through the shared CLI runtime,
+  records outcomes, and returns generated completion input. It is a second-level
+  write tool under `awr_work`; the first-level catalog remains eight domains.
+  Work inspection and preparation expose policy-scoped check obligations, completion
+  accepts a small-work check waiver, and `mcp.work_check` supports capability negotiation.
 - The contract of a context packing kernel with no store (`awr-context-kernel`, a library crate, not in the binaries): a request of fixed
   text chunks with stable names, entities and revisions, required and ranked optional chunks, atomic groups and a token or byte budget;
   a result that is a consistent partition of it; `validate_request` and `check_result` that say why a request or a result is refused, with
