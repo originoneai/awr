@@ -135,7 +135,7 @@ measurements are:
 
 | Path | AWR calls | Returned bytes | Call limit | Byte limit | Result |
 | --- | ---: | ---: | ---: | ---: | --- |
-| New idea through claimed, prepared work | 4 | 9,013 | 4 | 6,144 | Byte limit exceeded |
+| New idea through claimed, prepared work | 4 | 9,013 | 4 | 6,144 | **Not met**; AWR-ACR-024 |
 | Checked admission through completion, author | 6 | 5,538 | 6 | 8,192 | Within limits |
 | Separate admission reviewer | 2 | 4,391 | 2 | — | Within limit |
 | Compacted session continuation | 0 model calls; 1 host hook | 869 | 0 model calls | — | Within call limit |
@@ -146,8 +146,20 @@ The creation preview's text summary omits the fingerprint needed for acceptance.
 Its measured call therefore requests JSON and counts the entire 4,611-byte
 response; acceptance and activation return 204 bytes, session creation returns
 97 bytes, and text preparation returns 4,101 bytes. The 6 KiB limit stays in force
-and the positive regression test reports the excess. A clean main checkout
-reproduces the same result with the main runtime binary.
+and the positive regression test retains the same calls and assertions. A clean
+main checkout reproduces the same result with the main runtime binary. The test
+is temporarily ignored with the reason
+`AWR-ACR-024: the creation preview is too large`; AWR-ACR-024 tracks the shorter,
+executable creation preview. P1 remains **not met** and is excluded from passing
+acceptance counts. Its negative call and byte witnesses continue to run.
+
+Run the deferred positive guard explicitly to reproduce the known excess:
+
+```sh
+AWR_LOCAL_WEB=0 cargo test -p awr-cli --test golden_paths_cli --locked -- \
+  --ignored --exact p1_new_idea_starts_work_in_four_calls_within_six_kib_of_text \
+  --nocapture
+```
 
 The checked path begins with existing in-progress work at admission. Starting a
 planned item also needs a progress transition. Automatic recovery covers unchanged
