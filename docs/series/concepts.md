@@ -1,17 +1,12 @@
 # Core concepts
 
-AWR keeps a project's work facts outside any single agent
-conversation, so work survives context loss, agent switches and restarts. This
-article explains the five ideas behind that model; the commands in the
-[Quickstart](quickstart.md) and the routines in the
-[Daily workflow](daily-workflow.md) then read naturally.
+AWR connects authoritative project files, work items, sessions, claims and acceptance evidence. These records let work continue across context loss, agent changes and restarts.
 
-The core principle: your source files (ledgers, plans) are the authority, and
-everything the runtime stores — sessions, claims, evidence — is a checkable
-projection of those facts. AWR never invents missing intent, and never lets a
-conversation transcript substitute for a recorded fact.
+## Use it
 
-## Project facts: the source ledger
+Your source ledgers and plans hold project intent. Runtime sessions, claims and evidence keep their own attributable records linked to those sources.
+
+### Project facts: the source ledger
 
 AWR's *source ledger* is a small work contract you keep in ordinary project
 files: a YAML ledger such as `work-ledger.yaml`, or an existing Markdown
@@ -52,11 +47,16 @@ awr --project /absolute/project init --accept
 awr --project /absolute/project intake inspect --json
 ```
 
-Init never overwrites existing files, and inspection only refreshes a
-rebuildable projection cache — never your goals, task files or execution
-state.
+## How it behaves
 
-## Tasks: work items
+| Concept | Role |
+| --- | --- |
+| Ledger | Project goals and task contracts |
+| Session and checkpoint | Attribution and durable progress |
+| Claim | Explicit runtime ownership before execution |
+| Evidence | Reports bound to exact acceptance and source versions |
+
+### Tasks: work items
 
 A *work item* is one task in the ledger. Its key fields are the ones AWR can
 actually check:
@@ -75,9 +75,7 @@ You create a task from a JSON draft that states only explicitly known facts:
 awr work create --input draft.json
 ```
 
-Creation always produces a *draft*. Missing goals or required facts stay
-visible, and a draft grants no permission to execute or complete anything;
-applying it is a separate, explicit step.
+Creation produces a draft with explicit gaps for missing goals and required facts. Applying the preview is a separate step.
 
 AWR also reports project-level organization states such as `not_initialized`,
 `needs_organization`, `ready`, `blocked`, `awaiting_verification`,
@@ -87,12 +85,9 @@ criteria, a next action and resolved prerequisites; `awaiting_verification`
 means the ledger says tasks are done but their acceptance reports have not all
 been verified yet.
 
-## Checkpoints and sessions
+### Checkpoints and sessions
 
-A *session* is one agent's working attachment to a work item. A *checkpoint*
-is the durable record of where that session stands: the persisted next action,
-open loops, and the actual AWR event and source delta — not a copy of the
-conversation.
+A *session* attaches an agent to work. A *checkpoint* records its next action, open loops and observed AWR event/source delta.
 
 When a client session starts or resumes after compaction, AWR returns recovery
 context built from the checkpoint. When the turn stops or ends, the changed
@@ -103,14 +98,9 @@ awr client progress --client codex --external-session CLIENT_ID \
   --next-action "Apply the reviewer corrections" --open-loop "Independent review remains"
 ```
 
-Duplicate events with unchanged work reuse their checkpoint; a continued turn
-with changed progress creates a new one. One honest boundary: the native hook
-adapter that automates this is currently installed for Codex only. Other hosts
-use the L0 binder (`--client generic`), which attaches a host conversation to
-an active AWR session without installing hooks. The adapter never reads
-transcript bodies — it records what you tell it, not what a model said.
+Duplicate events reuse a checkpoint when work is unchanged; a continued turn with changed progress creates a new one. Generic hosts bind a conversation to an active AWR session with `--client generic`.
 
-## Claims and handoff
+### Claims and handoff
 
 A *claim* is the explicit lock a session holds before executing a task. AWR
 requires you to acquire the session claim before execution, and completion
@@ -131,30 +121,20 @@ awr client bind --client generic --external-session NEW_CLIENT_ID \
   --work INTAKE-001 --from-session AWR_PREDECESSOR_ID
 ```
 
-Handoff moves recorded facts — ledger state, checkpoints, execution history —
-not process memory. Shutdown hooks are advisory: they never release claims or
-terminate sessions, which remains your explicit responsibility at handoff.
+### Delivery and acceptance
 
-## Delivery and acceptance
-
-*Acceptance* is where AWR is deliberately strict. A task is not done because
-someone wrote `status: completed` in a ledger. It is done when a registered
-completion report verifies against the ledger's current acceptance criteria.
+Acceptance checks a registered completion report against the ledger’s current criteria.
 
 The work-aware section-stamp currency behavior described below ships in 0.6.0.
 
 Keep the evidence bindings separate:
 
-- `source_sha` names the exact source revision used by verification. It remains
-  strict for Git or code revisions; a matching task section cannot make an
-  arbitrary source-SHA mismatch current.
-- `section_fingerprint` identifies the work item's task-contract version for
-  work-scoped currency. It participates in the existing work/acceptance binding;
-  it does not introduce a second adopted or approved version, or replace the
-  report's exact criterion coverage.
-- The evidence `sha256` is the report digest: it binds the report bytes read
-  during preflight and completion. Branch, source freshness and required proof
-  bindings remain separate gates.
+| Binding | Meaning |
+| --- | --- |
+| `source_sha` | Exact verification revision |
+| `section_fingerprint` | Existing work/acceptance contract binding for work-scoped currency |
+| Evidence `sha256` | Exact report bytes read during preflight and completion |
+| Branch, freshness and required proof | Separate validation gates |
 
 For a YAML ledger, `section_fingerprint` is a SHA-256 hash of key-sorted JSON
 for the parsed work record after removing these fields: `status`, `next_action`,
@@ -174,8 +154,7 @@ omitted when supplying these hashes as `source_sha`. This permits ledger-only
 lifecycle or unrelated-task edits; it never overrides an arbitrary Git or code
 SHA mismatch.
 
-Currency follows the read path's explicit scope, not whether a record happens to
-name a work item:
+Currency follows each read path’s explicit scope:
 
 | Read path | Currency rule |
 | --- | --- |
@@ -183,11 +162,7 @@ name a work item:
 | Standalone `awr evidence show` | Use `assess` with the requested SHA and branch, without resolving a work projection. A SHA mismatch stays `Historical`, even when the record names a work item. |
 | Completion preflight, exact completion-report binding checks and evidence-input validation | Validate the supplied report, acceptance coverage and required fields, using the declared verification SHA where required. These checks do not classify currency or replace a work-scoped assessment. The internal plain `assess` calls used for input validation consume only missing-field diagnostics. |
 
-All work-scoped readers share the store assessment; none substitute a plain-SHA
-answer for the same record on that path. A standalone source-revision lookup and
-a work-scoped lookup ask different questions, so their answers may differ after
-unrelated ledger edits. Report byte reads and raw record lookups do not themselves
-make a currency assessment.
+All work-scoped readers use the store’s work assessment. Standalone revision lookups answer a different question and may differ after unrelated ledger edits.
 
 When a successful completion receipt still matches the current work, revalidation
 keeps its entire selected evidence set and passes it unchanged to the store.
@@ -196,13 +171,7 @@ requested revision. Neither a partially current set nor an entirely non-current
 set is discarded to fall back to a newer passing report. This preserves required
 proof beyond the records used to cover individual acceptance criteria.
 
-A work-aware query with an omitted SHA can use the section binding, but verified
-evidence still requires `source_sha` and all required report bindings. The
-original evidence/report SHA is never rewritten. Registering an old report after
-ledger drift receives no new stamp, and this exception does not automatically
-carry a stamp across nodes or establish report validity.
-`Current` describes currency only; it does not prove that a command ran,
-execution occurred or completion was accepted.
+A work-aware query may use the section binding when SHA is omitted. Verified evidence still requires `source_sha` and every report binding.
 
 A completion report records the command actually executed, the scope actually
 verified, the time, and named checks — each mapping to an exact acceptance
@@ -247,7 +216,7 @@ preflight invalidates its digest. Source-declared completion alone never
 supplies a verified receipt, and `source_completed` and `verified_completed`
 remain separate counts in status reports.
 
-## One task, end to end
+### One task, end to end
 
 Tie it together with the search task from the ledger above:
 
@@ -274,8 +243,31 @@ Tie it together with the search task from the ledger above:
    `verified_completed`; the latter requires AWR to check the exact bound reports
    and their checks.
 
-## Where to go next
+### Where to go next
 
 - [Quickstart](quickstart.md) — run these concepts for the first time.
 - [Daily workflow](daily-workflow.md) — the routine loop of prepare, claim,
   checkpoint and complete.
+
+## Limits
+
+- Missing intent stays explicit; recorded project facts take precedence over conversation transcripts.
+- Initialization preserves existing files. Inspection refreshes rebuildable projections while preserving goals, task files and execution state.
+- Draft creation grants neither execution permission nor completion.
+- Checkpoints preserve recorded project progress rather than conversation copies.
+- Automatic lifecycle installation depends on host dialect and installed version; confirm actual trigger delivery before relying on it.
+- Lifecycle adapters record supplied progress and exclude transcript bodies.
+- Handoff transfers ledger facts, checkpoints and execution history; process memory stays with the host.
+- Shutdown hooks are advisory. Explicit session operations release claims and end sessions at handoff.
+- A source status of `completed` alone supplies no verified completion receipt.
+- Matching task sections permit only the stated ledger-drift exception; arbitrary Git or code SHA mismatches remain historical.
+- Section fingerprints preserve the existing contract model and exact criterion coverage; they introduce no additional adopted or approved version.
+- Raw record and report-byte reads leave currency assessment to the selected read path.
+- Original evidence/report SHAs stay immutable. Old reports registered after drift gain no stamp; stamps require explicit cross-node provenance.
+- Currency labels describe bindings; command execution, report validity and accepted completion need their own evidence.
+
+## Code and tests
+
+- [Work readiness](../../crates/awr-core/src/query.rs)
+- [Evidence assessment](../../crates/awr-store/src/evidence.rs)
+- [Lifecycle tests](../../crates/awr-cli/tests/session_cli.rs)
