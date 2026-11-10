@@ -489,6 +489,7 @@ impl DeliverySyncStore {
             work,
             evidence.as_deref(),
             None,
+            false,
         )
         .await?;
         let mut result = json!({"work_id":work,"workstream_id":binding.workstream_id,"source_snapshot_id":auth.snapshot,
