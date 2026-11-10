@@ -32,6 +32,12 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   `awr_team_input_contract` still reads the exact input of one operation from the full catalog, and
   every call is still checked against the full schema. The default and `?catalog=full` are
   unchanged; any other value, or the parameter given twice, is refused when listing.
+- A [documentation style guide](../STYLE.md) and CI checker for negative-term density,
+  opening paragraphs, limitation sections, and relative links. The baseline preserves
+  existing pages' four recorded metrics; updates accept equal or lower values and new
+  pages use absolute limits. Each page can use one limitation section; larger recorded
+  counts remain the ceiling. Run `python3 scripts/check_docs_style.py --self-test`
+  for synthetic rule checks and mutation tests.
 - One observation freshness and coverage contract for the Observer Team reads (AWR-OBS-002): every
   read (`POST /api/team/read`, `/api/team/inbox-detail`, `GET /api/team/inbox`, `GET /api/team/work`)
   carries a `freshness` envelope that presents the report-received clock, the authoritative
@@ -82,6 +88,15 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   instead of reopening it. New schema version 58 (`snapshot_governance`, `work_governance`,
   append-only `work_admissions`, `review_rounds.governance_binding`, append-only `review_findings`).
   See [Team governance](../reference/team-governance.md).
+- Local hook dialects for Claude Code, Codex, Kimi and generic hosts. Claude
+  session starts receive AWR context, including after compaction; unbound
+  conversations receive the action view and a binding command. Optional project
+  write gates ask or deny when a conversation lacks a valid claim, or ask about
+  writes outside its declared work paths. The write check reads existing state
+  without refreshing sources; gate evaluation failures continue with a diagnostic,
+  while existing lifecycle errors retain their behavior.
+  Claude protocol coverage uses simulated events, without a named-version or
+  native-client verification. See [hook decisions](../reference/host-contract.md#hook-decisions).
 - The contract of a context packing kernel with no store (`awr-context-kernel`, a library crate, not in the binaries): a request of fixed
   text chunks with stable names, entities and revisions, required and ranked optional chunks, atomic groups and a token or byte budget;
   a result that is a consistent partition of it; `validate_request` and `check_result` that say why a request or a result is refused, with

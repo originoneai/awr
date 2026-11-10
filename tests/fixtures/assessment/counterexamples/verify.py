@@ -7,8 +7,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-DOC = ROOT.parents[3] / "docs" / "reference" / "assessment.md"
-BENCH_DOC = ROOT.parents[3] / "docs" / "benchmarks" / "assessment.md"
+DOC = ROOT.parents[3] / "docs" / "dev" / "reference" / "assessment.md"
+BENCH_DOC = ROOT.parents[3] / "docs" / "dev" / "benchmarks" / "assessment.md"
 BENCH = ROOT.parents[3] / "tests" / "benchmarks" / "assessment"
 ENVELOPE_MANIFEST = ROOT.parent / "envelope" / "manifest.json"
 
@@ -97,11 +97,11 @@ def main() -> int:
     env = json.loads(ENVELOPE_MANIFEST.read_text())
     assert env["dec_013_started"] is True
 
-    assert DOC.is_file(), "docs/reference/assessment.md missing"
+    assert DOC.is_file(), "docs/dev/reference/assessment.md missing"
     assert "DEC-013" in DOC.read_text()
     assert "DEC-020" in DOC.read_text()
 
-    assert BENCH_DOC.is_file(), "docs/benchmarks/assessment.md missing"
+    assert BENCH_DOC.is_file(), "docs/dev/benchmarks/assessment.md missing"
     bench_doc = BENCH_DOC.read_text()
     assert "baseline" in bench_doc and "candidate" in bench_doc
     assert "structural_correctness" in bench_doc

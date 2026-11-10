@@ -1,0 +1,419 @@
+{
+  "version": 1,
+  "files": {
+    "README.md": {
+      "density": 5.2356020942408374,
+      "opening_words": 13,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "README.zh-CN.md": {
+      "density": 6.26491646778043,
+      "opening_words": 15,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/README.md": {
+      "density": 14.340344168260039,
+      "opening_words": 40,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/claude-code-agent.md": {
+      "density": 19.41747572815534,
+      "opening_words": 21,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/codex.md": {
+      "density": 16.988869361452842,
+      "opening_words": 39,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/context-continuity.md": {
+      "density": 20.080321285140563,
+      "opening_words": 45,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/cursor.md": {
+      "density": 21.84235517568851,
+      "opening_words": 42,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/delegation-execution-auth.md": {
+      "density": 19.07356948228883,
+      "opening_words": 50,
+      "opening_negatives": 2,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/delivery-integration.md": {
+      "density": 20.689655172413794,
+      "opening_words": 31,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/delivery-route-templates.md": {
+      "density": 21.839080459770116,
+      "opening_words": 59,
+      "opening_negatives": 2,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/delivery-synchronization.md": {
+      "density": 16.70312189302048,
+      "opening_words": 43,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/github-delivery.md": {
+      "density": 15.957446808510639,
+      "opening_words": 45,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/grok.md": {
+      "density": 11.737089201877934,
+      "opening_words": 39,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/host-workflow.md": {
+      "density": 16.350555918901243,
+      "opening_words": 25,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/kimi.md": {
+      "density": 13.136288998357964,
+      "opening_words": 39,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/local-git-delivery.md": {
+      "density": 13.19820881451803,
+      "opening_words": 81,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/named-agent-host.md": {
+      "density": 20.304568527918782,
+      "opening_words": 32,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/pr-delivery-review.md": {
+      "density": 14.893617021276595,
+      "opening_words": 48,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/session-workflow.md": {
+      "density": 20.959290608625555,
+      "opening_words": 39,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/integrations/workbuddy.md": {
+      "density": 20.74074074074074,
+      "opening_words": 47,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/admission.md": {
+      "density": 16.74641148325359,
+      "opening_words": 83,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/artifact-boundaries.md": {
+      "density": 23.157894736842106,
+      "opening_words": 46,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/assessment-policy.md": {
+      "density": 14.7247119078105,
+      "opening_words": 82,
+      "opening_negatives": 2,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/assessment.md": {
+      "density": 15.372168284789645,
+      "opening_words": 50,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/claim-policy.md": {
+      "density": 15.294117647058824,
+      "opening_words": 68,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/cli-mcp-contract.md": {
+      "density": 24.62330025725836,
+      "opening_words": 77,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/containment.md": {
+      "density": 10.071942446043165,
+      "opening_words": 93,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/content-review.md": {
+      "density": 17.61006289308176,
+      "opening_words": 56,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/context-component.md": {
+      "density": 13.227513227513228,
+      "opening_words": 76,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/cross-workstream-policy.md": {
+      "density": 15.803631472763954,
+      "opening_words": 83,
+      "opening_negatives": 2,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/daily-work.md": {
+      "density": 14.671814671814673,
+      "opening_words": 13,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/database-recovery.md": {
+      "density": 12.185215272136475,
+      "opening_words": 67,
+      "opening_negatives": 2,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/delivery-content-proof.md": {
+      "density": 11.363636363636363,
+      "opening_words": 41,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/diagnostics.md": {
+      "density": 17.640573318632857,
+      "opening_words": 15,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/eta-checkpoints.md": {
+      "density": 15.503875968992247,
+      "opening_words": 31,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/event-payloads.md": {
+      "density": 18.73198847262248,
+      "opening_words": 63,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/file-inventory.md": {
+      "density": 9.836065573770492,
+      "opening_words": 41,
+      "opening_negatives": 2,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/findings.md": {
+      "density": 11.494252873563218,
+      "opening_words": 103,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/gaps.md": {
+      "density": 10.526315789473685,
+      "opening_words": 90,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/guidance.md": {
+      "density": 13.235294117647058,
+      "opening_words": 78,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/host-contract.md": {
+      "density": 14.025733163324446,
+      "opening_words": 73,
+      "opening_negatives": 2,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/local-project-hub.md": {
+      "density": 4.4671346522016595,
+      "opening_words": 35,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/management.md": {
+      "density": 22.5140712945591,
+      "opening_words": 42,
+      "opening_negatives": 2,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/mcp-service.md": {
+      "density": 18.636363636363637,
+      "opening_words": 36,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/migration-takeover.md": {
+      "density": 12.987012987012987,
+      "opening_words": 29,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/mutation-recovery.md": {
+      "density": 20.2020202020202,
+      "opening_words": 41,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/ops-audit.md": {
+      "density": 15.831134564643799,
+      "opening_words": 34,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/outcome-history.md": {
+      "density": 21.22905027932961,
+      "opening_words": 45,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/reassessment.md": {
+      "density": 11.811023622047244,
+      "opening_words": 84,
+      "opening_negatives": 2,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/runtime-isolation.md": {
+      "density": 13.48747591522158,
+      "opening_words": 26,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/runtime-snapshots.md": {
+      "density": 16.9811320754717,
+      "opening_words": 65,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/secret-boundaries.md": {
+      "density": 23.504273504273506,
+      "opening_words": 84,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/source-changes.md": {
+      "density": 20.275750202757504,
+      "opening_words": 18,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/specification-coverage.md": {
+      "density": 17.461383478844862,
+      "opening_words": 57,
+      "opening_negatives": 2,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/usage-time-observation.md": {
+      "density": 21.85792349726776,
+      "opening_words": 29,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/work-definition.md": {
+      "density": 14.47178002894356,
+      "opening_words": 90,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/workflow.md": {
+      "density": 12.779552715654953,
+      "opening_words": 23,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/workspace-exchange.md": {
+      "density": 22.84843869002285,
+      "opening_words": 59,
+      "opening_negatives": 1,
+      "limit_sections": 1
+    },
+    "docs/dev/reference/workstream-parallel-handoff-biz.md": {
+      "density": 13.916500994035784,
+      "opening_words": 24,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/dev/reference/workstreams.md": {
+      "density": 18.626076507109953,
+      "opening_words": 45,
+      "opening_negatives": 2,
+      "limit_sections": 0
+    },
+    "docs/series/README.md": {
+      "density": 6.993006993006993,
+      "opening_words": 10,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/series/agents.md": {
+      "density": 14.409221902017292,
+      "opening_words": 57,
+      "opening_negatives": 2,
+      "limit_sections": 0
+    },
+    "docs/series/cli.md": {
+      "density": 8.15418828762046,
+      "opening_words": 37,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/series/concepts.md": {
+      "density": 13.085052843482638,
+      "opening_words": 44,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/series/daily-workflow.md": {
+      "density": 11.980830670926517,
+      "opening_words": 39,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/series/mcp.md": {
+      "density": 10.159651669085632,
+      "opening_words": 63,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/series/quickstart.md": {
+      "density": 6.660323501427212,
+      "opening_words": 50,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    },
+    "docs/series/troubleshooting.md": {
+      "density": 14.836795252225519,
+      "opening_words": 56,
+      "opening_negatives": 1,
+      "limit_sections": 0
+    },
+    "docs/series/what-is-awr.md": {
+      "density": 12.934518997574777,
+      "opening_words": 51,
+      "opening_negatives": 0,
+      "limit_sections": 0
+    }
+  }
+}

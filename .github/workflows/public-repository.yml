@@ -13,3 +13,12 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 scripts/check_public_tree.py
+      - name: Check documentation style
+        run: |
+          python3 scripts/check_docs_style.py --self-test
+          python3 scripts/check_docs_style.py
+      - name: Check assessment documentation references
+        run: |
+          python3 tests/fixtures/assessment/counterexamples/verify.py
+          python3 tests/fixtures/assessment/contracts/verify.py
+          python3 tests/fixtures/assessment/envelope/verify.py

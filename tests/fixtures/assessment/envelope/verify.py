@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-DOC = ROOT.parents[3] / "docs" / "reference" / "assessment.md"
+DOC = ROOT.parents[3] / "docs" / "dev" / "reference" / "assessment.md"
 
 
 def load(name: str):
@@ -46,7 +46,7 @@ def main() -> int:
     conf = load("no-confidence.json")
     assert "probability" in conf["forbidden_conclusion_keys"]
 
-    assert DOC.is_file(), "docs/reference/assessment.md missing"
+    assert DOC.is_file(), "docs/dev/reference/assessment.md missing"
     doc = DOC.read_text()
     assert "DEC-012" in doc
     assert "hard_gate" in doc or "HardGate" in doc or "hard-rule" in doc.lower()
