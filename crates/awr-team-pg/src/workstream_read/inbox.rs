@@ -60,14 +60,14 @@ pub(super) async fn facts(
             "candidate_digest":r.get::<_,Option<String>>(4)});
     }
     let selected = tx.query_opt("SELECT s.binding_digest,c.body_json,s.selection_version,
-        s.source_snapshot_id=$4 AND s.ownership_version=$5 AND w.last_fence=s.fence
-          AND cl.coordinator_epoch=$6
+        s.ownership_version=$4 AND w.last_fence=s.fence AND cl.coordinator_epoch=$5,
+        s.source_snapshot_id
         FROM awr_team.delivery_selections s JOIN awr_team.delivery_candidates c
           USING(tenant_id,project_id,binding_digest)
         JOIN awr_team.work_runtime w ON (w.tenant_id,w.project_id,w.scope_id,w.work_id)=(s.tenant_id,s.project_id,s.scope_id,s.work_id)
         JOIN awr_team.claims cl ON (cl.tenant_id,cl.project_id,cl.id)=(s.tenant_id,s.project_id,s.claim_id)
         WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.work_id=$3 AND s.scope_id='main'",
-        &[&tenant,&project,&work,&auth.snapshot,&ownership,&auth.epoch]).await?;
+        &[&tenant,&project,&work,&ownership,&auth.epoch]).await?;
     if let Some(s) = selected {
         let digest: String = s.get(0);
         let candidate: DeliveryCandidate =
@@ -86,8 +86,22 @@ pub(super) async fn facts(
             return Err(PgError::SourceDivergence);
         }
         let version: i64 = s.get(2);
+        // The selection names the project snapshot it was made under. A delivered work whose
+        // contract a later activation left alone keeps that selection (its delivery is read
+        // under the recorded snapshot); a work still in flight needs the current snapshot.
+        let recorded: String = s.get(4);
         let current = s.get::<_, Option<bool>>(3).unwrap_or(false)
+            && crate::delivery_sync::completion::carried_across_snapshots(
+                tx,
+                tenant,
+                project,
+                work,
+                &recorded,
+                &auth.snapshot,
+            )
+            .await?
             && candidate.binding.contract_hash == contract;
+        let bound_snapshot: &str = if current { &recorded } else { &auth.snapshot };
         // Selecting a candidate binds evidence to that delivery even when no
         // connector was configured. Report-only work without a selection keeps
         // its existing review path.
@@ -156,7 +170,7 @@ pub(super) async fn facts(
                   AND x.coordinator_epoch=$8 AND c.version=x.connector_version AND c.enabled
                   AND c.coordinator_epoch=x.coordinator_epoch
                 ORDER BY h.connector_id,h.slot LIMIT 33",
-                &[&tenant,&project,&work,&digest,&version,&auth.snapshot,&ownership,&auth.epoch]).await?;
+                &[&tenant,&project,&work,&digest,&version,&bound_snapshot,&ownership,&auth.epoch]).await?;
             data["facts_truncated"] = json!(rows.len() > 32);
             let mut checks = Vec::new();
             for row in rows.iter().take(32) {
@@ -181,7 +195,7 @@ pub(super) async fn facts(
             WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND candidate_digest=$4
               AND selection_version=$5 AND source_snapshot_id=$6
             ORDER BY metadata_revision DESC,id DESC LIMIT 1",
-                &[&tenant, &project, &work, &digest, &version, &auth.snapshot],
+                &[&tenant, &project, &work, &digest, &version, &bound_snapshot],
             )
             .await?;
         if let Some(p) = publication {

@@ -475,6 +475,120 @@ async fn only_exact_pending_domain_work_continues_across_unrelated_source_activa
     }
 }
 
+/// What an observer reads about work `a`: the currentness flags of the work observation, the
+/// recorded verification checks and publication, and the synchronization flag of the source status.
+async fn delivered_flags(f: &SourceFixture) -> Value {
+    let mut q = query("work.observe");
+    q.work_id = Some("a".into());
+    let view =
+        f.f.reads
+            .query(TENANT, PROJECT, SUPERVISOR, q)
+            .await
+            .unwrap();
+    let c = &view["data"]["collaboration"];
+    let status =
+        f.f.store
+            .source_publication_status(TENANT, PROJECT, WORKER, "a")
+            .await
+            .unwrap();
+    let mut n = query("delivery.neutral.inspect");
+    n.work_id = Some("a".into());
+    let neutral =
+        f.f.reads
+            .query(TENANT, PROJECT, SUPERVISOR, n)
+            .await
+            .unwrap();
+    let current_facts = neutral["data"]["facts"]
+        .as_array()
+        .map(|facts| facts.iter().filter(|fact| fact["current"] == true).count());
+    json!({
+        "neutral_selected_current": neutral["data"]["selected_current"],
+        "neutral_current_facts": current_facts,
+        "candidate_current": c["candidate"]["current"],
+        "review_current_candidate": c["review"]["current_candidate"],
+        "integration_current_binding": c["integration"]["current_binding"],
+        "integration_state": c["integration"]["state"],
+        "verification_checks": c["verification"].as_array().map(Vec::len),
+        "publication_phase": c["publication"]["phase"],
+        "source_synchronized": c["source_synchronized"],
+        "status_source_synchronized": status["source_synchronized"],
+    })
+}
+
+/// A work that was integrated, completed and written back stays current when a later source
+/// activation leaves its contract alone, and goes stale when the activation changes it. The
+/// reads follow the contract of the work, not the project snapshot id. A work still in flight
+/// keeps the exact snapshot check, and so do the write paths (see the test above and the one for
+/// refreshed bindings).
+#[tokio::test]
+async fn a_delivered_work_stays_current_across_an_unrelated_activation_and_stale_when_its_contract_changes()
+ {
+    for (changed_work, still_current) in [("c", true), ("a", false)] {
+        let f = SourceFixture::new(false).await;
+        f.finalize("delivered").await;
+        let lease = f.take("sync-before-activation", "source").await;
+        let done =
+            f.f.store
+                .process_sync_intent(TENANT, PROJECT, WORKER, &lease, 60)
+                .await
+                .unwrap();
+        assert_eq!(done["data"]["phase"], "confirmed");
+        let delivered = delivered_flags(&f).await;
+        assert_eq!(delivered["candidate_current"], true);
+        assert_eq!(delivered["review_current_candidate"], true);
+        assert_eq!(delivered["integration_current_binding"], true);
+        assert_eq!(delivered["integration_state"], "confirmed");
+        assert_eq!(delivered["publication_phase"], "confirmed");
+        assert_eq!(delivered["source_synchronized"], true);
+        assert_eq!(delivered["status_source_synchronized"], true);
+        assert_eq!(delivered["neutral_selected_current"], true);
+        assert!(
+            delivered["verification_checks"].as_u64().unwrap() > 0,
+            "the delivered work has recorded verification checks"
+        );
+        assert!(
+            delivered["neutral_current_facts"].as_u64().unwrap() > 0,
+            "the neutral inspection lists current facts of the delivered work"
+        );
+        f.publish_successor(Some(changed_work)).await;
+        let after = delivered_flags(&f).await;
+        if still_current {
+            assert_eq!(
+                after, delivered,
+                "an activation that left the contract of work a alone changes nothing a reader sees"
+            );
+        } else {
+            assert_eq!(after["candidate_current"], false);
+            // A changed contract leaves no review round of the current contract.
+            assert!(after["review_current_candidate"].is_null());
+            assert_eq!(after["integration_current_binding"], false);
+            assert_eq!(after["integration_state"], "confirmed");
+            assert_eq!(after["source_synchronized"], false);
+            assert_eq!(after["status_source_synchronized"], false);
+            assert_eq!(after["neutral_selected_current"], false);
+            assert_eq!(after["neutral_current_facts"], 0);
+        }
+    }
+}
+
+/// The reads do not extend the carry to work that is still in flight: its author refreshes the
+/// selection after an unrelated activation, as the integration preparation requires.
+#[tokio::test]
+async fn a_work_in_flight_is_stale_after_an_unrelated_activation_until_its_binding_is_refreshed() {
+    let f = SourceFixture::new(false).await;
+    f.f.integrate().await;
+    let before = delivered_flags(&f).await;
+    assert_eq!(before["candidate_current"], true);
+    assert_eq!(before["integration_current_binding"], true);
+    f.publish_successor(Some("c")).await;
+    let after = delivered_flags(&f).await;
+    assert_eq!(after["candidate_current"], false);
+    assert_eq!(after["integration_current_binding"], false);
+    assert_eq!(after["integration_state"], "confirmed");
+    assert_eq!(after["neutral_selected_current"], false);
+    assert_eq!(after["neutral_current_facts"], 0);
+}
+
 #[tokio::test]
 async fn domain_source_queue_refuses_changed_contracts_and_retains_original_bindings() {
     let f = SourceFixture::new(false).await;

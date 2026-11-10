@@ -135,6 +135,40 @@ pub(super) async fn require_contracts(
     Ok(())
 }
 
+/// Whether the delivery a work recorded under `recorded` is still the work's delivery under the
+/// `current` project snapshot. Every activation creates a new snapshot of the whole planned
+/// source, so the snapshot ids alone differ after any later plan. A work that is completed with
+/// a selected completion receipt and whose contract hash is the same in both snapshots has lost
+/// nothing: its integration, review and source note stay current. A work still in flight has to
+/// refresh its selection, and a changed contract makes the delivery stale, as before. Reads only;
+/// the write paths keep their exact snapshot checks.
+pub(crate) async fn carried_across_snapshots(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    project: &str,
+    work: &str,
+    recorded: &str,
+    current: &str,
+) -> PgResult<bool> {
+    if recorded == current {
+        return Ok(true);
+    }
+    Ok(tx
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM awr_team.work_runtime w
+               WHERE w.tenant_id=$1 AND w.project_id=$2 AND w.scope_id='main' AND w.work_id=$3
+                 AND w.state='completed' AND w.selected_completion_id IS NOT NULL)
+             AND EXISTS(SELECT 1 FROM awr_team.work_contracts a JOIN awr_team.work_contracts b
+               ON (b.tenant_id,b.project_id,b.scope_id,b.work_id,b.contract_hash)
+                 =(a.tenant_id,a.project_id,a.scope_id,a.work_id,a.contract_hash)
+               WHERE a.tenant_id=$1 AND a.project_id=$2 AND a.scope_id='main' AND a.work_id=$3
+                 AND a.snapshot_id=$4 AND b.snapshot_id=$5)",
+            &[&tenant, &project, &work, &recorded, &current],
+        )
+        .await?
+        .get(0))
+}
+
 /// Use only evidence that originally names this exact candidate. The primary
 /// stored artifact is pinned independently of the repository manifest.
 pub(super) async fn verify_artifacts(

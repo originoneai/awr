@@ -191,6 +191,16 @@ same mapped resource is still required. Remapping to a different resource does
 not schedule the previous resource's effects; those need explicit operator
 reconciliation. Original issuer credentials and private authority are omitted.
 
+A delivered work keeps its currentness across later activations. Every activation creates a new
+project snapshot, so the snapshot ids alone differ after any later plan. A work that is completed
+with a selected completion receipt is read under the snapshot its selection and its source
+publications were recorded for, as long as its contract hash is the same in the current snapshot:
+the work observation reports its candidate, review round and integration binding as current, and
+`delivery.source.status` counts its confirmed publication toward `source_synchronized`. A changed
+contract makes all of these stale. A work still in flight is checked against the current snapshot
+as before (its author refreshes the selection), and every write path, namely integration
+preparation, dispatch, finalization and source publication, checks the exact current snapshot.
+
 `query_original: true` means dispatch occurred and the original operation must
 be observed rather than submitted again. It is not retry permission. Prepared
 requests still require the separate live lease/dispatch eligibility checks;
