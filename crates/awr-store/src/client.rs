@@ -22,6 +22,40 @@ fn binding_at(
         .transpose()
 }
 impl Store {
+    /// Gate receipts share the append-only event stream with client continuity.
+    pub fn client_gate_seen(
+        &self,
+        project: Id,
+        client: &str,
+        external: &str,
+        key: &str,
+        turn_key: Option<&str>,
+    ) -> Result<bool> {
+        self.conn.query_row("SELECT EXISTS(SELECT 1 FROM events WHERE project_id=?1 AND event_type='client.gate' AND json_extract(payload_json,'$.client')=?2 AND json_extract(payload_json,'$.external_session')=?3 AND (json_extract(payload_json,'$.delivery_key')=?4 OR (?5 IS NOT NULL AND json_extract(payload_json,'$.turn_key')=?5)))", params![project.to_string(),client,external,key,turn_key], |row| row.get(0)).map_err(db_error)
+    }
+
+    /// Only hook decisions can create this reserved receipt; generic event append cannot.
+    pub fn record_client_gate(
+        &mut self,
+        project: Id,
+        expected: Revision,
+        draft: EventDraft,
+    ) -> Result<Event> {
+        if draft.event_type != "client.gate" {
+            return Err(Error::InvalidInput("expected a client.gate receipt".into()));
+        }
+        awr_core::checked_event_payload(
+            &draft.event_type,
+            &draft.importance,
+            &draft.summary,
+            &draft.payload,
+        )?;
+        self.runtime_transaction_with_event(project, expected, draft, |tx, _, event| {
+            crate::events::bind_event(tx, project, event, true)
+        })
+        .map(|(_, event)| event)
+    }
+
     pub fn client_binding(
         &self,
         project: Id,
@@ -69,7 +103,7 @@ impl Store {
         checkpointed: bool,
     ) -> Result<(ClientBinding, Event)> {
         awr_core::ensure_public_data(&binding)?;
-        if !["codex", "kimi", "generic"].contains(&binding.client.as_str())
+        if !["codex", "kimi", "generic", "claude"].contains(&binding.client.as_str())
             || binding.external_session.trim().is_empty()
             || binding.external_session.len() > 512
             || binding.digest.len() > 8192
