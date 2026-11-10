@@ -15,17 +15,15 @@ const P2_REVIEWER_CALLS: usize = 2;
 const P3_MODEL_CALLS: usize = 0;
 const P4_RECOVERY_CALLS: usize = 1;
 
-fn idea_path() -> (Project, Flow) {
+fn idea_path(start_progress: bool) -> (Project, Flow) {
     let p = Project::new(false);
     let input = json!({"version":1,"request_key":"new-draft","title":"Retain another draft",
         "fields":{"goal":["G"],"acceptance":["The second draft is retained"],"next_action":"Implement retention"}});
     p.write_json(".awr/create.json", &input);
     let mut flow = Flow::default();
-    // The text creation summary omits the fingerprint needed to accept a preview.
-    // Count the actual structured CLI response, including all its UTF-8 text bytes.
-    let preview: Value = serde_json::from_str(&p.call(
+    let preview = p.call(
         &mut flow,
-        "work create preview",
+        "work create text preview",
         &[
             "work",
             "create",
@@ -33,26 +31,25 @@ fn idea_path() -> (Project, Flow) {
             ".awr/create.json",
             "--activate",
         ],
-        true,
-    ))
-    .unwrap();
-    let fingerprint = preview["preview"]["fingerprint"].as_str().unwrap();
-    let key = preview["preview"]["plan"]["external_key"].as_str().unwrap();
+        false,
+    );
+    let key = preview
+        .lines()
+        .find_map(|line| line.strip_prefix("Work key: "))
+        .unwrap();
+    let next = preview
+        .lines()
+        .find_map(|line| line.strip_prefix("Next: "))
+        .unwrap();
+    // The relative literal input path needs no shell quoting on any platform.
+    let accept: Vec<_> = next.split_whitespace().collect();
+    assert_eq!(accept[0], "awr");
+    assert!(accept.contains(&"--accept"));
+    assert!(accept.contains(&"--activate"));
     p.call(
         &mut flow,
         "work create accept and activate",
-        &[
-            "work",
-            "create",
-            "--input",
-            ".awr/create.json",
-            "--activate",
-            "--accept",
-            "--expected-preview",
-            fingerprint,
-            "--expected-revision",
-            &p.revision(),
-        ],
+        &accept[1..],
         false,
     );
     let started = p.call(
@@ -81,25 +78,50 @@ fn idea_path() -> (Project, Flow) {
         .lines()
         .find_map(|line| line.strip_prefix("Session: "))
         .unwrap();
-    let prepared = p.call(
-        &mut flow,
-        "work prepare",
-        &[
-            "work",
-            "prepare",
-            key,
-            "--session",
-            session,
-            "--response-view",
-            "action",
-        ],
-        false,
-    );
-    assert!(
-        prepared.contains("The second draft is retained"),
-        "{prepared}"
-    );
-    assert_ne!(p.json(&["work", "show", key])["work"]["status"], "draft");
+    if start_progress {
+        p.call(
+            &mut flow,
+            "work progress",
+            &[
+                "work",
+                "progress",
+                key,
+                "--session",
+                session,
+                "--reason",
+                "Start draft retention",
+                "--next-action",
+                "Implement draft retention",
+                "--expected-revision",
+                &p.revision(),
+            ],
+            false,
+        );
+        assert_eq!(
+            p.json(&["work", "show", key])["work"]["status"],
+            "in_progress"
+        );
+    } else {
+        let prepared = p.call(
+            &mut flow,
+            "work prepare",
+            &[
+                "work",
+                "prepare",
+                key,
+                "--session",
+                session,
+                "--response-view",
+                "action",
+            ],
+            false,
+        );
+        assert!(
+            prepared.contains("The second draft is retained"),
+            "{prepared}"
+        );
+        assert_ne!(p.json(&["work", "show", key])["work"]["status"], "draft");
+    }
     assert!(
         p.json(&["session", "show", session])["claims"]
             .as_array()
@@ -111,20 +133,29 @@ fn idea_path() -> (Project, Flow) {
 }
 
 #[test]
-#[ignore = "AWR-ACR-024: the creation preview is too large"]
 fn p1_new_idea_starts_work_in_four_calls_within_six_kib_of_text() {
-    let (_p, flow) = idea_path();
+    let (_p, flow) = idea_path(true);
+    assert_eq!(flow.calls[0].name, "work create text preview");
+    assert_eq!(flow.calls[3].name, "work progress");
     assert_eq!(flow.calls.len(), P1_CALLS);
     flow.budget("P1", P1_CALLS, P1_TEXT_BYTES).unwrap();
 }
 
 #[test]
+fn p1_text_preview_prepares_work_in_four_calls_within_six_kib_of_text() {
+    let (_p, flow) = idea_path(false);
+    assert_eq!(flow.calls.len(), P1_CALLS);
+    flow.budget("P1 preparation", P1_CALLS, P1_TEXT_BYTES)
+        .unwrap();
+}
+
+#[test]
 fn p1_an_extra_real_cli_call_fails_the_budget() {
-    let (p, mut flow) = idea_path();
+    let (p, mut flow) = idea_path(true);
     p.call(&mut flow, "unnecessary status", &["status"], false);
     let error = flow.budget("P1", P1_CALLS, P1_TEXT_BYTES).unwrap_err();
     assert!(error.contains("5 calls (limit 4)"), "{error}");
-    // Isolate the call guard even while the current runtime exceeds the byte cap.
+    // Isolate the call guard from the output-byte guard.
     assert!(flow.budget("P1 calls", P1_CALLS, usize::MAX).is_err());
 }
 

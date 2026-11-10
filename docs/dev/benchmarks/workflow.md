@@ -130,38 +130,31 @@ AWR_LOCAL_WEB=0 cargo test -p awr-cli --test golden_paths_cli \
   --test governance_overhead_cli --locked -- --nocapture
 ```
 
-On macOS arm64, using unoptimized binaries from `3203ecfff116`, the current fixture
+On macOS arm64, using unoptimized binaries from `36d2bacbe82c`, the current fixture
 measurements are:
 
 | Path | AWR calls | Returned bytes | Call limit | Byte limit | Result |
 | --- | ---: | ---: | ---: | ---: | --- |
-| New idea through claimed, prepared work | 4 | 9,013 | 4 | 6,144 | **Not met**; AWR-ACR-024 |
+| New idea through claimed work and progress | 4 | 817 | 4 | 6,144 | Within limits; AWR-ACR-024 |
+| New idea through claimed, prepared work | 4 | 4,735 | 4 | 6,144 | Within limits; AWR-ACR-024 |
 | Checked admission through completion, author | 6 | 5,538 | 6 | 8,192 | Within limits |
 | Separate admission reviewer | 2 | 4,391 | 2 | — | Within limit |
 | Compacted session continuation | 0 model calls; 1 host hook | 869 | 0 model calls | — | Within call limit |
 | Revision-only recovery | 1 | 180 | 1 | — | Within limit |
 | Explicit context-budget recovery | 1 | 2,485 | 1 | — | Within limit |
 
-The creation preview's text summary omits the fingerprint needed for acceptance.
-Its measured call therefore requests JSON and counts the entire 4,611-byte
-response; acceptance and activation return 204 bytes, session creation returns
-97 bytes, and text preparation returns 4,101 bytes. The 6 KiB limit stays in force
-and the positive regression test retains the same calls and assertions. A clean
-main checkout at `23dfa6499120` reproduces the same result with its runtime binary.
-Rechecking the merged runtime after adding the top-level `verify` command retains
-the call and byte measurements for all four paths. The test
-is temporarily ignored with the reason
-`AWR-ACR-024: the creation preview is too large`; AWR-ACR-024 tracks the shorter,
-executable creation preview. P1 remains **not met** and is excluded from passing
-acceptance counts. Its negative call and byte witnesses continue to run.
+AWR-ACR-024 supplies the compact text preview and its executable `Next:` command.
+P1 executes that command unchanged: the preview returns 333 bytes, acceptance
+and activation return 204 bytes, session creation and claiming return 97 bytes,
+and progress returns 183 bytes. These four calls total 817 bytes and mark the
+new work in progress with its claim held. The positive guard runs normally.
 
-Run the deferred positive guard explicitly to reproduce the known excess:
-
-```sh
-AWR_LOCAL_WEB=0 cargo test -p awr-cli --test golden_paths_cli --locked -- \
-  --ignored --exact p1_new_idea_starts_work_in_four_calls_within_six_kib_of_text \
-  --nocapture
-```
+The original preparation variant also runs with the same text preview. Its
+final `work prepare` call returns 4,101 bytes, for 4,735 bytes in four calls,
+down from 9,013 bytes when the preview required a 4,611-byte JSON response.
+This comparison retains the original final step; the progress variant has a
+different final step. Both preserve the 6,144-byte ceiling and active negative
+call and byte witnesses. P2, P3 and P4 retain their prior measurements.
 
 The checked path begins with existing in-progress work at admission. Starting a
 planned item also needs a progress transition. Automatic recovery covers unchanged
@@ -182,8 +175,8 @@ subtotals are:
 
 | Strategy | Tool calls, including AWR CLI and MCP | Returned tool-text bytes |
 | --- | ---: | ---: |
-| Primitive | 21 | 94,716 |
-| Prepared | 19 | 93,582 |
+| Primitive | 21 | 100,210 |
+| Prepared | 19 | 95,927 |
 
 These totals include onboarding, independent refusal probes, final verification
 and reviewer close-out. They have a broader denominator than the six author calls
