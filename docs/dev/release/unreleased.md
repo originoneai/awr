@@ -130,6 +130,18 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Fixed
 
+- A work that was integrated, completed and written back to the source is no longer shown as stale
+  after a later plan activation that left its contract alone. Before, every activation made the
+  project snapshot differ from the one recorded with the selection and the source publication, so
+  `work.observe` reported the delivered work's candidate, review round and integration binding as
+  not current, `delivery.source.status` reported `source_synchronized` false,
+  `delivery.neutral.inspect` reported its selection and facts as not current, and the Observer
+  said the earlier integration record does not apply to the current result, although the delivered
+  bytes and the contract had not changed and nothing could repair it. A completed work now stays
+  current while its contract hash is the same in the current snapshot, and turns stale when an
+  activation changes it. The reads of a work that is not completed, integration preparation,
+  dispatch, the reservation of a new inspection, `delivery.schedule` and
+  `delivery.submission.describe` are unchanged (AWR-TFQ-021).
 - `awr_team_planning_draft` in `edit` mode without a `candidate_id`, or whose mode is neither
   `create` nor `edit`, is now refused before any command is reserved or candidate created:
   `InvalidInput` at `/candidate_id` (constraint `required_when_editing_a_draft`) or at `/mode`
