@@ -1,0 +1,443 @@
+{
+  "blocked": [
+    {
+      "blocker": "Needs an agreed scope",
+      "claims": [],
+      "codes": [
+        "active_blocker"
+      ],
+      "details": {
+        "cli": [
+          "work",
+          "show",
+          "B"
+        ],
+        "mcp": "awr_work_get"
+      },
+      "key": "B",
+      "next_action": "Review section",
+      "owner": null,
+      "progress": {
+        "boundary": "Checkpoint progress does not modify the authoritative source or establish completion.",
+        "differs_from_source": null,
+        "latest_checkpoint_next_action": null,
+        "scope": "exact work, branch and current workstream ownership; includes active and closed sessions",
+        "source_next_action": {
+          "freshness": "fresh",
+          "locator": "file://<project>/work.yaml",
+          "pointer": "/work_items/3",
+          "projected_at": 0,
+          "source_id": "<id>",
+          "source_revision": 1,
+          "text": "Review section",
+          "timestamp_basis": "source projection receipt; source edit time is not recorded",
+          "truncated": false,
+          "trust": "source"
+        }
+      },
+      "raw_status": "blocked",
+      "source_revision": 1,
+      "status": "blocked",
+      "structural_codes": [
+        "active_blocker",
+        "status_not_selectable"
+      ],
+      "title": "Write B"
+    },
+    {
+      "blocker": null,
+      "claims": [],
+      "codes": [
+        "missing_dependency"
+      ],
+      "details": {
+        "cli": [
+          "work",
+          "show",
+          "U"
+        ],
+        "mcp": "awr_work_get"
+      },
+      "key": "U",
+      "next_action": "Review section",
+      "owner": null,
+      "progress": {
+        "boundary": "Checkpoint progress does not modify the authoritative source or establish completion.",
+        "differs_from_source": null,
+        "latest_checkpoint_next_action": null,
+        "scope": "exact work, branch and current workstream ownership; includes active and closed sessions",
+        "source_next_action": {
+          "freshness": "fresh",
+          "locator": "file://<project>/work.yaml",
+          "pointer": "/work_items/4",
+          "projected_at": 0,
+          "source_id": "<id>",
+          "source_revision": 1,
+          "text": "Review section",
+          "timestamp_basis": "source projection receipt; source edit time is not recorded",
+          "truncated": false,
+          "trust": "source"
+        }
+      },
+      "raw_status": "ready",
+      "source_revision": 1,
+      "status": "ready",
+      "structural_codes": [
+        "missing_dependency"
+      ],
+      "title": "Write U"
+    }
+  ],
+  "blocked_count": 2,
+  "branch_id": null,
+  "count_basis": "source status; queue buckets are navigation, not execution authorization or completion proof",
+  "counts": {
+    "blocked": 1,
+    "in_progress": 1,
+    "planned": 1,
+    "ready": 2
+  },
+  "current": [
+    {
+      "blocker": null,
+      "claims": [],
+      "codes": [],
+      "details": {
+        "cli": [
+          "work",
+          "show",
+          "W"
+        ],
+        "mcp": "awr_work_get"
+      },
+      "key": "W",
+      "next_action": "Review section",
+      "owner": null,
+      "ownership_required": true,
+      "progress": {
+        "boundary": "Checkpoint progress does not modify the authoritative source or establish completion.",
+        "differs_from_source": true,
+        "latest_checkpoint_next_action": {
+          "actor": {
+            "agent_id": null,
+            "identity_verified": false,
+            "origin": "undeclared"
+          },
+          "checkpoint_id": "<id>",
+          "context_hash_verified": false,
+          "details": {
+            "cli": [
+              "session",
+              "show",
+              "<id>"
+            ],
+            "mcp": "awr_session_get"
+          },
+          "project_revision": 4,
+          "recorded_at": 0,
+          "session_id": "<id>",
+          "session_label": {
+            "agent_id": "writer",
+            "is_caller_proof": false,
+            "model": "test",
+            "provider": "fixture"
+          },
+          "session_status": "active",
+          "text": "Review the revised draft",
+          "truncated": false,
+          "trust": "reported"
+        },
+        "scope": "exact work, branch and current workstream ownership; includes active and closed sessions",
+        "source_next_action": {
+          "freshness": "fresh",
+          "locator": "file://<project>/work.yaml",
+          "pointer": "/work_items/0",
+          "projected_at": 0,
+          "source_id": "<id>",
+          "source_revision": 1,
+          "text": "Review section",
+          "timestamp_basis": "source projection receipt; source edit time is not recorded",
+          "truncated": false,
+          "trust": "source"
+        }
+      },
+      "raw_status": "in_progress",
+      "source_revision": 1,
+      "status": "in_progress",
+      "title": "Write W"
+    }
+  ],
+  "current_total": 1,
+  "freshness_basis": "source_refresh",
+  "guidance": {
+    "basis": "Source structure, dependencies and recorded claims",
+    "next_action": "Prepare the selected work; continue only with its owned session or explicitly resume it",
+    "recheck": "Source, ownership, wait or execution outcome changes",
+    "when": "Current work can be continued"
+  },
+  "history": {
+    "basis": "project-wide; original source status preserved",
+    "business_checked_completed": 0,
+    "check_blocked": 0,
+    "details": [
+      "work show KEY",
+      "intake inspect --source-sha SHA",
+      "status --view full"
+    ],
+    "gap_total": 0,
+    "next_action": "Inspect original evidence and its recorded source SHA; never substitute current HEAD for historical proof",
+    "not_checked": 0,
+    "source_completed": 0,
+    "source_sha": null,
+    "user_confirmed_completed": 0,
+    "verification_failed": 0,
+    "verified_completed": 0
+  },
+  "next_action": "Review section",
+  "ok": true,
+  "omissions": {
+    "blocked": 0,
+    "current": 0,
+    "details": "status --view full; work show KEY; ready remains the claim queue",
+    "gaps": 0,
+    "not_evaluated": [
+      "host-private or filesystem-only receipts",
+      "live execution probes"
+    ],
+    "organization_scan_truncated": false,
+    "outside_scope": 0,
+    "pending_operations": 0,
+    "ready": 0,
+    "waiting": 0
+  },
+  "organization": {
+    "business_execution_ready": true,
+    "current_gap_total": 4,
+    "gap_sample_total": 4,
+    "gaps": [
+      {
+        "code": "active_blocker",
+        "detail": "Needs an agreed scope",
+        "target": "B"
+      },
+      {
+        "code": "status_not_selectable",
+        "detail": "source status is blocked",
+        "target": "B"
+      },
+      {
+        "code": "dependency_not_completed",
+        "detail": "required dependency has source status in_progress",
+        "target": "D"
+      },
+      {
+        "code": "missing_dependency",
+        "detail": "required dependency is absent from active source projections",
+        "target": "U"
+      }
+    ],
+    "project_gap_total": 4,
+    "state": "ready"
+  },
+  "pending_operations": {
+    "basis": "project-wide registered runtime findings; not a count of unfinished source tasks",
+    "details": "recovery inspect",
+    "items": [
+      {
+        "code": "missing_dependency",
+        "id": "<id>",
+        "kind": "edge"
+      },
+      {
+        "code": "active_session",
+        "id": "<id>",
+        "kind": "session"
+      }
+    ],
+    "total": 2
+  },
+  "progress": null,
+  "project": "Daily work",
+  "project_id": "<id>",
+  "project_revision": 5,
+  "project_work_total": 5,
+  "read_only": false,
+  "ready": [
+    {
+      "blocker": null,
+      "claims": [],
+      "codes": [],
+      "details": {
+        "cli": [
+          "work",
+          "show",
+          "R"
+        ],
+        "mcp": "awr_work_get"
+      },
+      "key": "R",
+      "next_action": "Review section",
+      "owner": null,
+      "progress": {
+        "boundary": "Checkpoint progress does not modify the authoritative source or establish completion.",
+        "differs_from_source": null,
+        "latest_checkpoint_next_action": null,
+        "scope": "exact work, branch and current workstream ownership; includes active and closed sessions",
+        "source_next_action": {
+          "freshness": "fresh",
+          "locator": "file://<project>/work.yaml",
+          "pointer": "/work_items/1",
+          "projected_at": 0,
+          "source_id": "<id>",
+          "source_revision": 1,
+          "text": "Review section",
+          "timestamp_basis": "source projection receipt; source edit time is not recorded",
+          "truncated": false,
+          "trust": "source"
+        }
+      },
+      "raw_status": "ready",
+      "source_revision": 1,
+      "status": "ready",
+      "title": "Write R"
+    }
+  ],
+  "ready_count": 1,
+  "schema_version": 1,
+  "scope": {
+    "goal": null,
+    "milestone": null,
+    "work": []
+  },
+  "scope_combination": "intersection",
+  "snapshot": {
+    "coherent": true,
+    "project_revision": 5,
+    "source_currentness_verified": true,
+    "source_refresh_revision": 5,
+    "source_state_fingerprint": "<fingerprint>",
+    "storage": "private_memory",
+    "version": 1
+  },
+  "source_issues": [],
+  "source_refresh_performed": true,
+  "source_warnings": 0,
+  "suggested_work": {
+    "blocker": null,
+    "claims": [],
+    "codes": [],
+    "details": {
+      "cli": [
+        "work",
+        "show",
+        "W"
+      ],
+      "mcp": "awr_work_get"
+    },
+    "key": "W",
+    "next_action": "Review section",
+    "owner": null,
+    "ownership_required": true,
+    "progress": {
+      "boundary": "Checkpoint progress does not modify the authoritative source or establish completion.",
+      "differs_from_source": true,
+      "latest_checkpoint_next_action": {
+        "actor": {
+          "agent_id": null,
+          "identity_verified": false,
+          "origin": "undeclared"
+        },
+        "checkpoint_id": "<id>",
+        "context_hash_verified": false,
+        "details": {
+          "cli": [
+            "session",
+            "show",
+            "<id>"
+          ],
+          "mcp": "awr_session_get"
+        },
+        "project_revision": 4,
+        "recorded_at": 0,
+        "session_id": "<id>",
+        "session_label": {
+          "agent_id": "writer",
+          "is_caller_proof": false,
+          "model": "test",
+          "provider": "fixture"
+        },
+        "session_status": "active",
+        "text": "Review the revised draft",
+        "truncated": false,
+        "trust": "reported"
+      },
+      "scope": "exact work, branch and current workstream ownership; includes active and closed sessions",
+      "source_next_action": {
+        "freshness": "fresh",
+        "locator": "file://<project>/work.yaml",
+        "pointer": "/work_items/0",
+        "projected_at": 0,
+        "source_id": "<id>",
+        "source_revision": 1,
+        "text": "Review section",
+        "timestamp_basis": "source projection receipt; source edit time is not recorded",
+        "truncated": false,
+        "trust": "source"
+      }
+    },
+    "raw_status": "in_progress",
+    "source_revision": 1,
+    "status": "in_progress",
+    "title": "Write W"
+  },
+  "total": 5,
+  "view": "action",
+  "waiting": [
+    {
+      "blocker": null,
+      "claims": [],
+      "codes": [
+        "dependency_not_completed"
+      ],
+      "details": {
+        "cli": [
+          "work",
+          "show",
+          "D"
+        ],
+        "mcp": "awr_work_get"
+      },
+      "execution_basis": "recorded registry and latest host report; not a live process probe",
+      "execution_total": 0,
+      "executions": [],
+      "key": "D",
+      "next_action": "Continue the unfinished prerequisite; recheck its source state.",
+      "owner": null,
+      "progress": {
+        "boundary": "Checkpoint progress does not modify the authoritative source or establish completion.",
+        "differs_from_source": null,
+        "latest_checkpoint_next_action": null,
+        "scope": "exact work, branch and current workstream ownership; includes active and closed sessions",
+        "source_next_action": {
+          "freshness": "fresh",
+          "locator": "file://<project>/work.yaml",
+          "pointer": "/work_items/2",
+          "projected_at": 0,
+          "source_id": "<id>",
+          "source_revision": 1,
+          "text": "Review section",
+          "timestamp_basis": "source projection receipt; source edit time is not recorded",
+          "truncated": false,
+          "trust": "source"
+        }
+      },
+      "raw_status": "planned",
+      "source_revision": 1,
+      "status": "planned",
+      "title": "Write D",
+      "wait_ids": [],
+      "wait_total": 0
+    }
+  ],
+  "waiting_count": 1
+}

@@ -21,6 +21,19 @@ Run a status check before doing anything else:
 awr status
 ```
 
+```text
+Guide project — 1 to continue · 1 claimable · 0 waiting · 0 blocked
+
+Continue (1 of 1)
+  GUIDE-1  Review the revised draft  [note, 2h]
+Claimable (1 of 1)
+  GUIDE-2  Draft the introduction  [ledger, 1d]
+
+Next: awr work prepare GUIDE-1
+More: awr work show <KEY> · awr status --view full
+[ledger] = Read from an authoritative project source. [note] = Supplied by a caller without an independent program check.
+```
+
 `awr status` and the MCP tool `awr_project_status` default to the action view
 (`view="action"`). It separates your open work into four queues, with at most
 five entries per queue plus exact total and omitted counts:

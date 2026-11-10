@@ -13,6 +13,16 @@ pub enum Trust {
 }
 
 impl Trust {
+    pub const fn marker(self) -> &'static str {
+        match self {
+            Self::Source => "ledger",
+            Self::Reported => "note",
+            Self::Recorded => "run",
+            Self::Verified => "checked",
+            Self::Reviewed => "reviewed",
+        }
+    }
+
     pub const fn legend(self) -> &'static str {
         match self {
             Self::Source => "Read from an authoritative project source.",
@@ -36,6 +46,27 @@ mod tests {
         Trust::Verified,
         Trust::Reviewed,
     ];
+
+    #[test]
+    fn trust_markers_map_to_compact_display_names() {
+        let markers = ["ledger", "note", "run", "checked", "reviewed"];
+        for (trust, marker) in VALUES.into_iter().zip(markers) {
+            assert_eq!(trust.marker(), marker);
+        }
+    }
+
+    #[test]
+    fn trust_markers_preserve_canonical_json_names() {
+        for trust in VALUES {
+            let canonical = serde_json::to_string(&trust).unwrap();
+            assert_eq!(serde_json::from_str::<Trust>(&canonical).unwrap(), trust);
+            if trust != Trust::Reviewed {
+                assert!(
+                    serde_json::from_value::<Trust>(serde_json::json!(trust.marker())).is_err()
+                );
+            }
+        }
+    }
 
     #[test]
     fn trust_legend_has_five_short_distinct_explanations() {
