@@ -47,6 +47,11 @@ fn help_version_and_unsupported_have_explicit_exit_contracts() {
         assert!(output.status.success());
         assert!(output.stderr.is_empty());
         assert!(!output.stdout.is_empty());
+        if flag == "--help" {
+            let text = String::from_utf8_lossy(&output.stdout);
+            assert!(text.contains("Daily work"), "{text}");
+            assert!(text.contains("awr help all"), "{text}");
+        }
     }
     let output = Command::new(env!("CARGO_BIN_EXE_awr"))
         .args(["--json", "unsupported-command"])

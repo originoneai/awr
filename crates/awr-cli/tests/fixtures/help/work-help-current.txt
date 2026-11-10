@@ -1,0 +1,37 @@
+Read one work item without expanding the full ledger or event history
+
+Usage: awr work [OPTIONS] <COMMAND>
+
+Commands:
+  activate            Preview activation of a draft, then accept the reviewed source and revision
+  edit                Preview a small edit by work ID; apply the reviewed change without editing YAML
+  graph               Inspect dependencies, impact, readiness and claims without admitting execution
+  assess              Explain management requirements without changing execution or completion policy
+  manage              Record attributed observations and retain continuous management after upgrade
+  admit               Record a work admission proposal or decision for governed work
+  contain             Record a containment proposal or decision for the children of a parent work
+  reassess            Record a reassessment decision for a work whose records show repeated failures or an unknown outcome
+  gap                 Open, resolve or withdraw a gap in the intent, acceptance, design, plan or definition of a work
+  finding             Record a review finding of a work, or close one; blocking findings return the work, the rest are deferred
+  prepare             Prepare readiness and the required context together; does not acknowledge consumption
+  prepare-completion  Validate a real report and derive evidence metadata without registering or completing
+  create              Preview or accept a source-backed draft, optionally attempting activation
+  create-status       Read the durable outcome for a stable creation request without applying it
+  create-recover      Explicitly recover a pending creation while retaining externally changed bytes
+  progress            Record progress in the source ledger; requires an active owned runtime claim
+  block               Mark in-progress source work blocked with a concrete blocker
+  unblock             Clear a blocked source state after rechecking required dependencies
+  cancel              Cancel nonterminal source work and release this session's runtime claims
+  reopen              Reopen completed/cancelled source work to planned with a reason and next action
+  complete            Complete source work only after verifying dependencies, acceptance and actual evidence reports
+  claim               Acquire a runtime claim for the selected session; never rewrites source ownership
+  release             Release an explicit claim held by the selected session
+  history             Read bounded event summaries for one work item, including retained history
+  handoff             Close a session and hand off its latest checkpoint, optionally transferring its claim
+  show                Show source state, readiness, acceptance and related decision/evidence summaries
+  help                Print this message or the help of the given subcommand(s)
+
+Options:
+      --project <PROJECT>  [default: .]
+      --json               
+  -h, --help               Print help

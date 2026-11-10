@@ -1,0 +1,45 @@
+Persistent work state and minimal context for long-running agents
+
+Usage: awr [OPTIONS] [COMMAND]
+
+Commands:
+  overview      Open the local project hub, or inspect its catalog and background service
+  runtime       Inspect, back up and explicitly restore a matching local runtime
+  organization  Maintain explicitly mapped project phase, scope and focus
+  batch         Preview and apply a bounded batch of source edits
+  host          Save explicit host edits with durable request identity and provenance
+  document      Edit registered Markdown documents or create source-backed drafts
+  capabilities  Negotiate host capabilities without opening a project or its database
+  init          Preview source authority mapping; --accept initializes using the reviewed mapping
+  intake        Diagnose project organization and recheck readiness after source edits
+  client        Bind client conversations and persist lifecycle checkpoints
+  execution     Register, run and inspect executions that can outlive the calling session
+  recovery      Inspect saved work and verify execution evidence before resuming
+  source        List, scan or index authoritative project sources
+  nav           Read-only mainline navigation across scope, dependencies, accounting and blockers
+  status        Refresh source projections and summarize current project work
+  ready         List dependency-ready work with explicit reasons for excluded work
+  assessment    Offline assessment replay, shadow compare, and advice kill-switch
+  work          Read one work item without expanding the full ledger or event history
+  session       Start, inspect, checkpoint or end an explicitly identified agent session
+  evidence      Add evidence records or inspect a specific record and its report reference
+  decision      Inspect a specific authoritative decision
+  spec          Inspect explicit specification versions, supersessions and requirement coverage
+  artifact      Import, inspect or explicitly read a registered artifact
+  context       Compile revision-bound context after refreshing project sources
+  object        Read one referenced goal, plan, rule, work item or checkpoint
+  event         Append validated events or inspect immutable events and bounded history
+  search        Search bounded summaries, optionally filtering by entity type, status or work item
+  proposal      Create, inspect and review source-bound mutation proposals
+  branch        Create, inspect or select an Agent Work Branch without changing Git checkout
+  doctor        Diagnose project/database state; apply only explicitly selected runtime repairs
+  workspace     Share tracked project files between machines through an object store
+  team          Inspect Team protocol capabilities or submit a remote Team envelope
+  remote        Store Team remote endpoint and credential environment references
+  help          Print this message or the help of the given subcommand(s)
+
+Options:
+      --project <PROJECT>  [default: .]
+      --json               
+  -h, --help               Print help
+  -V, --version            Print version
