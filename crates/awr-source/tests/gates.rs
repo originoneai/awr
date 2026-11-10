@@ -9,12 +9,13 @@ fn gates_missing_file_disables_all_hooks() {
     assert_eq!(policy.hooks.write_gate, WriteGate::Off);
     assert!(!policy.hooks.write_gate_paths);
     assert!(!policy.hooks.completion_reminder);
+    assert!(!policy.verify.require_work);
     fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
-fn gates_parses_hooks_and_empty_reserved_tables() {
-    let policy = GatePolicy::parse("version = 1\n[checks]\n[hooks]\nwrite_gate = 'ask'\nwrite_gate_exempt = ['.local/**']\nwrite_gate_paths = true\ncompletion_reminder = true\n[verify]\n").unwrap();
+fn gates_parses_hooks_and_verify_with_an_empty_check_table() {
+    let policy = GatePolicy::parse("version = 1\n[checks]\n[hooks]\nwrite_gate = 'ask'\nwrite_gate_exempt = ['.local/**']\nwrite_gate_paths = true\ncompletion_reminder = true\n[verify]\nrequire_work = true\n").unwrap();
     assert_eq!(policy.hooks.write_gate, WriteGate::Ask);
     assert!(
         policy
@@ -30,6 +31,7 @@ fn gates_parses_hooks_and_empty_reserved_tables() {
     );
     assert!(policy.hooks.write_gate_paths);
     assert!(policy.hooks.completion_reminder);
+    assert!(policy.verify.require_work);
 }
 
 #[test]
@@ -40,7 +42,9 @@ fn gates_rejects_unknown_tables_keys_versions_modes_and_globs() {
         "version = 1\n[unknown]",
         "version = 1\n[hooks]\nunknown = true",
         "version = 1\n[checks]\nrequired = true",
-        "version = 1\n[verify]\nrequire_work = true",
+        "version = 1\n[verify]\nrequire_wrok = true",
+        "version = 1\n[verify]\nrequire_work = 'yes'",
+        "version = 1\n[verify]\nrequire_work = 1",
         "version = 1\n[hooks]\nwrite_gate = 'maybe'",
         "version = 1\n[hooks]\nwrite_gate_exempt = ['[']",
     ] {
