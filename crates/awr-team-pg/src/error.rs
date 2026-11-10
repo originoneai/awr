@@ -257,6 +257,16 @@ impl PgError {
         Self::Protocol("planning_input/scope_paths/bounds".into())
     }
 
+    /// `mode` edit changes a draft candidate that already exists, so it needs that candidate's id.
+    pub(crate) fn planning_draft_candidate_required() -> Self {
+        Self::Protocol("planning_input/candidate_id/required_for_edit".into())
+    }
+
+    /// `mode` is the candidate mode, `create` or `edit`; a change's own operation lives in `changes`.
+    pub(crate) fn planning_draft_mode_invalid() -> Self {
+        Self::Protocol("planning_input/mode/create_or_edit".into())
+    }
+
     /// Fixed diagnostics for fresh planning input rejection; never echo the assertion.
     pub fn planning_input_diagnostic(&self) -> Option<serde_json::Value> {
         if matches!(self, Self::Protocol(message) if message == "planning_input/impact_proven/required")
@@ -283,6 +293,29 @@ impl PgError {
                 "constraint": "project_relative_scope_bounds",
                 "request_reserved": false,
                 "next_step": "Read the selected work's scope_paths. Every after.scope_paths entry must be project-relative, without empty, dot or parent segments. Include its code, test or specification directory in allowed_spec_roots when declaring bounds. Correct this unused request and retry; declared roots grant no additional authority."
+            }));
+        }
+        if matches!(self, Self::Protocol(message) if message == "planning_input/candidate_id/required_for_edit")
+        {
+            return Some(serde_json::json!({
+                "code": "InvalidInput",
+                "message": "mode edit changes an existing planning candidate and needs its candidate_id",
+                "invalid_field": "/candidate_id",
+                "related_fields": ["/mode"],
+                "constraint": "required_when_editing_a_draft",
+                "request_reserved": false,
+                "next_step": "Mode edit changes a planning candidate that already exists: pass the candidate_id returned by your earlier create; edit replaces that candidate's changes with the list you send. To start a new draft, including a change to existing work, use mode create with the changes; each change to existing work carries the exact prior definition in before. Correct this unused request and retry; if this ID was submitted before, inspect planning.outcome and retain its original intent."
+            }));
+        }
+        if matches!(self, Self::Protocol(message) if message == "planning_input/mode/create_or_edit")
+        {
+            return Some(serde_json::json!({
+                "code": "InvalidInput",
+                "message": "mode must be create or edit",
+                "invalid_field": "/mode",
+                "constraint": "create_or_edit",
+                "request_reserved": false,
+                "next_step": "Mode names what happens to the planning candidate: create starts a new candidate (also for changes to existing work) and edit changes an existing candidate by its candidate_id. A change's own operation (create_task, edit_fields, split, cancel, archive) goes in changes[].op. Correct this unused request and retry; if this ID was submitted before, inspect planning.outcome and retain its original intent."
             }));
         }
         if !matches!(self, Self::Protocol(message) if message == "planning_input/author_person_id/actor_mismatch")
