@@ -123,6 +123,12 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   a corpus of 69 offline cases. Mandatory content is never dropped to fit, unsupported input fails by name, and nothing a result carries
   says anything of authority, readiness or acceptance. The packing itself moves out of `awr-context` in a later step. See
   [context packing kernel](../reference/context-component.md).
+- Compact text rows for the default `status` action view and `ready`: each shows
+  the work key, a next action capped at 90 characters, and its source marker with
+  a relative age. A newer checkpoint supplies the displayed action; the footer
+  explains each used marker once through the shared trust vocabulary. Full and
+  summary status views and JSON retain their existing output. See the
+  [daily workflow](../../series/daily-workflow.md).
 - The capabilities of the Team workstream protocol say, for each of the five result layers (work readiness,
   execution admission, context completeness, delivery observation, completion validity), which Team operations carry
   it and which entries of the personal CLI and MCP server have no Team operation, with the reason; the report is checked
