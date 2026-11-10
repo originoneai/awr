@@ -197,6 +197,7 @@ fn binding(contract: &str) -> AdmissionBinding {
         contract_fingerprint: contract.into(),
         definition_fingerprint: Some(A.into()),
         examples_fingerprint: Some(A.into()),
+        oracle_fingerprint: None,
         policy_fingerprint: A.into(),
         purpose: Some(WorkPurpose::Implementation),
         tier: Some(DeliveryTier::Required),
@@ -261,6 +262,7 @@ impl Case {
     }
     fn status(&self) -> AdmissionStatus {
         evaluate_admission(&AdmissionInputs {
+            baselines: &[],
             work: "W",
             tags: &self.tags,
             completed: self.completed,
@@ -437,6 +439,31 @@ fn an_approval_goes_stale_for_each_binding_that_changed() {
     case.current.tier = Some(DeliveryTier::Later);
     case.latest = Some(recorded(AdmissionDecision::Approved, binding(A)));
     assert_eq!(case.status().state, "approved");
+}
+
+#[test]
+fn oracle_binding_detects_changed_or_unknown_files_and_keeps_unchanged_files_current() {
+    let with_oracle = |oracle: Value| {
+        let mut value = serde_json::to_value(binding(A)).unwrap();
+        value["oracle_fingerprint"] = oracle;
+        serde_json::from_value::<AdmissionBinding>(value).unwrap()
+    };
+    let approved = with_oracle(json!(A));
+    assert!(approved.changed_from(&with_oracle(json!(A))).is_empty());
+    assert_eq!(approved.changed_from(&with_oracle(json!(B))), ["oracle"]);
+    assert_eq!(approved.changed_from(&with_oracle(Value::Null)), ["oracle"]);
+}
+
+#[test]
+fn legacy_binding_without_an_oracle_ignores_only_that_field() {
+    let legacy = binding(A);
+    let mut value = serde_json::to_value(&legacy).unwrap();
+    assert!(value.get("oracle_fingerprint").is_none());
+    value["oracle_fingerprint"] = json!(B);
+    let mut current: AdmissionBinding = serde_json::from_value(value).unwrap();
+    assert!(legacy.changed_from(&current).is_empty());
+    current.contract_fingerprint = B.into();
+    assert_eq!(legacy.changed_from(&current), ["contract"]);
 }
 
 #[test]

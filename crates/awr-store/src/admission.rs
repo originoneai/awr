@@ -18,6 +18,7 @@ use awr_core::*;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::{fs::File, io::Read, path::Path};
 
 pub(crate) fn digest(value: &Value) -> Result<String> {
     Ok(format!(
@@ -68,9 +69,200 @@ fn current_binding(
     project: Id,
     work: &Projected<WorkItem>,
     policy: &Value,
-) -> Result<AdmissionBinding> {
+    report: &DefinitionReport,
+) -> Result<(AdmissionBinding, Vec<ExampleOracle>)> {
     let contract = work_contract(conn, project, &work.item.meta.external_key)?;
-    admission_binding(&contract.fingerprint, policy, work.item.definition.as_ref())
+    let mut binding =
+        admission_binding(&contract.fingerprint, policy, work.item.definition.as_ref())?;
+    let mut oracles = Vec::new();
+    if let Some(definition) = &work.item.definition {
+        let root: String = conn
+            .query_row(
+                "SELECT root FROM projects WHERE id=?1",
+                [project.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(db_error)?;
+        for example in &definition.examples {
+            let required = report.criterion_tiers.iter().any(|(criterion, tier)| {
+                criterion == &example.criterion && *tier == DeliveryTier::Required
+            });
+            if let (true, Some(id), Some(check)) = (required, &example.id, &example.check) {
+                let files = current_oracle_files(Path::new(&root), check);
+                let oracle = files
+                    .map(|files| example_oracle(id, &check.run, &files))
+                    .transpose()?;
+                oracles.push(ExampleOracle {
+                    example: id.clone(),
+                    oracle,
+                });
+            }
+        }
+    }
+    if !oracles.is_empty() {
+        let known: Option<Vec<_>> = oracles
+            .iter()
+            .map(|o| {
+                o.oracle
+                    .as_ref()
+                    .map(|hash| (o.example.clone(), hash.clone()))
+            })
+            .collect();
+        binding.oracle_fingerprint = known.map(|known| oracle_fingerprint(&known)).transpose()?;
+    }
+    Ok((binding, oracles))
+}
+
+struct ExampleOracle {
+    example: String,
+    oracle: Option<String>,
+}
+
+/// Admission runs inside the store, including direct claim and execution entry points.
+/// Read only regular files within the registered project, with a bounded read per file.
+fn current_oracle_files(root: &Path, check: &ExampleCheck) -> Option<Vec<OracleFile>> {
+    let root = root.canonicalize().ok()?;
+    check
+        .files
+        .iter()
+        .map(|path| {
+            let resolved = root.join(path.replace('\\', "/")).canonicalize().ok()?;
+            if !resolved.starts_with(&root) || !resolved.is_file() {
+                return None;
+            }
+            let file = File::open(&resolved).ok()?;
+            let meta = file.metadata().ok()?;
+            if !meta.is_file() || meta.len() > CHECK_FILE_CAP {
+                return None;
+            }
+            let mut bytes = Vec::new();
+            file.take(CHECK_FILE_CAP + 1).read_to_end(&mut bytes).ok()?;
+            if bytes.len() as u64 > CHECK_FILE_CAP {
+                return None;
+            }
+            Some(OracleFile {
+                path: path.clone(),
+                sha256: format!("{:x}", Sha256::digest(&bytes)),
+                size: bytes.len() as u64,
+            })
+        })
+        .collect()
+}
+
+fn needs_baseline(conn: &Connection, project: Id, work: &WorkItem) -> Result<bool> {
+    let Some(definition) = &work.definition else {
+        return Ok(false);
+    };
+    let inherited: Option<Projected<WorkItem>> = if definition.discrimination.is_none() {
+        definition
+            .inherits
+            .as_ref()
+            .map(
+                |key| match projection(conn, project, EntityKind::WorkItem, key) {
+                    Ok(parent) => Ok(Some(parent)),
+                    Err(Error::NotFound(_)) => Ok(None),
+                    Err(error) => Err(error),
+                },
+            )
+            .transpose()?
+            .flatten()
+    } else {
+        None
+    };
+    let discrimination = definition.discrimination.as_ref().or_else(|| {
+        inherited
+            .as_ref()?
+            .item
+            .definition
+            .as_ref()?
+            .discrimination
+            .as_ref()
+    });
+    Ok(discrimination.is_some_and(|d| d.method == DiscriminationMethod::FailBeforePassAfter))
+}
+
+fn baselines_at(
+    conn: &Connection,
+    project: Id,
+    work: &Projected<WorkItem>,
+    branch: Option<Id>,
+    oracles: &[ExampleOracle],
+) -> Result<Vec<AdmissionBaseline>> {
+    if oracles.is_empty() || !needs_baseline(conn, project, &work.item)? {
+        return Ok(vec![]);
+    }
+    let mut stmt = conn.prepare("SELECT id,project_id,work_item_id,session_id,branch_id,event_type,importance,summary,payload_json,project_revision,created_at FROM events WHERE project_id=?1 AND work_item_id=?2 AND branch_id IS ?3 AND event_type=?4 AND json_extract(payload_json,'$.phase')='baseline' ORDER BY project_revision DESC,id DESC").map_err(db_error)?;
+    let events = stmt
+        .query_map(
+            params![
+                project.to_string(),
+                work.item.meta.id.to_string(),
+                branch.map(|id| id.to_string()),
+                CHECK_EVENT
+            ],
+            event_row,
+        )
+        .map_err(db_error)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db_error)?;
+    let revision: u64 = conn
+        .query_row(
+            "SELECT project_revision FROM projects WHERE id=?1",
+            [project.to_string()],
+            |r| crate::catalog::revision_at(r, 0),
+        )
+        .map_err(db_error)?;
+    let mut baselines = Vec::new();
+    for oracle in oracles {
+        let matches = |event: &&Event| {
+            event.payload["example"] == oracle.example
+                && oracle
+                    .oracle
+                    .as_ref()
+                    .is_some_and(|hash| event.payload["example_oracle"] == *hash)
+        };
+        // One failed observation of this exact example oracle is sufficient. A later run does
+        // not erase that fact, and another example never contributes a baseline here.
+        let observed = events
+            .iter()
+            .filter(matches)
+            .find(|event| event.payload["outcome"] == "failed")
+            .or_else(|| events.iter().find(matches));
+        let state = if oracle.oracle.is_none() {
+            "baseline_inconclusive"
+        } else {
+            match observed.and_then(|event| event.payload["outcome"].as_str()) {
+                Some("failed") => "baseline_recorded",
+                Some("passed") => "baseline_passed",
+                Some(_) => "baseline_inconclusive",
+                None => "baseline_missing",
+            }
+        };
+        let log_dir = observed
+            .and_then(|event| event.payload["log_dir"].as_str())
+            .map(String::from);
+        let detail = match state {
+            "baseline_recorded" => "A failed baseline is recorded for the current example oracle.".into(),
+            "baseline_passed" => "This check passed before the change, so it cannot demonstrate the change's effect. Rewrite the example or check.".into(),
+            "baseline_inconclusive" => format!(
+                "Read the check logs at {} and verify that every check file is readable and at most 4 MiB.",
+                log_dir.as_deref().unwrap_or(".awr/artifacts/checks/")
+            ),
+            _ => format!(
+                "Run awr work check {} --example {} --phase baseline --session <session-id> --expected-revision {revision}",
+                work.item.meta.external_key, oracle.example
+            ),
+        };
+        baselines.push(AdmissionBaseline {
+            example: oracle.example.clone(),
+            state,
+            example_oracle: oracle.oracle.clone(),
+            event: observed.map(|event| event.id),
+            log_dir,
+            detail,
+        });
+    }
+    Ok(baselines)
 }
 
 /// The branch an agent-declared decision applies to: the project's current one, like a read.
@@ -155,7 +347,8 @@ pub(crate) fn status_at(
         return Ok(AdmissionStatus::ungoverned(key, mode_name(&policy)));
     }
     let definition = work_definition_report(conn, project, key)?;
-    let current = current_binding(conn, project, work, &value)?;
+    let (current, oracles) = current_binding(conn, project, work, &value, &definition)?;
+    let baselines = baselines_at(conn, project, work, branch, &oracles)?;
     let latest = latest_admission(conn, project, work.item.meta.id, branch)?;
     Ok(evaluate_admission(&AdmissionInputs {
         work: key,
@@ -165,6 +358,7 @@ pub(crate) fn status_at(
         current: &current,
         latest: latest.as_ref().map(|(_, record)| record),
         definition: &DefinitionSummary::from(&definition),
+        baselines: &baselines,
     }))
 }
 
@@ -200,9 +394,15 @@ pub(crate) fn diagnostics(
         return Ok(vec![]);
     }
     let decisions = || -> Result<Vec<(String, String)>> {
-        let mut found: Vec<(String, String)> = status_at(conn, project, work, branch)?
+        let status = status_at(conn, project, work, branch)?;
+        let baseline_gap = baseline_diagnostic(&status.baselines);
+        // Stale admission requires a new decision first. Its baseline details remain visible
+        // in status, while readiness keeps the stale reason when it sorts diagnostic codes.
+        let stale = status.state == "stale";
+        let mut found: Vec<(String, String)> = status
             .diagnostics
             .into_iter()
+            .filter(|diagnostic| !(stale && baseline_gap.as_ref() == Some(diagnostic)))
             .map(|d| (d.code.to_string(), d.detail))
             .collect();
         found.extend(crate::containment::diagnostics_for_child(
@@ -398,7 +598,8 @@ impl Store {
                     Some(session) => session.branch_id,
                     None => current_branch(tx, project)?,
                 };
-                let current = current_binding(tx, project, &work, &value)?;
+                let definition = work_definition_report(tx, project, &request.work)?;
+                let (current, oracles) = current_binding(tx, project, &work, &value, &definition)?;
                 if request.contract_fingerprint != current.contract_fingerprint {
                     return Err(Error::SourceConflict(
                         "work contract changed; read the current assessment before deciding".into(),
@@ -436,10 +637,11 @@ impl Store {
                                 "a newer admission event exists; answer the latest proposal".into(),
                             ));
                         }
-                        if recorded(&proposal)?.bound != current {
+                        let changed = recorded(&proposal)?.bound.changed_from(&current);
+                        if !changed.is_empty() {
                             return Err(reject(
                                 "admission_stale",
-                                "the proposal describes an earlier scope; propose again",
+                                format!("the proposal describes an earlier {}; propose again", changed.join(", ")),
                             ));
                         }
                         let judgment: Option<AdmissionJudgment> =
@@ -457,7 +659,6 @@ impl Store {
                             "this work needs a review by a session other than the one that proposed it",
                         ));
                     }
-                    let definition = work_definition_report(tx, project, &request.work)?;
                     let gaps: Vec<&str> = if definition.state == "not_declared" {
                         vec!["definition_not_declared"]
                     } else {
@@ -468,6 +669,15 @@ impl Store {
                             "admission_obligations_unmet",
                             format!("definition gaps: {}", gaps.join(", ")),
                         ));
+                    }
+                    if policy.enforced() {
+                        let baselines = baselines_at(tx, project, &work, branch, &oracles)?;
+                        if let Some(diagnostic) = baseline_diagnostic(&baselines) {
+                            return Err(reject(diagnostic.code, diagnostic.detail));
+                        }
+                        if !oracles.is_empty() && current.oracle_fingerprint.is_none() {
+                            return Err(reject("admission_stale", "the current oracle is unknown; restore readable check files before approving"));
+                        }
                     }
                 }
                 event.work_item_id = Some(work.item.meta.id);
