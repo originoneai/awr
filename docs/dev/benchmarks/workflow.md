@@ -130,7 +130,7 @@ AWR_LOCAL_WEB=0 cargo test -p awr-cli --test golden_paths_cli \
   --test governance_overhead_cli --locked -- --nocapture
 ```
 
-On macOS arm64, using unoptimized binaries from `23dfa6499120`, the current fixture
+On macOS arm64, using unoptimized binaries from `3203ecfff116`, the current fixture
 measurements are:
 
 | Path | AWR calls | Returned bytes | Call limit | Byte limit | Result |
@@ -147,7 +147,9 @@ Its measured call therefore requests JSON and counts the entire 4,611-byte
 response; acceptance and activation return 204 bytes, session creation returns
 97 bytes, and text preparation returns 4,101 bytes. The 6 KiB limit stays in force
 and the positive regression test retains the same calls and assertions. A clean
-main checkout reproduces the same result with the main runtime binary. The test
+main checkout at `23dfa6499120` reproduces the same result with its runtime binary.
+Rechecking the merged runtime after adding the top-level `verify` command retains
+the call and byte measurements for all four paths. The test
 is temporarily ignored with the reason
 `AWR-ACR-024: the creation preview is too large`; AWR-ACR-024 tracks the shorter,
 executable creation preview. P1 remains **not met** and is excluded from passing
@@ -180,8 +182,8 @@ subtotals are:
 
 | Strategy | Tool calls, including AWR CLI and MCP | Returned tool-text bytes |
 | --- | ---: | ---: |
-| Primitive | 21 | 94,962 |
-| Prepared | 19 | 93,810 |
+| Primitive | 21 | 94,716 |
+| Prepared | 19 | 93,582 |
 
 These totals include onboarding, independent refusal probes, final verification
 and reviewer close-out. They have a broader denominator than the six author calls
