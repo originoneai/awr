@@ -126,6 +126,7 @@ const COMMANDS = {
   mapSessions: ['session', 'list', '--active', '--limit', '100'],
   mapDoctor: ['doctor'],
   workPrepare: ['work', 'prepare'],
+  workShow: ['work', 'show'],
 };
 
 function asKey(value) {
@@ -331,6 +332,12 @@ const routes = {
     const key = asKey(url.searchParams.get('key'));
     if (!key) return { ok: false, error: { code: 'BadRequest', message: 'key must be a valid work key' } };
     return runCommand('workPrepare', [key, '--response-view', 'action']);
+  },
+
+  'GET /api/map/show': async (url) => {
+    const key = asKey(url.searchParams.get('key'));
+    if (!key) return { ok: false, error: { code: 'BadRequest', message: 'key must be a valid work key' } };
+    return runCommand('workShow', [key]);
   },
 
 };
