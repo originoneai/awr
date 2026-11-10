@@ -119,6 +119,12 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Changed
 
+- Project-scoped Claude Code and Codex lifecycle installation, removal and status.
+  Optional preview fingerprints reject changed settings; managed entries are replaced
+  while preserving parsed user configuration. Shared Claude settings use portable
+  commands. Status and doctor share adapter inspection and report receiver observations.
+  Claude coverage is **simulated events verified**; native verification is
+  **unexecuted, awaiting approval**. See [Claude Code hooks](../integrations/claude-code.md).
 - Follow-ups of the early digest check: `delivery.integration.prepare` now refuses evidence whose declared output digest or
   stored artifact digest differs from the settled execution's reported output with the same 409 `EvidenceInvalid` reasons,
   digest prefixes and repair as `review.open` (stage `prepare`), instead of the generic refusal; the refusal at an approving

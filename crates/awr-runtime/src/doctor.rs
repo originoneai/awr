@@ -46,7 +46,7 @@ fn finding(
 }
 
 /// Findings that advise and never fail `doctor`: a project that was healthy for the exit code stays so.
-pub(crate) const ADVISORY_FINDINGS: &[&str] = &["claim_without_expiry"];
+pub(crate) const ADVISORY_FINDINGS: &[&str] = &["claim_without_expiry", "host_adapter_outdated"];
 
 /// Inspect current files without calling the source indexer or changing retained freshness.
 pub fn diagnose_project(
@@ -140,6 +140,7 @@ pub fn diagnose_project(
         max_bytes,
         &mut report,
     )?;
+    inspect_host_adapters(&root, &mut report);
     let final_revision = store.project(project.id)?.project_revision;
     report.observed_final_revision = Some(final_revision);
     if final_revision != inspected.project_revision {
@@ -166,6 +167,40 @@ pub fn diagnose_project(
             .iter()
             .any(|f| f.severity != "info" && !ADVISORY_FINDINGS.contains(&f.code.as_str()));
     Ok(report)
+}
+
+fn inspect_host_adapters(root: &Path, report: &mut ProjectDoctorReport) {
+    match crate::host_adapter::installation::inspect_host_adapters(root, None) {
+        Ok(adapters) => {
+            let enabled = adapters
+                .iter()
+                .any(|a| a.write_gate != "off" || a.completion_reminder);
+            if enabled && !adapters.iter().any(|a| a.installed) {
+                report.findings.push(finding("host_adapter_missing", "info", "host_adapter", "project", "Hook gates are enabled; preview an adapter with awr client install --client claude or --client codex."));
+            }
+            for adapter in adapters.into_iter().filter(|a| a.installed) {
+                if adapter.outdated {
+                    report.findings.push(finding("host_adapter_outdated", "warning", "host_adapter", &adapter.client, "Project hooks use an older adapter or a work-specific command; preview client install to update them."));
+                }
+                if adapter.observed_at.is_none() {
+                    report.findings.push(finding(
+                        "host_adapter_inactive",
+                        "info",
+                        "host_adapter",
+                        &adapter.client,
+                        "Project hooks are installed; a receiver event has not been observed.",
+                    ));
+                }
+            }
+        }
+        Err(error) => report.findings.push(finding(
+            "host_adapter_unreadable",
+            "warning",
+            "host_adapter",
+            "project",
+            error,
+        )),
+    }
 }
 
 fn inspect_sources(

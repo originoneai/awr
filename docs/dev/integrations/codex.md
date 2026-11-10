@@ -121,7 +121,8 @@ above is the default `tools/list` for 0.6.0 and this source tree.
 
 ## Identity
 
-`--client` is required on every `client` subcommand. Use the L0 generic identity
+`--client` selects the dialect on binding, hook and installation commands;
+`client status` can inspect all adapters together. Use the L0 generic identity
 for a manual binding, prefixing the native Codex conversation UUID so unrelated
 hosts cannot collide:
 
@@ -147,24 +148,35 @@ they do not configure or invoke Codex.
 
 ## Optional L2 lifecycle adapter
 
-Codex is the only host with a built-in `awr client install` adapter. Preview the
-exact configuration, then accept it after review:
+Install once for the project. Preview the exact configuration, then accept its
+returned fingerprint:
 
 ```sh
+awr --project /absolute/path/to/initialized/project client install --client codex
 awr --project /absolute/path/to/initialized/project client install \
-  --client codex --work EXAMPLE-001
-awr --project /absolute/path/to/initialized/project client install \
-  --client codex --work EXAMPLE-001 --accept
+  --client codex --accept --expected-preview PREVIEW_SHA256
+awr --project /absolute/path/to/initialized/project client status --client codex
 ```
 
 The installer merges `SessionStart`, `PreCompact`, `PostCompact`, `Stop`,
 `SessionEnd` and `Interrupt` handlers into the project's `.codex/hooks.json`,
-preserving existing handlers. Project hooks load only for a trusted project.
-Review and trust the exact definitions in a fresh client's `/hooks` view.
-Installation reports `activation_verified: false`; a generated file or synthetic
-receiver call is not proof that the receiving client activated the hooks.
+preserving parsed user settings and handlers. An enabled write gate also installs
+`PreToolUse`. Each generated command identifies adapter version 1. Reinstallation
+replaces older entries, including commands containing `--work`; the compatibility
+`install --work` argument is ignored and reports `work_ignored: true`.
 
-The receiver binds the native Codex `session_id` to a work-bound AWR session.
+The preview fingerprint is optional. Supplying it binds acceptance to the exact
+settings and proposal reviewed; a changed file returns `SourceConflict`. A bare
+`--accept` retains the existing in-call source check. Project hooks load for a
+trusted project. Review their exact definitions in a fresh client's `/hooks` view.
+Installation reports `activation_verified: false`. `client status` separately
+shows event coverage, gate consistency, executable existence and the latest
+receiver observation. A simulated receiver event and native activation are
+separate observations.
+
+For a new conversation, the receiver injects project action and binding guidance.
+Use that `client bind --client codex` command to select work. Bound conversations
+receive their work's recovery context.
 `SessionStart` and `PostCompact` return recovery context.
 `Stop`, `PreCompact`, `SessionEnd` and `Interrupt` checkpoint the persisted next
 action, open loops and observed AWR event/source delta. Shutdown hooks are
@@ -201,6 +213,11 @@ Copying [the AGENTS snippet](../../../examples/codex/AGENTS.snippet.md) provides
 agent instructions only; it does not install hooks. The
 [executable lifecycle example](../../../examples/codex/README.md) checks AWR
 behavior on a disposable project but does not invoke Codex or activate hooks.
+
+Preview removal with `awr client uninstall --client codex`, then accept with
+`--accept --expected-preview PREVIEW_SHA256` using that preview's fingerprint.
+Removal preserves the parsed content of user handlers. Claude Code has its own
+[project lifecycle adapter](claude-code.md).
 
 ## Dated check
 

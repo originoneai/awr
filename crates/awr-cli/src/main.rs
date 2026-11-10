@@ -13,6 +13,7 @@ mod catalog;
 mod cli_failure;
 mod client;
 mod client_dialect;
+mod client_install;
 mod compaction;
 mod context;
 mod doctor;

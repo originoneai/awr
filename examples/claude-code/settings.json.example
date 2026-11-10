@@ -1,0 +1,52 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "awr --project \"$CLAUDE_PROJECT_DIR\" client hook --client claude --adapter-version 1",
+            "timeout": 15,
+            "statusMessage": "AWR work continuity"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "awr --project \"$CLAUDE_PROJECT_DIR\" client hook --client claude --adapter-version 1",
+            "timeout": 15,
+            "statusMessage": "AWR work continuity"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "awr --project \"$CLAUDE_PROJECT_DIR\" client hook --client claude --adapter-version 1",
+            "timeout": 15,
+            "statusMessage": "AWR work continuity"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "awr --project \"$CLAUDE_PROJECT_DIR\" client hook --client claude --adapter-version 1",
+            "timeout": 3,
+            "statusMessage": "AWR work continuity"
+          }
+        ]
+      }
+    ]
+  }
+}
