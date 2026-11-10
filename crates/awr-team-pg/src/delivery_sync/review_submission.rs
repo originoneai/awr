@@ -9,6 +9,10 @@ fn unavailable_source(reason: &str) -> Value {
         "note":"No source locator is disclosed. Use the current authorized delivery configuration; do not guess a remote, server path or tree."})
 }
 
+/// What a reviewer does after reading the artifacts. A source this read cannot verify is a limit to
+/// state in the decision; it is not a precondition that withholds the decision.
+const DECISION_NEXT: &str = "When you have read them, record your decision with review.decide (approve or reject, with a reason) and say what you verified and what you could not. A source this read cannot verify is a limit to state in the decision, not a reason to withhold it: approval does not integrate or deliver anything, which is a separate step through the delivery service.";
+
 async fn source_navigation(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -404,7 +408,7 @@ pub(crate) async fn inspect(
             "Extra content: this round's submission.source_revision needs an authorized-channel immutability + candidate-binding check; else version unverified."
         };
         result["guidance"]["action"] = json!({"op":query["op"], "query":query,
-            "note":format!("Read all manifest + report artifacts; not proof of complete source or code/verification, approval or integration. {revision_note} If segment_query exists, join contiguous pages; verify full length/sha256.")});
+            "note":format!("Read all manifest + report artifacts; not proof of complete source or code/verification, approval or integration. {revision_note} If segment_query exists, join contiguous pages; verify full length/sha256. {DECISION_NEXT}")});
     }
     Ok(result)
 }

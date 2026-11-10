@@ -831,6 +831,10 @@ async fn review_needs_every_bound_manifest_artifact_and_returns_exact_authorized
         )
     );
     assert!(note.contains("else version unverified"));
+    assert!(
+        note.contains("record your decision with review.decide (approve or reject, with a reason)")
+    );
+    assert!(note.contains("a limit to state in the decision, not a reason to withhold it"));
     assert!(!note.contains("the revision is immutable"));
     assert!(
         note.contains("If segment_query exists, join contiguous pages; verify full length/sha256")
@@ -906,6 +910,10 @@ async fn review_without_source_revision_requires_a_verifiable_binding_instead_of
     );
     let note = submission["guidance"]["action"]["note"].as_str().unwrap();
     assert!(note.contains("Extra content lacks submission.source_revision: do not guess"));
+    assert!(
+        note.contains("record your decision with review.decide (approve or reject, with a reason)")
+    );
+    assert!(note.contains("a limit to state in the decision, not a reason to withhold it"));
     assert!(
         note.contains("an authorized, verifiable binding shows immutability + candidate binding")
     );
@@ -1177,6 +1185,10 @@ async fn opaque_artifact_revision_still_requires_immutability_and_candidate_bind
     let note = submission["guidance"]["action"]["note"].as_str().unwrap();
     assert!(note.contains("authorized-channel immutability + candidate-binding check"));
     assert!(note.contains("else version unverified"));
+    assert!(
+        note.contains("record your decision with review.decide (approve or reject, with a reason)")
+    );
+    assert!(note.contains("a limit to state in the decision, not a reason to withhold it"));
     assert!(!note.contains("the revision is immutable"));
     assert!(!submission.to_string().contains("git-blob:"));
 }
