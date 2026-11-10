@@ -775,7 +775,8 @@ impl SourceStore {
         req: &PlanningDraftRequest,
     ) -> PgResult<Value> {
         require_request_id(&req.request_id)?;
-        // Refuse a draft request that cannot name its candidate before any receipt is reserved.
+        // Both refusals depend on the payload alone, so no receipt can exist for them: they come
+        // before the command lock and before any receipt is reserved.
         match req.mode.as_str() {
             "create" => {}
             "edit" => {

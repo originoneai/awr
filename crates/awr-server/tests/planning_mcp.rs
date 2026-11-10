@@ -284,6 +284,10 @@ async fn planning_draft_edit_without_a_candidate_explains_how_to_start_a_draft()
     blank["candidate_id"] = json!("   ");
     let blank = call(&client, "awr_team_planning_draft", blank, true).await;
     assert_eq!(blank["constraint"], "required_when_editing_a_draft");
+    let mut null = input.clone();
+    null["candidate_id"] = Value::Null;
+    let null = call(&client, "awr_team_planning_draft", null, true).await;
+    assert_eq!(null["constraint"], "required_when_editing_a_draft");
     let mut wrong = input.clone();
     wrong["mode"] = json!("update");
     let wrong = call(&client, "awr_team_planning_draft", wrong, true).await;
@@ -295,6 +299,10 @@ async fn planning_draft_edit_without_a_candidate_explains_how_to_start_a_draft()
             .as_str()
             .unwrap()
             .contains("changes[].op")
+    );
+    assert!(
+        !wrong.to_string().contains("update"),
+        "the refused mode is not echoed"
     );
     let count: i64 = admin.query_one("SELECT count(*) FROM awr_team.planning_command_receipts WHERE request_id='edit-without-candidate'", &[]).await.unwrap().get(0);
     assert_eq!(
@@ -309,10 +317,10 @@ async fn planning_draft_edit_without_a_candidate_explains_how_to_start_a_draft()
     assert_eq!(count, 0, "an edit without a candidate must not create one");
 
     // The unused request id starts the draft with mode create.
-    let mut start = input;
-    start["mode"] = json!("create");
-    start["changes"] = json!([{"op":"create_task","after":draft("QUEUE-CHANGE")}]);
-    let created = call(&client, "awr_team_planning_draft", start, false).await;
+    let mut started = input;
+    started["mode"] = json!("create");
+    started["changes"] = json!([{"op":"create_task","after":draft("QUEUE-CHANGE")}]);
+    let created = call(&client, "awr_team_planning_draft", started, false).await;
     assert!(created["result"]["candidate_id"].is_string());
     client.cancel().await.unwrap();
 }

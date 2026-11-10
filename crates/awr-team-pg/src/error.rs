@@ -299,12 +299,12 @@ impl PgError {
         {
             return Some(serde_json::json!({
                 "code": "InvalidInput",
-                "message": "mode edit changes an existing draft candidate and needs its candidate_id",
+                "message": "mode edit changes an existing planning candidate and needs its candidate_id",
                 "invalid_field": "/candidate_id",
                 "related_fields": ["/mode"],
                 "constraint": "required_when_editing_a_draft",
                 "request_reserved": false,
-                "next_step": "Mode edit changes a draft candidate that already exists: pass its candidate_id. To start a draft, including a change to existing work, use mode create with the changes; each change to existing work carries the exact prior definition in before. Correct this unused request and retry; if this ID was submitted before, inspect planning.outcome and retain its original intent."
+                "next_step": "Mode edit changes a planning candidate that already exists: pass the candidate_id returned by your earlier create; edit replaces that candidate's changes with the list you send. To start a new draft, including a change to existing work, use mode create with the changes; each change to existing work carries the exact prior definition in before. Correct this unused request and retry; if this ID was submitted before, inspect planning.outcome and retain its original intent."
             }));
         }
         if matches!(self, Self::Protocol(message) if message == "planning_input/mode/create_or_edit")
@@ -315,7 +315,7 @@ impl PgError {
                 "invalid_field": "/mode",
                 "constraint": "create_or_edit",
                 "request_reserved": false,
-                "next_step": "Mode names what happens to the planning candidate: create starts a draft candidate (also for changes to existing work) and edit changes an existing draft candidate by its candidate_id. A change's own operation (create_task, edit_fields, split, cancel, archive) goes in changes[].op. Correct this unused request and retry."
+                "next_step": "Mode names what happens to the planning candidate: create starts a new candidate (also for changes to existing work) and edit changes an existing candidate by its candidate_id. A change's own operation (create_task, edit_fields, split, cancel, archive) goes in changes[].op. Correct this unused request and retry; if this ID was submitted before, inspect planning.outcome and retain its original intent."
             }));
         }
         if !matches!(self, Self::Protocol(message) if message == "planning_input/author_person_id/actor_mismatch")

@@ -1507,8 +1507,8 @@ fn catalog() -> Vec<Tool> {
         "properties":{
             "protocol_version":{"type":"integer","const":1},
             "request_id":{"type":"string","maxLength":128},
-            "mode":{"type":"string","enum":["create","edit"],"description":"create starts a draft candidate, also for changes to existing work; edit changes an existing draft candidate and needs candidate_id. A change's own operation goes in changes[].op."},
-            "candidate_id":{"type":["string","null"],"maxLength":128,"description":"Required for mode edit: the id of an existing draft candidate. Omit for create."},
+            "mode":{"type":"string","enum":["create","edit"],"description":"create starts a new planning candidate, also for changes to existing work; edit changes an existing candidate and needs candidate_id. A change's own operation goes in changes[].op."},
+            "candidate_id":{"type":["string","null"],"maxLength":128,"description":"Required for mode edit: the candidate_id returned by your earlier create. Omit for create."},
             "changes":{"type":"array","maxItems":256},
             "suggestion_ids":{"type":"array","maxItems":256,"items":{"type":"string"}},
             "allowed_spec_roots":{"type":"array","maxItems":64,"items":{"type":"string"},"description":"For create, supply the project specification roots covering every change scope_path. Edit retains the candidate roots."},
@@ -1593,7 +1593,7 @@ fn catalog() -> Vec<Tool> {
             planning_suggest.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_planning_draft",
-            "Create or edit a planning draft candidate (planning.edit_draft). mode names what happens to the candidate: create starts a draft candidate and is also how existing work is changed (each change to existing work carries the exact prior definition in before); edit changes an existing draft candidate and needs its candidate_id. Split/cancel/archive are DraftChange ops inside changes. V4 supports reviewed workspace declarations; V5 adds explicit simulated-member dependency assurance. Neither grants execution/review authority. Preview and approve the current digest before publishing. No hard-delete of history or forging done via status. Stable request_id.",
+            "Create or edit a planning draft candidate (planning.edit_draft). mode names what happens to the planning candidate: create starts a new candidate and is also how existing work is changed (each change to existing work carries the exact prior definition in before); edit changes an existing candidate, needs the candidate_id returned by your earlier create and replaces its changes with the list you send. Split/cancel/archive are DraftChange ops inside changes. V4 supports reviewed workspace declarations; V5 adds explicit simulated-member dependency assurance. Neither grants execution/review authority. Preview and approve the current digest before publishing. No hard-delete of history or forging done via status. Stable request_id.",
             planning_draft.as_object().unwrap().clone())
             .with_annotations(ToolAnnotations::new().read_only(false).destructive(false).idempotent(true).open_world(false)),
         Tool::new("awr_team_planning_preview",
