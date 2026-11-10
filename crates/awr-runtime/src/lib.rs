@@ -37,6 +37,8 @@ mod fs_sync;
 mod management;
 mod mutation;
 mod mutation_apply;
+mod recovery_input;
+pub use recovery_input::save_cli_recovery_input;
 mod operation_readset;
 mod organization;
 mod planning_writeback;

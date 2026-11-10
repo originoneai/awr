@@ -131,13 +131,28 @@ fn validate_draft_activation(
             "only a draft can be explicitly activated".into(),
         ));
     }
-    validate_criteria(&work.acceptance)?;
+    validate_criteria(&work.acceptance)
+        .map_err(|error| draft_repair_error(error, work, &["acceptance"]))?;
     if work.title.trim().is_empty()
         || work.next_action.trim().is_empty()
         || work.kind.as_deref() == Some("intake")
     {
-        return Err(Error::RuleViolation(
-            "draft needs a title, delivery acceptance and a concrete next action".into(),
+        let mut missing = Vec::new();
+        if work.title.trim().is_empty() {
+            missing.push("title");
+        }
+        if work.next_action.trim().is_empty() {
+            missing.push("next_action");
+        }
+        if work.kind.as_deref() == Some("intake") {
+            missing.push("kind");
+        }
+        return Err(draft_repair_error(
+            Error::RuleViolation(
+                "draft needs a title, delivery acceptance and a concrete next action".into(),
+            ),
+            work,
+            &missing,
         ));
     }
     let claimed:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM claims WHERE project_id=?1 AND work_item_id=?2 AND status='active' AND released_at IS NULL AND (expires_at IS NULL OR expires_at>?3))",params![project.to_string(),work.meta.id.to_string(),now_millis()?],|r|r.get(0)).map_err(db_error)?;
@@ -160,32 +175,47 @@ fn validate_draft_activation(
     let minimal = !configs.is_empty() && configs.iter().all(|c| c["context_profile"] == "minimal");
     if !minimal {
         let rules:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM sources WHERE project_id=?1 AND domain='rules' AND active=1 AND freshness='fresh')",[project.to_string()],|r|r.get(0)).map_err(db_error)?;
-        if !rules
-            || work
-                .milestone
-                .as_deref()
-                .is_none_or(|m| m.trim().is_empty())
-        {
+        if !rules {
             return Err(Error::RuleViolation(
                 "standard projects retain their declared rule and milestone requirements".into(),
+            )
+            .with_details(
+                serde_json::json!({"missing":["rules"],"next_action":"awr source list"}),
+            ));
+        }
+        if work
+            .milestone
+            .as_deref()
+            .is_none_or(|m| m.trim().is_empty())
+        {
+            return Err(draft_repair_error(
+                Error::RuleViolation(
+                    "standard projects retain their declared rule and milestone requirements"
+                        .into(),
+                ),
+                work,
+                &["milestone"],
             ));
         }
     }
     if let Some(key) = &work.milestone {
-        let p: Projected<Plan> = crate::query::projection(conn, project, EntityKind::Plan, key)?;
+        let p: Projected<Plan> = crate::query::projection(conn, project, EntityKind::Plan, key)
+            .map_err(|error| draft_repair_error(error, work, &["milestone"]))?;
         if p.source.freshness != Freshness::Fresh {
             return Err(Error::SourceStale("draft milestone is stale".into()));
         }
     }
     let goal_keys=conn.prepare("SELECT e.to_key FROM edges e JOIN sources s ON s.id=e.source_id AND s.project_id=e.project_id WHERE e.project_id=?1 AND e.active=1 AND s.active=1 AND e.from_kind='work_item' AND e.from_key=?2 AND e.to_kind='goal' AND e.relation='supports'").map_err(db_error)?.query_map(params![project.to_string(),work.meta.external_key],|r|r.get::<_,String>(0)).map_err(db_error)?.collect::<rusqlite::Result<Vec<_>>>().map_err(db_error)?;
     if goal_keys.is_empty() {
-        return Err(Error::RuleViolation(
-            "draft activation requires an explicit goal link".into(),
+        return Err(draft_repair_error(
+            Error::RuleViolation("draft activation requires an explicit goal link".into()),
+            work,
+            &["goal"],
         ));
     }
     for key in goal_keys {
-        let goal: Projected<Goal> =
-            crate::query::projection(conn, project, EntityKind::Goal, &key)?;
+        let goal: Projected<Goal> = crate::query::projection(conn, project, EntityKind::Goal, &key)
+            .map_err(|error| draft_repair_error(error, work, &["goal"]))?;
         if goal.source.role != "primary"
             || goal.source.freshness != Freshness::Fresh
             || goal.item.title.trim().is_empty()
@@ -200,8 +230,12 @@ fn validate_draft_activation(
                 .contains(".awr/intake/")
                 && goal.item.title == "Establish a verified project baseline")
         {
-            return Err(Error::RuleViolation(
-                "draft goal is missing, unconfirmed, finished or an intake placeholder".into(),
+            return Err(draft_repair_error(
+                Error::RuleViolation(
+                    "draft goal is missing, unconfirmed, finished or an intake placeholder".into(),
+                ),
+                work,
+                &["goal"],
             ));
         }
     }

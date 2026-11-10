@@ -357,7 +357,10 @@ pub fn create_work_with_activation(
             expected,
             actual: revision,
         }
-        .with_details(json!({"current_revision":revision,"preview_still_valid":true})));
+        .with_details(
+            json!({"current_revision":revision,"preview_still_valid":true,
+            "retry":{"expected_revision":revision}}),
+        ));
     }
     let mutations = recovery_root(&root)?;
     let name = receipt_name(project.id, &plan.request.request_key)?;
@@ -647,11 +650,23 @@ fn activate_created(
         }
         Ok(applied.value)
     })();
-    let activation = match result {
+    let mut activation = match result {
         Ok(value) => value,
-        Err(error) => json!({"ok":false,"status":"rejected","error":error.report(),
-            "next_action":cli_next_action(&["awr","work","activate",&receipt.plan.external_key,"--request-key",&format!("activate-{}",Id::new())])}),
+        Err(error) => json!({"ok":false,"status":"rejected","error":error.report()}),
     };
+    if activation["ok"] != true {
+        activation["next_action"] = activation["error"]["details"]["next_action"]
+            .as_str()
+            .map(|next| json!(next))
+            .unwrap_or_else(|| {
+                json!(cli_next_action(&[
+                    "awr",
+                    "work",
+                    "show",
+                    &receipt.plan.external_key
+                ]))
+            });
+    }
     if activation["source_write_performed"] == true {
         report.value["source_write_performed"] = json!(true);
     }

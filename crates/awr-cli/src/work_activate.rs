@@ -5,6 +5,7 @@ use std::path::Path;
 
 #[derive(Debug, Args)]
 pub struct ActivateArgs {
+    /// Work key, or the internal work ID returned by recovery guidance.
     work: String,
     #[arg(long)]
     request_key: String,
@@ -24,16 +25,28 @@ pub struct ActivateArgs {
 pub fn run(root: &Path, args: &ActivateArgs, json_output: bool) -> Result<()> {
     let root = root.canonicalize()?;
     let mut project = crate::query::QueryProject::open(&root)?;
-    let source_fingerprint = match &args.source_fingerprint {
-        Some(fp) => fp.clone(),
-        None => {
-            project
-                .store
-                .work_item(project.project.id, &args.work)?
-                .source
-                .fingerprint
+    let mut key = args.work.clone();
+    let mut source_fingerprint = args.source_fingerprint.clone();
+    if source_fingerprint.is_none() || key.parse::<Id>().is_ok() {
+        match project
+            .store
+            .object_projection(project.project.id, EntityKind::WorkItem, &key)
+        {
+            Ok(selected) => {
+                key = serde_json::from_value::<WorkItem>(selected.item)?
+                    .meta
+                    .external_key;
+                if source_fingerprint.is_none() {
+                    source_fingerprint = Some(selected.source.fingerprint);
+                }
+            }
+            // A completed receipt remains replayable after the source record is removed.
+            Err(Error::NotFound(_)) if args.accept && source_fingerprint.is_some() => (),
+            Err(error) => return Err(error),
         }
-    };
+    }
+    let source_fingerprint =
+        source_fingerprint.expect("preview resolved the source or accept supplied it");
     let request = HostSaveRequest {
         version: 1,
         request_key: args.request_key.clone(),
@@ -44,21 +57,29 @@ pub fn run(root: &Path, args: &ActivateArgs, json_output: bool) -> Result<()> {
         },
         reason: "Activate the selected draft at the caller's explicit request".into(),
         change: HostChange::ActivateDraft {
-            work: args.work.clone(),
+            work: key.clone(),
             source_fingerprint: source_fingerprint.clone(),
         },
     };
-    let mut report = if args.accept {
+    let result = if args.accept {
         awr_runtime::host_save(
             &mut project.store,
             &root,
             request,
             args.expected_revision.expect("clap requires revision"),
             args.expected_preview.as_deref(),
-        )?
+        )
     } else {
-        awr_runtime::host_preview(&mut project.store, &root, request)?
+        awr_runtime::host_preview(&mut project.store, &root, request)
     };
+    let mut report = result.map_err(|error| {
+        if error.report().details.as_ref().is_some_and(|details| details["next_action"].is_string()) {
+            error
+        } else {
+            let command = cli_next_action(&["awr", "work", "show", &key]);
+            error.with_details(serde_json::json!({"next_action":if command.len() <= 300 && !command.chars().any(char::is_control) {command} else {"awr status".into()}}))
+        }
+    })?;
     report.value["source_fingerprint"] = serde_json::json!(source_fingerprint);
     if json_output {
         println!("{}", serde_json::to_string_pretty(&report.value)?);

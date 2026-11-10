@@ -173,7 +173,7 @@ mod next_action_tests {
     fn argv(command: &str) -> Vec<String> {
         let mut args = Vec::new();
         let mut word = String::new();
-        let mut quoted = false;
+        let mut quoted = None;
         let mut escaped = false;
         let mut started = false;
         for c in command.chars() {
@@ -181,12 +181,15 @@ mod next_action_tests {
                 word.push(c);
                 escaped = false;
                 started = true;
-            } else if c == '\\' && !quoted {
+            } else if c == '\\' && quoted != Some('\'') {
                 escaped = true;
-            } else if c == '\'' {
-                quoted = !quoted;
+            } else if quoted == Some(c) {
+                quoted = None;
                 started = true;
-            } else if c.is_whitespace() && !quoted {
+            } else if (c == '\'' || c == '"') && quoted.is_none() {
+                quoted = Some(c);
+                started = true;
+            } else if c.is_whitespace() && quoted.is_none() {
                 if started {
                     args.push(std::mem::take(&mut word));
                     started = false;
@@ -196,7 +199,10 @@ mod next_action_tests {
                 started = true;
             }
         }
-        assert!(!quoted && !escaped, "incomplete shell quoting: {command}");
+        assert!(
+            quoted.is_none() && !escaped,
+            "incomplete shell quoting: {command}"
+        );
         if started {
             args.push(word);
         }
@@ -233,6 +239,463 @@ mod next_action_tests {
         assert_eq!(saved["status"], "completed");
         assert_eq!(saved["preview_fingerprint"], p["preview"]["fingerprint"]);
         assert_ne!(e["code"], "SourceStale");
+    }
+
+    #[test]
+    fn rework_f3_long_creation_retry_preserves_reviewed_fields_and_activation() {
+        let f = Fixture::new();
+        let title = format!("Review the delivery {}", "x".repeat(70));
+        let first = "a".repeat(110);
+        let second = "b".repeat(110);
+        assert_eq!(title.chars().count(), 90);
+        let args = [
+            "work",
+            "create",
+            "--title",
+            &title,
+            "--request-key",
+            "long-review",
+            "--acceptance",
+            &first,
+            "--acceptance",
+            &second,
+            "--goal",
+            "G",
+            "--next-action",
+            "Read the delivery report",
+            "--activate",
+        ];
+        let preview = f.ok(&args);
+        let before = fs::read(f.0.join("work.yaml")).unwrap();
+        f.session("W", false);
+        let rev = preview["project_revision"].to_string();
+        let mut accept = args.to_vec();
+        accept.extend([
+            "--accept",
+            "--expected-preview",
+            preview["preview"]["fingerprint"].as_str().unwrap(),
+            "--expected-revision",
+            &rev,
+        ]);
+        let error = f.error(&accept, "RevisionConflict");
+        assert_eq!(error["details"]["preview_still_valid"], true);
+        assert!(
+            error["details"]["next_action"]
+                .as_str()
+                .unwrap()
+                .starts_with("awr "),
+            "{error}"
+        );
+        assert_eq!(
+            error["details"]["retry"]["expected_revision"].to_string(),
+            f.revision()
+        );
+        assert_eq!(fs::read(f.0.join("work.yaml")).unwrap(), before);
+        let saved = f.follow(&error);
+        assert_eq!(saved["status"], "completed");
+        assert_eq!(saved["draft"], false);
+        assert_eq!(
+            saved["preview_fingerprint"],
+            preview["preview"]["fingerprint"]
+        );
+        let key = saved["external_key"].as_str().unwrap();
+        let work = f.ok(&["work", "show", key]);
+        assert_eq!(work["work"]["title"], title);
+        assert_eq!(work["acceptance"], json!([first, second]));
+        assert!(f.session(key, true)["claim"]["id"].is_string());
+    }
+
+    #[test]
+    fn rework_f3_control_characters_in_fields_keep_executable_retry() {
+        let f = Fixture::new();
+        let args = [
+            "work",
+            "create",
+            "--title",
+            "Review a multiline criterion",
+            "--request-key",
+            "multiline-review",
+            "--acceptance",
+            "The delivery is reviewed\nand the result is recorded",
+        ];
+        let preview = f.ok(&args);
+        f.session("W", false);
+        let rev = preview["project_revision"].to_string();
+        let mut accept = args.to_vec();
+        accept.extend([
+            "--accept",
+            "--expected-preview",
+            preview["preview"]["fingerprint"].as_str().unwrap(),
+            "--expected-revision",
+            &rev,
+        ]);
+        let error = f.error(&accept, "RevisionConflict");
+        let action = error["details"]["next_action"].as_str().unwrap();
+        assert!(action.starts_with("awr "), "{error}");
+        assert!(!action.chars().any(char::is_control), "{action}");
+        assert_eq!(f.follow(&error)["status"], "completed");
+    }
+
+    #[test]
+    fn rework_f3_long_context_filters_keep_exact_recovery_request() {
+        let f = Fixture::new();
+        let path = format!("notes/{}/review.md", "p".repeat(180));
+        let tag = "t".repeat(180);
+        let args = [
+            "context",
+            "compile",
+            "--work",
+            "W",
+            "--detached",
+            "--path",
+            &path,
+            "--tag",
+            &tag,
+            "--after-revision",
+            "0",
+            "--budget",
+            "1",
+        ];
+        let error = f.error(&args, "BudgetExceeded");
+        assert!(
+            error["details"]["next_action"]
+                .as_str()
+                .unwrap()
+                .starts_with("awr "),
+            "{error}"
+        );
+        let recovered = f.follow(&error);
+        let required = error["details"]["required"].to_string();
+        let mut expected_args = args.to_vec();
+        *expected_args.last_mut().unwrap() = &required;
+        let expected = f.ok(&expected_args);
+        assert_eq!(recovered["work_context"], expected["work_context"]);
+        let mut mixed = validate_action(&error);
+        mixed.extend(["--work".into(), "W".into()]);
+        assert!(
+            Cli::try_parse_from(mixed).is_err(),
+            "saved input must not silently replace selection flags"
+        );
+    }
+
+    #[test]
+    fn rework_f3_long_retry_requires_repreview_after_source_change() {
+        let f = Fixture::new();
+        let title = "n".repeat(90);
+        let criterion = "c".repeat(110);
+        let args = [
+            "work",
+            "create",
+            "--title",
+            &title,
+            "--request-key",
+            "changed-long-review",
+            "--acceptance",
+            &criterion,
+            "--goal",
+            "G",
+            "--next-action",
+            "Read the note",
+            "--activate",
+        ];
+        let preview = f.ok(&args);
+        f.write("rules.md", &format!("{RULE}\nKeep the delivery trace.\n"));
+        let before = fs::read(f.0.join("work.yaml")).unwrap();
+        let rev = preview["project_revision"].to_string();
+        let mut accept = args.to_vec();
+        accept.extend([
+            "--accept",
+            "--expected-preview",
+            preview["preview"]["fingerprint"].as_str().unwrap(),
+            "--expected-revision",
+            &rev,
+        ]);
+        let error = f.error(&accept, "SourceStale");
+        assert_eq!(error["details"]["preview_still_valid"], false);
+        assert!(
+            error["details"]["next_action"]
+                .as_str()
+                .unwrap()
+                .starts_with("awr "),
+            "{error}"
+        );
+        let fresh = f.follow(&error);
+        assert_eq!(fresh["status"], "preview");
+        assert_ne!(
+            fresh["preview"]["fingerprint"],
+            preview["preview"]["fingerprint"]
+        );
+        assert_eq!(fs::read(f.0.join("work.yaml")).unwrap(), before);
+    }
+
+    #[test]
+    fn rework_f3_long_unsupported_name_retains_bounded_capability_command() {
+        let f = Fixture::new();
+        let name = format!("unavailable-{}", "x".repeat(400));
+        let error = f.error(&[&name], "Unsupported");
+        assert!(
+            error["details"]["next_action"]
+                .as_str()
+                .unwrap()
+                .starts_with("awr "),
+            "{error}"
+        );
+        assert_eq!(f.follow(&error)["ok"], true);
+    }
+
+    #[test]
+    fn rework_f3_long_draft_key_uses_bounded_activation_command() {
+        let f = Fixture::new();
+        let key = format!("DRAFT-{}", "x".repeat(350));
+        let ledger = fs::read_to_string(f.0.join("work.yaml"))
+            .unwrap()
+            .replace("- id: D\n", &format!("- id: {key}\n"));
+        f.write("work.yaml", &ledger);
+        f.ok(&["source", "reindex"]);
+        let error = f.claim_error(&key, "DependencyBlocked");
+        assert!(
+            error["details"]["next_action"]
+                .as_str()
+                .unwrap()
+                .starts_with("awr work activate "),
+            "{error}"
+        );
+        assert_eq!(f.follow(&error)["status"], "preview");
+    }
+
+    #[test]
+    fn rework_f4_missing_draft_fields_offer_edit_then_activate_and_claim() {
+        for missing in ["next_action", "acceptance", "goal", "unknown_goal"] {
+            let f = Fixture::new();
+            let mut args = vec![
+                "work",
+                "create",
+                "--title",
+                "Review a new note",
+                "--request-key",
+                "repair-review",
+                "--activate",
+            ];
+            if missing != "next_action" {
+                args.extend(["--next-action", "Read the note"]);
+            }
+            if missing != "acceptance" {
+                args.extend(["--acceptance", "The note is reviewed"]);
+            }
+            if missing != "goal" {
+                args.extend([
+                    "--goal",
+                    if missing == "unknown_goal" {
+                        "ABSENT"
+                    } else {
+                        "G"
+                    },
+                ]);
+            }
+            let preview = f.ok(&args);
+            let rev = preview["project_revision"].to_string();
+            args.extend([
+                "--accept",
+                "--expected-preview",
+                preview["preview"]["fingerprint"].as_str().unwrap(),
+                "--expected-revision",
+                &rev,
+            ]);
+            let saved = f.ok(&args);
+            assert_eq!(saved["status"], "completed", "{missing}: {saved}");
+            assert_eq!(saved["draft"], true, "{missing}: {saved}");
+            let key = saved["external_key"].as_str().unwrap();
+            let rejected = f.error(
+                &[
+                    "work",
+                    "activate",
+                    key,
+                    "--request-key",
+                    "unrepaired-activation",
+                ],
+                saved["activation"]["error"]["code"].as_str().unwrap(),
+            );
+            assert_eq!(
+                rejected["message"], saved["activation"]["error"]["message"],
+                "{missing}: activation alone must not erase its refusal"
+            );
+            let text = Command::new(env!("CARGO_BIN_EXE_awr"))
+                .env("AWR_LOCAL_WEB", "0")
+                .args([
+                    "--project",
+                    f.0.to_str().unwrap(),
+                    "work",
+                    "activate",
+                    key,
+                    "--request-key",
+                    "unrepaired-text",
+                ])
+                .output()
+                .unwrap();
+            assert!(!text.status.success());
+            assert!(
+                String::from_utf8_lossy(&text.stderr)
+                    .lines()
+                    .last()
+                    .unwrap()
+                    .starts_with("Next: awr work edit "),
+                "{missing}: {}",
+                String::from_utf8_lossy(&text.stderr)
+            );
+            let action = saved["activation"]["next_action"].as_str().unwrap();
+            assert!(
+                action.starts_with("awr work edit "),
+                "{missing}: recovery repeats activation without repairing its cause: {action}"
+            );
+            validate_action(&json!({"details":{"next_action":action}}));
+            // These are caller-supplied business facts, not invented recovery defaults.
+            let mut command = action.to_owned();
+            for (name, value) in [
+                ("AWR_NEXT_ACTION", "Read the note"),
+                ("AWR_ACCEPTANCE", "The note is reviewed"),
+                ("AWR_GOAL", "G"),
+            ] {
+                command = command.replace(
+                    &format!("\"${{{name}:?}}\""),
+                    &awr_core::cli_next_action(&[value]),
+                );
+            }
+            assert!(!command.contains("${"), "{command}");
+            let mut edit = argv(&command);
+            let p = f.ok(&edit[1..].iter().map(String::as_str).collect::<Vec<_>>());
+            edit.extend([
+                "--accept".into(),
+                "--source-fingerprint".into(),
+                p["change"]["source_fingerprint"].as_str().unwrap().into(),
+                "--expected-preview".into(),
+                p["preview_fingerprint"].as_str().unwrap().into(),
+                "--expected-revision".into(),
+                p["project_revision"].to_string(),
+            ]);
+            f.ok(&edit[1..].iter().map(String::as_str).collect::<Vec<_>>());
+            let activate = [
+                "work",
+                "activate",
+                key,
+                "--request-key",
+                "activate-repaired",
+            ];
+            let p = f.ok(&activate);
+            let revision = p["project_revision"].to_string();
+            let mut accept = activate.to_vec();
+            accept.extend([
+                "--accept",
+                "--source-fingerprint",
+                p["source_fingerprint"].as_str().unwrap(),
+                "--expected-preview",
+                p["preview"]["fingerprint"].as_str().unwrap(),
+                "--expected-revision",
+                &revision,
+            ]);
+            f.ok(&accept);
+            assert!(f.session(key, true)["claim"]["id"].is_string(), "{missing}");
+        }
+    }
+
+    #[test]
+    fn rework_f4_direct_activation_refusal_has_repair_in_text_and_json() {
+        let f = Fixture::new();
+        let ledger = fs::read_to_string(f.0.join("work.yaml"))
+            .unwrap()
+            .replace("  next_action: Read the draft\n", "");
+        f.write("work.yaml", &ledger);
+        f.ok(&["source", "reindex"]);
+        let error = f.error(
+            &["work", "activate", "D", "--request-key", "repair-direct"],
+            "RuleViolation",
+        );
+        assert!(
+            error["details"]["next_action"]
+                .as_str()
+                .unwrap()
+                .starts_with("awr work edit "),
+            "{error}"
+        );
+        validate_action(&error);
+        let text = Command::new(env!("CARGO_BIN_EXE_awr"))
+            .env("AWR_LOCAL_WEB", "0")
+            .args([
+                "--project",
+                f.0.to_str().unwrap(),
+                "work",
+                "activate",
+                "D",
+                "--request-key",
+                "repair-direct-text",
+            ])
+            .output()
+            .unwrap();
+        assert!(!text.status.success());
+        assert!(
+            String::from_utf8_lossy(&text.stderr)
+                .lines()
+                .last()
+                .unwrap()
+                .starts_with("Next: awr work edit "),
+            "{}",
+            String::from_utf8_lossy(&text.stderr)
+        );
+    }
+
+    #[test]
+    fn rework_f4_planning_repairs_preserve_active_work_and_source() {
+        let f = Fixture::new();
+        let before = fs::read(f.0.join("work.yaml")).unwrap();
+        for fields in [["--acceptance", "The note is reviewed"], ["--goal", "G"]] {
+            f.error(
+                &[
+                    "work",
+                    "edit",
+                    "W",
+                    "--request-key",
+                    "active-repair",
+                    "--actor",
+                    "fixture",
+                    "--reason",
+                    "Review missing planning facts",
+                    fields[0],
+                    fields[1],
+                ],
+                "RuleViolation",
+            );
+            assert_eq!(fs::read(f.0.join("work.yaml")).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn rework_f3_activation_receipt_replays_after_source_work_is_removed() {
+        let f = Fixture::new();
+        let args = [
+            "work",
+            "activate",
+            "D",
+            "--request-key",
+            "retained-activation",
+        ];
+        let preview = f.ok(&args);
+        let rev = preview["project_revision"].to_string();
+        let mut accept = args.to_vec();
+        accept.extend([
+            "--accept",
+            "--source-fingerprint",
+            preview["source_fingerprint"].as_str().unwrap(),
+            "--expected-preview",
+            preview["preview"]["fingerprint"].as_str().unwrap(),
+            "--expected-revision",
+            &rev,
+        ]);
+        f.ok(&accept);
+        let ledger = fs::read_to_string(f.0.join("work.yaml")).unwrap();
+        f.write("work.yaml", ledger.split("- id: D\n").next().unwrap());
+        f.ok(&["source", "reindex"]);
+        let before = fs::read(f.0.join("work.yaml")).unwrap();
+        assert_eq!(f.ok(&accept)["already_recorded"], true);
+        assert_eq!(fs::read(f.0.join("work.yaml")).unwrap(), before);
     }
 
     #[test]

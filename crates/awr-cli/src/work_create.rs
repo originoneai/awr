@@ -41,7 +41,7 @@ pub struct CreateArgs {
     owner: Option<String>,
     #[arg(long)]
     milestone: Option<String>,
-    /// After creation, attempt the existing draft activation checks in this request.
+    /// Attempt activation after creation; supply acceptance, a goal and --next-action (or fields.next_action in --input).
     #[arg(long)]
     activate: bool,
     #[arg(long)]
@@ -112,19 +112,19 @@ pub fn create(root: &Path, args: &CreateArgs, json_output: bool) -> Result<()> {
     };
     let mut store =
         Store::open_existing(&crate::source::runtime_dir(&root, false)?.join("state.db"))?;
-    output(
-        awr_runtime::create_work_with_activation(
-            &mut store,
-            &root,
-            input,
-            args.accept,
-            args.expected_preview.as_deref(),
-            args.expected_revision,
-            args.activate,
-        )
-        .map_err(|error| args.recovery_error(error))?,
-        json_output,
-    )
+    let report = awr_runtime::create_work_with_activation(
+        &mut store,
+        &root,
+        input.clone(),
+        args.accept,
+        args.expected_preview.as_deref(),
+        args.expected_revision,
+        args.activate,
+    );
+    match report {
+        Ok(report) => output(report, json_output),
+        Err(error) => Err(args.recovery_error(&root, &input, error)?),
+    }
 }
 pub fn status(root: &Path, args: &StatusArgs, json_output: bool) -> Result<()> {
     let root = root.canonicalize()?;
@@ -181,13 +181,13 @@ impl CreateArgs {
         Ok(fields)
     }
 
-    fn recovery_error(&self, error: Error) -> Error {
+    fn recovery_error(&self, root: &Path, input: &CreateWorkInput, error: Error) -> Result<Error> {
         let report = error.report();
         if !matches!(
             report.code,
             "RevisionConflict" | "SourceStale" | "SourceConflict"
         ) {
-            return error;
+            return Ok(error);
         }
         let valid = report
             .details
@@ -256,6 +256,38 @@ impl CreateArgs {
                 ]);
             }
         }
-        error.with_details(serde_json::json!({"next_action":cli_next_action(&args.iter().map(String::as_str).collect::<Vec<_>>())}))
+        let mut command = cli_next_action(&args.iter().map(String::as_str).collect::<Vec<_>>());
+        if command.len() > 300 || command.chars().any(char::is_control) {
+            let path = awr_runtime::save_cli_recovery_input(root, input)?;
+            let mut compact = vec![
+                "awr".to_owned(),
+                "work".into(),
+                "create".into(),
+                "--input".into(),
+                path,
+            ];
+            if self.activate {
+                compact.push("--activate".into());
+            }
+            if valid {
+                if let (Some(preview), Some(revision)) = (
+                    &self.expected_preview,
+                    report
+                        .details
+                        .as_ref()
+                        .and_then(|d| d["current_revision"].as_u64()),
+                ) {
+                    compact.extend([
+                        "--accept".into(),
+                        "--expected-preview".into(),
+                        preview.clone(),
+                        "--expected-revision".into(),
+                        revision.to_string(),
+                    ]);
+                }
+            }
+            command = cli_next_action(&compact.iter().map(String::as_str).collect::<Vec<_>>());
+        }
+        Ok(error.with_details(serde_json::json!({"next_action":command})))
     }
 }

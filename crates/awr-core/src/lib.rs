@@ -45,7 +45,7 @@ pub use branch_close::*;
 pub use completion::*;
 pub use error::{
     DiagnosticLocation, Error, ErrorReport, Result, SourceDiagnostic, cli_next_action,
-    render_diagnostic_details,
+    draft_repair_error, render_diagnostic_details,
 };
 pub use event_payload::*;
 pub use execution::*;

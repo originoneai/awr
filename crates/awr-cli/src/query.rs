@@ -41,7 +41,10 @@ pub enum WorkCommand {
     Prepare(crate::work_prepare::PrepareArgs),
     /// Validate a real report and derive evidence metadata without registering or completing.
     PrepareCompletion(crate::work_prepare::CompletionArgs),
-    /// Preview or accept one new source-backed, non-executable task draft.
+    /// Preview or accept a source-backed draft, optionally attempting activation.
+    #[command(
+        after_help = "Example: awr work create --title 'Review a report' --request-key review-report --acceptance 'The report is reviewed' --goal GUIDE --next-action 'Read the report' --activate"
+    )]
     Create(crate::work_create::CreateArgs),
     /// Read the durable outcome for a stable creation request without applying it.
     CreateStatus(crate::work_create::StatusArgs),

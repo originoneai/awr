@@ -75,10 +75,12 @@ L1 JSON 顶层包含 `ok` 和 `project_revision`；有必需缺口时为 `ok=fal
 
 **Error-code change:** accepting a work-creation preview after only the project
 revision advances now returns `RevisionConflict`, rather than `SourceStale`.
-`details.current_revision` supplies the retry revision and
+`details.current_revision` and `details.retry.expected_revision` supply the retry revision and
 `details.preview_still_valid=true` confirms that the reviewed source facts still
 match. The CLI adds `details.next_action` with the same acceptance request and the
-new revision. Changed source content or mappings still require a fresh preview:
+new revision. Commands that would exceed 300 bytes or contain control characters
+use a private literal JSON input file with the same reviewed request instead of
+discarding its fields. Changed source content or mappings still require a fresh preview:
 `SourceStale` carries `preview_still_valid=false`. An incorrect preview fingerprint
 without a source change remains `SourceConflict`.
 
@@ -87,6 +89,9 @@ facts need more, it raises the budget to that requirement up to 10000 tokens.
 The JSON response adds `budget: {applied: N, basis: "raised_to_required"}`;
 other bases are `default` and `explicit`. Explicit budgets remain strict and
 `BudgetExceeded` includes a command retaining the selected work, session and scope.
+Long requests use CLI `context compile --input FILE --budget N`; the file contains
+the full context request, and its budget is explicit. Input and selection flags
+are mutually exclusive.
 The rendered context and its hash exclude this CLI metadata. MCP defaults and
 request shapes remain unchanged; parity comparisons use explicit matching budgets
 and check the CLI metadata separately.
@@ -97,6 +102,12 @@ no expiry), and the original claim records. Draft claim refusals suggest
 `work activate`; unsupported operations suggest capability negotiation. JSON shape
 errors on `batch change` and `host preview` identify `details.missing` and include a
 JSON skeleton in `details.expected` (at most 600 bytes).
+
+Draft activation refusals retain their error codes and list missing planning fields.
+Their `next_action` previews a `work edit` with caller-supplied `AWR_*` values;
+the caller accepts that repair before activating. Missing acceptance, next steps
+and valid goal links are not replaced with invented defaults. Text refusals include
+the same repair command in their final `Next:` line.
 
 ## 输出、错误与退出码
 

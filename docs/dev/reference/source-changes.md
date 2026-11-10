@@ -118,12 +118,49 @@ CLI creation also accepts repeated `--acceptance`, `--goal`, `--depends-on`, `--
 `priority`, `summary`, `next_action`, `owner` and `milestone`. `--input` and field
 flags are mutually exclusive. No omitted source facts are invented.
 
-Add `--activate` to both the creation preview and acceptance to attempt activation
-in the acceptance call. If the existing activation checks refuse it, creation
+Provide the title, acceptance, goal and a concrete `--next-action` before requesting
+activation. For JSON input, put the same next step in `fields.next_action`.
+Include any milestone required by the registered source policy.
+
+```sh
+awr work create --title "Review appendix" --request-key appendix-1 \
+  --acceptance "The conclusion is reviewed" --goal GUIDE \
+  --next-action "Read the source material" --activate
+```
+
+Repeat that request with `--accept`, `--expected-preview` and `--expected-revision`
+from the preview to create and attempt activation. If the activation checks refuse it, creation
 succeeds, `draft` stays true, and `activation.error` explains the reason. The
 creation receipt retains that outcome. Use a new activation request after repairing
 the draft. Creation and activation share a caller request but retain separate
 recoverable source operations.
+
+An activation refusal lists missing fields and suggests an edit preview instead of
+repeating the refused activation. Supply the actual business values in the named
+`AWR_*` variables before executing that command. Unset variables stop the shell;
+the command does not write placeholder criteria or select a goal for the caller.
+For example, repair a missing next step with:
+
+```sh
+export AWR_NEXT_ACTION="Read the source material"
+awr work edit APPENDIX --request-key repair-appendix --actor planner \
+  --reason "Complete draft fields" --next-action "${AWR_NEXT_ACTION:?}"
+```
+
+Accept the returned edit with its `source_fingerprint`, `preview_fingerprint` and
+`project_revision`, then preview and accept activation. Draft repairs also support
+repeated `--acceptance` and `--goal`, which replace the complete corresponding lists,
+and `--kind` / `--milestone`. Those planning-field repairs require a draft. Activation
+continues to validate the supplied criteria, goal, dependencies and source policy.
+
+Creation revision conflicts include `details.retry.expected_revision`. The caller
+can reuse its request with that revision. If a suggested command would exceed 300
+bytes or contain control characters, the CLI retains the exact request in a private
+project runtime input file and suggests `work create --input FILE` with the reviewed
+fingerprint, activation intent and new revision. Changed sources still require a
+fresh preview. Long context-budget recovery similarly uses
+`context compile --input FILE --budget N`, retaining all original selectors and the
+delta baseline; input and selection flags cannot be mixed.
 
 For an existing draft, `awr work activate APPENDIX --request-key activate-1`
 previews activation. Accept with the same arguments plus `--accept`,

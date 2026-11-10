@@ -284,9 +284,16 @@ impl Error {
                 }
                 Self::DependencyBlocked(message) => dependency_details(message),
                 Self::ClaimConflict(message) => claim_details(message),
-                Self::Unsupported(capability) => Some(serde_json::json!({
-                    "next_action": cli_next_action(&["awr", "capabilities", "--require", capability])
-                })),
+                Self::Unsupported(capability) => {
+                    let command = cli_next_action(&["awr", "capabilities", "--require", capability]);
+                    Some(serde_json::json!({
+                        "next_action": if command.len() <= 300 && !command.chars().any(char::is_control) {
+                            command
+                        } else {
+                            "awr capabilities".into()
+                        }
+                    }))
+                },
                 Self::ProtocolUnsupported { requested, supported } => Some(serde_json::json!({
                     "requested": requested, "supported": supported,
                     "source_write_performed": false, "runtime_write_performed": false
@@ -338,8 +345,7 @@ impl Error {
 
 /// Quote literal argv values for a POSIX command line; never interpolate source text as code.
 pub fn cli_next_action(args: &[&str]) -> String {
-    let command = args
-        .iter()
+    args.iter()
         .map(|arg| {
             if !arg.is_empty()
                 && arg
@@ -352,13 +358,44 @@ pub fn cli_next_action(args: &[&str]) -> String {
             }
         })
         .collect::<Vec<_>>()
-        .join(" ");
-    if command.len() <= 300 && !command.chars().any(char::is_control) {
+        .join(" ")
+}
+
+/// Require caller-supplied business facts before previewing a draft repair.
+pub fn draft_repair_error(error: Error, work: &crate::WorkItem, fields: &[&str]) -> Error {
+    let request = format!("repair-{}", crate::Id::new());
+    let command = |key: &str| {
+        let mut command = cli_next_action(&[
+            "awr",
+            "work",
+            "edit",
+            key,
+            "--request-key",
+            &request,
+            "--actor",
+            "awr-cli",
+            "--reason",
+            "Complete draft fields",
+        ]);
+        for field in fields {
+            command.push_str(match *field {
+                "title" => " --title \"${AWR_TITLE:?}\"",
+                "acceptance" => " --acceptance \"${AWR_ACCEPTANCE:?}\"",
+                "goal" => " --goal \"${AWR_GOAL:?}\"",
+                "kind" => " --kind \"${AWR_KIND:?}\"",
+                "milestone" => " --milestone \"${AWR_MILESTONE:?}\"",
+                "next_action" => " --next-action \"${AWR_NEXT_ACTION:?}\"",
+                _ => unreachable!("draft repair fields are defined by activation checks"),
+            });
+        }
         command
-    } else {
-        "Review the returned facts, then repeat the same command with the indicated correction."
-            .into()
+    };
+    let mut next = command(&work.meta.external_key);
+    if next.len() > 300 || next.chars().any(char::is_control) {
+        next = command(&work.meta.id.to_string());
     }
+    error.with_details(serde_json::json!({"missing":fields,"next_action":next,
+        "repair":"Set the named AWR_* variables to the missing business facts, execute the edit preview, accept its reviewed values, then activate the repaired draft."}))
 }
 
 fn dependency_details(message: &str) -> Option<serde_json::Value> {

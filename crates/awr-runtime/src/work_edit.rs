@@ -24,12 +24,20 @@ pub fn edit_work(
         .as_object()
         .ok_or_else(|| Error::InvalidInput("work edit fields must be an object".into()))?;
     if changes.is_empty()
-        || changes.iter().any(|(k, v)| {
-            !matches!(k.as_str(), "title" | "summary" | "priority" | "next_action")
-                || !v.is_string()
+        || changes.iter().any(|(k, v)| match k.as_str() {
+            "title" | "summary" | "priority" | "next_action" | "kind" | "milestone" => {
+                !v.is_string()
+            }
+            "acceptance" | "goal" => !v.as_array().is_some_and(|values| {
+                !values.is_empty()
+                    && values
+                        .iter()
+                        .all(|value| value.as_str().is_some_and(|s| !s.trim().is_empty()))
+            }),
+            _ => true,
         })
     {
-        return Err(Error::MutationUnsupported("work edit accepts text fields title, summary, priority and next_action; use dedicated work actions for lifecycle/ownership/completion and reviewed batch changes for other fields".into()));
+        return Err(Error::MutationUnsupported("work edit accepts title, summary, priority and next_action text, and draft acceptance, goal, kind and milestone fields; use dedicated work actions for lifecycle/ownership/completion and reviewed batch changes for other fields".into()));
     }
     if request.actor.origin != HostEditOrigin::DelegatedAgent {
         return Err(Error::RuleViolation(
@@ -45,6 +53,15 @@ pub fn edit_work(
     let review = if accept.is_none() {
         let project = store.project_by_root(root)?;
         let work = store.work_item(project.id, target)?;
+        if changes
+            .keys()
+            .any(|key| matches!(key.as_str(), "acceptance" | "goal" | "kind" | "milestone"))
+            && work.item.status != WorkStatus::Draft
+        {
+            return Err(Error::RuleViolation(
+                "planning-field repairs through work edit require a draft".into(),
+            ));
+        }
         if source_fingerprint.is_empty() {
             *source_fingerprint = work.source.fingerprint.clone();
         }

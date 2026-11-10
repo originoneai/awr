@@ -165,9 +165,20 @@ pub(crate) fn acquire(
         });
     }
     if !diagnostics.is_empty() {
-        return Err(Error::DependencyBlocked(serde_json::to_string(
-            &diagnostics,
-        )?));
+        let error = Error::DependencyBlocked(serde_json::to_string(&diagnostics)?);
+        let action = error
+            .report()
+            .details
+            .and_then(|d| d["next_action"].as_str().map(str::to_owned));
+        if ready.work.item.status == WorkStatus::Draft
+            && action.is_some_and(|a| a.len() > 300 || a.chars().any(char::is_control))
+        {
+            return Err(error.with_details(serde_json::json!({
+                "next_action":cli_next_action(&["awr", "work", "activate", &work_id.to_string(),
+                    "--request-key", &format!("activate-{}", Id::new())])
+            })));
+        }
+        return Err(error);
     }
     let expired=conn.prepare("SELECT id FROM claims WHERE project_id=?1 AND work_item_id=?2 AND status='active' AND expires_at<=?3").map_err(db_error)?
         .query_map(params![session.project_id.to_string(),work_id.to_string(),at],|r|id_at(r,0)).map_err(db_error)?.collect::<rusqlite::Result<Vec<_>>>().map_err(db_error)?;
