@@ -1,15 +1,12 @@
 # Quickstart
 
-This walkthrough takes you from a fresh install of AWR to a verified session
-handoff: install the CLI, initialize a project, start a work session, and prove
-that a successor session can pick up where the first one left off. Everything
-is copy-paste runnable; AWR bundles its own SQLite.
+Install AWR, initialize a project, claim work and pass a checkpoint to a successor session. The walkthrough uses the bundled SQLite runtime and copyable shell commands.
 
-## 1. Install AWR
+## Use it
 
-AWR ships as native packages on npm and PyPI. Both channels install the same
-Rust CLI (`awr`) and MCP server (`awr-mcp`); there is no separate JavaScript or
-Python SDK.
+### 1. Install AWR
+
+AWR ships the same native Rust CLI (`awr`) and MCP server (`awr-mcp`) through npm and PyPI.
 
 With npm (requires Node 22.14 or newer):
 
@@ -38,13 +35,18 @@ Linux, check your glibc first:
 ldd --version | head -n 1
 ```
 
-For npm installs, keep optional dependencies enabled — the launcher resolves a
-per-platform native package. There is no install script or network downloader;
-pip wheels embed the binaries. A third channel exists for application authors:
-a pinned native payload of the two binaries that a host app can embed, so its
-users need no Node, Python, or Rust at runtime.
+For npm, keep optional dependencies enabled so the launcher resolves its per-platform native package. Pip wheels embed the binaries. Application authors can embed a pinned native payload.
 
-## 2. Initialize your project
+## How it behaves
+
+| Step | Result |
+| --- | --- |
+| Preview and accept | Registered authoritative sources |
+| Start and claim | A work-bound session |
+| Compile and read | Budgeted context with completeness and hash |
+| Checkpoint and resume | A successor with recorded next actions and open loops |
+
+### 2. Initialize your project
 
 Initialization is a two-step operation: a preview, then an explicit accept.
 Nothing is written until you pass `--accept`.
@@ -54,10 +56,7 @@ AWR_PROJECT=/absolute/path/to/your/project
 awr --project "$AWR_PROJECT" init
 ```
 
-Read the preview: it shows the inventory AWR found — existing Markdown task
-ledgers, YAML sources, goals — and the source mapping it proposes. Existing
-files are never overwritten; your original documents stay the authority. If the
-preview looks right, accept it:
+Read the inventory of Markdown task ledgers, YAML sources and goals, then review the proposed mapping before accepting it:
 
 ```sh
 awr --project "$AWR_PROJECT" init --accept
@@ -87,7 +86,7 @@ least one task has a source-declared goal, acceptance criteria, a next action,
 and resolved prerequisites. `needs_organization` means something is missing —
 the report's ordered `actions` tell you what to add to your source files.
 
-## 3. Start a work session
+### 3. Start a work session
 
 A session is AWR's unit of work ownership. These commands use a small shell
 helper so every call carries the project path and JSON output:
@@ -122,10 +121,9 @@ awrj context compile --work "$AWR_WORK" --session "$AWR_SESSION" \
 jq -e '.completeness.complete and (.work_context != null)' "$AWR_NOTES/context.json"
 ```
 
-Read the packet, not only the boolean. On `BudgetExceeded`, widen `--budget`;
-on `SourceStale`, run `awrj source reindex` and compile again.
+Read the complete packet. On `BudgetExceeded`, widen `--budget`; on `SourceStale`, run `awrj source reindex` and compile again.
 
-## 4. Record progress with a checkpoint
+### 4. Record progress with a checkpoint
 
 Before you step away — or before a long host conversation compacts — save a
 checkpoint with the context hash you actually used, an honest digest, the exact
@@ -142,14 +140,9 @@ awrj session checkpoint --session "$AWR_SESSION" --agent "$AWR_AGENT" \
   --expected-project-revision "$AWR_REV" > "$AWR_NOTES/checkpoint.json"
 ```
 
-A checkpoint can record unfinished work; it is not proof of passing tests or
-completed acceptance criteria.
+### 5. Continue the work in a new session
 
-## 5. Continue the work in a new session
-
-To prove continuation works, end the first session and resume from it — the
-same takeover path a new agent, machine, or host conversation would use. End
-releases the claim; it does not mark source work complete:
+End the first session to release its claim, then create a successor through the same takeover path used by another agent, machine or host conversation:
 
 ```sh
 AWR_REV=$(awrj status | jq -er '.project_revision')
@@ -192,12 +185,24 @@ awrj client bind --client generic --external-session "myhost:$HOST_CONVERSATION_
   --work "$AWR_WORK" --session "$AWR_SESSION"
 ```
 
-AWR does not transfer a host's process memory or take over arbitrary existing
-processes — continuity comes from what was explicitly recorded.
-
-## Where to go next
+### Where to go next
 
 - [Concepts](concepts.md) — what sessions, claims, and checkpoints mean.
 - [CLI reference](cli.md) — the full command surface used above.
 - [Daily workflow](daily-workflow.md) — this loop in everyday work.
 - [Troubleshooting](troubleshooting.md) — when something reports unexpected.
+
+## Limits
+
+- The packages expose native executables; JavaScript and Python SDKs are outside their scope.
+- Installation uses bundled native payloads rather than install scripts or network downloaders.
+- Embedded native payloads run independently of Node, Python and Rust runtimes.
+- Initialization preserves existing files and their authority.
+- Checkpoint success records progress, including unfinished work; test results and acceptance require their own evidence.
+- Session end releases runtime ownership; completing source work uses a separate operation.
+- Continuity transfers explicitly recorded facts; host process memory and arbitrary existing processes remain host responsibilities.
+
+## Code and tests
+
+- [CLI session tests](../../crates/awr-cli/tests/session_cli.rs)
+- [Client lifecycle fixture](../../examples/codex/README.md)

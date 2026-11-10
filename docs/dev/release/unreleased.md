@@ -186,6 +186,13 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   stored artifact's hash). `evidence.submit` still accepts such evidence (one execution can have auxiliary evidence)
   and reports the relation in `execution_consistency.result_binding`. Works whose completion does not verify an exact
   result, and executions that are not workspace-settled, are unchanged. No schema change.
+- Purpose-first guides and eight Personal reference pages now collect assurance boundaries in
+  a single Limits section. MCP descriptions state the action and result; empty domain discovery
+  returns a `limits` array with the detailed constraints. Catalog tests cap descriptions at
+  200 bytes and the default stdio catalog at 6144 bytes. Incomplete-context guidance points to
+  gaps and an incomplete checkpoint; execution and completion rules stay the same. Documentation
+  baseline updates lower improved metrics and retain recorded ceilings for drifted metrics;
+  new-page limits and relative links are checked before writing.
 - A work that delivers a selected candidate into a repository (a connector is configured for it, a
   candidate is selected and its completion policy can be integrated) can no longer be completed before
   that candidate's integration is confirmed. `delivery.finalize` and `work.complete` (and the library

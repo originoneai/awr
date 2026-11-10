@@ -318,12 +318,7 @@ fn incomplete_context_allows_a_truthful_checkpoint_and_revision_errors_name_proj
     let error: Value = serde_json::from_slice(&compiled.stderr).unwrap();
     assert_eq!(error["code"], "ContextIncomplete");
     assert_eq!(error["details"]["incomplete_checkpoint_allowed"], true);
-    assert!(
-        error["message"]
-            .as_str()
-            .unwrap()
-            .contains("incomplete checkpoint")
-    );
+    assert_eq!(error["details"]["checkpoint_updates_source_work"], false);
     let context: Value = serde_json::from_slice(&compiled.stdout).unwrap();
     let hash = context["work_context"]["context_hash"].as_str().unwrap();
     let session_revision = s["session"]["revision"].to_string();

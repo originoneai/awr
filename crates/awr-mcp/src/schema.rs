@@ -75,7 +75,7 @@ fn compaction_tools() -> Vec<Tool> {
     vec![
         tool(
             "awr_compaction_observe",
-            "Record completed native compaction: stable ID, increasing sequence, actual request usage/capacity; omit unknowns. One action; no session switch or compaction disable.",
+            "Record completed native compaction telemetry. Returns the observation receipt and next action.",
             selector(
                 json!({"expected_revision":revision(),"observation":observation,"policy":object(json!({"post_compaction_threshold_percent":{"type":"integer","minimum":1,"maximum":100,"default":50}}), &["post_compaction_threshold_percent"])}),
                 &["expected_revision", "observation"],
@@ -85,7 +85,7 @@ fn compaction_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_compaction_get",
-            "Read latest compaction action. include_observation adds measurements/costs. Runtime-only; source freshness is not verified.",
+            "Inspect the latest compaction action. Returns guidance and optional measurements and costs.",
             selector(
                 json!({"include_observation":{"type":"boolean","default":false}}),
                 &[],
@@ -95,7 +95,7 @@ fn compaction_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_compaction_defer",
-            "After user postponement, defer the latest observation until next compaction. No permission grant or session switch.",
+            "Defer advice after the user postpones the latest observation. Returns the deferral receipt.",
             selector(
                 json!({"expected_revision":revision(),"observation_event_id":text()}),
                 &["expected_revision", "observation_event_id"],
@@ -110,7 +110,7 @@ fn workflow_tools() -> Vec<Tool> {
     vec![
         tool(
             "awr_work_assess",
-            "Assess management from contracts and attributed observations. Unknowns stay unknown; no execution grant or completion-policy change. Optional explain attaches assessment.explain without a new tool name.",
+            "Assess management requirements from the current contract. Returns the assessment and optional explanation.",
             object(
                 json!({"work":text(),"branch":branch(),"explain":{"type":"boolean","default":false,"description":"Opt-in assessment.explain field; default false preserves legacy shape."}}),
                 &["work"],
@@ -120,7 +120,7 @@ fn workflow_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_work_manage",
-            "Record attributed management observations for the current contract/session and stable key. Continuous management never automatically downgrades.",
+            "Record attributed management observations for a contract. Returns the assessment receipt.",
             object(
                 json!({"work":text(),"session":text(),"expected_revision":revision(),"request_key":text(),"contract_fingerprint":text(),"observation":object(json!({
                 "observed_at":{"type":"integer","minimum":0},"note":text(),
@@ -141,7 +141,7 @@ fn workflow_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_work_admit",
-            "Record a governed admission proposal or decision for the current work contract and session. A request is not a decision; the program checks provenance and currency only, grants no execution beyond the recorded decision and changes no completion policy.",
+            "Record an admission proposal or decision for one work item. Returns the receipt and current admission state.",
             object(
                 json!({"work":text(),"session":optional(text()),"agent":optional(text()),"expected_revision":revision(),"request_key":text(),
                 "decision":{"type":"string","enum":["proposed","approved","denied"]},"contract_fingerprint":text(),
@@ -162,7 +162,7 @@ fn workflow_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_work_contain",
-            "Record a containment proposal or decision for the children of a parent work, bound to the parent's contract, the exact set of children and their dependencies. A request is not a decision; the program checks scope, currency and authorization only and judges no intent.",
+            "Record a containment proposal or decision for a parent’s children. Returns the receipt and bound change set.",
             object(
                 json!({"parent":text(),"session":optional(text()),"agent":optional(text()),"expected_revision":revision(),"request_key":text(),
                 "decision":{"type":"string","enum":["proposed","approved","denied"]},"change_set_fingerprint":text(),
@@ -182,7 +182,7 @@ fn workflow_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_work_reassess",
-            "Record a reassessment decision for a work whose records show a method that kept failing or an outcome nobody knows, or whose rework or effort budget is spent, bound to exactly those facts or that budget. A request is not a decision by itself; the program checks currency and attribution only and judges no cause. It opens no task and holds no other work.",
+            "Record a decision on repeated failure, unknown outcomes or spent budgets. Returns the reassessment receipt.",
             object(
                 json!({"work":text(),"session":optional(text()),"agent":optional(text()),"expected_revision":revision(),"request_key":text(),
                 "decision":{"type":"string","enum":["continue","wait","reuse","alter_method","split","replan","deliver_with_known_issues","reduce_scope","escalate"]},
@@ -207,7 +207,7 @@ fn workflow_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_work_gap",
-            "Open, resolve or withdraw a gap of a work: something missing or changed in its intent, acceptance, design, plan or definition, closed by a fact lookup, a feasibility experiment that really ran, an authorized choice or an observed environment change. An open gap puts in question only the judgments that read its layer, on that work; it opens no task and holds no other work.",
+            "Open, resolve or withdraw a gap in one work item. Returns the gap record and affected judgments.",
             object(
                 json!({"work":text(),"session":optional(text()),"agent":optional(text()),"expected_revision":revision(),"request_key":text(),
                 "gap_key":text(),"action":{"type":"string","enum":["open","resolve","withdraw"]},
@@ -231,7 +231,7 @@ fn workflow_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_work_finding",
-            "Record a review finding of a work, or close one. The severity is derived, not claimed: a finding blocks only when it breaks a required criterion or a hard rule and shows it with a reproducible counterexample, or states a security or data-loss risk with its reasoning. Blocking findings hold the completion of the work; every other finding becomes a deferred record linked to the work that blocks nothing.",
+            "Record or resolve a review finding. Returns its derived severity and completion impact.",
             object(
                 json!({"work":text(),"session":optional(text()),"agent":optional(text()),"expected_revision":revision(),"request_key":text(),
                 "finding_key":text(),"action":{"type":"string","enum":["record","resolve"]},
@@ -253,7 +253,7 @@ fn workflow_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_work_prepare",
-            "Prepare readiness and required context. Summary/action aggregate optional budget-omission indexes with a count, reason and full_result query; full retains details. Consume context before checkpointing; no claim or completion-policy change. Optional explain attaches assessment.explain without a new tool name.",
+            "Prepare work readiness and required context. Returns management requirements, context and the next action.",
             object(
                 json!({"work":text(),"session":optional(text()),"branch":branch(),"goals":strings(),"source_sha":optional(text()),"budget":{"type":"integer","minimum":1,"maximum":100000},"explain":{"type":"boolean","default":false,"description":"Opt-in assessment.explain field; default false omits the explanation independently of response_view."}}),
                 &["work"],
@@ -263,7 +263,7 @@ fn workflow_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_completion_prepare",
-            "Validate actual report bytes and current acceptance coverage; derive hash/evidence mapping. No verification execution or completion. Level is caller asserted. Returns a nullable advisory warning when the report is not in canonical form (exactly one trailing LF); the warning is descriptive only and the report file is never modified or refused.",
+            "Validate a completion report against current acceptance. Returns evidence and completion inputs with any format advisory.",
             object(
                 json!({"work":text(),"report":text(),"evidence_key":text(),"source_sha":text(),"level":levels(),"branch":branch()}),
                 &["work", "report", "evidence_key", "source_sha", "level"],
@@ -290,7 +290,7 @@ fn change_tools() -> Vec<Tool> {
     vec![
         tool(
             "awr_work_graph",
-            "Read dependencies, dependents, readiness and claims. Roots include required ancestors; no silent closure truncation. Host owns execution/concurrency.",
+            "Read a task’s dependency impact. Returns required ancestors, dependents, readiness, claims and graph bindings.",
             object(
                 json!({"roots":strings(),"branch":branch(),"limit":{"type":"integer","minimum":1,"maximum":1000,"default":100}}),
                 &[],
@@ -300,7 +300,7 @@ fn change_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_spec_check",
-            "Read explicit approved specification bindings, supersessions and requirement coverage. Unknown refs remain unknown; never edits sources or proves acceptance. Owner stdio and unisolated project-level shared grants only; shared workstream scopes are unsupported.",
+            "Inspect approved specification bindings and coverage. Returns declared coverage, supersessions and unresolved references.",
             object(
                 json!({"spec":optional(text()),"limit":{"type":"integer","minimum":1,"maximum":10000,"default":1000}}),
                 &[],
@@ -310,7 +310,7 @@ fn change_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_change_preview",
-            "Preview source change without writing. work_edit shows only changed fields. Keep request_id; review before apply/status/recover.",
+            "Preview a proposed source change. Returns reviewed fields or source text and a preview fingerprint.",
             object(
                 json!({"request_id":key,"reason":text(),"change":change}),
                 &["request_id", "reason", "change"],
@@ -320,7 +320,7 @@ fn change_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_change_apply",
-            "Apply reviewed preview at expected_revision. Query awr_change_status for outcome. Changed sources/revisions or occupied contracts conflict; drafts remain non-executable.",
+            "Apply a reviewed source preview at the expected revision. Returns the source-operation receipt.",
             object(
                 json!({"request_id":key,"reason":text(),"change":change,"expected_revision":revision(),"expected_preview":text()}),
                 &[
@@ -336,7 +336,7 @@ fn change_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_change_status",
-            "Inspect this client's source-change outcome even with stale sources. Use original kind/request_id. Missing receipt does not prove no effect.",
+            "Inspect this client’s source-change operation. Returns its durable outcome and recovery state.",
             object(
                 json!({"request_id":key,"kind":kind}),
                 &["request_id", "kind"],
@@ -346,7 +346,7 @@ fn change_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_change_recover",
-            "Recover inspected source change with the same client/kind/request_id. No Agent launch. Related-file writes are recoverable, not atomic.",
+            "Recover an inspected source-change operation. Returns the phases completed and remaining recovery state.",
             object(
                 json!({"request_id":key,"kind":kind,"expected_revision":revision()}),
                 &["request_id", "kind", "expected_revision"],
@@ -420,7 +420,7 @@ pub fn tools() -> Vec<Tool> {
     let mut catalog = vec![
         tool(
             TOOL_NAMES[0],
-            "Daily action queue: continue, claimable, waiting, blocked; history is aggregated. Use view=full for earlier diagnostics. Explicit source_sha verifies reports. Reindex changed sources first; this query never writes.",
+            "Read the daily action queues or full project status. Returns work summaries, diagnostics and evidence currency.",
             object(
                 json!({"branch":branch(),"source_sha":optional(text()),"view":{"type":"string","enum":["action","full","summary"],"default":"action"},"work":strings(),"goal":optional(text()),"milestone":optional(text())}),
                 &[],
@@ -430,14 +430,14 @@ pub fn tools() -> Vec<Tool> {
         ),
         tool(
             TOOL_NAMES[1],
-            "Read work eligible for a new claim. Active/in-progress work is excluded; blocked_total means not selectable. Use awr_project_status for continuation and waiting.",
+            "Find work eligible for a new claim. Returns a bounded list with readiness diagnostics.",
             object(json!({"branch":branch(),"limit":limit()}), &[]),
             true,
             false,
         ),
         tool(
             TOOL_NAMES[2],
-            "Read one work item, exact acceptance, dependencies and decision/evidence summaries.",
+            "Read one work item. Returns acceptance criteria, dependencies, decisions and evidence summaries.",
             object(
                 json!({"work":text(),"branch":branch(),"source_sha":optional(text())}),
                 &["work"],
@@ -447,7 +447,7 @@ pub fn tools() -> Vec<Tool> {
         ),
         tool(
             TOOL_NAMES[3],
-            "Compile the existing L1 context contract within budget. Incomplete context returns its gaps with isError. Explicit branch uses fork delta.",
+            "Compile task context within a token budget. Returns required facts, source bindings, a context hash and any gaps.",
             object(
                 json!({
                     "work":optional(text()),"session":optional(text()),"detached":{"type":"boolean","default":false},"agent":optional(text()),"branch":branch(),
@@ -461,7 +461,7 @@ pub fn tools() -> Vec<Tool> {
         ),
         tool(
             TOOL_NAMES[4],
-            "Apply one source work action through domain revision/fingerprint/claim gates. Complete requires every criterion's evidence mapping. Start sessions/claims via CLI.",
+            "Apply one work lifecycle action. Returns the source-change receipt and current work state.",
             object(
                 json!({
                     "work":text(),"action":{"type":"string","enum":["progress","block","unblock","cancel","reopen","complete"]},"session":text(),"expected_revision":revision(),"reason":text(),
@@ -475,7 +475,7 @@ pub fn tools() -> Vec<Tool> {
         ),
         tool(
             TOOL_NAMES[5],
-            "Append a bounded generic event. Reserved lifecycle events require their domain operation; payload is data, never executed.",
+            "Append a bounded generic event. Returns the recorded event and project revision.",
             object(
                 json!({
                     "expected_revision":revision(),"work":optional(text()),"session":optional(text()),"branch":branch(),
@@ -491,7 +491,7 @@ pub fn tools() -> Vec<Tool> {
         ),
         tool(
             TOOL_NAMES[6],
-            "Record evidence bindings and report reference. Verification fields are caller assertions; no report command is executed.",
+            "Record evidence bindings and a report reference. Returns the evidence record and event receipt.",
             object(
                 json!({
                     "expected_revision":revision(),"external_key":text(),"work":optional(text()),"evidence_type":text(),"level":levels(),"summary":text(),"locator":text(),
@@ -512,7 +512,7 @@ pub fn tools() -> Vec<Tool> {
         ),
         tool(
             TOOL_NAMES[7],
-            "Search bounded summaries with structured filters. Search cache is built only in RAM; event payloads and file bodies are excluded.",
+            "Search project summaries with structured filters. Returns bounded matching summaries and references.",
             object(
                 json!({
                     "text":optional(text()),"kind":{"type":["string","null"],"enum":["goal","plan","rule","work_item","work","decision","evidence","event",null]},
@@ -590,7 +590,7 @@ fn lifecycle_tools() -> Vec<Tool> {
     vec![
         tool(
             "awr_session_start",
-            "Atomically bind this client's conversation to work; optionally claim (without ttl_ms the project's default lifetime applies, or none; no_expiry asks for none). Identical bindings reuse the session. Inspect current claims/status.",
+            "Bind a client conversation to work and optionally claim it. Returns the session, binding and claim receipt.",
             object(
                 json!({"work":text(),"conversation":text(),"agent":text(),"provider":text(),"model":text(),"expected_revision":revision(),"claim":{"type":"boolean","default":false},"ttl_ms":ttl,"no_expiry":no_expiry,"branch":branch()}),
                 &[
@@ -607,14 +607,14 @@ fn lifecycle_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_session_get",
-            "Read session, binding, claims, checkpoints, interrupted saves and successor. Runtime-only; available with stale sources.",
+            "Inspect a work session. Returns its binding, claims, checkpoints, interrupted saves and successor.",
             selector(json!({}), &[]),
             true,
             false,
         ),
         tool(
             "awr_session_list",
-            "List this client's persistent sessions newest first. Use next_before_revision to read older entries; transport connections are not work sessions.",
+            "List this client’s persistent sessions. Returns newest entries and a cursor for older sessions.",
             object(
                 json!({"limit":limit(),"before_revision":optional(revision())}),
                 &[],
@@ -624,7 +624,7 @@ fn lifecycle_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_session_checkpoint",
-            "Save actual progress, including failures and context gaps, without changing source work. Never invent a context hash. expected_revision is the project revision, not session.revision. Supply agent to record an unverified caller declaration; changing agents requires awr_session_resume. Omission retains compatibility and records an undeclared caller, not the session agent.",
+            "Save progress and the last consumed context hash. Returns the checkpoint and observed project delta.",
             selector(
                 json!({"expected_revision":revision(),"agent":text(),"context_hash":text(),"digest":text(),"next_action":text(),"open_loops":strings(),"changed_entities":strings()}),
                 &["expected_revision", "context_hash", "digest", "next_action"],
@@ -634,7 +634,7 @@ fn lifecycle_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_session_end",
-            "Explicitly close a work session and release its claims. A transport disconnect does not perform this action. Available with stale sources.",
+            "Close a work session and release its claims. Returns the session-end receipt.",
             selector(
                 json!({"expected_revision":revision(),"outcome":{"type":"string","enum":["ended","interrupted","incomplete"]}}),
                 &["expected_revision", "outcome"],
@@ -644,7 +644,7 @@ fn lifecycle_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_session_resume",
-            "Resume a predecessor into a bound conversation: refresh context, inherit checkpoint and transfer/acquire claims through resume gates.",
+            "Continue from a predecessor in a bound conversation. Returns the successor session, refreshed context and claim outcome.",
             object(
                 json!({"session":text(),"conversation":text(),"agent":text(),"provider":text(),"model":text(),"expected_revision":revision(),"claim":{"type":"string","enum":["inherit","acquire","none"],"default":"inherit"},"ttl_ms":ttl,"no_expiry":no_expiry,"budget":{"type":["integer","null"],"minimum":1,"maximum":100000},"paths":optional(strings()),"tags":optional(strings()),"goals":strings(),"source_sha":optional(text())}),
                 &[
@@ -661,7 +661,7 @@ fn lifecycle_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_session_claim",
-            "Acquire a work claim (without ttl_ms the project's default lifetime applies, or none; no_expiry asks for none), or release an explicitly identified claim owned by the session.",
+            "Acquire or release a session’s work claim. Returns the claim receipt and current project revision.",
             selector(
                 json!({"action":{"type":"string","enum":["acquire","release"]},"expected_revision":revision(),"claim":optional(text()),"ttl_ms":ttl,"no_expiry":no_expiry}),
                 &["action", "expected_revision"],
@@ -687,14 +687,14 @@ fn continuity_tools() -> Vec<Tool> {
     vec![
         tool(
             "awr_session_wait",
-            "Save a checkpoint with caller-supplied progress and consumed context hash, then persist a user-input wait. The host collects input; AWR does not start a new model turn.",
+            "Save a checkpoint and persist a user-input wait. Returns the checkpoint and wait receipt.",
             wait,
             false,
             false,
         ),
         tool(
             "awr_session_reply",
-            "Record a user reply or explicit cancellation reason for this client's wait. Does not execute work. Query the session and compile current context before continuing.",
+            "Record a reply or cancellation for this client’s wait. Returns the updated wait receipt.",
             object(
                 json!({"wait":text(),"expected_revision":revision(),"reply":text(),"cancel":{"type":"boolean","default":false}}),
                 &["wait", "expected_revision", "reply"],
@@ -704,14 +704,14 @@ fn continuity_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_operation_get",
-            "Read this client's durable request outcome and exactly correlated domain receipts, including after disconnect or restart. A started request has unknown outcome; never replay it automatically.",
+            "Inspect this client’s durable request outcome. Returns its state and correlated domain receipts.",
             object(json!({"request_id":text()}), &["request_id"]),
             true,
             false,
         ),
         tool(
             "awr_operation_recover",
-            "Recover an unknown request only from its correlated committed terminal domain receipt. Never re-executes the operation; absence or partial receipts stays unknown. Compile fresh context after recovery.",
+            "Resolve an unknown request from a committed terminal receipt. Returns the recovered outcome or remaining uncertainty.",
             object(
                 json!({"request_id":text(),"expected_revision":revision()}),
                 &["request_id", "expected_revision"],
@@ -721,7 +721,7 @@ fn continuity_tools() -> Vec<Tool> {
         ),
         tool(
             "awr_source_reindex",
-            "Explicitly refresh this registered project's source projections after authoritative files change. Does not edit source files; partial failures remain visible.",
+            "Refresh this project’s source projections. Returns indexing receipts and any source diagnostics.",
             object(
                 json!({"expected_revision":revision()}),
                 &["expected_revision"],
@@ -756,7 +756,7 @@ pub(crate) fn shared_tools() -> Vec<Tool> {
                 .push(json!("request_id"));
         }
     }
-    catalog.insert(0, tool("awr_projects_list", "List this authenticated client's registered project keys and access. Does not read project source files.", object(json!({}), &[]), true, false));
+    catalog.insert(0, tool("awr_projects_list", "List this authenticated client’s registered projects. Returns project keys and access grants.", object(json!({}), &[]), true, false));
     catalog.push(crate::workstreams::tool());
     catalog
 }

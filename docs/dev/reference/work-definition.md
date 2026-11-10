@@ -83,17 +83,18 @@ work_items:
 
 ## How it behaves
 
+| Layer | Responsibility |
+| --- | --- |
+| Definition | Declared obligations and pinned references |
+| Admission | Current oracle files and failed baselines |
+| Work check | Program-recorded check execution |
+
 The deterministic check verifies reference resolution, pinned versions and the obligations of the
 declared purpose. Definitions reuse existing goals, success criteria, acceptance, specification
 references, decisions and dependencies. Work without a definition keeps its existing projection,
 display and preparation behavior. Legacy examples keep `id` and `check` absent when serialized.
 
-YAML ledgers support definitions; Markdown ledgers reject them with rule `ledger.definition`.
-Unknown definition, example and check fields are rejected. General lists hold at most 64 entries,
-descriptive text is nonblank and at most 4096 bytes, and the whole record stays within 64 KiB.
-Public-content screening applies to the complete definition. User decisions and sourced facts need
-a decision key and a `sha256:` fingerprint; assumptions and suggestions are kept as such and are
-never treated as adopted facts.
+YAML ledgers support definitions. Unknown definition, example and check fields are rejected. Lists hold at most 64 entries; descriptive text is nonblank and at most 4096 bytes; records fit within 64 KiB. Public-content screening covers the complete definition. Adopted user decisions and sourced facts require a decision key and `sha256:` fingerprint.
 
 | Example field | Rule |
 | --- | --- |
@@ -135,10 +136,7 @@ order, each with `id` (null when absent), `kind`, `criterion` and `has_check`.
 | `large_work_budget_missing` | a work declared `large` has no rework budget of its own: larger work declares it, and until it does the figure of a standard work applies |
 | `outline_trigger_missing`, `outline_not_elaborated` | an outline has no elaboration trigger; an outline is not near-term executable, so [admission](admission.md) refuses it until it is elaborated |
 
-Two obligations take their answer from existing sources instead of the definition: the observable
-assertions are the work's acceptance criteria (the examples refine them), and the prerequisites are
-its dependency links. A work without dependencies reports `prerequisites` as `not_applicable`; that
-is never a gap, and unfinished prerequisites stay the business of the readiness rules.
+Observable assertions come from work acceptance criteria, refined by examples. Prerequisites come from dependency links. An empty dependency set reports `prerequisites=not_applicable`.
 
 The note `example_check_absent` identifies each example for a required criterion that has no check.
 It leaves the definition's `state` unchanged and adds no gap by itself.
@@ -149,12 +147,9 @@ as stated. Elaborating it means replacing the outline with a full definition, wh
 everything its purpose owes. A side line owes a contribution like any work, and additionally a parent to
 return to and the two conditions; none of them is a new task type or state.
 
-`size` and `budget` do not add an obligation: they say how many times a work may be sent back and how
-long it may be worked on before a decision is needed, see [bounded reassessment](reassessment.md#budgets).
+`size` and `budget` bound rework cycles and active effort before a decision is required. See [bounded reassessment](reassessment.md#budgets).
 
-The note `parent_outcome_unproven` appears on a parent whose children are all completed while the
-parent is not: finished children never prove the parent's own outcome, which still needs its own
-acceptance evidence.
+The `parent_outcome_unproven` note marks a parent whose children have all completed while the parent remains open.
 
 A criterion is `later` when the work is marked `tier: later` or when every specification
 reference bound to exactly that criterion points at a `future` item; later criteria owe no
@@ -180,15 +175,20 @@ see [check freezing and baselines](admission.md#freeze-checks-and-record-baselin
 
 ## Limits
 
-- Definitions add no second goal, task, requirement or status system.
-- Semantic adequacy of contribution claims, granularity judgments and examples stays with the author and reviewer.
-- Declaring a definition grants no execution permission and changes no completion rule.
-- Definition validation reports declared bindings; admission reads `check.files` and `work check` executes `check.run`.
-- File existence, file contents and symlink targets are not checked by definition validation.
-- Older readers reject `id` and `check`; upgrade every reader before adding these keys to a shared ledger.
-- `work create` and `batch change` do not author definitions; edit the authoritative YAML source.
-- Shared workstream grants cannot read this project-wide report; use `awr_workstream`, which carries no definition.
-- A complete report establishes present, current obligations; it does not establish correct work or accepted delivery.
+- Definitions use YAML; Markdown ledgers reject them with `ledger.definition`.
+- Assumptions and suggestions retain their declared roles rather than becoming adopted facts.
+- Absent prerequisites create no definition gap; readiness rules judge unfinished dependencies.
+- Size and budget configure reassessment thresholds rather than adding definition obligations.
+- Parent outcomes require the parent’s own acceptance evidence; child completion alone is insufficient.
+- Definitions reuse existing goals, tasks, requirements and statuses.
+- Authors and reviewers judge the semantic adequacy of contribution claims, granularity and examples.
+- Definitions declare obligations; execution admission and completion retain their own rules.
+- Definition validation checks declarations. Admission reads `check.files`; `work check` executes `check.run`.
+- File existence, content and symlink targets are checked by later operations rather than definition validation.
+- Older readers reject `id` and `check`; upgrade every reader before adding them to shared ledgers.
+- Author definitions in authoritative YAML; `work create` and `batch change` support other planning fields.
+- Shared workstream grants use `awr_workstream`; the project-wide definition report is outside their read scope.
+- A complete report establishes current declared obligations. Correct implementation and accepted delivery require their own evidence.
 
 ## Code and tests
 
