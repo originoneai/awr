@@ -85,8 +85,12 @@ awr work help all
 awr help runtime
 awr help team
 awr status --help
+awr work activate --help
 awr work complete --help
 ```
+
+The work planning group lists `create`, `activate`, `edit`, `graph` and `assess`.
+Use `awr work help planning` to read their one-line descriptions.
 
 `awr help daily` and `awr work help daily` list the daily commands.
 `awr help runtime` and `awr help team` show their commands' detailed help;

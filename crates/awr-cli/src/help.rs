@@ -128,6 +128,7 @@ static WORK_GROUPS: &[Group] = &[
         title: "Planning",
         commands: &[
             ("create", "Preview or accept a new task draft"),
+            ("activate", "Preview and accept activation of a task draft"),
             ("edit", "Preview and apply a source-backed work edit"),
             ("graph", "Inspect dependencies, readiness and claims"),
             ("assess", "Explain management requirements"),

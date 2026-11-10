@@ -83,7 +83,8 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   for the original complete lists. The `environments` and `collaboration` groups
   keep command help topics distinct; detailed help, including `awr help work`,
   retains its original format. Built-in help topics also preserve the invoked
-  executable name.
+  executable name. The work planning group includes `activate` alongside
+  `create` and `edit`.
 - Team evidence keeps the caller's claim and the recorded outcome of an execution apart. `evidence.submit` compares a
   claim bound to an execution with the Team's record of it (same work, scope, contract and input digest; a claim of
   success against a recorded failure or cancellation, or the reverse) and refuses a provable contradiction as

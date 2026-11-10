@@ -5,6 +5,7 @@ use std::process::{Command, Output};
 const HELP: &[u8] = include_bytes!("fixtures/help/help.txt");
 const HELP_FLAG: &[u8] = include_bytes!("fixtures/help/help-flag.txt");
 const WORK_HELP: &[u8] = include_bytes!("fixtures/help/work-help.txt");
+const CURRENT_WORK_HELP: &[u8] = include_bytes!("fixtures/help/work-help-current.txt");
 const HELP_HELP: &[u8] = include_bytes!("fixtures/help/help-help.txt");
 const WORK_HELP_HELP: &[u8] = include_bytes!("fixtures/help/work-help-help.txt");
 const STATUS_HELP: &[u8] = include_bytes!("fixtures/help/status-help.txt");
@@ -62,6 +63,12 @@ fn ac1_default_overviews_are_short_and_point_to_all_commands() {
         let text = String::from_utf8(output).unwrap();
         assert!(text.contains("Daily work"), "{text}");
         assert!(text.contains(hint), "{text}");
+        if args.first() == Some(&"work") {
+            assert!(
+                text.contains("create, activate, edit, graph, assess"),
+                "{text}"
+            );
+        }
     }
     assert_eq!(help(&[]), help(&["--help"]));
     assert_eq!(help(&["help"]), help(&["--help"]));
@@ -73,7 +80,10 @@ fn ac1_default_overviews_are_short_and_point_to_all_commands() {
 fn ac2_full_lists_match_the_baseline_line_for_line() {
     assert_eq!(HELP, HELP_FLAG);
     assert_eq!(help(&["help", "all"]), native_baseline(HELP));
-    assert_eq!(help(&["work", "help", "all"]), native_baseline(WORK_HELP));
+    assert_eq!(
+        help(&["work", "help", "all"]),
+        native_baseline(CURRENT_WORK_HELP)
+    );
 }
 
 #[test]
@@ -93,7 +103,7 @@ fn ac2_full_list_comparison_detects_an_omitted_command() {
 #[test]
 fn ac3_leaf_help_matches_the_baseline_byte_for_byte() {
     for (args, baseline) in [
-        (vec!["help", "work"], WORK_HELP),
+        (vec!["help", "work"], CURRENT_WORK_HELP),
         (vec!["status", "--help"], STATUS_HELP),
         (vec!["work", "complete", "--help"], COMPLETE_HELP),
         (vec!["help", "status"], STATUS_HELP),
@@ -111,25 +121,22 @@ fn ac3_all_visible_command_help_paths_match_detailed_help() {
         let mut full_args = scope.clone();
         full_args.extend(["help", "all"]);
         let full = String::from_utf8(help(&full_args)).unwrap();
-        let commands = full
-            .split_once("Commands:\n")
-            .unwrap()
-            .1
-            .split_once("\nOptions:")
-            .unwrap()
-            .0;
-        let names = commands
-            .lines()
-            .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
-            .filter_map(|line| line.split_whitespace().next())
-            .collect::<Vec<_>>();
+        let names = visible_command_names(&full);
         assert!(!names.is_empty(), "{full}");
+        let baseline =
+            std::str::from_utf8(if scope.is_empty() { HELP } else { WORK_HELP }).unwrap();
+        for name in visible_command_names(baseline) {
+            assert!(
+                names.contains(&name),
+                "missing baseline command {name}: {full}"
+            );
+        }
         for name in names {
             let mut help_args = scope.clone();
             help_args.extend(["help", name]);
             let expected = if scope.is_empty() && name == "work" {
-                // The work overview is intentionally shorter; preserve its original help topic.
-                native_baseline(WORK_HELP)
+                // Work topics retain the full format while allowing newly added commands.
+                help(&["work", "help", "all"])
             } else if name == "help" {
                 // The original built-in help topic has no equivalent --help form.
                 native_baseline(if scope.is_empty() {
@@ -162,6 +169,19 @@ fn ac3_all_visible_command_help_paths_match_detailed_help() {
     assert!(differences.is_empty(), "{}", differences.join("\n"));
 }
 
+fn visible_command_names(full: &str) -> Vec<&str> {
+    full.split_once("Commands:\n")
+        .unwrap()
+        .1
+        .split_once("\nOptions:")
+        .unwrap()
+        .0
+        .lines()
+        .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
+        .filter_map(|line| line.split_whitespace().next())
+        .collect()
+}
+
 #[test]
 fn ac3_leaf_help_comparison_detects_a_single_byte_change() {
     for (args, baseline) in [
@@ -186,10 +206,10 @@ fn help_fixtures_preserve_the_invoked_executable_name() {
     std::fs::copy(env!("CARGO_BIN_EXE_awr"), &binary).unwrap();
     for (args, baseline) in [
         (vec!["help", "all"], HELP),
-        (vec!["work", "help", "all"], WORK_HELP),
+        (vec!["work", "help", "all"], CURRENT_WORK_HELP),
         (vec!["help", "help"], HELP_HELP),
         (vec!["work", "help", "help"], WORK_HELP_HELP),
-        (vec!["help", "work"], WORK_HELP),
+        (vec!["help", "work"], CURRENT_WORK_HELP),
         (vec!["status", "--help"], STATUS_HELP),
         (vec!["work", "complete", "--help"], COMPLETE_HELP),
         (vec!["help", "status"], STATUS_HELP),
@@ -225,7 +245,7 @@ fn ac4_planning_groups_list_members_and_short_descriptions() {
         ),
         (
             vec!["work", "help", "planning"],
-            vec!["create", "edit", "graph", "assess"],
+            vec!["create", "activate", "edit", "graph", "assess"],
         ),
     ] {
         let text = String::from_utf8(help(&args)).unwrap();
