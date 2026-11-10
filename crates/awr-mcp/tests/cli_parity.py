@@ -698,7 +698,9 @@ class Parity(unittest.TestCase):
         criterion = "A saved draft survives a failed save"
         decision = '---\n{"id":"scope","status":"accepted","affected_keys":["*"]}\n---\n# Scope\n\n## Decision\nKeep the local draft available.\n'
         (self.root / "decisions").mkdir()
-        (self.root / "decisions/scope.md").write_text(decision, encoding="utf-8")
+        # Use CRLF on every host to catch fingerprints computed from normalized text.
+        decision_path = self.root / "decisions/scope.md"
+        decision_path.write_bytes(decision.replace("\n", "\r\n").encode("utf-8"))
         manifest = (self.root / ".awr/project.toml").read_text()
         manifest = manifest.replace("adapter = \"yaml-ledger-v1\"", 'adapter = "yaml-ledger-v1"\n[sources.options.admission_policy]\nversion=1\nmode="governed_enforce"\nscope="all"')
         manifest += '\n[[sources]]\ndomain="decisions"\nrole="supporting"\npath="decisions"\nadapter="markdown-directory-v1"\n'
@@ -708,7 +710,7 @@ class Parity(unittest.TestCase):
         (self.root / "check.py").write_text(probe)
         definition = {"version": 1, "purpose": "implementation", "tier": "required",
                       "intent": [{"role": "user_decision", "decision": "scope",
-                                  "source_fingerprint": "sha256:" + hashlib.sha256(decision.encode()).hexdigest()}],
+                                  "source_fingerprint": "sha256:" + hashlib.sha256(decision_path.read_bytes()).hexdigest()}],
                       "contributes": [{"goal": "G", "outcome": criterion, "claim": "Retains a local draft", "by": "parity-executor"}],
                       "granularity": {"judgment": "independent_result", "reason": "One observable save result", "by": "parity-executor"},
                       "responsibility": {"name": "draft-storage", "kind": "delivery"},
