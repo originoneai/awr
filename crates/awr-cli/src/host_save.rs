@@ -38,16 +38,11 @@ fn input(root: &Path, path: &Path) -> Result<HostSaveRequest> {
     } else {
         root.join(path)
     };
-    serde_json::from_slice(&awr_source::read_capped(
-        &path,
-        awr_source::MARKDOWN_READ_CAP,
-    )?)
-    .map_err(|_| {
-        Error::InvalidInput(
-            "host JSON requires version, request_key, actor, reason and one supported change"
-                .into(),
-        )
-    })
+    parse_request(
+        &awr_source::read_capped(&path, awr_source::MARKDOWN_READ_CAP)?,
+        "host",
+        serde_json::json!({"version":1,"request_key":"edit-1","actor":{"host":"awr-cli","subject":"caller","origin":"delegated_agent"},"reason":"Describe the intended change","change":{"operation":"activate_draft","work":"WORK","source_fingerprint":"sha256:..."}}),
+    )
 }
 fn output(report: HostSaveReport, json_output: bool) -> Result<()> {
     if json_output {
@@ -99,4 +94,34 @@ pub fn run(root: &Path, command: &HostCommand, json_output: bool) -> Result<()> 
             json_output,
         ),
     }
+}
+
+/// Decode the outer object first so shape diagnostics identify absent top-level keys.
+pub(crate) fn parse_request<T: serde::de::DeserializeOwned>(
+    bytes: &[u8],
+    surface: &str,
+    expected: serde_json::Value,
+) -> Result<T> {
+    let parsed = serde_json::from_slice::<serde_json::Value>(bytes);
+    let missing: Vec<_> = ["version", "request_key", "actor", "reason", "change"]
+        .into_iter()
+        .filter(|key| {
+            parsed
+                .as_ref()
+                .ok()
+                .and_then(|v| v.as_object())
+                .is_none_or(|v| !v.contains_key(*key))
+        })
+        .collect();
+    let error = || {
+        Error::InvalidInput(format!(
+            "{surface} JSON requires version, request_key, actor, reason and one supported change"
+        ))
+        .with_details(
+            serde_json::json!({"missing":missing,"expected":expected.to_string(),
+            "next_action":"Edit the input JSON to match expected, then repeat the same command."}),
+        )
+    };
+    let value = parsed.map_err(|_| error())?;
+    serde_json::from_value(value).map_err(|_| error())
 }

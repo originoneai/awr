@@ -41,6 +41,12 @@ struct Plan {
     external_key: String,
     before_fingerprint: String,
     after_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    observations: Vec<Source>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    manifest_fingerprint: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    activate: bool,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -50,6 +56,8 @@ struct Receipt {
     phase: String,
     work_id: Option<Id>,
     project_revision: Revision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    activation: Option<Value>,
 }
 pub struct CreationReport {
     pub value: Value,
@@ -115,7 +123,8 @@ fn load(root: &Path, project: Id, key: &str) -> Result<Option<Receipt>> {
     if value.plan.project_id != project
         || value.plan.project_root != root
         || value.plan.request.request_key != key
-        || fingerprint(&serde_json::to_vec(&value.plan)?) != value.preview_fingerprint
+        || (plan_fingerprint(&value.plan)? != value.preview_fingerprint
+            && fingerprint(&serde_json::to_vec(&value.plan)?) != value.preview_fingerprint)
     {
         return Err(Error::SourceConflict(
             "creation receipt differs from its bound project or plan".into(),
@@ -140,7 +149,8 @@ fn summary(receipt: &Receipt, replay: bool) -> Result<Value> {
         "preview_fingerprint":receipt.preview_fingerprint,"phase":receipt.phase,"already_recorded":replay,
         "source_write_performed":false,"runtime_write_performed":false,"historical_outcome":true,
         "write_outcome":if receipt.phase=="completed"{"applied"}else{"pending_recovery"},
-        "draft":true,"completion_claimed":false,
+        "draft":!receipt.activation.as_ref().is_some_and(|v| v["ok"] == true),"completion_claimed":false,
+        "activation":receipt.activation,
         "recovery_directory":format!(".awr/mutations/{}",receipt_name(receipt.plan.project_id,&receipt.plan.request.request_key)?)}),
     )
 }
@@ -176,6 +186,27 @@ pub fn create_work(
     expected_preview: Option<&str>,
     expected_revision: Option<Revision>,
 ) -> Result<CreationReport> {
+    create_work_with_activation(
+        store,
+        root,
+        input,
+        accept,
+        expected_preview,
+        expected_revision,
+        false,
+    )
+}
+
+/// The CLI can request activation without changing the existing MCP creation input shape.
+pub fn create_work_with_activation(
+    store: &mut Store,
+    root: &Path,
+    input: CreateWorkInput,
+    accept: bool,
+    expected_preview: Option<&str>,
+    expected_revision: Option<Revision>,
+    activate: bool,
+) -> Result<CreationReport> {
     let root = root.canonicalize()?;
     let project = store.project_by_root(&root)?;
     validate_key(&input.request_key)?;
@@ -196,34 +227,42 @@ pub fn create_work(
     } else {
         None
     };
-    if let Some(receipt) = load(&root, project.id, &input.request_key)? {
-        if receipt.plan.request != input {
+    if let Some(mut receipt) = load(&root, project.id, &input.request_key)? {
+        if receipt.plan.request != input || receipt.plan.activate != activate {
             return Err(Error::SourceConflict(
                 "request_key already belongs to different creation content".into(),
             ));
         }
-        return Ok(CreationReport {
+        let mut report = CreationReport {
             value: summary(&receipt, true)?,
             failure: (receipt.phase!="completed").then(||Error::MutationConflict("creation is pending; inspect its receipt and explicitly recover instead of replaying".into())),
-        });
+        };
+        if accept
+            && receipt.plan.activate
+            && receipt.activation.is_none()
+            && receipt.phase == "completed"
+        {
+            let dir = awr_source::open_dir_exact(
+                &root
+                    .join(".awr/mutations")
+                    .join(receipt_name(project.id, &input.request_key)?),
+            )?;
+            activate_created(store, &root, &dir, &mut receipt, &mut report)?;
+        }
+        return Ok(report);
     }
+
     let manifest = Manifest::load(&root)?;
     let report = index_project(store, &root, &manifest, false)?;
     if !report.ok {
         return Err(Error::SourceStale(
             "refresh every registered source before creating work".into(),
-        ));
+        )
+        .with_details(json!({"preview_still_valid":false})));
     }
     let revision = store.project(project.id)?.project_revision;
-    if let Some(expected) = expected_revision
-        && expected != revision
-    {
-        return Err(Error::RevisionConflict {
-            expected,
-            actual: revision,
-        });
-    }
     let sources = store.sources(project.id)?;
+    let observations = sources.clone();
     let candidates: Vec<_> = sources
         .into_iter()
         .filter(|s| {
@@ -269,19 +308,58 @@ pub fn create_work(
         external_key,
         before_fingerprint: prepared.before.fingerprint.clone(),
         after_fingerprint: prepared.after.fingerprint.clone(),
+        observations,
+        manifest_fingerprint: fingerprint(&awr_source::read_capped(
+            &root.join(".awr/project.toml"),
+            1024 * 1024,
+        )?),
+        activate,
     };
-    let preview = fingerprint(&serde_json::to_vec(&plan)?);
+    let preview = plan_fingerprint(&plan)?;
     if !accept {
         return Ok(CreationReport {
             value: json!({"ok":true,"status":"preview","project_revision":revision,"requires_accept":true,
             "preview":{"fingerprint":preview,"plan":plan,"before_text":prepared.before.text()?,"after_text":prepared.after.text()?,"new_record":prepared.record},
-            "source_write_performed":false,"runtime_write_performed":true,"draft":true,"completion_claimed":false}),
+            "source_write_performed":false,"runtime_write_performed":true,"draft":true,"activation_requested":activate,"completion_claimed":false}),
             failure: None,
         });
     }
-    if expected_revision.is_none() || expected_preview != Some(preview.as_str()) {
+    if expected_revision.is_none() || expected_preview.is_none() {
         return Err(Error::SourceConflict(
             "creation accept requires the exact reviewed preview and project revision".into(),
+        ));
+    }
+    if expected_preview != Some(preview.as_str()) {
+        let changed = !store
+            .query_source_events(
+                project.id,
+                &awr_store::EventQuery {
+                    after_revision: expected_revision.unwrap(),
+                    limit: 1,
+                    ..Default::default()
+                },
+            )?
+            .events
+            .is_empty();
+        let error = if changed {
+            Error::SourceStale("creation sources changed; review a fresh preview".into())
+        } else {
+            Error::SourceConflict("creation accept requires the exact reviewed preview".into())
+        };
+        return Err(
+            error.with_details(json!({"preview_still_valid":false,"current_revision":revision}))
+        );
+    }
+    if let Some(expected) = expected_revision
+        && expected != revision
+    {
+        return Err(Error::RevisionConflict {
+            expected,
+            actual: revision,
+        }
+        .with_details(
+            json!({"current_revision":revision,"preview_still_valid":true,
+            "retry":{"expected_revision":revision}}),
         ));
     }
     let mutations = recovery_root(&root)?;
@@ -302,10 +380,14 @@ pub fn create_work(
         phase: "prepared".into(),
         work_id: None,
         project_revision: revision,
+        activation: None,
     };
     save(&dir, &receipt)?;
     crate::fs_sync::sync_directory(&mutations)?;
-    finish(store, &root, &dir, &mut receipt, expected_revision.unwrap())
+    let mut report = finish(store, &root, &dir, &mut receipt, expected_revision.unwrap())?;
+    drop(_source_lock);
+    activate_created(store, &root, &dir, &mut receipt, &mut report)?;
+    Ok(report)
 }
 
 pub fn recover_creation(
@@ -322,19 +404,22 @@ pub fn recover_creation(
     )?;
     let mut receipt =
         load(&root, project.id, key)?.ok_or_else(|| Error::NotFound("creation receipt".into()))?;
-    if receipt.phase == "completed" {
-        return Ok(CreationReport {
-            value: summary(&receipt, true)?,
-            failure: None,
-        });
-    }
-    let _source_lock = source_lock(&root, receipt.plan.source.id)?;
     let dir = awr_source::open_dir_exact(
         &root
             .join(".awr/mutations")
             .join(receipt_name(project.id, key)?),
     )?;
-    finish(store, &root, &dir, &mut receipt, expected_revision)
+    let mut report = if receipt.phase == "completed" {
+        CreationReport {
+            value: summary(&receipt, true)?,
+            failure: None,
+        }
+    } else {
+        let _source_lock = source_lock(&root, receipt.plan.source.id)?;
+        finish(store, &root, &dir, &mut receipt, expected_revision)?
+    };
+    activate_created(store, &root, &dir, &mut receipt, &mut report)?;
+    Ok(report)
 }
 fn finish(
     store: &mut Store,
@@ -391,6 +476,27 @@ fn finish(
             &spec,
         )?;
         if current.fingerprint == plan.before_fingerprint {
+            if !plan.observations.is_empty() {
+                if fingerprint(&awr_source::read_capped(
+                    &root.join(".awr/project.toml"),
+                    1024 * 1024,
+                )?) != plan.manifest_fingerprint
+                {
+                    return Err(Error::SourceConflict(
+                        "creation mapping changed before source replacement".into(),
+                    ));
+                }
+                for source in &plan.observations {
+                    if source.id != plan.source.id
+                        && inspect_registered_source(root, source)?.2.fingerprint
+                            != source.fingerprint
+                    {
+                        return Err(Error::SourceConflict(
+                            "creation context source changed before source replacement".into(),
+                        ));
+                    }
+                }
+            }
             let permissions = open_file_exact(&path)?.metadata()?.permissions();
             if permissions.readonly() {
                 return Err(Error::RuleViolation("ledger is read-only".into()));
@@ -465,4 +571,112 @@ fn finish(
         value,
         failure: None,
     })
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+fn plan_fingerprint(plan: &Plan) -> Result<String> {
+    let mut value = serde_json::to_value(plan)?;
+    // Runtime events must not invalidate a review of unchanged source facts.
+    value.as_object_mut().unwrap().remove("project_revision");
+    Ok(fingerprint(&serde_json::to_vec(&value)?))
+}
+
+fn activate_created(
+    store: &mut Store,
+    root: &Path,
+    dir: &Dir,
+    receipt: &mut Receipt,
+    report: &mut CreationReport,
+) -> Result<()> {
+    if !receipt.plan.activate || receipt.phase != "completed" || receipt.activation.is_some() {
+        return Ok(());
+    }
+    let activation_key = format!(
+        "work-create-activate-{}",
+        identity(receipt.plan.project_id, &receipt.plan.request.request_key)?
+    );
+    let result = (|| -> Result<Value> {
+        let prior = crate::host_status(store, root, &activation_key)?;
+        if prior.value["found"] == true {
+            return Ok(prior.value);
+        }
+        if fingerprint(&awr_source::read_capped(
+            &root.join(".awr/project.toml"),
+            1024 * 1024,
+        )?) != receipt.plan.manifest_fingerprint
+        {
+            return Err(Error::SourceConflict(
+                "creation mapping changed before activation".into(),
+            ));
+        }
+        for source in &receipt.plan.observations {
+            if source.id != receipt.plan.source.id
+                && inspect_registered_source(root, source)?.2.fingerprint != source.fingerprint
+            {
+                return Err(Error::SourceConflict(
+                    "creation context source changed before activation".into(),
+                ));
+            }
+        }
+        let request = crate::HostSaveRequest {
+            version: 1,
+            request_key: activation_key.clone(),
+            actor: HostActor {
+                host: "awr-cli".into(),
+                subject: "work-create".into(),
+                origin: HostEditOrigin::DelegatedAgent,
+            },
+            reason: "Activate the newly created draft at the caller's explicit request".into(),
+            change: crate::HostChange::ActivateDraft {
+                work: receipt.plan.external_key.clone(),
+                source_fingerprint: receipt.plan.after_fingerprint.clone(),
+            },
+        };
+        let preview = crate::host_preview(store, root, request.clone())?;
+        let mut applied = crate::host_save(
+            store,
+            root,
+            request,
+            preview.value["project_revision"]
+                .as_u64()
+                .expect("host revision"),
+            preview.value["preview"]["fingerprint"].as_str(),
+        )?;
+        if let Some(error) = applied.failure {
+            applied.value["error"] = json!(error.report());
+        }
+        Ok(applied.value)
+    })();
+    let mut activation = match result {
+        Ok(value) => value,
+        Err(error) => json!({"ok":false,"status":"rejected","error":error.report()}),
+    };
+    if activation["ok"] != true {
+        activation["next_action"] = activation["error"]["details"]["next_action"]
+            .as_str()
+            .map(|next| json!(next))
+            .unwrap_or_else(|| {
+                json!(cli_next_action(&[
+                    "awr",
+                    "work",
+                    "show",
+                    &receipt.plan.external_key
+                ]))
+            });
+    }
+    if activation["source_write_performed"] == true {
+        report.value["source_write_performed"] = json!(true);
+    }
+    receipt.activation = Some(activation);
+    receipt.project_revision = store.project(receipt.plan.project_id)?.project_revision;
+    save(dir, receipt)?;
+    report.value["activation"] = json!(receipt.activation);
+    report.value["draft"] = json!(!receipt.activation.as_ref().is_some_and(|v| v["ok"] == true));
+    report.value["project_revision"] = json!(receipt.project_revision);
+    report.value["runtime_write_performed"] = json!(true);
+    report.value["historical_outcome"] = json!(false);
+    Ok(())
 }

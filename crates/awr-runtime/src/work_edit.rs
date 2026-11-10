@@ -24,12 +24,20 @@ pub fn edit_work(
         .as_object()
         .ok_or_else(|| Error::InvalidInput("work edit fields must be an object".into()))?;
     if changes.is_empty()
-        || changes.iter().any(|(k, v)| {
-            !matches!(k.as_str(), "title" | "summary" | "priority" | "next_action")
-                || !v.is_string()
+        || changes.iter().any(|(k, v)| match k.as_str() {
+            "title" | "summary" | "priority" | "next_action" | "kind" | "milestone" => {
+                !v.is_string()
+            }
+            "acceptance" | "goal" => !v.as_array().is_some_and(|values| {
+                !values.is_empty()
+                    && values
+                        .iter()
+                        .all(|value| value.as_str().is_some_and(|s| !s.trim().is_empty()))
+            }),
+            _ => true,
         })
     {
-        return Err(Error::MutationUnsupported("work edit accepts text fields title, summary, priority and next_action; use dedicated work actions for lifecycle/ownership/completion and reviewed batch changes for other fields".into()));
+        return Err(Error::MutationUnsupported("work edit accepts title, summary, priority and next_action text, and draft acceptance, goal, kind and milestone fields; use dedicated work actions for lifecycle/ownership/completion and reviewed batch changes for other fields".into()));
     }
     if request.actor.origin != HostEditOrigin::DelegatedAgent {
         return Err(Error::RuleViolation(
@@ -45,15 +53,40 @@ pub fn edit_work(
     let review = if accept.is_none() {
         let project = store.project_by_root(root)?;
         let work = store.work_item(project.id, target)?;
+        if changes
+            .keys()
+            .any(|key| matches!(key.as_str(), "acceptance" | "goal" | "kind" | "milestone"))
+            && work.item.status != WorkStatus::Draft
+        {
+            return Err(Error::RuleViolation(
+                "planning-field repairs through work edit require a draft".into(),
+            ));
+        }
         if source_fingerprint.is_empty() {
             *source_fingerprint = work.source.fingerprint.clone();
         }
         let source = json!({"locator":work.item.meta.source_ref.locator,"pointer":work.item.meta.source_ref.pointer,"fingerprint":source_fingerprint});
         let current = serde_json::to_value(&work.item)?;
-        let before: Map<_, _> = changes
-            .keys()
-            .map(|k| (k.clone(), current[k].clone()))
-            .collect();
+        let mut before = Map::new();
+        for key in changes.keys() {
+            let value = if key == "goal" {
+                let mut goals = store
+                    .work_goal_links(project.id)?
+                    .into_iter()
+                    .filter(|edge| {
+                        edge.from_key == work.item.meta.external_key
+                            && edge.source_ref.source_id == work.source.id
+                    })
+                    .map(|edge| edge.to_key)
+                    .collect::<Vec<_>>();
+                goals.sort();
+                goals.dedup();
+                json!(goals)
+            } else {
+                current[key].clone()
+            };
+            before.insert(key.clone(), value);
+        }
         Some(json!({"source":source,"before":before,"after":fields}))
     } else {
         // A replay must reach the existing journal even if the task was later removed.

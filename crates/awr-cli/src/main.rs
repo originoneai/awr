@@ -39,6 +39,7 @@ mod source_relocation;
 mod specification;
 mod team;
 mod work_action;
+mod work_activate;
 mod work_create;
 mod work_edit;
 mod work_prepare;

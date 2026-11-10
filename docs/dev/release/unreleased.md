@@ -23,6 +23,19 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   `not_measured` (a bare `project_revision` is not a comparable measurement and never
   borrows another clock), `page_read` is `measured`, and `report_received` follows the
   usual contract. Envelope-carrying reads are unchanged.
+- CLI recovery guidance now includes executable next commands for creation revision
+  conflicts, draft claims and context budget errors. Work creation accepts source
+  fields directly and can attempt activation in its acceptance call; `work activate`
+  provides a reviewed shortcut for existing drafts. Request-key aliases and JSON
+  shape diagnostics cover creation and batch recovery. Omitted context budgets
+  grow to required facts up to 10000 tokens; explicit budgets remain strict.
+  Creation with unchanged sources and an advanced project revision now reports
+  `RevisionConflict` with `preview_still_valid=true` instead of `SourceStale`.
+  Long recovery commands retain the exact input in a private runtime file, and
+  revision conflicts expose a machine-readable retry revision. Draft activation
+  refusals offer reviewed field repair with caller-supplied values; acceptance,
+  goals and concrete next steps are still required before activation.
+
 - A compact Team MCP tool catalog for clients whose model provider caps the size of a tool schema
   (AWR-TF-014AN). Moonshot's API refuses `awr_team_command` because its full input schema is about
   130 KB (`schema exceeds maximum allowed size`), which stopped every Kimi Code turn against a Team
