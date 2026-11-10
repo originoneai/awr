@@ -22,12 +22,12 @@ pub enum BatchCommand {
     Change(ChangeArgs),
     /// Read a retained request outcome without indexing or writing.
     Status {
-        #[arg(long)]
+        #[arg(long, visible_alias = "request-key")]
         key: String,
     },
     /// Explicitly recover one interrupted batch change at the current revision.
     Recover {
-        #[arg(long)]
+        #[arg(long, visible_alias = "request-key")]
         key: String,
         #[arg(long)]
         expected_revision: Revision,
@@ -70,14 +70,11 @@ pub fn run(root: &Path, command: &BatchCommand, json_output: bool) -> Result<()>
             } else {
                 root.join(&args.input)
             };
-            let input: BatchRequest =
-                serde_json::from_slice(&awr_source::read_capped(&path, 64 * 1024 * 1024)?)
-                    .map_err(|_| {
-                        Error::InvalidInput(
-                            "batch JSON requires version, request_key and a supported change"
-                                .into(),
-                        )
-                    })?;
+            let input: BatchRequest = crate::host_save::parse_request(
+                &awr_source::read_capped(&path, 64 * 1024 * 1024)?,
+                "batch",
+                serde_json::json!({"version":1,"request_key":"change-1","actor":{"host":"awr-cli","subject":"caller","origin":"delegated_agent"},"reason":"Describe the intended change","change":{"kind":"ledger","source_id":"00000000000000000000000000","source_fingerprint":"sha256:...","operations":[]}}),
+            )?;
             output(
                 awr_runtime::change_batch(
                     &mut Store::open_existing(&db)?,

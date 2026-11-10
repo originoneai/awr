@@ -8,6 +8,7 @@ AWR_LOCAL_WEB=0 cargo test --workspace --all-targets --locked
 AWR_LOCAL_WEB=0 cargo test --workspace --doc --locked
 cargo fmt --all --check
 python3 scripts/check_public_tree.py
+python3 scripts/check_docs_style.py
 ```
 
 Use Python 3.11+ and `pip install -r requirements-dev.txt` for Python fixture checks.

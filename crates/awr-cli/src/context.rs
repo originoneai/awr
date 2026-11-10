@@ -4,7 +4,7 @@ use awr_context::{
 };
 use awr_core::{Error, Id, Result};
 use clap::Subcommand;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Subcommand)]
 pub enum ContextCommand {
@@ -27,6 +27,9 @@ pub enum ContextCommand {
     },
     /// Compile current work, hard facts, required context and explicit gaps within a token budget.
     Compile {
+        /// Saved context request returned by bounded recovery; --budget can override its explicit budget.
+        #[arg(long, conflicts_with_all=["work","session","detached","agent","branch","goal","path","tag","source_sha","intent","checkpoint","after_revision"])]
+        input: Option<PathBuf>,
         #[arg(long)]
         work: Option<String>,
         #[arg(long)]
@@ -48,8 +51,9 @@ pub enum ContextCommand {
         source_sha: Option<String>,
         #[arg(long, default_value = "work")]
         intent: String,
-        #[arg(long, default_value_t = 5000)]
-        budget: usize,
+        /// Default 5000; raise to required facts up to 10000 when omitted.
+        #[arg(long)]
+        budget: Option<usize>,
         #[arg(long, conflicts_with = "after_revision")]
         checkpoint: Option<Id>,
         #[arg(long, conflicts_with = "checkpoint")]
@@ -119,6 +123,7 @@ pub fn run(root: &Path, command: &ContextCommand, json_output: bool) -> Result<(
             Ok(())
         }
         ContextCommand::Compile {
+            input,
             work,
             session,
             detached,
@@ -133,10 +138,17 @@ pub fn run(root: &Path, command: &ContextCommand, json_output: bool) -> Result<(
             checkpoint,
             after_revision,
         } => {
-            let report = compile_context(
-                &mut db.store,
-                root,
-                &ContextRequest {
+            let mut request = if let Some(path) = input {
+                let path = if path.is_absolute() {
+                    path.clone()
+                } else {
+                    root.join(path)
+                };
+                serde_json::from_slice(&awr_source::read_capped(&path, 64 * 1024)?).map_err(
+                    |error| Error::InvalidInput(format!("invalid context input: {error}")),
+                )?
+            } else {
+                ContextRequest {
                     work_item_key: work.clone(),
                     session_id: *session,
                     detached: *detached,
@@ -147,7 +159,7 @@ pub fn run(root: &Path, command: &ContextCommand, json_output: bool) -> Result<(
                     tags: tag.clone(),
                     source_sha: source_sha.clone(),
                     intent: intent.clone(),
-                    token_budget: *budget,
+                    token_budget: budget.unwrap_or(5000),
                     delta_baseline: if let Some(id) = checkpoint {
                         DeltaBaseline::Checkpoint { id: *id }
                     } else if let Some(revision) = after_revision {
@@ -157,14 +169,89 @@ pub fn run(root: &Path, command: &ContextCommand, json_output: bool) -> Result<(
                     } else {
                         DeltaBaseline::Auto
                     },
-                },
-            )?;
-            print_l1(
+                }
+            };
+            if let Some(budget) = budget {
+                request.token_budget = *budget;
+            }
+            let explicit_budget = budget.is_some() || input.is_some();
+            let mut basis = if explicit_budget {
+                "explicit"
+            } else {
+                "default"
+            };
+            let result = match compile_context(&mut db.store, root, &request) {
+                Err(Error::BudgetExceeded { required, .. })
+                    if !explicit_budget && required <= 10000 =>
+                {
+                    request.token_budget = required;
+                    basis = "raised_to_required";
+                    compile_context(&mut db.store, root, &request)
+                }
+                result => result,
+            };
+            let report = result.or_else(|error| {
+                if let Error::BudgetExceeded { required, .. } = &error {
+                    let mut args = vec!["awr".to_owned(), "context".into(), "compile".into()];
+                    if let Some(path) = input {
+                        args.extend(["--input".into(), path.to_string_lossy().into_owned()]);
+                    } else {
+                        for (name, value) in [
+                            ("--work", work.clone()),
+                            ("--session", session.map(|id| id.to_string())),
+                            ("--agent", agent.clone()),
+                            ("--branch", branch.map(|id| id.to_string())),
+                            ("--source-sha", source_sha.clone()),
+                            ("--checkpoint", checkpoint.map(|id| id.to_string())),
+                            ("--after-revision", after_revision.map(|r| r.to_string())),
+                        ] {
+                            if let Some(v) = value {
+                                args.extend([name.into(), v]);
+                            }
+                        }
+                        if *detached {
+                            args.push("--detached".into());
+                        }
+                        for (name, values) in [
+                            ("--goal", goal.as_slice()),
+                            ("--path", path.as_deref().unwrap_or_default()),
+                            ("--tag", tag.as_deref().unwrap_or_default()),
+                        ] {
+                            for v in values {
+                                args.extend([name.into(), v.clone()]);
+                            }
+                        }
+                        args.extend(["--intent".into(), intent.clone()]);
+                    }
+                    args.extend(["--budget".into(), required.to_string()]);
+                    let mut command = awr_core::cli_next_action(
+                        &args.iter().map(String::as_str).collect::<Vec<_>>(),
+                    );
+                    if command.len() > 300 || command.chars().any(char::is_control) {
+                        let path = awr_runtime::save_cli_recovery_input(root, &request)?;
+                        command = awr_core::cli_next_action(&[
+                            "awr",
+                            "context",
+                            "compile",
+                            "--input",
+                            &path,
+                            "--budget",
+                            &required.to_string(),
+                        ]);
+                    }
+                    Err(error.with_details(serde_json::json!({"next_action":command})))
+                } else {
+                    Err(error)
+                }
+            })?;
+            print_l1_with_budget(
                 &report,
                 db.store.project(db.project.id)?.project_revision,
                 json_output,
+                Some(serde_json::json!({"applied":request.token_budget,"basis":basis})),
             )
         }
+
         ContextCommand::Bootstrap {
             work,
             session,
@@ -218,6 +305,15 @@ pub(crate) fn print_l1(
     revision: awr_core::Revision,
     json_output: bool,
 ) -> Result<()> {
+    print_l1_with_budget(report, revision, json_output, None)
+}
+
+fn print_l1_with_budget(
+    report: &awr_context::WorkContextReport,
+    revision: awr_core::Revision,
+    json_output: bool,
+    budget: Option<serde_json::Value>,
+) -> Result<()> {
     if revision != report.completeness.project_revision {
         return Err(Error::RevisionConflict {
             expected: report.completeness.project_revision,
@@ -230,10 +326,16 @@ pub(crate) fn print_l1(
         )
     });
     if json_output {
-        let value = l1_value(report)?;
+        let mut value = l1_value(report)?;
+        if let Some(budget) = budget {
+            value["budget"] = budget;
+        }
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         print!("{}", report.rendered_context());
+        if let Some(budget) = budget.filter(|v| v["basis"] == "raised_to_required") {
+            eprintln!("Budget: {} (raised_to_required)", budget["applied"]);
+        }
     }
     match error {
         Some(error) => Err(error),

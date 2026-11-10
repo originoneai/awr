@@ -7,6 +7,8 @@ use std::{collections::BTreeMap, path::Path};
 
 #[derive(Debug, Subcommand)]
 pub enum WorkCommand {
+    /// Preview activation of a draft, then accept the reviewed source and revision.
+    Activate(crate::work_activate::ActivateArgs),
     /// Preview a small edit by work ID; apply the reviewed change without editing YAML.
     Edit(crate::work_edit::EditArgs),
     /// Inspect dependencies, impact, readiness and claims without admitting execution.
@@ -39,7 +41,10 @@ pub enum WorkCommand {
     Prepare(crate::work_prepare::PrepareArgs),
     /// Validate a real report and derive evidence metadata without registering or completing.
     PrepareCompletion(crate::work_prepare::CompletionArgs),
-    /// Preview or accept one new source-backed, non-executable task draft.
+    /// Preview or accept a source-backed draft, optionally attempting activation.
+    #[command(
+        after_help = "Example: awr work create --title 'Review a report' --request-key review-report --acceptance 'The report is reviewed' --goal GUIDE --next-action 'Read the report' --activate"
+    )]
     Create(crate::work_create::CreateArgs),
     /// Read the durable outcome for a stable creation request without applying it.
     CreateStatus(crate::work_create::StatusArgs),
@@ -604,6 +609,7 @@ pub fn ready(
 
 pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()> {
     match command {
+        WorkCommand::Activate(args) => crate::work_activate::run(root, args, json_output),
         WorkCommand::Edit(args) => crate::work_edit::run(root, args, json_output),
         WorkCommand::Graph {
             root: roots,

@@ -7,6 +7,7 @@ use std::path::Path;
 
 #[derive(Debug, Args)]
 pub struct EditArgs {
+    /// Work key, or the internal work ID returned by recovery guidance.
     work: String,
     #[arg(long)]
     request_key: String,
@@ -23,6 +24,16 @@ pub struct EditArgs {
     priority: Option<String>,
     #[arg(long)]
     next_action: Option<String>,
+    /// Replacement delivery criteria for a draft; repeat for each criterion.
+    #[arg(long)]
+    acceptance: Vec<String>,
+    /// Replacement goal links for a draft; repeat for each goal.
+    #[arg(long)]
+    goal: Vec<String>,
+    #[arg(long)]
+    kind: Option<String>,
+    #[arg(long)]
+    milestone: Option<String>,
     /// Omit for preview; use exactly the returned source fingerprint when applying.
     #[arg(long, required_if_eq("accept", "true"))]
     source_fingerprint: Option<String>,
@@ -36,15 +47,38 @@ pub struct EditArgs {
 
 pub fn run(root: &Path, args: &EditArgs, json_output: bool) -> Result<()> {
     let root = root.canonicalize()?;
+    let mut store =
+        Store::open_existing(&crate::source::runtime_dir(&root, false)?.join("state.db"))?;
+    let mut target = args.work.clone();
+    if target.parse::<Id>().is_ok() {
+        let project = store.project_by_root(&root)?;
+        match store.object_projection(project.id, EntityKind::WorkItem, &target) {
+            Ok(projection) => {
+                target = serde_json::from_value::<WorkItem>(projection.item)?
+                    .meta
+                    .external_key;
+            }
+            // Preserve receipt replay for a source record that has since been removed.
+            Err(Error::NotFound(_)) if args.accept => (),
+            Err(error) => return Err(error),
+        }
+    }
     let mut fields = Map::new();
     for (key, value) in [
         ("title", &args.title),
         ("summary", &args.summary),
         ("priority", &args.priority),
         ("next_action", &args.next_action),
+        ("kind", &args.kind),
+        ("milestone", &args.milestone),
     ] {
         if let Some(value) = value {
             fields.insert(key.into(), json!(value));
+        }
+    }
+    for (key, values) in [("acceptance", &args.acceptance), ("goal", &args.goal)] {
+        if !values.is_empty() {
+            fields.insert(key.into(), json!(values));
         }
     }
     let request = HostSaveRequest {
@@ -58,13 +92,11 @@ pub fn run(root: &Path, args: &EditArgs, json_output: bool) -> Result<()> {
         reason: args.reason.clone(),
         change: HostChange::Fields {
             kind: EntityKind::WorkItem,
-            target: args.work.clone(),
+            target,
             source_fingerprint: args.source_fingerprint.clone().unwrap_or_default(),
             fields: json!(fields),
         },
     };
-    let mut store =
-        Store::open_existing(&crate::source::runtime_dir(&root, false)?.join("state.db"))?;
     let accept = if args.accept {
         Some((
             args.expected_revision
