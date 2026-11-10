@@ -6,6 +6,12 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
+- Optional identifiers and check bindings for work-definition examples, advertised as
+  `definition.example_checks`. Definition reports show each example's check binding, validate
+  argument and path bounds, and identify missing or duplicate identifiers. Check metadata is
+  included in admission fingerprints. All readers must support the new keys before a shared
+  ledger uses them; this feature does not run commands or read the listed files. See
+  [work definitions](../reference/work-definition.md).
 - The generic Team read adapter (`POST /api/team/read`) now serves the real `work.next`
   response. Upstream's identity-scoped navigation read carries only
   `{ data, project_revision, protocol_version }` — no scope/snapshot attribution

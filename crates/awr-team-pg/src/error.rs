@@ -168,14 +168,18 @@ impl PgError {
                 "Do not retry delivery.route.reuse. Inspect delivery.neutral.inspect; keep a current enabled mapping and continue the dispatch/claim flow from work.prepare. Stale or disabled mappings require the established operator administration path.",
             ),
             "work_entered" => (
-                "This task has already entered the work lifecycle.",
-                "Do not retry delivery.route.reuse. Continue the current workflow from work.prepare; a mapping change needs its established operator administration path.",
+                "This task has unsettled execution, prior delivery effects or a closed outcome.",
+                "Do not retry delivery.route.reuse until the blocking state changes. Inspect work.prepare and the original effects. Settle active execution normally; unknown effects, prior delivery and closed work retain their established recovery or administration path. Do not reset work or replay effects to obtain a route.",
+            ),
+            "candidate_resource" => (
+                "The selected candidate does not use the template's repository resource.",
+                "Inspect delivery.routes and the selected candidate through delivery.neutral.inspect. Choose a template for the actual candidate resource; do not rebind approved content to another repository.",
             ),
             _ => return None,
         };
         Some(serde_json::json!({
             "code":"PreconditionsChanged","reason":reason,
-            "message":"route reuse cannot replace an existing mapping or configure entered work",
+            "message":"route reuse cannot replace a mapping, reinterpret a candidate or cross unsettled or historical effects",
             "next_step":action,
             "action_guidance":{"condition":condition,
                 "basis":"Current persisted task and mapping state; no mapping or permission was changed.",

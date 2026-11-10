@@ -113,6 +113,32 @@ impl DeliverySyncStore {
         {
             return Err(PgError::PreconditionsChanged);
         }
+        // Registration may follow implementation/review, but cannot reinterpret
+        // an existing selection or attach its delivery to another repository.
+        if let Some((candidate, digest, snapshot, ownership, fence_current, _)) =
+            snapshots::selection(&tx, tenant, project, &set.work_id).await?
+        {
+            auth::bind_candidate(tenant, project, set, &candidate.binding)?;
+            let resource: String = row.get(12);
+            if candidate.binding.target.resource != resource
+                || candidate
+                    .binding
+                    .source_revision
+                    .as_ref()
+                    .is_some_and(|r| r.resource != resource)
+            {
+                return Err(PgError::DeliveryRouteReuseBlocked {
+                    reason: "candidate_resource",
+                });
+            }
+            if snapshot != auth.snapshot
+                || ownership != version(&set.ownership_version)?
+                || !fence_current
+                || candidate.binding.digest().map_err(|_| invalid())? != digest
+            {
+                return Err(PgError::InactiveCandidate);
+            }
+        }
         let locator_contract: Option<String> = row.get(15);
         let locator_url: Option<String> = row.get(16);
         let locator = locator_contract.zip(locator_url).filter(|(contract, url)| {

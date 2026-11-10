@@ -121,11 +121,25 @@ pub struct Responsibility {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Example {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub criterion: String,
     pub kind: ExampleKind,
     pub given: String,
     pub when: String,
     pub then: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<ExampleCheck>,
+}
+
+/// A declared argument vector and project-relative file list. Validation performs no I/O.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExampleCheck {
+    pub run: Vec<String>,
+    pub files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -307,6 +321,32 @@ fn opt_text(value: &Option<String>) -> bool {
     value.as_deref().is_none_or(text)
 }
 
+fn example_id(value: &str) -> bool {
+    let alphanumeric = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit();
+    (1..=32).contains(&value.len())
+        && value.bytes().next().is_some_and(alphanumeric)
+        && value.bytes().all(|b| alphanumeric(b) || b == b'-')
+}
+
+fn check_file_path(value: &str) -> bool {
+    if value.trim().is_empty()
+        || value.chars().any(char::is_control)
+        || value.starts_with(['/', '\\'])
+        || value.ends_with(['/', '\\'])
+        || (value.as_bytes().get(1) == Some(&b':') && value.as_bytes()[0].is_ascii_alphabetic())
+    {
+        return false;
+    }
+    // Check both separators so a source keeps the same boundary on every supported platform.
+    let mut parts = value
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty() && *part != ".");
+    parts
+        .next()
+        .is_some_and(|first| first != ".." && !first.eq_ignore_ascii_case(".awr"))
+        && parts.all(|part| part != "..")
+}
+
 impl WorkDefinition {
     /// Structural checks only: shape, bounds and attribution. Whether references resolve is the
     /// checker's job because it needs the rest of the project.
@@ -390,6 +430,37 @@ impl WorkDefinition {
                 "examples need the exact criterion plus given, when and then text",
             ));
         }
+        for (index, example) in self.examples.iter().enumerate() {
+            if example.id.as_deref().is_some_and(|id| !example_id(id)) {
+                return Err(invalid(&format!(
+                    "examples[{index}].id must match [a-z0-9][a-z0-9-]{{0,31}}"
+                )));
+            }
+            if let Some(check) = &example.check {
+                if !(1..=64).contains(&check.run.len())
+                    || check.run.iter().any(|arg| arg.len() > 1024)
+                {
+                    return Err(invalid(&format!(
+                        "examples[{index}].check.run needs 1 to 64 arguments of at most 1024 bytes each"
+                    )));
+                }
+                if !(1..=32).contains(&check.files.len())
+                    || check.files.iter().any(|path| !check_file_path(path))
+                {
+                    return Err(invalid(&format!(
+                        "examples[{index}].check.files needs 1 to 32 project-relative file paths without parent components or the .awr directory"
+                    )));
+                }
+                if check
+                    .timeout_seconds
+                    .is_some_and(|n| !(1..=7200).contains(&n))
+                {
+                    return Err(invalid(&format!(
+                        "examples[{index}].check.timeout_seconds must be between 1 and 7200 seconds"
+                    )));
+                }
+            }
+        }
         if let Some(side_line) = &self.side_line
             && !(opt_text(&side_line.return_condition) && opt_text(&side_line.stop_condition))
         {
@@ -464,6 +535,14 @@ pub struct DefinitionGap {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ExampleSummary {
+    pub id: Option<String>,
+    pub kind: ExampleKind,
+    pub criterion: String,
+    pub has_check: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DefinitionReport {
     pub work: String,
     /// not_declared, complete or gaps
@@ -476,6 +555,8 @@ pub struct DefinitionReport {
     pub gaps: Vec<DefinitionGap>,
     /// Informational diagnostics that never turn a complete definition into one with gaps.
     pub notes: Vec<DefinitionGap>,
+    /// At most 64 summaries of the work's own examples, in source order.
+    pub examples: Vec<ExampleSummary>,
     /// The tier of each acceptance criterion, word for word. Not part of the report itself: the
     /// findings of a review are measured against it.
     #[serde(skip)]
@@ -675,6 +756,7 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
             obligations: vec![],
             gaps: vec![],
             notes: vec![],
+            examples: vec![],
             criterion_tiers: vec![],
             basis: BASIS,
         };
@@ -968,7 +1050,27 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
         },
         source: None,
     });
-    for example in &me.examples {
+    let mut example_ids = BTreeSet::new();
+    for (index, example) in me.examples.iter().enumerate() {
+        if let Some(id) = &example.id {
+            if !example_ids.insert(id) {
+                run.gap(
+                    "example_id_duplicate",
+                    format!("examples[{index}].id repeats an identifier in this definition"),
+                );
+            }
+        } else if example.check.is_some() {
+            run.gap(
+                "example_id_missing",
+                format!("examples[{index}] declares a check and needs a stable id"),
+            );
+        }
+        if example.check.is_none() && required_criteria.contains(&&example.criterion) {
+            notes.push(DefinitionGap {
+                code: "example_check_absent",
+                detail: format!("examples[{index}] for a required criterion has no check binding"),
+            });
+        }
         if !facts.acceptance.iter().any(|c| c == &example.criterion) {
             run.gap(
                 "example_criterion_unknown",
@@ -1132,6 +1234,17 @@ pub fn check_work_definition(facts: &DefinitionFacts<'_>) -> DefinitionReport {
         obligations: run.obligations,
         gaps: run.gaps,
         notes,
+        examples: me
+            .examples
+            .iter()
+            .take(MAX_ENTRIES)
+            .map(|example| ExampleSummary {
+                id: example.id.clone(),
+                kind: example.kind,
+                criterion: example.criterion.clone(),
+                has_check: example.check.is_some(),
+            })
+            .collect(),
         criterion_tiers: tiers
             .iter()
             .map(|(criterion, tier)| ((*criterion).clone(), *tier))

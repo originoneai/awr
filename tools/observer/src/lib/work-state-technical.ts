@@ -1,5 +1,17 @@
 import type { TechnicalDetailItem } from '../components/TechnicalDetails';
 import type { WorkStateResult } from '../core/observation';
+import type { ReviewData } from './types';
+
+/** Exact review metadata belongs only in the work detail's technical disclosure. */
+export function reviewTechnicalItems(review: NonNullable<ReviewData['review']>): TechnicalDetailItem[] {
+  return [
+    { label: 'review.author_actor_id', value: review.author_actor_id },
+    { label: 'review.author_person_id', value: review.author_person_id },
+    { label: 'review.artifact_digest', value: review.artifact_digest },
+    { label: 'review.contract_hash', value: review.contract_hash },
+    { label: 'review.bundle_hash', value: review.bundle_hash },
+  ];
+}
 
 /** The reporter's raw next action, the service's agent-addressed hint and guidance, for the collapsed technical details only. */
 export function workStateTechnicalItems(state: WorkStateResult): TechnicalDetailItem[] {

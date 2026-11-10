@@ -189,6 +189,101 @@ fn code(error: Error) -> String {
     }
 }
 
+fn edit_fixture_ledger(f: &mut Fixture, edit: impl FnOnce(&mut Value)) {
+    let path = f.root.join("work.yaml");
+    let mut ledger: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    edit(&mut ledger["work_items"][0]);
+    fs::write(path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
+    f.reindex();
+}
+
+fn bind_fixture_example_checks(f: &mut Fixture) {
+    edit_fixture_ledger(f, |work| {
+        for (index, example) in work["definition"]["examples"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .enumerate()
+        {
+            example["id"] = json!(format!("save-{index}"));
+            example["check"] = json!({"run": ["nonexistent-storage-check", "--case", index.to_string()], "files": ["nonexistent-tests/save.rs"]});
+        }
+    });
+}
+
+#[test]
+fn changing_a_check_argument_invalidates_the_examples_binding_and_refuses_a_claim() {
+    let mut f = Fixture::new();
+    bind_fixture_example_checks(&mut f);
+    let reviewer = f.session("reviewer", None);
+    f.approve(reviewer, "approve-checks");
+    let before = f.store.admission_status(f.project, "W", None).unwrap();
+    assert_eq!(before.state, "approved");
+    let worker = f.session("agent-w", Some("W"));
+    edit_fixture_ledger(&mut f, |work| {
+        work["definition"]["examples"][0]["check"]["run"][2] = json!("changed-case");
+    });
+    let after = f.store.admission_status(f.project, "W", None).unwrap();
+    assert_eq!(after.state, "stale");
+    assert_ne!(
+        after.current.unwrap().examples_fingerprint,
+        before.current.unwrap().examples_fingerprint
+    );
+    let revision = f.revision();
+    let error = f
+        .store
+        .acquire_claim(f.project, revision, worker, None)
+        .unwrap_err();
+    assert_eq!(code(error), "admission_stale");
+}
+
+#[test]
+fn next_action_and_priority_keep_admission_current_and_allow_a_claim() {
+    for (field, value) in [
+        ("next_action", json!("Review the saved draft behavior")),
+        ("priority", json!("P1")),
+    ] {
+        let mut f = Fixture::new();
+        bind_fixture_example_checks(&mut f);
+        let reviewer = f.session("reviewer", None);
+        f.approve(reviewer, "approve-checks");
+        let before = f.store.admission_status(f.project, "W", None).unwrap();
+        let worker = f.session("agent-w", Some("W"));
+        edit_fixture_ledger(&mut f, |work| work[field] = value);
+        let status = f.store.admission_status(f.project, "W", None).unwrap();
+        assert_eq!(status.state, "approved", "{field}");
+        assert_eq!(status.current, before.current, "{field}");
+        let revision = f.revision();
+        let (claim, _) = f
+            .store
+            .acquire_claim(f.project, revision, worker, None)
+            .unwrap();
+        assert_eq!(claim.status, "active", "{field}");
+    }
+}
+
+#[test]
+fn summary_edits_still_make_admission_stale_and_refuse_a_claim() {
+    let mut f = Fixture::new();
+    bind_fixture_example_checks(&mut f);
+    let reviewer = f.session("reviewer", None);
+    f.approve(reviewer, "approve-checks");
+    let before = f.store.admission_status(f.project, "W", None).unwrap();
+    let worker = f.session("agent-w", Some("W"));
+    edit_fixture_ledger(&mut f, |work| {
+        work["summary"] = json!("The failure path is ready for review");
+    });
+    let status = f.store.admission_status(f.project, "W", None).unwrap();
+    assert_eq!(status.state, "stale");
+    assert_ne!(status.current, before.current);
+    let revision = f.revision();
+    let error = f
+        .store
+        .acquire_claim(f.project, revision, worker, None)
+        .unwrap_err();
+    assert_eq!(code(error), "admission_stale");
+}
+
 #[test]
 fn executions_need_a_current_decision_to_register_and_again_to_start() {
     let mut f = Fixture::new();
