@@ -1,6 +1,6 @@
 {
   "contract_id": "awr-native-platforms",
-  "version": "1.7.0",
+  "version": "1.9.0",
   "work_item": "AWR-QA-004",
   "rust_version": "1.93.1",
   "command_timeout_seconds": 1800,
@@ -29,9 +29,11 @@
   ],
   "required_gates": ["environment", "runner_tests", "build", "ignored_inventory", "workspace", "doctests", "crash_recovery", "cli_mcp_parity", "cli_lifecycle", "native_cli", "workflow_oracle", "workflow_scenarios", "format", "source_unchanged"],
   "platform_required_gates": {"linux-x64": ["doc_commands"]},
+  "cli_mcp_parity": {"tests_run": 14, "tools_exercised": 14},
   "ignored_tests": [
     "admission_check_process_fixture",
     "check_process_fixture",
+    "verify_process_fixture",
     "fixture_contender",
     "fixture_wal_writer",
     "mutation_apply::recovery_tests::fixture_worker",
@@ -44,6 +46,7 @@
   "ignored_routes": {
     "admission_check_process_fixture": "work_admission_cli parents launch this native fixture through declared direct checks to record failed or passing baselines and verify admission oracle renewal; fixture invocations are not additional business scenarios",
     "check_process_fixture": "work_check_cli parents launch this native fixture through declared direct checks to observe pass/fail results, oracle changes and timeout cleanup; fixture invocations are not additional business scenarios",
+    "verify_process_fixture": "verify_cli parents launch this native fixture through declared direct checks to verify baseline failure, acceptance results and database-free reruns; fixture invocations are not additional business scenarios",
     "fixture_contender": "workspace parents launch isolated claim contenders",
     "fixture_wal_writer": "workspace parents launch and kill isolated committed/uncommitted WAL writers",
     "mutation_apply::recovery_tests::fixture_worker": "workspace and crash_recovery parents launch isolated mutation writers",

@@ -58,6 +58,7 @@ pub const DOMAINS: &[DomainDef] = &[
         description: "Apply reviewed work transitions, manage progress, and read dependency graphs.",
         children: &[
             "awr_work_transition",
+            "awr_work_check",
             "awr_work_manage",
             "awr_work_admit",
             "awr_work_contain",

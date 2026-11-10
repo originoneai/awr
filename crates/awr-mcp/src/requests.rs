@@ -199,6 +199,7 @@ pub(crate) fn recover(root: &Path, args: Value, client: &str) -> Result<CallTool
         "awr_evidence_record" => event.event_type == "evidence.recorded",
         "awr_work_manage" => event.event_type == "management.assessed",
         "awr_work_admit" => event.event_type == "work.admission",
+        "awr_work_check" => event.event_type == "work.check",
         "awr_work_contain" => event.event_type == "work.containment",
         "awr_work_reassess" => event.event_type == "work.reassessment",
         "awr_work_gap" => event.event_type == "work.gap",

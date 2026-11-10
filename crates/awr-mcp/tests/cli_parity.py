@@ -694,6 +694,139 @@ class Parity(unittest.TestCase):
         finally:
             client.close()
 
+    def test_check_path_matches_baseline_admission_acceptance_and_completion_and_detects_unmet_drift(self):
+        def normalize_generated_source(source, locator):
+            self.assertIn(locator, json.loads(source)["work_items"][0]["evidence"])
+            encoded_locator = json.dumps(locator)
+            self.assertIn(encoded_locator, source)
+            return source.replace(encoded_locator, json.dumps("<generated-check-report>"))
+
+        for locator in (".awr/artifacts/generated-report", r".awr\artifacts\generated-report"):
+            source = json.dumps({"work_items": [{"evidence": [locator]}]})
+            expected = json.dumps({"work_items": [{"evidence": ["<generated-check-report>"]}]})
+            self.assertEqual(normalize_generated_source(source, locator), expected)
+            with self.assertRaises(AssertionError, msg="a missing source reference must remain visible"):
+                normalize_generated_source(source, locator + "-missing")
+
+        criterion = "A saved draft survives a failed save"
+        decision = '---\n{"id":"scope","status":"accepted","affected_keys":["*"]}\n---\n# Scope\n\n## Decision\nKeep the local draft available.\n'
+        (self.root / "decisions").mkdir()
+        # Use CRLF on every host to catch fingerprints computed from normalized text.
+        decision_path = self.root / "decisions/scope.md"
+        decision_path.write_bytes(decision.replace("\n", "\r\n").encode("utf-8"))
+        manifest = (self.root / ".awr/project.toml").read_text()
+        manifest = manifest.replace("adapter = \"yaml-ledger-v1\"", 'adapter = "yaml-ledger-v1"\n[sources.options.admission_policy]\nversion=1\nmode="governed_enforce"\nscope="all"')
+        manifest += '\n[[sources]]\ndomain="decisions"\nrole="supporting"\npath="decisions"\nadapter="markdown-directory-v1"\n'
+        (self.root / ".awr/project.toml").write_text(manifest)
+        (self.root / ".awr/gates.toml").write_text('version=1\n[checks]\nmode="enforce"\nscope="all"\n')
+        probe = 'from pathlib import Path\nraise SystemExit(0 if Path("draft.txt").read_text() == "retained" else 1)\n'
+        (self.root / "check.py").write_text(probe)
+        definition = {"version": 1, "purpose": "implementation", "tier": "required",
+                      "intent": [{"role": "user_decision", "decision": "scope",
+                                  "source_fingerprint": "sha256:" + hashlib.sha256(decision_path.read_bytes()).hexdigest()}],
+                      "contributes": [{"goal": "G", "outcome": criterion, "claim": "Retains a local draft", "by": "parity-executor"}],
+                      "granularity": {"judgment": "independent_result", "reason": "One observable save result", "by": "parity-executor"},
+                      "responsibility": {"name": "draft-storage", "kind": "delivery"},
+                      "deliverable": "A retained local draft", "evidence_method": "Run the same checks before and after the fix",
+                      "failure_recovery": "Keep the draft after a failed save", "discrimination": {"method": "fail_before_pass_after"},
+                      "examples": [{"id": kind, "criterion": criterion, "kind": kind, "given": "a pending draft",
+                                    "when": "saving fails", "then": "the draft remains available",
+                                    "check": {"run": [sys.executable, "check.py"], "files": ["check.py"]}}
+                                   for kind in ("positive", "negative")]}
+        ledger = {"goals": [{"id": "G", "title": "Retain drafts", "status": "active", "success_criteria": [criterion]}],
+                  "work_items": [{"id": "W", "title": "Retain drafts", "status": "in_progress", "goal": "G",
+                                  "paths": ["draft.txt"], "next_action": "Implement draft retention", "acceptance": [criterion],
+                                  "definition": definition}]}
+        (self.root / "work.yaml").write_text(json.dumps(ledger))
+        (self.root / ".gitignore").write_text(".awr/\ndraft.txt\nsnapshot.db\n*-input.json\nreport.json\n")
+        for args in (["init"], ["config", "user.email", "parity@example.invalid"], ["config", "user.name", "Parity fixture"],
+                     ["add", "work.yaml", "rules.md", "goal.md", "decisions", "check.py", ".gitignore"],
+                     ["commit", "-m", "Declare draft retention checks"]):
+            subprocess.run(["git", "-C", str(self.root), *args], check=True, capture_output=True)
+        sha = subprocess.check_output(["git", "-C", str(self.root), "rev-parse", "HEAD"], text=True).strip()
+        self.cli(["source", "reindex"])
+        sid = self.cli(["session", "start", "--work", "W", "--agent", "parity-executor", "--provider", "fixture",
+                        "--model", "no-model-call", "--expected-revision", self.revision()])["session"]["id"]
+        snapshot = self.snapshot()
+
+        def path(mcp):
+            trace = {}
+            (self.root / "draft.txt").write_text("lost")
+
+            def check(phase, error=False):
+                args = {"work": "W", "session": sid, "phase": phase, "expected_revision": self.revision()}
+                if mcp:
+                    return self.tool("awr_work_check", args, error=error)
+                command = ["work", "check", "W", "--session", sid, "--phase", phase, "--expected-revision", args["expected_revision"]]
+                return self.cli(command, code=1)[1] if error else self.cli(command)
+
+            refused = check("acceptance", error=True)
+            self.assertEqual(refused["code"], "AdmissionRequired")
+            trace["admission_refusal"] = refused
+            trace["before_unmet"] = (self.tool("awr_work_get", {"work": "W", "source_sha": sha}, readonly=True)
+                                     if mcp else self.cli(["work", "show", "W", "--source-sha", sha]))["checks"]["unmet"]
+            baseline = check("baseline")
+            self.assertTrue(baseline["met"])
+            self.assertEqual([r["outcome"] for r in baseline["results"]], ["failed", "failed"])
+            prepared = (self.tool("awr_work_prepare", {"work": "W", "session": sid, "budget": 9000}, readonly=True)
+                        if mcp else self.cli(["work", "prepare", "W", "--session", sid, "--budget", 9000]))
+            trace["obligations"] = prepared["check_obligations"]
+            admission = {"work": "W", "session": sid, "expected_revision": self.revision(), "request_key": "approve-draft",
+                         "decision": "approved", "contract_fingerprint": prepared["management"]["contract_fingerprint"],
+                         "judgment": {"contribution": "Keeps the draft", "necessity": "Drafts are lost today",
+                                      "alternatives": "Reuse the local buffer", "deliverable": "A retained draft",
+                                      "exit": "All checks pass", "responsibility": "draft-storage"}}
+            (self.root / "admit-input.json").write_text(json.dumps(admission))
+            approved = self.tool("awr_work_admit", admission) if mcp else self.cli(["work", "admit", "--input", self.root / "admit-input.json"])
+            trace["admission_state"] = approved["admission"]["state"]
+            self.cli(["work", "claim", "W", "--session", sid, "--expected-revision", self.revision()])
+            (self.root / "draft.txt").write_text("retained")
+            acceptance = check("acceptance")
+            self.assertTrue(acceptance["met"])
+            self.assertEqual([r["outcome"] for r in acceptance["results"]], ["passed", "passed"])
+            self.assertIsNotNone(acceptance["completion_input"])
+            report = {"version": 1, "work_item": "W", "source_sha": sha, "command": "Inspect retained draft",
+                      "scope": ["W"], "verified_at": 1,
+                      "checks": [{"name": "draft", "passed": True, "details": "Draft retained", "criteria": [criterion]}]}
+            (self.root / "report.json").write_text(json.dumps(report) + "\n")
+            preflight = (self.tool("awr_completion_prepare", {"work": "W", "report": "report.json", "evidence_key": "review",
+                                                              "source_sha": sha, "level": "locally_verified"}, readonly=True)
+                         if mcp else self.cli(["work", "prepare-completion", "W", "--report", "report.json", "--evidence-key", "review",
+                                              "--source-sha", sha, "--level", "locally_verified"]))
+            trace["after_unmet"] = preflight["checks"]["unmet"]
+            self.assertEqual(trace["after_unmet"], [])
+            completion = acceptance["completion_input"]
+            (self.root / "complete-input.json").write_text(json.dumps(completion))
+            completed = (self.tool("awr_work_transition", {"work": "W", "session": sid, "action": "complete", "reason": "Retained draft verified",
+                                                          "completion": completion, "expected_revision": self.revision()})
+                         if mcp else self.cli(["work", "complete", "W", "--session", sid, "--reason", "Retained draft verified",
+                                              "--input", self.root / "complete-input.json", "--expected-revision", self.revision()]))
+            trace["completion"] = {key: completed[key] for key in ("ok", "code", "project_revision", "source_write_performed", "write_outcome", "error")}
+            self.assertEqual(completed["event"]["event_type"], "work.completed")
+            trace["completion_gate"] = completed["check_gate"]
+            # Each execution allocates a fresh artifact identity. Validate its actual
+            # bytes and source reference before comparing the remaining source text.
+            locator = acceptance["evidence"]["locator"]
+            report_bytes = (self.root / locator).read_bytes()
+            self.assertEqual(hashlib.sha256(report_bytes).hexdigest(), acceptance["evidence"]["sha256"])
+            source = (self.root / "work.yaml").read_text()
+            trace["completed_source"] = normalize_generated_source(source, locator)
+            with closing(sqlite3.connect(f"file:{self.root / '.awr/state.db'}?mode=ro", uri=True)) as db:
+                events = [json.loads(row[0]) for row in db.execute("SELECT payload_json FROM events WHERE event_type='work.check' ORDER BY project_revision")]
+            self.assertEqual(len(events), 4)
+            trace["events"] = [{k: v for k, v in event.items() if k not in ("started_at", "finished_at")} for event in events]
+            return trace
+
+        cli = path(False)
+        self.restore(snapshot)
+        shutil.rmtree(self.root / ".awr/artifacts")
+        mcp = path(True)
+        self.assertEqual(cli, mcp)
+        changed = deepcopy(mcp)
+        changed["after_unmet"] = [{"example": "positive", "reason": "acceptance_missing"}]
+        with self.assertRaises(AssertionError, msg="unmet drift must fail the comparison"):
+            self.assertEqual(cli, changed)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

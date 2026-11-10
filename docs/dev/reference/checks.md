@@ -28,7 +28,7 @@ in the argument vector. Commands have the permissions of the calling process.
 | --- | --- | --- |
 | `baseline` | A nonzero exit recorded as `failed` | Can run before admission |
 | `acceptance` | Exit zero recorded as `passed` | Governed work needs current admission and this session's active claim |
-| `mutation` | Exit zero recorded as `passed` | Same admission and claim requirement as acceptance |
+| `mutation` | Exit zero plus a valid report with zero survivors and timeouts | Same admission and claim requirement as acceptance |
 
 Recording a result exits zero, including a failed check. Add `--require-met` to exit one when
 any selected example misses its phase expectation. A timeout is `unknown` with reason
@@ -78,8 +78,60 @@ merged into the input before completion.
 `work complete --input`. It writes when the run generates completion input.
 Keep report generation, work completion, review and release as distinct steps.
 
+## Mutation and alternatives
+
+Declare the project's report command in `.awr/gates.toml`, then run the mutation phase:
+
+```toml
+version = 1
+[checks.mutation]
+run = ["python3", "examples/checks/mutants_example.py"]
+```
+
+```sh
+awr work check W --session S --phase mutation --require-met --expected-revision R
+```
+
+The command runs once at the project root and writes one UTF-8 JSON report to standard
+output. AWR records the report against each selected example's current oracle. The bundled
+[synthetic example](../../../examples/checks/mutants_example.py) illustrates this format:
+
+```json
+{"version":1,"source_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","tool":"project-report 1","mutants":[{"id":"save-result","file":"src/save.rs","line":42,"status":"killed","killed_by":["keeps-input"]}]}
+```
+
+| Report field | Meaning |
+| --- | --- |
+| `version` | Report contract version `1` |
+| `source_sha` | The current Git commit, matching the recorded check source |
+| `tool` | The project's tool and version label |
+| `mutants` | Entries with unique `id`, `file`, positive `line`, and `status` |
+| `killed_by` | Optional list of example or test identifiers |
+| `note` | Required nonblank explanation for `equivalent` entries |
+
+Entry status is `killed`, `survived`, `equivalent`, `timeout`, or `skipped`. Events store
+all five counts in `mutants` and the first surviving locations in `survivors` as
+`{id,file,line}`. A successful command with zero survivors and timeouts records `passed`.
+Survivors produce `mutants_survived`; mutant timeouts produce `mutation_timeout`.
+Output lists surviving files and lines and suggests adding an example or recording a finding.
+`--timeout SECONDS` controls the project command; its fallback is 300 seconds.
+
+Completion with `diff_mutation` requires a passing mutation observation for the completed
+source commit and each current example oracle, alongside the acceptance checks. The clean-tree
+policy applies to both phases. A later valid run of the same source and oracle satisfies the gate.
+
+For `justified_alternative`, provide `discrimination.note` with the proposed review method.
+The definition report exposes `discrimination_note_missing` for an empty explanation.
+Propose admission from an identified session, then approve that proposal from another session.
+This approval rule applies across tags, including inherited alternative methods. Approval
+receipts retain the proposer and reviewer session identities for the completion gate.
+
 ## Limits
 
 - `--status` reads stored facts without executing commands, refreshing sources or changing state.
 - Completion reports and evidence require every required bound example to pass in the same acceptance run, with an observable Git commit.
 - A passing selected check leaves unmapped criteria for separate evidence and validation.
+- Mutation reports contain at most 4 MiB and 5000 entries; events retain at most 20 surviving locations.
+- Mutation IDs, files, and tool labels allow 128, 512, and 256 UTF-8 bytes respectively, with printable text.
+- Mutation execution consumes the declared JSON contract; projects supply report commands and tool-specific adapters.
+- A missing mutation command returns `Unsupported` with guidance to declare `[checks.mutation]` in `.awr/gates.toml`.

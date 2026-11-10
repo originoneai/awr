@@ -684,6 +684,26 @@ fn catalog() -> Vec<Capability> {
                 "legacy_fields_preserved",
             ][..],
         ),
+        (
+            "mcp.work_check",
+            true,
+            &["work check", "work prepare", "work complete"][..],
+            &[
+                "second_level_write_tool",
+                "session_and_revision_required",
+                "shared_writes_require_request_id",
+                "completion_input_returned_inline",
+            ][..],
+        ),
+        (
+            "verify.commit",
+            true,
+            &["verify", "verify install-hook"][..],
+            &[
+                "local_observations_or_database_free_rerun",
+                "baseline_fail_before_pass_after",
+            ][..],
+        ),
     ]
     .into_iter()
     .map(|(id, available, commands, limitations)| Capability {

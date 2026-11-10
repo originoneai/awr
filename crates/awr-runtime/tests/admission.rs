@@ -500,6 +500,64 @@ fn inherited_fail_before_pass_after_requires_baselines_but_other_methods_do_not(
 }
 
 #[test]
+fn alternative_approval_requires_a_distinct_proposal_session_in_store() {
+    let mut f = Fixture::new();
+    edit_fixture_ledger(&mut f, |work| {
+        work["definition"]["discrimination"] =
+            json!({"method":"justified_alternative","note":"Review recorded failure injection"});
+    });
+    let proposer = f.session("proposer", Some("W"));
+    let reviewer = f.session("reviewer", None);
+    let inline = f.request(reviewer, "inline-alternative");
+    assert_eq!(
+        code(f.store.record_admission(f.project, &inline).unwrap_err()),
+        "admission_review_not_independent"
+    );
+    let mut proposal = f.request(proposer, "propose-alternative");
+    proposal.decision = AdmissionDecision::Proposed;
+    let (event, _) = f.store.record_admission(f.project, &proposal).unwrap();
+    let mut own = f.request(proposer, "self-alternative");
+    own.judgment = None;
+    own.proposal_event = Some(event.id);
+    assert_eq!(
+        code(f.store.record_admission(f.project, &own).unwrap_err()),
+        "admission_review_not_independent"
+    );
+    let mut independent = f.request(reviewer, "review-alternative");
+    independent.judgment = None;
+    independent.proposal_event = Some(event.id);
+    f.store.record_admission(f.project, &independent).unwrap();
+    assert_eq!(admission_value(&f)["state"], "approved");
+    assert_eq!(admission_value(&f)["independent_review_required"], true);
+}
+
+#[test]
+fn inherited_alternative_requires_independent_approval_without_policy_review_tags() {
+    let mut f = Fixture::new();
+    let path = f.root.join("work.yaml");
+    let mut ledger: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let mut parent = ledger["work_items"][0].clone();
+    parent["id"] = json!("P");
+    parent["definition"]["discrimination"] =
+        json!({"method":"justified_alternative","note":"Review injected failures"});
+    ledger["work_items"].as_array_mut().unwrap().push(parent);
+    let definition = &mut ledger["work_items"][0]["definition"];
+    definition.as_object_mut().unwrap().remove("discrimination");
+    definition["inherits"] = json!("P");
+    fs::write(path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
+    f.reindex();
+    let proposer = f.session("proposer", Some("W"));
+    let mut request = f.request(proposer, "inherited-alternative");
+    assert_eq!(
+        code(f.store.record_admission(f.project, &request).unwrap_err()),
+        "admission_review_not_independent"
+    );
+    request.decision = AdmissionDecision::Proposed;
+    f.store.record_admission(f.project, &request).unwrap();
+    assert_eq!(admission_value(&f)["independent_review_required"], true);
+}
+
+#[test]
 fn oracle_drift_blocks_execution_registration_and_start_without_source_reindexing() {
     let mut f = Fixture::new();
     bind_fixture_example_checks(&mut f);

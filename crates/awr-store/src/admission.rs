@@ -149,9 +149,13 @@ pub(crate) fn current_oracle_files(root: &Path, check: &ExampleCheck) -> Option<
         .collect()
 }
 
-fn needs_baseline(conn: &Connection, project: Id, work: &WorkItem) -> Result<bool> {
+fn discrimination_method(
+    conn: &Connection,
+    project: Id,
+    work: &WorkItem,
+) -> Result<Option<DiscriminationMethod>> {
     let Some(definition) = &work.definition else {
-        return Ok(false);
+        return Ok(None);
     };
     let inherited: Option<Projected<WorkItem>> = if definition.discrimination.is_none() {
         definition
@@ -178,7 +182,7 @@ fn needs_baseline(conn: &Connection, project: Id, work: &WorkItem) -> Result<boo
             .discrimination
             .as_ref()
     });
-    Ok(discrimination.is_some_and(|d| d.method == DiscriminationMethod::FailBeforePassAfter))
+    Ok(discrimination.map(|d| d.method))
 }
 
 fn baselines_at(
@@ -188,7 +192,10 @@ fn baselines_at(
     branch: Option<Id>,
     oracles: &[ExampleOracle],
 ) -> Result<Vec<AdmissionBaseline>> {
-    if oracles.is_empty() || !needs_baseline(conn, project, &work.item)? {
+    if oracles.is_empty()
+        || discrimination_method(conn, project, &work.item)?
+            != Some(DiscriminationMethod::FailBeforePassAfter)
+    {
         return Ok(vec![]);
     }
     let mut stmt = conn.prepare("SELECT id,project_id,work_item_id,session_id,branch_id,event_type,importance,summary,payload_json,project_revision,created_at FROM events WHERE project_id=?1 AND work_item_id=?2 AND branch_id IS ?3 AND event_type=?4 AND json_extract(payload_json,'$.phase')='baseline' ORDER BY project_revision DESC,id DESC").map_err(db_error)?;
@@ -350,7 +357,7 @@ pub(crate) fn status_at(
     let (current, oracles) = current_binding(conn, project, work, &value, &definition)?;
     let baselines = baselines_at(conn, project, work, branch, &oracles)?;
     let latest = latest_admission(conn, project, work.item.meta.id, branch)?;
-    Ok(evaluate_admission(&AdmissionInputs {
+    let mut status = evaluate_admission(&AdmissionInputs {
         work: key,
         tags: &work.item.tags,
         completed: work.item.status == WorkStatus::Completed,
@@ -359,7 +366,10 @@ pub(crate) fn status_at(
         latest: latest.as_ref().map(|(_, record)| record),
         definition: &DefinitionSummary::from(&definition),
         baselines: &baselines,
-    }))
+    });
+    status.independent_review_required |= discrimination_method(conn, project, &work.item)?
+        == Some(DiscriminationMethod::JustifiedAlternative);
+    Ok(status)
 }
 
 /// Readiness diagnostics: only an enforced policy turns the derived reasons into blockers.
@@ -606,7 +616,8 @@ impl Store {
                     ));
                 }
                 let latest = latest_admission(tx, project, work.item.meta.id, branch)?;
-                let review_required = policy.requires_independent_review(&work.item.tags);
+                let review_required = policy.requires_independent_review(&work.item.tags)
+                    || discrimination_method(tx, project, &work.item)? == Some(DiscriminationMethod::JustifiedAlternative);
                 if review_required
                     && request.decision == AdmissionDecision::Proposed
                     && decider_session.is_none()

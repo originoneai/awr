@@ -23,6 +23,7 @@ Commands:
   work          Read one work item without expanding the full ledger or event history
   session       Start, inspect, checkpoint or end an explicitly identified agent session
   evidence      Add evidence records or inspect a specific record and its report reference
+  verify        Verify completed work for a commit using local observations or fresh checks
   decision      Inspect a specific authoritative decision
   spec          Inspect explicit specification versions, supersessions and requirement coverage
   artifact      Import, inspect or explicitly read a registered artifact
