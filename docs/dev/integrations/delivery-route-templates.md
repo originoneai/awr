@@ -98,7 +98,9 @@ and does not prove the template or task is still current. Report-only work does
 not need a route, and a Git revision or check list alone does not require one.
 For a current candidate with an integration-capable review policy and no matching
 channel, supervisor guidance offers `delivery.routes` before repeating review or
-finalization advice. This discovery does not change report-only completion policy.
+finalization advice. A role that may deliver but may not assign work is pointed at a
+supervisor instead, because `delivery.route.reuse` needs the authority to assign work.
+This discovery does not change report-only completion policy.
 
 The registry requires Team PostgreSQL schema 60. Use the normal owner-side
 migration and application-role bootstrap procedure before starting a matching

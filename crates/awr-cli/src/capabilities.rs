@@ -641,6 +641,17 @@ fn catalog() -> Vec<Capability> {
                 "project_file_only_no_runtime_schema_change",
             ][..],
         ),
+        (
+            "definition.example_checks",
+            true,
+            &["work show", "work prepare"][..],
+            &[
+                "optional_example_metadata",
+                "structural_validation_only",
+                "no_check_execution_or_file_reads",
+                "requires_upgraded_source_readers",
+            ][..],
+        ),
     ]
     .into_iter()
     .map(|(id, available, commands, limitations)| Capability {
