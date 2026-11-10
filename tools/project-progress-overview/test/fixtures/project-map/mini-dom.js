@@ -202,6 +202,16 @@ class Element {
     return child;
   }
 
+  insertBefore(child, ref) {
+    if (!ref) return this.appendChild(child);
+    if (child.parent) child.parent.childNodes.splice(child.parent.childNodes.indexOf(child), 1);
+    child.parent = this;
+    const at = this.childNodes.indexOf(ref);
+    if (at < 0) this.childNodes.push(child);
+    else this.childNodes.splice(at, 0, child);
+    return child;
+  }
+
   contains(node) {
     for (let n = node; n; n = n.parent) if (n === this) return true;
     return false;

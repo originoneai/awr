@@ -13,6 +13,12 @@
     return String(value);
   };
 
+  const workKey = (value) => {
+    const key = String(value == null ? '' : value);
+    if (!/^[A-Za-z0-9_.:#/-]{1,200}$/.test(key)) throw new Error('key must be a valid work key');
+    return key;
+  };
+
   const BUILDERS = {
     workGraph: (p) => ['work', 'graph', '--limit', integer(p.limit === undefined ? 100 : p.limit, 'limit', 1, 1000), ...(p.cached ? ['--cached'] : [])],
     nav: (p) => ['nav', '--cached', ...(p.milestone ? ['--milestone', String(p.milestone)] : [])],
@@ -22,6 +28,7 @@
       ...(p.cursor ? ['--cursor', JSON.stringify(p.cursor)] : [])],
     sessions: () => ['session', 'list', '--active', '--limit', '100'],
     doctor: () => ['doctor'],
+    workPrepare: (p) => ['work', 'prepare', workKey(p && p.key), '--response-view', 'action'],
   };
 
   /** Argument list of one extractor command; throws RangeError / Error for bad parameters or unknown names. */

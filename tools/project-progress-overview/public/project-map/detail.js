@@ -162,7 +162,46 @@
   /** The awr command that shows this item, for copying. */
   const commandFor = (key) => `awr work show ${/^[A-Za-z0-9_.:#/-]+$/.test(key) ? key : `'${key.replace(/'/g, "'\\''")}'`}`;
 
-  const api = { dependencyIndex, neighborhood, detailData, renderDetail, commandFor };
+  function guidanceFrom(data) {
+    const g = data && data.guidance;
+    if (!g || typeof g !== 'object' || Array.isArray(g)) return null;
+    return g;
+  }
+
+  /**
+   * Live `work prepare --response-view action` card. Snapshot facts stay in `renderDetail`;
+   * empty prepare fields stay blank and are never filled from the snapshot. Guidance is
+   * shown even when the CLI exits with ContextIncomplete. The error code is shown only
+   * when there is no guidance payload.
+   */
+  function renderPrepare(envelope, t) {
+    const data = envelope && envelope.data && typeof envelope.data === 'object' && !Array.isArray(envelope.data)
+      ? envelope.data : null;
+    const g = guidanceFrom(data);
+    const field = (label, value) => {
+      const text = value == null || value === '' ? '' : String(value);
+      return `<dt>${esc(label)}</dt><dd>${text ? esc(text) : `<span class="pm-d-none">${esc(t('map.detail.unset'))}</span>`}</dd>`;
+    };
+    const parts = [
+      `<h3>${esc(t('map.prepare.title'))}</h3>`,
+      `<p class="pm-d-note">${esc(t('map.prepare.not_completion'))}</p>`,
+    ];
+    if (g) {
+      parts.push(`<dl class="pm-d-grid">${[
+        field(t('map.prepare.when'), g.when),
+        field(t('map.prepare.basis'), g.basis),
+        field(t('map.prepare.next'), g.next_action),
+        field(t('map.prepare.recheck'), g.recheck),
+      ].join('')}</dl>`);
+    } else if (envelope && envelope.error && envelope.error.code) {
+      parts.push(`<p class="pm-d-none">${esc(String(envelope.error.code))}</p>`);
+    } else {
+      parts.push(`<p class="pm-d-none">${esc(t('map.prepare.missing'))}</p>`);
+    }
+    return `<section class="pm-d-sec" data-pm-prepare-card>${parts.join('')}</section>`;
+  }
+
+  const api = { dependencyIndex, neighborhood, detailData, renderDetail, renderPrepare, commandFor };
   if (commonJS) module.exports = api;
   else {
     root.AWR_PROJECT_MAP = root.AWR_PROJECT_MAP || {};
