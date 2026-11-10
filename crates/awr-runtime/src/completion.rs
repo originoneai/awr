@@ -75,8 +75,22 @@ fn verify_check_gate(store: &Store, root: &Path, request: &CheckGateRequest) -> 
     if gate.mode == CheckGateMode::Enforce && gate.would_refuse {
         let project = store.project_by_root(&root.canonicalize()?)?;
         let next = check_gate_command(request, project.project_revision, None, "acceptance");
+        let survivors: std::collections::BTreeSet<_> = gate
+            .unmet
+            .iter()
+            .flat_map(|item| &item.survivors)
+            .map(|m| format!("{} ({}:{})", m.id, m.file, m.line))
+            .collect();
+        let message = if survivors.is_empty() {
+            "completion checks are not satisfied".into()
+        } else {
+            format!(
+                "mutants_survived: {}; add an example or record a finding",
+                survivors.into_iter().collect::<Vec<_>>().join(", ")
+            )
+        };
         return Err(Error::EvidenceDiagnostic(Box::new(SourceDiagnostic {
-            message: "completion checks are not satisfied".into(),
+            message,
             location: DiagnosticLocation {
                 locator: Some(awr_source::GATES_FILE.into()),
                 pointer: Some("/checks".into()),

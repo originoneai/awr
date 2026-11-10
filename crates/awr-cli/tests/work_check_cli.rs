@@ -189,6 +189,337 @@ fn check_process_fixture() {
     }
 }
 
+impl Fixture {
+    fn discrimination(&self, method: &str, note: Option<&str>) {
+        let path = self.root.join("work.yaml");
+        let mut ledger: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        ledger["work_items"][0]["definition"]["discrimination"] =
+            json!({"method":method,"note":note});
+        fs::write(&path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
+        self.ok(&["source", "reindex"]);
+        self.git(&["add", "work.yaml"]);
+        self.git(&["commit", "-m", "Declare the discrimination method"]);
+    }
+
+    fn mutation_report(&self, mutants: Value) {
+        let report = json!({"version":1,"source_sha":self.git(&["rev-parse","HEAD"]),
+            "tool":"synthetic-report 1","mutants":mutants});
+        fs::write(
+            self.root.join(".awr/mutation-report.json"),
+            serde_json::to_vec(&report).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn mutation_policy(&self) {
+        let python = if cfg!(windows) { "python" } else { "python3" };
+        let script = "import pathlib,sys; p=pathlib.Path('.awr/mutation-invocations'); p.write_text(p.read_text()+'x' if p.exists() else 'x'); sys.stdout.buffer.write(pathlib.Path('.awr/mutation-report.json').read_bytes())";
+        self.gate_policy(
+            "enforce",
+            &format!(
+                "[checks.mutation]\nrun = {}",
+                serde_json::to_string(&json!([python, "-c", script])).unwrap()
+            ),
+        );
+    }
+
+    fn alternative_decision(&self, session: &str, proposal: Option<&str>) -> Output {
+        let assessed = self.ok(&["work", "assess", "W"]);
+        let mut request = json!({"work":"W","session":session,
+            "expected_revision":self.revision().parse::<u64>().unwrap(),
+            "request_key":format!("alternative-{}",Id::new()),
+            "decision":if proposal.is_some() {"approved"} else {"proposed"},
+            "contract_fingerprint":assessed["contract_fingerprint"]});
+        if let Some(event) = proposal {
+            request["proposal_event"] = json!(event);
+        } else {
+            request["judgment"] = json!({"contribution":"Keep the draft","necessity":"Preserve pending input",
+                "alternatives":"Use a failure injection review","deliverable":"Safe local saving",
+                "exit":"The reviewer accepts the alternative","responsibility":"draft-storage"});
+        }
+        fs::write(
+            self.root.join(".awr/alternative-admission.json"),
+            serde_json::to_vec(&request).unwrap(),
+        )
+        .unwrap();
+        self.run(&[
+            "work",
+            "admit",
+            "--input",
+            ".awr/alternative-admission.json",
+        ])
+    }
+}
+
+fn mutation_fixture() -> Fixture {
+    let f = Fixture::new(2, false);
+    f.gate_definition("medium", "implementation");
+    f.discrimination("diff_mutation", None);
+    f.gate_admit();
+    f.mutation_policy();
+    f
+}
+
+#[test]
+fn mutation_criterion_1_all_killed_passes_records_counts_and_completes() {
+    let f = mutation_fixture();
+    f.mutation_report(json!([{"id":"m1","file":"src/save.rs","line":42,
+        "status":"killed","killed_by":["draft-0"]}]));
+    let run = f.checked("mutation", &["--require-met"]);
+    assert_eq!(run["met"], true);
+    assert_eq!(run["results"][0]["outcome"], "passed");
+    let payload = &f.event(&run["results"][0])["payload"];
+    assert_eq!(
+        payload["mutants"],
+        json!({"killed":1,"survived":0,"equivalent":0,"timeout":0,"skipped":0})
+    );
+    assert_eq!(
+        fs::read_to_string(f.root.join(".awr/mutation-invocations")).unwrap(),
+        "x"
+    );
+    f.checked("acceptance", &["--write-input", "completion.json"]);
+    assert_eq!(f.gate_done()["check_gate"]["would_refuse"], false);
+}
+
+#[test]
+fn mutation_criterion_1_survivor_refuses_completion_with_file_and_line() {
+    let f = mutation_fixture();
+    f.mutation_report(json!([{"id":"m-live","file":"src/save.rs","line":57,"status":"survived"}]));
+    let run = f.checked("mutation", &[]);
+    assert_eq!(run["met"], false);
+    assert_eq!(run["results"][0]["outcome"], "failed");
+    assert_eq!(
+        run["results"][0]["survivors"],
+        json!([{"id":"m-live","file":"src/save.rs","line":57}])
+    );
+    f.checked("acceptance", &["--write-input", "completion.json"]);
+    let error = f.gate_error("mutants_survived");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("src/save.rs:57"),
+        "{error}"
+    );
+}
+
+#[test]
+fn mutation_criterion_2_equivalent_with_note_is_counted_and_passes() {
+    let f = mutation_fixture();
+    f.mutation_report(json!([{"id":"m-eq","file":"src/save.rs","line":12,
+        "status":"equivalent","note":"The earlier guard already excludes this branch"}]));
+    let run = f.checked("mutation", &[]);
+    assert_eq!(run["met"], true);
+    assert_eq!(run["results"][0]["mutants"]["equivalent"], 1);
+    f.checked("acceptance", &["--write-input", "completion.json"]);
+    f.gate_done();
+}
+
+#[test]
+fn mutation_criterion_2_equivalent_without_note_rejects_report_with_id() {
+    let f = mutation_fixture();
+    f.mutation_report(
+        json!([{"id":"m-needs-note","file":"src/save.rs","line":12,"status":"equivalent"}]),
+    );
+    let output = f.check("mutation", &[]);
+    assert!(!output.status.success());
+    let error: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert!(
+        error["message"].as_str().unwrap().contains("m-needs-note"),
+        "{error}"
+    );
+    let status = f.ok(&["work", "check", "W", "--status"]);
+    assert!(status["examples"].as_array().unwrap().iter().all(|e| {
+        e["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["phase"] != "mutation")
+    }));
+}
+
+#[test]
+fn mutation_criterion_4_missing_command_is_unsupported_and_explains_configuration() {
+    let f = Fixture::new(1, false);
+    let output = f.check("mutation", &[]);
+    assert!(!output.status.success());
+    let error: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(error["code"], "Unsupported", "{error}");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains(".awr/gates.toml"),
+        "{error}"
+    );
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap()
+            .contains("[checks.mutation]"),
+        "{error}"
+    );
+}
+
+#[test]
+fn mutation_criterion_4_declared_example_command_passes() {
+    let f = Fixture::new(1, false);
+    let python = if cfg!(windows) { "python" } else { "python3" };
+    let script =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/checks/mutants_example.py");
+    f.gate_policy(
+        "off",
+        &format!(
+            "[checks.mutation]\nrun = {}",
+            serde_json::to_string(&json!([python, script.to_str().unwrap()])).unwrap()
+        ),
+    );
+    let run = f.checked("mutation", &["--require-met"]);
+    assert_eq!(run["met"], true);
+    assert_eq!(run["results"][0]["mutants"]["killed"], 1);
+    assert_eq!(run["results"][0]["mutants"]["equivalent"], 1);
+}
+
+#[test]
+fn mutation_timeout_and_source_mismatch_cannot_satisfy_completion() {
+    let f = mutation_fixture();
+    f.mutation_report(json!([{"id":"slow","file":"src/save.rs","line":31,"status":"timeout"}]));
+    assert_eq!(f.checked("mutation", &[])["met"], false);
+    f.checked("acceptance", &["--write-input", "completion.json"]);
+    f.gate_error("mutation_timeout");
+    let path = f.root.join(".awr/mutation-report.json");
+    let mut report: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    report["source_sha"] = json!("a".repeat(40));
+    fs::write(path, serde_json::to_vec(&report).unwrap()).unwrap();
+    let output = f.check("mutation", &[]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("source_sha"));
+}
+
+#[test]
+fn mutation_criterion_3_independent_alternative_approval_allows_completion() {
+    let f = Fixture::new(2, false);
+    f.gate_definition("medium", "implementation");
+    f.gate_admit();
+    f.discrimination(
+        "justified_alternative",
+        Some("Review a recorded storage failure injection"),
+    );
+    let output = f.alternative_decision(&f.session, None);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let proposal: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let reviewer = f.ok(&[
+        "session",
+        "start",
+        "--agent",
+        "reviewer",
+        "--provider",
+        "fixture",
+        "--model",
+        "local",
+        "--expected-revision",
+        &f.revision(),
+    ]);
+    let output = f.alternative_decision(
+        reviewer["session"]["id"].as_str().unwrap(),
+        proposal["event"]["id"].as_str(),
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    f.gate_policy("enforce", "");
+    f.checked("acceptance", &["--write-input", "completion.json"]);
+    f.gate_done();
+}
+
+#[test]
+fn mutation_criterion_3_self_approval_of_alternative_is_rejected_without_tags() {
+    let f = Fixture::new(2, false);
+    f.gate_definition("medium", "implementation");
+    f.gate_admit();
+    f.discrimination(
+        "justified_alternative",
+        Some("Review a recorded storage failure injection"),
+    );
+    let output = f.alternative_decision(&f.session, None);
+    assert!(output.status.success());
+    let proposal: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let output = f.alternative_decision(&f.session, proposal["event"]["id"].as_str());
+    assert!(!output.status.success());
+    let error: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(error["code"], "AdmissionRequired", "{error}");
+    assert_eq!(
+        error["details"]["reason"], "admission_review_not_independent",
+        "{error}"
+    );
+}
+
+#[test]
+fn mutation_survivor_event_keeps_twenty_locations_and_the_full_count() {
+    let f = mutation_fixture();
+    f.mutation_report(json!((1..=25).map(|line|json!({"id":format!("m{line}"),"file":"src/save.rs","line":line,"status":"survived"})).collect::<Vec<_>>()));
+    let run = f.checked("mutation", &[]);
+    let event = f.event(&run["results"][0]);
+    assert_eq!(event["payload"]["mutants"]["survived"], 25);
+    assert_eq!(event["payload"]["survivors"].as_array().unwrap().len(), 20);
+    assert_eq!(event["payload"]["survivors"][19]["line"], 20);
+    assert!(serde_json::to_vec(&event["payload"]).unwrap().len() <= awr_core::CHECK_PAYLOAD_CAP);
+}
+
+#[test]
+fn mutation_command_failure_and_timeout_remain_unsatisfied() {
+    let python = if cfg!(windows) { "python" } else { "python3" };
+    for (script, outcome, reason) in [
+        ("import sys; sys.exit(7)", "failed", Value::Null),
+        ("import time; time.sleep(120)", "unknown", json!("timeout")),
+    ] {
+        let f = Fixture::new(1, false);
+        f.gate_policy(
+            "off",
+            &format!(
+                "[checks.mutation]\nrun = {}",
+                serde_json::to_string(&json!([python, "-c", script])).unwrap()
+            ),
+        );
+        let run = f.checked("mutation", &["--timeout", "1"]);
+        assert_eq!(run["met"], false);
+        assert_eq!(run["results"][0]["outcome"], outcome);
+        assert_eq!(run["results"][0]["reason"], reason);
+        assert!(run["results"][0]["mutants"].is_null());
+    }
+}
+
+#[test]
+fn mutation_command_cannot_rebind_later_example_oracles_after_rewriting_files() {
+    let f = Fixture::new(2, false);
+    let python = if cfg!(windows) { "python" } else { "python3" };
+    let script = "import pathlib,sys; pathlib.Path('oracle.txt').write_text('rewritten'); sys.stdout.buffer.write(pathlib.Path('.awr/mutation-report.json').read_bytes())";
+    f.gate_policy(
+        "off",
+        &format!(
+            "[checks.mutation]\nrun = {}",
+            serde_json::to_string(&json!([python, "-c", script])).unwrap()
+        ),
+    );
+    f.mutation_report(json!([{"id":"m1","file":"src/save.rs","line":1,"status":"killed"}]));
+    let run = f.checked("mutation", &[]);
+    assert_eq!(run["met"], false);
+    for observation in run["results"].as_array().unwrap() {
+        assert_eq!(observation["outcome"], "errored");
+        assert_eq!(observation["reason"], "oracle_changed_during_run");
+        assert_eq!(
+            observation["oracle_files"][0]["sha256"],
+            format!("{:x}", Sha256::digest(b"original oracle\n"))
+        );
+    }
+}
+
 #[test]
 fn baseline_failure_and_acceptance_pass_record_exit_oracle_source_and_log_hashes() {
     let f = Fixture::new(1, false);
