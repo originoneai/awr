@@ -13,6 +13,131 @@ const CRITERION: &str = "Deliver the reviewed analysis";
 const WORK: &str = "work_items:\n- id: W\n  title: Prepare customer analysis\n  status: ready\n  owner: business-coordinator\n  next_action: Draft the analysis\n  depends_on: [D]\n  acceptance: [Deliver the reviewed analysis]\n  verification:\n    evidence_level: none\n  evidence: []\n- id: D\n  title: Required input\n  status: completed\n- id: NEXT\n  title: Prepare follow-up\n  status: ready\n  next_action: Review next steps\n  acceptance: [Follow-up is available]\n";
 const MANIFEST: &str = "[project]\nname='MCP fixture'\nexternal_key='mcp-fixture'\n[[sources]]\ndomain='ledger'\nrole='primary'\npath='work.yaml'\nadapter='yaml-ledger-v1'\n[[sources]]\ndomain='rules'\nrole='primary'\npath='rules.md'\nadapter='markdown-rules-v1'\n[[sources]]\ndomain='goal'\nrole='primary'\npath='goal.md'\nadapter='markdown-heading-v1'\n[sources.options]\nstatus='active'\n[[sources]]\ndomain='decisions'\nrole='supporting'\npath='decisions'\nadapter='markdown-directory-v1'\n";
 
+fn quickstart_installation(page: &str) -> bool {
+    let page = page.replace("\r\n", "\n");
+    let Some(step) = page.split("### 3. ").nth(1) else {
+        return false;
+    };
+    let step = step.split("\n### ").next().unwrap();
+    step.contains("client install --client codex\n")
+        && step.contains("client install --client codex --accept --expected-preview PREVIEW_SHA256")
+        && !step.lines().any(|line| line.trim_start().starts_with('>'))
+}
+
+fn fallback_agreement(page: &str) -> String {
+    let page = page.replace("\r\n", "\n");
+    page.split("### Hosts without lifecycle hooks\n")
+        .nth(1)
+        .unwrap_or("")
+        .split("\n### ")
+        .next()
+        .unwrap_or("")
+        .lines()
+        .filter_map(|line| line.strip_prefix("> "))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn agreement_matches(instructions: &str, fallback: &str) -> bool {
+    !WORKING_AGREEMENT.is_empty()
+        && instructions.contains(WORKING_AGREEMENT)
+        && fallback == WORKING_AGREEMENT
+}
+
+fn agreement_is_bounded(agreement: &str) -> bool {
+    !agreement.is_empty() && agreement.len() <= 600 && agreement.split_whitespace().count() <= 60
+}
+
+#[test]
+fn quickstarts_use_previewed_installation_in_step_three() {
+    for (name, page) in [
+        ("README.md", include_str!("../../../README.md")),
+        ("README.zh-CN.md", include_str!("../../../README.zh-CN.md")),
+        (
+            "quickstart.md",
+            include_str!("../../../docs/series/quickstart.md"),
+        ),
+    ] {
+        assert!(
+            quickstart_installation(page),
+            "{name}: preview and accept the adapter in step three"
+        );
+    }
+}
+
+#[test]
+fn quickstart_check_rejects_pasted_agreements_and_unreviewed_installation() {
+    let preview = "awr client install --client codex\n";
+    let accept = "awr client install --client codex --accept --expected-preview PREVIEW_SHA256\n";
+    let valid = format!("### 3. Install the adapter\n{preview}{accept}");
+    assert!(quickstart_installation(&valid));
+    assert!(!quickstart_installation(&format!(
+        "{valid}> Paste this agreement to your agent.\n"
+    )));
+    assert!(!quickstart_installation(&format!(
+        "### 3. Install the adapter\n{preview}"
+    )));
+    assert!(!quickstart_installation(&format!(
+        "### 3. Install the adapter\n{accept}"
+    )));
+}
+
+#[tokio::test]
+async fn mcp_and_documented_fallback_use_the_core_working_agreement() {
+    let f = Fixture::new();
+    let client = f.client().await;
+    let instructions = client.peer_info().unwrap().instructions.clone().unwrap();
+    let fallback = fallback_agreement(include_str!("../../../docs/series/agents.md"));
+    assert!(agreement_matches(&instructions, &fallback));
+    client.cancel().await.unwrap();
+}
+
+#[test]
+fn working_agreement_check_rejects_independent_mcp_and_documentation_edits() {
+    assert!(agreement_matches(WORKING_AGREEMENT, WORKING_AGREEMENT));
+    assert!(!agreement_matches(
+        "A separately edited instruction.",
+        WORKING_AGREEMENT
+    ));
+    assert!(!agreement_matches(
+        WORKING_AGREEMENT,
+        "A separately edited fallback."
+    ));
+    assert!(!agreement_matches(WORKING_AGREEMENT, ""));
+}
+
+#[test]
+fn documented_fallback_and_core_working_agreement_stay_within_the_limits() {
+    let fallback = fallback_agreement(include_str!("../../../docs/series/agents.md"));
+    assert!(agreement_is_bounded(&fallback));
+    assert!(agreement_is_bounded(WORKING_AGREEMENT));
+}
+
+#[test]
+fn fallback_check_rejects_more_than_sixty_words_or_six_hundred_bytes() {
+    assert!(agreement_is_bounded(&"word ".repeat(60)));
+    assert!(!agreement_is_bounded(&"word ".repeat(61)));
+    assert!(agreement_is_bounded(&"a".repeat(600)));
+    assert!(!agreement_is_bounded(&"a".repeat(601)));
+    assert!(!agreement_is_bounded(""));
+}
+
+#[test]
+fn documentation_checks_accept_crlf_without_agreement_drift() {
+    for page in [
+        include_str!("../../../README.md"),
+        include_str!("../../../README.zh-CN.md"),
+        include_str!("../../../docs/series/quickstart.md"),
+    ] {
+        let crlf = page.replace("\r\n", "\n").replace('\n', "\r\n");
+        assert!(quickstart_installation(&crlf));
+    }
+    let page = include_str!("../../../docs/series/agents.md")
+        .replace("\r\n", "\n")
+        .replace('\n', "\r\n");
+    assert_eq!(fallback_agreement(&page), WORKING_AGREEMENT);
+}
+
 #[tokio::test]
 async fn personal_input_diagnostics_stdio_preserve_state_and_defaults() {
     let f = Fixture::new();

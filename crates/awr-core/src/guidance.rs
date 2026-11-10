@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 /// One actionable instruction; details remain in queryable receipts.
 pub const ACTION_GUIDANCE_MAX_BYTES: usize = 1024;
 
+/// Shared session agreement for MCP instructions, documentation and managed host guidance.
+pub const WORKING_AGREEMENT: &str = "Start with `awr status` and read the current work, rules, dependencies and latest checkpoint. Change work state through AWR actions. Before stopping, checkpoint and end the session with progress, next actions and open loops recorded.";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActionGuidance {
