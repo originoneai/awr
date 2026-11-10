@@ -10,6 +10,7 @@ impl DeliverySyncStore {
         work: &str,
         id: Option<&str>,
     ) -> PgResult<Value> {
+        // The carry across snapshots below repeats completion::carried_across_snapshots.
         let row = tx.query_opt("SELECT i.id,i.state,r.execution_id,
             coalesce((s.source_snapshot_id=$4
                 OR (EXISTS(SELECT 1 FROM awr_team.work_runtime wr

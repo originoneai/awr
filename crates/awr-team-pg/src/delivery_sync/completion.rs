@@ -142,6 +142,12 @@ pub(super) async fn require_contracts(
 /// nothing: its integration, review and source note stay current. A work still in flight has to
 /// refresh its selection, and a changed contract makes the delivery stale, as before. Reads only;
 /// the write paths keep their exact snapshot checks.
+///
+/// The test is lighter than `acceptance::current` on purpose: it asks only for the completed state,
+/// a selected completion and an unchanged contract hash. Every reader also compares the candidate
+/// with the current contract itself (and an activation that changes a contract reopens the
+/// completed work), so the hash term here is defence in depth. The inline SQL of
+/// `integration_summary_in_tx` repeats this test and has to change together with this function.
 pub(crate) async fn carried_across_snapshots(
     tx: &Transaction<'_>,
     tenant: &str,

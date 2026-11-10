@@ -1276,20 +1276,31 @@ impl DeliverySyncStore {
         let truncated = rows.len() > 32;
         let mut history = Vec::new();
         let mut synchronized = false;
+        let mut carried: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
         for row in rows.into_iter().take(32) {
             let j = Journal::from_row(&row)?;
             // A publication written under an earlier snapshot still describes a delivered work
             // whose contract the later activations left alone.
-            let snapshot_current = j.phase == "confirmed"
-                && completion::carried_across_snapshots(
-                    tx,
-                    tenant,
-                    project,
-                    work,
-                    &j.set.source_snapshot_id,
-                    &auth.snapshot,
-                )
-                .await?;
+            let snapshot_current = if j.phase == "confirmed" {
+                match carried.get(&j.set.source_snapshot_id) {
+                    Some(known) => *known,
+                    None => {
+                        let known = completion::carried_across_snapshots(
+                            tx,
+                            tenant,
+                            project,
+                            work,
+                            &j.set.source_snapshot_id,
+                            &auth.snapshot,
+                        )
+                        .await?;
+                        carried.insert(j.set.source_snapshot_id.clone(), known);
+                        known
+                    }
+                }
+            } else {
+                false
+            };
             let current = j.phase == "confirmed"
                 && snapshot_current
                 && projection_current
@@ -1306,6 +1317,9 @@ impl DeliverySyncStore {
                 .is_ok_and(|bytes| physical.as_ref() == Some(&bytes))
                 && j.require_note(tx, tenant, project, auth).await.is_ok();
             synchronized |= current;
+            if synchronized && !include_history {
+                break;
+            }
             if include_history {
                 let mut item = j.summary();
                 item["source_current"] = json!(current);

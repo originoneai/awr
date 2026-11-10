@@ -189,13 +189,27 @@ pub(super) async fn facts(
             }
             data["verification"] = json!(checks);
         }
+        // A publication is written under the snapshot that is current when it is prepared, which
+        // can be a later one than the snapshot of the selection; the newest one counts.
+        let publication_snapshots: Vec<&str> = if current && recorded != auth.snapshot {
+            vec![&recorded, &auth.snapshot]
+        } else {
+            vec![bound_snapshot]
+        };
         let publication = tx
             .query_opt(
                 "SELECT id,phase,metadata_revision FROM awr_team.delivery_source_publications
             WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND candidate_digest=$4
-              AND selection_version=$5 AND source_snapshot_id=$6
-            ORDER BY metadata_revision DESC,id DESC LIMIT 1",
-                &[&tenant, &project, &work, &digest, &version, &bound_snapshot],
+              AND selection_version=$5 AND source_snapshot_id=ANY($6)
+            ORDER BY created_at DESC,metadata_revision DESC,id DESC LIMIT 1",
+                &[
+                    &tenant,
+                    &project,
+                    &work,
+                    &digest,
+                    &version,
+                    &publication_snapshots,
+                ],
             )
             .await?;
         if let Some(p) = publication {

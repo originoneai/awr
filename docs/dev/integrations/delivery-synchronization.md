@@ -191,16 +191,6 @@ same mapped resource is still required. Remapping to a different resource does
 not schedule the previous resource's effects; those need explicit operator
 reconciliation. Original issuer credentials and private authority are omitted.
 
-A delivered work keeps its currentness across later activations. Every activation creates a new
-project snapshot, so the snapshot ids alone differ after any later plan. A work that is completed
-with a selected completion receipt is read under the snapshot its selection and its source
-publications were recorded for, as long as its contract hash is the same in the current snapshot:
-the work observation reports its candidate, review round and integration binding as current, and
-`delivery.source.status` counts its confirmed publication toward `source_synchronized`. A changed
-contract makes all of these stale. A work still in flight is checked against the current snapshot
-as before (its author refreshes the selection), and every write path, namely integration
-preparation, dispatch, finalization and source publication, checks the exact current snapshot.
-
 `query_original: true` means dispatch occurred and the original operation must
 be observed rather than submitted again. It is not retry permission. Prepared
 requests still require the separate live lease/dispatch eligibility checks;
@@ -356,6 +346,20 @@ separates `source_synchronized_at_commit` from `source_current`. A confirmed
 metadata update for another work preserves an unchanged current note, while
 changed candidates, observations, contracts or filesystem identities invalidate
 the affected note. The query does not recreate a missing lock to obtain success.
+
+A delivered work keeps its currentness across later activations. Every activation creates a new
+project snapshot, so the snapshot ids alone differ after any later plan. A work that is completed
+with a selected completion receipt is read under the snapshot its selection was recorded for, as
+long as its contract hash is the same in the current snapshot. The work observation then reports
+its candidate, review round and integration binding as current and finds its newest source
+publication under the recorded or the current snapshot, `delivery.source.status` counts a
+confirmed publication under either snapshot toward `source_synchronized`, and
+`delivery.neutral.inspect` reports its selection and facts as current. A changed contract makes
+all of these stale. These are read paths. Integration preparation, dispatch and the reservation
+of a new inspection still require the current snapshot, so the author of a work in flight
+refreshes the selection; finalization and the completion-bound source note accept an earlier
+selection with an unchanged contract, as before; and `delivery.schedule` and
+`delivery.submission.describe` keep reporting a delivered work as stale.
 
 Confirmation proofs contain digests and counts, not source/specification bodies
 or private paths. History is limited to 32 entries with explicit truncation and

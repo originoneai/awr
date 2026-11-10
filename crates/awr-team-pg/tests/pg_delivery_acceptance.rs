@@ -472,6 +472,26 @@ async fn only_exact_pending_domain_work_continues_across_unrelated_source_activa
             confirmed["data"]["confirmation"]["completion_reference"]["receipt_id"],
             completed["receipt_id"]
         );
+        // The publication was written under the current snapshot while the selection stays on
+        // the original one: the observation finds it, calls the delivery current and raises no
+        // hint that a source confirmation is missing.
+        let observed = delivered_flags(&f).await;
+        assert_eq!(observed["publication_phase"], "confirmed");
+        assert_eq!(observed["candidate_current"], true);
+        assert_eq!(observed["source_synchronized"], true);
+        let inbox =
+            f.f.reads
+                .query(TENANT, PROJECT, SUPERVISOR, query("work.inbox"))
+                .await
+                .unwrap();
+        let item = inbox["data"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["work_id"] == "a")
+            .cloned()
+            .unwrap_or(Value::Null);
+        assert_ne!(item["guidance"]["code"], "source_publication");
     }
 }
 
@@ -571,10 +591,12 @@ async fn a_delivered_work_stays_current_across_an_unrelated_activation_and_stale
     }
 }
 
-/// The reads do not extend the carry to work that is still in flight: its author refreshes the
-/// selection after an unrelated activation, as the integration preparation requires.
+/// The reads stop the carry at completed work. This pins how the reads behave today, not a goal:
+/// a work that is approved and integrated but not yet completed shows the labels of a stale
+/// selection, while its finalization goes through without a refresh. The integration preparation
+/// and the dispatch need the refreshed selection (see the test for refreshed bindings).
 #[tokio::test]
-async fn a_work_in_flight_is_stale_after_an_unrelated_activation_until_its_binding_is_refreshed() {
+async fn a_work_that_is_not_completed_keeps_the_exact_snapshot_check_in_the_reads() {
     let f = SourceFixture::new(false).await;
     f.f.integrate().await;
     let before = delivered_flags(&f).await;
