@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Check documentation style against a ratcheting baseline using the standard library."""
+"""Check documentation style against a ratcheting baseline using the standard library.
+
+R4 caps limitation sections at max(recorded count, 1) for existing pages.
+"""
 from __future__ import annotations
 
 import argparse
@@ -129,7 +132,7 @@ def check_r3(path, text, current, recorded):
 
 
 def check_r4(path, text, current, recorded):
-    limit = recorded["limit_sections"] if recorded is not None else 1
+    limit = max(recorded["limit_sections"], 1) if recorded is not None else 1
     if current["limit_sections"] > limit:
         return [f'{path}:1: R4 limit_sections {current["limit_sections"]} exceeds {limit}']
     return []
@@ -397,6 +400,37 @@ class StyleTests(unittest.TestCase):
         text = self.page() + "\n## Limits\n\nA.\n\n## Boundaries\n\nB.\n"
         self.assertEqual(check_document(self.root, self.path, text, measure(text)), [])
         self.assert_rule("R4", text + "\n## Known limits\n\nC.\n", measure(text))
+
+    def test_ac1_r4_zero_baseline_allows_one_limits_section(self):
+        text = self.page()
+        self.baseline(text)
+        before = (self.root / BASELINE).read_bytes()
+        self.write(text + "\n## Limits\n\nA short boundary.\n")
+        code, output = self.invoke()
+        self.assertEqual(code, 0, output)
+        self.assertEqual((self.root / BASELINE).read_bytes(), before)
+
+    def test_ac1_r4_zero_baseline_rejects_two_limits_sections(self):
+        text = self.page()
+        self.baseline(text)
+        self.write(text + "\n## Limits\n\nA.\n\n## Boundaries\n\nB.\n")
+        code, output = self.invoke()
+        self.assertEqual(code, 1, output)
+        self.assertIn(self.path + ":1: R4 limit_sections 2 exceeds 1", output)
+
+    def test_ac1_r4_two_baseline_allows_two_limits_sections(self):
+        text = self.page() + "\n## Limits\n\nA.\n\n## Boundaries\n\nB.\n"
+        self.baseline(text)
+        code, output = self.invoke()
+        self.assertEqual(code, 0, output)
+
+    def test_ac1_r4_two_baseline_rejects_three_limits_sections(self):
+        text = self.page() + "\n## Limits\n\nA.\n\n## Boundaries\n\nB.\n"
+        self.baseline(text)
+        self.write(text + "\n## Known limits\n\nC.\n")
+        code, output = self.invoke()
+        self.assertEqual(code, 1, output)
+        self.assertIn(self.path + ":1: R4 limit_sections 3 exceeds 2", output)
 
     def test_ac2_chinese_density_counts_han_and_negative_terms(self):
         self.assertEqual(measure("正文" * 499 + "不未")["density"], 2.0)

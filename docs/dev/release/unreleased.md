@@ -35,7 +35,8 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 - A [documentation style guide](../STYLE.md) and CI checker for negative-term density,
   opening paragraphs, limitation sections, and relative links. The baseline preserves
   existing pages' four recorded metrics; updates accept equal or lower values and new
-  pages use absolute limits. Run `python3 scripts/check_docs_style.py --self-test`
+  pages use absolute limits. Each page can use one limitation section; larger recorded
+  counts remain the ceiling. Run `python3 scripts/check_docs_style.py --self-test`
   for synthetic rule checks and mutation tests.
 - One observation freshness and coverage contract for the Observer Team reads (AWR-OBS-002): every
   read (`POST /api/team/read`, `/api/team/inbox-detail`, `GET /api/team/inbox`, `GET /api/team/work`)
