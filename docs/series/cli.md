@@ -65,6 +65,7 @@ Daily work
   session   Start, checkpoint and end a work session
   context   Compile the context for one work item
   evidence  Record or read evidence
+  verify    Verify completed work for a commit
   search    Search work, decisions and evidence
   doctor    Find and repair inconsistent runtime state
   overview  Open the local project hub
@@ -108,6 +109,10 @@ Use `awr work help planning` to read their one-line descriptions.
 The daily work group places `check` beside `prepare-completion` and `complete`.
 Use `awr work check` to run example checks and record their results; see
 [Running checks](../dev/reference/checks.md) for phases and completion evidence.
+
+Use `awr verify` to evaluate completed work before pushing, or `awr verify --rerun`
+to execute its examples in CI. See [commit verification](../dev/reference/verify.md)
+for baseline comparison and pre-push hook installation.
 
 `awr help daily` and `awr work help daily` list the daily commands.
 `awr help runtime` and `awr help team` show their commands' detailed help;
