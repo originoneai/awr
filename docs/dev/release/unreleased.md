@@ -178,6 +178,10 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   `fail_before_pass_after` method requires a failed baseline for each required check-bound
   example before governed approval; observation mode reports gaps. Per-example baselines remain
   current when another example is added, and legacy bindings retain their original comparison rules.
+- Quickstarts now preview and install project-local lifecycle hooks, then accept the
+  reviewed fingerprint. MCP instructions and the short manual-host fallback share
+  the core working agreement. These commands target current source builds; see
+  [connecting an agent](../../series/agents.md#hosts-without-lifecycle-hooks).
 - Evidence for a workspace-settled execution is checked against the execution's reported result when a review
   round is bound to it, not only at completion and integration. `review.open` and an approving `review.decide`
   refuse it with HTTP 409 `EvidenceInvalid` when the `payload.output_digest` it declares or the sha256 of its stored

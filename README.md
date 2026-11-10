@@ -175,18 +175,26 @@ If intake reports `NeedsOrganization`, let your agent complete the goals, tasks
 and acceptance criteria before starting implementation. See the
 [project intake guide](docs/dev/TAKEOVER.md) for custom fields and existing ledgers.
 
-### 3. Give your agent the working agreement
+### 3. Install your agent's lifecycle hooks
 
-With CLI access to the initialized project, give your agent this instruction:
+Use a [current source build](CONTRIBUTING.md) for these installers. From your
+initialized project directory, preview the Codex configuration:
 
-> Use AWR to carry this project from its goal to verified delivery. Start by
-> reading the goal, shared rules, dependencies and latest checkpoint. Break this
-> request into work with clear acceptance criteria, ownership and next actions.
-> Check an upstream result's version and evidence before using it. Keep
-> implementation, verification, merge and release facts separate. Record available
-> usage data and its gaps. Before stopping, save a checkpoint so the next agent
-> can check current sources and continue. Use the installed version's supported
-> capabilities and report any missing integration.
+```sh
+awr client install --client codex
+```
+
+Review `configuration`, `path` and `preview_fingerprint`. Replace `PREVIEW_SHA256`
+with that fingerprint, then accept the reviewed preview:
+
+```sh
+awr client install --client codex --accept --expected-preview PREVIEW_SHA256
+awr client status --client codex
+```
+
+Use `--client claude` throughout for Claude Code. Start a fresh trusted host session,
+then inspect receiver observations with `awr client status`. For the 0.7.0 packages
+or another host, use the [manual working agreement](docs/series/agents.md#hosts-without-lifecycle-hooks).
 
 You can inspect progress at any time with `awr status`. For the explicit
 claim → context → checkpoint workflow, see the

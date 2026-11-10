@@ -181,6 +181,15 @@ Grok’s `--session-id` creates a native conversation. After compaction, compile
 
 Grok Build documents session/compact events. Use manual checkpoints until a real trigger returns a receipt. Grok web connectors can use a reachable AWR shared HTTP endpoint.
 
+### Hosts without lifecycle hooks
+
+For hosts using manual checkpoints, give your agent this shared agreement:
+
+<!-- Keep this paragraph in sync with awr_core::WORKING_AGREEMENT. -->
+> Start with `awr status` and read the current work, rules, dependencies and latest
+> checkpoint. Change work state through AWR actions. Before stopping, checkpoint
+> and end the session with progress, next actions and open loops recorded.
+
 ### Next steps
 
 - [MCP tools](mcp.md) — the full tool surface your client can call once connected.
