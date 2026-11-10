@@ -3026,6 +3026,7 @@ pub(crate) async fn inspect_review(
         row.get::<_, Option<String>>(11).as_deref(),
     )
     .await?;
+    let decision_due = row.get::<_, String>(5) == "open";
     data["review"]["submission"] = crate::delivery_sync::review_submission::inspect(
         tx,
         tenant,
@@ -3034,6 +3035,7 @@ pub(crate) async fn inspect_review(
         &work,
         evidence.as_deref(),
         Some(row.get::<_, String>(3).as_str()),
+        decision_due,
     )
     .await?;
     if let Some(findings) = crate::review_findings::block(tx, tenant, project, &work).await? {

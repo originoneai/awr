@@ -777,10 +777,10 @@ fn evidence(root: &Path, args: EvidenceArgs) -> Result<CallToolResult> {
             verified_at: args.verified_at,
         },
     )?;
-    let trust = evidence_trust(&evidence, &[])?;
+    let trust = store.evidence_trust(project.id, evidence.id)?;
     let mut evidence = serde_json::to_value(evidence)?;
     evidence["trust"] = json!(trust);
     Ok(CallToolResult::structured(
-        json!({"ok":true,"project_revision":event.project_revision,"evidence":evidence,"event_id":event.id,"validation_basis":"caller_supplied_bindings","freshness_basis":"source_refresh","source_refresh_performed":true}),
+        json!({"ok":true,"project_revision":event.project_revision,"evidence":evidence,"event_id":event.id,"trust":trust,"validation_basis":"caller_supplied_bindings","freshness_basis":"source_refresh","source_refresh_performed":true}),
     ))
 }

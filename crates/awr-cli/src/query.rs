@@ -41,6 +41,8 @@ pub enum WorkCommand {
     Prepare(crate::work_prepare::PrepareArgs),
     /// Validate a real report and derive evidence metadata without registering or completing.
     PrepareCompletion(crate::work_prepare::CompletionArgs),
+    /// Run example checks directly and record results, or inspect their recorded status.
+    Check(crate::work_check::CheckArgs),
     /// Preview or accept a source-backed draft, optionally attempting activation.
     #[command(
         after_help = "Example: awr work create --title 'Review a report' --request-key review-report --acceptance 'The report is reviewed' --goal GUIDE --next-action 'Read the report' --activate"
@@ -312,46 +314,46 @@ pub fn status_with_scope(
             println!("{}", serde_json::to_string(&value)?);
         } else if action_view {
             println!(
-                "Project: {} | {} selected\nContinue: {} | Claimable: {} | Waiting: {} | Blocked: {}\nNext: {}",
+                "{} — {} to continue · {} claimable · {} waiting · {} blocked\n",
                 query.project.name,
-                value["total"],
                 value["current_total"],
                 value["ready_count"],
                 value["waiting_count"],
                 value["blocked_count"],
-                value["guidance"]["next_action"].as_str().unwrap_or("")
             );
-            for bucket in ["current", "ready", "waiting", "blocked"] {
-                for item in value[bucket].as_array().into_iter().flatten() {
-                    println!(
-                        "  {bucket}: {} — {}",
+            let now = now_millis()?;
+            let mut trusts = vec![];
+            for (bucket, label, total) in [
+                ("current", "Continue", "current_total"),
+                ("ready", "Claimable", "ready_count"),
+                ("waiting", "Waiting", "waiting_count"),
+                ("blocked", "Blocked", "blocked_count"),
+            ] {
+                let Some(items) = value[bucket].as_array().filter(|items| !items.is_empty()) else {
+                    continue;
+                };
+                println!("{label} ({} of {})", items.len(), value[total]);
+                for item in items {
+                    let (line, trust) = compact_work_line(
                         item["key"].as_str().unwrap_or(""),
-                        item["next_action"].as_str().unwrap_or("Inspect work show")
+                        item["next_action"].as_str().unwrap_or("Inspect work show"),
+                        &item["progress"],
+                        now,
                     );
-                    if value["progress"].is_null() {
-                        print_progress(&item["progress"], None);
-                    }
+                    println!("{line}");
+                    trusts.push(trust);
                 }
             }
-            for gap in value["organization"]["gaps"]
-                .as_array()
-                .into_iter()
-                .flatten()
-            {
+            if let Some(key) = value["suggested_work"]["key"].as_str() {
+                println!("\nNext: awr work prepare {key}");
+            } else {
                 println!(
-                    "  {} [{}]: {}",
-                    gap["code"].as_str().unwrap_or(""),
-                    gap["target"].as_str().unwrap_or(""),
-                    gap["detail"].as_str().unwrap_or("")
+                    "\nNext: {}",
+                    value["guidance"]["next_action"].as_str().unwrap_or("")
                 );
             }
-            println!(
-                "History: {} source-completed; {} not checked in this query; {} failed verification; {} checks blocked.\nDetails: awr work show KEY; awr status --view full; awr intake inspect --source-sha SHA",
-                value["history"]["source_completed"],
-                value["history"]["not_checked"],
-                value["history"]["verification_failed"],
-                value["history"]["check_blocked"]
-            );
+            println!("More: awr work show <KEY> · awr status --view full");
+            print_compact_legend(&trusts);
         } else {
             println!(
                 "Project: {} | {} selected | {} active | {} ready | {} not selectable\nNext: {}\nDetails: awr status --view full; awr work show KEY",
@@ -376,7 +378,7 @@ pub fn status_with_scope(
                 }
             }
         }
-        if !json_output && !value["progress"].is_null() {
+        if !json_output && !action_view && !value["progress"].is_null() {
             print_progress(&value["progress"], None);
         }
         return query.finish();
@@ -473,6 +475,100 @@ pub fn status_with_scope(
         println!("{}", organization.rendered());
     }
     query.finish()
+}
+
+fn compact_work_line(key: &str, fallback: &str, progress: &Value, now: i64) -> (String, Trust) {
+    let source = &progress["source_next_action"];
+    let checkpoint = &progress["latest_checkpoint_next_action"];
+    let source_at = source["projected_at"].as_i64();
+    let checkpoint_at = checkpoint["recorded_at"].as_i64();
+    let (observation, trust, timestamp) = match (source_at, checkpoint_at) {
+        (Some(source_at), Some(checkpoint_at)) if checkpoint_at > source_at => {
+            (checkpoint, Trust::Reported, Some(checkpoint_at))
+        }
+        _ => (source, Trust::Source, source_at),
+    };
+    let action = public_summary(observation["text"].as_str().unwrap_or(fallback), 90)
+        .unwrap_or_else(|_| SENSITIVE_CONTENT_WITHHELD.into());
+    let age = timestamp
+        .map(|timestamp| {
+            let seconds = now.saturating_sub(timestamp).max(0) / 1000;
+            let (count, unit) = match seconds {
+                0..60 => (seconds, "s"),
+                60..3600 => (seconds / 60, "m"),
+                3600..86400 => (seconds / 3600, "h"),
+                _ => (seconds / 86400, "d"),
+            };
+            format!(", {count}{unit}")
+        })
+        .unwrap_or_default();
+    (
+        format!("  {key}  {action}  [{}{age}]", trust.marker()),
+        trust,
+    )
+}
+
+fn print_compact_legend(trusts: &[Trust]) {
+    let legends = [
+        Trust::Source,
+        Trust::Reported,
+        Trust::Recorded,
+        Trust::Verified,
+        Trust::Reviewed,
+    ]
+    .into_iter()
+    .filter(|trust| trusts.contains(trust))
+    .map(|trust| format!("[{}] = {}", trust.marker(), trust.legend()))
+    .collect::<Vec<_>>();
+    if !legends.is_empty() {
+        println!("{}", legends.join(" "));
+    }
+}
+
+#[cfg(test)]
+mod compact_tests {
+    use super::*;
+
+    #[test]
+    fn compact_age_uses_seconds_minutes_hours_and_days() {
+        let progress = json!({"source_next_action":{"text":"Review", "projected_at":1000}});
+        for (elapsed, age) in [
+            (0, "0s"),
+            (59, "59s"),
+            (60, "1m"),
+            (3599, "59m"),
+            (3600, "1h"),
+            (86399, "23h"),
+            (86400, "1d"),
+            (518400, "6d"),
+        ] {
+            let (line, trust) =
+                compact_work_line("W", "Fallback", &progress, 1000 + elapsed * 1000);
+            assert_eq!(line, format!("  W  Review  [ledger, {age}]"));
+            assert_eq!(trust, Trust::Source);
+        }
+        assert_eq!(
+            compact_work_line("W", "Fallback", &progress, 0).0,
+            "  W  Review  [ledger, 0s]"
+        );
+    }
+
+    #[test]
+    fn compact_checkpoint_requires_a_strictly_newer_timestamp() {
+        for source_at in [json!(1000), json!(2000), Value::Null] {
+            let progress = json!({
+                "source_next_action":{"text":"Source", "projected_at":source_at},
+                "latest_checkpoint_next_action":{"text":"Checkpoint", "recorded_at":1000}
+            });
+            let (line, trust) = compact_work_line("W", "Fallback", &progress, 2000);
+            assert!(line.contains("  Source  [ledger"), "{line}");
+            assert_eq!(trust, Trust::Source);
+        }
+        assert_eq!(
+            compact_work_line("W", "Fallback", &Value::Null, 2000),
+            ("  W  Fallback  [ledger]".into(), Trust::Source)
+        );
+    }
 }
 
 fn print_progress(progress: &Value, full_source_action: Option<&str>) {
@@ -587,11 +683,19 @@ pub fn ready(
             report.blocked.len(),
             report.project_revision
         );
+        let now = now_millis()?;
+        let mut trusts = vec![];
         for work in report.ready.iter().take(limit) {
-            println!(
-                "{} {}\n  Next: {}",
-                work.work.item.meta.external_key, work.work.item.title, work.work.item.next_action
+            let progress =
+                awr_runtime::work_progress(&query.store, query.project.id, &work.work, branch_id)?;
+            let (line, trust) = compact_work_line(
+                &work.work.item.meta.external_key,
+                &work.work.item.next_action,
+                &progress,
+                now,
             );
+            println!("{line}");
+            trusts.push(trust);
         }
         if report.ready.is_empty() || !organization.business_execution_ready {
             println!("Next: {}", organization.next_action);
@@ -603,6 +707,7 @@ pub fn ready(
                 report.ready.len()
             );
         }
+        print_compact_legend(&trusts);
     }
     query.finish()
 }
@@ -643,6 +748,7 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
         WorkCommand::Gap(args) => crate::management::gap(root, args),
         WorkCommand::Finding(args) => crate::management::finding(root, args),
         WorkCommand::Prepare(args) => crate::work_prepare::prepare(root, args, json_output),
+        WorkCommand::Check(args) => crate::work_check::run(root, args, json_output),
         WorkCommand::PrepareCompletion(args) => {
             crate::work_prepare::completion(root, args, json_output)
         }

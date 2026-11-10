@@ -95,6 +95,14 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   they are read, and only after the work binding, the replay of the evidence digest, the current review contract and
   the current work binding of the execution; otherwise they say `unverifiable` with a reason and show no execution
   fact. Completion and integration keep their strict result binding. No schema change.
+- `awr work check` runs declared example checks directly, records oracle and log digests,
+  and generates registered reports and completion input after passing acceptance checks.
+  Baselines can run before admission; governed acceptance and mutation runs require admission
+  and the session's claim. Timeouts are recorded as unknown and their child processes are
+  terminated. Unchecked acceptance criteria remain unmapped. Evidence registration reports
+  the shared trust vocabulary in CLI and MCP receipts and reads: generated evidence starts as
+  `recorded` and becomes `verified` after completion checks its report bytes.
+  See [running checks](../reference/checks.md).
 - Governed work in a Team: a snapshot may declare governance (`governance.json`, written by
   `PublishPrepOptions::governance`), the Team reuses the Core admission rules on its own facts, and
   `admission.decide` records decisions attributed to the verified caller (`planning.approve`, a
@@ -123,6 +131,12 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   a corpus of 69 offline cases. Mandatory content is never dropped to fit, unsupported input fails by name, and nothing a result carries
   says anything of authority, readiness or acceptance. The packing itself moves out of `awr-context` in a later step. See
   [context packing kernel](../reference/context-component.md).
+- Compact text rows for the default `status` action view and `ready`: each shows
+  the work key, a next action capped at 90 characters, and its source marker with
+  a relative age. A newer checkpoint supplies the displayed action; the footer
+  explains each used marker once through the shared trust vocabulary. Full and
+  summary status views and JSON retain their existing output. See the
+  [daily workflow](../../series/daily-workflow.md).
 - The capabilities of the Team workstream protocol say, for each of the five result layers (work readiness,
   execution admission, context completeness, delivery observation, completion validity), which Team operations carry
   it and which entries of the personal CLI and MCP server have no Team operation, with the reason; the report is checked
@@ -191,6 +205,16 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   The tool description and schema say what `mode` means. Before, such a request was answered with
   the generic "query fields or bounds are invalid" text, and a supervisor that picked `edit` for
   existing work could not recover (AWR-TFQ-020).
+- `review.inspect` of an open round now ends its reading guidance with the reviewer's next step:
+  read what the delivery service observed in `delivery.neutral.inspect`, then record the decision
+  with `review.decide` (approve or reject, with a reason that states what was verified and what
+  could not be). A source revision that the reviewer cannot verify (no source locator disclosed)
+  is a limit to state in the decision, not a reason to withhold it; approval still integrates and
+  delivers nothing. For a candidate without a source revision the note says that
+  `delivery.integration.prepare` refuses it. Before, the reviewer was told only that the revision
+  needs an authorized-channel check "else version unverified", and a careful reviewer agent read
+  the review as blocked and made no decision. The neutral inspection and decided rounds are
+  unchanged (AWR-TFQ-019).
 - The next-action guidance after a repository target moved no longer tells the developer to
   update against the current target, or to rebuild, "in a new admitted execution"
   (AWR-TF-014AN). It appeared in the integration inspection of a rejected integration, in the work

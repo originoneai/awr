@@ -6,6 +6,7 @@ use crate::{
 };
 use awr_core::*;
 use rusqlite::{Connection, params};
+use std::collections::BTreeSet;
 
 fn evidence_rows(conn: &Connection, project: Id, key: Option<&str>) -> Result<Vec<EvidenceRecord>> {
     evidence_rows_by(conn, project, key, false, false)
@@ -29,6 +30,18 @@ fn evidence_rows_by(
         .into_iter()
         .map(|payload| serde_json::from_str::<Evidence>(&payload).map_err(Error::from))
         .collect::<Result<Vec<_>>>()?;
+    let check_producers = conn
+        .prepare("SELECT DISTINCT json_extract(registered.payload_json, '$.evidence_id')
+            FROM events registered, json_each(registered.payload_json, '$.check_events') producer
+            JOIN events observed ON observed.project_id=registered.project_id AND observed.id=producer.value
+            WHERE registered.project_id=?1 AND registered.event_type='evidence.recorded'
+            AND observed.event_type='work.check' AND observed.work_item_id IS registered.work_item_id
+            AND observed.branch_id IS registered.branch_id")
+        .map_err(db_error)?
+        .query_map(params![project.to_string()], |r| r.get::<_, String>(0))
+        .map_err(db_error)?
+        .collect::<rusqlite::Result<BTreeSet<_>>>()
+        .map_err(db_error)?;
     let visibility = if scoped {
         crate::scoped_read::visible("evidence", "e.id")
     } else {
@@ -48,7 +61,13 @@ fn evidence_rows_by(
             Ok(EvidenceRecord {item,source,project_revision:revision_at(r,12)?,trust:Trust::Reported})
         }).map_err(db_error)?.collect::<rusqlite::Result<Vec<_>>>().map_err(db_error)?;
     for record in &mut records {
-        record.trust = evidence_trust(&record.item, &completed_reports)?;
+        // Exact completion verification takes precedence over the producing check observation.
+        record.trust = match evidence_trust(&record.item, &completed_reports)? {
+            Trust::Reported if check_producers.contains(&record.item.id.to_string()) => {
+                Trust::Recorded
+            }
+            trust => trust,
+        };
     }
     Ok(records)
 }
@@ -62,6 +81,11 @@ pub(crate) fn evidence_by_id(conn: &Connection, project: Id, id: Id) -> Result<E
 }
 
 impl Store {
+    /// Receipts use the same derived trust as evidence and work queries.
+    pub fn evidence_trust(&self, project: Id, id: Id) -> Result<Trust> {
+        Ok(self.evidence_by_id(project, id)?.trust)
+    }
+
     /// Immutable proposal bindings use IDs exclusively, never ambiguous external-key lookup.
     pub fn evidence_by_id(&self, project: Id, id: Id) -> Result<EvidenceRecord> {
         evidence_by_id(&self.conn, project, id)
@@ -251,6 +275,16 @@ impl Store {
         expected: Revision,
         draft: EvidenceDraft,
     ) -> Result<(Evidence, Event)> {
+        self.record_evidence_with_checks(project, expected, draft, None)
+    }
+
+    pub(crate) fn record_evidence_with_checks(
+        &mut self,
+        project: Id,
+        expected: Revision,
+        draft: EvidenceDraft,
+        check_events: Option<&[Id]>,
+    ) -> Result<(Evidence, Event)> {
         awr_core::ensure_public_data(&draft)?;
         if [
             &draft.external_key,
@@ -324,6 +358,9 @@ impl Store {
         );
         event.branch_id = draft.branch_id;
         event.payload = serde_json::json!({"evidence_id":item.id,"external_key":item.external_key,"level":item.level});
+        if let Some(events) = check_events {
+            event.payload["check_events"] = serde_json::json!(events);
+        }
         if let Some(key) = &draft.work_item_key {
             event.work_item_id = Some(self.work_item(project, key)?.item.meta.id);
         }
