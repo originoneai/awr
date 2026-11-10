@@ -1,19 +1,17 @@
 # Daily workflow
 
-This guide walks through a repeatable daily routine with AWR: check the state
-of your project, claim or resume a task, record progress, checkpoint, and hand
-off so you — or an agent — can pick up exactly where things stopped.
+Find the next action, claim or resume work, read its context and save progress for the next session. This routine works through CLI or MCP.
+
+## Use it
 
 Before you start, make sure your project is initialized and you know the basic
 concepts (work items, sessions, claims, checkpoints) — see
 [Quickstart](quickstart.md) and [Concepts](concepts.md). The same routine works
 over MCP; see [MCP](mcp.md).
 
-A note on versions: some capabilities below (the action view and `work edit`)
-reflect the current source tree and may not be enabled in the released package.
-Run `awr --help` to see what your installation supports.
+Run `awr --help` to check the capabilities of your installed build.
 
-## 1. Start your day: find the next action
+### 1. Start your day: find the next action
 
 Run a status check before doing anything else:
 
@@ -51,11 +49,18 @@ Narrow the selection with repeatable selectors — they intersect:
 awr status --work GUIDE-1 --goal GOAL-1 --milestone M1
 ```
 
-The queue is navigation, not authorization: claims and completion checks stay
-enforced by their own actions. `awr ready` keeps its narrower meaning —
-eligible for a *new* claim — and omits in-progress work.
+`awr ready` selects work eligible for a new claim. Use the action queues for continuation and waiting.
 
-## 2. Claim or resume the task
+## How it behaves
+
+| Stage | Result |
+| --- | --- |
+| Status | Continue, claimable, waiting and blocked queues |
+| Session | Owned work and a current context packet |
+| Checkpoint | Recorded progress and recovery action |
+| Completion | Evidence bound to current acceptance |
+
+### 2. Claim or resume the task
 
 Set up once per shell so every command is project-bound and JSON-formatted:
 
@@ -79,14 +84,14 @@ awrj session start --work "$AWR_WORK" --agent "$AWR_AGENT" \
 AWR_SESSION=$(jq -er '.session.id' "$AWR_NOTES/start.json")
 ```
 
-The claim is runtime ownership; it does not rewrite the source work status.
+A claim records runtime ownership.
 
 A project can declare a default claim lifetime and renewal in `.awr/policy.toml`; with it `--ttl-ms` can be left out, and `--no-expiry` asks for a claim without an expiry. See [claim policy](../dev/reference/claim-policy.md).
 If a session already exists for the work, inspect it with `session show` and
 confirm ownership — a different agent or model continues through
 `session resume` into its own session.
 
-## 3. Compile your context
+### 3. Compile your context
 
 Before editing, build the context packet for the session:
 
@@ -100,10 +105,9 @@ awrj context compile --work "$AWR_WORK" --session "$AWR_SESSION" \
 jq -e '.completeness.complete and (.work_context != null)' "$AWR_NOTES/context.json"
 ```
 
-Read the packet, not just the boolean. On `BudgetExceeded`, widen the budget
-or narrow the scope; on `SourceStale`, run `awr source reindex` first.
+Read the complete packet. On `BudgetExceeded`, widen the budget or narrow the scope; on `SourceStale`, run `awr source reindex` first.
 
-## 4. Work, then checkpoint
+### 4. Work, then checkpoint
 
 Record what really happened — failures, missing context, and open loops:
 
@@ -120,20 +124,9 @@ awrj session checkpoint --session "$AWR_SESSION" --agent "$AWR_AGENT" \
 
 A few things to understand about checkpoints:
 
-- `--agent` is a caller declaration. One that does not match the session is
-  rejected with resume guidance; a matching one stays **unverified** — the CLI
-  cannot authenticate the real model behind a label. Omitting it records the
-  origin as `undeclared`.
-- Digest and context hash are your assertions. Use the real last-used hash; a
-  saved checkpoint does not prove verified context, passing tests, or
-  completed work.
-- For the revision guard, use the top-level `project_revision` from
-  `session show`, not `session.revision`. On a conflict, inspect the
-  intervening changes before retrying.
-- A checkpoint never rewrites the source-backed next action. To change the
-  contract, edit the authoritative source.
+Use the top-level `project_revision` returned by `session show`. On conflict, inspect intervening changes before retrying. Change the authoritative source to revise the work contract.
 
-## 5. Fix small field edits without hand-editing YAML
+### 5. Preview small field edits
 
 When the source plan needs a small correction — say the source says "Draft the
 guide" but the real next step is "Review the conclusion" — preview the edit:
@@ -151,11 +144,9 @@ fingerprints to accept with. Review them, then repeat the command adding:
 --expected-preview PREVIEW_FINGERPRINT --expected-revision REVISION
 ```
 
-Supported fields are `--title`, `--summary`, `--priority`, and `--next-action`.
-After an uncertain response, check `host status --key guide-next-1`; a field
-edit never changes ownership, lifecycle, or verification.
+Supported fields are `--title`, `--summary`, `--priority`, and `--next-action`. After an uncertain response, check `host status --key guide-next-1`.
 
-## 6. End the session — or hand it off
+### 6. End the session — or hand it off
 
 When you stop for the day:
 
@@ -165,10 +156,9 @@ awrj session end --session "$AWR_SESSION" --outcome incomplete \
   --expected-revision "$AWR_REV"
 ```
 
-Ending releases the claim; it does not complete the source work. Your
-checkpoint from step 4 is what lets the work resume cleanly.
+Ending releases the claim. The checkpoint from step 4 supplies the next recovery action.
 
-## 7. Pick up where you (or an agent) left off
+### 7. Pick up where you (or an agent) left off
 
 Later — or from a different agent — resume from the predecessor session:
 
@@ -183,33 +173,47 @@ jq -e '.context_ready' "$AWR_NOTES/resume.json"
 AWR_SESSION=$(jq -er '.resumed.session.id' "$AWR_NOTES/resume.json")
 ```
 
-Resume creates a new AWR session; it does not switch your host's native chat.
-Then compile context again (step 3) and continue. After host compaction, if the
-same AWR session is still active, just compile again — reserve
-`session resume` for a real handoff.
+Resume creates a new AWR session. Compile context again (step 3). After compaction, compile for the still-active session; use resume for a handoff.
 
 To compare the plan with what was last recorded, check the `progress` object
 exposed by `status --view action` and `work show KEY`:
 
-- `source_next_action` — the authoritative text from the source plan, with its
-  locator, source revision, and freshness.
-- `latest_checkpoint_next_action` — the most recent checkpoint for this exact
-  work, branch, and ownership, or null if there is none.
-- `differs_from_source` — true when the checkpoint text diverges from the
-  source. An observation, not a problem: saving progress never modifies the
-  original contract or establishes completion.
+| Progress field | Meaning |
+| --- | --- |
+| `source_next_action` | Authoritative plan text, locator, source revision and freshness; `trust=source` |
+| `latest_checkpoint_next_action` | Latest checkpoint for this work, branch and ownership, or null; `trust=reported` |
+| `differs_from_source` | Whether checkpoint and source text differ |
 
 Progress text is capped at 240 characters (flagged `truncated`); use
 `work show KEY` and `session show SESSION` for the full text.
 
-## When something goes wrong
+### When something goes wrong
 
-- Uncertain save response → check `host status --key REQUEST_KEY`; use
-  `host recover` only for an inspected pending operation.
-- Revision conflict → read `status` for the current `project_revision` and
-  retry with it.
-- Suspicious checkpoint → read the full record with `session show SESSION`; an
-  interrupted save without a completion receipt is no recovery checkpoint.
+| Situation | Next action |
+| --- | --- |
+| Uncertain save | Read `host status --key REQUEST_KEY`; recover an inspected pending operation |
+| Revision conflict | Read `status`, inspect changes and retry with the current `project_revision` |
+| Suspicious checkpoint | Read the full record with `session show SESSION` |
 
 For more failure modes, see [Troubleshooting](troubleshooting.md). For the
 vocabulary in this routine, see [Concepts](concepts.md).
+
+## Limits
+
+- The action view and `work edit` described here follow development source; released packages have their own capability boundary.
+- Queue rows are navigation; ownership and completion are checked by their respective operations.
+- Claims leave source work status unchanged.
+- Checkpoint `--agent` is caller reported; mismatches require resume, matching labels remain unauthenticated, and omission records `undeclared`.
+- Use the actual last-consumed context hash. Digest and hash are caller assertions; checkpoint success records progress rather than verified tests or completion.
+- The revision guard uses `project_revision`; `session.revision` belongs to the session object.
+- Checkpoint next actions preserve the authoritative source-backed next action.
+- Field edits update planning text; ownership, lifecycle and verification use their own operations.
+- Ending a session leaves source completion to the completion operation.
+- AWR resume changes its own session identity; the host retains control of its native chat.
+- Checkpoint progress records observations; the source contract and completion remain separately governed.
+- Recovery checkpoints require a completed save receipt; an interrupted attempt remains an attempt.
+
+## Code and tests
+
+- [Status output tests](../../crates/awr-cli/tests/checkpoint_progress.rs)
+- [Session lifecycle](../../crates/awr-cli/tests/session_cli.rs)

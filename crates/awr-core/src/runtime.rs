@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 pub const CHECKPOINT_LIMITATION: &str = "Progress record only: context hash and caller identity are not independently verified. Saving a checkpoint does not update source-backed work or prove tests passed or work completed.";
 
-pub const INCOMPLETE_CONTEXT_GUIDANCE: &str = "Required context has gaps. Do not claim complete understanding, passing tests or completed work. You may save an incomplete checkpoint with the actual last-used context hash, explicit gaps and open loops; do not invent a hash. A checkpoint does not change the source-backed next action.";
+pub const INCOMPLETE_CONTEXT_GUIDANCE: &str = "Context has gaps (see `gaps`). Save a checkpoint marked incomplete and list each gap as an open loop.";
 
 /// Stable host conversation identity, independent of any MCP transport connection.
 /// `client` is an MCP namespace, distinct from the hook dialect in `ClientBinding`.

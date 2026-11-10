@@ -1,15 +1,10 @@
 # Host-agnostic session workflow
 
-This is the **L0** operator path. It works from any coding agent's terminal
-tool, and from any MCP client that can start `awr-mcp` or reach the shared
-HTTP service. Host-specific merge paths live in [L1/L2 notes](README.md).
+Start or resume a work-bound session, read its required context and save progress before handoff. This guide connects CLI, MCP and native conversation identities.
 
-This page describes the **AWR 0.6.0** integration baseline and the current source tree. The
-packages include the CLI, stdio MCP, session/claim tools and the
-[shared HTTP service](../reference/mcp-service.md). **0.5.1** already grouped the
-MCP catalog; install 0.6.0 for schema 14 and
-`session start --client/--conversation`. The 0.4.0 package is not the current
-release.
+## Use it
+
+This page covers the **AWR 0.6.0** baseline and development source. Packages include CLI, stdio MCP, session/claim tools and [shared HTTP](../reference/mcp-service.md). Version 0.5.1 introduced grouped discovery; 0.6.0 adds schema 14 and `session start --client/--conversation`.
 
 Installation examples use the canonical 0.7.0 package names. Existing users should
 follow the [package migration steps](../release/DISTRIBUTIONS.md#migrate-from-the-previous-package-names) first.
@@ -27,11 +22,9 @@ first. Older binaries refuse schema 14. See
 0.6.0 packages compile Team code but leave it off unless enabled; this L0 path
 stays on personal CLI/MCP. Optional source tools are available separately from the CLI packages.
 
-## Bind the project
+### Bind the project
 
-Initialize the target project from a reviewed source manifest, as in
-[the basic example](../../../examples/basic/README.md). Starting `awr-mcp` does
-not create or migrate a database. Use absolute executable and project paths.
+Initialize from a reviewed source manifest, as in [the basic example](../../../examples/basic/README.md). Use absolute executable and project paths.
 
 ```sh
 AWR_BIN=/absolute/path/to/awr
@@ -46,44 +39,21 @@ awrj session list --active
 awrj ready
 ```
 
-`--provider` and `--model` are recorded labels. They do not invoke a host.
-If a session already exists for the work, inspect `session show` and confirm
-ownership before using that AWR session ID. A different agent/provider/model
-continues through `session resume` into its own session. Native chat IDs are not
-AWR session IDs.
+`--provider` and `--model` are recorded labels. Inspect an existing session and confirm ownership before using its ID. A different agent/provider/model continues through resume.
 
-### Recording incomplete progress and caller identity
+#### Recording incomplete progress and caller identity
 
-The current source adds checkpoint caller declarations and
-[dual-source progress queries](../reference/daily-work.md#source-plans-and-recorded-progress).
-This describes source capabilities, not a claim that older packages include them.
+Development source adds checkpoint caller declarations and [dual-source progress queries](../reference/daily-work.md#source-plans-and-recorded-progress).
 
-Use `session checkpoint --session SESSION --agent YOUR_AGENT ...` to record a
-caller declaration independently from the session label. MCP
-`awr_session_checkpoint` accepts the optional `agent` field. A declaration that
-does not match the selected session is rejected with resume guidance. A matching
-declaration remains **unverified**: local CLI and MCP cannot authenticate the real
-model behind an agent label. MCP's existing client access checks still apply.
+Record a caller declaration with `session checkpoint --session SESSION --agent YOUR_AGENT ...`; MCP `awr_session_checkpoint` accepts optional `agent`. A mismatch returns resume guidance.
 
-For compatibility, omitting the agent records `actor.origin="undeclared"` and
-`actor.agent_id=null`. Historical receipts without attribution are read as
-`origin="not_recorded"`. Neither case inherits authorship from the session's
-agent/provider/model labels; historical events are not rewritten.
+Omission records `actor.origin="undeclared"` and `actor.agent_id=null`. Historical unattributed receipts read as `origin="not_recorded"`.
 
-`ContextIncomplete` does not prohibit recording unfinished facts. Preserve actual
-failures, missing context and open loops in a checkpoint, using the real last-used
-context hash. Do not invent a hash or treat a saved checkpoint as verified context,
-passing tests or completed work. The CLI and MCP surface that limitation when a
-checkpoint is saved and when its metadata is read.
+`ContextIncomplete` permits checkpoints of actual failures, missing context and open loops. Use the actual last-consumed context hash.
 
-Checkpoint writes accept `--expected-project-revision`; `--expected-revision` is
-a compatible alias. Use the top-level `project_revision` from `session show`
-(MCP `awr_session_get`), **not** `session.revision`. On a conflict, inspect
-intervening changes before retrying with the current project revision. Recording
-a checkpoint never rewrites source-backed `next_action`; an intended contract
-change belongs in the authoritative source or its authorized writeback path.
+Checkpoint writes accept `--expected-project-revision` and its compatible alias `--expected-revision`. Read the top-level `project_revision` from `session show` / `awr_session_get`; inspect intervening changes after a conflict.
 
-## Generic MCP
+### Generic MCP
 
 Any MCP client can launch a project-bound stdio server:
 
@@ -108,21 +78,20 @@ domain with no arguments to discover its children, then invoke through it:
 {"child_tool": "awr_project_status", "arguments": {}}
 ```
 
-So the status probe is an `awr_query` call with the payload above. Flat names
-such as `awr_project_status` remain directly callable for already-integrated
-hosts, but they are not in the default catalog; a host that builds its tool
-list from `tools/list` must use the domain call. Set
-`AWR_MCP_TOOL_EXPOSURE_MODE=flat` on the server only when the host cannot route
-through domain tools.
+Probe status through `awr_query` with the payload above. Existing flat names remain callable. Hosts discovering through `tools/list` route via the advertised domains.
 
-The server does not need a model API key. Shared HTTP uses a URL and a bearer
-token; every tool then requires an explicit `project` key. See
-[MCP tools](../../../crates/awr-mcp/README.md).
+Shared HTTP uses a service URL, bearer token and explicit `project` key per project call. See [MCP tools](../../../crates/awr-mcp/README.md).
 
-Stdio cannot run on a laptop filesystem from a remote/cloud agent. Those hosts
-need a reachable HTTP service whose registered roots exist on the server.
+## How it behaves
 
-## Start or resume
+| Stage | Result |
+| --- | --- |
+| Bind and claim | Explicit work ownership and conversation identity |
+| Assess and compile | Management requirements and consumed context |
+| Checkpoint | Attributed progress and open loops |
+| Complete and end | Durable completion receipt, then session close-out |
+
+### Start or resume
 
 New work, with a claim:
 
@@ -134,7 +103,7 @@ awrj session start --work "$AWR_WORK" --agent "$AWR_AGENT" \
 AWR_SESSION=$(jq -er '.session.id' "$AWR_NOTES/start.json")
 ```
 
-The claim is runtime ownership. It does not rewrite source work status.
+A claim records runtime ownership.
 
 A project can declare a default claim lifetime and renewal in `.awr/policy.toml`; with it `--ttl-ms` can be left out, and `--no-expiry` asks for a claim without an expiry. See [claim policy](../reference/claim-policy.md).
 
@@ -151,46 +120,27 @@ jq -e '.context_ready' "$AWR_NOTES/resume.json"
 AWR_SESSION=$(jq -er '.resumed.session.id' "$AWR_NOTES/resume.json")
 ```
 
-Resume creates a new AWR session. It does not switch the host's native chat.
+Resume creates a successor AWR session.
 
-## Assess before compiling
+### Assess before compiling
 
-A `ready` queue row and a claim are not execution permission. After start or
-resume, read the current management assessment before compiling context or
-mutating source:
+After start or resume, read the management assessment before compiling context or changing source:
 
 ```sh
 awrj work assess "$AWR_WORK"
 ```
 
-Do not pass `--explain` on this path. Do not run `work manage`: that records
-host observations. Intensity (`lightweight` / `continuous` / `undetermined`) is
-not a permission, source-write or completion rule.
-`execution_admission=not_granted_by_management_classification` means
-classification did not grant admission. Listed acceptance is not proof that
-criteria are clear or verifiable; a goal link is not proof of implementation
-coverage. `observation_basis=host_assertion_not_independently_verified` stays
-unverified. See [management intensity](../reference/management.md).
+Read the compact assessment with `work assess`. Intensity is `lightweight`, `continuous` or `undetermined`. Its `execution_admission`, `observation_basis`, required actions and gaps describe the current management obligations. See [management intensity](../reference/management.md).
 
-`work prepare --response-view action` returns required context and management
-requirements together. Consume its `next_action`, `admission_gaps` and required
-context; do not treat prepare as authorization to skip those reads. See
-[context continuity](context-continuity.md).
+`work prepare --response-view action` returns required context and management requirements together. Consume `next_action`, `admission_gaps` and required context. See [context continuity](context-continuity.md).
 
-### Specification coverage (current source)
+#### Specification coverage (current source)
 
-The current source tree also has read-only `awr spec check` (MCP `awr_spec_check`
-under `awr_work`). It is **not** in the 0.6.0 packages. It reports declared
-`covered` / `uncovered` / `needs_review` / `unknown` for registered specification
-refs. `covered` means a declared binding exists; it is not tests passed, review
-quality or parent-goal completion. Do not scan PRD prose or auto-create tasks.
-See [specification coverage](../reference/specification-coverage.md).
+Development source supplies read-only `awr spec check`, or `awr_spec_check` under `awr_work`. Registered refs report `covered`, `uncovered`, `needs_review` or `unknown`. See [specification coverage](../reference/specification-coverage.md).
 
-## Inspect before retrying
+### Inspect before retrying
 
-A CLI timeout, dropped MCP connection or expired claim does not prove the
-external command finished or failed. Query the original records before starting
-another session or repeating a side-effecting command:
+After CLI timeout, MCP disconnect or claim expiry, inspect original records before starting another session or repeating a side-effecting command:
 
 ```sh
 awrj session show "$AWR_SESSION"
@@ -204,17 +154,13 @@ If an execution id is already known, inspect that attempt rather than guessing:
 awrj execution inspect "$AWR_EXECUTION"
 ```
 
-These reads do not resume a session, record a compaction observation, defer a
-suggestion or kill a process. Missing occupancy or an unverified execution stays
-unknown; do not treat absence as zero or as failure. `session compaction inspect`
-does not take `--include-observation` here; that flag expands host telemetry and
-is not required to decide whether to continue.
+Read session, recovery and compact compaction state to decide whether to continue. `--include-observation` expands telemetry on its separate diagnostic path.
 
 Use the CLI commands above for session and recovery diagnostics.
 [Project Progress Overview](../../../tools/project-progress-overview/README.md) shows local project maps,
 and [Observer](../../../tools/observer/README.md) provides the Team observation workspace.
 
-## Compile context
+### Compile context
 
 ```sh
 awrj context bootstrap --session "$AWR_SESSION" --budget 1000 \
@@ -226,12 +172,9 @@ awrj context compile --work "$AWR_WORK" --session "$AWR_SESSION" \
 jq -e '.completeness.complete and (.work_context != null)' "$AWR_NOTES/context.json"
 ```
 
-Read the packet, not only the boolean. On `BudgetExceeded`, inspect `required`
-and widen the budget or scope. On `SourceStale`, inspect the source change and
-run `awr source reindex` before reading again. MCP `awr_context_compile` is
-read-only against the persistent index; CLI context reads may refresh it.
+Read the entire packet. On `BudgetExceeded`, inspect `required` and widen budget or scope. On `SourceStale`, inspect changes and reindex before reading again.
 
-## Checkpoint and continue
+### Checkpoint and continue
 
 ```sh
 AWR_CONTEXT_HASH=$(jq -er '.work_context.context_hash' "$AWR_NOTES/context.json")
@@ -244,20 +187,14 @@ awrj session checkpoint --session "$AWR_SESSION" --agent "$AWR_AGENT" \
   --expected-project-revision "$AWR_REV" > "$AWR_NOTES/checkpoint.json"
 ```
 
-Digest and hash are caller assertions. Use returned/current revisions after a
-save. A completed checkpoint save may record unfinished work. An interrupted save
-without a completion receipt is not a recovery checkpoint.
+Use returned/current revisions after saving. A completed save can record unfinished progress.
 
 When the same AWR session is still active after host compaction, compile again.
 Use `session resume` only for a real session handoff.
 
-## Finish the work and end the session
+### Finish the work and end the session
 
-Finishing is part of the flow, not an afterthought. A completed or cancelled work item
-releases the claim it held, and the response of `work complete` and `work cancel` carries
-one `close_out` instruction while the session holds no other active claim: save a
-checkpoint, then end the session with `--outcome ended`. The instruction is short on
-purpose (under 60 tokens) and appears only when it applies.
+`work complete` or `work cancel` releases the work’s claim. When the session’s active claims are exhausted, `close_out` gives one instruction under 60 tokens: checkpoint, then end with `--outcome ended`.
 
 ```sh
 awrj work complete "$AWR_WORK" --session "$AWR_SESSION" --reason "Evidence reviewed" \
@@ -272,11 +209,7 @@ active. If the completion succeeded but the end did not, the response reports `s
 `failed` with a nonzero exit; the completion stands, and `session end --outcome ended` finishes the
 job. Without the flag the call behaves as before.
 
-Completing work by editing its status in the source directly has consequences: no completion
-receipt and no evidence binding are recorded, and no claim is released, so the session and its claim
-stay open until they are closed by hand.
-
-## Bind a native conversation
+### Bind a native conversation
 
 This section uses local client continuity. Its `--client generic` is a hook
 dialect; it is distinct from the caller-supplied MCP namespace recorded by
@@ -297,9 +230,7 @@ into one binding:
 AWR_EXTERNAL="cursor:${HOST_CONVERSATION_ID}"
 ```
 
-Get the native ID from the host itself (its session/conversation metadata, not
-an invented value), and keep it stable for the life of that conversation. A new
-chat means a new ID.
+Get the native conversation ID from host metadata and keep it stable for that conversation. A new chat gets a new ID.
 
 Attach to an **active** AWR session:
 
@@ -324,14 +255,9 @@ awrj client bind --client generic --external-session "$AWR_EXTERNAL" \
 AWR_SESSION=$(jq -er '.binding.session_id' "$AWR_NOTES/bind.json")
 ```
 
-Unlike `session resume`, this path does **not** transfer or acquire the work
-claim (`claim: None` on the successor). Acquire a claim explicitly before any
-mutation.
+Acquire a work claim explicitly before mutation after one-step `client bind --from-session`.
 
-Do not pass both flags. `--client generic` is the L0 identity; use the same
-namespaced external ID on `client progress` and `client show`. `awr client
-install` is L2 and currently exists only for Codex; other values return
-`Unsupported`. That error is not a missing binary or a failed MCP connection.
+Select either `--session` or `--from-session`. Use `--client generic` and the same namespaced external ID with `client progress` and `client show`.
 
 An existing local binding stays pinned to its original AWR session after a
 resume. Use a new native conversation when attaching continuity to a successor;
@@ -339,7 +265,7 @@ if the native conversation stays the same, use explicit successor session
 operations. MCP's ability to reuse a conversation for a successor does not move
 the old local continuity binding.
 
-## End
+### End
 
 When the work is not finished, end the session by itself. For finished work see
 [Finish the work and end the session](#finish-the-work-and-end-the-session).
@@ -350,18 +276,51 @@ awrj session end --session "$AWR_SESSION" --outcome incomplete \
   --expected-revision "$AWR_REV"
 ```
 
-Ending releases claims. It does not complete source work.
+Ending releases runtime claims.
 
-## Fixture
+### Fixture
 
-[examples/codex/lifecycle.py](../../../examples/codex/README.md) walks this CLI
-path on a copy of `examples/basic`. It invokes AWR, not a coding agent. The
-directory name is historical; treat the script as the L0 fixture. The fixture
-runs read-only `work assess` after the claim and before bootstrap; it does not
-run `work manage` or `spec check`.
+[examples/codex/lifecycle.py](../../../examples/codex/README.md) runs the CLI path on a copy of `examples/basic`. Its historical directory names the L0 fixture. It reads `work assess` after claim and before bootstrap.
 
-## Verification boundary
+## Limits
 
-A configured MCP server, a bind receipt or this fixture does not prove that a
-named host called a tool, installed hooks or accepted business work. Record the
-host version and the exact tools or commands that ran.
+- Use a current package; 0.4.0 predates this integration baseline.
+- Starting `awr-mcp` binds an initialized project; database creation and migration use explicit operator commands.
+- Session labels leave host launch to the client. Native chat IDs and AWR session IDs are separate identities.
+- Development-source capabilities require matching installed versions; earlier packages retain their documented surfaces.
+- Matching checkpoint declarations remain `trust=reported`; local CLI/MCP labels cannot authenticate the actual model. Existing MCP client access checks still apply.
+- Omitted and historical attribution preserve their recorded origin rather than inheriting session labels. Historical events stay immutable.
+- Checkpoint success records progress rather than verified context, passing tests or completed work; save receipts and metadata retain this distinction.
+- The checkpoint guard uses project revision rather than `session.revision`. Source-backed next actions change through authoritative source edits or authorized writeback.
+- Default discovery advertises domains; set `AWR_MCP_TOOL_EXPOSURE_MODE=flat` when a host requires flat discovery.
+- AWR’s server operates independently of model API credentials.
+- Remote/cloud clients require reachable HTTP with server-readable roots; stdio accesses files where its process runs.
+- Claim operations preserve source work status.
+- AWR resume leaves the host’s native chat under host control.
+- Queue readiness and runtime claims describe their own layers; execution admission remains separately governed.
+- This path uses the compact read; `--explain` expands details and `work manage` records host observations.
+- Management intensity leaves permission, source-write and completion rules unchanged; `not_granted_by_management_classification` explicitly retains separate admission.
+- Listed acceptance and goal links declare intent; criteria quality and implementation coverage need independent evidence.
+- `host_assertion_not_independently_verified` keeps host observations unverified.
+- Preparation supplies required reads; callers still consume them before proceeding.
+- `spec check` postdates 0.6.0 packages. `covered` means a declared binding; tests, review quality and parent completion need separate evidence.
+- Specification checks use registered refs; PRD scanning and automatic task creation are outside this path.
+- Timeouts, disconnects and expired claims leave external execution outcome unknown.
+- Inspection preserves sessions, observations, deferrals and processes. Missing occupancy and unverified executions remain unknown rather than zero or failure.
+- CLI context reads may refresh projections; MCP `awr_context_compile` preserves the persistent index.
+- Digest and context hash are caller assertions. Recovery uses completed checkpoint receipts; interrupted saves remain attempts.
+- The close-out instruction appears only when its session/claim conditions apply.
+- Direct source-status edits omit completion receipts and evidence bindings; the session and claim stay open until explicitly closed.
+- Conversation identity comes from the host; invented or empty native IDs can merge unrelated continuity bindings.
+- One-step bind-resume creates a successor with `claim: None`; session resume uses its own transfer/acquisition gates.
+- Generic binding is L0; automatic installation is L2. Unsupported dialects return `Unsupported`, independently of binary availability or MCP connectivity.
+- Codex installation is in the baseline; development source also provides the `claude-code` lifecycle dialect.
+- Ending a session preserves the source work’s completion state.
+- The L0 fixture invokes AWR rather than a coding agent; it omits `work manage` and `spec check`.
+- Configuration, bindings and fixtures verify their own surfaces. Named-host tool calls, hook triggers and business acceptance require host/version-specific receipts.
+
+## Code and tests
+
+- [Lifecycle fixture](../../../examples/codex/README.md)
+- [Checkpoint tests](../../../crates/awr-cli/tests/checkpoint_progress.rs)
+- [Session tests](../../../crates/awr-cli/tests/session_cli.rs)

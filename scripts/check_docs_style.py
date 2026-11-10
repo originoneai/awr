@@ -217,11 +217,19 @@ def read_baseline(root):
     return data["files"]
 
 
+def ratchet_baseline(recorded, current):
+    return recorded | {
+        path: {key: min(recorded[path][key], values[key]) for key in METRICS}
+        if path in recorded else values
+        for path, values in current.items()
+    }
+
+
 def main(argv=None, *, root=ROOT):
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--write-baseline", action="store_true", help="Record the initial four metrics once")
-    mode.add_argument("--update-baseline", action="store_true", help="Record equal or lower metrics after edits")
+    mode.add_argument("--update-baseline", action="store_true", help="Lower metrics without raising recorded ceilings")
     mode.add_argument("--self-test", action="store_true", help="Run synthetic checks and rule mutation tests")
     args = parser.parse_args(argv)
     if args.self_test:
@@ -236,20 +244,16 @@ def main(argv=None, *, root=ROOT):
         paths = document_paths(root)
         for path in paths:
             text = (root / path).read_text(encoding="utf-8")
-            if args.write_baseline:
+            if args.write_baseline or (args.update_baseline and path in recorded):
                 errors.extend(check_r5(root, path, text))
             else:
                 errors.extend(check_document(root, path, text, recorded.get(path)))
-        if args.update_baseline:
-            for path, values in current.items():
-                if path in recorded:
-                    errors.extend(f"{path}:1: baseline {key} {values[key]} exceeds {recorded[path][key]}"
-                                  for key in METRICS if values[key] > recorded[path][key])
         if errors:
             print("\n".join(errors), file=sys.stderr)
             return 1
         if args.write_baseline or args.update_baseline:
-            data = json.dumps({"version": 1, "files": dict(sorted((recorded | current).items()))},
+            updated = ratchet_baseline(recorded, current) if args.update_baseline else current
+            data = json.dumps({"version": 1, "files": dict(sorted(updated.items()))},
                               indent=2, ensure_ascii=False) + "\n"
             baseline_path.parent.mkdir(parents=True, exist_ok=True)
             if args.write_baseline:
@@ -265,7 +269,15 @@ def main(argv=None, *, root=ROOT):
                 finally:
                     temporary.unlink(missing_ok=True)
             print(f"Baseline saved: {len(current)} pages in {BASELINE}")
-        print(f"Docs style OK: {len(paths)} pages checked (Team pages: R5 only).")
+            if args.update_baseline:
+                lowered = sum(any(values[key] < recorded[path][key] for key in METRICS)
+                              for path, values in current.items() if path in recorded)
+                kept = sum(any(values[key] > recorded[path][key] for key in METRICS)
+                           for path, values in current.items() if path in recorded)
+                added = sum(path not in recorded for path in current)
+                print(f"Baseline update — lowered: {lowered} pages; kept higher values: {kept} pages; added: {added} pages.")
+        if not args.update_baseline:
+            print(f"Docs style OK: {len(paths)} pages checked (Team pages: R5 only).")
         return 0
     except (OSError, ValueError) as error:
         print(f"Docs style error: {error}", file=sys.stderr)
@@ -489,21 +501,77 @@ class StyleTests(unittest.TestCase):
         self.assertEqual(json.loads(target.read_text())["files"][self.path],
                          measure((self.root / self.path).read_text()))
 
-    def test_ac4_update_rejects_each_higher_value_without_writing(self):
+    def test_ac4_update_never_raises_a_recorded_value(self):
         text = "# Page\n\nIt is not ready.\n\n## Limits\n\n" + "word " * 400
         self.baseline(text)
         target = self.root / BASELINE
-        original = json.loads(target.read_text())
-        for metric in original["files"][self.path]:
+        current = measure(text)
+        for metric in METRICS:
             with self.subTest(metric=metric):
-                data = json.loads(json.dumps(original))
-                data["files"][self.path][metric] -= 0.01 if metric == "density" else 1
-                target.write_text(json.dumps(data))
-                before = target.read_bytes()
+                recorded = {key: value + 10 for key, value in current.items()}
+                recorded[metric] = current[metric] - (0.01 if metric == "density" else 1)
+                target.write_text(json.dumps({"version": 1, "files": {self.path: recorded}}))
                 code, output = self.invoke("--update-baseline")
-                self.assertEqual(code, 1, output)
-                self.assertIn(metric, output)
-                self.assertEqual(target.read_bytes(), before)
+                self.assertEqual(code, 0, output)
+                updated = json.loads(target.read_text())["files"][self.path]
+                self.assertEqual(updated[metric], recorded[metric])
+                for other in METRICS:
+                    if other != metric:
+                        self.assertEqual(updated[other], current[other])
+
+    def test_ac4_update_keeps_a_drifted_page_and_lowers_others(self):
+        improved = "docs/series/improved.md"
+        text = self.page(negatives=4)
+        self.write(text)
+        self.write(text, improved)
+        self.assertEqual(self.invoke("--write-baseline")[0], 0)
+        target = self.root / BASELINE
+        recorded = json.loads(target.read_text())["files"]
+        drifted = self.page(words=490, negatives=4)
+        self.assertEqual(check_document(self.root, self.path, drifted, recorded[self.path]), [])
+        self.write(drifted)
+        self.write(self.page(negatives=1), improved)
+        code, output = self.invoke("--update-baseline")
+        self.assertEqual(code, 0, output)
+        updated = json.loads(target.read_text())["files"]
+        self.assertEqual(updated[self.path], recorded[self.path])
+        self.assertEqual(updated[improved], measure(self.page(negatives=1)))
+        self.assertIn("lowered: 1 pages; kept higher values: 1 pages; added: 0 pages", output)
+
+    def test_ac4_update_keeps_zero_limits_baseline_with_one_section(self):
+        self.baseline(self.page())
+        self.write(self.page() + "\n## Limits\n\nA short boundary.\n")
+        self.assertEqual(self.invoke()[0], 0)
+        code, output = self.invoke("--update-baseline")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(json.loads((self.root / BASELINE).read_text())
+                         ["files"][self.path]["limit_sections"], 0)
+        self.assertIn("lowered: 0 pages; kept higher values: 1 pages; added: 0 pages", output)
+
+    def test_ac4_update_leaves_existing_style_failures_to_regular_checks(self):
+        self.baseline(self.page())
+        text = "# Page\n\n" + "not " * 80 + "\n\n" + "word " * 400
+        text += "\n## Limits\n\nA.\n\n## Boundaries\n\nB.\n"
+        self.write(text)
+        before = json.loads((self.root / BASELINE).read_text())
+        code, output = self.invoke("--update-baseline")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(json.loads((self.root / BASELINE).read_text()), before)
+        self.assertNotIn("Docs style OK", output)
+        code, output = self.invoke()
+        self.assertEqual(code, 1, output)
+        for rule in ("R1", "R3", "R4"):
+            self.assertIn(rule, output)
+
+    def test_ac4_update_rejects_broken_links_without_writing(self):
+        self.baseline(self.page(negatives=4))
+        target = self.root / BASELINE
+        before = target.read_bytes()
+        self.write(self.page() + "\n[Missing](missing.md)\n")
+        code, output = self.invoke("--update-baseline")
+        self.assertEqual(code, 1, output)
+        self.assertIn("R5", output)
+        self.assertEqual(target.read_bytes(), before)
 
     def test_ac4_write_baseline_refuses_overwrite(self):
         self.baseline(self.page())
@@ -514,14 +582,22 @@ class StyleTests(unittest.TestCase):
 
     def test_ac4_update_checks_new_pages_before_adding_them(self):
         self.baseline(self.page())
-        self.write(self.page(negatives=5), "docs/series/new.md")
         before = (self.root / BASELINE).read_bytes()
-        code, output = self.invoke("--update-baseline")
-        self.assertEqual(code, 1, output)
-        self.assertIn("R2", output)
-        self.assertEqual((self.root / BASELINE).read_bytes(), before)
+        for rule, text in (
+            ("R2", self.page(negatives=5)),
+            ("R3", "# Page\n\n" + "word " * 80 + "\n"),
+            ("R4", self.page() + "\n## Limits\n\nA.\n\n## Boundaries\n\nB.\n"),
+        ):
+            with self.subTest(rule=rule):
+                self.write(text, "docs/series/new.md")
+                code, output = self.invoke("--update-baseline")
+                self.assertEqual(code, 1, output)
+                self.assertIn(rule, output)
+                self.assertEqual((self.root / BASELINE).read_bytes(), before)
         self.write(self.page(negatives=3), "docs/series/new.md")
-        self.assertEqual(self.invoke("--update-baseline")[0], 0)
+        code, output = self.invoke("--update-baseline")
+        self.assertEqual(code, 0, output)
+        self.assertIn("added: 1 pages", output)
         self.assertIn("docs/series/new.md", json.loads((self.root / BASELINE).read_text())["files"])
 
     def test_ac4_missing_or_invalid_baseline_fails(self):
@@ -563,6 +639,33 @@ class SelfTestTests(unittest.TestCase):
                 self.assertTrue(any(examples[rule - 1] in str(test)
                                     for test, _ in result.failures + result.errors),
                                 f"Self-test missed the R{rule} counterexample")
+
+    def test_ac5_raising_any_recorded_metric_fails_self_test(self):
+        original = ratchet_baseline
+        for metric in METRICS:
+            with self.subTest(metric=metric):
+                def raise_metric(recorded, current):
+                    updated = original(recorded, current)
+                    for path in current.keys() & recorded.keys():
+                        updated[path][metric] = max(recorded[path][metric], current[path][metric])
+                    return updated
+
+                with patch.dict(globals(), {"ratchet_baseline": raise_metric}):
+                    result = run_rule_tests(io.StringIO())
+                self.assertFalse(result.wasSuccessful(), f"Self-test missed raised {metric}")
+                self.assertTrue(any("test_ac4_update_never_raises_a_recorded_value" in str(test)
+                                    for test, _ in result.failures + result.errors),
+                                f"Self-test missed the {metric} ratchet counterexample")
+
+    def test_ac5_freezing_metrics_fails_self_test(self):
+        with patch.dict(globals(), {"ratchet_baseline": lambda recorded, current:
+                                   recorded | {path: values for path, values in current.items()
+                                               if path not in recorded}}):
+            result = run_rule_tests(io.StringIO())
+        self.assertFalse(result.wasSuccessful(), "Self-test missed frozen metrics")
+        self.assertTrue(any("test_ac4_update_accepts_lower_values" in str(test)
+                            for test, _ in result.failures + result.errors),
+                        "Self-test missed the lower-value counterexample")
 
 
 def run_self_tests():
