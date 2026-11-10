@@ -23,7 +23,10 @@ pub type CheckGates = awr_core::CheckGatePolicy;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct VerifyGates {}
+pub struct VerifyGates {
+    #[serde(default)]
+    pub require_work: bool,
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]

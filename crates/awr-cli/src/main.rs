@@ -40,6 +40,7 @@ mod source_changes;
 mod source_relocation;
 mod specification;
 mod team;
+mod verify;
 mod work_action;
 mod work_activate;
 mod work_check;
@@ -181,6 +182,8 @@ enum Command {
         #[command(subcommand)]
         command: records::EvidenceCommand,
     },
+    /// Verify completed work for a commit using local observations or fresh checks.
+    Verify(verify::VerifyArgs),
     /// Inspect a specific authoritative decision.
     Decision {
         #[command(subcommand)]
@@ -243,6 +246,7 @@ enum Command {
 
 fn run(cli: &Cli) -> cli_failure::CliResult<()> {
     let result = match &cli.command {
+        Some(Command::Verify(args)) => verify::run(&cli.project, args, cli.json),
         Some(Command::Overview(args)) => overview::run(&cli.project, args, cli.json),
         Some(Command::Host { command }) => host_save::run(&cli.project, command, cli.json),
         Some(Command::Runtime { command }) => {
@@ -389,7 +393,8 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(error.exit_code() as u8);
         }
     };
-    if !matches!(cli.command, Some(Command::Overview(_))) {
+    let stateless_verify = matches!(&cli.command, Some(Command::Verify(args)) if args.stateless());
+    if !matches!(cli.command, Some(Command::Overview(_))) && !stateless_verify {
         let project = if matches!(cli.command, Some(Command::Capabilities(_))) {
             None
         } else {
