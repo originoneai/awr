@@ -46,6 +46,9 @@ pub struct CreateArgs {
     activate: bool,
     #[arg(long)]
     accept: bool,
+    /// Include the complete creation preview payload (JSON); preview only.
+    #[arg(long, conflicts_with = "accept")]
+    full: bool,
     #[arg(long)]
     expected_preview: Option<String>,
     #[arg(long)]
@@ -66,6 +69,24 @@ pub struct RecoverArgs {
 fn output(report: CreationReport, json_output: bool) -> Result<()> {
     if json_output {
         println!("{}", serde_json::to_string_pretty(&report.value)?);
+    } else if report.value["status"] == "preview" {
+        let request = &report.value["preview"]["plan"]["request"];
+        let goals = request["fields"]
+            .get("goal")
+            .map(serde_json::Value::to_string)
+            .unwrap_or_else(|| "none".into());
+        println!(
+            "Work creation: preview\nWork key: {}\nTitle: {}\nGoals: {goals}\nAcceptance: {}\nActivation requested: {}\nNext: {}",
+            report.value["preview"]["plan"]["external_key"]
+                .as_str()
+                .unwrap(),
+            request["title"].as_str().unwrap(),
+            request["fields"]["acceptance"]
+                .as_array()
+                .map_or(0, Vec::len),
+            report.value["activation_requested"],
+            report.value["next_action"].as_str().unwrap()
+        );
     } else {
         println!(
             "Work creation: {}\nWork key: {}\nReceipt: {}",
@@ -122,9 +143,44 @@ pub fn create(root: &Path, args: &CreateArgs, json_output: bool) -> Result<()> {
         args.activate,
     );
     match report {
-        Ok(report) => output(report, json_output),
+        Ok(mut report) => {
+            if report.value["status"] == "preview" {
+                report.value["next_action"] = serde_json::json!(args.command(
+                    &root,
+                    &input,
+                    Some((
+                        report.value["preview"]["fingerprint"].as_str().unwrap(),
+                        report.value["project_revision"].as_u64().unwrap()
+                    ))
+                )?);
+                if !args.full {
+                    compact_preview(&mut report.value)?;
+                }
+            }
+            output(report, json_output)
+        }
         Err(error) => Err(args.recovery_error(&root, &input, error)?),
     }
+}
+
+// Compact only the CLI view; runtime plans, fingerprints and MCP previews stay intact.
+fn compact_preview(value: &mut serde_json::Value) -> Result<()> {
+    let preview = &mut value["preview"];
+    for field in ["before_text", "after_text", "new_record"] {
+        let bytes = match preview[field].as_str() {
+            Some(text) => text.len(),
+            None => serde_json::to_vec(&preview[field])?.len(),
+        };
+        preview[field] = serde_json::json!({"bytes": bytes, "omitted": true});
+    }
+    let plan = preview["plan"].as_object_mut().unwrap();
+    let count = plan["observations"].as_array().map_or(0, Vec::len);
+    plan.retain(|key, _| matches!(key.as_str(), "request" | "external_key"));
+    plan.insert(
+        "observations".into(),
+        serde_json::json!({"count": count, "omitted": true}),
+    );
+    Ok(())
 }
 pub fn status(root: &Path, args: &StatusArgs, json_output: bool) -> Result<()> {
     let root = root.canonicalize()?;
@@ -193,6 +249,27 @@ impl CreateArgs {
             .details
             .as_ref()
             .is_some_and(|d| d["preview_still_valid"] == true);
+        let acceptance = if valid {
+            self.expected_preview.as_deref().zip(
+                report
+                    .details
+                    .as_ref()
+                    .and_then(|d| d["current_revision"].as_u64()),
+            )
+        } else {
+            None
+        };
+        Ok(error.with_details(
+            serde_json::json!({"next_action":self.command(root, input, acceptance)?}),
+        ))
+    }
+
+    fn command(
+        &self,
+        root: &Path,
+        input: &CreateWorkInput,
+        acceptance: Option<(&str, Revision)>,
+    ) -> Result<String> {
         let mut args = vec!["awr".to_owned(), "work".into(), "create".into()];
         if let Some(path) = &self.input {
             args.extend(["--input".into(), path.to_string_lossy().into_owned()]);
@@ -239,22 +316,14 @@ impl CreateArgs {
         if self.activate {
             args.push("--activate".into());
         }
-        if valid {
-            if let (Some(preview), Some(revision)) = (
-                &self.expected_preview,
-                report
-                    .details
-                    .as_ref()
-                    .and_then(|d| d["current_revision"].as_u64()),
-            ) {
-                args.extend([
-                    "--accept".into(),
-                    "--expected-preview".into(),
-                    preview.clone(),
-                    "--expected-revision".into(),
-                    revision.to_string(),
-                ]);
-            }
+        if let Some((preview, revision)) = acceptance {
+            args.extend([
+                "--accept".into(),
+                "--expected-preview".into(),
+                preview.into(),
+                "--expected-revision".into(),
+                revision.to_string(),
+            ]);
         }
         let mut command = cli_next_action(&args.iter().map(String::as_str).collect::<Vec<_>>());
         if command.len() > 300 || command.chars().any(char::is_control) {
@@ -269,25 +338,17 @@ impl CreateArgs {
             if self.activate {
                 compact.push("--activate".into());
             }
-            if valid {
-                if let (Some(preview), Some(revision)) = (
-                    &self.expected_preview,
-                    report
-                        .details
-                        .as_ref()
-                        .and_then(|d| d["current_revision"].as_u64()),
-                ) {
-                    compact.extend([
-                        "--accept".into(),
-                        "--expected-preview".into(),
-                        preview.clone(),
-                        "--expected-revision".into(),
-                        revision.to_string(),
-                    ]);
-                }
+            if let Some((preview, revision)) = acceptance {
+                compact.extend([
+                    "--accept".into(),
+                    "--expected-preview".into(),
+                    preview.into(),
+                    "--expected-revision".into(),
+                    revision.to_string(),
+                ]);
             }
             command = cli_next_action(&compact.iter().map(String::as_str).collect::<Vec<_>>());
         }
-        Ok(error.with_details(serde_json::json!({"next_action":command})))
+        Ok(command)
     }
 }
