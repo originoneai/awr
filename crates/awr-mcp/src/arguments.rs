@@ -64,6 +64,20 @@ pub(crate) struct ContextArgs {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct CheckArgs {
+    pub work: String,
+    pub session: Id,
+    pub phase: CheckPhase,
+    #[serde(default)]
+    pub examples: Vec<String>,
+    pub timeout_seconds: Option<u32>,
+    #[serde(default)]
+    pub require_met: bool,
+    pub expected_revision: Revision,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct TransitionArgs {
     pub work: String,
     pub action: WorkAction,

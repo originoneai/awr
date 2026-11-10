@@ -21,6 +21,85 @@ const WRITER: &str = "synthetic-writer-credential-for-http-fixtures";
 const READER: &str = "synthetic-reader-credential-for-http-fixtures";
 const COLLEAGUE: &str = "synthetic-colleague-credential-for-http-fixtures";
 
+#[tokio::test]
+async fn mcp_check_shared_enforces_write_access_session_ownership_and_durable_replay() {
+    let a = ProjectFixture::new("Check the toolchain");
+    let b = ProjectFixture::new("Separate project");
+    fs::write(a.root.join("oracle.txt"), "Inspect the local toolchain\n").unwrap();
+    fs::write(a.root.join("work.yaml"), serde_json::to_vec_pretty(&json!({
+        "work_items":[{"id":"W","title":"Check the toolchain","status":"ready","next_action":"Inspect Git",
+            "acceptance":["Git is available"],"definition":{"version":1,"purpose":"implementation","tier":"required",
+                "examples":[{"id":"git-version","criterion":"Git is available","kind":"positive",
+                    "given":"a local toolchain","when":"the version is requested","then":"Git responds",
+                    "check":{"run":["git","--version"],"files":["oracle.txt"]}}]}}]
+    })).unwrap()).unwrap();
+    a.reindex();
+    let config = registry(&a, &b);
+    let mut server = Server::start(&config).await;
+    let started = ok(server
+        .call(
+            WRITER,
+            "awr_session_start",
+            start_args("alpha", "W", "check-conversation", a.revision(), true),
+        )
+        .await);
+    let session = started["session"]["id"].clone();
+    let args = json!({"project":"alpha","work":"W","session":session,"phase":"baseline","expected_revision":a.revision()});
+    let revision = a.revision();
+    error(
+        server
+            .raw_call(READER, "awr_work_check", args.clone())
+            .await,
+        "RuleViolation",
+    );
+    error(
+        server
+            .raw_call(
+                READER,
+                "awr_work",
+                json!({"project":"alpha","child_tool":"awr_work_check","arguments":{
+        "work":"W","session":session,"phase":"baseline","expected_revision":revision}}),
+            )
+            .await,
+        "RuleViolation",
+    );
+    diagnostic(
+        server
+            .raw_call(WRITER, "awr_work_check", args.clone())
+            .await,
+        "/request_id",
+        "required",
+    );
+    let mut other = args;
+    other["request_id"] = json!("wrong-owner");
+    error(
+        server.raw_call(COLLEAGUE, "awr_work_check", other).await,
+        "RuleViolation",
+    );
+    assert_eq!(
+        a.revision(),
+        revision,
+        "refusals must not execute checks or start request receipts"
+    );
+    let args = json!({"project":"alpha","work":"W","conversation":"check-conversation","phase":"baseline",
+        "expected_revision":revision,"request_id":"check-replay"});
+    let checked = ok(server
+        .raw_call(WRITER, "awr_work_check", args.clone())
+        .await);
+    assert_eq!(checked["results"][0]["outcome"], "passed");
+    assert_eq!(checked["operation"]["replayed"], false);
+    let revision = a.revision();
+    server.stop().await;
+    server = Server::start(&config).await;
+    let replayed = ok(server.raw_call(WRITER, "awr_work_check", args).await);
+    assert_eq!(replayed["operation"]["replayed"], true);
+    assert_eq!(replayed["results"], checked["results"]);
+    assert_eq!(a.revision(), revision);
+    let store = Store::open_readonly(&a.root.join(".awr/state.db")).unwrap();
+    assert_eq!(store.check_events(a.id, "W", None).unwrap().len(), 1);
+    server.stop().await;
+}
+
 fn diagnostic(result: Value, path: &str, constraint: &str) -> Value {
     error(result.clone(), "InvalidInput");
     let detail = result["structuredContent"].clone();

@@ -125,6 +125,47 @@ fn a_definition_that_meets_every_obligation_is_complete() {
     assert_eq!(report.effective_tier, Some(DeliveryTier::Required));
 }
 
+#[test]
+fn check_alternative_note_is_required_and_can_be_inherited() {
+    let mut world = World::new();
+    for note in [Value::Null, json!(""), json!("   ")] {
+        world.change(|v| {
+            v["discrimination"] = json!({"method":"justified_alternative","note":note})
+        });
+        world.works["W"]
+            .definition
+            .as_ref()
+            .unwrap()
+            .validate()
+            .unwrap();
+        assert!(codes(&world.report()).contains(&"discrimination_note_missing"));
+    }
+    world.change(|v| v["discrimination"] = json!({"method":"justified_alternative"}));
+    assert!(codes(&world.report()).contains(&"discrimination_note_missing"));
+    assert_eq!(state(&world.report(), "discrimination"), "missing");
+    world.change(|v| v["discrimination"] = json!({"method":"justified_alternative","note":"A reviewer checks injected storage failures"}));
+    assert!(codes(&world.report()).is_empty());
+    let parent = serde_json::to_value(world.works["W"].definition.clone()).unwrap();
+    world.set("P", "api", WorkStatus::Ready, Some(parent));
+    world.change(|v| {
+        v.as_object_mut().unwrap().remove("discrimination");
+        v["inherits"] = json!("P");
+    });
+    assert!(!codes(&world.report()).contains(&"discrimination_note_missing"));
+    world
+        .works
+        .get_mut("P")
+        .unwrap()
+        .definition
+        .as_mut()
+        .unwrap()
+        .discrimination
+        .as_mut()
+        .unwrap()
+        .note = None;
+    assert!(codes(&world.report()).contains(&"discrimination_note_missing"));
+}
+
 fn example_check() -> Value {
     json!({"run": ["storage-check", "--case", "keeps-input"], "files": ["tests/save.rs"]})
 }

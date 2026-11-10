@@ -227,7 +227,7 @@ fn call_as_full(
     if let Err(rejection) = crate::lifecycle::authorize(root, name, &mut args, principal) {
         return rejection.into_result();
     }
-    if matches!(name, "awr_work_transition" | "awr_session_resume") {
+    if crate::lifecycle::requires_resolved_wait(name) {
         if let Some(session) = args.get("session").and_then(Value::as_str) {
             let store = Store::open_readonly(&database(root)?)?;
             let project = store.project_by_root(root)?;
@@ -269,6 +269,40 @@ pub(crate) fn call(root: &Path, name: &str, mut args: JsonObject) -> Result<Call
         return Err(Error::InvalidInput("tool arguments exceed 1 MiB".into()));
     }
     match name {
+        "awr_work_check" => {
+            let args: CheckArgs = parse_tool!(name, args);
+            if args
+                .timeout_seconds
+                .is_some_and(|value| value == 0 || value > 86400)
+            {
+                return Err(Error::InvalidInput(
+                    "timeout_seconds must be 1..86400".into(),
+                ));
+            }
+            let (mut store, project) = write_project(root, args.expected_revision)?;
+            let mut value = awr_runtime::run_check(
+                &mut store,
+                &project.root,
+                &awr_runtime::RunCheckRequest {
+                    work: args.work,
+                    session: args.session,
+                    phase: args.phase,
+                    examples: args.examples,
+                    timeout_seconds: args.timeout_seconds,
+                    expected_revision: args.expected_revision,
+                },
+            )?;
+            if args.require_met && value["met"] != true {
+                value["error"] = json!(
+                    Error::RuleViolation(
+                        "selected checks did not meet the phase expectation".into()
+                    )
+                    .report()
+                );
+                return Ok(CallToolResult::structured_error(value));
+            }
+            return Ok(CallToolResult::structured(value));
+        }
         "awr_work_transition" => return transition(root, parse_tool!(name, args)),
         "awr_event_append" => return append_event(root, parse_tool!(name, args)),
         "awr_evidence_record" => return evidence(root, parse_tool!(name, args)),
@@ -592,16 +626,28 @@ fn work(view: &ReadProject, args: WorkArgs) -> Result<Value> {
     {
         detail["findings"] = json!(findings);
     }
-    Ok(
-        json!({"work":detail,"acceptance":work.work.item.acceptance,"source_ref":work.work.item.meta.source_ref,
+    let mut value = json!({"work":detail,"acceptance":work.work.item.acceptance,"source_ref":work.work.item.meta.source_ref,
         "progress":awr_runtime::work_progress(&view.store,view.project.id,&work.work,branch)?,
         "required_dependencies":work.dependencies.dependencies.iter().map(|d| json!({"external_key":d.item.meta.external_key,"status":d.item.status,"revision":d.item.meta.revision,"source_revision":d.item.meta.source_ref.source_revision,"freshness":d.source.freshness})).collect::<Vec<_>>(),
         "missing_dependencies":work.dependencies.missing_keys,"dependency_cycles":work.dependencies.cycle_keys,
         "decisions":decisions.iter().map(|d| json!({"external_key":d.decision.item.meta.external_key,"summary":short(&d.decision.item.decision),"relevance":d.relevance,"reasons":d.reasons,"source_ref":d.decision.item.meta.source_ref})).collect::<Vec<_>>(),
         "evidence":evidence.iter().map(|e| json!({"external_key":e.evidence.item.external_key,"summary":short(&e.evidence.item.summary),"level":e.evidence.item.level,"currency":e.currency,"missing_bindings":e.missing_bindings,"locator":e.evidence.item.locator,"source_sha":e.evidence.item.source_sha,"reasons":e.reasons,"trust":e.evidence.trust})).collect::<Vec<_>>(),
         "evidence_groups":awr_core::evidence_groups(&evidence),
-        "evidence_currency_basis":{"requested_source_sha":args.source_sha,"branch_id":branch}}),
-    )
+        "evidence_currency_basis":{"requested_source_sha":args.source_sha,"branch_id":branch}});
+    if let Some(checks) = awr_runtime::work_checks(
+        &view.store,
+        &view.project.root,
+        &CheckGateRequest {
+            work: args.work,
+            branch,
+            session: None,
+            source_sha: args.source_sha.unwrap_or_default(),
+            check_waiver: None,
+        },
+    )? {
+        value["checks"] = checks;
+    }
+    Ok(value)
 }
 fn context(view: &mut ReadProject, root: &Path, args: ContextArgs) -> Result<Value> {
     check_sha(args.source_sha.as_deref())?;

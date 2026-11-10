@@ -56,6 +56,10 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   pages use absolute limits. Each page can use one limitation section; larger recorded
   counts remain the ceiling. Run `python3 scripts/check_docs_style.py --self-test`
   for synthetic rule checks and mutation tests.
+- Project-owned mutation report commands for `work check --phase mutation`, with bounded
+  JSON reports, five status counts, surviving source locations, and commit-bound completion
+  checks. Alternative discrimination methods require a stated reason and approval from a
+  session other than the proposer. See [example checks](../reference/checks.md#mutation-and-alternatives).
 - One observation freshness and coverage contract for the Observer Team reads (AWR-OBS-002): every
   read (`POST /api/team/read`, `/api/team/inbox-detail`, `GET /api/team/inbox`, `GET /api/team/work`)
   carries a `freshness` envelope that presents the report-received clock, the authoritative
@@ -136,6 +140,11 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   while existing lifecycle errors retain their behavior.
   Claude protocol coverage uses simulated events, without a named-version or
   native-client verification. See [hook decisions](../reference/host-contract.md#hook-decisions).
+- MCP `awr_work_check` runs bound example checks through the shared CLI runtime,
+  records outcomes, and returns generated completion input. It is a second-level
+  write tool under `awr_work`; the first-level catalog remains eight domains.
+  Work inspection and preparation expose policy-scoped check obligations, completion
+  accepts a small-work check waiver, and `mcp.work_check` supports capability negotiation.
 - The contract of a context packing kernel with no store (`awr-context-kernel`, a library crate, not in the binaries): a request of fixed
   text chunks with stable names, entities and revisions, required and ranked optional chunks, atomic groups and a token or byte budget;
   a result that is a consistent partition of it; `validate_request` and `check_result` that say why a request or a result is refused, with

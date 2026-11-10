@@ -1,7 +1,7 @@
 use rmcp::model::{Tool, ToolAnnotations};
 use serde_json::{Value, json};
 
-pub const TOOL_NAMES: [&str; 38] = [
+pub const TOOL_NAMES: [&str; 39] = [
     "awr_project_status",
     "awr_work_ready",
     "awr_work_get",
@@ -40,6 +40,7 @@ pub const TOOL_NAMES: [&str; 38] = [
     "awr_work_reassess",
     "awr_work_gap",
     "awr_work_finding",
+    "awr_work_check",
 ];
 
 fn compaction_tools() -> Vec<Tool> {
@@ -108,6 +109,18 @@ fn compaction_tools() -> Vec<Tool> {
 
 fn workflow_tools() -> Vec<Tool> {
     vec![
+        tool(
+            "awr_work_check",
+            "Run example checks and record outcomes. Baseline precedes admission; acceptance returns completion_input. Read obligations with awr_work_prepare. Requires a session and revision.",
+            object(
+                json!({"work":text(),"session":text(),"phase":{"type":"string","enum":["baseline","acceptance","mutation"]},
+                    "examples":strings(),"timeout_seconds":{"type":"integer","minimum":1,"maximum":86400},
+                    "require_met":{"type":"boolean","default":false},"expected_revision":revision()}),
+                &["work", "session", "phase", "expected_revision"],
+            ),
+            false,
+            false,
+        ),
         tool(
             "awr_work_assess",
             "Assess management requirements from the current contract. Returns the assessment and optional explanation.",
@@ -414,6 +427,7 @@ pub fn tools() -> Vec<Tool> {
             "version":{"type":"integer","const":1},"source_sha":text(),"minimum_level":levels(),
             "acceptance":{"type":"array","items":object(json!({"criterion":text(),"evidence":strings()}), &["criterion","evidence"])},
             "required_evidence":strings(),
+            "check_waiver":optional(text()),
         }),
         &["version", "source_sha", "acceptance"],
     );
@@ -555,14 +569,17 @@ pub fn tools() -> Vec<Tool> {
         }
         if matches!(
             entry.name.as_ref(),
-            "awr_context_compile" | "awr_work_transition" | "awr_event_append"
+            "awr_context_compile" | "awr_work_transition" | "awr_work_check" | "awr_event_append"
         ) {
             let schema = std::sync::Arc::make_mut(&mut entry.input_schema);
             schema["properties"]
                 .as_object_mut()
                 .unwrap()
                 .insert("conversation".into(), optional(text()));
-            if entry.name == "awr_work_transition" {
+            if matches!(
+                entry.name.as_ref(),
+                "awr_work_transition" | "awr_work_check"
+            ) {
                 schema["required"]
                     .as_array_mut()
                     .unwrap()

@@ -14,6 +14,8 @@ FLAT_TOOLS = frozenset({
     "awr_operation_recover", "awr_source_reindex",
     "awr_work_prepare", "awr_completion_prepare",
     "awr_work_assess", "awr_work_manage",
+    "awr_work_check", "awr_work_admit", "awr_work_contain", "awr_work_reassess",
+    "awr_work_gap", "awr_work_finding", "awr_spec_check",
     "awr_work_graph", "awr_change_preview", "awr_change_apply",
     "awr_change_status", "awr_change_recover",
     "awr_compaction_observe", "awr_compaction_get", "awr_compaction_defer",

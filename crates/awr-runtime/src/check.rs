@@ -340,6 +340,13 @@ pub fn run_check(store: &mut Store, root: &Path, request: &RunCheckRequest) -> R
         request.session,
         request.phase,
     )?;
+    let mutation = if request.phase == CheckPhase::Mutation {
+        Some(awr_source::GatePolicy::load(&root)?.checks.mutation.ok_or_else(|| {
+            Error::Unsupported("declare [checks.mutation] with a run argument vector in .awr/gates.toml before running --phase mutation".into())
+        })?)
+    } else {
+        None
+    };
     let work = store.work_item(project.id, &request.work)?.item;
     let definition = work
         .definition
@@ -409,7 +416,16 @@ pub fn run_check(store: &mut Store, root: &Path, request: &RunCheckRequest) -> R
     }
     let mut revision = request.expected_revision;
     let mut results = Vec::new();
-    for example in examples {
+    let mutation_oracles: Option<Vec<_>> = mutation.as_ref().map(|_| {
+        examples
+            .iter()
+            .map(|e| oracle_files(&root, e.check.as_ref().unwrap()))
+            .collect()
+    });
+    // One project-wide report is shared by the selected examples' oracle-bound observations.
+    let mut mutation_run = None;
+    let mut mutation_report = None;
+    for (index, example) in examples.into_iter().enumerate() {
         store.require_check(
             project.id,
             revision,
@@ -419,7 +435,10 @@ pub fn run_check(store: &mut Store, root: &Path, request: &RunCheckRequest) -> R
         )?;
         let id = example.id.as_deref().unwrap();
         let check = example.check.as_ref().unwrap();
-        let before = oracle_files(&root, check);
+        let argv = mutation.as_ref().map_or(&check.run, |m| &m.run);
+        let before = mutation_oracles
+            .as_ref()
+            .map_or_else(|| oracle_files(&root, check), |files| files[index].clone());
         let source = observe_git_ref(&root, "HEAD").ok().map(|b| b.commit_sha);
         let tree_state = if source.is_some() {
             match git_command(&root, &["status", "--porcelain=v1", "--untracked-files=no"]).output()
@@ -454,8 +473,8 @@ pub fn run_check(store: &mut Store, root: &Path, request: &RunCheckRequest) -> R
                 .map(|f| example_oracle(id, &check.run, f))
                 .transpose()?,
             oracle_files: before.as_ref().cloned().unwrap_or_default(),
-            run_sha256: format!("{:x}", Sha256::digest(serde_json::to_vec(&check.run)?)),
-            run_preview: preview(&check.run),
+            run_sha256: format!("{:x}", Sha256::digest(serde_json::to_vec(argv)?)),
+            run_preview: preview(argv),
             source_sha: source,
             tree_state,
             stdout_sha256: empty_hash.clone(),
@@ -468,16 +487,26 @@ pub fn run_check(store: &mut Store, root: &Path, request: &RunCheckRequest) -> R
         // Bound the full event before running an arbitrary command.
         observation.validate()?;
         if before.is_ok() {
-            let direct = run_check_direct(
-                &check.run,
-                &root,
-                Duration::from_secs(u64::from(
-                    request
-                        .timeout_seconds
-                        .or(check.timeout_seconds)
-                        .unwrap_or(300),
-                )),
-            )?;
+            let timeout = Duration::from_secs(u64::from(
+                request
+                    .timeout_seconds
+                    .or(if mutation.is_some() {
+                        None
+                    } else {
+                        check.timeout_seconds
+                    })
+                    .unwrap_or(300),
+            ));
+            let single;
+            let direct = if mutation.is_some() {
+                if mutation_run.is_none() {
+                    mutation_run = Some(run_check_direct(argv, &root, timeout)?);
+                }
+                mutation_run.as_ref().unwrap()
+            } else {
+                single = run_check_direct(argv, &root, timeout)?;
+                &single
+            };
             write_log(&dir, "stdout.log", Some(&direct.log_dir.join("stdout.log")))?;
             write_log(&dir, "stderr.log", Some(&direct.log_dir.join("stderr.log")))?;
             observation.exit_code = direct.exit_code;
@@ -487,9 +516,49 @@ pub fn run_check(store: &mut Store, root: &Path, request: &RunCheckRequest) -> R
             observation.stderr_sha256 = direct.stderr_sha256.clone();
             observation.started_at = direct.started_at;
             observation.finished_at = direct.finished_at;
+            if mutation.is_some() && direct.outcome == CheckOutcome::Passed {
+                if mutation_report.is_none() {
+                    let bytes = awr_source::read_capped(
+                        &direct.log_dir.join("stdout.log"),
+                        MUTATION_REPORT_CAP as u64,
+                    )?;
+                    mutation_report = Some(MutationReport::parse(&bytes)?);
+                }
+                let report = mutation_report.as_ref().unwrap();
+                if observation
+                    .source_sha
+                    .as_ref()
+                    .is_none_or(|sha| !sha.eq_ignore_ascii_case(&report.source_sha))
+                {
+                    return Err(Error::InvalidInput(
+                        "mutation report source_sha must match the current Git commit".into(),
+                    ));
+                }
+                let counts = report.counts();
+                observation.mutants = Some(counts);
+                observation.survivors = Some(report.survivors());
+                if !counts.passed() {
+                    observation.outcome = CheckOutcome::Failed;
+                    observation.reason = Some(
+                        if counts.survived > 0 {
+                            "mutants_survived"
+                        } else {
+                            "mutation_timeout"
+                        }
+                        .into(),
+                    );
+                }
+            }
             if oracle_files(&root, check).as_ref().ok() != before.as_ref().ok() {
                 observation.outcome = CheckOutcome::Errored;
                 observation.reason = Some("oracle_changed_during_run".into());
+            }
+            if mutation.is_some()
+                && observe_git_ref(&root, "HEAD").ok().map(|b| b.commit_sha)
+                    != observation.source_sha
+            {
+                observation.outcome = CheckOutcome::Errored;
+                observation.reason = Some("source_changed_during_run".into());
             }
         } else {
             write_log(&dir, "stdout.log", None)?;
@@ -539,10 +608,24 @@ pub fn run_check(store: &mut Store, root: &Path, request: &RunCheckRequest) -> R
         .iter()
         .find(|r| !request.phase.met(r.observation.outcome))
     {
-        format!(
-            "Inspect {} and rerun example {}",
-            failed.observation.log_dir, failed.observation.example
-        )
+        if let Some(survivors) = &failed.observation.survivors
+            && !survivors.is_empty()
+        {
+            format!(
+                "Add an example or record a finding for {}; inspect {}",
+                survivors
+                    .iter()
+                    .map(|m| format!("{} ({}:{})", m.id, m.file, m.line))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                failed.observation.log_dir
+            )
+        } else {
+            format!(
+                "Inspect {} and rerun example {}",
+                failed.observation.log_dir, failed.observation.example
+            )
+        }
     } else if request.phase == CheckPhase::Baseline {
         "Request admission: awr work admit --input <file>".into()
     } else if !value["completion_input"].is_null() {
