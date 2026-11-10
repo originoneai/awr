@@ -178,6 +178,9 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             }
             "mcp.wait_created" | "mcp.wait_replied" => "wait",
             "client.bound" | "client.updated" | "client.checkpointed" => "binding",
+            "client.gate" => {
+                "client external_session gate decision reason path delivery_key turn_key source_sha"
+            }
             "execution.registered"
             | "execution.starting"
             | "execution.running"
@@ -261,6 +264,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             "proposal_id source_id action to proposal_revision expected_revision"
         }
         "client.bound" | "client.updated" | "client.checkpointed" => "binding",
+        "client.gate" => "client external_session gate decision reason delivery_key",
         "execution.registered"
         | "execution.starting"
         | "execution.running"
@@ -325,6 +329,28 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             "check_events" if kind == "evidence.recorded" => value
                 .as_array()
                 .is_some_and(|v| !v.is_empty() && v.len() <= 64 && v.iter().all(id)),
+            "client" if kind == "client.gate" => matches!(
+                value.as_str(),
+                Some("codex" | "kimi" | "generic" | "claude")
+            ),
+            "external_session" if kind == "client.gate" => value
+                .as_str()
+                .is_some_and(|s| !s.trim().is_empty() && s.len() <= 512),
+            "gate" if kind == "client.gate" => {
+                matches!(value.as_str(), Some("write" | "completion"))
+            }
+            "decision" if kind == "client.gate" => {
+                matches!(value.as_str(), Some("ask" | "deny" | "block_stop"))
+            }
+            "reason" | "path" if kind == "client.gate" => value
+                .as_str()
+                .is_some_and(|s| !s.is_empty() && s.len() <= 8192),
+            "delivery_key" | "turn_key" if kind == "client.gate" => {
+                value.as_str().is_some_and(crate::is_sha256_hash)
+            }
+            "source_sha" if kind == "client.gate" => {
+                value.as_str().is_some_and(crate::is_source_sha)
+            }
             "actor" if kind.starts_with("checkpoint.") => {
                 value
                     .as_object()

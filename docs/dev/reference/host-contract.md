@@ -437,7 +437,7 @@ alone never identifies a session across binding kinds or clients.
 
 | Binding kind | Meaning of `client` | External ID | Writer and lookup |
 | --- | --- | --- | --- |
-| Local client continuity (`ClientBinding`) | Hook dialect: `generic`, `codex` or `kimi` | `external_session`, normally a host-prefixed native conversation ID | `client bind` / `client hook`; inspect with `client show` |
+| Local client continuity (`ClientBinding`) | Hook dialect: `generic`, `codex`, `kimi` or `claude` | `external_session`, normally a host-prefixed native conversation ID | `client bind` / `client hook`; inspect with `client show` |
 | MCP session identity (`McpSessionBinding`) | MCP client namespace: HTTP supplies its authenticated registry client ID; local MCP uses `stdio`; CLI values are caller-supplied | `conversation`, stable across transport reconnects | `awr_session_start` / `awr_session_resume`, or CLI `session start --client ... --conversation ...`; inspect with `awr_session_get` using `conversation` |
 
 These records serve different purposes. Local continuity stores the digest,
@@ -502,6 +502,65 @@ to match the authenticated principal; an explicit session ID alone never grants
 access, including for resume. Existing records retain these meanings; no binding
 or access rights are inferred from another record.
 
+### Hook decisions
+
+`awr client hook --client claude` accepts Claude Code JSON on stdin. `SessionStart`
+with `source: "compact"` restores the post-compaction context; other starts load
+the ordinary context. `PreCompact`, `Stop` and `SessionEnd` save continuity for
+bound work. The receiver ignores `transcript_path` and conversation content.
+Protocol verification: simulated events against the
+[public hook reference](https://code.claude.com/docs/en/hooks), without a named
+Claude Code version or native-client activation test. Installation is separate.
+
+To ask before a project write without a valid claim, create `.awr/gates.toml`:
+
+```toml
+version = 1
+
+[hooks]
+write_gate = "ask" # off, ask, deny
+write_gate_exempt = [".local/**", "notes/**"]
+write_gate_paths = false
+completion_reminder = false
+```
+
+Missing files disable all gates. Unknown tables, keys, values and versions are
+errors. The `[checks]` and `[verify]` tables currently accept no fields. An error
+while evaluating an optional write gate or completion reminder exits successfully,
+continues, and emits one stderr diagnostic. Existing lifecycle errors propagate:
+for example, a start with damaged project sources still returns `SourceStale`.
+Invalid envelopes and foreign-project inputs remain caller errors.
+`AWR_HOOK_GATES=off` disables both optional decisions while preserving continuity.
+
+The write gate checks `PreToolUse` targets for `Edit`, `Write`, `MultiEdit` and
+`NotebookEdit` in Claude. It resolves paths against the event's working directory,
+including symlinks, and ignores targets outside the project or matching an
+exemption glob. It reads the existing claim state without refreshing sources. A
+claim must belong to the bound active session and current branch and must not
+have expired. With `write_gate_paths = true`, a claimed write outside the work's
+declared files, directories or globs asks for confirmation even in `deny` mode.
+Shell commands and tools outside the dialect's write-tool list are not inspected.
+
+Ask/deny decisions use `hookSpecificOutput.permissionDecision` and
+`permissionDecisionReason`. A pass-through omits the permission decision so that
+Claude's own permission checks remain in charge. Gate receipts use `client.gate`;
+pass-through writes no receipt or other database state. Each decision class
+interrupts at most once per reported turn. Without native turn IDs, write gates
+use saved continuity as the boundary and suppress further interruptions until
+that continuity advances.
+
+Completion reminders have an injection point for the completion-check evaluator.
+They remain inactive until that evaluator is connected. The rule requires a
+current-commit passing result, an in-progress work claim, and
+`stop_hook_active: false`. It renders `decision: "block"` with a completion command
+once per session/work/commit; subsequent stops save ordinary checkpoints. Hooks
+never end a session or release a claim.
+
+Codex and Kimi retain their existing continuation envelopes. Unsupported
+interception decisions continue with `awr.unsupported_decision`. Generic hosts
+receive `continue`, `decision`, `reason` and `context`; their existing
+`hookSpecificOutput.additionalContext` field is retained for compatibility.
+
 ### Local continuity lifecycle
 
 1. Start an AWR session with `session start` and the actual Agent/provider/model,
@@ -520,10 +579,12 @@ or access rights are inferred from another record.
    rejected, including after `--`; see [secret boundaries](secret-boundaries.md).
 4. Save useful progress with `client progress --client generic --external-session
    <native-id> --digest <observed-summary> --next-action <next> --open-loop <issue>`.
-   Deliver a lifecycle callback using `client hook --client generic --work <key>`
+   Deliver a lifecycle callback using `client hook --client generic [--work <key>]`
    and JSON on stdin: `session_id`, `cwd`, `hook_event_name` and optional `turn_id`.
    Events are `SessionStart`, `PostCompact`, `PreCompact`, `Stop`, `SessionEnd`,
-   `Interrupt`. Start/PostCompact return context; the others persist a checkpoint.
+   `Interrupt`. Start/PostCompact return context; the others persist a checkpoint
+   for bound work. Without `--work`, the receiver recovers the existing binding;
+   an unbound start receives up to 1536 bytes of the action view and a binding command.
    Stable repeated callbacks deduplicate against source state and saved progress.
    Changed progress/source facts can legitimately produce a new checkpoint even with
    the same native turn ID. Wait for `awr.checkpoint_saved` before calling a save done.

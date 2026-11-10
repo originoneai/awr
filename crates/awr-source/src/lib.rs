@@ -6,6 +6,10 @@ mod directory;
 mod document;
 mod file_inventory;
 mod freshness;
+mod gates;
+pub use gates::{
+    CheckGates, GATES_FILE, GatePolicy, HookGates, VerifyGates, WriteGate, hook_work_path_matches,
+};
 mod indexer;
 mod ledger_mapping;
 mod limits;

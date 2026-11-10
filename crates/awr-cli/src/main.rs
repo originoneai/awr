@@ -12,6 +12,7 @@ mod capabilities;
 mod catalog;
 mod cli_failure;
 mod client;
+mod client_dialect;
 mod compaction;
 mod context;
 mod doctor;

@@ -68,13 +68,8 @@ fn terminate(child: &mut Child) -> Result<()> {
     #[cfg(unix)]
     {
         signal_group(child, 15)?;
-        let deadline = Instant::now() + Duration::from_millis(200);
-        while Instant::now() < deadline {
-            if child.try_wait()?.is_some() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        // Keep the child unreaped until group cleanup finishes, so its PID cannot be reused.
+        std::thread::sleep(Duration::from_millis(200));
         // A descendant may survive the direct child; kill the owned group after the grace period.
         signal_group(child, 9)?;
     }
