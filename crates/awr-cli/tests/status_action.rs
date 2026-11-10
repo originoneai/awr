@@ -495,10 +495,43 @@ fn legacy_text_fixtures_reject_changed_output() {
 #[test]
 fn status_json_matches_baseline_fields_and_values() {
     let fixture = Fixture::legacy();
-    assert_eq!(
-        fixture.normalized_status(),
+    assert!(status_json_fixture_matches(
+        &fixture.normalized_status(),
         include_str!("fixtures/status-text/action.json")
-    );
+    ));
+}
+
+fn status_json_fixture_matches(actual: &str, expected: &str) -> bool {
+    serde_json::from_str::<Value>(actual).unwrap()
+        == serde_json::from_str::<Value>(expected).unwrap()
+}
+
+#[test]
+fn status_json_fixture_accepts_crlf_checkout_formatting() {
+    let fixture = Fixture::legacy();
+    let expected = include_str!("fixtures/status-text/action.json")
+        .replace("\r\n", "\n")
+        .replace('\n', "\r\n");
+    assert!(status_json_fixture_matches(
+        &fixture.normalized_status(),
+        &expected
+    ));
+}
+
+#[test]
+fn status_json_fixture_rejects_value_changes_with_crlf_formatting() {
+    let fixture = Fixture::legacy();
+    let mut expected: Value =
+        serde_json::from_str(include_str!("fixtures/status-text/action.json")).unwrap();
+    expected["current"][0]["progress"]["source_next_action"]["trust"] =
+        serde_json::json!("reported");
+    let expected = serde_json::to_string_pretty(&expected)
+        .unwrap()
+        .replace('\n', "\r\n");
+    assert!(!status_json_fixture_matches(
+        &fixture.normalized_status(),
+        &expected
+    ));
 }
 
 #[test]
@@ -514,15 +547,15 @@ fn status_json_fixture_rejects_removed_or_renamed_fields() {
     ] {
         let mut value = fixture.status(&[]);
         let removed = value.as_object_mut().unwrap().remove(field).unwrap();
-        assert_ne!(
-            fixture.normalize(&serde_json::to_string_pretty(&value).unwrap()),
+        assert!(!status_json_fixture_matches(
+            &fixture.normalize(&serde_json::to_string_pretty(&value).unwrap()),
             expected
-        );
+        ));
         value[format!("renamed_{field}")] = removed;
-        assert_ne!(
-            fixture.normalize(&serde_json::to_string_pretty(&value).unwrap()),
+        assert!(!status_json_fixture_matches(
+            &fixture.normalize(&serde_json::to_string_pretty(&value).unwrap()),
             expected
-        );
+        ));
     }
 }
 
