@@ -577,6 +577,16 @@ mod next_action_tests {
             assert!(!command.contains("${"), "{command}");
             let mut edit = argv(&command);
             let p = f.ok(&edit[1..].iter().map(String::as_str).collect::<Vec<_>>());
+            if missing == "unknown_goal" {
+                assert_eq!(
+                    p["review"]["before"]["goal"],
+                    json!(["ABSENT"]),
+                    "goal repair must retain the existing goal links in its review"
+                );
+            }
+            if missing == "goal" {
+                assert_eq!(p["review"]["before"]["goal"], json!([]));
+            }
             edit.extend([
                 "--accept".into(),
                 "--source-fingerprint".into(),

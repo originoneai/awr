@@ -67,10 +67,26 @@ pub fn edit_work(
         }
         let source = json!({"locator":work.item.meta.source_ref.locator,"pointer":work.item.meta.source_ref.pointer,"fingerprint":source_fingerprint});
         let current = serde_json::to_value(&work.item)?;
-        let before: Map<_, _> = changes
-            .keys()
-            .map(|k| (k.clone(), current[k].clone()))
-            .collect();
+        let mut before = Map::new();
+        for key in changes.keys() {
+            let value = if key == "goal" {
+                let mut goals = store
+                    .work_goal_links(project.id)?
+                    .into_iter()
+                    .filter(|edge| {
+                        edge.from_key == work.item.meta.external_key
+                            && edge.source_ref.source_id == work.source.id
+                    })
+                    .map(|edge| edge.to_key)
+                    .collect::<Vec<_>>();
+                goals.sort();
+                goals.dedup();
+                json!(goals)
+            } else {
+                current[key].clone()
+            };
+            before.insert(key.clone(), value);
+        }
         Some(json!({"source":source,"before":before,"after":fields}))
     } else {
         // A replay must reach the existing journal even if the task was later removed.
