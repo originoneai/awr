@@ -420,12 +420,27 @@ impl DeliverySyncStore {
         let current_contract: String = tx.query_one("SELECT contract_hash FROM awr_team.work_contracts
             WHERE tenant_id=$1 AND project_id=$2 AND snapshot_id=$3 AND scope_id='main' AND work_id=$4",
             &[&tenant,&project,&auth.snapshot,&work]).await?.get(0);
-        let selected_current = selected.as_ref().is_some_and(|(c, _, s, o, f, _)| {
-            *s == auth.snapshot
-                && *o == ownership
-                && *f
-                && c.binding.contract_hash == current_contract
-        });
+        // A delivered work keeps the delivery it recorded under an earlier snapshot while its
+        // contract is unchanged; a work in flight needs the current snapshot.
+        let selected_snapshot = selected.as_ref().map(|s| s.2.clone());
+        let snapshot_current = match &selected_snapshot {
+            Some(recorded) => {
+                super::completion::carried_across_snapshots(
+                    tx,
+                    tenant,
+                    project,
+                    work,
+                    recorded,
+                    &auth.snapshot,
+                )
+                .await?
+            }
+            None => false,
+        };
+        let selected_current = snapshot_current
+            && selected.as_ref().is_some_and(|(c, _, _, o, f, _)| {
+                *o == ownership && *f && c.binding.contract_hash == current_contract
+            });
         let mut facts = Vec::new();
         let rows = tx.query("SELECT f.envelope_json,f.id,i.receipt_json,x.binding_digest,x.source_snapshot_id,
             x.ownership_version,x.coordinator_epoch,c.version=x.connector_version AND c.enabled AND c.coordinator_epoch=x.coordinator_epoch,x.selection_version
@@ -443,7 +458,7 @@ impl DeliverySyncStore {
                 && selected
                     .as_ref()
                     .is_some_and(|s| s.1 == row.get::<_, String>(3))
-                && row.get::<_, String>(4) == auth.snapshot
+                && Some(row.get::<_, String>(4)) == selected_snapshot
                 && row.get::<_, i64>(5) == ownership
                 && row.get::<_, String>(6) == auth.epoch
                 && row.get::<_, bool>(7)
