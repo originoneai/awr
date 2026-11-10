@@ -74,8 +74,8 @@ static COMMAND_GROUPS: &[Group] = &[
         ],
     },
     Group {
-        name: "runtime",
-        title: "Runtime",
+        name: "environments",
+        title: "Environments",
         commands: &[
             ("runtime", "Inspect, back up and restore a local runtime"),
             ("workspace", "Share tracked files between machines"),
@@ -83,8 +83,8 @@ static COMMAND_GROUPS: &[Group] = &[
         ],
     },
     Group {
-        name: "team",
-        title: "Team",
+        name: "collaboration",
+        title: "Collaboration",
         commands: &[
             (
                 "team",
@@ -235,16 +235,22 @@ pub(crate) fn command() -> Command {
 }
 
 pub(crate) fn parse_from(args: &[OsString]) -> Result<Cli, clap::Error> {
-    let matches = command().try_get_matches_from(args)?;
-    let request = match matches.subcommand() {
-        Some(("help", help)) => Some((false, help)),
-        Some(("work", work)) => work.subcommand_matches("help").map(|help| (true, help)),
-        _ => None,
-    };
-    if let Some((work, help)) = request {
-        let program = args.first().map_or(OsStr::new("awr"), OsString::as_os_str);
-        return Err(render_request(work, help, program));
+    if let Ok(matches) = command().try_get_matches_from(args) {
+        let request = match matches.subcommand() {
+            Some(("help", help)) => Some((false, help)),
+            Some(("work", work)) => work.subcommand_matches("help").map(|help| (true, help)),
+            _ => None,
+        };
+        if let Some((work, help)) = request {
+            let program = args.first().map_or(OsStr::new("awr"), OsString::as_os_str);
+            return Err(render_request(work, help, program));
+        }
     }
+    // Keep clap's inherited help behavior for ordinary commands and detailed help.
+    let matches = Cli::command()
+        .override_help(overview(false))
+        .mut_subcommand("work", |command| command.override_help(overview(true)))
+        .try_get_matches_from(args)?;
     Cli::from_arg_matches(&matches)
 }
 
@@ -311,7 +317,7 @@ fn render_request(work: bool, matches: &ArgMatches, program: &OsStr) -> clap::Er
     }
     match command_path.as_slice() {
         [] => display(overview(false)),
-        ["work"] => display(overview(true)),
+        ["work"] if work => display(overview(true)),
         _ => legacy_help(&command_path, program),
     }
 }
@@ -321,6 +327,17 @@ mod tests {
     use super::*;
 
     fn validate_groups(command: &Command, groups: &[Group]) -> Result<(), String> {
+        for group in groups {
+            if command
+                .get_subcommands()
+                .any(|child| !child.is_hide_set() && child.get_name() == group.name)
+            {
+                return Err(format!(
+                    "help group '{}' shadows command '{}'",
+                    group.name, group.name
+                ));
+            }
+        }
         for child in command
             .get_subcommands()
             .filter(|child| !child.is_hide_set())
@@ -375,6 +392,68 @@ mod tests {
                 error.contains("ungrouped-command belongs to 0 groups"),
                 "{error}"
             );
+        }
+    }
+
+    #[test]
+    fn ac3_group_names_never_shadow_visible_commands() {
+        let mut command = command();
+        command.build();
+        validate_groups(&command, COMMAND_GROUPS).unwrap();
+        validate_groups(command.find_subcommand("work").unwrap(), WORK_GROUPS).unwrap();
+        for (command, groups) in [
+            (command.clone(), COMMAND_GROUPS),
+            (
+                command.find_subcommand("work").unwrap().clone(),
+                WORK_GROUPS,
+            ),
+        ] {
+            for group in groups {
+                assert!(
+                    command.find_subcommand(group.name).is_none(),
+                    "help group '{}' shadows command '{}'",
+                    group.name,
+                    group.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ac3_new_group_or_command_collision_is_rejected_by_name() {
+        for (command, groups) in [
+            (command(), COMMAND_GROUPS),
+            (
+                command().find_subcommand("work").unwrap().clone(),
+                WORK_GROUPS,
+            ),
+        ] {
+            let name = groups[0].commands[0].0;
+            let mut new_groups = vec![Group {
+                name,
+                title: "New group",
+                commands: &[],
+            }];
+            new_groups.extend(groups.iter().map(|group| Group {
+                name: group.name,
+                title: group.title,
+                commands: group.commands,
+            }));
+            let error = validate_groups(&command, &new_groups).unwrap_err();
+            assert!(
+                error.contains(&format!("help group '{name}' shadows command '{name}'")),
+                "{error}"
+            );
+
+            for group in groups {
+                let command = command.clone().subcommand(Command::new(group.name));
+                let error = validate_groups(&command, groups).unwrap_err();
+                let name = group.name;
+                assert!(
+                    error.contains(&format!("help group '{name}' shadows command '{name}'")),
+                    "{error}"
+                );
+            }
         }
     }
 

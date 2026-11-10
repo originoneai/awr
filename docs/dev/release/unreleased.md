@@ -6,9 +6,6 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
-- Grouped CLI help: `awr --help` and `awr work --help` show daily commands and
-  point to purpose-specific groups. Use `awr help all` or `awr work help all`
-  for the original complete lists; detailed command help keeps its format.
 - The generic Team read adapter (`POST /api/team/read`) now serves the real `work.next`
   response. Upstream's identity-scoped navigation read carries only
   `{ data, project_revision, protocol_version }` — no scope/snapshot attribution
@@ -56,6 +53,11 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   auth/permission revocation clears the whole response, a mixed-revision composition claims no
   common version, and the whole composition answers within one deadline with whatever is left
   unread declared failed as `ReadTimeout` rather than as empty data.
+- Grouped CLI help: `awr --help` and `awr work --help` show daily commands and
+  point to purpose-specific groups. Use `awr help all` or `awr work help all`
+  for the original complete lists. The `environments` and `collaboration` groups
+  keep command help topics distinct; detailed help, including `awr help work`,
+  retains its original format.
 - Team evidence keeps the caller's claim and the recorded outcome of an execution apart. `evidence.submit` compares a
   claim bound to an execution with the Team's record of it (same work, scope, contract and input digest; a claim of
   success against a recorded failure or cancellation, or the reverse) and refuses a provable contradiction as

@@ -65,7 +65,6 @@ fn ac1_default_overviews_are_short_and_point_to_all_commands() {
     assert_eq!(help(&["help"]), help(&["--help"]));
     assert_eq!(help(&["-h"]), help(&["--help"]));
     assert_eq!(help(&["work", "help"]), help(&["work", "--help"]));
-    assert_eq!(help(&["help", "work"]), help(&["work", "--help"]));
 }
 
 #[test]
@@ -92,6 +91,7 @@ fn ac2_full_list_comparison_detects_an_omitted_command() {
 #[test]
 fn ac3_leaf_help_matches_the_baseline_byte_for_byte() {
     for (args, baseline) in [
+        (vec!["help", "work"], WORK_HELP),
         (vec!["status", "--help"], STATUS_HELP),
         (vec!["work", "complete", "--help"], COMPLETE_HELP),
         (vec!["help", "status"], STATUS_HELP),
@@ -100,6 +100,49 @@ fn ac3_leaf_help_matches_the_baseline_byte_for_byte() {
     ] {
         assert_eq!(help(&args), native_baseline(baseline), "{args:?}");
     }
+}
+
+#[test]
+fn ac3_all_visible_command_help_paths_match_detailed_help() {
+    let mut differences = Vec::new();
+    for scope in [vec![], vec!["work"]] {
+        let mut full_args = scope.clone();
+        full_args.extend(["help", "all"]);
+        let full = String::from_utf8(help(&full_args)).unwrap();
+        let commands = full
+            .split_once("Commands:\n")
+            .unwrap()
+            .1
+            .split_once("\nOptions:")
+            .unwrap()
+            .0;
+        let names = commands
+            .lines()
+            .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
+            .filter_map(|line| line.split_whitespace().next())
+            .filter(|name| *name != "help")
+            .collect::<Vec<_>>();
+        assert!(!names.is_empty(), "{full}");
+        for name in names {
+            let mut help_args = scope.clone();
+            help_args.extend(["help", name]);
+            let expected = if scope.is_empty() && name == "work" {
+                // The work overview is intentionally shorter; preserve its original help topic.
+                native_baseline(WORK_HELP)
+            } else {
+                let mut flag_args = scope.clone();
+                flag_args.extend([name, "--help"]);
+                help(&flag_args)
+            };
+            if help(&help_args) != expected {
+                differences.push(format!("awr {} changed detailed help", help_args.join(" ")));
+            }
+            if !scope.is_empty() && help(&["help", "work", name]) != expected {
+                differences.push(format!("awr help work {name} changed detailed help"));
+            }
+        }
+    }
+    assert!(differences.is_empty(), "{}", differences.join("\n"));
 }
 
 #[test]
@@ -127,6 +170,7 @@ fn help_fixtures_preserve_the_invoked_executable_name() {
     for (args, baseline) in [
         (vec!["help", "all"], HELP),
         (vec!["work", "help", "all"], WORK_HELP),
+        (vec!["help", "work"], WORK_HELP),
         (vec!["status", "--help"], STATUS_HELP),
         (vec!["work", "complete", "--help"], COMPLETE_HELP),
         (vec!["help", "status"], STATUS_HELP),
@@ -193,7 +237,13 @@ fn ac4_unknown_groups_exit_two_and_list_available_groups() {
         (
             vec!["help", "nosuch"],
             vec![
-                "daily", "planning", "records", "hosts", "runtime", "team", "all",
+                "daily",
+                "planning",
+                "records",
+                "hosts",
+                "environments",
+                "collaboration",
+                "all",
             ],
         ),
         (
@@ -224,7 +274,14 @@ fn every_advertised_group_is_available_with_global_options() {
     for (prefix, groups) in [
         (
             vec![],
-            vec!["daily", "planning", "records", "hosts", "runtime", "team"],
+            vec![
+                "daily",
+                "planning",
+                "records",
+                "hosts",
+                "environments",
+                "collaboration",
+            ],
         ),
         (
             vec!["work"],

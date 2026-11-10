@@ -60,11 +60,11 @@ Daily work
   overview  Open the local project hub
 
 More: awr help <group>
-  planning  init, intake, source, batch, host, document, proposal, organization
-  records   event, object, decision, artifact, spec, execution, recovery, assessment, nav
-  hosts     client, capabilities
-  runtime   runtime, workspace, branch
-  team      team, remote
+  planning       init, intake, source, batch, host, document, proposal, organization
+  records        event, object, decision, artifact, spec, execution, recovery, assessment, nav
+  hosts          client, capabilities
+  environments   runtime, workspace, branch
+  collaboration  team, remote
 
 All commands: awr help all
 ```
@@ -74,18 +74,26 @@ command list in its original format, or read a command's detailed help:
 
 ```sh
 awr help planning
+awr help environments
+awr help collaboration
 awr help all
 awr work help planning
 awr work help governance
 awr work help lifecycle
 awr work help recovery
 awr work help all
+awr help runtime
+awr help team
 awr status --help
 awr work complete --help
 ```
 
-`awr help daily` and `awr work help daily` list the daily commands. Detailed
-command help and JSON usage errors retain their existing format.
+`awr help daily` and `awr work help daily` list the daily commands.
+`awr help runtime` and `awr help team` show their commands' detailed help;
+`environments` and `collaboration` are the group topics. `awr help work` keeps
+the original work help, while `awr work --help` and `awr work help` show the
+short overview. Detailed command help and JSON usage errors retain their
+existing format.
 
 ## Checking where the project stands
 
