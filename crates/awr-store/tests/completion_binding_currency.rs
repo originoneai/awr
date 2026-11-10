@@ -64,6 +64,8 @@ fn record(f: &mut Fixture, key: &str) -> Evidence {
 fn binding(evidence: Vec<Evidence>, criteria: &[&str]) -> CompletionBinding {
     let ids = evidence.iter().map(|e| e.id).collect::<Vec<_>>();
     CompletionBinding {
+        check_waiver: None,
+        check_gate: None,
         version: 1,
         source_sha: SHA.into(),
         minimum_level: EvidenceLevel::LocallyVerified,

@@ -142,7 +142,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             | "work.draft_activated"
             | "work.ordinary_confirmed"
     ) {
-        "proposal_id source_id attempt_event_id write_plan_id before_fingerprint after_fingerprint target_after_hash source_revision target_revision actor reason work_action host_edit action_reason creating_session_id released_claim_ids claim_renewal"
+        "proposal_id source_id attempt_event_id write_plan_id before_fingerprint after_fingerprint target_after_hash source_revision target_revision actor reason work_action host_edit action_reason creating_session_id released_claim_ids claim_renewal check_gate"
     } else if matches!(kind, "proposal.apply_conflict" | "proposal.apply_failed") {
         "proposal_id source_id attempt_event_id write_plan_id actor reason"
     } else if matches!(
@@ -463,6 +463,8 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
                     )
                     .is_ok()
             }
+            "check_gate" => serde_json::from_value::<crate::CheckGate>(value.clone())
+                .is_ok_and(|gate| gate.would_refuse == (gate.applies && !gate.unmet.is_empty())),
             "workstream_binding" => {
                 serde_json::from_value::<crate::SessionWorkstream>(value.clone()).is_ok()
             }

@@ -19,9 +19,7 @@ pub struct GatePolicy {
     pub verify: VerifyGates,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CheckGates {}
+pub type CheckGates = awr_core::CheckGatePolicy;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,6 +68,7 @@ impl GatePolicy {
         for pattern in &policy.hooks.write_gate_exempt {
             glob(pattern)?;
         }
+        policy.checks.validate()?;
         Ok(policy)
     }
     pub fn load(root: &Path) -> Result<Self> {
@@ -121,4 +120,46 @@ pub fn hook_work_path_matches(patterns: &[String], relative: &Path) -> Result<bo
         }
     }
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use awr_core::{CheckGateMode, SmallWorkChecks};
+    #[test]
+    fn checks_policy_defaults_and_hook_settings_remain_compatible() {
+        let p = GatePolicy::parse(
+            "version = 1\n[hooks]\nwrite_gate = 'ask'\ncompletion_reminder = true\n",
+        )
+        .unwrap();
+        assert_eq!(p.checks.mode, CheckGateMode::Off);
+        assert_eq!(p.hooks.write_gate, WriteGate::Ask);
+        assert!(p.hooks.completion_reminder);
+        let p = GatePolicy::parse("version = 1\n[checks]\nmode = 'observe'\n").unwrap();
+        assert!(p.checks.require_clean_tree);
+        assert_eq!(p.checks.small_work, SmallWorkChecks::Reason);
+        assert!(!p.checks.separate_approver);
+    }
+    #[test]
+    fn checks_enforce_requires_explicit_valid_scope() {
+        for scope in ["'all'", "{ tags = ['checked'] }"] {
+            let p=GatePolicy::parse(&format!("version = 1\n[checks]\nmode = 'enforce'\nscope = {scope}\nsmall_work = 'checks'\nrequire_clean_tree = false\nseparate_approver = true\n")).unwrap();
+            assert_eq!(p.checks.mode, CheckGateMode::Enforce);
+            assert!(!p.checks.require_clean_tree);
+            assert!(p.checks.separate_approver);
+        }
+        for text in [
+            "mode = 'enforce'",
+            "mode = 'enforce'\nscope = { tags = [] }",
+            "mode = 'refuse'",
+            "small_work = 'ignore'",
+            "typo = true",
+            "scope = { tags = [' '] }",
+        ] {
+            assert!(
+                GatePolicy::parse(&format!("version = 1\n[checks]\n{text}\n")).is_err(),
+                "{text}"
+            );
+        }
+    }
 }

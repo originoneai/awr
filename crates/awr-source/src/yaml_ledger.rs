@@ -46,6 +46,7 @@ struct Entry<'a> {
 
 fn invalid(pointer: &str, rule: &str, message: &str, repair: &str) -> Error {
     Error::InvalidSource(Box::new(SourceDiagnostic {
+        details: None,
         message: message.into(),
         location: DiagnosticLocation {
             pointer: Some(pointer.into()),
@@ -327,6 +328,7 @@ impl YamlLedgerAdapter {
     ) -> Result<ProjectionBatch> {
         let yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(snapshot.text()?)
         .map_err(|error| Error::InvalidSource(Box::new(SourceDiagnostic {
+            details: None,
             message: "invalid YAML ledger document".into(),
             location: DiagnosticLocation {
                 line: error.location().map(|p| p.line()),

@@ -684,6 +684,7 @@ fn generate_completion(
             })
             .collect(),
         required_evidence: vec![],
+        check_waiver: None,
     };
     value["completion_input"] = serde_json::to_value(input)?;
     value["unmapped"] = json!(unmapped);

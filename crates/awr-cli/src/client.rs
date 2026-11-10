@@ -411,7 +411,26 @@ fn process_hook(
         return Ok(write_gate(root, client, event, dialect).unwrap_or_else(gate_failure));
     }
     if event.event == LifecycleEvent::Stop {
-        match completion_gate(root, client, event, dialect, &|_, _, _, _, _| Ok(false)) {
+        match completion_gate(
+            root,
+            client,
+            event,
+            dialect,
+            &|store, _, session, work, sha| {
+                let gate = awr_runtime::completion_check_gate(
+                    store,
+                    root,
+                    &awr_core::CheckGateRequest {
+                        work: work.meta.external_key.clone(),
+                        branch: session.branch_id,
+                        session: Some(session.id),
+                        source_sha: sha.into(),
+                        check_waiver: None,
+                    },
+                )?;
+                Ok(gate.is_some_and(|gate| gate.applies && !gate.would_refuse))
+            },
+        ) {
             Ok(Some(result)) => return Ok(result),
             Ok(None) => (),
             Err(error) => return Ok(gate_failure(error)),
@@ -917,15 +936,14 @@ fn write_gate(
     )
 }
 
-// The completion gate will be supplied by the checks consumer. Until then production
-// always reports false; tests inject a result without a user-visible bypass switch.
-type CompletionCheck = dyn Fn(&Store, Id, &Session, &WorkItem, &str) -> Result<bool>;
+// The production receiver supplies the same evaluator used by completion preflight.
+type CompletionCheck<'a> = dyn Fn(&Store, Id, &Session, &WorkItem, &str) -> Result<bool> + 'a;
 fn completion_gate(
     root: &Path,
     client: &str,
     event: &HookEvent,
     dialect: &dyn HookDialect,
-    check: &CompletionCheck,
+    check: &CompletionCheck<'_>,
 ) -> Result<Option<(HookDecision, Value)>> {
     if !gates_enabled() || event.stop_hook_active {
         return Ok(None);

@@ -120,7 +120,7 @@ struct ExampleOracle {
 
 /// Admission runs inside the store, including direct claim and execution entry points.
 /// Read only regular files within the registered project, with a bounded read per file.
-fn current_oracle_files(root: &Path, check: &ExampleCheck) -> Option<Vec<OracleFile>> {
+pub(crate) fn current_oracle_files(root: &Path, check: &ExampleCheck) -> Option<Vec<OracleFile>> {
     let root = root.canonicalize().ok()?;
     check
         .files
@@ -306,7 +306,7 @@ fn recorded(event: &Event) -> Result<RecordedAdmission> {
 }
 
 /// The newest admission event of a work on a branch.
-fn latest_admission(
+pub(crate) fn latest_admission(
     conn: &Connection,
     project: Id,
     work: Id,

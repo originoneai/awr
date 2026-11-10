@@ -1041,6 +1041,8 @@ mod completion_binding_guard_tests {
         };
         let (record, _) = store.record_evidence(project.id, revision, draft).unwrap();
         let binding = CompletionBinding {
+            check_waiver: None,
+            check_gate: None,
             version: 1,
             source_sha: SHA.into(),
             minimum_level: EvidenceLevel::LocallyVerified,

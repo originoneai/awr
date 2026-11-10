@@ -143,6 +143,8 @@ pub struct SourceDiagnostic {
     pub location: DiagnosticLocation,
     pub rule: String,
     pub repair: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
 }
 
 /// Render the same structured diagnostic carried by JSON and MCP responses.
@@ -255,9 +257,15 @@ impl Error {
                     );
                     Some(details)
                 }
-                Self::InvalidSource(diagnostic) | Self::EvidenceDiagnostic(diagnostic) => Some(serde_json::json!({
-                    "location":diagnostic.location,"rule":diagnostic.rule,"repair":diagnostic.repair
-                })),
+                Self::InvalidSource(diagnostic) | Self::EvidenceDiagnostic(diagnostic) => {
+                    let mut details = serde_json::json!({
+                        "location":diagnostic.location,"rule":diagnostic.rule,"repair":diagnostic.repair
+                    });
+                    if let Some(extra) = diagnostic.details.as_ref().and_then(serde_json::Value::as_object) {
+                        details.as_object_mut().unwrap().extend(extra.clone());
+                    }
+                    Some(details)
+                },
                 Self::IntakePreflightRejected { issues, intake_staged } => Some(serde_json::json!({
                     "can_apply":false,"source_issues":issues,"source_write_performed":intake_staged,
                     "configuration_write_performed":false,"runtime_write_performed":intake_staged,

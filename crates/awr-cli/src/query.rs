@@ -811,6 +811,19 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
                     id
                 )?);
             }
+            if let Some(checks) = awr_runtime::work_checks(
+                &query.store,
+                root,
+                &CheckGateRequest {
+                    work: id.clone(),
+                    branch: branch_id,
+                    session: None,
+                    source_sha: source_sha.clone().unwrap_or_default(),
+                    check_waiver: None,
+                },
+            )? {
+                value["checks"] = checks;
+            }
             let admission = query
                 .store
                 .admission_status(query.project.id, id, branch_id)?;

@@ -27,6 +27,22 @@ struct Capability {
 fn catalog() -> Vec<Capability> {
     [
         (
+            "gates.checks",
+            true,
+            &[
+                "work check",
+                "work prepare",
+                "work prepare-completion",
+                "work complete",
+            ][..],
+            &[
+                "opt_in_project_policy",
+                "observe_records_only",
+                "source_bound_acceptance",
+                "implementation_required_criteria",
+            ][..],
+        ),
+        (
             "local.project_discovery",
             true,
             &["overview discover", "overview projects", "overview inspect"][..],

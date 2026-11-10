@@ -452,3 +452,83 @@ impl Store {
         validate_completion_binding(&self.conn, project, work, branch, binding)
     }
 }
+
+impl Store {
+    /// Gather current source oracles and exact-branch observations for the pure check gate.
+    pub fn work_check_gate(
+        &self,
+        project: Id,
+        request: &CheckGateRequest,
+        policy: &CheckGatePolicy,
+    ) -> Result<CheckGate> {
+        let work = self.work_item(project, &request.work)?.item;
+        let report = self.work_definition_report(project, &request.work)?;
+        let required: Vec<_> = report
+            .criterion_tiers
+            .iter()
+            .filter(|(_, tier)| *tier == DeliveryTier::Required)
+            .map(|(criterion, _)| criterion.clone())
+            .collect();
+        let mut definition = work.definition.clone();
+        if let Some(definition) = &mut definition
+            && definition.discrimination.is_none()
+            && let Some(parent) = &definition.inherits
+        {
+            definition.discrimination = match self.work_item(project, parent) {
+                Ok(parent) => parent.item.definition.and_then(|d| d.discrimination),
+                Err(Error::NotFound(_)) => None,
+                Err(error) => return Err(error),
+            };
+        }
+        let root = self.project(project)?.root;
+        let mut oracles = Vec::new();
+        if let Some(definition) = &definition {
+            for example in &definition.examples {
+                if required.contains(&example.criterion)
+                    && let (Some(id), Some(check)) = (&example.id, &example.check)
+                {
+                    let oracle =
+                        crate::admission::current_oracle_files(std::path::Path::new(&root), check)
+                            .map(|files| example_oracle(id, &check.run, &files))
+                            .transpose()?;
+                    oracles.push((id.clone(), oracle));
+                }
+            }
+        }
+        let known: Option<Vec<_>> = oracles
+            .iter()
+            .map(|(id, hash)| hash.clone().map(|h| (id.clone(), h)))
+            .collect();
+        let fingerprint = known
+            .filter(|o| !o.is_empty())
+            .map(|o| oracle_fingerprint(&o))
+            .transpose()?;
+        let admission =
+            crate::admission::latest_admission(&self.conn, project, work.meta.id, request.branch)?;
+        let events = self.check_events(project, &request.work, request.branch)?;
+        let observations: Vec<CheckPayload> = events
+            .into_iter()
+            .map(|mut event| {
+                if let Some(object) = event.payload.as_object_mut() {
+                    object.remove("mcp_operation_id");
+                }
+                serde_json::from_value(event.payload).map_err(Error::from)
+            })
+            .collect::<Result<_>>()?;
+        evaluate_check_gate(
+            &CheckGateDefinition {
+                definition: definition.as_ref(),
+                tags: &work.tags,
+                required_criteria: &required,
+                oracles: &oracles,
+                oracle_fingerprint: fingerprint.as_deref(),
+                session: request.session,
+                check_waiver: request.check_waiver.as_deref(),
+            },
+            admission.as_ref().map(|(_, admission)| admission),
+            &observations,
+            &request.source_sha,
+            policy,
+        )
+    }
+}

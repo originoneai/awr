@@ -111,7 +111,92 @@ pub fn prepare_work(store: &mut Store, root: &Path, request: &PrepareWorkRequest
     if let Some(findings) = store.finding_block(project.id, &request.work, branch)? {
         prepared["findings"] = json!(findings);
     }
+    if let Some(checks) = work_checks(
+        store,
+        root,
+        &CheckGateRequest {
+            work: request.work.clone(),
+            branch,
+            session: request.session,
+            source_sha: request.source_sha.clone().unwrap_or_default(),
+            check_waiver: None,
+        },
+    )? {
+        prepared["check_obligations"] = checks["obligations"].clone();
+    }
     Ok(prepared)
+}
+
+/// The same check summary for work inspection and completion preflight.
+pub fn work_checks(
+    store: &Store,
+    root: &Path,
+    request: &CheckGateRequest,
+) -> Result<Option<Value>> {
+    let project = store.project_by_root(&root.canonicalize()?)?;
+    if awr_source::GatePolicy::load(root)?.checks.mode == CheckGateMode::Off {
+        return Ok(None);
+    }
+    let session = match request.session {
+        Some(session) => Some(session),
+        None => store
+            .work_readiness(project.id, &request.work, request.branch, now_millis()?)?
+            .active_claims
+            .first()
+            .map(|claim| claim.session_id),
+    };
+    let source_sha = if request.source_sha.is_empty() {
+        crate::observe_git_ref(root, "HEAD")
+            .ok()
+            .map(|git| git.commit_sha)
+            .unwrap_or_default()
+    } else {
+        request.source_sha.clone()
+    };
+    let request = CheckGateRequest {
+        work: request.work.clone(),
+        branch: request.branch,
+        session,
+        source_sha,
+        check_waiver: request.check_waiver.clone(),
+    };
+    let Some(gate) = crate::completion_check_gate(store, root, &request)? else {
+        return Ok(None);
+    };
+    let work = store.work_item(project.id, &request.work)?.item;
+    let report = store.work_definition_report(project.id, &request.work)?;
+    let mut obligations = Vec::new();
+    if gate.applies
+        && let Some(definition) = &work.definition
+    {
+        for example in &definition.examples {
+            if !report.criterion_tiers.iter().any(|(criterion, tier)| {
+                criterion == &example.criterion && *tier == DeliveryTier::Required
+            }) {
+                continue;
+            }
+            let reasons: Vec<_> = gate
+                .unmet
+                .iter()
+                .filter(|u| {
+                    u.example == example.id && u.criterion.as_deref() == Some(&example.criterion)
+                })
+                .map(|u| &u.reason)
+                .collect();
+            obligations.push(json!({"example":example.id,"criterion":example.criterion,
+                "state":if reasons.is_empty() {"satisfied"} else {"unmet"}, "unmet":reasons,
+                "baseline_command":crate::completion::check_gate_command(&request, project.project_revision, example.id.as_deref(), "baseline"),
+                "acceptance_command":crate::completion::check_gate_command(&request, project.project_revision, example.id.as_deref(), "acceptance")}));
+        }
+    }
+    let mut summary = serde_json::to_value(gate)?;
+    summary["source_sha"] = if request.source_sha.is_empty() {
+        Value::Null
+    } else {
+        json!(request.source_sha)
+    };
+    summary["obligations"] = json!(obligations);
+    Ok(Some(summary))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -234,6 +319,7 @@ pub fn prepare_completion(
             })
             .collect(),
         required_evidence: vec![],
+        check_waiver: None,
     };
     completion.validate(&work.item)?;
     let draft = json!({"external_key":evidence.external_key,"work":request.work,
@@ -241,11 +327,23 @@ pub fn prepare_completion(
         "locator":evidence.locator,"sha256":evidence.sha256,"source_sha":evidence.source_sha,
         "command":evidence.command,"scope":evidence.scope,"branch":request.branch,
         "verified_at":evidence.verified_at});
-    Ok(
-        json!({"version":1,"stage":"report_validated","report_sha256":evidence.sha256,
+    let mut prepared = json!({"version":1,"stage":"report_validated","report_sha256":evidence.sha256,
         "warning":warning,
         "evidence":draft,"completion":completion,"verification_executed":false,
         "completion_claimed":false,"level_basis":"caller_assertion",
-        "next_action":"record_evidence_then_complete_with_current_revision_and_owned_session"}),
-    )
+        "next_action":"record_evidence_then_complete_with_current_revision_and_owned_session"});
+    if let Some(checks) = work_checks(
+        store,
+        root,
+        &CheckGateRequest {
+            work: request.work.clone(),
+            branch,
+            session: None,
+            source_sha: request.source_sha.clone(),
+            check_waiver: None,
+        },
+    )? {
+        prepared["checks"] = checks;
+    }
+    Ok(prepared)
 }
