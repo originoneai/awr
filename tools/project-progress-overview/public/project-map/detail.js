@@ -168,6 +168,33 @@
     return g;
   }
 
+  function field(label, value, t) {
+    const text = value == null || value === '' ? '' : String(value);
+    return `<dt>${esc(label)}</dt><dd>${text ? esc(text) : `<span class="pm-d-none">${esc(t('map.detail.unset'))}</span>`}</dd>`;
+  }
+
+  function stringLines(value) {
+    if (!Array.isArray(value)) return [];
+    return value.map((item) => (typeof item === 'string' ? item : '')).filter(Boolean);
+  }
+
+  function reasonLines(value) {
+    if (!Array.isArray(value)) return [];
+    const lines = [];
+    for (const item of value) {
+      if (typeof item === 'string') {
+        if (item) lines.push(item);
+        continue;
+      }
+      if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+      const code = typeof item.code === 'string' ? item.code : '';
+      const basis = typeof item.basis === 'string' ? item.basis : '';
+      const text = [code, basis].filter(Boolean).join(' · ');
+      if (text) lines.push(text);
+    }
+    return lines;
+  }
+
   /**
    * Live `work prepare --response-view action` card. Snapshot facts stay in `renderDetail`;
    * empty prepare fields stay blank and are never filled from the snapshot. Guidance is
@@ -178,20 +205,16 @@
     const data = envelope && envelope.data && typeof envelope.data === 'object' && !Array.isArray(envelope.data)
       ? envelope.data : null;
     const g = guidanceFrom(data);
-    const field = (label, value) => {
-      const text = value == null || value === '' ? '' : String(value);
-      return `<dt>${esc(label)}</dt><dd>${text ? esc(text) : `<span class="pm-d-none">${esc(t('map.detail.unset'))}</span>`}</dd>`;
-    };
     const parts = [
       `<h3>${esc(t('map.prepare.title'))}</h3>`,
       `<p class="pm-d-note">${esc(t('map.prepare.not_completion'))}</p>`,
     ];
     if (g) {
       parts.push(`<dl class="pm-d-grid">${[
-        field(t('map.prepare.when'), g.when),
-        field(t('map.prepare.basis'), g.basis),
-        field(t('map.prepare.next'), g.next_action),
-        field(t('map.prepare.recheck'), g.recheck),
+        field(t('map.prepare.when'), g.when, t),
+        field(t('map.prepare.basis'), g.basis, t),
+        field(t('map.prepare.next'), g.next_action, t),
+        field(t('map.prepare.recheck'), g.recheck, t),
       ].join('')}</dl>`);
     } else if (envelope && envelope.error && envelope.error.code) {
       parts.push(`<p class="pm-d-none">${esc(String(envelope.error.code))}</p>`);
@@ -201,7 +224,46 @@
     return `<section class="pm-d-sec" data-pm-prepare-card>${parts.join('')}</section>`;
   }
 
-  const api = { dependencyIndex, neighborhood, detailData, renderDetail, renderPrepare, commandFor };
+  /**
+   * Live `work assess` card. Snapshot facts stay in `renderDetail`. Intensity,
+   * admission gaps and required actions are management obligations, not completion
+   * or a grant to execute. Query parameters cannot add `--explain` or run work manage.
+   */
+  function renderAssess(envelope, t) {
+    const data = envelope && envelope.data && typeof envelope.data === 'object' && !Array.isArray(envelope.data)
+      ? envelope.data : null;
+    const decision = data && data.decision && typeof data.decision === 'object' && !Array.isArray(data.decision)
+      ? data.decision : null;
+    const listed = (title, items) => `<h3>${esc(title)}</h3><ul class="pm-d-list">${items.map((item) => `<li><code>${esc(item)}</code></li>`).join('')}</ul>`;
+    const parts = [
+      `<h3>${esc(t('map.assess.title'))}</h3>`,
+      `<p class="pm-d-note">${esc(t('map.assess.not_completion'))}</p>`,
+    ];
+    if (decision || (data && (data.next_action || data.observation_basis || (Array.isArray(data.admission_gaps) && data.admission_gaps.length)))) {
+      parts.push(`<dl class="pm-d-grid">${[
+        field(t('map.assess.mode'), decision && decision.mode, t),
+        field(t('map.assess.admission'), decision && decision.execution_admission, t),
+        field(t('map.assess.policy'), decision && decision.completion_policy, t),
+        field(t('map.assess.next'), data && data.next_action, t),
+        field(t('map.assess.basis'), data && data.observation_basis, t),
+      ].join('')}</dl>`);
+      const gaps = stringLines(data && data.admission_gaps);
+      const reasons = reasonLines(decision && decision.reasons);
+      const unknown = stringLines(decision && decision.unknown_observations);
+      const required = stringLines(decision && decision.required_actions);
+      if (gaps.length) parts.push(listed(t('map.assess.gaps'), gaps));
+      if (reasons.length) parts.push(listed(t('map.assess.reasons'), reasons));
+      if (unknown.length) parts.push(listed(t('map.assess.unknown'), unknown));
+      if (required.length) parts.push(listed(t('map.assess.required'), required));
+    } else if (envelope && envelope.error && envelope.error.code) {
+      parts.push(`<p class="pm-d-none">${esc(String(envelope.error.code))}</p>`);
+    } else {
+      parts.push(`<p class="pm-d-none">${esc(t('map.assess.missing'))}</p>`);
+    }
+    return `<section class="pm-d-sec" data-pm-assess-card>${parts.join('')}</section>`;
+  }
+
+  const api = { dependencyIndex, neighborhood, detailData, renderDetail, renderPrepare, renderAssess, commandFor };
   if (commonJS) module.exports = api;
   else {
     root.AWR_PROJECT_MAP = root.AWR_PROJECT_MAP || {};

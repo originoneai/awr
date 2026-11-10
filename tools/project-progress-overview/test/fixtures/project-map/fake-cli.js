@@ -122,6 +122,27 @@ function createFakeCli(snapshot, options = {}) {
         response_view: { version: 1, view: 'action' },
       });
     }
+    if (a === 'work' && b === 'assess') {
+      if (flag(args, '--explain')) {
+        return error('InvalidInput', 'work assess does not accept --explain here');
+      }
+      const key = args[2];
+      return ok({
+        version: 1, work: key,
+        decision: {
+          version: 1, mode: 'undetermined',
+          reasons: [{ code: 'unresolved_dependencies', basis: 'source_projection', reference: key }],
+          unknown_observations: ['single_outcome'],
+          required_actions: ['assess_unknown_management_facts'],
+          completion_policy: 'unchanged_source_policy',
+          execution_admission: 'not_granted_by_management_classification',
+        },
+        observation_basis: 'host_assertion_not_independently_verified',
+        admission_gaps: ['source_acceptance_missing_or_ambiguous'],
+        record_required: true,
+        next_action: 'repair_required_context_before_execution',
+      });
+    }
     return error('InvalidInput', `unrecognized subcommand: ${args.join(' ')}`);
   }
 
