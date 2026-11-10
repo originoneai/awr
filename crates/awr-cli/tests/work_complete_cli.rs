@@ -210,6 +210,8 @@ impl Fixture {
         let target = s.mutation_target(p, EntityKind::WorkItem, "W").unwrap();
         let work: WorkItem = serde_json::from_value(target.item).unwrap();
         let binding = CompletionBinding {
+            check_waiver: None,
+            check_gate: None,
             version: 1,
             source_sha: SHA.into(),
             minimum_level: EvidenceLevel::LocallyVerified,

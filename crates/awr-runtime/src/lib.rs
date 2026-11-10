@@ -136,7 +136,7 @@ pub use awr_store::{BranchFilter, EventCursor, EventPage, EventQuery};
 pub use branch::{CreateBranchRequest, create_branch, observe_git_ref, switch_branch};
 pub use branch_close::{CloseBranchRequest, close_branch};
 pub use close_out::{CloseOut, SessionEndReceipt};
-pub use completion::{CompleteWorkRequest, complete_work};
+pub use completion::{CompleteWorkRequest, complete_work, completion_check_gate};
 pub use doctor::{ProjectDoctorReport, diagnose_project};
 pub use execution::{
     HostIsolationEvidence, IsolationClass, classify_isolation, inspect_execution,
@@ -190,7 +190,7 @@ pub use work_create::{
 };
 pub use work_definition::work_definition_report;
 pub use workflow::{
-    PrepareCompletionRequest, PrepareWorkRequest, prepare_completion, prepare_work,
+    PrepareCompletionRequest, PrepareWorkRequest, prepare_completion, prepare_work, work_checks,
 };
 
 /// Hard ceilings; a caller may select a smaller budget, never raise these limits.

@@ -22,6 +22,76 @@ pub struct CompleteWorkRequest {
     pub end_session: bool,
 }
 
+/// Shared by completion, preflight and native Stop reminders. Reads observations only.
+pub fn completion_check_gate(
+    store: &Store,
+    root: &Path,
+    request: &CheckGateRequest,
+) -> Result<Option<CheckGate>> {
+    let policy = awr_source::GatePolicy::load(root)?.checks;
+    if policy.mode == CheckGateMode::Off && request.check_waiver.is_none() {
+        return Ok(None);
+    }
+    let project = store.project_by_root(&root.canonicalize()?)?;
+    let gate = store.work_check_gate(project.id, request, &policy)?;
+    Ok((policy.mode != CheckGateMode::Off).then_some(gate))
+}
+
+pub(crate) fn check_gate_command(
+    request: &CheckGateRequest,
+    revision: Revision,
+    example: Option<&str>,
+    phase: &str,
+) -> String {
+    let session = request
+        .session
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "<SESSION>".into());
+    let revision = revision.to_string();
+    let mut args = vec![
+        "awr",
+        "work",
+        "check",
+        &request.work,
+        "--session",
+        &session,
+        "--phase",
+        phase,
+    ];
+    if let Some(example) = example {
+        args.extend(["--example", example]);
+    }
+    if phase == "acceptance" {
+        args.extend(["--write-input", ".awr/completion-input.json"]);
+    }
+    args.extend(["--expected-revision", &revision]);
+    cli_next_action(&args)
+}
+
+fn verify_check_gate(store: &Store, root: &Path, request: &CheckGateRequest) -> Result<()> {
+    let Some(gate) = completion_check_gate(store, root, request)? else {
+        return Ok(());
+    };
+    if gate.mode == CheckGateMode::Enforce && gate.would_refuse {
+        let project = store.project_by_root(&root.canonicalize()?)?;
+        let next = check_gate_command(request, project.project_revision, None, "acceptance");
+        return Err(Error::EvidenceDiagnostic(Box::new(SourceDiagnostic {
+            message: "completion checks are not satisfied".into(),
+            location: DiagnosticLocation {
+                locator: Some(awr_source::GATES_FILE.into()),
+                pointer: Some("/checks".into()),
+                ..Default::default()
+            },
+            rule: "completion.checks".into(),
+            repair:
+                "Run the listed checks for the completion source revision, then retry completion."
+                    .into(),
+            details: Some(serde_json::json!({"unmet": gate.unmet, "next_action": next})),
+        })));
+    }
+    Ok(())
+}
+
 /// Verify the exact stored proof and actual report bytes, including on journal recovery.
 /// Supplied commands and levels are claims backed by reports, not commands to execute.
 pub(crate) fn verify_completion_proof(
@@ -49,6 +119,17 @@ pub(crate) fn verify_completion_proof(
     let session = store.session(
         project,
         session.ok_or_else(|| Error::InvalidInput("completion requires a session".into()))?,
+    )?;
+    verify_check_gate(
+        store,
+        root,
+        &CheckGateRequest {
+            work: work.meta.external_key.clone(),
+            branch: session.branch_id,
+            session: Some(session.id),
+            source_sha: binding.source_sha.clone(),
+            check_waiver: binding.check_waiver.clone(),
+        },
     )?;
     store.check_completion_dependencies(project, &work.meta.external_key, session.branch_id)?;
     verify_required_sources(
@@ -197,6 +278,18 @@ pub fn complete_work(
         version: 1,
         source_sha: request.input.source_sha.clone(),
         minimum_level: request.input.minimum_level,
+        check_waiver: request.input.check_waiver.clone(),
+        check_gate: completion_check_gate(
+            store,
+            &root,
+            &CheckGateRequest {
+                work: work.meta.external_key.clone(),
+                branch: session.branch_id,
+                session: Some(session.id),
+                source_sha: request.input.source_sha.clone(),
+                check_waiver: request.input.check_waiver.clone(),
+            },
+        )?,
         acceptance: request
             .input
             .acceptance

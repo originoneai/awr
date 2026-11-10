@@ -65,6 +65,7 @@ fn cycle(links: &Links) -> Vec<String> {
 
 fn graph_error(edge: &Edge, message: String, rule: &str, repair: &str) -> Error {
     Error::InvalidSource(Box::new(SourceDiagnostic {
+        details: None,
         message,
         location: DiagnosticLocation {
             locator: Some(edge.source_ref.locator.clone()),

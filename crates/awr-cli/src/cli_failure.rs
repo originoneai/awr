@@ -54,6 +54,12 @@ impl CliFailure {
                         report.message,
                         awr_core::render_diagnostic_details(report.details.as_ref())
                     );
+                    if let Some(unmet) = report.details.as_ref().and_then(|d| d["unmet"].as_array())
+                    {
+                        for item in unmet {
+                            eprintln!("  Check: {}", terminal_json(item, false));
+                        }
+                    }
                     print_next(report.details.as_ref());
                 }
             }

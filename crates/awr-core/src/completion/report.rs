@@ -12,6 +12,7 @@ pub(super) fn diagnostic(
     repair: &str,
 ) -> Box<SourceDiagnostic> {
     Box::new(SourceDiagnostic {
+        details: None,
         message: message.into(),
         location: DiagnosticLocation {
             locator: Some(locator.into()),
@@ -56,6 +57,7 @@ impl CompletionReport {
                     .map(|prefix| prefix.chars().count() + 1)
             });
             Box::new(SourceDiagnostic {
+                details: None,
                 message: "invalid completion report schema".into(),
                 location: DiagnosticLocation {
                     locator: Some(locator.into()), pointer: None,

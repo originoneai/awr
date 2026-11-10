@@ -37,6 +37,8 @@ pub struct CompletionInput {
     pub acceptance: Vec<AcceptanceEvidenceRequest>,
     #[serde(default)]
     pub required_evidence: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_waiver: Option<String>,
 }
 impl CompletionInput {
     pub fn validate(&self, work: &WorkItem) -> Result<()> {
@@ -325,6 +327,10 @@ pub struct CompletionBinding {
     /// All selected records, including extra required evidence. Metadata is immutable here;
     /// application rechecks the stored records and actual report bytes.
     pub evidence: Vec<Evidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_waiver: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_gate: Option<crate::CheckGate>,
 }
 impl CompletionBinding {
     pub fn validate(&self) -> Result<()> {

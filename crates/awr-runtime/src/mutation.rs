@@ -47,6 +47,8 @@ pub struct ProposalReport {
     pub project_revision: Revision,
     pub proposal: MutationProposal,
     pub event: Event,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check_gate: Option<CheckGate>,
     pub source_refresh_performed: bool,
     pub source_write_performed: Option<bool>,
     pub write_outcome: &'static str,
@@ -73,6 +75,10 @@ pub(crate) fn report(
     failure: Option<Error>,
 ) -> ProposalReport {
     ProposalReport {
+        check_gate: event
+            .payload
+            .get("check_gate")
+            .and_then(|gate| serde_json::from_value(gate.clone()).ok()),
         ok: failure.is_none(),
         code: failure
             .as_ref()

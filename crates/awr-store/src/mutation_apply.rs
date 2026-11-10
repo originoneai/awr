@@ -197,6 +197,9 @@ impl Store {
             if let Some(binding)=patch.work_action {
                 event.event_type=binding.action.event_type().into();
                 event.summary=format!("Verified source work action {:?}",binding.action);
+                if let Some(gate) = binding.completion.as_ref().and_then(|c| c.check_gate.as_ref()) {
+                    event.payload["check_gate"]=json!(gate);
+                }
                 event.payload["work_action"]=json!(binding);
                 event.payload["action_reason"]=json!(patch.intent);
                 event.payload["creating_session_id"]=json!(proposal.created_by_session);

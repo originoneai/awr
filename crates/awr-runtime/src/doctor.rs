@@ -129,6 +129,15 @@ pub fn diagnose_project(
             error,
         ));
     }
+    if let Err(error) = awr_source::GatePolicy::load(&root) {
+        report.findings.push(finding(
+            "gates_policy_unreadable",
+            "error",
+            "policy",
+            awr_source::GATES_FILE,
+            error,
+        ));
+    }
     if let Some(manifest) = &manifest {
         inspect_sources(&store, project.id, &root, manifest, &mut report)?;
     }
