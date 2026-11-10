@@ -19,7 +19,7 @@ method when they need a legend.
 | `status`, `work show` | `progress.source_next_action.trust` | `source` |
 | `status`, `work show` | `progress.latest_checkpoint_next_action.trust`, when a checkpoint exists | `reported` |
 | `session show` | `session_label.trust` | `reported` |
-| Evidence records | `trust` beside the evidence metadata | `reported`, `recorded` or `verified` |
+| Evidence records | `trust` beside the evidence metadata | `reported` or `verified` |
 | Admission status | `trust` beside the decision state | `reviewed` or `reported` |
 
 In a status queue, each work item's progress is inside its queue entry. The
@@ -30,8 +30,10 @@ agent, provider and model, with `is_caller_proof: false`.
 ## Evidence and review
 
 Manual evidence registration starts with `reported`, including when the caller
-supplies a verification level, digest and timestamp. A `check_run` evidence type
-uses `recorded`. Other evidence becomes `verified` when its exact stored snapshot
+supplies a verification level, digest and timestamp. Caller-supplied types such as
+`check_run`, `test_run` and `review` do not grant `recorded`. That value is reserved
+for evidence backed by program-generated events; this version does not assign it
+to evidence. Evidence becomes `verified` when its exact stored snapshot
 matches a report binding in a successful completion receipt. Completion checks
 the report bytes against the registered digest; registering a report or preparing
 completion does not perform that promotion. Another record with the same locator

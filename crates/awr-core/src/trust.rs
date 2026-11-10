@@ -17,7 +17,7 @@ impl Trust {
         match self {
             Self::Source => "Read from an authoritative project source.",
             Self::Reported => "Supplied by a caller without an independent program check.",
-            Self::Recorded => "Observed and saved by the program.",
+            Self::Recorded => "Observed and stored in a program-generated evidence event.",
             Self::Verified => "Compared by the program against a separate recorded fact.",
             Self::Reviewed => "Approved by a different session or a human reviewer.",
         }

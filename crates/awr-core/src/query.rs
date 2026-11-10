@@ -83,14 +83,11 @@ pub struct EvidenceRecord {
 }
 
 /// Only exact evidence snapshots from byte-checked completion receipts establish verification.
-/// Caller-declared levels and timestamps cannot establish it.
+/// Caller-declared types, levels and timestamps cannot establish program provenance.
 pub fn evidence_trust(
     item: &crate::Evidence,
     completed_reports: &[crate::Evidence],
 ) -> crate::Result<crate::Trust> {
-    if item.evidence_type == "check_run" {
-        return Ok(crate::Trust::Recorded);
-    }
     let current = serde_json::to_value(item)?;
     for bound in completed_reports {
         if bound.id == item.id && serde_json::to_value(bound)? == current {

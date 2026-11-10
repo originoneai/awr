@@ -372,7 +372,7 @@ fn trust_evidence_completion_byte_check_is_verified() {
 }
 
 #[test]
-fn trust_evidence_check_run_is_recorded() {
+fn trust_evidence_manual_check_run_is_reported() {
     let project = Project::new("trust-check-run", false);
     let sha = project.current_sha();
     let report = project.write_report("run.json", WORK_KEY, &sha);
@@ -381,12 +381,41 @@ fn trust_evidence_check_run_is_recorded() {
     let input = project.write_prepared_evidence(&prepared, "run-evidence.json");
     assert_eq!(
         project.add_prepared_evidence(&prepared, &input)["evidence"]["trust"],
-        "recorded"
+        "reported"
     );
     assert_eq!(
         project.evidence_show("run", &sha)["evidence"]["trust"],
-        "recorded"
+        "reported"
     );
+    assert_eq!(
+        project.work_show(WORK_KEY, &sha)["evidence"][0]["trust"],
+        "reported"
+    );
+}
+
+#[test]
+fn trust_evidence_manual_type_strings_never_imply_recorded() {
+    for kind in ["test_run", "review", "check_run"] {
+        let project = Project::new("trust-manual-types", false);
+        let sha = project.current_sha();
+        let report = project.write_report("report.json", WORK_KEY, &sha);
+        let mut prepared = project.prepare(WORK_KEY, &report, kind, &sha);
+        prepared["evidence"]["evidence_type"] = json!(kind);
+        let input = project.write_prepared_evidence(&prepared, "evidence.json");
+        let added = project.add_prepared_evidence(&prepared, &input);
+        let shown = project.evidence_show(kind, &sha);
+        let work = project.work_show(WORK_KEY, &sha);
+        for trust in [
+            &added["evidence"]["trust"],
+            &shown["evidence"]["trust"],
+            &work["evidence"][0]["trust"],
+        ] {
+            assert_ne!(
+                trust, "recorded",
+                "manual type {kind} cannot establish a program observation"
+            );
+        }
+    }
 }
 
 #[test]
