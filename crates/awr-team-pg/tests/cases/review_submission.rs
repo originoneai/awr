@@ -835,7 +835,7 @@ async fn review_needs_every_bound_manifest_artifact_and_returns_exact_authorized
         "The independent reviewer then records the decision with review.decide (approve or reject, with a reason that states what was verified and what could not be"
     ));
     assert!(note.contains(
-        "To check the source, read what the delivery service observed with delivery.neutral.inspect (candidate facts and required checks) and delivery.source.status"
+        "To check the source, read what the delivery service observed in delivery.neutral.inspect (the candidate, its adapter-observed facts and required checks)"
     ));
     assert!(note.contains("on governed work a rejection also needs a blocking finding"));
     assert!(
@@ -1237,7 +1237,7 @@ async fn opaque_artifact_revision_still_requires_immutability_and_candidate_bind
         "The independent reviewer then records the decision with review.decide (approve or reject, with a reason that states what was verified and what could not be"
     ));
     assert!(note.contains(
-        "To check the source, read what the delivery service observed with delivery.neutral.inspect (candidate facts and required checks) and delivery.source.status"
+        "To check the source, read what the delivery service observed in delivery.neutral.inspect (the candidate, its adapter-observed facts and required checks)"
     ));
     assert!(note.contains("on governed work a rejection also needs a blocking finding"));
     assert!(
