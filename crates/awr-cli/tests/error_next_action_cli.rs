@@ -1278,6 +1278,459 @@ mod next_action_tests {
         );
     }
 
+    fn realistic_create_input() -> Value {
+        json!({"version":1,"request_key":"supplier-reconciliation",
+            "title":"Review the monthly supplier reconciliation and retain the finance team's signed audit summary",
+            "fields":{"goal":["G"],"acceptance":[
+                "The retained reconciliation lists every supplier difference with its source invoice, reviewer and final resolution.",
+                "The finance reviewer can reproduce each total from the retained invoices and approve the monthly summary without gaps."
+            ],"next_action":"Review the supplier invoices against the monthly reconciliation"}})
+    }
+
+    fn creation_text(f: &Fixture, args: &[&str]) -> String {
+        let out = Command::new(env!("CARGO_BIN_EXE_awr"))
+            .env("AWR_LOCAL_WEB", "0")
+            .args(["--project", f.0.to_str().unwrap()])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(out.stderr.is_empty());
+        String::from_utf8(out.stdout).unwrap()
+    }
+
+    fn preview_accept_command(text: &str) -> Result<Vec<String>, String> {
+        if text.len() > 1024 {
+            return Err(format!("preview is {} bytes", text.len()));
+        }
+        let next = text
+            .lines()
+            .last()
+            .and_then(|line| line.strip_prefix("Next: "))
+            .ok_or("missing final Next command")?;
+        let args = argv(next);
+        if !args.windows(2).any(|pair| {
+            pair[0] == "--expected-preview" && pair[1].starts_with("sha256:") && pair[1].len() == 71
+        }) || !args.iter().any(|arg| arg == "--accept")
+        {
+            return Err("missing reviewed fingerprint or acceptance flag".into());
+        }
+        Cli::try_parse_from(&args).map_err(|error| error.to_string())?;
+        Ok(args)
+    }
+
+    fn follow_preview(f: &Fixture, text: &str) -> Value {
+        let args = preview_accept_command(text).unwrap();
+        f.ok(&args[1..].iter().map(String::as_str).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn work_create_preview_1_text_is_short_parseable_and_creates_with_activation_intent() {
+        for activate in [false, true] {
+            let f = Fixture::new();
+            let input = realistic_create_input();
+            f.write("create.json", &input.to_string());
+            let mut args = vec!["work", "create", "--input", "create.json"];
+            if activate {
+                args.push("--activate");
+            }
+            let text = creation_text(&f, &args);
+            assert!(text.contains(input["title"].as_str().unwrap()), "{text}");
+            assert!(text.contains("Goals: [\"G\"]"), "{text}");
+            assert!(text.contains("Acceptance: 2"), "{text}");
+            assert!(
+                text.contains(&format!("Activation requested: {activate}")),
+                "{text}"
+            );
+            let saved = follow_preview(&f, &text);
+            assert_eq!(saved["status"], "completed");
+            assert_eq!(saved["draft"], !activate);
+            let work = f.ok(&["work", "show", saved["external_key"].as_str().unwrap()]);
+            assert_eq!(work["work"]["title"], input["title"]);
+        }
+    }
+
+    #[test]
+    fn work_create_preview_1_long_flags_use_a_private_literal_input_and_short_flags_quote_safely() {
+        for long in [false, true] {
+            let f = Fixture::new();
+            let title = if long {
+                realistic_create_input()["title"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            } else {
+                "Review O'Brien's 文档 $(literal)".into()
+            };
+            let mut args = vec![
+                "work",
+                "create",
+                "--title",
+                &title,
+                "--request-key",
+                "literal",
+            ];
+            if long {
+                args.extend(["--goal", "G", "--acceptance", "The reviewed supplier differences are retained with the original invoices and the final finance review decision.",
+                    "--next-action", "Read the reviewed supplier invoices before preparing the reconciliation", "--activate"]);
+            }
+            let text = creation_text(&f, &args);
+            let command = preview_accept_command(&text).unwrap();
+            if long {
+                let index = command.iter().position(|arg| arg == "--input").unwrap();
+                let path = f.0.join(&command[index + 1]);
+                assert!(path.starts_with(f.0.join(".awr/mutations")));
+                let retained: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                assert_eq!(retained["title"], title);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    assert_eq!(fs::metadata(path).unwrap().permissions().mode() & 0o077, 0);
+                }
+            } else {
+                assert!(!command.iter().any(|arg| arg == "--input"));
+            }
+            assert_eq!(follow_preview(&f, &text)["status"], "completed");
+        }
+    }
+
+    #[test]
+    fn work_create_preview_1_missing_fingerprint_and_invalid_next_command_are_rejected() {
+        let f = Fixture::new();
+        f.create_input("G");
+        let text = creation_text(&f, &["work", "create", "--input", "create.json"]);
+        preview_accept_command(&text).unwrap();
+        let args = argv(text.lines().last().unwrap().strip_prefix("Next: ").unwrap());
+        let fingerprint = &args[args
+            .iter()
+            .position(|arg| arg == "--expected-preview")
+            .unwrap()
+            + 1];
+        assert!(preview_accept_command(&text.replace(fingerprint, "")).is_err());
+        assert!(
+            preview_accept_command(&text.replace("--expected-revision", "--invalid-revision"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn work_create_preview_2_json_fits_three_kib_and_contains_every_acceptance_input() {
+        let f = Fixture::new();
+        let input = realistic_create_input();
+        f.write("create.json", &input.to_string());
+        let out = f.run(&["work", "create", "--input", "create.json", "--activate"]);
+        assert!(out.status.success());
+        assert!(
+            out.stdout.len() <= 3072,
+            "preview is {} bytes",
+            out.stdout.len()
+        );
+        let preview: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(preview["status"], "preview");
+        assert_eq!(preview["requires_accept"], true);
+        assert_eq!(preview["activation_requested"], true);
+        assert!(preview["project_revision"].is_u64());
+        assert!(
+            preview["preview"]["plan"]["external_key"]
+                .as_str()
+                .unwrap()
+                .starts_with("WORK-")
+        );
+        let mut expected = input;
+        expected["source_id"] = Value::Null;
+        assert_eq!(preview["preview"]["plan"]["request"], expected);
+        let command = format!("Next: {}", preview["next_action"].as_str().unwrap());
+        let saved = follow_preview(&f, &command);
+        assert_eq!(
+            saved["preview_fingerprint"],
+            preview["preview"]["fingerprint"]
+        );
+        assert_eq!(saved["draft"], false);
+    }
+
+    #[test]
+    fn work_create_preview_2_default_omits_source_arrays_and_complete_texts_even_as_sources_grow() {
+        let f = Fixture::new();
+        f.create_input("G");
+        f.write(
+            "rules.md",
+            &format!("{RULE}{}", " Review retained invoices.".repeat(1000)),
+        );
+        let preview = f.preview();
+        let p = &preview["preview"];
+        assert_eq!(p["plan"]["observations"], json!({"count":2,"omitted":true}));
+        for field in ["before_text", "after_text", "new_record"] {
+            assert!(
+                p[field]["bytes"].as_u64().unwrap() > 0,
+                "{field}: {}",
+                p[field]
+            );
+            assert_eq!(p[field]["omitted"], true);
+            assert!(!p[field].is_string());
+        }
+        assert!(p["plan"].get("manifest_fingerprint").is_none());
+        assert!(p["plan"].get("source").is_none());
+        assert!(
+            !serde_json::to_string(p)
+                .unwrap()
+                .contains("Review retained invoices.")
+        );
+    }
+
+    #[test]
+    fn work_create_preview_3_compact_and_runtime_fingerprints_match_and_wrong_fingerprints_refuse()
+    {
+        let f = Fixture::new();
+        f.create_input("G");
+        let input = serde_json::from_slice(&fs::read(f.0.join("create.json")).unwrap()).unwrap();
+        let mut store = awr_store::Store::open_existing(&f.0.join(".awr/state.db")).unwrap();
+        let baseline = awr_runtime::create_work(&mut store, &f.0, input, false, None, None)
+            .unwrap()
+            .value;
+        drop(store);
+        let mut plan = baseline["preview"]["plan"].clone();
+        plan.as_object_mut().unwrap().remove("project_revision");
+        let original_fingerprint = awr_source::fingerprint(&serde_json::to_vec(&plan).unwrap());
+        let mut compact = f.preview();
+        assert_eq!(compact["preview"]["fingerprint"], original_fingerprint);
+        compact["preview"]["fingerprint"] = json!(format!("sha256:{}", "0".repeat(64)));
+        let error = f.error(
+            &f.accept_args(&compact, &compact["project_revision"].to_string()),
+            "SourceConflict",
+        );
+        assert_eq!(error["details"]["preview_still_valid"], false);
+        let saved = f.ok(&f.accept_args(&baseline, &baseline["project_revision"].to_string()));
+        assert_eq!(saved["preview_fingerprint"], original_fingerprint);
+    }
+
+    #[test]
+    fn work_create_preview_3_compact_source_change_refuses_but_revision_only_retries() {
+        for source_change in [false, true] {
+            let f = Fixture::new();
+            f.create_input("G");
+            let preview = f.preview();
+            if source_change {
+                f.write("rules.md", &format!("{RULE}\nKeep the signed copy too.\n"));
+            } else {
+                f.session("W", false);
+            }
+            let error = f.error(
+                &f.accept_args(&preview, &preview["project_revision"].to_string()),
+                if source_change {
+                    "SourceStale"
+                } else {
+                    "RevisionConflict"
+                },
+            );
+            assert_eq!(error["details"]["preview_still_valid"], !source_change);
+            let retried = f.follow(&error);
+            assert_eq!(
+                retried["status"],
+                if source_change {
+                    "preview"
+                } else {
+                    "completed"
+                }
+            );
+            if source_change {
+                assert_ne!(
+                    retried["preview"]["fingerprint"],
+                    preview["preview"]["fingerprint"]
+                );
+            } else {
+                assert_eq!(
+                    retried["preview_fingerprint"],
+                    preview["preview"]["fingerprint"]
+                );
+            }
+        }
+    }
+
+    fn contains_original_payload(full: &Value, original: &Value) -> bool {
+        match original {
+            Value::Object(fields) => fields.iter().all(|(key, value)| {
+                full.get(key)
+                    .is_some_and(|actual| contains_original_payload(actual, value))
+            }),
+            _ => full == original,
+        }
+    }
+
+    #[test]
+    fn work_create_preview_4_full_preserves_original_runtime_payload_and_detects_missing_fields() {
+        let f = Fixture::new();
+        f.create_input("G");
+        let input = serde_json::from_slice(&fs::read(f.0.join("create.json")).unwrap()).unwrap();
+        let mut store = awr_store::Store::open_existing(&f.0.join(".awr/state.db")).unwrap();
+        let original = awr_runtime::create_work_with_activation(
+            &mut store, &f.0, input, false, None, None, true,
+        )
+        .unwrap()
+        .value;
+        drop(store);
+        let full = f.ok(&[
+            "work",
+            "create",
+            "--input",
+            "create.json",
+            "--activate",
+            "--full",
+        ]);
+        assert!(contains_original_payload(&full, &original));
+        assert!(full["preview"]["before_text"].is_string());
+        assert!(full["preview"]["plan"]["observations"].is_array());
+        for key in original["preview"]["plan"].as_object().unwrap().keys() {
+            let mut missing = full.clone();
+            missing["preview"]["plan"]
+                .as_object_mut()
+                .unwrap()
+                .remove(key);
+            assert!(
+                !contains_original_payload(&missing, &original),
+                "missing {key} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn work_create_preview_4_full_is_preview_only_and_cannot_be_used_for_acceptance() {
+        let out = Cli::try_parse_from([
+            "awr",
+            "--json",
+            "work",
+            "create",
+            "--title",
+            "Review",
+            "--request-key",
+            "full",
+            "--full",
+        ]);
+        assert!(out.is_ok());
+        assert!(
+            Cli::try_parse_from([
+                "awr",
+                "work",
+                "create",
+                "--title",
+                "Review",
+                "--request-key",
+                "full",
+                "--full",
+                "--accept"
+            ])
+            .is_err()
+        );
+    }
+
+    fn creation_path_fits(calls: &[usize]) -> bool {
+        calls.len() <= 4 && calls.iter().sum::<usize>() <= 6144
+    }
+
+    fn text_creation_path() -> (Fixture, Vec<usize>) {
+        let f = Fixture::new();
+        f.write("create.json", &realistic_create_input().to_string());
+        let preview = creation_text(
+            &f,
+            &["work", "create", "--input", "create.json", "--activate"],
+        );
+        let key = preview
+            .lines()
+            .find_map(|line| line.strip_prefix("Work key: "))
+            .unwrap();
+        let accept = preview_accept_command(&preview).unwrap();
+        let created = creation_text(
+            &f,
+            &accept[1..].iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        // Inspect bookkeeping directly; every CLI invocation in the path is measured.
+        let store = awr_store::Store::open_readonly(&f.0.join(".awr/state.db")).unwrap();
+        let revision = store
+            .project_by_root(&f.0.canonicalize().unwrap())
+            .unwrap()
+            .project_revision
+            .to_string();
+        drop(store);
+        let started = creation_text(
+            &f,
+            &[
+                "session",
+                "start",
+                "--work",
+                key,
+                "--agent",
+                "author",
+                "--provider",
+                "fixture",
+                "--model",
+                "local",
+                "--claim",
+                "--ttl-ms",
+                "60000",
+                "--expected-revision",
+                &revision,
+            ],
+        );
+        let session = started
+            .lines()
+            .find_map(|line| line.strip_prefix("Session: "))
+            .unwrap();
+        let prepared = creation_text(
+            &f,
+            &[
+                "work",
+                "prepare",
+                key,
+                "--session",
+                session,
+                "--response-view",
+                "action",
+            ],
+        );
+        assert!(
+            prepared.contains(
+                realistic_create_input()["fields"]["acceptance"][0]
+                    .as_str()
+                    .unwrap()
+            )
+        );
+        let calls = vec![preview.len(), created.len(), started.len(), prepared.len()];
+        println!(
+            "Creation path: {} calls, {} bytes; steps {calls:?}",
+            calls.len(),
+            calls.iter().sum::<usize>()
+        );
+        assert_ne!(f.ok(&["work", "show", key])["work"]["status"], "draft");
+        assert!(
+            f.ok(&["session", "show", session])["claims"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|claim| claim["status"] == "active")
+        );
+        (f, calls)
+    }
+
+    #[test]
+    fn work_create_preview_5_text_path_starts_real_work_in_four_calls_within_six_kib() {
+        let (_f, calls) = text_creation_path();
+        assert_eq!(calls.len(), 4);
+        assert!(creation_path_fits(&calls), "{calls:?}");
+    }
+
+    #[test]
+    fn work_create_preview_5_extra_call_and_relaxed_byte_budget_are_rejected() {
+        let (f, mut calls) = text_creation_path();
+        calls.push(creation_text(&f, &["status"]).len());
+        assert!(!creation_path_fits(&calls));
+        assert!(creation_path_fits(&[6144, 0, 0, 0]));
+        assert!(!creation_path_fits(&[6145, 0, 0, 0]));
+        assert!(!creation_path_fits(&[0, 0, 0, 0, 0]));
+    }
+
     #[test]
     fn text_error_ends_with_the_same_next_action_as_json() {
         let f = Fixture::new();

@@ -56,8 +56,8 @@ For title/summary/priority/next-action changes, use the [small edit shortcut](da
 `change:{kind:"work_edit",work:"KEY",fields:{next_action:"Review the draft"}}`.
 Its preview returns compact changed fields and a normalized `change`, plus
 `preview_fingerprint` at the top level. Apply that returned change so retries
-retain the reviewed source fingerprint. General create/batch/edit responses keep
-their existing full preview shape.
+retain the reviewed source fingerprint. MCP create/batch/edit responses keep
+their existing full preview shape. CLI creation uses the compact view described below.
 
 #### CLI and MCP request envelopes
 
@@ -114,12 +114,39 @@ awr work create --title "Review appendix" --request-key appendix-1 \
   --next-action "Read the source material" --activate
 ```
 
-Repeat that request with `--accept`, `--expected-preview` and `--expected-revision`
-from the preview to create and attempt activation. If the activation checks refuse it, creation
+Execute the final `Next:` command to create and attempt activation. It includes
+`--accept`, the reviewed `--expected-preview` fingerprint and `--expected-revision`.
+If the activation checks refuse it, creation
 succeeds, `draft` stays true, and `activation.error` explains the reason. The
 creation receipt retains that outcome. Use a new activation request after repairing
 the draft. Creation and activation share a caller request but retain separate
 recoverable source operations.
+
+#### CLI creation previews
+
+The default text preview shows the draft key, title, goals, acceptance count and
+activation intent, followed by an executable acceptance command. Long commands
+retain their literal request in a private runtime file and use `--input FILE`.
+Relative input paths resolve from the selected project root.
+
+| Preview entry point | Returned shape |
+| --- | --- |
+| `work create` | Summary and final `Next:` acceptance command |
+| `--json work create` | Status, project revision, acceptance requirement, activation intent, fingerprint, draft key, complete request and `next_action` |
+| `--json work create --full` | Complete original preview payload plus `next_action` |
+| MCP create preview | Complete runtime preview payload |
+
+Compact JSON retains `preview.plan.request` and `preview.plan.external_key`.
+`preview.plan.observations` becomes `{count, omitted: true}`. `before_text`,
+`after_text` and `new_record` become `{bytes, omitted: true}` summaries; text sizes
+count UTF-8 bytes and the record size counts compact JSON bytes. Other plan
+metadata, including source snapshots and the manifest fingerprint, appears in
+`--full`. Existing consumers that inspect the complete plan can request that view.
+`--full` applies to previews and conflicts with `--accept`.
+
+Both CLI views use the same runtime fingerprint and acceptance checks. Source
+changes require a fresh preview; a project revision change alone permits a retry
+with the returned current revision.
 
 An activation refusal lists missing fields and suggests an edit preview instead of
 repeating the refused activation. Supply the actual business values in the named

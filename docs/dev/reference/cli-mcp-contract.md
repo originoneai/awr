@@ -118,6 +118,20 @@ L1 JSON 含 `ok`、`project_revision`。必需缺口返回 `ok=false`、`Context
 
 #### Creation recovery and CLI context budgets
 
+CLI `work create` previews return a compact view by default. Text shows the title,
+goals, acceptance count and activation intent, ending with an executable `Next:`
+command containing the reviewed fingerprint and project revision. Long commands
+save their literal request in a private runtime input file.
+
+JSON retains `status`, `project_revision`, `requires_accept`, `activation_requested`,
+`preview.fingerprint`, `preview.plan.request`, `preview.plan.external_key` and the
+acceptance command in `next_action`. `preview.plan.observations` is a count summary;
+`before_text`, `after_text` and `new_record` are byte summaries with `omitted: true`.
+The remaining plan metadata is available through `--json --full`.
+That preview-only flag preserves the complete original runtime payload and adds
+`next_action`; it conflicts with `--accept`. MCP creation requests and responses
+retain their complete shapes. See [creation previews](source-changes.md#cli-creation-previews).
+
 **Error-code change:** accepting a work-creation preview after only the project
 revision advances now returns `RevisionConflict`, rather than `SourceStale`.
 `details.current_revision` and `details.retry.expected_revision` supply the retry revision and
