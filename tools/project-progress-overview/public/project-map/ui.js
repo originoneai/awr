@@ -145,6 +145,9 @@
             prepare: state.demo
               ? (key) => L.demo.workPrepare(key, t)
               : (key) => callApi(`/api/map/prepare?key=${encodeURIComponent(key)}`),
+            assess: state.demo
+              ? (key) => L.demo.workAssess(key, t)
+              : (key) => callApi(`/api/map/assess?key=${encodeURIComponent(key)}`),
           });
         }
       }
