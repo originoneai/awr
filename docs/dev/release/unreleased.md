@@ -85,6 +85,12 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   retains its original format. Built-in help topics also preserve the invoked
   executable name. The work planning group includes `activate` alongside
   `create` and `edit`.
+- `awr verify` checks completed work for a Git commit using local observations or
+  database-free CI reruns. Baseline comparison checks fail-before/pass-after
+  behavior in a temporary worktree; `verify install-hook` previews and installs a
+  pre-push gate while preserving existing hooks. Includes `verify.commit`, an
+  optional required-work policy, and Git/CI examples. See
+  [commit verification](../reference/verify.md).
 - Team evidence keeps the caller's claim and the recorded outcome of an execution apart. `evidence.submit` compares a
   claim bound to an execution with the Team's record of it (same work, scope, contract and input digest; a claim of
   success against a recorded failure or cancellation, or the reverse) and refuses a provable contradiction as

@@ -22,6 +22,7 @@ static COMMAND_GROUPS: &[Group] = &[
             ("session", "Start, checkpoint and end a work session"),
             ("context", "Compile the context for one work item"),
             ("evidence", "Record or read evidence"),
+            ("verify", "Verify completed work for a commit"),
             ("search", "Search work, decisions and evidence"),
             ("doctor", "Find and repair inconsistent runtime state"),
             ("overview", "Open the local project hub"),

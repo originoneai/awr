@@ -1,0 +1,33 @@
+name: Verify completed work
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    env:
+      AWR_LOCAL_WEB: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # Choose a release that advertises the verify.commit capability.
+      - run: npm install -g @originoneai/awr
+      - run: awr capabilities --require verify.commit
+      - name: Run current checks and compare the base commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            awr verify --rerun --baseline "$BASE_SHA"
+          else
+            awr verify --rerun
+          fi

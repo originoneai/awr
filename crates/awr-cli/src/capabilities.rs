@@ -684,6 +684,15 @@ fn catalog() -> Vec<Capability> {
                 "legacy_fields_preserved",
             ][..],
         ),
+        (
+            "verify.commit",
+            true,
+            &["verify", "verify install-hook"][..],
+            &[
+                "local_observations_or_database_free_rerun",
+                "baseline_fail_before_pass_after",
+            ][..],
+        ),
     ]
     .into_iter()
     .map(|(id, available, commands, limitations)| Capability {
