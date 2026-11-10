@@ -1,12 +1,16 @@
 # CLI / MCP 输出与错误契约
 
-本页描述八个原有工作与上下文工具的 CLI/MCP 领域对照。0.3.3 新增十二个会话与接续工具；共享 HTTP 服务另有项目目录工具，总计 21 个，stdio 为 20 个。完整契约见[共享 MCP 服务](mcp-service.md)。CLI 继续提供完整项目管理入口。
+对照 CLI 与 MCP 的动作、回执、来源版本和错误字段。自动化按结构字段判断结果。
 
-## 动作映射
+## Use it
+
+基础版本 0.3.3：原有八个工作/上下文工具，加十二个会话/接续工具；stdio 共 20 个，共享 HTTP 加项目目录后为 21 个。当前工具清单见[共享 MCP 服务](mcp-service.md)。CLI 提供完整管理入口。
+
+### 动作映射
 
 CLI 示例统一以 `awr --project /absolute/project --json` 为前缀。表中的 `R` 是最近一次观察到的 `project_revision`。会话可由 `awr session start` 或 `awr_session_start` 创建；共享 HTTP 调用必须使用当前认证客户端绑定的会话。
 
-共享 HTTP 每次调用显式传 `project`，写入还需稳定 `request_id`。请求回执会额外推进项目版本，原有 CLI/stdio 对照以不启用请求日志的调用为基线。使用日志时按返回版本继续，不要求它与独立 CLI 执行后的数字相同。上下文额外返回等待/回复的 `continuity`，该信封独立于 L1 正文、预算和 hash。
+共享 HTTP 每次显式传 `project`，写入带稳定 `request_id`。请求日志和领域回执都推进项目版本，继续操作使用返回的版本。上下文另带等待/回复的 `continuity` 信封，其正文、预算和 hash 与 L1 分开。
 
 | MCP 工具 | CLI 对应动作 | 参数对应与返回值 |
 | --- | --- | --- |
@@ -14,20 +18,32 @@ CLI 示例统一以 `awr --project /absolute/project --json` 为前缀。表中�
 | `awr_work_ready` | `ready [--limit N] [--branch NAME_OR_ID]` | `limit` 默认 10，范围 1..100；就绪项、诊断、认领与截断提示 |
 | `awr_work_get` | `work show WORK [--branch NAME_OR_ID] [--source-sha SHA]` | `work`、`branch`、`source_sha`；任务、验收、依赖、决策、证据及来源 |
 | `awr_context_compile`，无 `branch` | `context compile --work WORK [--session SESSION] [--detached]` | L1、完整性、缺口、来源、预算和 Context hash |
-| `awr_context_compile`，显式 `branch` | `branch context NAME_OR_ID --work WORK [--session SESSION] [--detached]` | 同一命名分支自 fork 起的增量；不切换默认分支 |
+| `awr_context_compile`，显式 `branch` | `branch context NAME_OR_ID --work WORK [--session SESSION] [--detached]` | 同一命名分支自 fork 起的增量；保持默认分支 |
 | `awr_work_transition` | `work progress/block/unblock/cancel/reopen WORK --session SESSION --reason TEXT --expected-revision R` | `action` 选择动作，`next_action` / `summary` / `blocker` 对应同名连字符参数；返回提案、源写入结果和事件回执 |
-| `awr_work_transition`，`action=complete` | `work complete WORK --session SESSION --reason TEXT --input /absolute/completion.json --expected-revision R [--end-session]` | MCP `completion` 是文件里的 JSON 对象；逐条绑定验收与证据，成功后释放本会话的认领。`--end-session` 对应 MCP `end_session`：同一请求内在完成落盘后结束会话（`session_end`），会话仍有其他活动认领时拒绝且不写入；`work complete` 与 `work cancel` 的响应在会话已无其他活动认领时带一条 `close_out` 指引（条件、依据、下一步、重评触发，不超过 60 token） |
+| `awr_work_transition`，`action=complete` | `work complete WORK --session SESSION --reason TEXT --input /absolute/completion.json --expected-revision R [--end-session]` | MCP `completion` 是文件里的 JSON 对象；逐条绑定验收与证据，成功后释放本会话的认领。`--end-session` 对应 MCP `end_session`：同一请求内在完成落盘后结束会话（`session_end`），会话仍有其他活动认领时拒绝且保持原状态；`work complete` 与 `work cancel` 的响应在会话已无其他活动认领时带一条 `close_out` 指引（条件、依据、下一步、重评触发，至多 60 tokens） |
 | `awr_event_append` | `event append --type TYPE --summary TEXT --expected-revision R` | `event_type` 对应 `--type`；可带 `--work`、`--session`、`--branch`、`--importance`、`--payload FILE`；返回完整 Event |
 | `awr_evidence_record` | `evidence add --input FILE --expected-revision R` | 输入字段映射见下节；返回完整 Evidence 与 `event_id` |
 | `awr_search` | `search [TEXT] [--type KIND] [--status STATUS] [--work WORK] [--limit N]` | `text` 对应位置参数，`kind` 对应 `--type`，其余同名；`work` 是 `work_item` 的别名 |
 
 两种 Context 入口均支持 `work`、`session`、`detached`、`agent`、`goals`、`paths`、`tags`、`source_sha`、`intent`、`budget`；CLI 对应 `--work`、`--session`、`--detached`、`--agent`、可重复的 `--goal` / `--path` / `--tag`、`--source-sha`、`--intent`、`--budget`。省略的值采用同一领域默认值。
 
-无显式 MCP `branch` 时，`checkpoint` / `after_revision` 对应 CLI `--checkpoint` / `--after-revision`，两者互斥。显式 MCP `branch` 使用 fork 基线，不接受这两个自定义基线。CLI 单独提供的 `context compile --branch ID` 使用普通上下文基线；它与 `branch context NAME_OR_ID` 的含义不同，不用来替代上表中的命名分支映射。
+| 上下文入口 | 增量基线 |
+| --- | --- |
+| MCP 省略 `branch` | `checkpoint` / `after_revision` 对应 CLI 同名连字符参数，二选一 |
+| MCP 显式 `branch` / CLI `branch context NAME_OR_ID` | 命名分支 fork |
+| CLI `context compile --branch ID` | 普通上下文基线 |
 
-查询的 `branch` 可以是名字、内部 ID 或 `main`；省略时读取项目当前默认分支。显式选择不会修改默认分支、既有会话、认领或 Git checkout。MCP 的 `null` 等同省略，选择主分支须传 `"main"`。
+查询 `branch` 接受名字、内部 ID 或 `main`；省略时选默认分支。MCP `null` 等同省略，主分支显式传 `"main"`。
 
-## 记录输入与回执
+## How it behaves
+
+| 层 | 负责的结果 |
+| --- | --- |
+| CLI | 项目管理及可刷新投影的读取 |
+| MCP | 来源验证后的只读查询、显式写入 |
+| 回执 | 真实版本、来源与恢复入口 |
+
+### 记录输入与回执
 
 `awr_evidence_record` 与 CLI EvidenceDraft 的字段如下：
 
@@ -38,21 +54,19 @@ CLI 示例统一以 `awr --project /absolute/project --json` 为前缀。表中�
 | `branch` | `branch_id`，传内部 ID；显式 `null` 表示主分支，省略表示当前分支 |
 | `external_key`, `evidence_type`, `level`, `summary`, `locator`, `sha256`, `source_sha`, `command`, `scope`, `verified_at` | 同名 |
 
-两端成功写入都返回 `ok`、`project_revision`、`evidence`、`event_id`、`validation_basis`、`freshness_basis`、`source_refresh_performed`。`evidence.evidence_type`、`summary`、`command`、`scope` 是实际保存的完整值，不截短调用者的记录。`validation_basis=caller_supplied_bindings` 表示按调用者提交的绑定保存；记录成功不代表命令被执行或业务验收已完成。
+两端写入返回 `ok`、`project_revision`、完整 `evidence`、`event_id`、`validation_basis`、`freshness_basis`、`source_refresh_performed`。`evidence_type`、`summary`、`command`、`scope` 保存调用者完整记录。
 
-这修正了早期 CLI `evidence add` 用摘要字段 `type` 返回写入结果的行为。读取命令 `evidence show` 继续提供原有摘要视图（含 `type`、`scope_total`）；它不是写入回执。
+早期 `evidence add` 的摘要字段 `type` 已由完整写入回执替代。`evidence show` 保留含 `type`、`scope_total` 的摘要视图。
 
-`event append` 的 `--payload FILE` 是 JSON 值文件，省略时为 `{}`。MCP 直接传 `payload` JSON 值。`importance` 默认 `normal`。成功回执含 `ok`、`project_revision`、完整 `event` 和刷新元数据。事件 ID、时间由每次实际执行产生；独立的两次写入不会得到同一个 ID。
-
-通用事件不能伪造 `work.completed` 等保留的领域事件；必须走对应状态变更服务。Event payload、Evidence command 都只是记录内容，不作为命令执行。
+`event append` 的 `--payload FILE` 是 JSON 值文件，省略时为 `{}`。MCP 直接传 `payload` JSON 值。`importance` 默认 `normal`。成功回执含 `ok`、`project_revision`、完整 `event` 和刷新元数据。事件 ID、时间由每次实际执行产生；各次独立写入产生各自 ID。
 
 Evidence 输入和 Event payload 的相对路径以 `--project` 根目录为基准。Completion 输入的相对路径以进程当前目录为基准，自动化建议始终使用绝对路径。
 
-## 版本、来源与完整性
+### 版本、来源与完整性
 
-在同一项目、同一分支选择、同一已索引来源和相同参数下，两个入口返回相同的领域状态、标识、版本、验收、依赖、诊断及缺口。查询中的 `active_claims` 都包含 `id`、`agent_id`、`session_id`、`expires_at`。`revision` 是对象版本，`source_revision` 是来源版本，`project_revision` 是项目状态版本，三者不可互换。
+同一项目、分支、已索引来源与参数产生相同领域状态、标识、版本、验收、依赖、诊断及缺口。`active_claims` 含 `id`、`agent_id`、`session_id`、`expires_at`。
 
-认领的生命周期在两个入口一致：请求未给 `--ttl-ms` / `ttl_ms` 时采用项目策略的默认值（`.awr/policy.toml` 或 `AWR_DEFAULT_CLAIM_TTL`，见 [claim policy](claim-policy.md)），`--no-expiry` / `no_expiry` 明确要求无到期，二者同时给出是用法错误。检查点保存与 `work progress|block|unblock`（MCP `awr_work_transition`）按同一策略续约仍有效的 claim。
+认领的生命周期在两个入口一致：请求省略 `--ttl-ms` / `ttl_ms` 时采用项目策略的默认值（`.awr/policy.toml` 或 `AWR_DEFAULT_CLAIM_TTL`，见 [claim policy](claim-policy.md)），`--no-expiry` / `no_expiry` 明确要求无到期，二者同时给出是用法错误。检查点保存与 `work progress|block|unblock`（MCP `awr_work_transition`）按同一策略续约仍有效的 claim。
 
 读取策略有意保留以下差异：
 
@@ -60,18 +74,18 @@ Evidence 输入和 Event payload 的相对路径以 `--project` 根目录为基�
 | --- | --- | --- |
 | `freshness_basis` | `source_refresh` | `source_verified_readonly` |
 | `source_refresh_performed` | `true` | `false` |
-| `read_only` | `false`，可能更新可重建的 DB 投影 | `true`，不持久化任何表的变化 |
+| `read_only` | `false`，可能更新可重建的 DB 投影 | `true`，所有持久表保持原样 |
 | 来源已改变 | 先刷新，返回新版本或显式缺口 | 返回 `SourceStale`；显式运行 `awr source reindex` 或 `awr_source_reindex` 后再读 |
 
-MCP 在内存快照中验证来源，并在返回前再次检查来源和真实 DB revision。它不会把临时快照版本当作持久状态返回。CLI 刷新不会改写权威源文件。通用查询提供 `source_issues` 和 `source_warnings`；L1 将来源与所需缺口放在自己的上下文和 `completeness` 中。
+MCP 在内存快照验证来源，返回前再次核对来源和真实 DB revision。通用查询给出 `source_issues`、`source_warnings`；L1 将来源与必需缺口保留在正文和 `completeness`。
 
-因此，对照读取应先同步来源，再比较同一个 `project_revision`，仅区别表中的三个传输策略字段；不能忽略 revision、Context hash、硬事实或缺口来制造一致结果。CLI 刷新失败时可能同时返回带 `source_issues` 的诊断正文和错误；MCP 拒绝陈旧快照时只返回错误，不返回一个可执行的旧结果。
+对照读取先同步来源，再比较同一 `project_revision`；传输策略差异限于上表三个字段。CLI 刷新失败可同时给出带 `source_issues` 的诊断正文与错误。
 
-Event / Evidence 写入在刷新前后都核对 `expected_revision`。刷新前已过期的请求不执行刷新或领域写入；刷新发现来源变化而推进版本后，拒绝沿用旧版本追加记录。状态变更使用同一领域提案与源指纹校验流程。
+Event / Evidence 写入在来源刷新前后都核对 `expected_revision`。来源变化推进版本后，调用者读取当前状态再写。状态变更复用领域提案与源指纹校验。
 
-L1 JSON 顶层包含 `ok` 和 `project_revision`；有必需缺口时为 `ok=false`，同时保留 `completeness`、诊断与可用正文，并带 `error.code=ContextIncomplete`。硬事实超预算时返回 `BudgetExceeded` 和 `details.required` / `details.budget`，不截断硬事实后宣称完整。
+L1 JSON 含 `ok`、`project_revision`。必需缺口返回 `ok=false`、`ContextIncomplete`，保留 `completeness`、诊断与可用正文。硬事实超预算返回 `BudgetExceeded`、`details.required`、`details.budget`。
 
-### Creation recovery and CLI context budgets
+#### Creation recovery and CLI context budgets
 
 **Error-code change:** accepting a work-creation preview after only the project
 revision advances now returns `RevisionConflict`, rather than `SourceStale`.
@@ -109,11 +123,11 @@ the caller accepts that repair before activating. Missing acceptance, next steps
 and valid goal links are not replaced with invented defaults. Text refusals include
 the same repair command in their final `Next:` line.
 
-## 输出、错误与退出码
+### 输出、错误与退出码
 
-CLI 普通输出面向人阅读：默认列出有界摘要，状态页最多显示一个当前建议，ready 默认最多 10 项。事件追加默认显示 ID、类型、短摘要和版本；不回显 payload。`event show --full`、`object show --full` 和报告内容读取属于显式展开。L1 的默认文本输出是预算约束内的执行上下文，完整验收与硬规则保留。
+普通输出使用有界摘要；状态页最多一个当前建议，ready 默认最多 10 项。事件追加显示 ID、类型、短摘要、版本。`event show --full`、`object show --full` 和报告正文是显式展开。L1 文本保留预算内完整验收与硬规则。
 
-`--json` 模式下，成功正文是 stdout 上的一个 JSON 对象。失败可能有可检查的部分正文；stderr 是独立的 typed error JSON，调用者必须分别解析两个流。不要用 `2>&1` 合并后再整体解析。
+`--json` 成功正文是 stdout 上的一个 JSON 对象；失败可保留部分诊断正文。stderr 独立输出 typed error JSON，分别解析两个流。
 
 ```json
 {
@@ -123,7 +137,7 @@ CLI 普通输出面向人阅读：默认列出有界摘要，状态页最多显�
 }
 ```
 
-上例仅展示形状。`code` 与 `details` 是机器判断依据，`message` 用于解释，不承诺不同参数解析器逐字一致。没有附加结构时省略 `details`。
+上例展示错误形状。机器判断读取 `code`、`details`，人类解释读取 `message`；附加结构为空时省略 `details`。
 
 | 情况 | CLI | MCP |
 | --- | --- | --- |
@@ -134,9 +148,9 @@ CLI 普通输出面向人阅读：默认列出有界摘要，状态页最多显�
 | 未实现的 CLI 顶层命令 | exit 1、`Unsupported` | 未知工具名是 JSON-RPC `-32601`（method not found），无领域结果 |
 | `--help`、`--version` | exit 0；即使带 `--json` 也输出普通帮助 / 版本文本 | 使用 initialize / tools list 协议能力 |
 
-`--json` 支持放在已知子命令前后。为了诊断未知顶层命令，放在命令前。`--` 之后的字面量 `--json` 和 `--field=--json` 不切换输出模式。
+`--json` 可放已知子命令前后；顶层命令诊断需要将它放在命令前。
 
-### Remote Team reads
+#### Remote Team reads
 
 The native [Team CLI reads](team-cli.md) use the authenticated Team HTTP query
 contract shared with `awr_team_query`. They preserve its original JSON shapes
@@ -152,15 +166,15 @@ exits 1 with the error on stderr and no result on stdout. Successful reads do no
 authorize execution. Usage errors still exit 2, and Personal error reports and
 exit behavior remain unchanged.
 
-输入 JSON 语法或字段错误返回 `InvalidInput`，不冒充内部序列化错误。若同时存在多个错误，两端的参数解析与文件读取顺序可能不同；修正首个错误后再继续，不依赖多重故障的报错先后顺序。
+输入 JSON 语法或字段错误返回 `InvalidInput`。多个错误同时存在时，修正首个错误后继续处理。
 
-`WorkspaceConflict` 只来自 `awr workspace`：两端都改过同一个被跟踪文件，工具不自动合并，本地文件保持原样。`WorkspaceContended` 是另一种情形——一次 `publish` 或 `drop` 连续三次提交都被对端抢先，此时没有任何路径被改写，补救是再执行一次同一命令，不需要调解，也不需要读消息来区分。核心错误保留 `NotFound`、`SourceUnavailable`、`SourceStale`、`SourceConflict`、`RevisionConflict`、`DependencyBlocked`、`ClaimConflict`、`RuleViolation`、`EvidenceMissing`、`MutationUnsupported`、`MutationConflict`、`WorkspaceConflict`、`WorkspaceContended`、`ContextIncomplete`、`BudgetExceeded`、`InvalidTransition`。`InvalidInput`、`Unsupported`、`Storage`、`Io`、`Json` 表示输入、实现或底层错误。提案 / 恢复错误还可能包括 `proposal_required`、`MutationIncomplete`、`WorkActionIncomplete`、`CheckpointIncomplete`，其中附带的提案或尝试 ID 是恢复入口。
+核心错误保留 `NotFound`、`SourceUnavailable`、`SourceStale`、`SourceConflict`、`RevisionConflict`、`DependencyBlocked`、`ClaimConflict`、`RuleViolation`、`EvidenceMissing`、`MutationUnsupported`、`MutationConflict`、`WorkspaceConflict`、`WorkspaceContended`、`ContextIncomplete`、`BudgetExceeded`、`InvalidTransition`。`InvalidInput`、`Unsupported`、`Storage`、`Io`、`Json` 表示输入、实现或底层错误。提案 / 恢复错误还可能包括 `proposal_required`、`MutationIncomplete`、`WorkActionIncomplete`、`CheckpointIncomplete`，其中附带的提案或尝试 ID 是恢复入口。
 
-发现部分写入或通信中断时先检查提案、事件、会话与当前版本，再决定下一步；不能看到进程失败就盲目重试写入。MCP 进程无法绑定项目或协议本身损坏时属于启动 / 协议错误，没有可以读取的领域 `CallToolResult`。
+部分写入或通信中断后，先检查提案、事件、会话与当前版本，再决定下一步。
 
-MCP 参数总量最多 1 MiB；CLI Evidence 输入 / Event payload 文件最多 1 MiB；Completion 映射最多 64 KiB。领域字段、预算和内容读取另有自己的上限，外层限制不放宽内层校验。
+MCP 参数、CLI Evidence 输入和 Event payload 文件至多 1 MiB；Completion 映射至多 64 KiB。领域字段、预算和内容读取按各自上限逐层校验。
 
-## 定向验证
+### 定向验证
 
 ```bash
 cargo build -p awr-cli -p awr-mcp --locked
@@ -171,22 +185,19 @@ cargo test -p awr-mcp --test stdio --locked
 cargo test -p awr-mcp --test shared --locked
 ```
 
-对照程序使用临时 fixture，实际启动 CLI 与 MCP stdio。读取比较完整领域 JSON，逐表检查 MCP 未写入 DB，检查权威来源字节不变；写入从同一快照分别执行，并核对状态、源文件结果、revision、缺口、证据和认领回执。Context hash 和必需事实不做归一化。独立写入的生成 ID / 时间分别验证，不能作为两次执行内容相等的条件。
+对照程序在临时 fixture 启动真实 CLI 与 MCP stdio。读取比较完整领域 JSON，逐表核对持久状态及权威来源字节；写入由相同快照独立执行，核对状态、源文件、revision、缺口、证据与认领回执。
 
-HTTP 集成另外覆盖多客户端、多项目、会话、等待、重复请求、重启和未知结果恢复；官方 Rust MCP SDK 客户端还验证协议发现与调用。十一项 CLI 对照没有被扩充成全部新工具的逐项对照；其中两项（AWR-EVO-012）对同一组事实经两端核对结论、诊断与五层互不混用，并核对查询不授权。
+HTTP 集成覆盖多客户端、多项目、会话、等待、重复请求、重启和待恢复结果；官方 Rust MCP SDK 验证发现与调用。两项 AWR-EVO-012 对相同事实核对结论、诊断和五层独立性。
 
-这些属于本地接口与功能验证，不代表真实 Agent 客户端业务验收、性能测量或发布结果。
+### 五层结果语义与入口不混用（AWR-EVO-010）
 
-
-## 五层结果语义与入口不混用（AWR-EVO-010）
-
-本段冻结 AWR-EVO-010 的结果层与协商边界；不新增第二套工作状态机。核对矩阵：
+本段固定五层结果语义和协商边界，沿用既有工作状态机。核对矩阵：
 
 - `.local/awr-evolution-20260919/semantic-contract-matrix.json`
 - `tests/fixtures/evolution/AWR-EVO-010/`
 - `scripts/evolution/verify_evo_010_semantic_contract.py`
 
-### 层与入口主键
+#### 层与入口主键
 
 | 层 id | CLI / MCP 主要入口 | 可读成功不意味 |
 | --- | --- | --- |
@@ -195,8 +206,6 @@ HTTP 集成另外覆盖多客户端、多项目、会话、等待、重复请求
 | `context_completeness` | `context compile` / `awr_context_compile` / prepare | 依赖完成、可写执行权、模型已消费 |
 | `delivery_observation` | client progress/hook、execution report、ack | 完成有效性、业务验收 |
 | `completion_validity` | `work complete`、evidence、ordinary confirm | 仅因就绪队列或投递回执而通过 |
-
-同一入口不得把一层成功重解释为另一层成功（反例 `CX-MIX-01`）。
 
 可表达但禁止混用的组合：
 
@@ -209,17 +218,54 @@ AWR-EVO-012：CLI 与 MCP 的 `ready` / `work` 简报由同一组函数生成（
 `test_a_query_authorizes_nothing_and_a_claim_is_judged_on_the_facts_of_that_moment` 核对查询不授权、事实变化或租约
 结束后提交重新判定。诊断含义见 [diagnostics](diagnostics.md#readiness-diagnostics-which-layer-answers)。
 
-### 宿主模式
+#### 宿主模式
 
-- `runtime_delegated`：唯一写入所有者为 `awr_runtime`
-- `component_only`：唯一写入所有者为 `embedding_host`；**不得**创建宿主 Work/Run/owner，不得持有第二工作状态
+- `runtime_delegated`：唯一写入所有者为 `awr_runtime`。
+- `component_only`：唯一写入所有者为 `embedding_host`。
 
-### 兼容
+#### 兼容
 
-旧输出保留。新字段/视图需能力或协议协商；缺必要能力返回
-`CapabilityUnavailable` / `ProtocolUnsupported`，禁止静默降级（`CX-COMPAT-01`）。
-unknown 不得默认为成功。
+旧输出保留。新字段/视图通过能力或协议协商；缺必要能力返回 `CapabilityUnavailable` / `ProtocolUnsupported`（`CX-COMPAT-01`）。
 
 ```sh
 python3 scripts/evolution/verify_evo_010_semantic_contract.py
 ```
+
+## Limits
+
+- CLI/stdio 对照采用关闭请求日志的基线；开启日志后比较领域事实与实际返回版本。
+- 命名分支固定使用 fork 基线；普通上下文的两个自定义基线仅适用于对应普通入口。
+- 查询的分支选择只影响本次读取，保留默认分支、会话、认领和 Git checkout。
+- 手工证据 `trust=reported`，`validation_basis=caller_supplied_bindings`；登记保存绑定，命令执行与业务验收另行取证。
+- 读取摘要与写入回执各有用途；登记结果以写入回执为准。
+- 保留领域事件由对应状态变更服务产生。通用 Event payload 和 Evidence command 只作记录数据。
+- `revision`、`source_revision`、`project_revision` 分别标记对象、来源与项目，按各自作用域使用。
+- MCP 返回真实持久状态的版本；CLI 刷新只更新可重建投影，保留权威源字节。
+- 对照保留 revision、Context hash、硬事实与缺口。MCP 遇陈旧快照仅返回错误，旧结果退出可执行路径。
+- 已过期请求在刷新前拒绝；刷新后版本变化也要求重新确认，拒绝沿用旧版本登记。
+- 预算不足时完整硬事实进入错误诊断；完整性声明以实际保留事实为准。
+- 事件默认摘要省略 payload，完整正文通过显式展开读取。
+- stdout 正文与 stderr 错误保持分流；合并输出会破坏单对象 JSON 的解析边界。
+- 参数解析器的解释文字可变；自动化依赖结构字段而非逐字消息。
+- 两端参数解析和文件读取顺序各自生效；多重故障的报错先后顺序属于实现细节。
+- `WorkspaceConflict` 表示同一跟踪文件两端冲突：本地字节保持原样，交给操作者调解。
+- `WorkspaceContended` 表示 publish/drop 连续三次提交被抢先：路径保持原样，重跑同一命令即可。
+- 进程失败先检查实际写入结果再重试；项目绑定失败或协议损坏是启动/协议错误，领域 CallToolResult 此时缺席。
+- 对照保留原始 Context hash 与必需事实；独立写入生成的 ID 和时间分别验证，不作为相等条件。
+- 这些是本地接口与功能检查；真实 Agent 客户端业务验收、性能与发布验证分别留证。
+- 各层结果分别判断；一层成功只回答该层问题。
+- `CX-MIX-01` 检查同一入口保持五层结果独立，防止从一个成功推导其他成功。
+- 能力不足时显式拒绝；unknown 保留未知含义，成功必须有相应事实。
+- 命名分支读取保留默认选择；完成并结束会话要求其他活动认领已释放，拒绝时原状态保持。
+- 独立写入保留各自生成的 ID 与时间；重放身份按对应请求日志判断。
+- MCP 查询将快照变化留在内存；全部持久表保持原样。
+- `--` 后的 --json 及 --field=--json 是字面值，保持当前输出模式。
+- 外层与领域层上限同时生效，取适用于本次输入的全部约束。
+- CLI 对照范围为既有十一项；全部新增工具逐项对照需另行扩充，查询授权仍由独立反例验证。
+- component_only 由 embedding_host 持有唯一工作状态；AWR 创建宿主 Work/Run/owner 或第二工作状态属于模式范围之外。
+
+## Code and tests
+
+- [CLI/MCP parity](../../../crates/awr-mcp/tests/cli_parity.py)
+- [CLI output](../../../crates/awr-cli/tests/output_cli.rs)
+- [Stdio and HTTP](../../../crates/awr-mcp/tests/stdio.rs)

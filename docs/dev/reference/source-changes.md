@@ -1,14 +1,14 @@
 # Source changes and task graphs
 
-Hosts that need to monitor files beyond registered source mappings can use the
-read-only [file inventory](file-inventory.md) interface.
+Inspect dependency impact and apply reviewed source changes through stable, recoverable requests.
 
-AWR owns task identity, source authority, required dependencies, execution claims,
-readiness, checkpoints and completion evidence. A planner supplies explicit work
-and dependency proposals. A host chooses Agents, allocates resources, dispatches
-executors and enforces its concurrency limit. AWR does not launch models or shells.
+## Use it
 
-## Query a plan and its impact
+For read-only monitoring beyond registered mappings, use [file inventory](file-inventory.md).
+
+AWR owns task identity, source authority, required dependencies, claims, readiness, checkpoints and completion evidence. Planners propose explicit work/dependencies; hosts select agents, allocate resources, dispatch executors and enforce concurrency.
+
+### Query a plan and its impact
 
 `awr_work_graph {"roots":["API"],"limit":100}` returns API, its transitive required
 dependents and all required ancestors of that affected set. Omit roots to inspect
@@ -18,23 +18,20 @@ add `--cached` to read the last recorded projection without opening business fil
 writing project files, see [host contract](host-contract.md)).
 MCP queries never persist a refresh; explicitly reindex stale sources first.
 
-The result includes source references and fingerprints, project revision, graph
-fingerprint, readiness diagnostics and active claims. Each node also has
-`last_event_at`, the newest event time of that work in milliseconds over every branch
-and session (null without events); it never enters the graph fingerprint. `affected`
-identifies the changed roots and dependents, while `nodes` also includes
-prerequisites. Required missing references and a real cycle are explicit. Optional edges remain visible
-but do not block execution or participate in required dependency cycles.
-If the closure exceeds the selected limit, the query returns `BudgetExceeded`;
-it never labels a truncated plan complete. The default limit is 100, maximum 1000.
+The result includes source refs/fingerprints, project revision, graph fingerprint, diagnostics and active claims. Nodes carry `last_event_at`, the newest event time in milliseconds across branches and sessions, or null. `affected` selects roots/dependents; `nodes` also includes prerequisites. Missing required refs and cycles are explicit. Oversized closures return `BudgetExceeded`; default limit is 100 nodes, maximum 1000.
 
-`ready` is a current scheduling observation. Consume the task context and acquire
-an actual claim before dispatch. A graph fingerprint is not an execution lease:
-readiness and claims can change without a source edit. Review new source/revision
-state after an incremental plan change. Completed dependencies release successors
-through the existing readiness rules; executor termination alone does not.
+Consume task context and acquire a claim before dispatch. Review source/revision state after incremental plan changes. Completed dependencies release successors through readiness rules.
 
-## Review and apply a source change
+## How it behaves
+
+| Operation | Result |
+| --- | --- |
+| Graph | Bounded dependency closure, readiness and claims |
+| Preview | Before/after text and fingerprint |
+| Apply | Revision-checked source receipt |
+| Status/recover | Durable source-operation outcome |
+
+### Review and apply a source change
 
 Four tools share a source-operation identity scoped by project, authenticated
 client, change kind and caller-selected `request_id`:
@@ -51,20 +48,9 @@ client, change kind and caller-selected `request_id`:
    and the current `expected_revision`. Recovery preserves externally edited bytes
    and reports which phases actually completed; it does not start another executor.
 
-These tools reuse the existing CLI creation, batch and host-edit journals. They do
-not add MCP lifecycle bookkeeping revisions between preview and apply. Query them
-with `awr_change_status`, **not** `awr_operation_get`. Other MCP lifecycle mutations
-continue to use the operation journal. Recovery and completion are separate facts.
-Source writes, indexing and related-file replacement are not a filesystem transaction.
-Inspect `source_write_performed`, `status`, and `historical_outcome`; do not infer
-"nothing happened" from an error, missing response or missing receipt.
+These tools reuse CLI creation, batch and host-edit journals. Query `awr_change_status` with the source-operation identity; other MCP lifecycle writes use `awr_operation_get`. Inspect `source_write_performed`, `status` and `historical_outcome` after interruption.
 
-Shared HTTP still requires the registered project selector and that client's write
-permission. A different client cannot apply another client's preview or retrieve
-its journal merely by guessing the request ID. Stdio has one local client identity.
-The `reason` and field values describe the caller's intent; they do not independently
-verify it. Batch/edit attribution uses the actual MCP client as `delegated_agent`.
-The API does not grant a human-confirmation completion path to an Agent.
+Shared HTTP requires registered `project` and client write permission. Stdio has one local client identity. Batch/edit attribution records the connected MCP client as `delegated_agent`.
 
 For title/summary/priority/next-action changes, use the [small edit shortcut](daily-work.md):
 `change:{kind:"work_edit",work:"KEY",fields:{next_action:"Review the draft"}}`.
@@ -73,7 +59,7 @@ Its preview returns compact changed fields and a normalized `change`, plus
 retain the reviewed source fingerprint. General create/batch/edit responses keep
 their existing full preview shape.
 
-### CLI and MCP request envelopes
+#### CLI and MCP request envelopes
 
 The CLI reads a complete request from `--input FILE`. MCP wraps the same change in
 its own request identity and supplies actor provenance from the connected client.
@@ -168,7 +154,7 @@ previews activation. Accept with the same arguments plus `--accept`,
 preview. `work create-status`, `work create-recover`, `batch status` and
 `batch recover` accept both `--key` and its visible alias `--request-key`.
 
-### Create a draft
+#### Create a draft
 
 ```json
 {
@@ -187,13 +173,9 @@ preview. `work create-status`, `work create-recover`, `batch status` and
 }
 ```
 
-`source_id` is optional when one primary ledger is unambiguous. Creation first
-writes a draft; missing goals, criteria and results are never invented. The CLI can
-explicitly request activation as described above. MCP creation keeps its existing
-input shape and draft behavior. Both entries support the same bounded source
-fields and preserve stable task identity.
+An unambiguous primary ledger makes `source_id` optional. Creation writes a draft; CLI can request activation, while MCP retains its existing draft input shape. Both entries preserve stable task identity and support bounded source fields.
 
-### Change several tasks together
+#### Change several tasks together
 
 Use `change.kind="batch"` and the existing `BatchChange` shape:
 
@@ -221,13 +203,9 @@ before source replacement. Required missing references, cycles, archive conflict
 duplicate cross-source task keys and changes to an occupied task's planning contract
 are rejected. Next-action notes do not replace the planning contract.
 
-The existing related-file batch remains available as
-`{"kind":"related","changes":[...]}`; its document/adoption/ledger variants and
-partial-write recovery semantics are documented in [host contract](host-contract.md).
-It can include one ledger with its related registered documents. This is controlled
-source editing, not arbitrary filesystem writing.
+Related-file batches retain `{"kind":"related","changes":[...]}` with document/adoption/ledger variants and recoverable partial writes. They may include one ledger with registered related documents; see [host contract](host-contract.md).
 
-### Refine or activate a draft
+#### Refine or activate a draft
 
 `change.kind="edit"` accepts the existing `HostChange` work operations:
 
@@ -239,27 +217,37 @@ source editing, not arbitrary filesystem writing.
 {"kind":"edit","change":{"operation":"activate_draft","work":"APPENDIX","source_fingerprint":"<reviewed-fingerprint>"}}
 ```
 
-Activation retains the normal goal, rule, acceptance, dependency and occupancy
-checks. Draft successors whose required predecessors are unfinished remain drafts
-until those prerequisites permit activation. Activation does not complete or claim
-the work. Lifecycle actions and engineering completion still use their own tools.
+Activation checks goals, rules, acceptance, dependencies and occupancy. Draft successors wait for required predecessors to permit activation.
 
-## Replaceable host scheduling example
+### Replaceable host scheduling example
 
 [orchestrator.py](../../../examples/host-app/orchestrator.py) supplies a caller-driven
 step over an injected driver. The driver can query this MCP graph or the same CLI
 query, and can use [Workflow](../../../examples/host-app/workflow.py) for pinned-runtime
 sessions, explicit context consumption, checkpoints and guarded completion.
 
-The host saves a stable dispatch identity before any effect, respects its configured
-parallelism and conservative path conflicts, and retains capacity for unknown
-executions. Restart queries retained identities; it never automatically repeats an
-unknown dispatch. An executor reporting stopped does not mark work completed. AWR's
-current source state and completion gates determine whether successors are ready.
-Missing path hints serialize work by default; real resource isolation, quota policy,
-Agent credentials and process termination belong to the host's executor adapter.
+Hosts persist dispatch identity before effects, enforce parallelism/path conflicts and reserve capacity for unknown executions. Restart inspects retained identities. Missing path hints serialize by default; executor adapters handle resource isolation, quotas, credentials and process termination.
 
-The example regression uses native CLI claims/context/evidence/completion, independent
-synthetic output files, simultaneous outstanding executions, path conflicts, a lost
-dispatch response and dependency release. It is a protocol/host fixture, not an
-enterprise or native Agent-client business acceptance result.
+The regression exercises native CLI claims/context/evidence/completion, separate synthetic outputs, concurrent outstanding executions, path conflicts, a lost dispatch response and dependency release.
+
+## Limits
+
+- Models and shells are launched by the host rather than AWR.
+- `last_event_at` is observation metadata outside the graph fingerprint. Optional edges remain visible and are excluded from required readiness/cycle gates.
+- Graph closure limits reject oversized plans instead of returning a truncated plan labeled complete.
+- `ready` is a scheduling observation; graph fingerprints grant no execution lease, and readiness/claims can change independently of source edits.
+- Executor termination alone leaves task completion and successor readiness to AWR’s completion gates.
+- Source operations add no lifecycle bookkeeping revision between preview and apply. Recovery and completion remain separate facts.
+- Source replacement, indexing and related-file writes are recoverable phases rather than a filesystem transaction; missing responses leave effects uncertain.
+- Source previews and journals belong to their authenticated client; guessed request IDs grant no cross-client access.
+- Reasons and fields are caller intent rather than independently verified facts. Agents retain engineering completion rules rather than human-confirmation shortcuts.
+- Creation preserves missing goals, criteria and results as gaps rather than inventing source facts.
+- Related-file batches edit registered sources rather than arbitrary filesystem paths.
+- Activation, ownership, lifecycle transitions and engineering completion use their respective operations.
+- Unknown dispatches require inspection rather than automatic replay. Executor stop reports leave completion and successor readiness to current AWR state.
+- This regression verifies a host protocol fixture; enterprise and native agent-client business acceptance require separate runs.
+
+## Code and tests
+
+- [Source change MCP tests](../../../crates/awr-mcp/tests/stdio.rs)
+- [CLI/MCP parity](../../../crates/awr-mcp/tests/cli_parity.py)
