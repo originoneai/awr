@@ -1,0 +1,26 @@
+Complete source work only after verifying dependencies, acceptance and actual evidence reports
+
+Usage: awr work complete [OPTIONS] --session <SESSION> --reason <REASON> --input <INPUT> --expected-revision <EXPECTED_REVISION> <WORK>
+
+Arguments:
+  <WORK>  
+
+Options:
+      --project <PROJECT>
+          [default: .]
+      --session <SESSION>
+          
+      --json
+          
+      --reason <REASON>
+          
+      --input <INPUT>
+          JSON acceptance-to-evidence mapping (version 1, at most 64 KiB)
+      --expected-revision <EXPECTED_REVISION>
+          
+      --response-view <RESPONSE_VIEW>
+          [default: full] [possible values: full, summary]
+      --end-session
+          End the session in the same request once the work is completed. Refused while the session still holds claims on other work
+  -h, --help
+          Print help

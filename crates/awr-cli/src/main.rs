@@ -3,7 +3,7 @@ mod organization;
 mod overview;
 mod runtime_snapshot;
 use awr_core::{Error, Result};
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 mod assessment;
 mod batch;
@@ -21,6 +21,7 @@ mod document;
 mod drill;
 mod event_append;
 mod execution;
+mod help;
 mod host_save;
 mod intake_plan;
 mod management;
@@ -330,8 +331,7 @@ fn run(cli: &Cli) -> cli_failure::CliResult<()> {
             remote::run(&cli.project, command, cli.json)
         }
         None => {
-            Cli::command().print_help().map_err(Error::from)?;
-            println!();
+            help::command().print_help().map_err(Error::from)?;
             Ok(())
         }
         Some(Command::Unsupported(args)) => Err(Error::Unsupported(args.join(" "))),
@@ -365,7 +365,7 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(1);
         }
     }
-    let cli = match Cli::try_parse_from(&args) {
+    let cli = match help::parse_from(&args) {
         Ok(cli) => cli,
         Err(error) => {
             if !error.use_stderr() {
