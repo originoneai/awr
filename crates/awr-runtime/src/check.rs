@@ -71,7 +71,16 @@ fn terminate(child: &mut Child) -> Result<()> {
         // Keep the child unreaped until group cleanup finishes, so its PID cannot be reused.
         std::thread::sleep(Duration::from_millis(200));
         // A descendant may survive the direct child; kill the owned group after the grace period.
-        signal_group(child, 9)?;
+        if let Err(error) = signal_group(child, 9) {
+            // Darwin reports EPERM for a group containing only the unreaped, terminated child.
+            // Observe exit only after the final group signal, while its PID is still reserved.
+            let exited = child.try_wait()?.is_some();
+            if !exited
+                || !matches!(&error, Error::Io(e) if e.kind() == std::io::ErrorKind::PermissionDenied)
+            {
+                return Err(error);
+            }
+        }
     }
     #[cfg(windows)]
     {
