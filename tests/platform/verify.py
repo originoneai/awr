@@ -173,8 +173,8 @@ def main():
     parity = evidence / 'cli_mcp_parity.json'
 
     def validate_parity(data):
-        require(data['passed'] and data['tests_run'] == 11 and len(data['tools_exercised']) == 11,
-                'CLI/MCP parity did not execute all eleven tool contracts')
+        require(data['passed'] and data['tests_run'] == 12 and len(data['tools_exercised']) == 11,
+                'CLI/MCP parity did not execute all twelve tests and eleven tool contracts')
 
     gate('cli_mcp_parity', [sys.executable, 'crates/awr-mcp/tests/cli_parity.py', '--awr', awr, '--mcp', mcp, '--report', parity],
          receipt(parity, validate_parity), requires=('build',))

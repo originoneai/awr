@@ -17,6 +17,18 @@ fn evidence_rows_by(
     exact_id: bool,
     scoped: bool,
 ) -> Result<Vec<EvidenceRecord>> {
+    let completed_reports = conn
+        .prepare("SELECT bound.value FROM events e, json_each(e.payload_json, '$.work_action.completion.evidence') bound
+            WHERE e.project_id=?1 AND e.event_type='work.completed'
+            AND e.branch_id IS json_extract(bound.value, '$.branch_id')")
+        .map_err(db_error)?
+        .query_map(params![project.to_string()], |r| r.get::<_, String>(0))
+        .map_err(db_error)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(db_error)?
+        .into_iter()
+        .map(|payload| serde_json::from_str::<Evidence>(&payload).map_err(Error::from))
+        .collect::<Result<Vec<_>>>()?;
     let visibility = if scoped {
         crate::scoped_read::visible("evidence", "e.id")
     } else {
@@ -27,14 +39,18 @@ fn evidence_rows_by(
         .map(|c| format!("s.{c}"))
         .collect::<Vec<_>>()
         .join(",");
-    conn.prepare(&format!("SELECT {columns},e.payload_json,p.project_revision FROM evidence e
+    let mut records = conn.prepare(&format!("SELECT {columns},e.payload_json,p.project_revision FROM evidence e
         LEFT JOIN sources s ON s.id=e.source_id AND s.project_id=e.project_id JOIN projects p ON p.id=e.project_id
         WHERE ({visibility}) AND e.project_id=?1 AND e.active=1 AND (e.source_id IS NULL OR s.active=1) AND (?2 IS NULL OR (NOT ?3 AND e.external_key=?2) OR e.id=?2)
         ORDER BY e.external_key")).map_err(db_error)?.query_map(params![project.to_string(),key,exact_id],|r| {
             let item=serde_json::from_str(&r.get::<_,String>(11)?).map_err(|e|rusqlite::Error::FromSqlConversionFailure(11,rusqlite::types::Type::Text,Box::new(e)))?;
             let source=if r.get::<_,Option<String>>(0)?.is_some() {Some(source_row(r)?)} else {None};
-            Ok(EvidenceRecord {item,source,project_revision:revision_at(r,12)?})
-        }).map_err(db_error)?.collect::<rusqlite::Result<Vec<_>>>().map_err(db_error)
+            Ok(EvidenceRecord {item,source,project_revision:revision_at(r,12)?,trust:Trust::Reported})
+        }).map_err(db_error)?.collect::<rusqlite::Result<Vec<_>>>().map_err(db_error)?;
+    for record in &mut records {
+        record.trust = evidence_trust(&record.item, &completed_reports)?;
+    }
+    Ok(records)
 }
 
 pub(crate) fn evidence_by_id(conn: &Connection, project: Id, id: Id) -> Result<EvidenceRecord> {
@@ -285,6 +301,7 @@ impl Store {
             item: item.clone(),
             source: None,
             project_revision: expected,
+            trust: Trust::Reported,
         }
         .assess(None, None, draft.branch_id)
         .missing_bindings;

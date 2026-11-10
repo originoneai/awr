@@ -78,6 +78,23 @@ pub struct EvidenceRecord {
     pub item: crate::Evidence,
     pub source: Option<Source>,
     pub project_revision: Revision,
+    #[serde(default)]
+    pub trust: crate::Trust,
+}
+
+/// Only exact evidence snapshots from byte-checked completion receipts establish verification.
+/// Caller-declared types, levels and timestamps cannot establish program provenance.
+pub fn evidence_trust(
+    item: &crate::Evidence,
+    completed_reports: &[crate::Evidence],
+) -> crate::Result<crate::Trust> {
+    let current = serde_json::to_value(item)?;
+    for bound in completed_reports {
+        if bound.id == item.id && serde_json::to_value(bound)? == current {
+            return Ok(crate::Trust::Verified);
+        }
+    }
+    Ok(crate::Trust::Reported)
 }
 
 /// Relative to an explicitly requested source SHA and branch. This is not independent verification.
@@ -113,6 +130,7 @@ pub fn evidence_groups(assessments: &[EvidenceAssessment]) -> Vec<serde_json::Va
                 "sha256": item.sha256, "source_sha": item.source_sha,
                 "scope": item.scope, "branch_id": item.branch_id,
                 "source_ref": item.source_ref, "verified_at": item.verified_at,
+                "trust": assessment.evidence.trust,
             }));
     }
     groups

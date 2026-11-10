@@ -39,6 +39,20 @@ impl Drop for Host {
 }
 
 #[test]
+fn trust_capability_is_negotiable_without_a_project() {
+    let host = Host::new();
+    let result = host.ok(&["--json", "capabilities", "--require", "output.trust_field"]);
+    assert!(
+        result["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == "output.trust_field" && c["available"] == true)
+    );
+    assert_eq!(fs::read_dir(&host.0).unwrap().count(), 0);
+}
+
+#[test]
 fn negotiation_needs_no_project_tty_model_or_environment() {
     let host = Host::new();
     let result = host.ok(&[

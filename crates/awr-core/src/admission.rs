@@ -350,6 +350,18 @@ pub struct RecordedAdmission {
     pub decider_session: Option<Id>,
 }
 
+impl RecordedAdmission {
+    pub fn trust(&self) -> crate::Trust {
+        if self.decision == AdmissionDecision::Approved
+            && matches!((self.proposer_session, self.decider_session), (Some(author), Some(reviewer)) if author != reviewer)
+        {
+            crate::Trust::Reviewed
+        } else {
+            crate::Trust::Reported
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AdmissionDiagnostic {
     pub code: &'static str,
@@ -369,6 +381,7 @@ pub struct AdmissionFacts {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AdmissionStatus {
     pub work: String,
+    pub trust: crate::Trust,
     /// not_governed, legacy_observe or governed_enforce.
     pub mode: &'static str,
     pub governed: bool,
@@ -391,6 +404,7 @@ impl AdmissionStatus {
         Self {
             work: work.into(),
             mode,
+            trust: crate::Trust::Reported,
             governed: false,
             enforced: false,
             state: "not_governed",
@@ -412,6 +426,7 @@ impl AdmissionStatus {
         Self {
             work: work.into(),
             mode: "policy_invalid",
+            trust: crate::Trust::Reported,
             governed: true,
             enforced: true,
             state: "policy_invalid",
@@ -482,6 +497,9 @@ pub fn evaluate_admission(inputs: &AdmissionInputs<'_>) -> AdmissionStatus {
             let admitted = state == "approved" && diagnostics.is_empty();
             AdmissionStatus {
                 work: inputs.work.into(),
+                trust: inputs
+                    .latest
+                    .map_or(crate::Trust::Reported, RecordedAdmission::trust),
                 mode,
                 governed,
                 enforced,

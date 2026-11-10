@@ -354,6 +354,33 @@ class Parity(unittest.TestCase):
             self.assertEqual(len(value["evidence"].pop("id")), 26)
         self.assertEqual(cli, mcp)
 
+    def test_manual_evidence_type_strings_are_reported_in_cli_and_mcp(self):
+        for kind in ["check_run", "test_run", "review"]:
+            with self.subTest(evidence_type=kind):
+                key = "manual-" + kind
+                draft = {"external_key": key, "work_item_key": "W", "evidence_type": kind,
+                         "level": "implemented", "summary": "Caller-supplied report",
+                         "locator": "run.json", "scope": ["W"], "branch_id": None}
+                (self.root / "evidence.json").write_text(json.dumps(draft))
+                expected = self.revision()
+                snapshot = self.snapshot()
+                cli = self.cli(["evidence", "add", "--input", "evidence.json", "--expected-revision", expected])
+                cli_evidence = self.cli(["evidence", "show", key])
+                cli_work = self.cli(["work", "show", "W"])
+                self.restore(snapshot)
+                args = {**draft, "expected_revision": expected, "work": "W", "branch": "main"}
+                del args["work_item_key"], args["branch_id"]
+                mcp = self.tool("awr_evidence_record", args)
+                mcp_work = self.tool("awr_work_get", {"work": "W"}, readonly=True)
+                observations = {
+                    "CLI registration": cli["evidence"]["trust"],
+                    "CLI evidence read": cli_evidence["evidence"]["trust"],
+                    "CLI work read": next(e["trust"] for e in cli_work["evidence"] if e["external_key"] == key),
+                    "MCP registration": mcp["evidence"]["trust"],
+                    "MCP work read": next(e["trust"] for e in mcp_work["evidence"] if e["external_key"] == key),
+                }
+                self.assertEqual(observations, dict.fromkeys(observations, "reported"))
+
     def test_transitions_share_receipts_source_changes_and_rejections(self):
         sid = self.session()
         for action, field, message, status in [
