@@ -14,6 +14,7 @@ import queue
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -355,6 +356,82 @@ class Parity(unittest.TestCase):
             self.assertEqual(len(value.pop("event_id")), 26)
             self.assertEqual(len(value["evidence"].pop("id")), 26)
         self.assertEqual(cli, mcp)
+
+    def test_manual_evidence_type_strings_are_reported_in_cli_and_mcp(self):
+        for kind in ["check_run", "test_run", "review"]:
+            with self.subTest(evidence_type=kind):
+                key = "manual-" + kind
+                draft = {"external_key": key, "work_item_key": "W", "evidence_type": kind,
+                         "level": "implemented", "summary": "Caller-supplied report",
+                         "locator": "run.json", "scope": ["W"], "branch_id": None}
+                (self.root / "evidence.json").write_text(json.dumps(draft))
+                expected = self.revision()
+                snapshot = self.snapshot()
+                cli = self.cli(["evidence", "add", "--input", "evidence.json", "--expected-revision", expected])
+                cli_evidence = self.cli(["evidence", "show", key])
+                cli_work = self.cli(["work", "show", "W"])
+                self.restore(snapshot)
+                args = {**draft, "expected_revision": expected, "work": "W", "branch": "main"}
+                del args["work_item_key"], args["branch_id"]
+                mcp = self.tool("awr_evidence_record", args)
+                mcp_work = self.tool("awr_work_get", {"work": "W"}, readonly=True)
+                observations = {
+                    "CLI registration receipt": cli["trust"],
+                    "CLI registration": cli["evidence"]["trust"],
+                    "CLI evidence receipt": cli_evidence["trust"],
+                    "CLI evidence read": cli_evidence["evidence"]["trust"],
+                    "CLI work read": next(e["trust"] for e in cli_work["evidence"] if e["external_key"] == key),
+                    "MCP registration receipt": mcp["trust"],
+                    "MCP registration": mcp["evidence"]["trust"],
+                    "MCP work read": next(e["trust"] for e in mcp_work["evidence"] if e["external_key"] == key),
+                }
+                self.assertEqual(observations, dict.fromkeys(observations, "reported"))
+
+    def test_generated_check_evidence_is_recorded_then_verified_in_cli_and_mcp(self):
+        criterion = "Deliver the reviewed analysis"
+        definition = {"version": 1, "purpose": "implementation", "tier": "required",
+                      "examples": [{"id": "saved-analysis", "criterion": criterion, "kind": "positive",
+                                    "given": "A reviewed analysis is saved", "when": "Its contents are checked",
+                                    "then": "The analysis remains available",
+                                    "check": {"run": [sys.executable, "-c",
+                                                      "from pathlib import Path; assert Path('analysis.txt').read_text() == 'reviewed analysis\\n'"],
+                                              "files": ["analysis.txt"], "timeout_seconds": 10}}]}
+        work = WORK.replace("  acceptance: [Deliver the reviewed analysis]\n",
+                            "  acceptance: [Deliver the reviewed analysis]\n  definition: " + json.dumps(definition) + "\n")
+        (self.root / "work.yaml").write_text(work)
+        (self.root / "analysis.txt").write_text("reviewed analysis\n")
+        self.cli(["status"])
+        sid = self.session()
+        self.cli(["work", "progress", "W", "--session", sid, "--reason", "The analysis is ready for checking",
+                  "--next-action", "Run the declared check", "--expected-revision", self.revision()])
+        for args in [["init"], ["config", "user.email", "parity@example.invalid"],
+                     ["config", "user.name", "Check parity fixture"],
+                     ["add", "work.yaml", "rules.md", "goal.md", "analysis.txt", "project.toml"],
+                     ["commit", "-m", "Create the check provenance fixture"]]:
+            subprocess.run(["git", *args], cwd=self.root, capture_output=True, check=True)
+        completion = self.root / "check-completion.json"
+        checked = self.cli(["work", "check", "W", "--session", sid, "--phase", "acceptance",
+                            "--write-input", completion, "--expected-revision", self.revision()])
+        self.assertEqual(checked["evidence"]["trust"], "recorded")
+        key = checked["evidence"]["external_key"]
+
+        def assert_trust(expected):
+            shown = self.cli(["evidence", "show", key])
+            cli = self.cli(["work", "show", "W"])
+            mcp = self.tool("awr_work_get", {"work": "W"}, readonly=True)
+            cli_record = next(e for e in cli["evidence"] if e["external_key"] == key)
+            mcp_record = next(e for e in mcp["evidence"] if e["external_key"] == key)
+            self.assertEqual(shown["evidence"]["id"], checked["evidence"]["id"])
+            self.assertEqual(cli_record, mcp_record)
+            self.assertEqual(cli_record["locator"], checked["evidence"]["locator"])
+            observations = {"CLI evidence receipt": shown["trust"], "CLI evidence": shown["evidence"]["trust"],
+                            "CLI work": cli_record["trust"], "MCP work": mcp_record["trust"]}
+            self.assertEqual(observations, dict.fromkeys(observations, expected))
+
+        assert_trust("recorded")
+        self.cli(["work", "complete", "W", "--session", sid, "--reason", "The report bytes match",
+                  "--input", completion, "--expected-revision", self.revision()])
+        assert_trust("verified")
 
     def test_transitions_share_receipts_source_changes_and_rejections(self):
         sid = self.session()

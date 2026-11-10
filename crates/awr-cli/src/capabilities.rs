@@ -652,6 +652,22 @@ fn catalog() -> Vec<Capability> {
                 "requires_upgraded_source_readers",
             ][..],
         ),
+        (
+            "output.trust_field",
+            true,
+            &[
+                "status",
+                "work show",
+                "session show",
+                "evidence show",
+                "work admit",
+            ][..],
+            &[
+                "scoped_json_fields",
+                "provenance_is_not_acceptance",
+                "legacy_fields_preserved",
+            ][..],
+        ),
     ]
     .into_iter()
     .map(|(id, available, commands, limitations)| Capability {
@@ -685,21 +701,7 @@ pub fn run(args: &CapabilitiesArgs, json_output: bool) -> Result<()> {
         ));
     }
     let capabilities = catalog();
-    let mut unknown = Vec::new();
-    let mut unsupported = Vec::new();
-    for id in args.required.iter().collect::<BTreeSet<_>>() {
-        match capabilities.iter().find(|c| c.id == id) {
-            None => unknown.push(id.clone()),
-            Some(c) if !c.available => unsupported.push(id.clone()),
-            Some(_) => (),
-        }
-    }
-    if !unknown.is_empty() || !unsupported.is_empty() {
-        return Err(Error::CapabilityUnavailable {
-            unknown,
-            unsupported,
-        });
-    }
+    require_available(&capabilities, &args.required)?;
     // Deliberately no project path, environment lookup, database open or source scan.
     let value = json!({
         "ok": true,
@@ -747,4 +749,64 @@ pub fn run(args: &CapabilitiesArgs, json_output: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn require_available(capabilities: &[Capability], required: &[String]) -> Result<()> {
+    let mut unknown = Vec::new();
+    let mut unsupported = Vec::new();
+    for id in required.iter().collect::<BTreeSet<_>>() {
+        match capabilities.iter().find(|c| c.id == id) {
+            None => unknown.push(id.clone()),
+            Some(c) if !c.available => unsupported.push(id.clone()),
+            Some(_) => (),
+        }
+    }
+    if !unknown.is_empty() || !unsupported.is_empty() {
+        return Err(Error::CapabilityUnavailable {
+            unknown,
+            unsupported,
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trust_and_example_check_capabilities_are_both_negotiable() {
+        let capabilities = catalog();
+        let required = [
+            "definition.example_checks".to_owned(),
+            "output.trust_field".to_owned(),
+        ];
+        require_available(&capabilities, &required).unwrap();
+        for id in required {
+            assert_eq!(
+                capabilities.iter().filter(|c| c.id == id).count(),
+                1,
+                "each negotiable capability must occur exactly once: {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn trust_capability_missing_from_legacy_catalog_returns_capability_unavailable() {
+        let legacy = catalog()
+            .into_iter()
+            .filter(|c| c.id != "output.trust_field")
+            .collect::<Vec<_>>();
+        let error = require_available(&legacy, &["output.trust_field".into()]).unwrap_err();
+        match error {
+            Error::CapabilityUnavailable {
+                unknown,
+                unsupported,
+            } => {
+                assert_eq!(unknown, ["output.trust_field"]);
+                assert!(unsupported.is_empty());
+            }
+            other => panic!("expected CapabilityUnavailable, got {other:?}"),
+        }
+    }
 }

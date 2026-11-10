@@ -185,14 +185,6 @@ pub struct RecordCheckRequest {
     pub payload: CheckPayload,
 }
 
-// Evidence provenance is derived from stored producer events, never the evidence type name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EvidenceTrust {
-    Recorded,
-    Reported,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

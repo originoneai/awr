@@ -93,7 +93,9 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   Baselines can run before admission; governed acceptance and mutation runs require admission
   and the session's claim. Timeouts are recorded as unknown and their child processes are
   terminated. Unchecked acceptance criteria remain unmapped. Evidence registration reports
-  derived trust in CLI and existing MCP receipts. See [running checks](../reference/checks.md).
+  the shared trust vocabulary in CLI and MCP receipts and reads: generated evidence starts as
+  `recorded` and becomes `verified` after completion checks its report bytes.
+  See [running checks](../reference/checks.md).
 - Governed work in a Team: a snapshot may declare governance (`governance.json`, written by
   `PublishPrepOptions::governance`), the Team reuses the Core admission rules on its own facts, and
   `admission.decide` records decisions attributed to the verified caller (`planning.approve`, a
@@ -126,6 +128,11 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   execution admission, context completeness, delivery observation, completion validity), which Team operations carry
   it and which entries of the personal CLI and MCP server have no Team operation, with the reason; the report is checked
   against the protocol's own operation lists. Asking for such an entry is still refused as `Unsupported`.
+- Trust metadata in progress, session-label, evidence and admission JSON, with
+  the negotiable `output.trust_field` capability. Existing fields and entry text
+  remain available. Caller-supplied evidence types stay `reported` until a
+  completion byte check establishes `verified`; a type name never grants
+  `recorded`. See [Trust fields](../reference/trust.md).
 - A bounded, read-only observation entry in the Observer Team bridge (`POST /api/team/read`): every implemented Team
   query is reachable except the deferred full ops audit (`audit.history`, `audit.export`, `audit.count`); commands are
   never exposed, an arbitrary command or a full audit export cannot be requested. Each operation's selectors, paging and

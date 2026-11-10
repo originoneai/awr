@@ -522,6 +522,8 @@ pub fn run(root: &Path, command: &SessionCommand, json_output: bool) -> Result<(
             let mut value = db.metadata(db.project.project_revision);
             value["session"] = json!(session);
             value["checkpoint"] = json!(checkpoint);
+            value["session_label"] = json!({"agent_id":session.agent_id,"provider":session.provider,
+                "model":session.model,"is_caller_proof":false,"trust":Trust::Reported});
             value["inherited_checkpoint"] = json!(inherited);
             value["claims"] = json!(claims);
             value["resumed_successor"] = json!(successor);

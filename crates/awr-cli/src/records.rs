@@ -81,7 +81,7 @@ pub enum ArtifactCommand {
 
 fn evidence_brief(record: &EvidenceRecord) -> Value {
     let item = &record.item;
-    json!({"id":item.id,"external_key":item.external_key,"type":item.evidence_type,"level":item.level,"summary":short(&item.summary),"locator":item.locator,"sha256":item.sha256,"source_sha":item.source_sha,"command":item.command.as_deref().map(short),"scope":item.scope.iter().take(20).collect::<Vec<_>>(),"scope_total":item.scope.len(),"work_item_id":item.work_item_id,"branch_id":item.branch_id,"verified_at":item.verified_at,"source_ref":item.source_ref,"freshness":record.source.as_ref().map(|s|s.freshness),"revision":item.revision})
+    json!({"id":item.id,"external_key":item.external_key,"type":item.evidence_type,"level":item.level,"summary":short(&item.summary),"locator":item.locator,"sha256":item.sha256,"source_sha":item.source_sha,"command":item.command.as_deref().map(short),"scope":item.scope.iter().take(20).collect::<Vec<_>>(),"scope_total":item.scope.len(),"work_item_id":item.work_item_id,"branch_id":item.branch_id,"verified_at":item.verified_at,"source_ref":item.source_ref,"freshness":record.source.as_ref().map(|s|s.freshness),"revision":item.revision,"trust":record.trust})
 }
 /// Report how a stored locator is meant to be resolved.
 fn locator_scheme(locator: &str) -> &'static str {
@@ -189,11 +189,13 @@ pub fn evidence(root: &Path, command: &EvidenceCommand, json_output: bool) -> Re
             }
             let (item, event) = Runtime::attach(&mut db.store, project)?
                 .record_evidence(*expected_revision, draft)?;
+            let trust = db.store.evidence_trust(project, item.id)?;
             let mut value = db.metadata(event.project_revision);
             value["evidence"] = serde_json::to_value(&item)?;
+            value["evidence"]["trust"] = json!(trust);
             value["event_id"] = json!(event.id);
             value["validation_basis"] = json!("caller_supplied_bindings");
-            value["trust"] = json!(db.store.evidence_trust(project, item.id)?);
+            value["trust"] = json!(trust);
             print(
                 &value,
                 &format!(
@@ -221,7 +223,7 @@ pub fn evidence(root: &Path, command: &EvidenceCommand, json_output: bool) -> Re
                     .assess(source_sha.as_deref(), None, db.project.current_branch_id);
             let mut value = db.metadata(db.project.project_revision);
             value["evidence"] = evidence_brief(&record);
-            value["trust"] = json!(db.store.evidence_trust(project, record.item.id)?);
+            value["trust"] = json!(record.trust);
             value["locator_scheme"] = json!(locator_scheme(&record.item.locator));
             value["currency"] = json!(assessment.currency);
             value["missing_bindings"] = json!(assessment.missing_bindings);

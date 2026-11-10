@@ -158,14 +158,4 @@ impl Store {
         }
         self.record_evidence_with_checks(project, expected, draft, Some(events))
     }
-
-    pub fn evidence_trust(&self, project: Id, evidence: Id) -> Result<EvidenceTrust> {
-        self.evidence_by_id(project, evidence)?;
-        let produced: bool = self.conn.query_row("SELECT EXISTS(SELECT 1 FROM events WHERE project_id=?1 AND event_type='evidence.recorded' AND json_extract(payload_json,'$.evidence_id')=?2 AND json_array_length(json_extract(payload_json,'$.check_events'))>0)",params![project.to_string(),evidence.to_string()], |r|r.get(0)).map_err(db_error)?;
-        Ok(if produced {
-            EvidenceTrust::Recorded
-        } else {
-            EvidenceTrust::Reported
-        })
-    }
 }

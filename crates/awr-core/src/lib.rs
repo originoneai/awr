@@ -35,6 +35,8 @@ pub use work_view::*;
 mod content_review;
 mod mutation;
 mod query;
+mod trust;
+pub use trust::*;
 mod runtime;
 mod secrets;
 pub use content_review::*;

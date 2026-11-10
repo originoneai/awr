@@ -281,6 +281,57 @@ fn passing_acceptance_generates_registered_evidence_and_completes_without_manual
 }
 
 #[test]
+fn generated_check_evidence_trust_is_recorded_across_receipts_and_reads() {
+    let f = Fixture::new(1, false);
+    let generated = f.checked("acceptance", &[]);
+    let key = generated["evidence"]["external_key"].as_str().unwrap();
+    assert_eq!(generated["evidence"]["trust"], "recorded");
+    let shown = f.ok(&["evidence", "show", key]);
+    assert_eq!(shown["trust"], "recorded");
+    assert_eq!(shown["evidence"]["trust"], "recorded");
+    let work = f.ok(&["work", "show", "W"]);
+    let record = work["evidence"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["external_key"] == key)
+        .unwrap();
+    assert_eq!(record["trust"], "recorded");
+}
+
+#[test]
+fn completed_check_evidence_upgrades_to_verified_over_its_recorded_provenance() {
+    let f = Fixture::new(1, false);
+    let generated = f.checked("acceptance", &["--write-input", "completion.json"]);
+    let key = generated["evidence"]["external_key"].as_str().unwrap();
+    assert_eq!(generated["evidence"]["trust"], "recorded");
+    f.ok(&[
+        "work",
+        "complete",
+        "W",
+        "--session",
+        &f.session,
+        "--reason",
+        "The generated report passed byte verification",
+        "--input",
+        "completion.json",
+        "--expected-revision",
+        &f.revision(),
+    ]);
+    let shown = f.ok(&["evidence", "show", key]);
+    assert_eq!(shown["trust"], "verified");
+    assert_eq!(shown["evidence"]["trust"], "verified");
+    let work = f.ok(&["work", "show", "W"]);
+    let record = work["evidence"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["external_key"] == key)
+        .unwrap();
+    assert_eq!(record["trust"], "verified");
+}
+
+#[test]
 fn failed_acceptance_does_not_register_evidence_and_points_at_failed_logs() {
     let f = Fixture::new(2, true);
     f.mode("pass_once");
