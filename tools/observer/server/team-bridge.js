@@ -20,16 +20,16 @@ const INBOX_READ_OPS = new Set(['work.prepare', 'work.observe', 'work.recovery',
 
 /**
  * Bounded read-only observation adapter (AWR-OBS-001). Every implemented Team
- * query is reachable except the deferred full ops audit export
- * (audit.history/audit.export/audit.count); commands are never exposed. The
+ * query is reachable except deferred full ops audit and route setup discovery;
+ * commands are never exposed. The
  * selector, paging and budget rules mirror the authoritative upstream
  * WorkstreamQuery validation so bad requests fail here with an explainable
  * error; the upstream service reauthorizes the caller's own cookie session on
  * every forwarded read. Selector values are never echoed in errors.
  */
-// Deferred full ops audit (W13): the only upstream queries this adapter must
-// never expose. The drift guard test pins READ_OPS against the service list.
-const READ_DEFERRED_OPS = new Set(['audit.history', 'audit.export', 'audit.count']);
+// Full ops audit is deferred (W13). Route setup belongs to the Agent workflow,
+// not this observation surface. The drift guard pins this explicit boundary.
+const READ_DEFERRED_OPS = new Set(['audit.history', 'audit.export', 'audit.count', 'delivery.routes']);
 const READ_PROJECT_WIDE = new Set(['capabilities', 'workstreams.list', 'work.inbox']);
 const READ_WORK_LIST = new Set(['work.list', 'work.search', 'planning.outcome']);
 const READ_AUDIT = new Set(['audit.requests', 'audit.development']);

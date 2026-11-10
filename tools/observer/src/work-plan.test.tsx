@@ -439,6 +439,79 @@ describe('work detail requirements and source state', () => {
 });
 
 describe('work detail review outcomes', () => {
+  function reviewedSnapshot(workId: string, state: string, current: boolean | undefined) {
+    const response = demoWorkSnapshot(workId);
+    return {
+      ...response,
+      result: {
+        ...response.result,
+        data: {
+          ...response.result.data,
+          observation: {
+            ...response.result.data.observation,
+            progress: { ...CHECKPOINT, stale: true },
+            collaboration: { review: { id: `review-${workId}`, state, current_candidate: current } },
+          },
+        },
+      },
+    };
+  }
+
+  it('discovers the current review on normal navigation and separates it from the earlier Agent report', async () => {
+    const { fetchMock } = setupPlan({ snapshot: (workId) => reviewedSnapshot(workId, 'approved', true) });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('tab', { name: '成果' }));
+    expect(await screen.findByTestId('plan-review')).toBeTruthy();
+    expect(defaultVisibleText(screen.getByTestId('plan-review'))).not.toContain('artifact-digest-1');
+    const reads = fetchMock.mock.calls
+      .filter(([, init]) => String(init?.body ?? '').includes('"review.inspect"'))
+      .map(([, init]) => JSON.parse(String(init?.body)).query);
+    expect(reads).toEqual([{ protocol_version: 1, op: 'review.inspect', work_id: 'W1', review_round_id: 'review-W1' }]);
+    expect(screen.getByTestId('plan-status-W1').textContent).toContain('上次汇报：待评审');
+    expect(screen.getByTestId('plan-status-W1').textContent).toContain('复核：已批准');
+    expect(screen.getByTestId('plan-detail-status').textContent).toBe(screen.getByTestId('plan-status-W1').textContent);
+    expect(screen.getByTestId('plan-status-W1').textContent).not.toMatch(/已完成|已交付|已合并/);
+  });
+
+  it('keeps an explicitly selected historical round instead of replacing it with the discovered current round', async () => {
+    const { fetchMock } = setupPlan({
+      path: '/projects/demo?tab=plan&work=W1&review_round_id=earlier-review',
+      snapshot: (workId) => reviewedSnapshot(workId, 'approved', true),
+    });
+    await userEvent.setup().click(await screen.findByRole('tab', { name: '成果' }));
+    expect(await screen.findByTestId('plan-review')).toBeTruthy();
+    const reads = fetchMock.mock.calls
+      .filter(([, init]) => String(init?.body ?? '').includes('"review.inspect"'))
+      .map(([, init]) => JSON.parse(String(init?.body)).query);
+    expect(reads).toEqual([{ protocol_version: 1, op: 'review.inspect', work_id: 'W1', review_round_id: 'earlier-review' }]);
+    expect(screen.getByTestId('plan-historical-review').textContent).toContain('正在查看此前的复核');
+  });
+
+  it('discovers each work own round after normal navigation without carrying over the previous work round', async () => {
+    const { fetchMock, router } = setupPlan({ snapshot: (workId) => reviewedSnapshot(workId, 'approved', true) });
+    const reads = () => fetchMock.mock.calls
+      .filter(([, init]) => String(init?.body ?? '').includes('"review.inspect"'))
+      .map(([, init]) => JSON.parse(String(init?.body)).query);
+    await waitFor(() => expect(reads()).toHaveLength(1));
+    await act(async () => { await router.navigate('/projects/demo?tab=plan&work=W2'); });
+    await waitFor(() => expect(reads()).toHaveLength(2));
+    expect(reads().map((read) => [read.work_id, read.review_round_id])).toEqual([
+      ['W1', 'review-W1'], ['W2', 'review-W2'],
+    ]);
+  });
+
+  it.each([
+    ['open', true, '复核：进行中'],
+    ['rejected', true, '复核：已拒绝'],
+    ['approved', false, '此前成果的复核：已批准'],
+    ['approved', undefined, '复核：已批准（是否最新尚未确认）'],
+  ])('attributes %s review with candidate currentness %s without upgrading work completion', async (state, current, expected) => {
+    setupPlan({ snapshot: (workId) => reviewedSnapshot(workId, state, current) });
+    await waitFor(() => expect(screen.getByTestId('plan-status-W1').textContent).toContain(expected));
+    expect(screen.getByTestId('plan-status-W1').textContent).toContain('上次汇报：待评审');
+    expect(screen.getByTestId('plan-status-W1').textContent).not.toMatch(/已完成|已交付|已合并/);
+  });
+
   it('renders localized review decisions with exact metadata and no narrative', async () => {
     const user = userEvent.setup();
     setupPlan({ path: '/projects/demo?tab=plan&work=W1&review_round_id=round-1' });
@@ -448,9 +521,13 @@ describe('work detail review outcomes', () => {
     expect(within(decision).getByTestId('review-decision-code').textContent).toBe('批准');
     expect(decision.textContent).toContain('成员独立复核（模拟）');
     expect(decision.textContent).toContain('人工批准');
-    expect(review.textContent).toContain('author-agent-1');
-    expect(review.textContent).toContain('artifact-digest-1');
-    expect(review.textContent).toContain('bundle-hash-1');
+    expect(defaultVisibleText(review)).not.toContain('author-agent-1');
+    expect(defaultVisibleText(review)).not.toContain('artifact-digest-1');
+    expect(defaultVisibleText(review)).not.toContain('bundle-hash-1');
+    await user.click(within(review).getByRole('button', { name: '技术细节' }));
+    expect(within(review).getByText('author-agent-1')).toBeTruthy();
+    expect(within(review).getByText('artifact-digest-1')).toBeTruthy();
+    expect(within(review).getByText('bundle-hash-1')).toBeTruthy();
     expect(review.querySelector('[data-testid="review-narrative"]')).toBeNull();
     expect(review.textContent).toContain('尚未开放');
   });

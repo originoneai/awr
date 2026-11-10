@@ -328,7 +328,7 @@ fn value_sources(tool: &str, op: &str, schema: &Value) -> Value {
             "read_op":"delivery.routes",
             "pointers":{"template_id":"/data/items/*/template_id","template_version":"/data/items/*/template_version",
                 "source_connector_version":"/data/items/*/source_connector_version"},
-            "freshness":"Select one current template for this exact work; refresh after version or authority changes."
+            "freshness":"Select one current template for this exact work; refresh after version or authority changes. Registration may follow settled implementation or review before delivery effects; any selected candidate must match the template resource."
         }));
         sources.push(json!({"fields":["connector_id"],"source":"caller_stable_identifier",
             "rule":"Choose one new project-unique connector name for this task. Preserve it and request_id after an uncertain response; inspect delivery.neutral.outcome before retry."}));
@@ -1359,7 +1359,7 @@ mod tests {
             .description
             .unwrap();
         assert!(description.contains("keep registered mappings"));
-        assert!(description.contains("reuse only missing mappings before intake"));
+        assert!(description.contains("Reuse missing mappings before delivery effects"));
         assert!(description.contains("report-only work needs no route"));
     }
 

@@ -32,11 +32,11 @@ impl TaskRouteState {
                 json!({"op":"delivery.neutral.inspect","note":"Use the established operator administration path to repair the existing mapping; route reuse cannot replace it."}),
             ),
             Self::Entered => (
-                "This unmapped task has already entered the work lifecycle",
-                json!({"op":"work.prepare","note":"Continue the current workflow or request established operator administration; route reuse is only available before intake."}),
+                "This unmapped task has unsettled execution, delivery history or a closed outcome",
+                json!({"op":"work.prepare","note":"Inspect the original work and effects before changing delivery registration. Settle active execution normally; unresolved or historical delivery effects retain their established recovery path. Do not reset work or replay effects to obtain a route."}),
             ),
             Self::Missing if templates_available => (
-                "Before intake of unconfigured repository work",
+                "This task has no delivery mapping or unsettled execution or prior delivery effects",
                 json!({"op":"delivery.route.reuse","role":"supervisor","note":"Select one listed template and its exact versions with a fresh work.prepare header."}),
             ),
             Self::Missing if continuation => (
@@ -70,13 +70,23 @@ impl DeliverySyncStore {
                 JOIN awr_team.actors a ON a.tenant_id=c.tenant_id AND a.id=c.principal_actor_id
                 WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.work_id=$3 AND c.workstream_id=$4
                     AND c.enabled AND c.coordinator_epoch=$5 AND a.status='active'),
-            EXISTS(SELECT 1 FROM awr_team.claims WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND state='active') OR
-            EXISTS(SELECT 1 FROM awr_team.executions WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3) OR
-            EXISTS(SELECT 1 FROM awr_team.evidence WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3) OR
-            EXISTS(SELECT 1 FROM awr_team.delivery_selections WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3) OR
-            EXISTS(SELECT 1 FROM awr_team.review_rounds WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3) OR
+            EXISTS(SELECT 1 FROM awr_team.executions WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3
+                AND (state NOT IN ('succeeded','failed','cancelled')
+                    OR (settlement_policy_json IS NOT NULL AND NOT workspace_effects_settled)
+                    OR admission_mode='reference_write_v1')) OR
+            EXISTS(SELECT 1 FROM awr_team.resource_reservations
+                WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3 AND state='unknown') OR
+            EXISTS(SELECT 1 FROM awr_team.delivery_inspections i
+                JOIN awr_team.delivery_candidates c USING(tenant_id,project_id,binding_digest)
+                WHERE i.tenant_id=$1 AND i.project_id=$2 AND c.work_id=$3) OR
+            EXISTS(SELECT 1 FROM awr_team.delivery_integration_intents
+                WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3) OR
+            EXISTS(SELECT 1 FROM awr_team.delivery_source_publications
+                WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3) OR
+            EXISTS(SELECT 1 FROM awr_team.completion_receipts
+                WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3) OR
             EXISTS(SELECT 1 FROM awr_team.work_runtime WHERE tenant_id=$1 AND project_id=$2 AND work_id=$3
-                AND (recovery_blocked OR state NOT IN ('ready','planned') OR selected_completion_id IS NOT NULL))",
+                AND (recovery_blocked OR state IN ('completed','cancelled','archived') OR selected_completion_id IS NOT NULL))",
             &[&tenant,&project,&work,&workstream,&epoch]).await?;
         if row.get::<_, bool>(1) {
             return Ok(TaskRouteState::Registered);
@@ -84,17 +94,10 @@ impl DeliverySyncStore {
         if row.get::<_, bool>(0) {
             return Ok(TaskRouteState::RequiresAdministration);
         }
-        let task = crate::responsibility::current(tx, tenant, project, work).await?;
-        Ok(
-            if task.owner.is_some()
-                || task.current_executor.is_some()
-                || task.pending.is_some()
-                || row.get::<_, bool>(2)
-            {
-                TaskRouteState::Entered
-            } else {
-                TaskRouteState::Missing
-            },
-        )
+        Ok(if row.get::<_, bool>(2) {
+            TaskRouteState::Entered
+        } else {
+            TaskRouteState::Missing
+        })
     }
 }
