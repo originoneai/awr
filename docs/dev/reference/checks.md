@@ -64,6 +64,8 @@ When all required bound checks pass during acceptance, AWR imports a completion 
 registered artifact and registers `check_run` evidence at `locally_verified`. Its `recorded`
 trust comes from the producing check events. Manually added evidence remains `reported`,
 including evidence whose type is `check_run`; `evidence show` reports this distinction.
+Evidence registration returns the same derived trust through CLI and the existing
+`awr_evidence_record` MCP tool.
 This trust describes who recorded execution, not independent review or business acceptance.
 
 The JSON response includes `completion_input` and `unmapped`. Every acceptance criterion

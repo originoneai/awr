@@ -331,19 +331,21 @@ class Parity(unittest.TestCase):
             self.assertIsInstance(value["event"].pop("created_at"), int)
         self.assertEqual(cli, mcp)
 
-        draft = {"external_key": "E", "work_item_key": "W", "evidence_type": "report", "level": "implemented",
+        draft = {"external_key": "E", "work_item_key": "W", "evidence_type": "check_run", "level": "implemented",
                  "summary": "Evidence summary " * 24, "locator": "report.json", "command": "Documented command " * 24,
                  "scope": [f"scope-{i}" for i in range(24)], "branch_id": None}
         (self.root / "evidence.json").write_text(json.dumps(draft))
         expected = self.revision()
         snapshot = self.snapshot()
         cli = self.cli(["evidence", "add", "--input", "evidence.json", "--expected-revision", expected])
+        self.assertEqual(cli["trust"], "reported")
         self.assertEqual(cli["evidence"]["summary"], draft["summary"])
         self.assertEqual(cli["evidence"]["scope"], draft["scope"])
         self.restore(snapshot)
         args = {**draft, "expected_revision": expected, "work": draft["work_item_key"], "branch": "main"}
         del args["work_item_key"], args["branch_id"]
         mcp = self.tool("awr_evidence_record", args)
+        self.assertEqual(mcp["trust"], "reported")
         for value in [cli, mcp]:
             self.assertEqual(len(value.pop("event_id")), 26)
             self.assertEqual(len(value["evidence"].pop("id")), 26)

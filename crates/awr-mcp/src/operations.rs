@@ -777,7 +777,8 @@ fn evidence(root: &Path, args: EvidenceArgs) -> Result<CallToolResult> {
             verified_at: args.verified_at,
         },
     )?;
+    let trust = store.evidence_trust(project.id, evidence.id)?;
     Ok(CallToolResult::structured(
-        json!({"ok":true,"project_revision":event.project_revision,"evidence":evidence,"event_id":event.id,"validation_basis":"caller_supplied_bindings","freshness_basis":"source_refresh","source_refresh_performed":true}),
+        json!({"ok":true,"project_revision":event.project_revision,"evidence":evidence,"event_id":event.id,"trust":trust,"validation_basis":"caller_supplied_bindings","freshness_basis":"source_refresh","source_refresh_performed":true}),
     ))
 }

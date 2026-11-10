@@ -32,6 +32,12 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   `awr_team_input_contract` still reads the exact input of one operation from the full catalog, and
   every call is still checked against the full schema. The default and `?catalog=full` are
   unchanged; any other value, or the parameter given twice, is refused when listing.
+- A [documentation style guide](../STYLE.md) and CI checker for negative-term density,
+  opening paragraphs, limitation sections, and relative links. The baseline preserves
+  existing pages' four recorded metrics; updates accept equal or lower values and new
+  pages use absolute limits. Each page can use one limitation section; larger recorded
+  counts remain the ceiling. Run `python3 scripts/check_docs_style.py --self-test`
+  for synthetic rule checks and mutation tests.
 - One observation freshness and coverage contract for the Observer Team reads (AWR-OBS-002): every
   read (`POST /api/team/read`, `/api/team/inbox-detail`, `GET /api/team/inbox`, `GET /api/team/work`)
   carries a `freshness` envelope that presents the report-received clock, the authoritative
@@ -73,7 +79,8 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   and generates registered reports and completion input after passing acceptance checks.
   Baselines can run before admission; governed acceptance and mutation runs require admission
   and the session's claim. Timeouts are recorded as unknown and their child processes are
-  terminated. Unchecked acceptance criteria remain unmapped. See [running checks](../reference/checks.md).
+  terminated. Unchecked acceptance criteria remain unmapped. Evidence registration reports
+  derived trust in CLI and existing MCP receipts. See [running checks](../reference/checks.md).
 - Governed work in a Team: a snapshot may declare governance (`governance.json`, written by
   `PublishPrepOptions::governance`), the Team reuses the Core admission rules on its own facts, and
   `admission.decide` records decisions attributed to the verified caller (`planning.approve`, a
