@@ -685,6 +685,17 @@ fn catalog() -> Vec<Capability> {
             ][..],
         ),
         (
+            "mcp.work_check",
+            true,
+            &["work check", "work prepare", "work complete"][..],
+            &[
+                "second_level_write_tool",
+                "session_and_revision_required",
+                "shared_writes_require_request_id",
+                "completion_input_returned_inline",
+            ][..],
+        ),
+        (
             "verify.commit",
             true,
             &["verify", "verify install-hook"][..],

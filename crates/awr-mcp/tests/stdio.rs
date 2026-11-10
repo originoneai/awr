@@ -13,6 +13,291 @@ const CRITERION: &str = "Deliver the reviewed analysis";
 const WORK: &str = "work_items:\n- id: W\n  title: Prepare customer analysis\n  status: ready\n  owner: business-coordinator\n  next_action: Draft the analysis\n  depends_on: [D]\n  acceptance: [Deliver the reviewed analysis]\n  verification:\n    evidence_level: none\n  evidence: []\n- id: D\n  title: Required input\n  status: completed\n- id: NEXT\n  title: Prepare follow-up\n  status: ready\n  next_action: Review next steps\n  acceptance: [Follow-up is available]\n";
 const MANIFEST: &str = "[project]\nname='MCP fixture'\nexternal_key='mcp-fixture'\n[[sources]]\ndomain='ledger'\nrole='primary'\npath='work.yaml'\nadapter='yaml-ledger-v1'\n[[sources]]\ndomain='rules'\nrole='primary'\npath='rules.md'\nadapter='markdown-rules-v1'\n[[sources]]\ndomain='goal'\nrole='primary'\npath='goal.md'\nadapter='markdown-heading-v1'\n[sources.options]\nstatus='active'\n[[sources]]\ndomain='decisions'\nrole='supporting'\npath='decisions'\nadapter='markdown-directory-v1'\n";
 
+fn mcp_check_fixture() -> Fixture {
+    let f = Fixture::new();
+    fs::write(
+        f.root.join("oracle.txt"),
+        "Inspect the installed Git version\n",
+    )
+    .unwrap();
+    fs::write(f.root.join("work.yaml"), serde_json::to_vec_pretty(&json!({
+        "work_items":[{"id":"W","title":"Check the local toolchain","status":"in_progress","next_action":"Inspect the toolchain",
+            "acceptance":[CRITERION],"definition":{"version":1,"purpose":"implementation","tier":"required",
+            "examples":[{"id":"toolchain","criterion":CRITERION,"kind":"positive",
+                "given":"an installed toolchain","when":"the version is requested","then":"it is available",
+                "check":{"run":["git","--version"],"files":["oracle.txt"]}}]}}]
+    })).unwrap()).unwrap();
+    f.reindex();
+    f
+}
+
+#[tokio::test]
+async fn mcp_check_is_a_second_level_write_and_flat_calls_remain_available() {
+    let f = mcp_check_fixture();
+    let session = f.session("W", true, None).session.id;
+    let client = f.client().await;
+    let catalog = client.list_all_tools().await.unwrap();
+    assert_eq!(catalog.len(), 8, "a check must not add a first-level tool");
+    assert!(catalog.iter().all(|t| t.name != "awr_work_check"));
+    assert!(awr_mcp::TOOL_NAMES.contains(&"awr_work_check"));
+    let manifest = success(call(&client, "awr_work", json!({})).await);
+    let check = manifest["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "awr_work_check")
+        .expect("work manifest must expose checks");
+    assert_eq!(check["read_only"], false);
+    assert!(check["description"].as_str().unwrap().len() <= 200);
+    let properties = &check["input_schema"]["properties"];
+    assert!(properties["request_id"].is_object());
+    assert!(properties.get("status").is_none());
+    let transition = awr_mcp::tools()
+        .into_iter()
+        .find(|t| t.name == "awr_work_transition")
+        .unwrap();
+    assert!(
+        transition.input_schema["properties"]["completion"]["properties"]["check_waiver"]
+            .is_object()
+    );
+    for domain in [false, true] {
+        let arguments = json!({"work":"W","session":session,"phase":"baseline","expected_revision":f.rev(),
+            "examples":["toolchain"],"timeout_seconds":10,"request_id":format!("check-{domain}")});
+        let result = if domain {
+            call(
+                &client,
+                "awr_work",
+                json!({"child_tool":"awr_work_check","arguments":arguments}),
+            )
+            .await
+        } else {
+            call(&client, "awr_work_check", arguments).await
+        };
+        let checked = success(result);
+        assert_eq!(checked["results"][0]["outcome"], "passed");
+        assert_eq!(
+            checked["met"], false,
+            "a passing baseline is recorded, not relabeled"
+        );
+        assert_eq!(checked["operation"]["status"], "finished");
+    }
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn mcp_check_rejects_status_bad_selection_stale_revision_and_require_met() {
+    let f = mcp_check_fixture();
+    let session = f.session("W", true, None).session.id;
+    let client = f.client().await;
+    for extra in [
+        json!({"status":true}),
+        json!({"examples":["missing"]}),
+        json!({"timeout_seconds":0}),
+    ] {
+        let before = f.logical_state();
+        let mut args =
+            json!({"work":"W","session":session,"phase":"baseline","expected_revision":f.rev()});
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        error(call(&client, "awr_work_check", args).await, "InvalidInput");
+        assert_eq!(f.logical_state(), before);
+    }
+    let before = f.logical_state();
+    error(
+        call(
+            &client,
+            "awr_work_check",
+            json!({"work":"W","session":session,"phase":"baseline",
+        "expected_revision":f.rev()-1}),
+        )
+        .await,
+        "RevisionConflict",
+    );
+    assert_eq!(f.logical_state(), before);
+    let failed = call(
+        &client,
+        "awr_work_check",
+        json!({"work":"W","session":session,"phase":"baseline",
+        "expected_revision":f.rev(),"require_met":true}),
+    )
+    .await;
+    assert_eq!(failed.is_error, Some(true));
+    let checked = body(&failed);
+    assert_eq!(checked["error"]["code"], "RuleViolation");
+    assert_eq!(checked["results"][0]["outcome"], "passed");
+    assert_eq!(checked["met"], false);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn mcp_check_obligations_and_work_summary_are_readonly() {
+    let f = mcp_check_fixture();
+    fs::write(
+        f.root.join(".awr/gates.toml"),
+        "version=1\n[checks]\nmode='enforce'\nscope='all'\n",
+    )
+    .unwrap();
+    let client = f.client().await;
+    let before = f.logical_state();
+    let work = success(
+        call(
+            &client,
+            "awr_work_get",
+            json!({"work":"W","source_sha":SHA}),
+        )
+        .await,
+    );
+    assert!(
+        work["checks"]["unmet"]
+            .as_array()
+            .is_some_and(|v| !v.is_empty()),
+        "{work}"
+    );
+    let prepared = success(
+        call(
+            &client,
+            "awr_work_prepare",
+            json!({"work":"W","source_sha":SHA}),
+        )
+        .await,
+    );
+    assert_eq!(prepared["check_obligations"], work["checks"]["obligations"]);
+    assert_eq!(f.logical_state(), before);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn mcp_check_recovers_a_bound_check_receipt_without_rerunning() {
+    let f = mcp_check_fixture();
+    let session = f.session("W", true, None).session.id;
+    let (mut store, project) = f.store();
+    let operation = store
+        .begin_mcp_operation(
+            project.id,
+            project.project_revision,
+            "stdio",
+            "lost-check",
+            "awr_work_check",
+            &"a".repeat(64),
+        )
+        .unwrap();
+    awr_store::with_mcp_operation(project.id, operation.id, || {
+        awr_runtime::run_check(
+            &mut store,
+            &f.root,
+            &awr_runtime::RunCheckRequest {
+                work: "W".into(),
+                session,
+                phase: CheckPhase::Baseline,
+                examples: vec![],
+                timeout_seconds: None,
+                expected_revision: operation.started_revision,
+            },
+        )
+    })
+    .unwrap();
+    drop(store);
+    let client = f.client().await;
+    let recovered = success(
+        call(
+            &client,
+            "awr_operation_recover",
+            json!({"request_id":"lost-check","expected_revision":f.rev()}),
+        )
+        .await,
+    );
+    assert_eq!(recovered["write_outcome"], "committed");
+    assert_eq!(recovered["recovered"], true);
+    let (store, project) = f.store();
+    assert_eq!(store.check_events(project.id, "W", None).unwrap().len(), 1);
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn mcp_check_wait_requires_a_reply_before_execution() {
+    let f = mcp_check_fixture();
+    let client = f.client().await;
+    let started = success(call(&client, "awr_session_start", json!({"work":"W","conversation":"check-wait",
+        "agent":"checker","provider":"fixture","model":"test","claim":true,"expected_revision":f.rev()})).await);
+    let session = started["session"]["id"].clone();
+    let wait = success(call(&client, "awr_session_wait", json!({"session":session,
+        "expected_revision":f.rev(),"question":"Proceed with the local check?","context_hash":"a".repeat(64),
+        "digest":"Waiting before running checks","next_action":"Record the reply"})).await);
+    let before = f.logical_state();
+    error(
+        call(
+            &client,
+            "awr_work_check",
+            json!({"work":"W","session":session,
+        "phase":"baseline","expected_revision":f.rev()}),
+        )
+        .await,
+        "InvalidTransition",
+    );
+    assert_eq!(f.logical_state(), before);
+    success(
+        call(
+            &client,
+            "awr_session_reply",
+            json!({"wait":wait["wait"]["id"],
+        "expected_revision":f.rev(),"reply":"Proceed with the local check"}),
+        )
+        .await,
+    );
+    let checked = success(
+        call(
+            &client,
+            "awr_work_check",
+            json!({"work":"W","session":session,
+        "phase":"baseline","expected_revision":f.rev()}),
+        )
+        .await,
+    );
+    assert_eq!(checked["results"][0]["outcome"], "passed");
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn mcp_check_completion_requires_checks_or_a_policy_scoped_small_work_waiver() {
+    let f = mcp_check_fixture();
+    let path = f.root.join("work.yaml");
+    let mut work: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    work["work_items"][0]["definition"]["size"] = json!("small");
+    fs::write(path, serde_json::to_vec(&work).unwrap()).unwrap();
+    f.reindex();
+    fs::write(
+        f.root.join(".awr/gates.toml"),
+        "version=1\n[checks]\nmode='enforce'\nscope='all'\nsmall_work='reason'\n",
+    )
+    .unwrap();
+    let session = f.session("W", true, None).session.id;
+    let client = f.client().await;
+    success(
+        call(
+            &client,
+            "awr_evidence_record",
+            record_report(&f, "W", CRITERION, "waiver-report"),
+        )
+        .await,
+    );
+    let mut args = json!({"work":"W","session":session,"action":"complete","reason":"Reviewed the small change",
+        "expected_revision":f.rev(),"completion":{"version":1,"source_sha":SHA,
+            "acceptance":[{"criterion":CRITERION,"evidence":["waiver-report"]}]}});
+    error(
+        call(&client, "awr_work_transition", args.clone()).await,
+        "EvidenceMissing",
+    );
+    args["completion"]["check_waiver"] = json!("Reviewed this bounded toolchain metadata change.");
+    let completed = success(call(&client, "awr_work_transition", args).await);
+    assert_eq!(completed["event"]["event_type"], "work.completed");
+    assert_eq!(
+        completed["event"]["payload"]["work_action"]["completion"]["check_waiver"],
+        "Reviewed this bounded toolchain metadata change."
+    );
+    client.cancel().await.unwrap();
+}
+
 fn quickstart_installation(page: &str) -> bool {
     let page = page.replace("\r\n", "\n");
     let Some(step) = page.split("### 3. ").nth(1) else {

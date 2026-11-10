@@ -4,7 +4,11 @@
 
 ## Use it
 
-基础版本 0.3.3：原有八个工作/上下文工具，加十二个会话/接续工具；stdio 共 20 个，共享 HTTP 加项目目录后为 21 个。当前工具清单见[共享 MCP 服务](mcp-service.md)。CLI 提供完整管理入口。
+The default stdio catalog exposes eight domains. Their second-level manifests
+contain 39 Personal tools, including `awr_work_check`; flat names remain callable.
+Shared HTTP adds `awr_projects_list` for project discovery. Optional Team tools
+have their own catalog. See the [shared MCP service](mcp-service.md) for transport
+configuration. CLI provides the complete project management interface.
 
 ### 动作映射
 
@@ -17,6 +21,9 @@ CLI 示例统一以 `awr --project /absolute/project --json` 为前缀。表中�
 | `awr_project_status` | `status [--branch NAME_OR_ID] [--view action/full/summary]` | 默认 action：当前续接、可领取、等待、实际阻塞及历史汇总；旧完整结构显式传 full；[详细语义与兼容说明](daily-work.md) |
 | `awr_work_ready` | `ready [--limit N] [--branch NAME_OR_ID]` | `limit` 默认 10，范围 1..100；就绪项、诊断、认领与截断提示 |
 | `awr_work_get` | `work show WORK [--branch NAME_OR_ID] [--source-sha SHA]` | `work`、`branch`、`source_sha`；任务、验收、依赖、决策、证据及来源 |
+| `awr_work_prepare` | `work prepare WORK [--session SESSION] [--budget N]` | Read readiness, required context and policy-scoped `check_obligations` with runnable commands. |
+| `awr_work_check` | `work check WORK --session SESSION --phase baseline/acceptance/mutation --expected-revision R` | Write check observations; `examples` maps repeated `--example`, `timeout_seconds` maps `--timeout`, and `require_met` maps `--require-met`. Returns `results`, `met` and inline `completion_input`. |
+| `awr_completion_prepare` | `work prepare-completion WORK --report FILE --evidence-key KEY --source-sha SHA --level LEVEL` | Read report coverage and the same policy-scoped `checks` summary as work inspection. |
 | `awr_context_compile`，无 `branch` | `context compile --work WORK [--session SESSION] [--detached]` | L1、完整性、缺口、来源、预算和 Context hash |
 | `awr_context_compile`，显式 `branch` | `branch context NAME_OR_ID --work WORK [--session SESSION] [--detached]` | 同一命名分支自 fork 起的增量；保持默认分支 |
 | `awr_work_transition` | `work progress/block/unblock/cancel/reopen WORK --session SESSION --reason TEXT --expected-revision R` | `action` 选择动作，`next_action` / `summary` / `blocker` 对应同名连字符参数；返回提案、源写入结果和事件回执 |
@@ -42,6 +49,30 @@ CLI 示例统一以 `awr --project /absolute/project --json` 为前缀。表中�
 | CLI | 项目管理及可刷新投影的读取 |
 | MCP | 来源验证后的只读查询、显式写入 |
 | 回执 | 真实版本、来源与恢复入口 |
+
+### Example checks
+
+Discover `awr_work_check` by calling `awr_work` with empty arguments, then call
+the child through that domain or its flat name. The tool runs the same runtime
+checks as CLI and appends `work.check` events. Baseline runs precede governed
+admission; acceptance and mutation use the session's current admission and claim.
+Successful acceptance can register a report and evidence and return
+`completion_input`, ready for `awr_work_transition` with `action=complete`.
+That completion object also accepts the policy-scoped `check_waiver` for small work.
+`awr_work_get` exposes `checks` when the project's check policy is active.
+
+`request_id` enables durable replay and outcome inspection; shared HTTP requires
+it. A pending user wait must be resolved before starting a check. `require_met`
+returns a structured error alongside the recorded results when a phase expectation
+is missed. Default calls successfully record failed outcomes. Obligations are read
+through `awr_work_prepare`; CLI's `--status` and `--write-input` are file-oriented
+conveniences, while MCP returns the completion object inline.
+
+Negotiate the prerequisites with:
+
+```sh
+awr capabilities --require definition.example_checks --require gates.checks --require mcp.work_check
+```
 
 ### 记录输入与回执
 
@@ -189,6 +220,10 @@ cargo test -p awr-mcp --test shared --locked
 
 HTTP 集成覆盖多客户端、多项目、会话、等待、重复请求、重启和待恢复结果；官方 Rust MCP SDK 验证发现与调用。两项 AWR-EVO-012 对相同事实核对结论、诊断和五层独立性。
 
+Fourteen CLI parity cases exercise fourteen tool contracts, including the complete
+baseline → admission → acceptance → completion path and a deliberate `unmet`
+mismatch. The platform gate validates both registered counts.
+
 ### 五层结果语义与入口不混用（AWR-EVO-010）
 
 本段固定五层结果语义和协商边界，沿用既有工作状态机。核对矩阵：
@@ -261,7 +296,7 @@ python3 scripts/evolution/verify_evo_010_semantic_contract.py
 - MCP 查询将快照变化留在内存；全部持久表保持原样。
 - `--` 后的 --json 及 --field=--json 是字面值，保持当前输出模式。
 - 外层与领域层上限同时生效，取适用于本次输入的全部约束。
-- CLI 对照范围为既有十一项；全部新增工具逐项对照需另行扩充，查询授权仍由独立反例验证。
+- CLI 对照范围为十四项、十四个工具合同；其余工具的逐项对照需另行扩充，查询授权仍由独立反例验证。
 - component_only 由 embedding_host 持有唯一工作状态；AWR 创建宿主 Work/Run/owner 或第二工作状态属于模式范围之外。
 
 ## Code and tests

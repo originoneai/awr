@@ -21,6 +21,13 @@ pub(crate) const NAMES: [&str; 7] = [
     "awr_session_claim",
 ];
 
+pub(crate) fn requires_resolved_wait(name: &str) -> bool {
+    matches!(
+        name,
+        "awr_work_transition" | "awr_work_check" | "awr_session_resume"
+    )
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Start {

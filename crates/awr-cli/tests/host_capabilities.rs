@@ -39,6 +39,37 @@ impl Drop for Host {
 }
 
 #[test]
+fn check_capabilities_negotiate_together_and_unknown_checks_are_unavailable() {
+    let host = Host::new();
+    let result = host.ok(&[
+        "--json",
+        "capabilities",
+        "--require",
+        "definition.example_checks",
+        "--require",
+        "gates.checks",
+        "--require",
+        "mcp.work_check",
+    ]);
+    assert!(
+        result["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == "mcp.work_check" && c["available"] == true)
+    );
+    let refused = host.run(&["--json", "capabilities", "--require", "mcp.unknown_check"]);
+    assert_eq!(refused.status.code(), Some(1));
+    let error: Value = serde_json::from_slice(&refused.stderr).unwrap();
+    assert_eq!(error["code"], "CapabilityUnavailable");
+    assert_eq!(
+        error["details"]["unknown"],
+        serde_json::json!(["mcp.unknown_check"])
+    );
+    assert_eq!(fs::read_dir(&host.0).unwrap().count(), 0);
+}
+
+#[test]
 fn trust_capability_is_negotiable_without_a_project() {
     let host = Host::new();
     let result = host.ok(&["--json", "capabilities", "--require", "output.trust_field"]);

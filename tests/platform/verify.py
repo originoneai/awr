@@ -26,8 +26,8 @@ def require(condition, message):
 
 
 def validate_parity(data):
-    require(data['passed'] and data['tests_run'] == 13 and len(data['tools_exercised']) == 11,
-            'CLI/MCP parity did not execute all thirteen tests and eleven tool contracts')
+    require(data['passed'] and data['tests_run'] == 14 and len(data['tools_exercised']) == 14,
+            'CLI/MCP parity did not execute all fourteen tests and fourteen tool contracts')
 
 
 def digest(path):
