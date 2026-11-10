@@ -775,6 +775,20 @@ impl SourceStore {
         req: &PlanningDraftRequest,
     ) -> PgResult<Value> {
         require_request_id(&req.request_id)?;
+        // Refuse a draft request that cannot name its candidate before any receipt is reserved.
+        match req.mode.as_str() {
+            "create" => {}
+            "edit" => {
+                if req
+                    .candidate_id
+                    .as_deref()
+                    .is_none_or(|id| id.trim().is_empty())
+                {
+                    return Err(PgError::planning_draft_candidate_required());
+                }
+            }
+            _ => return Err(PgError::planning_draft_mode_invalid()),
+        }
         self.with_planning_command_lock(
             tenant_id,
             project_id,

@@ -248,6 +248,76 @@ async fn planning_scope_rejection_explains_bounds_and_allows_corrected_retry() {
 }
 
 #[tokio::test]
+async fn planning_draft_edit_without_a_candidate_explains_how_to_start_a_draft() {
+    let (_g, admin, _db, store) = setup().await;
+    admin.batch_execute(
+        "UPDATE awr_team.project_memberships SET role='maintainer', membership_version=membership_version+1 WHERE actor_id='agent';
+         UPDATE awr_team.workstream_grants SET can_write=true, grant_version=grant_version+1 WHERE client_id='cli-a';"
+    ).await.unwrap();
+    let server = start(store).await;
+    let client = connect(&server, A).await;
+    // A supervisor changing existing work picked mode edit; mode is the candidate mode, so the
+    // request has no candidate to edit. The refusal says what to do instead.
+    let input = json!({
+        "protocol_version":1,"request_id":"edit-without-candidate","mode":"edit",
+        "changes":[{"op":"edit_fields","before":draft("QUEUE-CHANGE"),"after":draft("QUEUE-CHANGE")}],
+        "allowed_spec_roots":["specs"],"project_goal_keys":["delivery"]
+    });
+    let denied = call(&client, "awr_team_planning_draft", input.clone(), true).await;
+    assert_eq!(denied["code"], "InvalidInput");
+    assert_eq!(denied["invalid_field"], "/candidate_id");
+    assert_eq!(denied["constraint"], "required_when_editing_a_draft");
+    assert_eq!(denied["request_reserved"], false);
+    let guidance = denied["next_step"].as_str().unwrap();
+    assert!(guidance.contains("mode create") && guidance.contains("before"));
+    assert!(guidance.contains("candidate_id"));
+    let response = http()
+        .post(format!("{}/one/planning/draft", server.url))
+        .bearer_auth(A)
+        .json(&input)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(response.json::<Value>().await.unwrap(), denied);
+    let mut blank = input.clone();
+    blank["candidate_id"] = json!("   ");
+    let blank = call(&client, "awr_team_planning_draft", blank, true).await;
+    assert_eq!(blank["constraint"], "required_when_editing_a_draft");
+    let mut wrong = input.clone();
+    wrong["mode"] = json!("update");
+    let wrong = call(&client, "awr_team_planning_draft", wrong, true).await;
+    assert_eq!(wrong["invalid_field"], "/mode");
+    assert_eq!(wrong["constraint"], "create_or_edit");
+    assert_eq!(wrong["request_reserved"], false);
+    assert!(
+        wrong["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("changes[].op")
+    );
+    let count: i64 = admin.query_one("SELECT count(*) FROM awr_team.planning_command_receipts WHERE request_id='edit-without-candidate'", &[]).await.unwrap().get(0);
+    assert_eq!(
+        count, 0,
+        "an edit without a candidate must not reserve a command"
+    );
+    let count: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.planning_candidates", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 0, "an edit without a candidate must not create one");
+
+    // The unused request id starts the draft with mode create.
+    let mut start = input;
+    start["mode"] = json!("create");
+    start["changes"] = json!([{"op":"create_task","after":draft("QUEUE-CHANGE")}]);
+    let created = call(&client, "awr_team_planning_draft", start, false).await;
+    assert!(created["result"]["candidate_id"].is_string());
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn planning_input_correction_and_reserved_outcome_have_transport_parity() {
     let (_g, admin, _db, store) = setup().await;
     admin.batch_execute(

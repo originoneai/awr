@@ -182,6 +182,14 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Fixed
 
+- `awr_team_planning_draft` in `edit` mode without a `candidate_id`, or with another mode, is now
+  refused before any command is reserved or candidate created: `InvalidInput` at `/candidate_id`
+  (constraint `required_when_editing_a_draft`) or at `/mode` (`create_or_edit`), with the next step.
+  `edit` changes an existing draft candidate; to start a draft, including a change to existing
+  work, use `create` with the changes (each one carries the exact prior definition in `before`).
+  The tool description and schema say what `mode` means. Before, such a request was answered with
+  the generic "query fields or bounds are invalid" text, and a supervisor that picked `edit` for
+  existing work could not recover (AWR-TFQ-020).
 - The next-action guidance after a repository target moved no longer tells the developer to
   update against the current target, or to rebuild, "in a new admitted execution"
   (AWR-TF-014AN). It appeared in the integration inspection of a rejected integration, in the work
