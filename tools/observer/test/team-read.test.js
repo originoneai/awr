@@ -3,7 +3,7 @@
 /**
  * AWR-OBS-001 read adapter: one bounded, authorized, read-only entry for the
  * observation workspace. Every implemented Team query is exposed except the
- * deferred full ops audit (audit.history/audit.export/audit.count); commands
+ * deferred full ops audit and Agent-side route setup discovery; commands
  * are never forwarded. Selectors, sizes and the response envelope are checked
  * per op; the upstream service reauthorizes the caller's own cookie session.
  */
@@ -87,9 +87,8 @@ const ENVELOPE = {
   coordinator_epoch: 'epoch-1',
 };
 
-// One minimal valid selector set per registered read op. audit.history,
-// audit.export and audit.count are deliberately absent (deferred full ops
-// audit); no command op is present.
+// One minimal valid selector set per registered read op. Explicitly deferred
+// audit and Agent route setup queries are absent; no command op is present.
 const VALID_QUERIES = {
   'capabilities': {},
   'workstreams.list': { limit: 10 },
@@ -284,13 +283,13 @@ test('flat workstream reads preserve upstream session, project and cursor denial
   }
 });
 
-test('read adapter rejects commands, the deferred full ops audit and unknown ops without forwarding', async () => {
+test('read adapter rejects commands, deferred queries and unknown ops without forwarding', async () => {
   let calls = 0;
   const upstream = await startMockUpstream((_request, response) => { calls++; response.end('{}'); });
   const bridge = await startLiveBridge(upstream.base);
   try {
     for (const op of ['claim.acquire', 'work.complete', 'delivery.adopt', 'session.start',
-      'audit.history', 'audit.export', 'audit.count', 'work.drop', '']) {
+      ...READ_DEFERRED_OPS, 'work.drop', '']) {
       const read = await req(bridge.base, 'POST', '/api/team/read',
         { body: { project: 'demo', query: { protocol_version: 1, op } } });
       assert.equal(read.json.ok, false, op);
@@ -483,7 +482,7 @@ test('read adapter registry stays in sync with the service query list (drift gua
   assert.ok(match, 'QUERIES list not found in workstream_read.rs');
   const serviceOps = [...match[1].matchAll(/"([a-z_.]+)"/g)].map((m) => m[1]);
   assert.ok(serviceOps.length > 30, `expected the full service query list, got ${serviceOps.length}`);
-  assert.deepEqual([...READ_DEFERRED_OPS].sort(), ['audit.count', 'audit.export', 'audit.history']);
+  assert.deepEqual([...READ_DEFERRED_OPS].sort(), ['audit.count', 'audit.export', 'audit.history', 'delivery.routes']);
   for (const op of serviceOps) {
     assert.ok(READ_OPS.has(op) || READ_DEFERRED_OPS.has(op),
       `service query ${op} is neither exposed by the read adapter nor explicitly deferred`);

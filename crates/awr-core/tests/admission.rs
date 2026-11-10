@@ -222,6 +222,7 @@ fn report(state: &'static str, gaps: &[&'static str], intent_ok: bool) -> Defini
             })
             .collect(),
         notes: vec![],
+        examples: vec![],
         criterion_tiers: vec![],
         basis: "test",
     }
@@ -581,11 +582,13 @@ fn every_store_computes_the_same_binding_and_a_change_in_any_part_shows() {
     // The reviewed examples are bound as a set of their own beside the definition that holds them.
     let mut reviewed = definition.clone();
     reviewed.examples.push(Example {
+        id: None,
         criterion: "Saving failure keeps the user's input".into(),
         kind: ExampleKind::Positive,
         given: "the storage is read-only".into(),
         when: "the user saves".into(),
         then: "the draft stays in the editor".into(),
+        check: None,
     });
     assert_eq!(
         bound.changed_from(&admission_binding(A, &policy, Some(&reviewed)).unwrap()),

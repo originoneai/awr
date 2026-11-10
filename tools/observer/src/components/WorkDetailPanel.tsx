@@ -20,7 +20,7 @@ import { NotReportedYet, ObservationEmpty, ObservationForbidden, PartialFailure 
 import { FieldLabel, ObservationValue } from './ObservationValue';
 import { deriveWorkState, describeProgressReport, documentLabel, rawObservationText } from '../core/observation';
 import { sourceStateTechnicalItems } from '../lib/source-technical';
-import { workStateTechnicalItems } from '../lib/work-state-technical';
+import { reviewTechnicalItems, workStateTechnicalItems } from '../lib/work-state-technical';
 import { RecentChanges } from './RecentChanges';
 import { TechnicalDetails } from './TechnicalDetails';
 import { pageTechnicalItems } from '../lib/activity-technical';
@@ -143,7 +143,7 @@ function Requirements({ query }: { query: SnapshotQuery }) {
   );
 }
 
-function ReviewOutcomes({ query, roundId }: { query: ReviewQuery; roundId: string | null }) {
+function ReviewOutcomes({ query, roundId, currentRoundId }: { query: ReviewQuery; roundId: string | null; currentRoundId: string | null }) {
   const { t } = useTranslation();
   if (!roundId) {
     return <Empty data-testid="review-round-unavailable" description={t('plan.detail.reviewRoundUnavailable')} />;
@@ -158,6 +158,11 @@ function ReviewOutcomes({ query, roundId }: { query: ReviewQuery; roundId: strin
   }
   return (
     <div data-testid="plan-review">
+      {currentRoundId && roundId !== currentRoundId ? (
+        <Typography.Paragraph type="secondary" data-testid="plan-historical-review">
+          {t('plan.detail.historicalReviewSelected')}
+        </Typography.Paragraph>
+      ) : null}
       <List
         size="small"
         dataSource={review.decisions}
@@ -175,17 +180,7 @@ function ReviewOutcomes({ query, roundId }: { query: ReviewQuery; roundId: strin
           </List.Item>
         )}
       />
-      <Descriptions
-        size="small"
-        column={1}
-        items={[
-          { key: 'actor', label: <FieldLabel field="author_actor_id" />, children: <ObservationValue value={review.author_actor_id} /> },
-          { key: 'person', label: <FieldLabel field="author_person_id" />, children: <ObservationValue value={review.author_person_id} /> },
-          { key: 'artifact', label: <FieldLabel field="artifact_digest" />, children: <ObservationValue value={review.artifact_digest} /> },
-          { key: 'contract', label: <FieldLabel field="contract_hash" />, children: <ObservationValue value={review.contract_hash} /> },
-          { key: 'bundle', label: <FieldLabel field="bundle_hash" />, children: <ObservationValue value={review.bundle_hash} /> },
-        ]}
-      />
+      <TechnicalDetails items={reviewTechnicalItems(review)} />
       <Typography.Paragraph type="secondary">
         {t('state.placeholder.title')} — {t('plan.detail.deliveryPending')}
       </Typography.Paragraph>
@@ -248,7 +243,11 @@ export function WorkDetailPanel({
     work?.workstream_id ?? '',
     revoked,
   ));
-  const review = useQuery(reviewQueryOptions(work ? project : null, workId, reviewRoundId, revoked));
+  const currentRoundId = snapshot.isSuccess && snapshot.data.result.data.work_id === workId
+    ? snapshot.data.result.data.observation?.collaboration?.review?.id ?? null
+    : null;
+  const selectedRoundId = reviewRoundId ?? currentRoundId;
+  const review = useQuery(reviewQueryOptions(work ? project : null, workId, selectedRoundId, revoked));
   const activity = useQuery(activityQueryOptions(work ? project : null, revoked, workId ?? undefined));
 
   // Only the work-level read decides the whole panel's access: a Forbidden
@@ -287,7 +286,7 @@ export function WorkDetailPanel({
               {
                 key: 'outcomes',
                 label: t('plan.detail.outcomes'),
-                children: <ReviewOutcomes query={review} roundId={reviewRoundId} />,
+                children: <ReviewOutcomes query={review} roundId={selectedRoundId} currentRoundId={currentRoundId} />,
               },
               {
                 key: 'history',

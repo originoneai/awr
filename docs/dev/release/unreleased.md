@@ -6,11 +6,12 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Added
 
-- Trust metadata in progress, session-label, evidence and admission JSON, with
-  the negotiable `output.trust_field` capability. Existing fields and entry text
-  remain available. Caller-supplied evidence types stay `reported` until a
-  completion byte check establishes `verified`; a type name never grants
-  `recorded`. See [Trust fields](../reference/trust.md).
+- Optional identifiers and check bindings for work-definition examples, advertised as
+  `definition.example_checks`. Definition reports show each example's check binding, validate
+  argument and path bounds, and identify missing or duplicate identifiers. Check metadata is
+  included in admission fingerprints. All readers must support the new keys before a shared
+  ledger uses them; this feature does not run commands or read the listed files. See
+  [work definitions](../reference/work-definition.md).
 - The generic Team read adapter (`POST /api/team/read`) now serves the real `work.next`
   response. Upstream's identity-scoped navigation read carries only
   `{ data, project_revision, protocol_version }` — no scope/snapshot attribution
@@ -91,6 +92,11 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   execution admission, context completeness, delivery observation, completion validity), which Team operations carry
   it and which entries of the personal CLI and MCP server have no Team operation, with the reason; the report is checked
   against the protocol's own operation lists. Asking for such an entry is still refused as `Unsupported`.
+- Trust metadata in progress, session-label, evidence and admission JSON, with
+  the negotiable `output.trust_field` capability. Existing fields and entry text
+  remain available. Caller-supplied evidence types stay `reported` until a
+  completion byte check establishes `verified`; a type name never grants
+  `recorded`. See [Trust fields](../reference/trust.md).
 - A bounded, read-only observation entry in the Observer Team bridge (`POST /api/team/read`): every implemented Team
   query is reachable except the deferred full ops audit (`audit.history`, `audit.export`, `audit.count`); commands are
   never exposed, an arbitrary command or a full audit export cannot be requested. Each operation's selectors, paging and

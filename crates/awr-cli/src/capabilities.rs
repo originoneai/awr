@@ -642,6 +642,17 @@ fn catalog() -> Vec<Capability> {
             ][..],
         ),
         (
+            "definition.example_checks",
+            true,
+            &["work show", "work prepare"][..],
+            &[
+                "optional_example_metadata",
+                "structural_validation_only",
+                "no_check_execution_or_file_reads",
+                "requires_upgraded_source_readers",
+            ][..],
+        ),
+        (
             "output.trust_field",
             true,
             &[
@@ -762,6 +773,23 @@ fn require_available(capabilities: &[Capability], required: &[String]) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trust_and_example_check_capabilities_are_both_negotiable() {
+        let capabilities = catalog();
+        let required = [
+            "definition.example_checks".to_owned(),
+            "output.trust_field".to_owned(),
+        ];
+        require_available(&capabilities, &required).unwrap();
+        for id in required {
+            assert_eq!(
+                capabilities.iter().filter(|c| c.id == id).count(),
+                1,
+                "each negotiable capability must occur exactly once: {id}"
+            );
+        }
+    }
 
     #[test]
     fn trust_capability_missing_from_legacy_catalog_returns_capability_unavailable() {

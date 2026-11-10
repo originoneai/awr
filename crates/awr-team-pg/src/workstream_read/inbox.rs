@@ -117,7 +117,34 @@ pub(super) async fn facts(
                 .get(0);
             // Registration is navigation metadata, not worker liveness,
             // verified artifact content or permission to configure a channel.
+            let matching_template_available = if !configured_delivery
+                && candidate
+                    .binding
+                    .source_revision
+                    .as_ref()
+                    .is_none_or(|r| r.resource == candidate.binding.target.resource)
+            {
+                tx.query_one("SELECT EXISTS(
+                    SELECT 1 FROM awr_team.delivery_route_templates t
+                    JOIN awr_team.delivery_connectors c
+                      ON c.tenant_id=t.tenant_id AND c.project_id=t.project_id AND c.id=t.source_connector_id
+                    JOIN awr_team.actors a ON a.tenant_id=c.tenant_id AND a.id=c.principal_actor_id
+                    JOIN awr_team.workstream_snapshot_ownership o
+                      ON o.tenant_id=c.tenant_id AND o.project_id=c.project_id AND o.work_id=c.work_id
+                        AND o.scope_id='main' AND o.snapshot_id=$5 AND o.workstream_id=t.workstream_id
+                    WHERE t.tenant_id=$1 AND t.project_id=$2 AND t.workstream_id=$3
+                      AND t.enabled AND c.enabled AND t.coordinator_epoch=$4 AND c.coordinator_epoch=$4
+                      AND c.workstream_id=t.workstream_id AND c.version=t.source_connector_version
+                      AND c.fact_source='adapter_observation' AND a.kind='system' AND a.status='active'
+                      AND c.resource=$6)",
+                    &[&tenant,&project,&binding.workstream_id.to_string(),&auth.epoch,&auth.snapshot,
+                      &candidate.binding.target.resource]).await?.get::<_,bool>(0)
+            } else {
+                false
+            };
             data["delivery_channel"] = json!({"registered_for_candidate":registered,
+                "mapping_present":configured_delivery,
+                "matching_template_available":matching_template_available,
                 "basis":"current_enabled_connector_registration"});
             let rows = tx.query("SELECT f.envelope_json FROM awr_team.delivery_fact_heads h
                 JOIN awr_team.delivery_facts f ON (f.tenant_id,f.project_id,f.id)=(h.tenant_id,h.project_id,h.fact_id)
@@ -164,7 +191,8 @@ pub(super) async fn facts(
     }
     // Repository integration keeps the existing configured-chain and policy gate.
     data["integration_required"] = json!(false);
-    if configured_delivery && !data["candidate"].is_null() {
+    data["repository_integration_policy"] = json!(false);
+    if !data["candidate"].is_null() {
         let policy: Option<String> = tx
             .query_opt(
                 "SELECT contract_json->>'completion_policy' FROM awr_team.work_contracts
@@ -174,16 +202,22 @@ pub(super) async fn facts(
             )
             .await?
             .and_then(|row| row.get(0));
-        data["integration_required"] = json!(
-            crate::DeliverySyncStore::delivers_into_repository_in_tx(
-                tx,
-                tenant,
-                project,
-                work,
-                policy.as_deref().unwrap_or("trusted_execution_and_review"),
-            )
-            .await?
-        );
+        data["repository_integration_policy"] =
+            json!(crate::DeliverySyncStore::repository_integration_policy(
+                policy.as_deref().unwrap_or("trusted_execution_and_review")
+            ));
+        if configured_delivery {
+            data["integration_required"] = json!(
+                crate::DeliverySyncStore::delivers_into_repository_in_tx(
+                    tx,
+                    tenant,
+                    project,
+                    work,
+                    policy.as_deref().unwrap_or("trusted_execution_and_review"),
+                )
+                .await?
+            );
+        }
     }
     // Historical unsettled effects must remain visible even after reselection.
     data["integration"] =
@@ -416,6 +450,40 @@ fn select(
             "this task has a configured delivery chain",
             "delivery.neutral.inspect",
             "Inspect submission context; publish actual code and report through the authorized project channel, then bind a candidate and readable manifest evidence before review.",
+        )
+    } else if involved
+        && !closed
+        && c["candidate"]["current"] == true
+        && c["delivery_channel"]["registered_for_candidate"] == false
+        && c["delivery_channel"]["mapping_present"] == false
+        && c["delivery_channel"]["matching_template_available"] == true
+        && c["repository_integration_policy"] == true
+        && supervisor
+    {
+        (
+            "delivery_configuration",
+            "a current candidate has an available repository route but no task delivery channel",
+            "an authorized current template matches the selected resource; no task mapping is registered",
+            "delivery.routes",
+            "For repository delivery, discover an authorized matching template and attach it before requesting delivery checks. Preserve the candidate and review. Existing mappings or unsettled effects retain their established recovery path; report-only completion keeps its current contract.",
+        )
+    } else if involved
+        && !closed
+        && c["candidate"]["current"] == true
+        && c["delivery_channel"]["registered_for_candidate"] == false
+        && c["delivery_channel"]["mapping_present"] == false
+        && c["delivery_channel"]["matching_template_available"] == true
+        && c["repository_integration_policy"] == true
+        && deliverer
+    {
+        // Attaching a route (delivery.route.reuse) needs the authority to assign work, which delivery authority alone
+        // does not give: this role is pointed at a supervisor instead of at a step it would be refused (AWR-TFQ-018).
+        (
+            "delivery_configuration",
+            "a current candidate has an available repository route but no task delivery channel",
+            "an authorized current template matches the selected resource; attaching it needs a supervisor who may assign work",
+            "delivery.neutral.inspect",
+            "Attaching a route needs a supervisor who may assign work; delivery authority alone does not allow it. Inspect the candidate facts, ask a supervisor to attach the matching template, and preserve the candidate and review.",
         )
     } else if !closed
         && c["review"]["state"] == "open"
@@ -653,4 +721,69 @@ pub(super) async fn read(
         return Err(PgError::ResponseTooLarge);
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A current candidate with an available repository route and no task delivery channel, on open work.
+    fn route_available() -> Value {
+        json!({
+            "work_id": "a",
+            "workstream_id": "s",
+            "runtime": {"state": "ready"},
+            "responsibility": {"relation": "unknown"},
+            "progress": {},
+            "collaboration": {
+                "candidate": {"current": true},
+                "review": null,
+                "repository_integration_policy": true,
+                "delivery_channel": {
+                    "registered_for_candidate": false,
+                    "mapping_present": false,
+                    "matching_template_available": true
+                }
+            }
+        })
+    }
+
+    // Attaching a route (delivery.route.reuse) needs the authority to assign work. Delivery authority alone does not
+    // give it, so that role must not be told to attach (AWR-TFQ-018).
+    #[test]
+    fn only_a_supervisor_is_told_to_attach_the_route() {
+        let data = route_available();
+        let supervisor = select(&data, true, false, false, false, true).unwrap();
+        assert_eq!(supervisor["code"], "delivery_configuration");
+        assert_eq!(supervisor["action"]["op"], "delivery.routes");
+        assert!(
+            supervisor["action"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("attach it")
+        );
+        // A role with both authorities is a supervisor first.
+        let both = select(&data, true, false, false, true, true).unwrap();
+        assert_eq!(both["action"]["op"], "delivery.routes");
+    }
+
+    #[test]
+    fn a_deliverer_without_assign_authority_is_pointed_at_a_supervisor() {
+        let data = route_available();
+        let deliverer = select(&data, false, false, false, true, true).unwrap();
+        assert_eq!(deliverer["code"], "delivery_configuration");
+        assert_eq!(deliverer["action"]["op"], "delivery.neutral.inspect");
+        let note = deliverer["action"]["note"].as_str().unwrap();
+        assert!(note.contains("ask a supervisor"), "{note}");
+        assert!(
+            !note.contains("route.reuse") && !note.contains("discover"),
+            "{note}"
+        );
+    }
+
+    #[test]
+    fn a_role_with_neither_authority_gets_no_route_guidance() {
+        let data = route_available();
+        assert!(select(&data, false, false, false, false, true).is_none());
+    }
 }

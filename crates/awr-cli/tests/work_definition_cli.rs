@@ -198,6 +198,50 @@ fn a_missing_obligation_is_an_explicit_gap_not_a_silent_pass() {
 }
 
 #[test]
+fn show_and_prepare_list_checked_and_unchecked_examples() {
+    let p = Project::new();
+    p.ok(&["capabilities", "--require", "definition.example_checks"]);
+    let mut definition = p.definition("Local save with a failure fallback");
+    for (index, example) in definition["examples"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .enumerate()
+    {
+        example["id"] = json!(format!("save-{index}"));
+        example["check"] = json!({
+            "run": ["nonexistent-storage-check", "--case", index.to_string()],
+            "files": ["nonexistent-tests/save.rs"]
+        });
+    }
+    p.ledger(&definition, "Review the fallback");
+    p.reindex();
+    let report = p.ok(&["work", "show", "W"])["work"]["definition"].clone();
+    assert_eq!(report["state"], "complete");
+    assert_eq!(
+        report["examples"],
+        json!([
+            {"id": "save-0", "kind": "positive", "criterion": ACC, "has_check": true},
+            {"id": "save-1", "kind": "negative", "criterion": ACC, "has_check": true}
+        ])
+    );
+    let prepared = p.ok(&["work", "prepare", "W", "--budget", "12000"]);
+    assert_eq!(prepared["definition"], report);
+
+    definition["examples"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("check");
+    p.ledger(&definition, "Review the fallback");
+    p.reindex();
+    let report = p.ok(&["work", "show", "W"])["work"]["definition"].clone();
+    assert_eq!(report["state"], "complete");
+    assert_eq!(report["examples"][0]["has_check"], true);
+    assert_eq!(report["examples"][1]["has_check"], false);
+    assert_eq!(report["notes"][0]["code"], "example_check_absent");
+}
+
+#[test]
 fn editing_an_adopted_decision_makes_the_pinned_intent_stale() {
     let p = Project::new();
     p.decision("The first release is local only and syncs later.");
