@@ -1,6 +1,7 @@
 {
   "contract_id": "awr-native-platforms",
-  "version": "1.6.0",
+  "version": "1.7.0",
+  "workflow_runs": 12,
   "work_item": "AWR-QA-004",
   "rust_version": "1.93.1",
   "command_timeout_seconds": 1800,
