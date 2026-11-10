@@ -372,6 +372,7 @@ fn inspect_artifacts(
             )),
         }
     }
+    inspect_check_logs(store, project, root, cap, report, &mut registered)?;
     let directory = root.join(".awr/artifacts");
     match fs::symlink_metadata(&directory) {
         Ok(_) => {}
@@ -411,6 +412,104 @@ fn inspect_artifacts(
             directory.display(),
             error,
         ));
+    }
+    Ok(())
+}
+
+/// Check logs are journal-backed files, distinct from imported report artifacts.
+fn inspect_check_logs(
+    store: &Store,
+    project: Id,
+    root: &Path,
+    cap: u64,
+    report: &mut ProjectDoctorReport,
+    registered: &mut BTreeSet<PathBuf>,
+) -> Result<()> {
+    let observations = store.check_log_observations(project)?;
+    if observations.is_empty() {
+        return Ok(());
+    }
+    let base = root.join(".awr/artifacts/checks");
+    let mut known = BTreeSet::new();
+    for observation in observations {
+        let directory = root.join(&observation.log_dir);
+        for (name, expected) in [
+            ("stdout.log", observation.stdout_sha256),
+            ("stderr.log", observation.stderr_sha256),
+        ] {
+            let path = directory.join(name);
+            let result = (|| -> Result<String> {
+                let resolved = path.canonicalize()?;
+                if !resolved.starts_with(root)
+                    || fs::symlink_metadata(&path)?.file_type().is_symlink()
+                {
+                    return Err(Error::RuleViolation(
+                        "check log escapes managed storage".into(),
+                    ));
+                }
+                hash_file(&path, fs::metadata(&path)?.len(), cap)
+            })();
+            match result {
+                Ok(actual) if actual == expected => (),
+                Ok(_) => report.findings.push(finding(
+                    "check_log_digest_mismatch",
+                    "error",
+                    "check_log",
+                    path.display(),
+                    "Check log differs from its recorded digest.",
+                )),
+                Err(error) => report.findings.push(finding(
+                    "check_log_unavailable",
+                    "error",
+                    "check_log",
+                    path.display(),
+                    error,
+                )),
+            }
+            known.insert(path);
+        }
+        let mut ancestor = Some(directory.as_path());
+        while let Some(path) = ancestor {
+            if !path.starts_with(&base) {
+                break;
+            }
+            known.insert(path.to_path_buf());
+            ancestor = path.parent();
+        }
+    }
+    registered.insert(base.clone());
+    let mut pending = vec![base];
+    while let Some(directory) = pending.pop() {
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) => {
+                report.findings.push(finding(
+                    "check_log_unavailable",
+                    "error",
+                    "check_log",
+                    directory.display(),
+                    error,
+                ));
+                continue;
+            }
+        };
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            if !known.contains(&path) {
+                report.findings.push(finding("orphan_artifact", "warning", "check_log", path.display(), "Check storage entry has no recorded check. Preserve it until its writer is checked."));
+            } else if entry.file_type()?.is_symlink() {
+                report.findings.push(finding(
+                    "check_log_unavailable",
+                    "error",
+                    "check_log",
+                    path.display(),
+                    "Check storage must not contain symbolic links.",
+                ));
+            } else if entry.file_type()?.is_dir() {
+                pending.push(path);
+            }
+        }
     }
     Ok(())
 }

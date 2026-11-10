@@ -6,6 +6,8 @@ use std::path::Path;
 mod artifact;
 mod branch;
 mod branch_close;
+pub mod check;
+pub use check::{RunCheckRequest, check_status, run_check, run_check_direct};
 mod close_out;
 mod compaction;
 mod completion;

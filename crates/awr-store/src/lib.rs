@@ -3,6 +3,7 @@ mod admission;
 mod branch;
 mod branch_close;
 mod catalog;
+mod check;
 mod checkpoint;
 mod checkpoint_save;
 mod claim_renewal;

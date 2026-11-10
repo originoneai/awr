@@ -193,6 +193,7 @@ pub fn evidence(root: &Path, command: &EvidenceCommand, json_output: bool) -> Re
             value["evidence"] = serde_json::to_value(&item)?;
             value["event_id"] = json!(event.id);
             value["validation_basis"] = json!("caller_supplied_bindings");
+            value["trust"] = json!(db.store.evidence_trust(project, item.id)?);
             print(
                 &value,
                 &format!(
@@ -220,6 +221,7 @@ pub fn evidence(root: &Path, command: &EvidenceCommand, json_output: bool) -> Re
                     .assess(source_sha.as_deref(), None, db.project.current_branch_id);
             let mut value = db.metadata(db.project.project_revision);
             value["evidence"] = evidence_brief(&record);
+            value["trust"] = json!(db.store.evidence_trust(project, record.item.id)?);
             value["locator_scheme"] = json!(locator_scheme(&record.item.locator));
             value["currency"] = json!(assessment.currency);
             value["missing_bindings"] = json!(assessment.missing_bindings);

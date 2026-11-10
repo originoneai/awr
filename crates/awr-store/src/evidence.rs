@@ -235,6 +235,16 @@ impl Store {
         expected: Revision,
         draft: EvidenceDraft,
     ) -> Result<(Evidence, Event)> {
+        self.record_evidence_with_checks(project, expected, draft, None)
+    }
+
+    pub(crate) fn record_evidence_with_checks(
+        &mut self,
+        project: Id,
+        expected: Revision,
+        draft: EvidenceDraft,
+        check_events: Option<&[Id]>,
+    ) -> Result<(Evidence, Event)> {
         awr_core::ensure_public_data(&draft)?;
         if [
             &draft.external_key,
@@ -307,6 +317,9 @@ impl Store {
         );
         event.branch_id = draft.branch_id;
         event.payload = serde_json::json!({"evidence_id":item.id,"external_key":item.external_key,"level":item.level});
+        if let Some(events) = check_events {
+            event.payload["check_events"] = serde_json::json!(events);
+        }
         if let Some(key) = &draft.work_item_key {
             event.work_item_id = Some(self.work_item(project, key)?.item.meta.id);
         }

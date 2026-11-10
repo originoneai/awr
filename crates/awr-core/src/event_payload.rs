@@ -57,6 +57,7 @@ pub fn is_domain_event_type(kind: &str) -> bool {
                 | "work.draft_activated"
                 | "work.ordinary_confirmed"
                 | "work.admission"
+                | "work.check"
                 | "work.containment"
                 | "work.reassessment"
                 | "work.gap"
@@ -208,7 +209,10 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             }
             "checkpoint.abandoned" => "attempt_id reason",
             "artifact.recorded" => "artifact_id source_event_id sha256 size locator",
-            "evidence.recorded" => "evidence_id external_key level",
+            "evidence.recorded" => "evidence_id external_key level check_events",
+            "work.check" => {
+                "version example criterion_sha256 phase outcome reason log_dir exit_code example_oracle oracle_files run_sha256 run_preview source_sha tree_state stdout_sha256 stderr_sha256 started_at finished_at mutants survivors"
+            }
             "branch.created" => {
                 "branch_id name parent_branch_id fork_project_revision git_binding actor reason source_copied git_write_performed"
             }
@@ -233,6 +237,9 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             "version request_key decision input bound"
         }
         "work.gap" => "version request_key action input decider_agent",
+        "work.check" => {
+            "version example criterion_sha256 phase outcome log_dir oracle_files run_sha256 run_preview tree_state stdout_sha256 stderr_sha256 started_at finished_at"
+        }
         "work.finding" => "version request_key action input decider_agent",
         "mcp.operation_started" | "mcp.operation_finished" | "mcp.operation_recovered" => {
             "operation"
@@ -295,6 +302,17 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
     {
         return Err(invalid());
     }
+    if kind == "work.check" {
+        let mut observation = payload.clone();
+        observation
+            .as_object_mut()
+            .unwrap()
+            .remove("mcp_operation_id");
+        serde_json::from_value::<crate::CheckPayload>(observation)
+            .map_err(|_| invalid())?
+            .validate()?;
+        return Ok(());
+    }
     for (key, value) in object {
         if key != "mcp_operation_id" && !allowed.split_whitespace().any(|name| name == key) {
             return Err(invalid());
@@ -304,6 +322,9 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             continue;
         }
         let valid = match key.as_str() {
+            "check_events" if kind == "evidence.recorded" => value
+                .as_array()
+                .is_some_and(|v| !v.is_empty() && v.len() <= 64 && v.iter().all(id)),
             "actor" if kind.starts_with("checkpoint.") => {
                 value
                     .as_object()
@@ -523,7 +544,11 @@ pub fn checked_event_payload(
     }
     let cap = if is_domain_event_type(kind) {
         domain_fields(kind, payload)?;
-        DOMAIN_EVENT_PAYLOAD_CAP
+        if kind == "work.check" {
+            crate::CHECK_PAYLOAD_CAP
+        } else {
+            DOMAIN_EVENT_PAYLOAD_CAP
+        }
     } else {
         generic_fields(payload)?;
         GENERIC_EVENT_PAYLOAD_CAP
