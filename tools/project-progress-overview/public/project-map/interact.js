@@ -149,11 +149,13 @@
    * mount, so a refresh keeps the folds, zoom and search), `offsetTop()` (pixels of a host bar the details panel must start
    * below; default none), `copy(text)` (clipboard; injectable), `timers` and `win` (the window: resize, scrollBy and the
    * clipboard; injectable for tests). `prepare(key)` is the optional live `work prepare --response-view action`
-   * read; exported HTML omits it and keeps the snapshot panel only.
+   * read; `workShow(key)` overlays recorded `priority` from `work show`. Exported HTML omits both and keeps
+   * the snapshot panel only. Query parameters cannot add `--cached`, `--source-sha` or `--branch`.
+   * The snapshot is not rewritten.
    */
   function mount({
     container, snapshot, config, t, model: given, restore, offsetTop, copy, win = root, timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (id) => clearTimeout(id) },
-    prepare,
+    prepare, workShow,
   }) {
     const model = given || modelLib.loadModel(snapshot, config);
     const views = viewsLib.createViews(t);
@@ -173,6 +175,8 @@
     let returnTo = null; // where the keyboard goes back to when the panel closes: the element and its key (it may be drawn again meanwhile)
     let prepareSeq = 0;
     let prepareWait = Promise.resolve();
+    let showSeq = 0;
+    let showWait = Promise.resolve();
     let matchCursor = -1;
     let pan = null;
     let suppressClick = false;
@@ -671,6 +675,7 @@
       const close = box.querySelector('.pm-drawer-close');
       if (close && close.focus) close.focus();
       prepareWait = loadPrepare(key);
+      showWait = loadShow(key);
       return true;
     }
 
@@ -693,6 +698,27 @@
       }
       if (seq !== prepareSeq || state.drawer !== key) return;
       slot.innerHTML = detailLib.renderPrepare(envelope, t);
+    }
+
+    async function loadShow(key) {
+      if (typeof workShow !== 'function') return;
+      const seq = ++showSeq;
+      const host = drawer() && drawer().querySelector('.pm-drawer-body');
+      if (!host) return;
+      const slot = host.ownerDocument.createElement('div');
+      slot.setAttribute('data-pm-priority', '');
+      slot.innerHTML = `<section class="pm-d-sec" data-pm-priority-card><h3>${esc(t('map.show.title'))}</h3><p class="pm-d-none">${esc(t('map.show.loading'))}</p></section>`;
+      const footer = host.querySelector('.pm-d-actions');
+      if (footer) host.insertBefore(slot, footer);
+      else host.appendChild(slot);
+      let envelope;
+      try {
+        envelope = await workShow(key);
+      } catch (error) {
+        envelope = { ok: false, error: { code: 'BridgeError', message: String(error && error.message || error) } };
+      }
+      if (seq !== showSeq || state.drawer !== key) return;
+      slot.innerHTML = detailLib.renderPriority(envelope, t);
     }
 
     function closeDetails() {
@@ -938,6 +964,7 @@
       select: (key) => { state.selected = key; applyEmphasis(); },
       matching: (text) => matching(model, text, t),
       get prepareWait() { return prepareWait; },
+      get showWait() { return showWait; },
     };
   }
 

@@ -113,7 +113,16 @@
     };
   }
 
-  const api = { buildDemo, workPrepare, GENERATED_AT };
+  /** Demo priority overlay: the live viewer does not call the CLI in demonstration mode. */
+  function workShow(key) {
+    return {
+      ok: true,
+      command: `awr work show ${key}`,
+      data: { work: { external_key: key, priority: 'P1' } },
+    };
+  }
+
+  const api = { buildDemo, workPrepare, workShow, GENERATED_AT };
   if (commonJS) module.exports = api;
   else {
     root.AWR_PROJECT_MAP = root.AWR_PROJECT_MAP || {};
