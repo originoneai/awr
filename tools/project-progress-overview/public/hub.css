@@ -51,6 +51,10 @@
 .hub-intake-path { color: var(--ink-3); font: 12px/1.8 var(--f-mono); overflow-wrap: anywhere; }
 .hub-intake > p { color: var(--ink-2); line-height: 1.8; }
 .hub-intake-prompt { margin: 22px 0; padding: 18px 20px; border: 1px solid var(--line-soft); border-radius: 10px; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.9 var(--f-ui, sans-serif); background: var(--surface-2); }
+.hub-intake-guidance { margin: 0 0 22px; }
+.hub-intake-guidance h3 { margin: 0 0 8px; color: var(--ink-2); font-size: 13px; font-weight: 600; }
+.hub-intake-command { margin: 0 0 12px; font-family: var(--f-mono); }
+.hub-intake-instruction, .hub-intake-recheck { margin: 0 0 8px; color: var(--ink-2); font-size: 13px; line-height: 1.8; }
 .hub-intake-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 .hub-intake details { margin-top: 24px; color: var(--ink-3); font-size: 12px; }
 .hub-intake details pre { white-space: pre-wrap; overflow-wrap: anywhere; }

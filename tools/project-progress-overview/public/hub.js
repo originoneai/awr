@@ -20,10 +20,36 @@
       && (!project.state || ['connected', 'discovered', 'attention'].includes(project.state));
   }
 
+  function quoteArg(value) {
+    const text = String(value == null ? '' : value);
+    return /^[A-Za-z0-9_./:=+-]+$/.test(text) ? text : `'${text.replace(/'/g, `'\\''`)}'`;
+  }
+
+  function formatArgv(argv) {
+    if (!Array.isArray(argv) || !argv.length) return '';
+    return argv.map(quoteArg).join(' ');
+  }
+
+  function guidanceField(data, path) {
+    let value = data && data.guidance;
+    for (const key of path) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+      value = value[key];
+    }
+    return typeof value === 'string' ? value : '';
+  }
+
+  function nextCommand(data) {
+    const next = data && data.guidance && data.guidance.next_action;
+    if (!next || typeof next !== 'object' || Array.isArray(next)) return '';
+    return formatArgv(next.argv);
+  }
+
   function createHub({ document: doc, i18n, load, selectedKey = null, loadIntake, copy, enroll, remove, rescan }) {
     const $ = (id) => doc.getElementById(id);
     const t = (key, params) => i18n.t(key, params);
     const state = { projects: [], running: null, removing: new Set(), enrolling: false, error: null, discovery: null, scope: null, signature: null, coverageSignature: null };
+    let intakeClipboard = '';
 
     function element(tag, className, text) {
       const node = doc.createElement(tag);
@@ -164,7 +190,30 @@
       const connected = project.state === 'connected';
       $('hubIntakeState').textContent = t(connected ? 'hub.connected' : project.state === 'attention' ? 'hub.attention' : 'hub.pending');
       $('hubIntakeDescription').textContent = t(connected ? 'hub.intake_connected' : project.state === 'attention' ? 'hub.intake_repair' : 'hub.intake_description');
-      $('hubIntakePrompt').textContent = t('hub.intake_prompt', { root: project.root });
+      const prompt = t('hub.intake_prompt', { root: project.root });
+      $('hubIntakePrompt').textContent = prompt;
+      const command = nextCommand(response.data);
+      const instruction = guidanceField(response.data, ['next_action', 'instruction']);
+      const recheck = guidanceField(response.data, ['recheck', 'trigger']);
+      const guidance = $('hubIntakeGuidance');
+      if (guidance) {
+        guidance.hidden = !(command || instruction || recheck);
+        $('hubIntakeCommandLabel').textContent = t('hub.intake_next');
+        $('hubIntakeCommandLabel').hidden = !command;
+        $('hubIntakeCommand').textContent = command;
+        $('hubIntakeCommand').hidden = !command;
+        $('hubIntakeInstruction').textContent = instruction;
+        $('hubIntakeRecheck').textContent = recheck ? t('hub.intake_recheck', { trigger: recheck }) : '';
+        $('hubIntakeInstruction').hidden = !instruction;
+        $('hubIntakeRecheck').hidden = !recheck;
+      }
+      intakeClipboard = [prompt];
+      if (command) intakeClipboard.push(`${t('hub.intake_next')}\n${command}`);
+      if (instruction) intakeClipboard.push(instruction);
+      if (recheck) intakeClipboard.push(t('hub.intake_recheck', { trigger: recheck }));
+      intakeClipboard = intakeClipboard.join('\n\n');
+      const copyButton = $('hubIntakeCopy');
+      if (copyButton) copyButton.textContent = t('hub.intake_copy');
       $('hubIntakeOpen').hidden = !connected;
       $('hubIntakeOpen').setAttribute('href', projectHref(selectedKey, i18n.locale));
       $('hubIntakeDiagnostic').hidden = !project.issue;
@@ -273,13 +322,13 @@
     }
     const copyButton = $('hubIntakeCopy');
     if (copyButton && copy) copyButton.addEventListener('click', async () => {
-      try { await copy($('hubIntakePrompt').textContent); copyButton.textContent = t('hub.intake_copied'); }
+      try { await copy(intakeClipboard || $('hubIntakePrompt').textContent); copyButton.textContent = t('hub.intake_copied'); }
       catch (_) { copyButton.textContent = t('hub.intake_copy_failed'); }
     });
     return { refresh, render, state };
   }
 
-  const api = { visibleProjects, projectHref, createHub };
+  const api = { visibleProjects, projectHref, createHub, formatArgv, nextCommand };
   if (commonJS) module.exports = api;
   else {
     root.AWR_PROJECT_HUB = api;

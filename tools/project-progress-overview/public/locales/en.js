@@ -52,6 +52,8 @@
   "hub.intake_description": "Give the instruction below to your agent. It will inspect the existing materials and connect the project. Missing goals remain explicit until clarified.",
   "hub.intake_repair": "This project needs inspection before continuing. Your agent can follow the recorded diagnostic and preserve existing work during a supported repair or upgrade.",
   "hub.intake_prompt": "Use AWR to take over the project at {root}. Inspect its existing sources and runtime, preserve its identity and follow the current intake or repair guidance. Use my actual request for planning. Record unknown goals before starting implementation.",
+  "hub.intake_next": "Next command",
+  "hub.intake_recheck": "Recheck: {trigger}",
   "hub.intake_copy": "Copy for your agent",
   "hub.intake_copied": "Copied",
   "hub.intake_copy_failed": "Select and copy the instruction above",
