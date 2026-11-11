@@ -1,6 +1,6 @@
 {
   "contract_id": "awr-native-platforms",
-  "version": "1.8.0",
+  "version": "1.10.0",
   "workflow_runs": 12,
   "work_item": "AWR-QA-004",
   "rust_version": "1.93.1",
@@ -29,6 +29,7 @@
     "awr-workspace"
   ],
   "required_gates": ["environment", "runner_tests", "build", "ignored_inventory", "workspace", "doctests", "crash_recovery", "cli_mcp_parity", "cli_lifecycle", "native_cli", "workflow_oracle", "workflow_scenarios", "format", "source_unchanged"],
+  "platform_required_gates": {"linux-x64": ["doc_commands"]},
   "cli_mcp_parity": {"tests_run": 14, "tools_exercised": 14},
   "ignored_tests": [
     "admission_check_process_fixture",

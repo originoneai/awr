@@ -10,6 +10,8 @@ on:
       - 'crates/**'
       - 'tools/project-progress-overview/public/**'
       - 'tests/**'
+      - 'docs/series/quickstart.md'
+      - 'docs/series/daily-workflow.md'
       - 'examples/**'
       - '.github/workflows/platform.yml'
   pull_request:
@@ -20,6 +22,8 @@ on:
       - 'crates/**'
       - 'tools/project-progress-overview/public/**'
       - 'tests/**'
+      - 'docs/series/quickstart.md'
+      - 'docs/series/daily-workflow.md'
       - 'examples/**'
       - '.github/workflows/platform.yml'
   workflow_dispatch:

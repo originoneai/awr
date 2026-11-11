@@ -22,8 +22,13 @@ python -m pip install originoneai-awr==0.7.0
 
 Verify both executables:
 
+<!-- doc-test: version -->
 ```sh
 awr --version
+```
+<!-- expect: awr -->
+
+```sh
 awr-mcp --version
 ```
 
@@ -48,16 +53,18 @@ For npm, keep optional dependencies enabled so the launcher resolves its per-pla
 
 ### 2. Initialize your project
 
-Initialization is a two-step operation: a preview, then an explicit accept.
+From your project directory, initialization is a two-step operation: a preview, then an explicit accept.
 Nothing is written until you pass `--accept`.
 
+<!-- doc-test: init-preview -->
 ```sh
-AWR_PROJECT=/absolute/path/to/your/project
+AWR_PROJECT=$PWD
 awr --project "$AWR_PROJECT" init
 ```
 
 Read the inventory of Markdown task ledgers, YAML sources and goals, then review the proposed mapping before accepting it:
 
+<!-- doc-test: init-accept -->
 ```sh
 awr --project "$AWR_PROJECT" init --accept
 ```
@@ -77,6 +84,7 @@ awr --project "$AWR_PROJECT" init \
 
 Then inspect the organization report:
 
+<!-- doc-test: intake-report -->
 ```sh
 awr --project "$AWR_PROJECT" intake inspect --json
 ```
@@ -91,15 +99,21 @@ the report's ordered `actions` tell you what to add to your source files.
 Use a [current source build](../../CONTRIBUTING.md) for these installers. Preview
 the Codex adapter for the initialized project:
 
+<!-- doc-test: install-preview -->
 ```sh
-awr --project "$AWR_PROJECT" client install --client codex
+AWR_INSTALL_PREVIEW=$(awr --project "$AWR_PROJECT" --json client install --client codex)
+printf '%s\n' "$AWR_INSTALL_PREVIEW"
 ```
+<!-- expect: preview_fingerprint -->
 
-Review `configuration`, `path` and `preview_fingerprint`. Replace `PREVIEW_SHA256`
-with the returned fingerprint, then accept the same preview:
+Review `configuration`, `path` and `preview_fingerprint`. Capture the returned
+fingerprint, then accept the same preview:
 
+<!-- doc-test: install-accept -->
 ```sh
-awr --project "$AWR_PROJECT" client install --client codex --accept --expected-preview PREVIEW_SHA256
+AWR_INSTALL_FINGERPRINT=$(printf '%s\n' "$AWR_INSTALL_PREVIEW" | jq -er '.preview_fingerprint')
+awr --project "$AWR_PROJECT" client install --client codex --accept \
+  --expected-preview "$AWR_INSTALL_FINGERPRINT"
 awr --project "$AWR_PROJECT" client status --client codex
 ```
 
@@ -112,6 +126,7 @@ or another host, use the [manual working agreement](agents.md#hosts-without-life
 A session is AWR's unit of work ownership. These commands use a small shell
 helper so every call carries the project path and JSON output:
 
+<!-- doc-test: session-config -->
 ```sh
 AWR_BIN=$(command -v awr)
 AWR_WORK=INTAKE-001          # a task key from your intake report
@@ -124,6 +139,7 @@ awrj() { "$AWR_BIN" --project "$AWR_PROJECT" --json "$@"; }
 Check what is executable, then start a session with a claim (runtime ownership
 of the work item) and the current project revision:
 
+<!-- doc-test: start-session -->
 ```sh
 awrj ready
 AWR_REV=$(awrj status | jq -er '.project_revision')
@@ -136,6 +152,7 @@ AWR_SESSION=$(jq -er '.session.id' "$AWR_NOTES/start.json")
 Compile the work context — the goal, acceptance criteria, recorded facts, and
 history assembled into a bounded packet:
 
+<!-- doc-test: compile-context -->
 ```sh
 awrj context compile --work "$AWR_WORK" --session "$AWR_SESSION" \
   --budget 5000 > "$AWR_NOTES/context.json"
@@ -150,6 +167,7 @@ Before you step away — or before a long host conversation compacts — save a
 checkpoint with the context hash you actually used, an honest digest, the exact
 next action, and every open loop:
 
+<!-- doc-test: checkpoint -->
 ```sh
 AWR_CONTEXT_HASH=$(jq -er '.work_context.context_hash' "$AWR_NOTES/context.json")
 AWR_REV=$(awrj status | jq -er '.project_revision')
@@ -165,6 +183,7 @@ awrj session checkpoint --session "$AWR_SESSION" --agent "$AWR_AGENT" \
 
 End the first session to release its claim, then create a successor through the same takeover path used by another agent, machine or host conversation:
 
+<!-- doc-test: end-session -->
 ```sh
 AWR_REV=$(awrj status | jq -er '.project_revision')
 awrj session end --session "$AWR_SESSION" --outcome incomplete \
@@ -174,6 +193,7 @@ awrj session end --session "$AWR_SESSION" --outcome incomplete \
 Now resume. Any agent — a different one, or the same one later — creates a
 successor session from the predecessor:
 
+<!-- doc-test: resume-session -->
 ```sh
 AWR_PREDECESSOR="$AWR_SESSION"
 awrj session show "$AWR_PREDECESSOR"
@@ -194,6 +214,7 @@ Two checks confirm the handoff worked:
 
 You can also inspect recovery state read-only at any time:
 
+<!-- doc-test: inspect-recovery -->
 ```sh
 awrj recovery inspect --session "$AWR_SESSION"
 ```
@@ -201,7 +222,9 @@ awrj recovery inspect --session "$AWR_SESSION"
 Working inside a coding agent's chat? Bind the host conversation to the AWR
 session so checkpoints survive host compaction:
 
+<!-- doc-test: bind-conversation -->
 ```sh
+HOST_CONVERSATION_ID=replace-with-your-host-conversation-id
 awrj client bind --client generic --external-session "myhost:$HOST_CONVERSATION_ID" \
   --work "$AWR_WORK" --session "$AWR_SESSION"
 ```
@@ -225,5 +248,6 @@ awrj client bind --client generic --external-session "myhost:$HOST_CONVERSATION_
 
 ## Code and tests
 
+- [Executable guide checks](../../tests/docs/run_doc_commands.py)
 - [CLI session tests](../../crates/awr-cli/tests/session_cli.rs)
 - [Client lifecycle fixture](../../examples/codex/README.md)
