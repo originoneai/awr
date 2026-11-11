@@ -36,6 +36,11 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   refusals offer reviewed field repair with caller-supplied values; acceptance,
   goals and concrete next steps are still required before activation.
 
+- Native CLI regression budgets cover work creation, checked completion, hook
+  continuation and automatic recovery. Failures list each step's output bytes;
+  the workflow benchmark adds checked completion to both strategies, bringing
+  each native platform run to twelve workflows. See the
+  [workflow measurements](../benchmarks/workflow.md#golden-path-budgets).
 - A compact Team MCP tool catalog for clients whose model provider caps the size of a tool schema
   (AWR-TF-014AN). Moonshot's API refuses `awr_team_command` because its full input schema is about
   130 KB (`schema exceeds maximum allowed size`), which stopped every Kimi Code turn against a Team

@@ -60,6 +60,11 @@ before registering evidence and verifies that source work remains unfinished.
 - **Unknown result:** the native server really saves a checkpoint, and the fixture
   withholds its response from the host. After restart the host queries the original
   request and exact checkpoint, without replaying the checkpoint or business executor.
+- **Checked completion:** a work-bound session records four failed baseline checks,
+  proposes admission and receives approval from a distinct reviewer session. After
+  claiming and starting work, it produces the artifact, commits the source state,
+  runs all acceptance checks and completes with their generated report and input.
+  The completion gate enforces the registered checks and combined session close-out.
 
 The [oracle](../../../tests/benchmarks/workflow/oracle.py) independently checks actual
 artifacts, limitations, exact criteria, context facts and one business execution per
@@ -109,5 +114,71 @@ python3 tests/benchmarks/workflow/run.py \
 On Windows use native `.exe` paths. Use a new output directory each time. The result
 binds the actual binary hashes, harness hashes, environment and declared source SHA.
 Only reviewed aggregate data belongs in Git; raw source, identities, operation
-receipts and failures remain local. Native platform CI runs the oracle and all ten
+receipts and failures remain local. Native platform CI runs the oracle and all twelve
 strategy/workload combinations on each actual platform, without timing thresholds.
+
+## Golden-path budgets
+
+The native CLI tests measure AWR calls and returned UTF-8 bytes, including stdout
+and stderr. Fixture initialization and independent final-state assertions surround
+the measured path. Revision bookkeeping reads the isolated fixture store directly.
+The limits live at the top of `golden_paths_cli.rs`; changes to a limit require an
+explanation in the PR.
+
+```sh
+AWR_LOCAL_WEB=0 cargo test -p awr-cli --test golden_paths_cli \
+  --test governance_overhead_cli --locked -- --nocapture
+```
+
+On macOS arm64, using unoptimized binaries from `36d2bacbe82c`, the current fixture
+measurements are:
+
+| Path | AWR calls | Returned bytes | Call limit | Byte limit | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| New idea through claimed work and progress | 4 | 817 | 4 | 6,144 | Within limits; AWR-ACR-024 |
+| New idea through claimed, prepared work | 4 | 4,735 | 4 | 6,144 | Within limits; AWR-ACR-024 |
+| Checked admission through completion, author | 6 | 5,538 | 6 | 8,192 | Within limits |
+| Separate admission reviewer | 2 | 4,391 | 2 | — | Within limit |
+| Compacted session continuation | 0 model calls; 1 host hook | 869 | 0 model calls | — | Within call limit |
+| Revision-only recovery | 1 | 180 | 1 | — | Within limit |
+| Explicit context-budget recovery | 1 | 2,485 | 1 | — | Within limit |
+
+AWR-ACR-024 supplies the compact text preview and its executable `Next:` command.
+P1 executes that command unchanged: the preview returns 333 bytes, acceptance
+and activation return 204 bytes, session creation and claiming return 97 bytes,
+and progress returns 183 bytes. These four calls total 817 bytes and mark the
+new work in progress with its claim held. The positive guard runs normally.
+
+The original preparation variant also runs with the same text preview. Its
+final `work prepare` call returns 4,101 bytes, for 4,735 bytes in four calls,
+down from 9,013 bytes when the preview required a 4,611-byte JSON response.
+This comparison retains the original final step; the progress variant has a
+different final step. Both preserve the 6,144-byte ceiling and active negative
+call and byte witnesses. P2, P3 and P4 retain their prior measurements.
+
+The checked path begins with existing in-progress work at admission. Starting a
+planned item also needs a progress transition. Automatic recovery covers unchanged
+source revision conflicts and explicit context-budget errors; source edits, draft
+activation and occupied claims require reviewed input or another actor's action.
+
+The separate governance comparison retains its JSON measurement. Its measured
+unchecked governed flow takes 7 calls, and checked completion takes 8 calls, with
+542 bytes of guidance. The extra-call ratio is 1/7 (0.143), within its 0.2 target.
+It includes preparation, a failed baseline, inline admission, claiming, progress,
+acceptance and combined completion/session close-out. Git commits are fixture
+implementation work, recorded separately from AWR calls.
+
+The current checked workflow benchmark uses the same native source revision and
+one repetition per strategy on macOS arm64. All 12 workload/strategy runs satisfy
+the artifact, evidence, identity and recovery checks. Its checked-completion
+subtotals are:
+
+| Strategy | Tool calls, including AWR CLI and MCP | Returned tool-text bytes |
+| --- | ---: | ---: |
+| Primitive | 21 | 100,210 |
+| Prepared | 19 | 95,927 |
+
+These totals include onboarding, independent refusal probes, final verification
+and reviewer close-out. They have a broader denominator than the six author calls
+in the CLI budget. The existing 30-run aggregate above retains its original
+five-workload source binding.
