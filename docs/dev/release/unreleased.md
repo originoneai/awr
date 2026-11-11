@@ -130,6 +130,15 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Fixed
 
+- `awr_team_planning_draft` in `create` mode with a `candidate_id` that already exists no longer
+  answers `resumed: true` for a different request. Only a retry of the creation that candidate
+  recorded (same changes, suggestion IDs, spec roots, goal keys, self-approve policy and author)
+  resumes; any other request is refused before any command is reserved as `InvalidInput` with the
+  reason `candidate_exists_with_different_request`, `differs_in`, the existing candidate's
+  `candidate_id`, `draft_revision`, `candidate_digest` and `state`, and a next step (use `edit` with
+  that `candidate_id`, or `create` with a new one or none). Before, a supervisor that reused a
+  candidate ID with new changes was told the draft was created while it still held the old changes
+  (AWR-TFQ-023).
 - A work that was integrated, completed and written back to the source is no longer shown as stale
   after a later plan activation that left its contract alone. Before, every activation made the
   project snapshot differ from the one recorded with the selection and the source publication, so

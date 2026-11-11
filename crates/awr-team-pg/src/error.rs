@@ -149,6 +149,18 @@ pub enum PgError {
     OutboxReplayForbidden,
     #[error("rollback forbidden")]
     RollbackForbidden,
+    /// A planning create named a candidate id that already exists, and the request is not the
+    /// creation that candidate recorded. Nothing was written. `differs_in` holds the closed
+    /// labels of [`PgError::planning_input_diagnostic`]; the other fields describe the existing,
+    /// unchanged candidate.
+    #[error("planning candidate already exists with a different creation request")]
+    PlanningCandidateExists {
+        candidate_id: String,
+        draft_revision: i32,
+        candidate_digest: String,
+        state: String,
+        differs_in: Vec<&'static str>,
+    },
     #[error("{0}")]
     Db(#[from] tokio_postgres::Error),
     #[error("connection pool: {0}")]
@@ -269,6 +281,30 @@ impl PgError {
 
     /// Fixed diagnostics for fresh planning input rejection; never echo the assertion.
     pub fn planning_input_diagnostic(&self) -> Option<serde_json::Value> {
+        if let Self::PlanningCandidateExists {
+            candidate_id,
+            draft_revision,
+            candidate_digest,
+            state,
+            differs_in,
+        } = self
+        {
+            return Some(serde_json::json!({
+                "code": "InvalidInput",
+                "reason": "candidate_exists_with_different_request",
+                "message": "a planning candidate with this candidate_id already exists and was created from a different request; this request was not applied",
+                "invalid_field": "/candidate_id",
+                "constraint": "new_candidate_id_or_same_creation_request",
+                "differs_in": differs_in,
+                "candidate_id": candidate_id,
+                "draft_revision": draft_revision,
+                "candidate_digest": candidate_digest,
+                "state": state,
+                "candidate_changed": false,
+                "request_reserved": false,
+                "next_step": format!("The existing candidate {candidate_id} was not changed; it still holds the changes of its earlier create. To change this draft, use mode edit with candidate_id {candidate_id}; edit replaces its changes with the list you send. To start a new draft, use mode create with a new candidate_id or leave candidate_id out. Repeat a create with an existing candidate_id only to retry the same creation request. Correct this unused request and retry.")
+            }));
+        }
         if matches!(self, Self::Protocol(message) if message == "planning_input/impact_proven/required")
         {
             return Some(serde_json::json!({
