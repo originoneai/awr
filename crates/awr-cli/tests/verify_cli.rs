@@ -158,6 +158,10 @@ impl Fixture {
     }
 
     fn local_completed(&self, acceptance: bool) {
+        self.local_completed_with(acceptance, |_| {});
+    }
+
+    fn local_completed_with(&self, acceptance: bool, configure: impl FnOnce(&Self)) {
         self.write_ledger("in_progress");
         self.ok(&["source", "reindex"]);
         let session = self.ok(&[
@@ -197,6 +201,7 @@ impl Fixture {
         let mut text = fs::read_to_string(&manifest).unwrap();
         text.push_str("\n[sources.options.admission_policy]\nversion=1\nmode='governed_enforce'\nscope='all'\n\n[[sources]]\ndomain='decisions'\nrole='supporting'\npath='decisions'\nadapter='markdown-directory-v1'\n");
         fs::write(manifest, text).unwrap();
+        configure(self);
         self.git(&["add", "decisions/scope.md"]);
         self.commit("Prepare local completion");
         self.ok(&["source", "reindex"]);
@@ -299,6 +304,633 @@ impl Fixture {
         )
         .unwrap();
     }
+
+    fn assert_no_reuse(&self, v: &Value) {
+        for result in v["results"].as_array().unwrap() {
+            for field in [
+                "bound_commit",
+                "delta",
+                "delta_paths",
+                "delta_paths_omitted",
+            ] {
+                assert!(result.get(field).is_none(), "unexpected {field}: {v}");
+            }
+        }
+    }
+
+    fn install_push_target(&self, require_work: bool) -> PathBuf {
+        let remote = self.root.join(".awr/push-target.git");
+        self.git(&["init", "--bare", remote.to_str().unwrap()]);
+        self.git(&["remote", "add", "validation", remote.to_str().unwrap()]);
+        self.git(&["push", "--quiet", "validation", "HEAD:refs/heads/verified"]);
+        self.ok(&["verify", "install-hook", "--accept"]);
+        if require_work {
+            self.require_work_policy();
+        }
+        remote
+    }
+
+    fn require_work_policy(&self) {
+        let path = self.root.join(".awr/gates.toml");
+        let mut policy = fs::read_to_string(&path).unwrap();
+        policy.push_str("\n[verify]\nrequire_work=true\n");
+        fs::write(path, policy).unwrap();
+    }
+
+    fn push(&self) -> Output {
+        let mut paths = vec![
+            PathBuf::from(env!("CARGO_BIN_EXE_awr"))
+                .parent()
+                .unwrap()
+                .to_owned(),
+        ];
+        paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+        Command::new("git")
+            .args(["push", "--quiet", "validation", "HEAD:refs/heads/verified"])
+            .current_dir(&self.root)
+            .env("AWR_LOCAL_WEB", "0")
+            .env("PATH", std::env::join_paths(paths).unwrap())
+            .env("AWR_VERIFY", "on")
+            .output()
+            .unwrap()
+    }
+}
+
+#[test]
+fn ledger_only_ac1_reuses_completion_observations_and_reports_the_delta() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    let bound = f.git(&["rev-parse", "HEAD"]);
+    f.commit("Record completed work in the ledger");
+    let requested = f.git(&["rev-parse", "HEAD"]);
+    let v = f.verify(&["--work", "W"], 0);
+    assert_eq!(v["commit"], requested);
+    assert_eq!(v["results"][0]["work"], "W");
+    assert_eq!(v["results"][0]["bound_commit"], bound);
+    assert_eq!(v["results"][0]["delta"], "ledger_only");
+    assert_eq!(v["results"][0]["delta_paths"], json!(["work.yaml"]));
+    assert_eq!(v["results"][0]["unmet"], json!([]));
+    assert_eq!(f.verify(&["--require-work"], 0)["results"], v["results"]);
+    f.require_work_policy();
+    assert_eq!(f.verify(&[], 0)["results"], v["results"]);
+}
+
+#[test]
+fn ledger_only_ac1_reopened_work_cannot_reuse_its_previous_completion() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    let mut ledger = f.ledger();
+    ledger["work_items"][0]["status"] = json!("in_progress");
+    let criterion = "Retain the revised saved content";
+    ledger["work_items"][0]["acceptance"] = json!([criterion]);
+    for e in ledger["work_items"][0]["definition"]["examples"]
+        .as_array_mut()
+        .unwrap()
+    {
+        e["criterion"] = json!(criterion);
+    }
+    f.save_ledger(&ledger);
+    f.commit("Reopen work with revised acceptance");
+    let v = f.verify(&["--work", "W"], 1);
+    assert!(v.to_string().contains("acceptance_missing"), "{v}");
+    f.assert_no_reuse(&v);
+    assert_eq!(
+        f.verify(&["--require-work"], 1)["reason"],
+        "no_associated_work"
+    );
+}
+
+#[test]
+fn ledger_only_ac2_code_changes_keep_acceptance_commit_bound() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    fs::write(f.root.join("implementation.txt"), "changed\n").unwrap();
+    f.commit("Change code after acceptance");
+    let v = f.verify(&["--work", "W"], 1);
+    assert!(v.to_string().contains("acceptance_missing"), "{v}");
+    f.assert_no_reuse(&v);
+    assert_eq!(f.verify(&[], 0)["reason"], "no_associated_work");
+    assert_eq!(
+        f.verify(&["--require-work"], 1)["reason"],
+        "no_associated_work"
+    );
+}
+
+#[test]
+fn ledger_only_ac2_ledger_mapping_matches_files_exactly() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    fs::write(f.root.join("work.yaml.rs"), "fn changed() {}\n").unwrap();
+    f.git(&["add", "work.yaml.rs"]);
+    f.commit("Change a file sharing the ledger name prefix");
+    let v = f.verify(&["--work", "W"], 1);
+    assert!(v.to_string().contains("acceptance_missing"), "{v}");
+    f.assert_no_reuse(&v);
+}
+
+#[test]
+fn ledger_only_ac3_check_file_changes_cannot_reuse_observations() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    fs::write(f.root.join("oracle.txt"), "changed\n").unwrap();
+    f.commit("Change the registered check file");
+    let v = f.verify(&["--work", "W"], 1);
+    assert!(v.to_string().contains("acceptance_missing"), "{v}");
+    assert!(v.to_string().contains("oracle_changed"), "{v}");
+    f.assert_no_reuse(&v);
+}
+
+#[test]
+fn ledger_only_ac3_changed_check_command_still_fails_the_frozen_oracle_gate() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    let mut ledger = f.ledger();
+    ledger["work_items"][0]["definition"]["examples"][0]["check"]["run"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("--quiet"));
+    f.save_ledger(&ledger);
+    f.commit("Change a check command inside the ledger");
+    let v = f.verify(&["--work", "W"], 1);
+    assert!(v.to_string().contains("oracle_changed"), "{v}");
+    f.assert_no_reuse(&v);
+}
+
+#[test]
+fn ledger_only_ac4_decision_and_policy_changes_are_not_ledger_deltas() {
+    for path in [
+        "decisions/scope.md",
+        ".awr/gates.toml",
+        "RULES.md",
+        "other.yaml",
+    ] {
+        let f = Fixture::new();
+        f.local_completed(true);
+        let file = f.root.join(path);
+        let mut content = fs::read_to_string(&file).unwrap_or_default();
+        content.push_str("\n# Additional project information\n");
+        fs::write(file, content).unwrap();
+        f.git(&["add", "--force", path]);
+        f.commit("Update a source outside the ledger mapping");
+        let v = f.verify(&["--work", "W"], 1);
+        assert!(v.to_string().contains("acceptance_missing"), "{path}: {v}");
+        f.assert_no_reuse(&v);
+    }
+}
+
+#[test]
+fn ledger_only_ac5_exact_commit_output_keeps_its_original_bytes() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    let bound = f.git(&["rev-parse", "HEAD"]);
+    let before = f.run(&["verify", "--commit", &bound]);
+    assert!(before.status.success());
+    f.commit("Record the completed ledger");
+    let after = f.run(&["verify", "--commit", &bound]);
+    assert!(after.status.success());
+    assert_eq!(before.stdout, after.stdout);
+    f.assert_no_reuse(&serde_json::from_slice(&after.stdout).unwrap());
+}
+
+#[test]
+fn ledger_only_ac5_unassociated_code_commit_keeps_the_original_empty_selection() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    fs::write(
+        f.root.join("implementation.txt"),
+        "changed after completion\n",
+    )
+    .unwrap();
+    f.commit("Change code without a completion bound to the new commit");
+    let v = f.verify(&[], 0);
+    assert_eq!(v["reason"], "no_associated_work");
+    assert_eq!(v["results"], json!([]));
+}
+
+#[test]
+fn ledger_only_ac5_unassociated_ledger_commit_keeps_the_original_empty_selection_bytes() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    f.commit("Record the completed ledger without requiring associated work");
+    let revision: u64 = f.revision().parse().unwrap();
+    let expected = json!({"mode":"local", "commit":f.git(&["rev-parse", "HEAD"]),
+        "results":[], "project_revision":revision, "ok":true, "met":true,
+        "require_work":false, "reason":"no_associated_work"});
+    let output = f.run(&["verify"]);
+    assert!(output.status.success());
+    assert_eq!(output.stdout, format!("{expected}\n").as_bytes());
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn ledger_only_ac5_rerun_and_baseline_keep_their_existing_receipt_shapes() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    f.commit("Record the completed ledger");
+    for args in [vec!["--rerun"], vec!["--rerun", "--baseline", &f.baseline]] {
+        let v = f.verify(&args, 0);
+        assert_eq!(v["mode"], "rerun");
+        f.assert_no_reuse(&v);
+        for check in v["results"][0]["checks"].as_array().unwrap() {
+            assert_eq!(check["acceptance"]["outcome"], "passed");
+            if args.len() > 1 {
+                assert_eq!(check["baseline"]["outcome"], "failed");
+            }
+        }
+    }
+}
+
+#[test]
+fn ledger_only_ac5_nonancestor_completion_is_not_reused() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    f.commit("Record the completed ledger");
+    let completed = f.git(&["rev-parse", "HEAD"]);
+    f.git(&["checkout", "--detach", &f.baseline]);
+    f.git(&[
+        "restore",
+        "--source",
+        &completed,
+        "--staged",
+        "--worktree",
+        "--",
+        ".",
+    ]);
+    f.git(&[
+        "commit",
+        "-m",
+        "Record the same files on a different line of history",
+    ]);
+    let v = f.verify(&["--work", "W"], 1);
+    assert!(v.to_string().contains("acceptance_missing"), "{v}");
+    f.assert_no_reuse(&v);
+}
+
+#[test]
+fn ledger_only_ac5_explicit_selection_and_mixed_results_remain_independent() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    let mut ledger = f.ledger();
+    let mut unobserved = ledger["work_items"][0].clone();
+    unobserved["id"] = json!("V");
+    unobserved["title"] = json!("Unobserved saved content");
+    ledger["work_items"]
+        .as_array_mut()
+        .unwrap()
+        .push(unobserved);
+    f.save_ledger(&ledger);
+    f.commit("Record another source-completed work without observations");
+    assert_eq!(f.verify(&[], 0)["results"], json!([]));
+    assert_eq!(
+        f.verify(&["--require-work"], 0)["results"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        f.verify(&["--work", "W", "--work", "W"], 0)["results"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let v = f.verify(&["--work", "V", "--work", "W"], 1);
+    let results = v["results"].as_array().unwrap();
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0]["work"], "V");
+    assert_eq!(results[0]["met"], false);
+    assert!(results[0].get("bound_commit").is_none());
+    assert_eq!(results[1]["work"], "W");
+    assert_eq!(results[1]["met"], true);
+    assert_eq!(results[1]["delta"], "ledger_only");
+}
+
+#[test]
+fn ledger_only_required_selection_keeps_exact_receipts_without_adding_ancestors() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    let ancestor = f.git(&["rev-parse", "HEAD"]);
+    let mut ledger = f.ledger();
+    let mut work = ledger["work_items"][0].clone();
+    work["id"] = json!("V");
+    work["status"] = json!("in_progress");
+    for field in ["evidence", "verification", "completed_at"] {
+        work.as_object_mut().unwrap().remove(field);
+    }
+    ledger["work_items"].as_array_mut().unwrap().push(work);
+    f.save_ledger(&ledger);
+    f.commit("Prepare an additional independently checked work");
+    f.ok(&["source", "reindex"]);
+    let session = f.ok(&[
+        "session",
+        "start",
+        "--work",
+        "V",
+        "--agent",
+        "additional-verifier",
+        "--provider",
+        "fixture",
+        "--model",
+        "local",
+        "--expected-revision",
+        &f.revision(),
+    ])["session"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    fs::write(f.root.join("implementation.txt"), "broken\n").unwrap();
+    assert_eq!(
+        f.ok(&[
+            "work",
+            "check",
+            "V",
+            "--session",
+            &session,
+            "--phase",
+            "baseline",
+            "--expected-revision",
+            &f.revision()
+        ])["met"],
+        true
+    );
+    fs::write(f.root.join("implementation.txt"), "after\n").unwrap();
+    let assessed = f.ok(&["work", "assess", "V"]);
+    let request = json!({"work":"V", "session":session,
+        "expected_revision":f.revision().parse::<u64>().unwrap(),
+        "request_key":"additional-content-admission", "decision":"approved",
+        "contract_fingerprint":assessed["contract_fingerprint"],
+        "judgment":{"contribution":"Retain content", "necessity":"Lost content interrupts work",
+            "alternatives":"Keep the original saved copy", "deliverable":"Retained content",
+            "exit":"Content checks pass", "responsibility":"content-storage"}});
+    fs::write(
+        f.root.join(".awr/additional-admission.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+    f.ok(&["work", "admit", "--input", ".awr/additional-admission.json"]);
+    f.ok(&[
+        "work",
+        "claim",
+        "V",
+        "--session",
+        &session,
+        "--expected-revision",
+        &f.revision(),
+    ]);
+    f.ok(&[
+        "work",
+        "check",
+        "V",
+        "--session",
+        &session,
+        "--phase",
+        "acceptance",
+        "--write-input",
+        ".awr/additional-completion.json",
+        "--expected-revision",
+        &f.revision(),
+    ]);
+    f.ok(&[
+        "work",
+        "complete",
+        "V",
+        "--session",
+        &session,
+        "--reason",
+        "Deliver checked content",
+        "--input",
+        ".awr/additional-completion.json",
+        "--expected-revision",
+        &f.revision(),
+    ]);
+    for args in [vec![], vec!["--require-work"]] {
+        let v = f.verify(&args, 0);
+        assert_eq!(v["results"].as_array().unwrap().len(), 1);
+        assert_eq!(v["results"][0]["work"], "V");
+        f.assert_no_reuse(&v);
+    }
+    assert_eq!(
+        f.verify(&["--work", "W"], 0)["results"][0]["bound_commit"],
+        ancestor
+    );
+}
+
+#[test]
+fn ledger_only_empty_tree_delta_is_eligible() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    let bound = f.git(&["rev-parse", "HEAD"]);
+    f.git(&["commit", "--allow-empty", "-m", "Keep the accepted tree"]);
+    let v = f.verify(&["--work", "W"], 0);
+    assert_eq!(v["results"][0]["bound_commit"], bound);
+    assert_eq!(v["results"][0]["delta_paths"], json!([]));
+}
+
+#[test]
+fn ledger_only_deleted_nonledger_file_prevents_reuse() {
+    let f = Fixture::new();
+    f.local_completed_with(true, |f| {
+        fs::write(f.root.join("obsolete.rs"), "fn obsolete() {}\n").unwrap();
+        f.git(&["add", "obsolete.rs"]);
+    });
+    f.git(&["rm", "obsolete.rs"]);
+    f.commit("Remove code after acceptance");
+    let v = f.verify(&["--work", "W"], 1);
+    assert!(v.to_string().contains("acceptance_missing"));
+    f.assert_no_reuse(&v);
+}
+
+#[test]
+fn ledger_only_rename_into_a_mapped_path_checks_the_old_path_too() {
+    let f = Fixture::new();
+    f.local_completed_with(true, |f| {
+        fs::write(f.root.join("pending.yaml"), "work_items: []\n").unwrap();
+        fs::write(f.root.join("bookkeeping.yaml"), "work_items: []\n# Old bookkeeping\n").unwrap();
+        let manifest = f.root.join(".awr/project.toml");
+        let mut text = fs::read_to_string(&manifest).unwrap();
+        text.push_str("\n[[sources]]\ndomain='ledger'\nrole='supporting'\npath='bookkeeping.yaml'\nadapter='yaml-ledger-v1'\n");
+        fs::write(manifest, text).unwrap();
+        f.git(&["add", "pending.yaml", "bookkeeping.yaml"]);
+    });
+    fs::remove_file(f.root.join("bookkeeping.yaml")).unwrap();
+    fs::rename(f.root.join("pending.yaml"), f.root.join("bookkeeping.yaml")).unwrap();
+    f.git(&["add", "--update", "pending.yaml", "bookkeeping.yaml"]);
+    f.commit("Move an unmapped file into a mapped ledger path");
+    let v = f.verify(&["--work", "W"], 1);
+    assert!(v.to_string().contains("acceptance_missing"));
+    f.assert_no_reuse(&v);
+}
+
+#[test]
+fn ledger_only_code_mode_change_prevents_reuse() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    f.git(&["add", "work.yaml"]);
+    f.git(&["update-index", "--chmod=+x", "implementation.txt"]);
+    f.git(&[
+        "commit",
+        "-m",
+        "Change only the code file mode and ledger status",
+    ]);
+    let v = f.verify(&["--work", "W"], 1);
+    assert!(v.to_string().contains("acceptance_missing"));
+    f.assert_no_reuse(&v);
+}
+
+#[test]
+fn ledger_only_mapped_file_mode_change_is_reported() {
+    let f = Fixture::new();
+    f.local_completed_with(true, |f| {
+        fs::write(f.root.join("bookkeeping.yaml"), "work_items: []\n").unwrap();
+        let manifest = f.root.join(".awr/project.toml");
+        let mut text = fs::read_to_string(&manifest).unwrap();
+        text.push_str("\n[[sources]]\ndomain='ledger'\nrole='supporting'\npath='bookkeeping.yaml'\nadapter='yaml-ledger-v1'\n");
+        fs::write(manifest, text).unwrap();
+        f.git(&["add", "bookkeeping.yaml"]);
+    });
+    f.git(&["add", "work.yaml"]);
+    f.git(&["update-index", "--chmod=+x", "bookkeeping.yaml"]);
+    f.git(&["commit", "-m", "Change a mapped ledger mode"]);
+    let v = f.verify(&["--work", "W"], 0);
+    assert_eq!(
+        v["results"][0]["delta_paths"],
+        json!(["bookkeeping.yaml", "work.yaml"])
+    );
+}
+
+#[test]
+fn ledger_only_reuse_keeps_the_independent_approver_gate() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    f.commit("Record the completed ledger");
+    fs::write(
+        f.root.join(".awr/gates.toml"),
+        "version=1\n[checks]\nmode='observe'\nscope='all'\nseparate_approver=true\n",
+    )
+    .unwrap();
+    let v = f.verify(&["--work", "W"], 1);
+    assert!(v.to_string().contains("approver_is_implementer"), "{v}");
+    assert_eq!(v["results"][0]["delta"], "ledger_only");
+}
+
+#[test]
+fn ledger_only_multiple_mapped_files_use_nul_paths_and_bound_the_receipt() {
+    let f = Fixture::new();
+    let mut paths: Vec<_> = (0..16)
+        .map(|n| format!("ledgers/part {n:02}.yaml"))
+        .collect();
+    #[cfg(unix)]
+    paths.push("ledgers/part\twith\nseparators.yaml".into());
+    f.local_completed_with(true, |f| {
+        fs::create_dir(f.root.join("ledgers")).unwrap();
+        let manifest = f.root.join(".awr/project.toml");
+        let mut text = fs::read_to_string(&manifest).unwrap();
+        for path in &paths {
+            fs::write(f.root.join(path), "work_items: []\n").unwrap();
+            text.push_str(&format!("\n[[sources]]\ndomain='ledger'\nrole='supporting'\npath={}\nadapter='yaml-ledger-v1'\n", serde_json::to_string(path).unwrap()));
+        }
+        fs::write(manifest, text).unwrap();
+        f.git(&["add", "ledgers"]);
+    });
+    for path in &paths {
+        fs::write(f.root.join(path), "work_items: []\n# Ledger bookkeeping\n").unwrap();
+    }
+    f.git(&["add", "ledgers"]);
+    f.commit("Record all mapped ledger files");
+    paths.push("work.yaml".into());
+    paths.sort();
+    let v = f.verify(&["--work", "W"], 0);
+    assert_eq!(v["results"][0]["delta_paths"], json!(&paths[..16]));
+    assert_eq!(v["results"][0]["delta_paths_omitted"], paths.len() - 16);
+}
+
+#[test]
+fn ledger_only_nested_project_uses_repository_relative_paths() {
+    let f = Fixture::new();
+    let project = f.root.join("app");
+    fs::create_dir_all(project.join(".awr")).unwrap();
+    for path in [
+        ".awr/project.toml",
+        ".gitignore",
+        "work.yaml",
+        "implementation.txt",
+        "oracle.txt",
+    ] {
+        fs::copy(f.root.join(path), project.join(path)).unwrap();
+    }
+    let nested = Fixture {
+        root: project,
+        baseline: f.baseline.clone(),
+    };
+    nested.local_completed(true);
+    nested.commit("Record the nested completed ledger");
+    f.git(&["config", "diff.relative", "true"]);
+    let v = nested.verify(&["--work", "W"], 0);
+    assert_eq!(v["results"][0]["delta_paths"], json!(["app/work.yaml"]));
+    fs::write(f.root.join("outside.txt"), "outside this project\n").unwrap();
+    f.git(&["add", "outside.txt"]);
+    f.git(&["commit", "-m", "Change another part of the repository"]);
+    let v = nested.verify(&["--work", "W"], 1);
+    nested.assert_no_reuse(&v);
+}
+
+#[test]
+fn ledger_only_ac6_installed_hook_allows_the_ledger_commit() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    let remote = f.install_push_target(true);
+    f.commit("Record the completed ledger before pushing");
+    let pushed = f.push();
+    assert!(
+        pushed.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&pushed.stdout),
+        String::from_utf8_lossy(&pushed.stderr)
+    );
+    let target = Command::new("git")
+        .arg("--git-dir")
+        .arg(remote)
+        .args(["rev-parse", "refs/heads/verified"])
+        .output()
+        .unwrap();
+    assert!(target.status.success());
+    assert_eq!(
+        String::from_utf8(target.stdout).unwrap().trim(),
+        f.git(&["rev-parse", "HEAD"])
+    );
+}
+
+#[test]
+fn ledger_only_ac6_installed_hook_refuses_code_changes() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    f.install_push_target(true);
+    fs::write(
+        f.root.join("implementation.txt"),
+        "changed after completion\n",
+    )
+    .unwrap();
+    f.commit("Change code after the verified delivery");
+    let pushed = f.push();
+    assert!(!pushed.status.success());
+    assert!(String::from_utf8_lossy(&pushed.stdout).contains("No associated work"));
+}
+
+#[test]
+fn ledger_only_ac6_default_hook_preserves_ledger_and_code_push_success() {
+    let f = Fixture::new();
+    f.local_completed(true);
+    f.install_push_target(false);
+    f.commit("Record the completed ledger with the default hook");
+    assert!(f.push().status.success());
+    fs::write(
+        f.root.join("implementation.txt"),
+        "changed after completion\n",
+    )
+    .unwrap();
+    f.commit("Change code with the default hook");
+    assert!(f.push().status.success());
 }
 
 #[test]
