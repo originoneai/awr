@@ -1254,3 +1254,137 @@ async fn create_retry_of_the_same_creation_still_resumes() {
         .expect_err("only the recorded creation resumes");
     assert_candidate_exists_refusal(&err, &current, "cand-same", json!(["changes"]));
 }
+
+#[tokio::test]
+async fn create_reusing_a_candidate_id_through_another_client_is_refused_as_author() {
+    let (_g, admin, db, _read) = setup().await;
+    elev_maintainer(&admin).await;
+    // Token B is the same actor through a second client (cli-b); let it write too.
+    admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_grants SET can_write=true, grant_version=grant_version+1
+             WHERE client_id='cli-b';",
+        )
+        .await
+        .unwrap();
+    let store = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let req = create_with_candidate("author-create-1", "cand-author", "OPS-AUTHOR-1");
+    store
+        .planning_draft(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    let before = candidate_row(&admin, "cand-author").await;
+    let counts = planning_write_counts(&admin).await;
+
+    // The same body through another client is not the creation this candidate recorded.
+    let mut other_client = req.clone();
+    other_client.request_id = "author-create-2".into();
+    let err = store
+        .planning_draft(TENANT, PROJECT, B, &other_client)
+        .await
+        .expect_err("a create through another client is a different creation");
+    assert_candidate_exists_refusal(&err, &before, "cand-author", json!(["author"]));
+    assert_eq!(candidate_row(&admin, "cand-author").await, before);
+    assert_eq!(
+        planning_write_counts(&admin).await,
+        counts,
+        "the refused create writes nothing"
+    );
+    let unused: i64 = admin
+        .query_one(
+            "SELECT count(*) FROM awr_team.planning_command_receipts WHERE request_id='author-create-2'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(unused, 0, "the refused request id stays unused");
+
+    // The original author retrying the same body still resumes.
+    let mut same_author = req.clone();
+    same_author.request_id = "author-create-3".into();
+    let resumed = store
+        .planning_draft(TENANT, PROJECT, A, &same_author)
+        .await
+        .unwrap();
+    assert_eq!(resumed["result"]["resumed"], true);
+    assert_eq!(
+        resumed["result"]["candidate_digest"],
+        before["candidate_digest"]
+    );
+}
+
+#[tokio::test]
+async fn create_reusing_a_candidate_id_compares_suggestion_ids() {
+    let (_g, admin, db, _read) = setup().await;
+    elev_maintainer(&admin).await;
+    let store = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let mut suggestion_ids = Vec::new();
+    for n in 1..=2 {
+        let suggested = store
+            .planning_suggest(
+                TENANT,
+                PROJECT,
+                A,
+                &PlanningSuggestRequest {
+                    protocol_version: 1,
+                    request_id: format!("sugg-ids-{n}"),
+                    rationale: format!("suggestion {n}"),
+                    affected_work_keys: vec!["a".into()],
+                    proposed_notes: json!({"note": n}),
+                    author_person_id: Some("agent".into()),
+                },
+            )
+            .await
+            .unwrap();
+        suggestion_ids.push(
+            suggested["result"]["suggestion_id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        );
+    }
+    let mut req = create_with_candidate("sugg-create-1", "cand-sugg", "OPS-SUGG-1");
+    req.suggestion_ids = vec![suggestion_ids[0].clone()];
+    store
+        .planning_draft(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    let before = candidate_row(&admin, "cand-sugg").await;
+    assert_eq!(before["suggestion_ids"], json!([suggestion_ids[0]]));
+
+    // (a) The same suggestion ids: an idempotent retry.
+    let mut same = req.clone();
+    same.request_id = "sugg-create-2".into();
+    let resumed = store
+        .planning_draft(TENANT, PROJECT, A, &same)
+        .await
+        .unwrap();
+    assert_eq!(resumed["result"]["resumed"], true);
+    assert_eq!(
+        resumed["result"]["candidate_digest"],
+        before["candidate_digest"]
+    );
+
+    // (b) Different suggestion ids with the same changes: refused, nothing written.
+    let counts = planning_write_counts(&admin).await;
+    let mut other = req.clone();
+    other.request_id = "sugg-create-3".into();
+    other.suggestion_ids = vec![suggestion_ids[1].clone()];
+    let err = store
+        .planning_draft(TENANT, PROJECT, A, &other)
+        .await
+        .expect_err("different suggestion ids are a different creation");
+    assert_candidate_exists_refusal(&err, &before, "cand-sugg", json!(["suggestion_ids"]));
+    assert_eq!(candidate_row(&admin, "cand-sugg").await, before);
+    assert_eq!(planning_write_counts(&admin).await, counts);
+    let state: String = admin
+        .query_one(
+            "SELECT state FROM awr_team.planning_suggestions WHERE id=$1",
+            &[&suggestion_ids[1]],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(state, "open", "the refused create accepts no suggestion");
+}

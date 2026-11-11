@@ -1344,6 +1344,10 @@ fn now_unix_ms() -> u64 {
 /// roots, goal keys (an empty request resolves to the stored default) and self-approve policy
 /// (an omitted policy resolves to the ordinary default), and the author person, actor and client
 /// that created it.
+///
+/// The refusal's `request_reserved: false` means only that this call reserved nothing: a receipt
+/// that an earlier, crashed call reserved for this candidate id, before the candidate was created
+/// under another request, stays `reserved` and is not cleared here.
 pub(super) async fn existing_candidate_for_create(
     tx: &Transaction<'_>,
     tenant_id: &str,
