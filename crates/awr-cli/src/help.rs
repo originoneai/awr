@@ -213,6 +213,7 @@ fn rows(group: &Group) -> String {
     }
     if group.name == "governance" {
         writeln!(text, "\n{}", awr_core::WORK_DEFINITION_GUIDANCE).unwrap();
+        writeln!(text, "\n{}", awr_core::WORK_DEFINITION_GAP_GUIDANCE).unwrap();
     }
     text
 }

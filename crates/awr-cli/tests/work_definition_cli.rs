@@ -9,6 +9,324 @@ use std::{fs, path::PathBuf, process::Command};
 const ACC: &str = "Saving failure keeps the user's input";
 const OUTCOME: &str = "Users keep their input when saving fails";
 
+fn governance_help() -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_awr"))
+        .env("AWR_LOCAL_WEB", "0")
+        .args(["work", "help", "governance"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    String::from_utf8(output.stdout).unwrap()
+}
+
+struct GapHint<'a> {
+    codes: Vec<&'a str>,
+    path: &'a str,
+    value: Value,
+    note: &'a str,
+}
+
+fn gap_hints(text: &str) -> Vec<GapHint<'_>> {
+    text.lines()
+        .filter_map(|line| {
+            let (codes, rest) = line.split_once(" | ")?;
+            let (yaml, note) = rest.split_once(" | ")?;
+            let (path, shape) = yaml.split_once(": ")?;
+            if !codes
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || b"_,".contains(&c))
+            {
+                return None;
+            }
+            Some(GapHint {
+                codes: codes.split(',').collect(),
+                path,
+                value: serde_yaml_ng::from_str(shape).expect("a one-line YAML value"),
+                note,
+            })
+        })
+        .collect()
+}
+
+// Read emitted codes from the checker itself, including conditional reference/graph gaps.
+// A new diagnostic is checked without copying the checker's list into this test.
+fn checker_gap_codes(source: &str) -> std::collections::BTreeSet<&str> {
+    let quoted: Vec<_> = source.split('"').skip(1).collect();
+    quoted
+        .chunks_exact(2)
+        .filter(|pair| {
+            pair[0].contains('_')
+                && pair[0].bytes().all(|c| c.is_ascii_lowercase() || c == b'_')
+                && matches!(
+                    pair[1].split_whitespace().collect::<String>().as_str(),
+                    "," | ",format!("
+                )
+        })
+        .map(|pair| pair[0])
+        .collect()
+}
+
+fn uncovered_codes<'a>(
+    codes: impl IntoIterator<Item = &'a str>,
+    hints: &[GapHint<'_>],
+) -> Vec<&'a str> {
+    codes
+        .into_iter()
+        .filter(|code| !hints.iter().any(|h| h.codes.contains(code)))
+        .collect()
+}
+
+fn filled_hint(value: &Value, pin: &str) -> Value {
+    match value {
+        Value::String(text) => json!(
+            text.replace("<sha256>", pin.strip_prefix("sha256:").unwrap())
+                .replace("<decision>", "scope")
+                .replace("<goal>", "G")
+                .replace("<outcome>", OUTCOME)
+                .replace("<criterion>", ACC)
+                .replace("<path>", "crates/storage/src")
+                .replace("<id>", "result")
+                .replace(['<', '>'], "")
+        ),
+        Value::Array(values) => Value::Array(values.iter().map(|v| filled_hint(v, pin)).collect()),
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .map(|(k, v)| (k.clone(), filled_hint(v, pin)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+fn set_hint(work: &mut Value, path: &str, value: Value) {
+    let path = path.replace("[0]", ".0");
+    let mut parts = path.split('.').peekable();
+    let mut target = work;
+    while let Some(part) = parts.next() {
+        if let Ok(index) = part.parse::<usize>() {
+            target = &mut target[index];
+        } else {
+            target = &mut target[part];
+        }
+        if parts.peek().is_none() {
+            *target = value;
+            break;
+        }
+    }
+}
+
+fn parse_hint_work(work: Value) -> awr_core::Result<awr_core::ProjectionBatch> {
+    use awr_source::{Manifest, ParseContext, SourceAdapter, SourceSnapshot, YamlLedgerAdapter};
+    let manifest = Manifest::parse(
+        "[project]\nname='Hint fixture'\n[[sources]]\ndomain='ledger'\nrole='primary'\npath='work.yaml'\nadapter='yaml-ledger-v1'\n",
+    )?;
+    let source = awr_core::Source {
+        id: Id::new(),
+        project_id: Id::new(),
+        domain: "ledger".into(),
+        role: "primary".into(),
+        locator: "file:///fixture/work.yaml".into(),
+        format: "yaml".into(),
+        adapter: "yaml-ledger-v1".into(),
+        revision: 1,
+        fingerprint: String::new(),
+        freshness: awr_core::Freshness::Fresh,
+        config: json!({}),
+    };
+    let bytes = serde_json::to_vec(&json!({"work_items": [work]})).unwrap();
+    let snapshot = SourceSnapshot {
+        content_review: None,
+        locator: source.locator.clone(),
+        fingerprint: awr_source::fingerprint(&bytes),
+        bytes,
+    };
+    YamlLedgerAdapter.parse(
+        &snapshot,
+        &ParseContext {
+            source: &source,
+            existing_ids: Default::default(),
+        },
+        &manifest.sources[0],
+    )
+}
+
+#[test]
+fn gap_hints_ac1_every_checker_code_has_a_field_and_yaml_value() {
+    let text = governance_help();
+    let hints = gap_hints(&text);
+    let source = include_str!("../../awr-core/src/work_definition.rs");
+    let source = source.split_once("fn intent_problems").unwrap().1;
+    let codes = checker_gap_codes(source);
+    assert!(
+        codes.len() >= 30,
+        "checker extraction lost diagnostics: {codes:?}"
+    );
+    assert_eq!(
+        uncovered_codes(codes.iter().copied(), &hints),
+        Vec::<&str>::new()
+    );
+    for code in codes {
+        let rows: Vec<_> = hints.iter().filter(|h| h.codes.contains(&code)).collect();
+        assert_eq!(rows.len(), 1, "one repair row for {code}");
+        assert!(!rows[0].path.is_empty());
+        assert!(!rows[0].note.is_empty() && rows[0].note.len() <= 100);
+    }
+}
+
+#[test]
+fn gap_hints_ac1_new_checker_code_without_a_row_is_detected() {
+    let text = governance_help();
+    let hints = gap_hints(&text);
+    let changed_checker = "run.gap(\"new_definition_gap\", \"A new obligation\");";
+    assert_eq!(
+        uncovered_codes(checker_gap_codes(changed_checker), &hints),
+        ["new_definition_gap"]
+    );
+}
+
+#[test]
+fn gap_hints_ac2_every_field_and_value_is_accepted_by_the_source_parser() {
+    let p = Project::new();
+    let text = governance_help();
+    let hints = gap_hints(&text);
+    assert!(!hints.is_empty(), "missing gap field hints");
+    for hint in hints {
+        let mut work = json!({"id":"W", "title":"Save safely", "status":"planned", "acceptance":[ACC], "definition": p.definition("Local save")});
+        set_hint(&mut work, hint.path, filled_hint(&hint.value, &p.pin()));
+        parse_hint_work(work).unwrap_or_else(|e| panic!("{}: {e}", hint.path));
+    }
+}
+
+#[test]
+fn gap_hints_ac2_unknown_field_in_a_hint_is_rejected() {
+    let p = Project::new();
+    let text = governance_help();
+    let hints = gap_hints(&text);
+    let hint = hints
+        .iter()
+        .find(|h| h.codes.contains(&"responsibility_missing"))
+        .expect("responsibility hint");
+    let mut work = json!({"id":"W", "title":"Save safely", "status":"planned", "definition":p.definition("Local save")});
+    set_hint(
+        &mut work,
+        &hint.path.replace("responsibility", "responsibilty"),
+        filled_hint(&hint.value, &p.pin()),
+    );
+    assert!(
+        parse_hint_work(work).is_err(),
+        "an invented field must fail parsing"
+    );
+}
+
+fn definition_from_hints(p: &Project) -> Value {
+    let text = governance_help();
+    let yaml = text
+        .split_once("```yaml\n")
+        .unwrap()
+        .1
+        .split_once("```")
+        .unwrap()
+        .0;
+    let mut work: Value = serde_yaml_ng::from_str(yaml).unwrap();
+    work["paths"] = json!([]);
+    let hints = gap_hints(&text);
+    for _ in 0..20 {
+        p.ledger_with(
+            &work["definition"],
+            "Review the contract",
+            json!({"paths": work["paths"]}),
+        );
+        p.reindex();
+        let report = p.ok(&["work", "show", "W"])["work"]["definition"].clone();
+        let codes = gap_codes(&report);
+        if codes.is_empty() {
+            return work;
+        }
+        for code in codes {
+            let hint = hints
+                .iter()
+                .find(|h| h.codes.contains(&code.as_str()))
+                .unwrap_or_else(|| panic!("no field hint for {code}"));
+            let mut value = filled_hint(&hint.value, &p.pin());
+            if hint.path == "definition.examples" {
+                assert!(hint.note.contains("negative"), "explain both example kinds");
+                let mut negative = value[0].clone();
+                negative["kind"] = json!("negative");
+                negative["then"] = json!("Success is withheld");
+                value.as_array_mut().unwrap().push(negative);
+            }
+            set_hint(&mut work, hint.path, value);
+        }
+    }
+    panic!("the hints did not clear the definition gaps");
+}
+
+#[test]
+fn gap_hints_ac3_filling_reported_fields_clears_work_show_gaps() {
+    let p = Project::new();
+    let work = definition_from_hints(&p);
+    assert_eq!(
+        work["definition"]["intent"][0]["source_fingerprint"],
+        p.pin()
+    );
+    let report = p.ok(&["work", "show", "W"])["work"]["definition"].clone();
+    assert_eq!(report["state"], "complete");
+    assert!(gap_codes(&report).is_empty());
+}
+
+#[test]
+fn gap_hints_ac3_omitting_one_field_reports_exactly_its_mapped_gap() {
+    let p = Project::new();
+    let complete = definition_from_hints(&p);
+    let text = governance_help();
+    let hints = gap_hints(&text);
+    for (field, code) in [
+        ("granularity", "granularity_missing"),
+        ("responsibility", "responsibility_missing"),
+        ("deliverable", "deliverable_missing"),
+        ("evidence_method", "evidence_method_missing"),
+        ("failure_recovery", "failure_recovery_missing"),
+        ("discrimination", "discrimination_missing"),
+    ] {
+        let mut sparse = complete["definition"].clone();
+        sparse.as_object_mut().unwrap().remove(field);
+        p.ledger(&sparse, "Repair the missing field");
+        p.reindex();
+        let report = p.ok(&["work", "show", "W"])["work"]["definition"].clone();
+        assert_eq!(gap_codes(&report), [code], "omitted {field}: {report}");
+        assert_eq!(
+            hints.iter().find(|h| h.codes.contains(&code)).unwrap().path,
+            format!("definition.{field}")
+        );
+    }
+}
+
+#[test]
+fn gap_hints_ac5_help_leaves_definition_and_admission_reports_unchanged() {
+    let p = Project::new();
+    let before = p.ok(&["work", "show", "W"]);
+    let text = governance_help();
+    assert!(text.contains("shasum -a 256 <decision file>"));
+    assert!(text.contains("sourced_fact") && text.contains("Assumptions are not adopted facts"));
+    let after = p.ok(&["work", "show", "W"]);
+    for field in ["definition", "admission"] {
+        assert_eq!(before["work"][field], after["work"][field]);
+    }
+}
+
+#[test]
+fn gap_hints_ac5_assumptions_still_leave_intent_and_inputs_unmet() {
+    let p = Project::new();
+    let mut definition = p.definition("Local save");
+    definition["intent"][0]["role"] = json!("assumption");
+    p.ledger(&definition, "Resolve the assumption");
+    p.reindex();
+    let report = p.ok(&["work", "show", "W"])["work"]["definition"].clone();
+    assert_eq!(gap_codes(&report), ["intent_missing", "inputs_unversioned"]);
+}
+
 struct Project(PathBuf);
 impl Drop for Project {
     fn drop(&mut self) {

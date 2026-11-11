@@ -190,6 +190,13 @@ creation receipts, activation errors and `work show` direct the caller to
 `examples` and `check` fields. Sample values need the caller's business facts;
 declaring a definition does not satisfy its remaining obligations or approve admission.
 
+The governance help topic also maps implementation-definition gap codes to field
+paths, one-line YAML value shapes and repair hints. Shared repairs occupy one row;
+`paths` and `acceptance` are work-item fields. It explains accepted intent sources
+and computing the decision file's SHA-256. The topic fits within 3,072 bytes;
+default help, activation receipts, work reports and MCP request/response shapes
+retain their existing content and budgets.
+
 For an unclassified rule, `work prepare` retains `hard_rule_unresolved` and explains
 how to place annotations at the end of the heading line, for example
 `# Delivery {severity=hard scope=project value=*}`. Choose the severity and scope

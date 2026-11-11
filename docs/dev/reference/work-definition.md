@@ -27,6 +27,19 @@ work item, replace the sample criterion, command and file path, and fill the rem
 reported obligations. The starter declares a definition; admission still requires
 the work's complete contract and applicable checks.
 
+The same topic maps every implementation-definition gap code to a field path,
+a one-line YAML value shape and a short repair hint. Codes with the same repair
+share a row. Expand dotted paths into nested YAML; `paths` and `acceptance` belong
+to the work item beside `definition`. Replace placeholders with the work's actual
+facts, use a goal's exact success criterion in `contributes.outcome`, and repeat
+each criterion's example with `kind: negative` as well as `kind: positive`.
+
+For adopted intent, use `role: user_decision` or `role: sourced_fact` and the key of
+a registered accepted decision. Compute its file's SHA-256 with
+`shasum -a 256 <decision file>` and write `source_fingerprint: sha256:<digest>`.
+Assumptions retain their role; adopted facts require the decision and its pinned
+bytes. Review changed decision content before updating its fingerprint.
+
 Author the definition beside the work item in its source ledger:
 
 ```yaml
@@ -142,6 +155,7 @@ order, each with `id` (null when absent), `kind`, `criterion` and `has_check`.
 | `example_id_missing` | an example declares a check without an identifier |
 | `example_id_duplicate` | an identifier repeats within the definition |
 | `discrimination_missing` | no method says how the tests will show they detect a wrong implementation |
+| `discrimination_note_missing` | `justified_alternative` lacks a nonblank explanation for independent review |
 | `tier_conflicts_with_specification` | the work is marked required while every specification item it references is declared future |
 | `inherits_not_found` | the inherited work declares no definition |
 | `side_line_without_parent`, `side_line_return_missing`, `side_line_stop_missing` | a side line does not name the line it returns to, when its result returns, or when it stops |

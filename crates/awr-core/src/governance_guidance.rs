@@ -60,6 +60,32 @@ definition:
 ```
 Then use one work admit call; no stage document is needed. More: awr work help governance."#;
 
+/// On-demand field shapes for definition gaps, kept out of per-work guidance and receipts.
+pub const WORK_DEFINITION_GAP_GUIDANCE: &str = r#"Gap codes | Path: YAML | Hint
+intent_missing,inputs_unversioned,intent_ref_not_found,intent_ref_stale | definition.intent: [{role: user_decision,decision: <decision>,source_fingerprint: 'sha256:<sha256>'}] | Accepted decision.
+contribution_missing,contribution_goal_not_found,contribution_outcome_unknown | definition.contributes: [{goal: <goal>,outcome: <outcome>,claim: <why>,by: <by>}] | Exact success criterion.
+granularity_missing | definition.granularity: {judgment: independent_result,reason: <why>,by: <by>} | One result.
+responsibility_missing | definition.responsibility: {name: <name>,kind: delivery} | Named owner.
+scope_missing | paths: [<path>] | Work scope.
+deliverable_missing | definition.deliverable: <what> | Output.
+evidence_method_missing | definition.evidence_method: <how> | Proof.
+failure_recovery_missing | definition.failure_recovery: <when> | Failure/recovery.
+acceptance_missing | acceptance: [<criterion>] | Observable.
+examples_missing,example_criterion_unknown | definition.examples: [{criterion: <criterion>,kind: positive,given: <input>,when: <action>,then: <what>}] | Repeat as negative per criterion.
+example_id_missing,example_id_duplicate | definition.examples[0].id: <id> | Unique ID per check.
+discrimination_missing | definition.discrimination: {method: fail_before_pass_after} | Method.
+discrimination_note_missing | definition.discrimination.note: <reason> | For justified_alternative.
+parent_not_found,parent_self,parent_cross_workstream,parent_cycle,step_without_parent,side_line_without_parent | definition.parent: <work> | Known; same stream; acyclic.
+inherits_not_found | definition.inherits: <work> | Current definition.
+tier_conflicts_with_specification | definition.tier: later | Match specification.
+side_line_return_missing | definition.side_line.return_condition: <when> | Rejoin.
+side_line_stop_missing | definition.side_line.stop_condition: <when> | Stop.
+large_work_budget_missing | definition.budget: {rework_cycles: 3} | Large-work budget.
+outline_trigger_missing | definition.outline.trigger: <when> | Elaborate when.
+outline_not_elaborated | definition.outline: null | Elaborate fully.
+Assumptions are not adopted facts; use user_decision or sourced_fact.
+source_fingerprint: sha256:<digest> via shasum -a 256 <decision file>."#;
+
 /// The facts the choice reads. They come from the readiness diagnostics and the findings block.
 pub struct GovernanceView<'a> {
     /// `(code, detail)` of every readiness diagnostic of the work.
