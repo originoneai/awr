@@ -849,3 +849,19 @@ async fn run(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_expired_lease_is_contention_by_variant_never_by_the_public_text() {
+        // Members read recovery guidance on the public body of this refusal; the worker keys on the
+        // variant and its unchanged text alone.
+        assert_eq!(
+            pg_failure(PgError::LeaseExpired),
+            GitHubWorkerFailure::Contention
+        );
+        assert_eq!(PgError::LeaseExpired.to_string(), "lease expired");
+    }
+}

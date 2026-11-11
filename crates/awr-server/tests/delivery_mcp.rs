@@ -855,3 +855,132 @@ async fn neutral_transport_refuses_injection_cross_scope_and_revoked_clients() {
     other.cancel().await.unwrap();
     client.cancel().await.unwrap();
 }
+
+#[tokio::test]
+async fn an_elapsed_claim_names_its_recovery_when_selecting_a_candidate_over_http_and_mcp() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    admin
+        .batch_execute(
+            "UPDATE awr_team.workstream_grants SET can_manage=true WHERE client_id='cli-a'",
+        )
+        .await
+        .unwrap();
+    let server = start(store).await;
+    let client = connect(&server, A).await;
+    let p = call(&client, "awr_team_query", read("work.prepare", None), false).await;
+    let claim = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &p,
+            "elapsed-take",
+            "claim.acquire",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "expected_work_version":"0","ttl_seconds":60}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await["receipt"]["data"]
+        .clone();
+    admin
+        .batch_execute(
+            "UPDATE awr_team.claims SET expires_at=clock_timestamp()-interval '1 second'",
+        )
+        .await
+        .unwrap();
+    let p = call(&client, "awr_team_query", read("work.prepare", None), false).await;
+    let candidate = candidate(&p);
+    let select = |p: &Value, key: &str, claim: &Value| {
+        neutral(
+            p,
+            key,
+            "delivery.candidate.select",
+            json!({"expected_selected_digest":null,"session_id":"session-a",
+                "claim_id":claim["claim_id"],"fence":claim["fence"],
+                "lease_version":claim["lease_version"],"candidate":candidate}),
+        )
+    };
+
+    let refused = select(&p, "elapsed-sentinel-select", &claim);
+    let over_mcp = call(&client, "awr_team_command", refused.clone(), true).await;
+    let (status, over_http) = request(&server, "one", A, "command", &refused).await;
+    assert_eq!(status, reqwest::StatusCode::CONFLICT);
+    assert_eq!(over_mcp, over_http);
+    // Nothing the caller supplied (request, claim, session, candidate or artifact) comes back.
+    assert_claim_lease_expired(
+        &over_http,
+        &[
+            "elapsed-sentinel-select",
+            "delivery.candidate.select",
+            claim["claim_id"].as_str().unwrap(),
+            "session-a",
+            "sdk-candidate",
+            "sdk-artifact",
+            "fixture://sdk-artifacts",
+            "fixture://artifact/report",
+            A,
+            TENANT,
+            PROJECT,
+        ],
+    );
+    // The refusal recorded nothing and left the request ID unused.
+    for table in [
+        "delivery_sync_requests",
+        "delivery_candidates",
+        "delivery_selections",
+    ] {
+        let count: i64 = admin
+            .query_one(&format!("SELECT count(*) FROM awr_team.{table}"), &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(count, 0, "{table}");
+    }
+
+    // Follow next_step literally: read the state, acquire again, select with the new claim.
+    let inspected = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"session.inspect","work_id":"a","session_id":"session-a"}),
+        false,
+    )
+    .await;
+    let session = &inspected["data"]["items"][0];
+    assert_eq!(session["state"], "active");
+    let current = call(&client, "awr_team_query", read("work.prepare", None), false).await;
+    let fresh = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &current,
+            "elapsed-reacquire",
+            "claim.acquire",
+            json!({"session_id":session["session_id"],
+                "expected_session_version":session["session_version"],
+                "expected_work_version":current["data"]["runtime"]["work_version"],
+                "ttl_seconds":60}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await["receipt"]["data"]
+        .clone();
+    assert_eq!(fresh["fence"], "2");
+    // The old claim is still refused with the same fixed body; the new claim selects.
+    let again = select(&current, "elapsed-sentinel-again", &claim);
+    let (status, body) = request(&server, "one", A, "command", &again).await;
+    assert_eq!(status, reqwest::StatusCode::CONFLICT);
+    assert_claim_lease_expired(&body, &["elapsed-sentinel-again"]);
+    let selected = call(
+        &client,
+        "awr_team_command",
+        select(&current, "elapsed-select", &fresh),
+        false,
+    )
+    .await;
+    assert_eq!(selected["receipt"]["protocol"], "awr-delivery-sync-v1");
+    assert_eq!(selected["execution_authorized"], false);
+    client.cancel().await.unwrap();
+}
