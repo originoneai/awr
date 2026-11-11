@@ -888,6 +888,11 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
                         diagnostic.code, diagnostic.work_item_key, diagnostic.detail
                     );
                 }
+                if let Some(next) =
+                    crate::help::definition_next_action(&value["work"]["diagnostics"])
+                {
+                    println!("Next: {next}");
+                }
                 println!("Acceptance:");
                 for criterion in &work.work.item.acceptance {
                     println!("- {criterion}");

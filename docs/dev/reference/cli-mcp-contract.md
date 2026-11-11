@@ -168,6 +168,17 @@ the caller accepts that repair before activating. Missing acceptance, next steps
 and valid goal links are not replaced with invented defaults. Text refusals include
 the same repair command in their final `Next:` line.
 
+When activation is refused because a governed work item has no definition, text
+creation receipts, activation errors and `work show` direct the caller to
+`awr work help governance`. That topic includes a YAML starter with `definition`,
+`examples` and `check` fields. Sample values need the caller's business facts;
+declaring a definition does not satisfy its remaining obligations or approve admission.
+
+For an unclassified rule, `work prepare` retains `hard_rule_unresolved` and explains
+how to place annotations at the end of the heading line, for example
+`# Delivery {severity=hard scope=project value=*}`. Choose the severity and scope
+from the actual rule. Putting the annotation in the body leaves the rule unresolved.
+
 ### 输出、错误与退出码
 
 普通输出使用有界摘要；状态页最多一个当前建议，ready 默认最多 10 项。事件追加显示 ID、类型、短摘要、版本。`event show --full`、`object show --full` 和报告正文是显式展开。L1 文本保留预算内完整验收与硬规则。

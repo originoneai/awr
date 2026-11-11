@@ -11,6 +11,38 @@ struct Group {
     commands: &'static [(&'static str, &'static str)],
 }
 
+const DEFINITION_HELP: &str = "awr work help governance";
+
+pub(crate) fn definition_next_action(diagnostics: &serde_json::Value) -> Option<&'static str> {
+    diagnostics
+        .as_array()?
+        .iter()
+        .any(|diagnostic| {
+            diagnostic["code"] == "admission_obligations_unmet"
+                && diagnostic["detail"]
+                    .as_str()
+                    .is_some_and(|detail| detail.contains("definition_not_declared"))
+        })
+        .then_some(DEFINITION_HELP)
+}
+
+pub(crate) fn definition_error_next_action(error: &serde_json::Value) -> Option<&'static str> {
+    if let Some(next) = definition_next_action(&error["details"]["diagnostics"]) {
+        return Some(next);
+    }
+    // Draft activation retains readiness diagnostics in the DependencyBlocked message.
+    if error["code"] == "DependencyBlocked" {
+        let diagnostics: serde_json::Value = serde_json::from_str(
+            error["message"]
+                .as_str()?
+                .strip_prefix("dependency blocked: ")?,
+        )
+        .ok()?;
+        return definition_next_action(&diagnostics);
+    }
+    None
+}
+
 static COMMAND_GROUPS: &[Group] = &[
     Group {
         name: "daily",
@@ -178,6 +210,9 @@ fn rows(group: &Group) -> String {
     let mut text = format!("{}\n", group.title);
     for (name, description) in group.commands {
         writeln!(text, "  {name:width$}  {description}").unwrap();
+    }
+    if group.name == "governance" {
+        writeln!(text, "\n{}", awr_core::WORK_DEFINITION_GUIDANCE).unwrap();
     }
     text
 }
