@@ -13,6 +13,9 @@ use serde_json::{Value, json};
 use sha2::Digest;
 use std::{fs, path::PathBuf, process::Command};
 
+#[path = "support/checked_work.rs"]
+mod checked_work;
+
 const TARGET_EXTRA_CALLS: usize = 1;
 const TARGET_GUIDANCE_BYTES: usize = 2048;
 const TARGET_MEDIAN_RATIO: f64 = 0.2;
@@ -449,4 +452,75 @@ fn a_task_that_needs_two_extra_calls_for_definition_review_and_admission_fails_a
     ]);
     assert_eq!(over.len(), 1, "{over:?}");
     assert!(over[0].contains("median extra-call ratio"), "{over:?}");
+}
+
+#[test]
+fn checked_completion_adds_at_most_one_call_to_the_measured_governed_flow() {
+    let (baseline, _) = run("implementation", true);
+    let (_project, checked, reviewer, guidance_bytes) =
+        checked_work::checked_flow(true, false, true);
+    assert!(
+        reviewer.calls.is_empty(),
+        "this small-task policy permits inline admission"
+    );
+    let extra_calls = checked.calls.len().saturating_sub(baseline.calls.len());
+    let measured = Measured {
+        purpose: "checked_completion".into(),
+        baseline_calls: baseline.calls.len(),
+        governed_calls: checked.calls.len(),
+        extra_calls,
+        ratio: extra_calls as f64 / baseline.calls.len() as f64,
+        extra_bytes: checked.bytes() as i64 - baseline.bytes() as i64,
+        guidance_bytes,
+        extra_steps: vec!["baseline and acceptance checks with combined close-out"],
+    };
+    println!(
+        "checked_completion: {} governed calls, {} checked calls, {} JSON output bytes, {} guidance bytes",
+        measured.baseline_calls,
+        measured.governed_calls,
+        checked.bytes(),
+        measured.guidance_bytes
+    );
+    for call in &checked.calls {
+        println!("{}: {} bytes", call.name, call.bytes);
+    }
+    assert_eq!(over_target(&[measured]), Vec::<String>::new());
+}
+
+#[test]
+fn checked_completion_rejects_extra_calls_or_guidance_beyond_the_governance_targets() {
+    let baseline = 7;
+    assert!(
+        over_target(&[fake(
+            "checked_completion",
+            baseline,
+            TARGET_EXTRA_CALLS,
+            TARGET_GUIDANCE_BYTES
+        )])
+        .is_empty()
+    );
+    let too_many = over_target(&[fake(
+        "checked_completion",
+        baseline,
+        TARGET_EXTRA_CALLS + 1,
+        TARGET_GUIDANCE_BYTES,
+    )]);
+    assert!(
+        too_many
+            .iter()
+            .any(|message| message.contains("2 extra calls")),
+        "{too_many:?}"
+    );
+    let too_large = over_target(&[fake(
+        "checked_completion",
+        baseline,
+        TARGET_EXTRA_CALLS,
+        TARGET_GUIDANCE_BYTES + 1,
+    )]);
+    assert!(
+        too_large
+            .iter()
+            .any(|message| message.contains("2049 bytes of guidance")),
+        "{too_large:?}"
+    );
 }

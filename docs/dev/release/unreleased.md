@@ -36,6 +36,11 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   refusals offer reviewed field repair with caller-supplied values; acceptance,
   goals and concrete next steps are still required before activation.
 
+- Native CLI regression budgets cover work creation, checked completion, hook
+  continuation and automatic recovery. Failures list each step's output bytes;
+  the workflow benchmark adds checked completion to both strategies, bringing
+  each native platform run to twelve workflows. See the
+  [workflow measurements](../benchmarks/workflow.md#golden-path-budgets).
 - A compact Team MCP tool catalog for clients whose model provider caps the size of a tool schema
   (AWR-TF-014AN). Moonshot's API refuses `awr_team_command` because its full input schema is about
   130 KB (`schema exceeds maximum allowed size`), which stopped every Kimi Code turn against a Team
@@ -55,6 +60,12 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   JSON reports, five status counts, surviving source locations, and commit-bound completion
   checks. Alternative discrimination methods require a stated reason and approval from a
   session other than the proposer. See [example checks](../reference/checks.md#mutation-and-alternatives).
+- Compact CLI work-creation previews show the draft facts and an executable acceptance
+  command with the reviewed fingerprint and revision. Default JSON replaces source
+  snapshots and full texts with count and byte summaries; `--json --full` preserves
+  the complete preview payload. Long commands retain their exact input in a private
+  runtime file. Runtime fingerprints, acceptance checks and MCP payloads are unchanged.
+  See [creation previews](../reference/source-changes.md#cli-creation-previews).
 - One observation freshness and coverage contract for the Observer Team reads (AWR-OBS-002): every
   read (`POST /api/team/read`, `/api/team/inbox-detail`, `GET /api/team/inbox`, `GET /api/team/work`)
   carries a `freshness` envelope that presents the report-received clock, the authoritative

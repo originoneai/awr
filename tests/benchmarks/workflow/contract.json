@@ -1,7 +1,7 @@
 {
-  "version": 1,
+  "version": 2,
   "benchmark": "adaptive-workflow-v1",
-  "workloads": ["lightweight", "upgrade", "wait", "dependencies", "unknown_result"],
+  "workloads": ["lightweight", "upgrade", "wait", "dependencies", "unknown_result", "checked_completion"],
   "strategies": ["primitive", "prepared"],
   "comparison": "Same native binaries, identical initial source bytes and completion requirements. Primitive reads work, management and context separately; prepared composes those same required observations.",
   "required_checks": ["required_facts_preserved", "false_completion_rejected", "final_completion_verified", "identity_preserved", "duplicate_execution_absent", "scenario_behavior_verified"],

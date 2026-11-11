@@ -10,6 +10,7 @@ import os
 import queue
 import statistics
 import subprocess
+import sys
 import threading
 import time
 
@@ -139,7 +140,7 @@ class Rpc:
         return self.call(name,arguments,phase,reject,request_id or f'write-{self.sequence+1:04d}')
 
 
-def source_fixture(root, dependencies):
+def source_fixture(root, dependencies, checked=False):
     root.mkdir()
     (root/'map.toml').write_text("[project]\nname='Workflow benchmark'\ncontext_profile='minimal'\n[[sources]]\ndomain='ledger'\nrole='primary'\npath='work.yaml'\nadapter='yaml-ledger-v1'\n[[sources]]\ndomain='rules'\nrole='primary'\npath='rules.md'\nadapter='markdown-rules-v1'\n")
     (root/'rules.md').write_text('# Evidence {#truth severity=hard scope=project value=*}\n\n'+RULE+'\n')
@@ -150,7 +151,48 @@ def source_fixture(root, dependencies):
         if key=='W' and dependencies:
             text += '  depends_on: [D]\n'
     (root/'work.yaml').write_text(text)
-    return {p.name:digest(p) for p in root.iterdir() if p.is_file()}
+    if checked:
+        decision = '---\n{"id":"scope","status":"accepted","affected_keys":["*"]}\n---\n# Scope\n\n## Decision\nDeliver a reviewed local handoff with explicit limitations.\n'
+        (root/'decisions').mkdir()
+        (root/'decisions/scope.md').write_text(decision, encoding='utf-8')
+        (root/'checks').mkdir()
+        (root/'checks/verify.py').write_text(
+            'import json, sys\nfrom pathlib import Path\n'
+            'value = json.loads(Path("W-artifact.json").read_text(encoding="utf-8"))\n'
+            'assert value["work"] == "W", "Artifact identity changed"\n'
+            'field = value.get(sys.argv[1])\n'
+            'assert isinstance(field, str) and field.strip(), "Missing reviewed artifact field"\n',
+            encoding='utf-8')
+        examples = [dict(id=f'{field}-{kind}', criterion=criterion, kind=kind,
+                         given='A handoff is ready for review', when=f'The {field} field is inspected',
+                         then='A reviewed value is present' if kind=='positive' else 'Missing or blank values fail review',
+                         check=dict(run=[sys.executable, 'checks/verify.py', field], files=['checks/verify.py'], timeout_seconds=10))
+                    for criterion, field in zip(CRITERIA, ['result', 'limitations'])
+                    for kind in ['positive', 'negative']]
+        definition = dict(version=1, purpose='implementation', tier='required', size='small',
+                          intent=[dict(role='user_decision', decision='scope', source_fingerprint='sha256:'+digest(root/'decisions/scope.md'))],
+                          contributes=[dict(goal='G', outcome='A reviewed handoff is available', claim='Provide a usable handoff', by='author')],
+                          granularity=dict(judgment='independent_result', reason='One handoff with stated limitations', by='author'),
+                          responsibility=dict(name='handoff', kind='delivery'), deliverable='A reviewed local handoff',
+                          evidence_method='Compare direct checks before and after producing the artifact',
+                          failure_recovery='Keep the previous reviewed handoff', examples=examples,
+                          discrimination=dict(method='fail_before_pass_after'))
+        ledger = dict(goals=[dict(id='G', title=GOAL, status='active', success_criteria=['A reviewed handoff is available'])],
+                      work_items=[dict(id='W', title='Review the W handoff', status='planned', goal='G',
+                                       acceptance=CRITERIA, paths=['w'], next_action='Produce and review the handoff', definition=definition)])
+        (root/'work.yaml').write_bytes(encoded(ledger))
+        mapping = (root/'map.toml').read_text().replace("adapter='yaml-ledger-v1'\n",
+                  "adapter='yaml-ledger-v1'\n[sources.options.admission_policy]\nversion=1\nmode='governed_enforce'\nscope='all'\n")
+        mapping += "[[sources]]\ndomain='decisions'\nrole='supporting'\npath='decisions'\nadapter='markdown-directory-v1'\n"
+        (root/'map.toml').write_text(mapping)
+        (root/'W-artifact.json').write_bytes(encoded(dict(work='W', result='', limitations='')))
+        (root/'.gitignore').write_text('.awr/\nW-artifact.json\nW-report.json\n')
+        for args in [('init',), ('config','user.name','Workflow fixture'), ('config','user.email','workflow@example.invalid'),
+                     ('config','core.autocrlf','false'), ('add','map.toml','work.yaml','rules.md','decisions/scope.md','checks/verify.py','.gitignore'),
+                     ('commit','-m','Declare the checked handoff contract')]:
+            subprocess.run(['git', *args], cwd=root, capture_output=True, check=True)
+    return {str(p.relative_to(root)):digest(p) for p in root.rglob('*')
+            if p.is_file() and '.git' not in p.relative_to(root).parts}
 
 
 def cli(binary, root, rec, *args, phase='maintenance'):
@@ -274,6 +316,59 @@ def run_work(rpc, cli_binary, root, rec, strategy, scenario, key, executions):
     return dict(key=key,criteria=criteria,report_sha256=report_hash,management=management['decision']['mode'])
 
 
+def run_checked_work(rpc, cli_binary, root, rec, strategy, executions):
+    """Use recorded baseline/acceptance checks as the completion evidence."""
+    key = 'W'
+    started = rpc.write('awr_session_start', dict(work=key, conversation='checked-author-conversation', agent='checked-author', provider='fixture', model='no-model', claim=False))
+    session, identity = started['session']['id'], started['session']['work_item_id']
+    management, _ = prepare(rpc, strategy, key, session, CRITERIA)
+    manage(rpc, key, session, management)
+    baseline = cli(cli_binary, root, rec, 'work', 'check', key, '--session', session, '--phase', 'baseline',
+                   '--require-met', '--expected-revision', str(rpc.revision))
+    rpc.revision = baseline['project_revision']
+    require(baseline['met'] and len(baseline['results'])==4 and all(r['outcome']=='failed' for r in baseline['results']),
+            'checked completion needs a failed baseline for every example')
+    judgment = dict(contribution='Provide the reviewed handoff', necessity='The artifact is missing reviewed fields',
+                    alternatives='Reuse the existing handoff format', deliverable='A reviewed local handoff',
+                    exit='Both fields pass positive and negative checks', responsibility='handoff')
+    proposal = rpc.write('awr_work_admit', dict(work=key, session=session, request_key='checked-proposal',
+                         decision='proposed', contract_fingerprint=management['contract_fingerprint'], judgment=judgment))
+    reviewer = rpc.write('awr_session_start', dict(work=key, conversation='checked-reviewer-conversation', agent='checked-reviewer', provider='fixture', model='no-model', claim=False))['session']['id']
+    rpc.write('awr_work_admit', dict(work=key, session=reviewer, request_key='checked-approval', decision='approved',
+              contract_fingerprint=management['contract_fingerprint'], proposal_event=proposal['event']['id']))
+    rpc.write('awr_session_claim', dict(session=session, action='acquire'))
+    rpc.write('awr_work_transition', dict(work=key, session=session, action='progress', reason='Produce the checked handoff', next_action='Produce and review the handoff artifact'))
+    guard = rpc.write('awr_work_transition', dict(work=key, session=session, action='complete', reason='Probe missing check evidence'),
+                      phase='guard', reject=True)
+    require(guard.get('code')=='EvidenceMissing', 'unchecked completion was not refused')
+    require(rpc.call('awr_work_get', {'work':key}, 'guard')['work']['status']!='completed', 'false completion changed source state')
+    write_artifact(root, rec, key, CRITERIA, executions)
+    began = time.perf_counter_ns()
+    commands = [['git', 'add', 'work.yaml', '.gitignore'], ['git', 'commit', '-m', 'Record the started handoff work']]
+    outputs = [subprocess.run(command, cwd=root, capture_output=True, check=True) for command in commands]
+    rec.add('commit_checked_sources', 'business', encoded(commands),
+            b''.join(p.stdout+p.stderr for p in outputs), (time.perf_counter_ns()-began)/1e6, host_operation=True)
+    acceptance = cli(cli_binary, root, rec, 'work', 'check', key, '--session', session, '--phase', 'acceptance',
+                     '--require-met', '--write-input', str(root/'.awr/completion.json'), '--expected-revision', str(rpc.revision))
+    rpc.revision = acceptance['project_revision']
+    require(acceptance['met'] and len(acceptance['results'])==4 and all(r['outcome']=='passed' for r in acceptance['results']),
+            'checked completion lost acceptance coverage')
+    completion = json.loads((root/'.awr/completion.json').read_text())
+    require(completion==acceptance['completion_input'], 'written completion input differs from the check receipt')
+    report = root/acceptance['evidence']['locator']
+    require(digest(report)==acceptance['evidence']['sha256'], 'generated report hash differs from registered evidence')
+    (root/'W-report.json').write_bytes(report.read_bytes())
+    done = rpc.write('awr_work_transition', dict(work=key, session=session, action='complete', reason='The registered handoff checks pass',
+                     completion=completion, end_session=True))
+    require(done['check_gate']['would_refuse'] is False, 'completion did not satisfy the enforced check gate')
+    ended = rpc.call('awr_session_get', {'session':session}, 'verification')
+    require(ended['session']['status']=='ended' and all(c['status']=='released' for c in ended['claims']), 'combined close-out left a claim or active author')
+    rpc.write('awr_session_end', dict(session=reviewer, outcome='ended'))
+    final = cli(cli_binary, root, rec, 'work', 'show', key, '--source-sha', completion['source_sha'], phase='verification')
+    report_hash = check_final(root, key, identity, CRITERIA, final, executions)
+    return dict(key=key, criteria=CRITERIA, report_sha256=report_hash, management=management['decision']['mode'])
+
+
 def metrics(rows, wall_ms):
     maintenance = [r for r in rows if r['phase']=='maintenance']
     identities = [tuple(r['mutation_identity']) for r in rows if r.get('mutation_identity')]
@@ -306,10 +401,14 @@ def cost_segments(rows):
 def run_case(cli_binary,mcp_binary,directory,strategy,scenario):
     directory.mkdir()
     root = directory/'project'
-    sources = source_fixture(root,scenario=='dependencies')
+    sources = source_fixture(root,scenario=='dependencies',checked=scenario=='checked_completion')
     rec = Recorder(directory/'receipts')
     began = time.perf_counter_ns()
     cli(cli_binary,root,rec,'init','--manifest','map.toml','--accept',phase='onboarding')
+    if scenario=='checked_completion':
+        policy = b"version=1\n[checks]\nmode='enforce'\nscope='all'\n"
+        (root/'.awr/gates.toml').write_bytes(policy)
+        rec.add('configure_checked_completion', 'onboarding', policy, b'', 0, host_operation=True)
     rpc = Rpc(mcp_binary,root,rec,summary=strategy=='summary')
     executions, works = {}, []
     try:
@@ -320,7 +419,10 @@ def run_case(cli_binary,mcp_binary,directory,strategy,scenario):
             works.append(run_work(rpc,cli_binary,root,rec,strategy,scenario,'D',executions))
             graph = rpc.call('awr_work_graph',{})
             require(next(n for n in graph['nodes'] if n['key']=='W')['ready'],'verified predecessor did not release its dependent')
-        works.append(run_work(rpc,cli_binary,root,rec,strategy,scenario,'W',executions))
+        if scenario=='checked_completion':
+            works.append(run_checked_work(rpc,cli_binary,root,rec,strategy,executions))
+        else:
+            works.append(run_work(rpc,cli_binary,root,rec,strategy,scenario,'W',executions))
         graph = rpc.call('awr_work_graph',{},'verification')
         require(all(n['status']=='completed' and not n['active_claims'] for n in graph['nodes']),'final source/claim state is incomplete')
         require(set(executions)==set(w['key'] for w in works),'unexpected or missing business execution')

@@ -18,6 +18,7 @@ from process_runner import run_command
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = ROOT / 'tests/platform/contract.json'
 PREFIX = ['rtk', 'proxy'] if shutil.which('rtk') else []
+EXPECTED_WORKFLOW_RUNS = 12
 
 
 def require(condition, message):
@@ -28,6 +29,18 @@ def require(condition, message):
 def validate_parity(data):
     require(data['passed'] and data['tests_run'] == 14 and len(data['tools_exercised']) == 14,
             'CLI/MCP parity did not execute all fourteen tests and fourteen tool contracts')
+
+
+def validate_workflow(data, source, binaries):
+    workflow = json.loads((ROOT / 'tests/benchmarks/workflow/contract.json').read_text(encoding='utf-8'))
+    require(EXPECTED_WORKFLOW_RUNS == len(workflow['workloads']) * len(workflow['strategies'])
+            and data['workflow_runs'] == EXPECTED_WORKFLOW_RUNS
+            and data['checks'] == {key: True for key in workflow['required_checks']}
+            and data['runtime_source_sha'] == source and data['binary_sha256'] == binaries,
+            'Equivalent workflow cases or native binary binding are incomplete')
+    require(data['missing_metrics'] == workflow['missing_metrics']
+            and all(value is None for value in data['missing_metrics'].values()),
+            'Model usage cannot be inferred from synthetic protocol metrics')
 
 
 def digest(path):
@@ -108,6 +121,7 @@ def main():
         required_gates = contract['required_gates'] + contract.get('platform_required_gates', {}).get(args.platform, [])
         if args.platform == 'linux-x64':
             require('doc_commands' in required_gates, 'Register doc_commands in the Linux x64 contract')
+        require(contract['workflow_runs'] == EXPECTED_WORKFLOW_RUNS, 'Platform workflow count differs from its verifier')
         require(not read_command('git', 'status', '--porcelain'), 'Native verification needs a clean source commit')
         source = read_command('git', 'rev-parse', 'HEAD')
         require(not os.environ.get('GITHUB_SHA') or os.environ['GITHUB_SHA'] == source, 'Checkout and Actions source SHA differ')
@@ -211,13 +225,8 @@ def main():
     gate('workflow_oracle', [sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/benchmarks/workflow', '-v'])
     workflow = output / 'workflow'
 
-    def validate_workflow(data):
-        require(data['workflow_runs'] == 10 and all(data['checks'].values())
-                and data['runtime_source_sha'] == source
-                and data['binary_sha256'] == {'awr': digest(awr), 'mcp': digest(mcp)},
-                'Equivalent workflow cases or native binary binding are incomplete')
-        require(all(value is None for value in data['missing_metrics'].values()),
-                'Model usage cannot be inferred from synthetic protocol metrics')
+    def workflow_receipt(data):
+        validate_workflow(data, source, {'awr': digest(awr), 'mcp': digest(mcp)})
         copied = evidence / 'workflow-aggregate.json'
         shutil.copyfile(workflow / 'aggregate.json', copied)
         return {'workflow_runs': data['workflow_runs'], 'aggregate': str(copied.relative_to(ROOT)),
@@ -225,7 +234,7 @@ def main():
 
     gate('workflow_scenarios', [sys.executable, 'tests/benchmarks/workflow/run.py', '--awr', awr, '--mcp', mcp,
                               '--runtime-source-sha', source, '--output', workflow, '--repetitions', '1'],
-         receipt(workflow / 'aggregate.json', validate_workflow), requires=('build', 'workflow_oracle'))
+         receipt(workflow / 'aggregate.json', workflow_receipt), requires=('build', 'workflow_oracle'))
     gate('format', ['cargo', 'fmt', '--all', '--check'])
     unchanged = all((ROOT / name).is_file() and digest(ROOT / name) == value for name, value in fingerprints.items())
     unchanged = unchanged and read_command('git', 'rev-parse', 'HEAD') == source and not read_command('git', 'status', '--porcelain')
