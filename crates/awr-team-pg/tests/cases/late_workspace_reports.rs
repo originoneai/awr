@@ -295,7 +295,9 @@ async fn v2_never_reinterprets_an_old_contract_or_clears_an_unknown_report() {
                     TENANT,
                     PROJECT,
                     A,
-                    report(&store, &started, "uncertain-first", "succeeded").await,
+                    // A terminal outcome without declarations is refused; an uncertain
+                    // first report is outcome unknown.
+                    report(&store, &started, "uncertain-first", "unknown").await,
                 )
                 .await
                 .unwrap()["receipt"]["data"]

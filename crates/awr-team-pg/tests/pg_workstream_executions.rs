@@ -1308,11 +1308,15 @@ mod workspace_settlement_tests {
     async fn check_uncertain_or_incomplete_terminal_declarations_keep_caller_protection_policy(
         mode: ExecutionSettlementMode,
     ) {
+        // Omitted and null declarations on a terminal outcome are refused before any write
+        // (terminal_reports_must_state_both_settlement_declarations); with outcome unknown they
+        // still land in recovery, as do explicit false declarations.
         for case in [
-            "omitted",
+            "omitted-unknown-outcome",
             "not-stopped",
-            "unknown-stop",
+            "unknown-stop-unknown-outcome",
             "external-effects",
+            "external-effects-failed",
             "unknown-outcome",
             "scope",
             "expired",
@@ -1330,20 +1334,26 @@ mod workspace_settlement_tests {
             }
             let mut cmd = declaration(&store, &c, &started, case, "succeeded").await;
             match case {
-                "omitted" => {
+                "omitted-unknown-outcome" => {
                     cmd.args
                         .as_object_mut()
                         .unwrap()
                         .remove("workspace_settlement");
+                    cmd.args["outcome"] = json!("unknown");
                 }
                 "not-stopped" => {
                     cmd.args["workspace_settlement"]["executor_stopped"] = json!(false)
                 }
-                "unknown-stop" => {
-                    cmd.args["workspace_settlement"]["executor_stopped"] = Value::Null
+                "unknown-stop-unknown-outcome" => {
+                    cmd.args["workspace_settlement"]["executor_stopped"] = Value::Null;
+                    cmd.args["outcome"] = json!("unknown");
                 }
                 "external-effects" => {
                     cmd.args["workspace_settlement"]["no_external_effects"] = json!(false)
+                }
+                "external-effects-failed" => {
+                    cmd.args["workspace_settlement"]["no_external_effects"] = json!(false);
+                    cmd.args["outcome"] = json!("failed");
                 }
                 "unknown-outcome" => cmd.args["outcome"] = json!("unknown"),
                 "scope" => cmd.args["observed_paths"] = json!(["outside/result.json"]),
@@ -1359,11 +1369,209 @@ mod workspace_settlement_tests {
             assert_eq!(result["effects_settled"], false, "{case}");
             assert_eq!(result["artifact_verified"], false, "{case}");
             assert_eq!(result["resource_release_performed"], false, "{case}");
+            assert_eq!(result["recovery_blocked"], true, "{case}");
+            assert_eq!(
+                result["next_action"],
+                "Have an authorized recovery operator inspect the receipt and reconcile actual effects. Do not retry or complete while recovery is blocked.",
+                "{case}"
+            );
             let snap = snapshot(&admin).await;
             assert_eq!(snap["work"][0]["recovery_blocked"], true, "{case}");
+            assert_eq!(snap["execution"][0]["state"], "unknown", "{case}");
+            assert_eq!(
+                snap["execution"][0]["unknown_reason"], "caller_report_requires_reconciliation",
+                "{case}"
+            );
             assert_eq!(snap["resources"][0]["state"], "unknown", "{case}");
             assert_eq!(snap["receipts"][0]["receipt_kind"], "caller_asserted");
         }
+    }
+
+    /// The observed incident: a terminal success whose settlement omits `no_external_effects`
+    /// must not commit an irreversible recovery barrier the member cannot clear.
+    #[tokio::test]
+    async fn terminal_report_omitting_no_external_effects_changes_nothing() {
+        let (_g, admin, _, store) = setup().await;
+        enable_writes(&admin).await;
+        policy_mode(
+            &admin,
+            "a",
+            "clone-alpha",
+            ExecutionSettlementMode::IndependentWorkspaceV2,
+        )
+        .await;
+        let (c, e) = ready_intent(&store).await;
+        let started = start(&store, &c, &e).await;
+        let mut cmd = declaration(&store, &c, &started, "incident-report", "succeeded").await;
+        cmd.args["workspace_settlement"]
+            .as_object_mut()
+            .unwrap()
+            .remove("no_external_effects");
+        let before = snapshot(&admin).await;
+        let result = store.commands().execute(TENANT, PROJECT, A, cmd).await;
+        assert!(result.is_err(), "accepted: {result:?}");
+        assert_eq!(snapshot(&admin).await, before);
+    }
+
+    #[tokio::test]
+    async fn terminal_reports_must_state_both_settlement_declarations() {
+        for mode in [
+            ExecutionSettlementMode::IndependentWorkspaceV1,
+            ExecutionSettlementMode::IndependentWorkspaceV2,
+        ] {
+            check_terminal_reports_must_state_both_settlement_declarations(mode).await;
+        }
+    }
+
+    async fn check_terminal_reports_must_state_both_settlement_declarations(
+        mode: ExecutionSettlementMode,
+    ) {
+        let (_g, admin, _, store) = setup().await;
+        enable_writes(&admin).await;
+        policy_mode(&admin, "a", "clone-alpha", mode).await;
+        let (c, e) = ready_intent(&store).await;
+        let started = start(&store, &c, &e).await;
+        // One request id for every refusal and the final report: a refusal must not use it.
+        let base = declaration(&store, &c, &started, "terminal-report", "succeeded").await;
+        let before = snapshot(&admin).await;
+        let settlement = "/args/workspace_settlement";
+        for (case, outcome, field, invalid_field) in [
+            (
+                "omit-effects",
+                "succeeded",
+                Some("no_external_effects"),
+                "/no_external_effects",
+            ),
+            (
+                "omit-stop",
+                "succeeded",
+                Some("executor_stopped"),
+                "/executor_stopped",
+            ),
+            ("omit-both", "failed", None, "/executor_stopped"),
+            (
+                "null-effects",
+                "succeeded",
+                Some("no_external_effects"),
+                "/no_external_effects",
+            ),
+            (
+                "null-stop",
+                "cancelled",
+                Some("executor_stopped"),
+                "/executor_stopped",
+            ),
+            ("null-both", "succeeded", None, "/executor_stopped"),
+            ("omit-settlement", "succeeded", None, ""),
+            ("omit-settlement-failed", "failed", None, ""),
+            ("omit-settlement-cancelled", "cancelled", None, ""),
+        ] {
+            let mut cmd = base.clone();
+            cmd.args["outcome"] = json!(outcome);
+            let declared = cmd.args["workspace_settlement"].as_object_mut().unwrap();
+            let names = match field {
+                Some(name) => vec![name],
+                None => vec!["executor_stopped", "no_external_effects"],
+            };
+            for name in names {
+                if case.starts_with("null") {
+                    declared.insert(name.into(), Value::Null);
+                } else {
+                    declared.remove(name);
+                }
+            }
+            if case.starts_with("omit-settlement") {
+                cmd.args
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("workspace_settlement");
+            }
+            let error = store
+                .commands()
+                .execute(TENANT, PROJECT, A, cmd)
+                .await
+                .expect_err(case);
+            assert!(
+                error.is_settlement_declaration_incomplete(),
+                "{case}: {error:?}"
+            );
+            let diagnostic = error
+                .settlement_declaration_incomplete_diagnostic()
+                .unwrap();
+            assert_eq!(diagnostic["code"], "InvalidInput", "{case}");
+            assert_eq!(
+                diagnostic["reason"], "settlement_declaration_incomplete",
+                "{case}"
+            );
+            assert_eq!(
+                diagnostic["invalid_field"],
+                format!("{settlement}{invalid_field}"),
+                "{case}"
+            );
+            assert_eq!(diagnostic["request_reserved"], false, "{case}");
+            let next = diagnostic["next_step"].as_str().unwrap();
+            for phrase in [
+                "explicit JSON booleans",
+                "Write true only when this executor has actually stopped",
+                "Write false when there are prior or unknown external effects",
+                "Omission or null is never treated as a declaration",
+                "This refusal changed nothing",
+            ] {
+                assert!(next.contains(phrase), "{case}: {phrase}");
+            }
+            assert_eq!(snapshot(&admin).await, before, "{case}");
+        }
+        // The same request id with both declarations settles normally.
+        let response = store
+            .commands()
+            .execute(TENANT, PROJECT, A, base.clone())
+            .await
+            .unwrap();
+        assert_eq!(response["replayed"], false);
+        let result = &response["receipt"]["data"];
+        assert_eq!(result["state"], "succeeded");
+        assert_eq!(result["effects_settled"], true);
+        assert_eq!(result["recovery_blocked"], false);
+        let snap = snapshot(&admin).await;
+        assert_eq!(snap["work"][0]["recovery_blocked"], false);
+        assert_eq!(snap["resources"][0]["state"], "released");
+        assert_eq!(
+            snap["receipts"][0]["payload_json"]["workspace_settlement"]["no_external_effects"],
+            true
+        );
+        // An exact replay returns the committed receipt.
+        let replay = store
+            .commands()
+            .execute(TENANT, PROJECT, A, base)
+            .await
+            .unwrap();
+        assert_eq!(replay["replayed"], true);
+    }
+
+    #[tokio::test]
+    async fn unknown_outcome_without_declarations_still_lands_in_recovery() {
+        let (_g, admin, _, store) = setup().await;
+        enable_writes(&admin).await;
+        policy(&admin, "a", "clone-alpha").await;
+        let (c, e) = ready_intent(&store).await;
+        let started = start(&store, &c, &e).await;
+        let mut cmd = declaration(&store, &c, &started, "unknown-partial", "unknown").await;
+        cmd.args["workspace_settlement"]
+            .as_object_mut()
+            .unwrap()
+            .remove("no_external_effects");
+        let response = store
+            .commands()
+            .execute(TENANT, PROJECT, A, cmd)
+            .await
+            .unwrap();
+        let result = &response["receipt"]["data"];
+        assert_eq!(result["state"], "unknown");
+        assert_eq!(result["recovery_blocked"], true);
+        assert_eq!(result["terminal_reported"], false);
+        let snap = snapshot(&admin).await;
+        assert_eq!(snap["work"][0]["recovery_blocked"], true);
+        assert_eq!(snap["resources"][0]["state"], "unknown");
     }
 
     #[tokio::test]
