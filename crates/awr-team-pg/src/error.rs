@@ -685,7 +685,7 @@ impl PgError {
             "no_external_effects" => "/args/workspace_settlement/no_external_effects",
             _ => return None,
         };
-        let action = "State both declarations in args.workspace_settlement as explicit JSON booleans, replacing the null placeholders of terminal_reporting. Write true only when this executor has actually stopped and the run had no external effects. Write false when there are prior or unknown external effects or the executor may still run; that keeps the recovery path for an authorized operator. Omission or null is never treated as a declaration; to report that you do not know what happened, use outcome unknown. This refusal changed nothing and did not use the request_id: re-send with both declarations.";
+        let action = "State both declarations in args.workspace_settlement as explicit JSON booleans, replacing the null placeholders of terminal_reporting. They are two independent facts. executor_stopped: write true when nothing of yours is still running for this execution; the AWR execution record stays running until you report, which does not matter. no_external_effects: write true when the run had no external effects. External effects are effects outside the admitted workspace paths: a push or other publication, an external review request, a merge into a shared target, a deployment, a call that changes another service, or an install outside the workspace. Local edits and commits, test runs and a local server you have stopped are workspace effects, not external effects. Write false only for the one you cannot truthfully assert, including prior or unknown external effects; false keeps the recovery path for an authorized operator. Omission or null is never treated as a declaration; to report that you do not know what happened, use outcome unknown. This refusal changed nothing and did not use the request_id: re-send with both declarations.";
         Some(serde_json::json!({
             "code":"InvalidInput","reason":Self::SETTLEMENT_DECLARATION_INCOMPLETE,
             "message":"a terminal execution.report for a caller-managed workspace run must state executor_stopped and no_external_effects explicitly",
@@ -697,7 +697,7 @@ impl PgError {
             "action_guidance":{
                 "condition":"execution.report with outcome succeeded, failed or cancelled omitted a settlement declaration or left it null.",
                 "basis":"A missing declaration cannot be told apart from an accidental omission, and an unsettled terminal report blocks recovery until an authorized operator reconciles it. Nothing was recorded.",
-                "action":action,
+                "action":"Follow next_step: state executor_stopped and no_external_effects as true or false, then re-send; this refusal changed nothing.",
                 "recheck":"Before re-sending, refresh execution.inspect if the execution, claim or lease may have changed. Settlement still checks the exact admitted bindings; this advice grants no authority."
             }
         }))

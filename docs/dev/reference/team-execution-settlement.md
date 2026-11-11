@@ -125,10 +125,14 @@ For a run admitted as `caller_managed` under a stored settlement policy, a
 report with outcome `succeeded`, `failed` or `cancelled` must state both
 `executor_stopped` and `no_external_effects` as JSON booleans. The
 `terminal_reporting` template carries them as `null` placeholders; replace each
-with `true` or `false`. Write `true` only when the executor has actually stopped
-and the run had no external effects. When there were prior or unknown external
-effects, write `false`, or report outcome `unknown` if you do not know what
-happened; both keep the recovery path for an authorized operator.
+with `true` or `false`. The two declarations are independent facts.
+`executor_stopped` is `true` when nothing of yours is still running for this
+execution; the AWR execution record stays `running` until you report, which does
+not matter. `no_external_effects` is `true` when the run had no external effects
+(defined in [Workspace effects and repository delivery](#workspace-effects-and-repository-delivery)).
+Write `false` only for the declaration you cannot truthfully assert, including
+prior or unknown external effects, or report outcome `unknown` if you do not
+know what happened; both keep the recovery path for an authorized operator.
 
 A terminal report that omits `workspace_settlement`, omits either declaration or
 leaves it `null` is refused before any write with `InvalidInput`, reason
@@ -323,6 +327,14 @@ artifact digest. If an external effect already occurred or its result is
 unknown, do not declare `no_external_effects: true` to bypass recovery; declare
 `false` or report outcome `unknown`. Leaving the declaration out is refused, not
 treated as either answer.
+
+External effects here are effects outside the admitted workspace paths: a push
+or other publication, an external review request, a merge into a shared target,
+a deployment, a call that changes another service, or an install outside the
+workspace. Local edits and commits, test runs and a local server that has been
+stopped are workspace effects, not external effects; report their paths in
+`observed_paths` and declare `no_external_effects: true` once the executor has
+stopped.
 
 ### Actual effects and contribution provenance
 
