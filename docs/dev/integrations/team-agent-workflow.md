@@ -301,8 +301,10 @@ workspace and input digest, a measured non-sensitive environment digest, and the
 current owned claim/fence/lease versions. Inspection advice uses a currently
 covering execution delegation, even when a separate delegation grants the read;
 it is omitted after that execution grant is revoked or the run binding changes.
-Assert `executor_stopped` and
-`no_external_effects` only when both facts hold. For success, compute
+Set `executor_stopped` and
+`no_external_effects` to `true` only when both facts hold; otherwise set the
+unproven one to `false` (or report outcome `unknown`). Never omit them or leave
+them `null`. For success, compute
 `output_digest` from the exact artifact bytes you will submit as evidence and
 retain those bytes unchanged. Stop and report the workspace execution **before**
 repository push/publication, external review, shared-target merge or deployment; those are
