@@ -688,3 +688,19 @@ async fn run(worker: Worker, store: Arc<DeliverySyncStore>, mut stop: watch::Rec
         tokio::select! { biased; _ = stopped(&mut stop) => return, _ = tokio::time::sleep(Duration::from_millis(delay)) => {} }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_expired_lease_is_contention_by_variant_never_by_the_public_text() {
+        // Members read recovery guidance on the public body of this refusal; the worker keys on the
+        // variant and its unchanged text alone.
+        assert_eq!(
+            pg_failure(PgError::LeaseExpired),
+            LocalGitWorkerFailure::Contention
+        );
+        assert_eq!(PgError::LeaseExpired.to_string(), "lease expired");
+    }
+}

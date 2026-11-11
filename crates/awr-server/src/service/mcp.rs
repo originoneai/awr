@@ -1999,17 +1999,11 @@ impl ServerHandler for Endpoint {
                 }
             }
             Ok(Err(error)) => {
-                let rejection = super::claim_rejection(&action, &error)
-                    .or_else(|| super::session_end_rejection(&action, &error));
-                let error = super::legacy_claim_acquire_error(&action, error);
                 let mut value = if let Some(input) = &input_contract {
                     input_contracts::public_error(input)
                 } else {
-                    public_error(super::legacy_session_end_error(&action, error)).1
+                    super::command_failure(&action, error).1
                 };
-                if let Some(rejection) = rejection {
-                    value["rejection"] = rejection;
-                }
                 if let Some(input) = diagnostic_input {
                     add_input_diagnostic(&mut value, &input, write);
                 }
@@ -2282,6 +2276,197 @@ mod tests {
             PgError::EpochChanged,
         ));
         assert_eq!(renewed["code"], "EpochChanged");
+    }
+
+    /// Every command or query name a fixed text mentions: lowercase dotted words that start with a
+    /// command or query family. Field paths such as `args.ttl_seconds` are not names.
+    fn named_operations(text: &str) -> BTreeSet<String> {
+        const FAMILIES: [&str; 8] = [
+            "session.",
+            "work.",
+            "claim.",
+            "execution.",
+            "delivery.",
+            "evidence.",
+            "review.",
+            "handoff.",
+        ];
+        text.split(|c: char| !(c.is_ascii_lowercase() || c == '.' || c == '_'))
+            .map(|word| word.trim_matches('.'))
+            .filter(|word| FAMILIES.iter().any(|family| word.starts_with(family)))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    const CLAIM_BOUND: [&str; 4] = [
+        "claim.renew",
+        "execution.prepare",
+        "execution.start",
+        "delivery.candidate.select",
+    ];
+
+    #[test]
+    fn an_elapsed_claim_names_its_recovery_for_the_commands_that_need_a_live_claim() {
+        let mut bodies = BTreeSet::new();
+        for action in CLAIM_BOUND {
+            let (status, body) = crate::service::command_failure(action, PgError::LeaseExpired);
+            assert_eq!(status, StatusCode::CONFLICT, "{action}");
+            // The legacy code and text stay as they were; three fields are added, nothing else.
+            assert_eq!(body["code"], "LeaseExpired", "{action}");
+            assert_eq!(body["message"], "lease expired", "{action}");
+            assert_eq!(body["reason"], "claim_lease_expired", "{action}");
+            assert_eq!(
+                body.as_object()
+                    .unwrap()
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                ["action_guidance", "code", "message", "next_step", "reason"],
+                "{action}"
+            );
+            assert!(serde_json::to_vec(&body).unwrap().len() < 2560, "{action}");
+            bodies.insert(body.to_string());
+
+            let next = body["next_step"].as_str().unwrap();
+            for fragment in [
+                "no longer live",
+                "cannot be renewed",
+                "refusal changed nothing",
+                "never replay one that already stopped",
+                "runtime.work_version",
+                "args.session_id",
+                "args.expected_session_version",
+                "args.expected_work_version",
+                "args.ttl_seconds",
+                "does not end your session",
+                "rejection.next_action",
+                "new claim's claim_id, fence and lease_version",
+            ] {
+                assert!(next.contains(fragment), "{action}: {fragment}");
+            }
+            // The order is the recovery: read the state, close an unfinished execution, then acquire.
+            let acquire = next.find("claim.acquire").unwrap();
+            for earlier in ["session.inspect", "work.prepare", "execution.cancel"] {
+                assert!(next.find(earlier).unwrap() < acquire, "{action}: {earlier}");
+            }
+            // Only the commands of the recovery are named, and every one of them exists.
+            let names = named_operations(next);
+            assert_eq!(
+                names,
+                [
+                    "claim.acquire",
+                    "execution.cancel",
+                    "session.inspect",
+                    "work.prepare"
+                ]
+                .map(str::to_owned)
+                .into_iter()
+                .collect::<BTreeSet<_>>(),
+                "{action}"
+            );
+            let guidance = &body["action_guidance"];
+            assert_eq!(
+                guidance
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                ["action", "basis", "condition", "recheck"]
+            );
+            let mut stated = String::new();
+            for field in ["condition", "basis", "action", "recheck"] {
+                stated.push_str(guidance[field].as_str().unwrap());
+                stated.push(' ');
+            }
+            assert!(
+                guidance["action"]
+                    .as_str()
+                    .unwrap()
+                    .contains("claim.acquire")
+            );
+            assert!(
+                guidance["action"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Do not replay an execution that already stopped")
+            );
+            names
+                .iter()
+                .chain(named_operations(&stated).iter())
+                .for_each(|name| {
+                    assert!(
+                        awr_team_pg::WorkstreamCommand::OPERATIONS.contains(&name.as_str())
+                            || awr_team_pg::WorkstreamQuery::OPERATIONS.contains(&name.as_str()),
+                        "{action}: {name} is not a command or query"
+                    );
+                });
+        }
+        assert_eq!(bodies.len(), 1, "one fixed body for every such command");
+    }
+
+    #[test]
+    fn other_refusals_and_other_commands_keep_their_bare_bodies() {
+        fn refusals() -> Vec<PgError> {
+            vec![
+                PgError::IdempotencyConflict,
+                PgError::EpochChanged,
+                PgError::ProjectNotAvailable,
+                PgError::RecoveryBlocked,
+                PgError::ClaimHeld,
+                PgError::StaleFence,
+                PgError::ScopeExceeded,
+                PgError::ResourceConflict,
+                PgError::BindingInvalid,
+                PgError::WaitOpen,
+                PgError::PreconditionsChanged,
+                PgError::Forbidden,
+                PgError::EvidenceInvalid,
+                PgError::Protocol("private-detail".into()),
+            ]
+        }
+        // Only LeaseExpired gets the guidance: every other refusal of these commands is what it was.
+        for action in CLAIM_BOUND {
+            for (error, same) in refusals().into_iter().zip(refusals()) {
+                let legacy = public_error(same);
+                assert!(legacy.1.get("reason").is_none());
+                assert_eq!(
+                    crate::service::command_failure(action, error),
+                    legacy,
+                    "{action}"
+                );
+            }
+        }
+        // LeaseExpired of any other command keeps the bare body; the recovery would mislead it. The
+        // source publication commands answer it for an elapsed publication lease, claim.release for
+        // a claim that is already released, and execution.report only when a settlement races with
+        // expiry.
+        let bare = json!({"code":"LeaseExpired","message":"lease expired"});
+        assert_eq!(public_error(PgError::LeaseExpired).1, bare);
+        for action in [
+            "delivery.source.write",
+            "delivery.source.confirm",
+            "delivery.source.renew",
+            "delivery.source.abandon",
+            "delivery.source.prepare",
+            "execution.report",
+            "execution.cancel",
+            "claim.acquire",
+            "claim.release",
+            "session.start",
+            "session.checkpoint",
+            "session.end",
+            "evidence.submit",
+            "handoff.accept",
+            "work.prepare",
+            "invalid.command",
+            "invalid.query",
+            "awr_team_planning_publish",
+        ] {
+            let (status, body) = crate::service::command_failure(action, PgError::LeaseExpired);
+            assert_eq!(status, StatusCode::CONFLICT, "{action}");
+            assert_eq!(body, bare, "{action}");
+        }
     }
 
     #[test]

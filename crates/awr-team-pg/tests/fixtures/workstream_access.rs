@@ -276,3 +276,46 @@ async fn setup_inner(
         WorkstreamReadStore::from_config(common::with_app_role(&common::test_config(), &db));
     (guard, admin, db, store, legacy)
 }
+
+/// The fixed recovery that a claim-bound command names when its claim is no longer live. `private`
+/// lists the values the caller supplied; none of them may come back in the body.
+pub fn assert_claim_lease_expired(body: &serde_json::Value, private: &[&str]) {
+    assert_eq!(body["code"], "LeaseExpired", "{body}");
+    assert_eq!(body["message"], "lease expired", "{body}");
+    assert_eq!(body["reason"], "claim_lease_expired", "{body}");
+    assert_eq!(body.as_object().unwrap().len(), 5, "{body}");
+    let next = body["next_step"].as_str().unwrap();
+    for fragment in [
+        "no longer live",
+        "cannot be renewed",
+        "refusal changed nothing",
+        "session.inspect",
+        "work.prepare",
+        "runtime.work_version",
+        "execution.cancel",
+        "never replay one that already stopped",
+        "claim.acquire",
+        "args.expected_session_version",
+        "args.expected_work_version",
+        "rejection.next_action",
+        "new claim's claim_id, fence and lease_version",
+    ] {
+        assert!(next.contains(fragment), "{fragment}: {next}");
+    }
+    let guidance = body["action_guidance"].as_object().unwrap();
+    assert_eq!(guidance.len(), 4, "{body}");
+    for field in ["condition", "basis", "action", "recheck"] {
+        assert!(guidance[field].is_string(), "{field}");
+    }
+    assert!(
+        guidance["action"]
+            .as_str()
+            .unwrap()
+            .contains("Do not replay an execution that already stopped")
+    );
+    assert!(serde_json::to_vec(body).unwrap().len() < 2560);
+    let text = body.to_string();
+    for value in private {
+        assert!(!text.contains(value), "the refusal echoed {value}");
+    }
+}

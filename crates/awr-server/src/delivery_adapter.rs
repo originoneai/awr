@@ -280,6 +280,17 @@ mod publication_tests {
     }
 
     #[test]
+    fn an_expired_lease_is_a_changed_precondition_by_variant_never_by_the_public_text() {
+        // Members read recovery guidance on the public body of this refusal; the adapters key on
+        // the variant and its unchanged text alone.
+        assert_eq!(
+            domain_error(PgError::LeaseExpired),
+            LocalGitError::PreconditionsChanged
+        );
+        assert_eq!(PgError::LeaseExpired.to_string(), "lease expired");
+    }
+
+    #[test]
     fn identical_concurrent_marker_publication_has_exactly_one_creator() {
         let directory = std::env::temp_dir().join(format!("awr-attempt-{}", awr_core::Id::new()));
         fs::create_dir(&directory).unwrap();

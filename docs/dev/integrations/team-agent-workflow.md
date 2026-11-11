@@ -162,6 +162,12 @@ consume current context and follow the appropriate fresh-claim intake action.
 Never renew an expired claim or resume the old run. Unknown effects, resource
 barriers, changed claim bindings and required recovery still block new effects;
 review, dependencies, user waits and permissions are checked independently.
+A command that still names the expired claim (`claim.renew`, `execution.prepare`,
+`execution.start`, `delivery.candidate.select`) is refused with `LeaseExpired`, reason
+`claim_lease_expired` and a fixed `next_step`: read `session.inspect` and `work.prepare`,
+settle an unfinished execution, call `claim.acquire` with the current
+`expected_session_version` and `expected_work_version`, and continue only with the new
+claim. See [coordination claims](../reference/team-workstream-service.md#coordination-claims).
 
 ## Current team inbox
 

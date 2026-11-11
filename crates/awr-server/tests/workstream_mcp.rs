@@ -4564,3 +4564,361 @@ async fn typed_delivery_evidence_shares_http_mcp_rejection_and_success() {
     );
     client.cancel().await.unwrap();
 }
+
+/// One refused command sent over MCP and then over HTTP: both answer with the same body.
+async fn refused_on_both_transports(server: &Server, client: &Client, input: &Value) -> Value {
+    let over_mcp = call(client, "awr_team_command", input.clone(), true).await;
+    let response = http()
+        .post(format!("{}/one/command", server.url))
+        .bearer_auth(A)
+        .json(input)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
+    let over_http: Value = response.json().await.unwrap();
+    assert_eq!(over_mcp, over_http);
+    over_http
+}
+
+/// Rows a refused command must leave untouched.
+async fn command_state(admin: &tokio_postgres::Client) -> Value {
+    admin
+        .query_one(
+            "SELECT jsonb_build_object(
+            'claims',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM awr_team.claims c),
+            'work',(SELECT jsonb_agg(to_jsonb(w) ORDER BY work_id) FROM awr_team.work_runtime w),
+            'executions',(SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM awr_team.executions e),
+            'events',(SELECT count(*) FROM awr_team.events),
+            'operations',(SELECT count(*) FROM awr_team.operations),
+            'revision',(SELECT project_revision FROM awr_team.projects WHERE tenant_id=$1 AND id=$2))",
+            &[&TENANT, &PROJECT],
+        )
+        .await
+        .unwrap()
+        .get(0)
+}
+
+#[tokio::test]
+async fn an_elapsed_claim_names_its_recovery_identically_over_http_and_mcp_and_the_recovery_works()
+{
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let taken = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "lease-take",
+            "claim.acquire",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "expected_work_version":"0","ttl_seconds":60}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    let claim = taken["receipt"]["data"].clone();
+    let digest = "a".repeat(64);
+    let other_digest = "b".repeat(64);
+    let live = prepared(&client).await;
+    let intent = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &live,
+            "lease-prepare",
+            "execution.prepare",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+                "expected_lease_version":claim["lease_version"],
+                "expected_work_version":live["data"]["runtime"]["work_version"],
+                "input_digest":digest,"declared_scope":["src"]}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    let execution = intent["receipt"]["data"].clone();
+    assert_eq!(execution["state"], "prepared");
+
+    // The claim lapses while an execution prepared under it was never started.
+    admin
+        .batch_execute(
+            "UPDATE awr_team.claims SET expires_at=clock_timestamp()-interval '1 second'",
+        )
+        .await
+        .unwrap();
+    let header = prepared(&client).await;
+    let claim_args = |extra: Value| {
+        let mut args = json!({"session_id":"session-a","expected_session_version":"1",
+            "claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+            "expected_lease_version":claim["lease_version"]});
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        args
+    };
+    let renew = serde_json::to_value(command(
+        &header,
+        "lease-sentinel-renew",
+        "claim.renew",
+        claim_args(json!({"ttl_seconds":120})),
+    ))
+    .unwrap();
+    let start = serde_json::to_value(command(
+        &header,
+        "lease-sentinel-start",
+        "execution.start",
+        claim_args(json!({"execution_id":execution["execution_id"],
+            "expected_execution_version":execution["execution_version"],
+            "expected_work_version":header["data"]["runtime"]["work_version"],
+            "execution_mode":"caller_managed","expected_input_digest":Value::Null})),
+    ))
+    .unwrap();
+    let prepare = serde_json::to_value(command(
+        &header,
+        "lease-sentinel-prepare",
+        "execution.prepare",
+        claim_args(
+            json!({"expected_work_version":header["data"]["runtime"]["work_version"],
+            "input_digest":other_digest,"declared_scope":["src"]}),
+        ),
+    ))
+    .unwrap();
+
+    let before = command_state(&admin).await;
+    let mut refusals = Vec::new();
+    for input in [&renew, &start, &prepare] {
+        let body = refused_on_both_transports(&server, &client, input).await;
+        // Nothing the caller supplied comes back; the refusal is the same fixed text each time.
+        assert_claim_lease_expired(
+            &body,
+            &[
+                "lease-sentinel-renew",
+                "lease-sentinel-start",
+                "lease-sentinel-prepare",
+                "claim.renew",
+                "execution.start",
+                "execution.prepare",
+                claim["claim_id"].as_str().unwrap(),
+                execution["execution_id"].as_str().unwrap(),
+                "session-a",
+                A,
+                &digest,
+                &other_digest,
+                TENANT,
+                PROJECT,
+            ],
+        );
+        refusals.push(body);
+    }
+    assert!(refusals.windows(2).all(|pair| pair[0] == pair[1]));
+    // The refused requests wrote nothing and left their request IDs unused.
+    assert_eq!(command_state(&admin).await, before);
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT count(*) FROM awr_team.operations WHERE request_id LIKE 'lease-sentinel-%'",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+
+    // Follow next_step literally. A prepared execution that was never started is closed first.
+    let cancelled = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "lease-cancel",
+            "execution.cancel",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "execution_id":execution["execution_id"],"expected_execution_version":"1"}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    assert_eq!(cancelled["receipt"]["data"]["stop_confirmed"], true);
+    // Read the current state: the session survives the expiry and work.prepare shows the version.
+    let inspected = call(
+        &client,
+        "awr_team_query",
+        json!({"protocol_version":1,"op":"session.inspect","work_id":"a","session_id":"session-a"}),
+        false,
+    )
+    .await;
+    let session = &inspected["data"]["items"][0];
+    assert_eq!(session["state"], "active");
+    let current = prepared(&client).await;
+    let fresh = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &current,
+            "lease-reacquire",
+            "claim.acquire",
+            json!({"session_id":session["session_id"],
+                "expected_session_version":session["session_version"],
+                "expected_work_version":current["data"]["runtime"]["work_version"],
+                "ttl_seconds":60}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await["receipt"]["data"]
+        .clone();
+    assert_ne!(fresh["claim_id"], claim["claim_id"]);
+    assert_eq!(fresh["fence"], "2");
+    assert_eq!(fresh["lease_version"], "1");
+    // The replaced claim stays unusable. These commands refuse it with StaleFence, not LeaseExpired,
+    // and keep their bare bodies.
+    let header = prepared(&client).await;
+    for (request, op, extra) in [
+        ("lease-old-renew", "claim.renew", json!({"ttl_seconds":60})),
+        ("lease-old-release", "claim.release", json!({})),
+        (
+            "lease-old-prepare",
+            "execution.prepare",
+            json!({"expected_work_version":header["data"]["runtime"]["work_version"],
+                "input_digest":digest,"declared_scope":["src"]}),
+        ),
+    ] {
+        let body = refused_on_both_transports(
+            &server,
+            &client,
+            &serde_json::to_value(command(&header, request, op, claim_args(extra))).unwrap(),
+        )
+        .await;
+        assert_eq!(body, json!({"code":"StaleFence","message":"stale fence"}));
+    }
+    // Continue only with the new claim: a fresh execution prepares and the new claim renews.
+    let current = prepared(&client).await;
+    let next = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &current,
+            "lease-fresh-prepare",
+            "execution.prepare",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "claim_id":fresh["claim_id"],"expected_fence":fresh["fence"],
+                "expected_lease_version":fresh["lease_version"],
+                "expected_work_version":current["data"]["runtime"]["work_version"],
+                "input_digest":digest,"declared_scope":["src"]}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    assert_eq!(next["receipt"]["data"]["state"], "prepared");
+    assert_ne!(
+        next["receipt"]["data"]["execution_id"],
+        execution["execution_id"]
+    );
+    let renewed = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "lease-fresh-renew",
+            "claim.renew",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "claim_id":fresh["claim_id"],"expected_fence":fresh["fence"],
+                "expected_lease_version":fresh["lease_version"],"ttl_seconds":120}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await;
+    assert_eq!(renewed["receipt"]["data"]["lease_version"], "2");
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_released_claim_is_refused_like_an_expired_one_when_it_is_renewed() {
+    let (_guard, admin, _, store) = setup().await;
+    enable_writes(&admin).await;
+    let server = start(store).await;
+    let client = connect(&server, "one", A).await.unwrap();
+    let claim = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "released-take",
+            "claim.acquire",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "expected_work_version":"0","ttl_seconds":60}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await["receipt"]["data"]
+        .clone();
+    let released = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &prepared(&client).await,
+            "released-release",
+            "claim.release",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+                "expected_lease_version":claim["lease_version"]}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await["receipt"]["data"]
+        .clone();
+    assert_eq!(released["state"], "released");
+    // A live lease on the clock does not help: the claim itself is no longer active.
+    let renew = serde_json::to_value(command(
+        &prepared(&client).await,
+        "released-sentinel-renew",
+        "claim.renew",
+        json!({"session_id":"session-a","expected_session_version":"1",
+            "claim_id":claim["claim_id"],"expected_fence":claim["fence"],
+            "expected_lease_version":released["lease_version"],"ttl_seconds":120}),
+    ))
+    .unwrap();
+    let body = refused_on_both_transports(&server, &client, &renew).await;
+    assert_claim_lease_expired(
+        &body,
+        &[
+            "released-sentinel-renew",
+            "claim.renew",
+            claim["claim_id"].as_str().unwrap(),
+            "session-a",
+            A,
+        ],
+    );
+    // The same recovery works: the session is active and a new claim takes the next fence.
+    let current = prepared(&client).await;
+    let fresh = call(
+        &client,
+        "awr_team_command",
+        serde_json::to_value(command(
+            &current,
+            "released-reacquire",
+            "claim.acquire",
+            json!({"session_id":"session-a","expected_session_version":"1",
+                "expected_work_version":current["data"]["runtime"]["work_version"],
+                "ttl_seconds":60}),
+        ))
+        .unwrap(),
+        false,
+    )
+    .await["receipt"]["data"]
+        .clone();
+    assert_eq!(fresh["fence"], "2");
+    assert_eq!(fresh["state"], "active");
+    client.cancel().await.unwrap();
+}
