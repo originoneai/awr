@@ -89,7 +89,9 @@ checks read the current files again, so a byte change makes the approval stale w
 Restore the intended checks, run their baselines, and approve the current scope again.
 
 For `fail_before_pass_after`, including a method inherited through `inherits`, each required
-example with a check owes a failed baseline at its current `example_oracle`. Start a work-bound
+example with a check owes a baseline classified as `failed_as_expected` at its current
+`example_oracle`. Older records retain outcome-based semantics with `classification: legacy`.
+See [baseline classifications](checks.md#classify-baseline-failures). Start a work-bound
 session before claiming and run the baseline with its session ID and the current project revision:
 
 ```sh
@@ -101,10 +103,12 @@ entry per applicable example, including its state, oracle, event, log directory 
 
 | Baseline state | Result and action |
 | --- | --- |
-| `baseline_recorded` | A failed baseline matches this example's current oracle; its obligation is satisfied. |
+| `baseline_recorded` | A recognized behavior failure or a legacy failed baseline matches this example's current oracle; its obligation is satisfied. |
 | `baseline_missing` | Run the baseline command in the detail using a work-bound session. |
 | `baseline_passed` | The check passed before the change. Rewrite the example or check so the baseline demonstrates the change's effect. |
 | `baseline_inconclusive` | Read the indicated logs and restore readable check files within the size limit, then rerun. |
+| `baseline_unrunnable` | Read the recognized check loading or startup failure in the detail, repair it, then run its baseline command. |
+| `baseline_unclassified` | Review the logs and record an explained `justified_alternative` for independent admission approval. |
 
 Baseline gaps appear under `admission_obligations_unmet`. `governed_enforce` requires them to be
 satisfied before approval; `legacy_observe` reports them while keeping decisions and claims

@@ -274,7 +274,10 @@ impl Error {
                 Self::RuleViolation(message) => crate::secrets::sensitive_rejection_details(message),
                 Self::Admission { code, diagnostics, .. } => Some(serde_json::json!({
                     "reason": code, "diagnostics": diagnostics,
-                    "next_action": "Read work prepare for the admission state, repair the listed reasons, then request a decision with work admit; recovery operations stay available."
+                    "next_action": diagnostics.as_array().and_then(|items| items.iter()
+                        .find(|item| matches!(item["code"].as_str(), Some(crate::BASELINE_UNRUNNABLE | crate::BASELINE_UNCLASSIFIED)))
+                        .and_then(|item| item["next_action"].as_str()))
+                        .unwrap_or("Read work prepare for the admission state, repair the listed reasons, then request a decision with work admit; recovery operations stay available.")
                 })),
                 Self::RevisionConflict { expected, actual } => {
                     Some(serde_json::json!({"expected": expected, "actual": actual}))

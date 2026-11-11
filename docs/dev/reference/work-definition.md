@@ -182,8 +182,13 @@ changing a check argument makes an approved [admission](admission.md) stale. Wor
 remains part of the contract, while `next_action` and `priority` remain outside it.
 Like [specification coverage](specification-coverage.md), the report uses indexed sources.
 Admission also reads the files of required check-bound examples and freezes their current hashes.
-The effective `fail_before_pass_after` method requires a failed baseline per such example;
-see [check freezing and baselines](admission.md#freeze-checks-and-record-baselines).
+The effective `fail_before_pass_after` method requires a `failed_as_expected` baseline per
+such example. `baseline_unrunnable` identifies checks that need repair;
+`baseline_unclassified` directs an unrecognized failure to the existing
+`justified_alternative` method with a recorded explanation and independent approval.
+Older baselines show `classification: legacy` and retain their original outcome semantics.
+See [baseline classifications](checks.md#classify-baseline-failures) and
+[check freezing and baselines](admission.md#freeze-checks-and-record-baselines).
 
 ## Limits
 

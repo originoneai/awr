@@ -52,7 +52,8 @@ These summaries inspect current files and recorded runs. The completion input's
 source SHA selects the acceptance revision; ordinary inspection uses Git HEAD.
 
 For each required example the gate checks its binding, current oracle, passing
-acceptance result at the completion SHA, and failed baseline at the same oracle.
+acceptance result at the completion SHA, and a `failed_as_expected` baseline at the same oracle.
+Older baselines retain their outcome semantics and display `classification: legacy`.
 By default the acceptance run must record a clean tracked Git tree. Set
 `require_clean_tree = false` to accept a dirty observation. An unknown tree state
 requires that same explicit setting. With `separate_approver = true`, use a

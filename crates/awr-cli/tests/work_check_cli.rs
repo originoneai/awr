@@ -11,6 +11,8 @@ use std::{
 
 const C1: &str = "The saved draft remains available";
 const C2: &str = "The delivery is independently reviewed";
+const CHECK_MODULE_FAILURE: &str = "ERROR: tests.test_promo_code (unittest.loader._FailedTest.tests.test_promo_code)\nImportError: Failed to import test module: tests.test_promo_code\nModuleNotFoundError: No module named 'tests.test_promo_code'";
+const IMPLEMENTATION_SYMBOL_FAILURE: &str = "ERROR: tests.test_promo_code (unittest.loader._FailedTest.tests.test_promo_code)\nImportError: Failed to import test module: tests.test_promo_code\nImportError: cannot import name 'PromoCodeAlreadyAppliedError' from 'shop.cart'";
 
 struct Fixture {
     root: PathBuf,
@@ -150,6 +152,30 @@ impl Fixture {
         )
         .unwrap();
     }
+    fn failure_output(&self, output: &str) {
+        fs::write(
+            self.root.join("probe.json"),
+            serde_json::to_vec(&json!({"mode":"output", "output":output})).unwrap(),
+        )
+        .unwrap();
+    }
+    fn check_files(&self, files: &[&str]) {
+        for file in files {
+            let path = self.root.join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "# Declared check fixture\n").unwrap();
+        }
+        let path = self.root.join("work.yaml");
+        let mut ledger: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        for example in ledger["work_items"][0]["definition"]["examples"]
+            .as_array_mut()
+            .unwrap()
+        {
+            example["check"]["files"] = json!(files);
+        }
+        fs::write(path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
+        self.ok(&["source", "reindex"]);
+    }
     fn governed(&self) {
         let path = self.root.join(".awr/project.toml");
         let mut s = fs::read_to_string(&path).unwrap();
@@ -178,6 +204,10 @@ fn check_process_fixture() {
     println!("Observed draft output");
     eprintln!("Observed draft diagnostics");
     match mode["mode"].as_str().unwrap() {
+        "output" => {
+            eprintln!("{}", mode["output"].as_str().unwrap());
+            std::process::exit(1);
+        }
         "fail" => panic!("The draft was lost"),
         "pass_once" => fs::write("probe.json", r#"{"mode":"fail"}"#).unwrap(),
         "rewrite" => fs::write("oracle.txt", "changed oracle\n").unwrap(),
@@ -187,6 +217,371 @@ fn check_process_fixture() {
         }
         _ => {}
     }
+}
+
+#[test]
+fn baseline_assertion_features_are_classified_as_expected() {
+    let f = Fixture::new(1, false);
+    for output in [
+        "FAIL: test_save (test_storage.SaveTests)",
+        "AssertionError: the draft was lost",
+        "E       assert actual == expected",
+        "assertion `left == right` failed",
+        "test result: FAILED. 0 passed; 1 failed",
+        "AssertionError: No such file or directory while reading user input",
+    ] {
+        f.failure_output(output);
+        let result = f.checked("baseline", &[]);
+        assert_eq!(
+            result["results"][0]["classification"], "failed_as_expected",
+            "{output}: {result}"
+        );
+        assert_eq!(result["met"], true, "{output}: {result}");
+    }
+}
+
+#[test]
+fn baseline_unrunnable_features_override_assertion_features() {
+    let f = Fixture::new(1, false);
+    f.check_files(&["tests/test_promo_code.py"]);
+    for output in [
+        CHECK_MODULE_FAILURE,
+        "sh: missing-check: command not found",
+        "sh: ./missing-check: No such file or directory",
+        "  File \"tests/test_promo_code.py\", line 1\nSyntaxError: invalid syntax",
+    ] {
+        f.failure_output(&format!("AssertionError: pending behavior\n{output}"));
+        let result = f.checked("baseline", &[]);
+        assert_eq!(
+            result["results"][0]["classification"], "failed_unrunnable",
+            "{output}: {result}"
+        );
+        assert_eq!(result["met"], false, "{output}: {result}");
+        assert!(
+            result["next_action"]
+                .as_str()
+                .unwrap()
+                .contains("awr work check W")
+        );
+    }
+}
+
+#[test]
+fn baseline_unknown_failures_never_count_as_expected() {
+    let f = Fixture::new(1, false);
+    for output in [
+        "",
+        "the check exited unsuccessfully",
+        "assertion helpers loaded",
+        "assert is enabled",
+    ] {
+        f.failure_output(output);
+        let result = f.checked("baseline", &[]);
+        assert_eq!(
+            result["results"][0]["classification"], "failed_unclassified",
+            "{output}: {result}"
+        );
+        assert_eq!(result["met"], false);
+        assert!(
+            result["next_action"]
+                .as_str()
+                .unwrap()
+                .contains("justified_alternative")
+        );
+    }
+}
+
+#[test]
+fn baseline_missing_executable_is_unrunnable_without_assertion_output() {
+    let f = Fixture::new(1, false);
+    let path = f.root.join("work.yaml");
+    let mut ledger: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    ledger["work_items"][0]["definition"]["examples"][0]["check"]["run"] =
+        json!([format!("awr-missing-check-{}", Id::new())]);
+    fs::write(path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
+    f.ok(&["source", "reindex"]);
+    let result = f.checked("baseline", &[]);
+    assert_eq!(result["results"][0]["outcome"], "errored");
+    assert_eq!(result["results"][0]["reason"], "spawn_failed");
+    assert_eq!(result["results"][0]["classification"], "failed_unrunnable");
+    assert_eq!(result["met"], false);
+}
+
+#[test]
+fn baseline_rejected_classifications_explain_each_work_show_obligation() {
+    for (output, classification, reason) in [
+        (
+            CHECK_MODULE_FAILURE,
+            "failed_unrunnable",
+            "baseline_unrunnable",
+        ),
+        (
+            "unknown failure",
+            "failed_unclassified",
+            "baseline_unclassified",
+        ),
+    ] {
+        let f = Fixture::new(1, false);
+        f.check_files(&["tests/test_promo_code.py"]);
+        f.gate_policy("observe", "");
+        f.failure_output(output);
+        let receipt = f.checked("baseline", &[]);
+        assert_ne!(
+            receipt["results"][0]["classification"],
+            "failed_as_expected"
+        );
+        let shown = f.ok(&["work", "show", "W"]);
+        let baselines = shown["checks"]["obligations"][0]["baselines"]
+            .as_array()
+            .unwrap();
+        assert_eq!(baselines.last().unwrap()["classification"], classification);
+        assert!(
+            shown["checks"]["unmet"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|unmet| unmet["reason"] == reason),
+            "{shown}"
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_awr"))
+            .current_dir(&f.root)
+            .env("AWR_LOCAL_WEB", "0")
+            .args(["work", "show", "W"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .contains(classification)
+        );
+    }
+}
+
+#[test]
+fn baseline_r1_check_module_import_failure_is_unrunnable() {
+    let f = Fixture::new(1, false);
+    f.check_files(&["tests/test_promo_code.py"]);
+    for output in [
+        CHECK_MODULE_FAILURE,
+        "ModuleNotFoundError: No module named 'tests'",
+    ] {
+        f.failure_output(output);
+        let result = f.checked("baseline", &[]);
+        assert_eq!(
+            result["results"][0]["classification"], "failed_unrunnable",
+            "{result}"
+        );
+        assert_eq!(result["met"], false);
+    }
+}
+
+#[test]
+fn baseline_r1_implementation_import_is_not_an_unrunnable_check() {
+    let f = Fixture::new(1, false);
+    f.check_files(&["tests/test_promo_code.py"]);
+    for output in [
+        "ModuleNotFoundError: No module named 'shop.promo'",
+        "  File \"shop/cart.py\", line 1\nSyntaxError: invalid syntax",
+    ] {
+        f.failure_output(output);
+        let result = f.checked("baseline", &[]);
+        assert_eq!(
+            result["results"][0]["classification"], "failed_unclassified",
+            "{result}"
+        );
+        assert_eq!(result["met"], false);
+    }
+}
+
+#[test]
+fn baseline_r1_missing_symbols_and_real_test_errors_are_behavior_failures() {
+    let f = Fixture::new(1, false);
+    f.check_files(&["tests/test_promo_code.py"]);
+    for output in [
+        IMPLEMENTATION_SYMBOL_FAILURE,
+        "ERROR: test_apply (tests.test_promo_code.PromoTests.test_apply)\nAttributeError: 'C' object has no attribute 'apply_promo_code'",
+        "ERROR: test_apply (tests.test_promo_code.PromoTests.test_apply)\nNameError: name 'apply_promo_code' is not defined",
+        "ERROR: test_apply (tests.test_promo_code.PromoTests.test_apply)\nTypeError: C.apply_promo_code() takes 1 positional argument but 2 were given",
+        "FAILED tests/test_promo_code.py::PromoTests::test_apply - AttributeError: 'C' object has no attribute 'apply_promo_code'",
+    ] {
+        f.failure_output(output);
+        let result = f.checked("baseline", &[]);
+        assert_eq!(
+            result["results"][0]["classification"], "failed_as_expected",
+            "{output}: {result}"
+        );
+        assert_eq!(result["met"], true);
+    }
+}
+
+#[test]
+fn baseline_r1_loader_placeholders_do_not_prove_behavior_failures() {
+    let f = Fixture::new(1, false);
+    f.check_files(&["tests/test_promo_code.py"]);
+    for output in [
+        "ERROR: tests.test_promo_code (unittest.loader._FailedTest.tests.test_promo_code)\nAttributeError: 'C' object has no attribute 'apply_promo_code'",
+        "ImportError: cannot import name 'PromoTests' from 'tests.test_promo_code'",
+    ] {
+        f.failure_output(output);
+        let result = f.checked("baseline", &[]);
+        assert_eq!(
+            result["results"][0]["classification"], "failed_unclassified",
+            "{output}: {result}"
+        );
+        assert_eq!(result["met"], false);
+    }
+}
+
+#[test]
+fn baseline_r1_ambiguous_modules_and_compilers_require_review() {
+    let f = Fixture::new(1, false);
+    f.check_files(&["tests/test_promo_code.py"]);
+    for output in [
+        "ModuleNotFoundError: No module named 'shop.promo'",
+        "ERROR: test_apply (tests.test_promo_code.PromoTests.test_apply)\nModuleNotFoundError: No module named 'shop.promo'",
+        "error[E0425]: cannot find value `apply_promo_code` in this scope",
+        "error: could not compile `shop` (lib) due to 1 previous error",
+    ] {
+        f.failure_output(output);
+        let result = f.checked("baseline", &[]);
+        assert_eq!(
+            result["results"][0]["classification"], "failed_unclassified",
+            "{output}: {result}"
+        );
+        assert_eq!(result["met"], false);
+        let next = result["next_action"].as_str().unwrap();
+        assert!(next.contains("justified_alternative"), "{next}");
+        assert!(!next.contains("Fix the check command"), "{next}");
+    }
+}
+
+#[test]
+fn baseline_r1_implementation_symbol_failure_does_not_override_assertions() {
+    let f = Fixture::new(1, false);
+    f.check_files(&["tests/test_promo_code.py"]);
+    f.failure_output(&format!(
+        "{IMPLEMENTATION_SYMBOL_FAILURE}\nAssertionError: promo code is not applied"
+    ));
+    let result = f.checked("baseline", &[]);
+    assert_eq!(
+        result["results"][0]["classification"], "failed_as_expected",
+        "{result}"
+    );
+    assert_eq!(result["met"], true);
+}
+
+#[test]
+fn baseline_r1_unrunnable_next_names_the_recognized_check_failure() {
+    let f = Fixture::new(1, false);
+    f.check_files(&["tests/test_promo_code.py"]);
+    f.failure_output(CHECK_MODULE_FAILURE);
+    let result = f.checked("baseline", &[]);
+    let reason = result["results"][0]["reason"]
+        .as_str()
+        .expect("recognized failure reason");
+    assert!(reason.contains("tests/test_promo_code.py"), "{reason}");
+    let next = result["next_action"].as_str().unwrap();
+    assert!(
+        next.contains("ModuleNotFoundError: tests.test_promo_code"),
+        "{next}"
+    );
+    assert!(next.contains("awr work check W"), "{next}");
+    assert_eq!(f.event(&result["results"][0])["payload"]["reason"], reason);
+}
+
+#[test]
+fn baseline_r1_unknown_next_does_not_blame_check_loading() {
+    let f = Fixture::new(1, false);
+    f.failure_output("ModuleNotFoundError: No module named 'shop.promo'");
+    let result = f.checked("baseline", &[]);
+    assert_eq!(result["results"][0]["reason"], Value::Null);
+    let next = result["next_action"].as_str().unwrap();
+    assert!(next.contains("justified_alternative"), "{next}");
+    assert!(!next.contains("Fix the check command"), "{next}");
+    assert!(!next.contains("could not be imported"), "{next}");
+}
+
+#[test]
+fn baseline_r1_declared_check_files_control_module_ownership() {
+    let f = Fixture::new(1, false);
+    f.check_files(&["tests/test_promo_code.py"]);
+    f.failure_output("ModuleNotFoundError: No module named 'tests.test_promo_code'");
+    assert_eq!(
+        f.checked("baseline", &[])["results"][0]["classification"],
+        "failed_unrunnable"
+    );
+    f.check_files(&["checks/test_cart.py"]);
+    assert_eq!(
+        f.checked("baseline", &[])["results"][0]["classification"],
+        "failed_unclassified"
+    );
+}
+
+#[test]
+fn baseline_classification_is_visible_in_receipts_status_and_work_show_within_budget() {
+    let f = Fixture::new(8, false);
+    f.gate_policy("observe", "");
+    f.mode("fail");
+    let result = f.checked("baseline", &[]);
+    for row in result["results"].as_array().unwrap() {
+        assert_eq!(row["classification"], "failed_as_expected");
+        assert_eq!(
+            f.event(row)["payload"]["classification"],
+            "failed_as_expected"
+        );
+    }
+    let status = f.ok(&["work", "check", "W", "--status"]);
+    for example in status["examples"].as_array().unwrap() {
+        assert_eq!(example["runs"][0]["classification"], "failed_as_expected");
+    }
+    let shown = f.ok(&["work", "show", "W"]);
+    for example in shown["checks"]["obligations"].as_array().unwrap() {
+        assert_eq!(
+            example["baselines"][0]["classification"],
+            "failed_as_expected"
+        );
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_awr"))
+        .current_dir(&f.root)
+        .env("AWR_LOCAL_WEB", "0")
+        .args(["work", "show", "W"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .matches("failed_as_expected")
+            .count(),
+        8
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_awr"))
+        .current_dir(&f.root)
+        .env("AWR_LOCAL_WEB", "0")
+        .args([
+            "work",
+            "check",
+            "W",
+            "--phase",
+            "baseline",
+            "--session",
+            &f.session,
+            "--expected-revision",
+            &f.revision(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(text.matches("failed_as_expected").count(), 8, "{text}");
+    assert!(text.len() <= 1024, "{} bytes: {text}", text.len());
+    f.failure_output("unrecognized failure");
+    assert!(!f.check("baseline", &["--require-met"]).status.success());
 }
 
 impl Fixture {
@@ -743,6 +1138,7 @@ fn timeout_is_unknown_and_the_direct_child_has_been_reaped() {
     let p = f.event(&v["results"][0])["payload"].clone();
     assert_eq!(p["outcome"], "unknown");
     assert_eq!(p["reason"], "timeout");
+    assert_eq!(p["classification"], "failed_unrunnable");
     assert_eq!(v["met"], false);
     let pid = fs::read_to_string(f.root.join("child.pid")).unwrap();
     #[cfg(unix)]

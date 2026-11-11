@@ -212,6 +212,17 @@ fn baselines_at(
         .map_err(db_error)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(db_error)?;
+    let observations = events
+        .iter()
+        .map(|event| {
+            let mut payload = event.payload.clone();
+            payload
+                .as_object_mut()
+                .ok_or_else(|| Error::Storage("invalid check observation".into()))?
+                .remove("mcp_operation_id");
+            Ok((event, serde_json::from_value::<CheckPayload>(payload)?))
+        })
+        .collect::<Result<Vec<_>>>()?;
     let revision: u64 = conn
         .query_row(
             "SELECT project_revision FROM projects WHERE id=?1",
@@ -221,32 +232,39 @@ fn baselines_at(
         .map_err(db_error)?;
     let mut baselines = Vec::new();
     for oracle in oracles {
-        let matches = |event: &&Event| {
+        let matches = |(event, _): &&(&Event, CheckPayload)| {
             event.payload["example"] == oracle.example
                 && oracle
                     .oracle
                     .as_ref()
                     .is_some_and(|hash| event.payload["example_oracle"] == *hash)
         };
-        // One failed observation of this exact example oracle is sufficient. A later run does
+        // One behavior failure of this exact example oracle is sufficient. A later run does
         // not erase that fact, and another example never contributes a baseline here.
-        let observed = events
+        let observed = observations
             .iter()
             .filter(matches)
-            .find(|event| event.payload["outcome"] == "failed")
-            .or_else(|| events.iter().find(matches));
+            .find(|(_, payload)| payload.met())
+            .or_else(|| observations.iter().filter(matches).next());
+        let classification = observed.and_then(|(_, payload)| payload.baseline_classification());
         let state = if oracle.oracle.is_none() {
             "baseline_inconclusive"
         } else {
-            match observed.and_then(|event| event.payload["outcome"].as_str()) {
-                Some("failed") => "baseline_recorded",
-                Some("passed") => "baseline_passed",
+            match observed.map(|(_, payload)| payload) {
+                Some(payload) if payload.met() => "baseline_recorded",
+                Some(_) if classification == Some(BaselineClassification::FailedUnrunnable) => {
+                    BASELINE_UNRUNNABLE
+                }
+                Some(_) if classification == Some(BaselineClassification::FailedUnclassified) => {
+                    BASELINE_UNCLASSIFIED
+                }
+                Some(payload) if payload.outcome == CheckOutcome::Passed => "baseline_passed",
                 Some(_) => "baseline_inconclusive",
                 None => "baseline_missing",
             }
         };
         let log_dir = observed
-            .and_then(|event| event.payload["log_dir"].as_str())
+            .and_then(|(event, _)| event.payload["log_dir"].as_str())
             .map(String::from);
         let detail = match state {
             "baseline_recorded" => "A failed baseline is recorded for the current example oracle.".into(),
@@ -255,6 +273,13 @@ fn baselines_at(
                 "Read the check logs at {} and verify that every check file is readable and at most 4 MiB.",
                 log_dir.as_deref().unwrap_or(".awr/artifacts/checks/")
             ),
+            BASELINE_UNRUNNABLE => {
+                let session = observed.and_then(|(event, _)| event.session_id)
+                    .map_or_else(|| "<session-id>".into(), |id| id.to_string());
+                baseline_rerun_guidance(&work.item.meta.external_key, &oracle.example, &session, revision,
+                    observed.and_then(|(_, payload)| payload.reason.as_deref()))
+            },
+            BASELINE_UNCLASSIFIED => baseline_review_guidance().into(),
             _ => format!(
                 "Run awr work check {} --example {} --phase baseline --session <session-id> --expected-revision {revision}",
                 work.item.meta.external_key, oracle.example
@@ -263,8 +288,9 @@ fn baselines_at(
         baselines.push(AdmissionBaseline {
             example: oracle.example.clone(),
             state,
+            classification,
             example_oracle: oracle.oracle.clone(),
-            event: observed.map(|event| event.id),
+            event: observed.map(|(event, _)| event.id),
             log_dir,
             detail,
         });
@@ -684,7 +710,15 @@ impl Store {
                     if policy.enforced() {
                         let baselines = baselines_at(tx, project, &work, branch, &oracles)?;
                         if let Some(diagnostic) = baseline_diagnostic(&baselines) {
-                            return Err(reject(diagnostic.code, diagnostic.detail));
+                            return Err(Error::Admission {
+                                code: diagnostic.code,
+                                message: diagnostic.detail,
+                                diagnostics: json!(baselines.iter()
+                                    .filter(|baseline| baseline.state != "baseline_recorded")
+                                    .map(|baseline| json!({"code":baseline.state,"detail":baseline.detail,
+                                        "next_action":baseline.detail,"classification":baseline.classification,
+                                        "log_dir":baseline.log_dir})).collect::<Vec<_>>()),
+                            });
                         }
                         if !oracles.is_empty() && current.oracle_fingerprint.is_none() {
                             return Err(reject("admission_stale", "the current oracle is unknown; restore readable check files before approving"));

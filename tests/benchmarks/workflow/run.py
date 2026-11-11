@@ -158,7 +158,9 @@ def source_fixture(root, dependencies, checked=False):
         (root/'checks').mkdir()
         (root/'checks/verify.py').write_text(
             'import json, sys\nfrom pathlib import Path\n'
-            'value = json.loads(Path("W-artifact.json").read_text(encoding="utf-8"))\n'
+            'artifact = Path("W-artifact.json")\n'
+            'assert artifact.is_file(), "The reviewed artifact is missing"\n'
+            'value = json.loads(artifact.read_text(encoding="utf-8"))\n'
             'assert value["work"] == "W", "Artifact identity changed"\n'
             'field = value.get(sys.argv[1])\n'
             'assert isinstance(field, str) and field.strip(), "Missing reviewed artifact field"\n',

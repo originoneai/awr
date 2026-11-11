@@ -82,7 +82,7 @@ impl Project {
                 "id":format!("retain-{kind}"),"criterion":CRITERION,"kind":kind,
                 "given":"a failed save","when":"the result is inspected",
                 "then":if kind == "positive" {"the draft is retained"} else {"success is withheld"},
-                "check":{"run":["git","diff","--no-index","--exit-code","--","oracle.txt","actual.txt"],"files":["oracle.txt"],"timeout_seconds":10}
+                "check":{"run":[std::env::current_exe().unwrap(),"--ignored","--exact","checked_work::checked_draft_process_fixture"],"files":["oracle.txt"],"timeout_seconds":10}
             })).collect();
             work["definition"] = json!({"version":1,"purpose":"implementation","tier":"required","size":"small",
                 "intent":[{"role":"user_decision","decision":"scope","source_fingerprint":format!("sha256:{:x}",Sha256::digest(decision))}],
@@ -311,6 +311,16 @@ impl Project {
         ))
         .unwrap()
     }
+}
+
+#[test]
+#[ignore = "subprocess helper selected by example checks"]
+fn checked_draft_process_fixture() {
+    assert_eq!(
+        fs::read("actual.txt").unwrap(),
+        fs::read("oracle.txt").unwrap(),
+        "Saving must retain the draft and report the failed save"
+    );
 }
 
 pub fn checked_flow(

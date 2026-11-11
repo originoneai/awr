@@ -382,8 +382,9 @@ pub struct AdmissionDiagnostic {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AdmissionBaseline {
     pub example: String,
-    /// baseline_recorded, baseline_missing, baseline_passed or baseline_inconclusive.
+    /// Baseline obligation state, including unrunnable and unclassified failures.
     pub state: &'static str,
+    pub classification: Option<crate::BaselineClassification>,
     pub example_oracle: Option<String>,
     pub event: Option<Id>,
     pub log_dir: Option<String>,
