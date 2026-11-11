@@ -387,7 +387,7 @@ pub(super) async fn start(
         None
     };
     let next_action = if terminal_reporting.is_some() {
-        "Execute once under the current lease. Stop and report workspace execution before repository push/publication, external review, shared-target merge or deployment; use separate delivery operations. Prior or unknown external effects from this run require recovery; never declare no_external_effects=true for them. A replay or unknown response never authorizes another start. Do not claim OS/sandbox isolation from AWR metadata alone."
+        "Execute once under the current lease. Stop and report workspace execution before repository push/publication, external review, shared-target merge or deployment; use separate delivery operations. A succeeded, failed or cancelled report states executor_stopped and no_external_effects as true or false, never omitted or null. Prior or unknown external effects from this run require recovery; never declare no_external_effects=true for them. A replay or unknown response never authorizes another start. Do not claim OS/sandbox isolation from AWR metadata alone."
     } else {
         "Execute once under the current lease; report observations. A replay or unknown response never authorizes another start. Do not claim OS/sandbox isolation from AWR metadata alone."
     };
@@ -433,6 +433,8 @@ pub(super) async fn report(
     if !matches!(r.get::<_, String>("state").as_str(), "running" | "unknown") {
         return Err(PgError::PreconditionsChanged);
     }
+    // Before any write: the request stays unused and nothing changes on refusal.
+    settlement::require_terminal_declarations(&r, &a.outcome, a.workspace_settlement.as_ref())?;
     let paths: Vec<String> = serde_json::from_value(r.get("declared_scope_json"))
         .map_err(|_| PgError::SourceDivergence)?;
     let exceeded = a.observed_paths.iter().any(|p| {

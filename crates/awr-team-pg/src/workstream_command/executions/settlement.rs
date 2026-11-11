@@ -154,6 +154,31 @@ pub(super) fn policy(run: &Row) -> PgResult<Option<ExecutionSettlementPolicy>> {
         .transpose()
 }
 
+/// A terminal report of a caller-managed run admitted under a stored settlement policy must state
+/// both declarations as booleans. Omission or a null (an unreplaced `reporting_hint` placeholder)
+/// is indistinguishable from an accident, so it is refused before any write instead of committing
+/// a recovery barrier the member cannot clear. `outcome=unknown` remains the way to say "I do not
+/// know"; explicit false declarations keep their fail-closed recovery path in `evaluate`.
+pub(super) fn require_terminal_declarations(
+    run: &Row,
+    outcome: &str,
+    declaration: Option<&Declaration>,
+) -> PgResult<()> {
+    if outcome == "unknown"
+        || run.get::<_, Option<String>>("admission_mode").as_deref() != Some("caller_managed")
+        || policy(run)?.is_none()
+    {
+        return Ok(());
+    }
+    let missing = match declaration {
+        None => "workspace_settlement",
+        Some(d) if d.executor_stopped.is_none() => "executor_stopped",
+        Some(d) if d.no_external_effects.is_none() => "no_external_effects",
+        Some(_) => return Ok(()),
+    };
+    Err(PgError::settlement_declaration_incomplete(missing))
+}
+
 /// Bind advice to recorded admission without asserting that the executor stopped.
 pub(super) fn reporting_hint(run: &Row, policy: &ExecutionSettlementPolicy) -> Value {
     json!({
@@ -170,7 +195,7 @@ pub(super) fn reporting_hint(run: &Row, policy: &ExecutionSettlementPolicy) -> V
                 "expected_lease_version":run.get::<_,i64>("claim_lease_version").to_string(),
                 "executor_stopped":null,"no_external_effects":null
             },
-            "note":"Measure a non-sensitive environment digest; report all actual effects, including imports. Contributions are provenance only; outside-scope imports need a reviewed baseline task. Settle before push/publication, external review, shared-target merge or deployment; use separate delivery operations. Prior or unknown external effects from this run require recovery; never declare no_external_effects=true for them. V1 needs a live lease; V2 allows unchanged-claim elapsed time, never execution after expiry. Success binds exact artifact bytes. Omission keeps recovery; no new authority."
+            "note":"Measure a non-sensitive environment digest; report all actual effects, including imports. Contributions are provenance only; outside-scope imports need a reviewed baseline task. Settle before push/publication, external review, shared-target merge or deployment; use separate delivery operations. Prior or unknown external effects from this run require recovery; never declare no_external_effects=true for them. V1 needs a live lease; V2 allows unchanged-claim elapsed time, never execution after expiry. Success binds exact artifact bytes. A succeeded, failed or cancelled report must replace both null placeholders with true or false; omission or null is refused unchanged. False or outcome unknown keeps recovery; no new authority."
         },
         "recheck_on":"contract, epoch, claim, execution or effects change"
     })

@@ -311,8 +311,16 @@ run already caused or may have caused an external effect, use recovery instead
 of declaring `no_external_effects: true`. Earlier settled delivery operations
 do not by themselves prevent a new workspace run.
 
-An omitted or unknown declaration records the
-outcome conservatively and requires recovery; it does not settle the workspace.
+A `succeeded`, `failed` or `cancelled` report states both declarations
+explicitly as `true` or `false`; replace the `null` placeholders of
+`terminal_reporting`. When external effects occurred or are unknown, write
+`no_external_effects: false`, or report outcome `unknown` when you do not know
+what happened. Both record the outcome conservatively and require recovery by an
+authorized operator; they do not settle the workspace. A terminal report that
+omits `workspace_settlement` or leaves either declaration out or `null` is
+refused with `InvalidInput` (`settlement_declaration_incomplete`, with
+`invalid_field` naming the declaration). The refusal changed nothing, so send
+the same request again with both declarations.
 Recheck after contract, lease, execution or effect changes. See the
 [ordinary workspace report](../reference/team-execution-settlement.md#report-an-ordinary-workspace-outcome).
 
