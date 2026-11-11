@@ -105,6 +105,32 @@ fn next_step_ac5_definition_example_stays_out_of_first_layer_help() {
 }
 
 #[test]
+fn gap_hints_ac4_governance_help_is_bounded_and_overviews_keep_their_bytes() {
+    let output = help(&["work", "help", "governance"]);
+    assert!(output.len() <= 3584, "{} bytes", output.len());
+    for (args, baseline) in [(vec!["--help"], 951), (vec!["work", "--help"], 945)] {
+        assert_eq!(help(&args).len(), baseline, "{args:?}");
+    }
+}
+
+#[test]
+fn gap_hints_ac4_inlining_the_reference_exceeds_the_receipt_budget() {
+    let text = String::from_utf8(help(&["work", "help", "governance"])).unwrap();
+    let reference = text
+        .split_once("Gap codes | ")
+        .expect("gap field reference")
+        .1;
+    assert!(
+        reference.len() > 1536,
+        "the full reference belongs in help only"
+    );
+    for args in [vec!["--help"], vec!["work", "--help"]] {
+        let overview = String::from_utf8(help(&args)).unwrap();
+        assert!(!overview.contains("intent_missing") && !overview.contains("Gap codes | "));
+    }
+}
+
+#[test]
 fn work_check_help_joins_completion_in_daily_and_preserves_detailed_help() {
     let daily = String::from_utf8(help(&["work", "help", "daily"])).unwrap();
     let members = daily

@@ -424,6 +424,46 @@ mod next_action_tests {
     }
 
     #[test]
+    fn gap_hints_ac4_refusal_and_show_keep_their_original_content_and_budget() {
+        let f = Fixture::new();
+        govern(&f);
+        let refusal = guidance_text(
+            &f,
+            &["work", "activate", "D", "--request-key", "gap-byte-compare"],
+        );
+        assert!(!refusal.status.success());
+        assert!(refusal.stdout.is_empty());
+        assert_eq!(refusal.stderr.len(), 291);
+        let shown = guidance_text(&f, &["work", "show", "W"]);
+        assert!(shown.status.success());
+        assert!(shown.stdout.len() <= 1536);
+        // Only source URLs and their projection times vary across platforms and runs.
+        let normalized = String::from_utf8(shown.stdout.clone())
+            .unwrap()
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("Source:"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            normalized,
+            "W — Review the note\nStatus: planned; ready: false; revision: 1 (project 8)\nSummary: Review the note\nBlocker: none\n  Source next: Read the note\n  Latest checkpoint: none in this work/branch scope\nadmission_missing [W]: no admission decision is recorded for this work\nadmission_obligations_unmet [W]: definition gaps: definition_not_declared\nNext: awr work help governance\nAcceptance:\n- The note is reviewed\nDependencies: 0; decisions: 0; evidence: 0"
+        );
+        let help =
+            String::from_utf8(guidance_text(&f, &["work", "help", "governance"]).stdout).unwrap();
+        let reference = help
+            .split_once("Gap codes | ")
+            .expect("gap field reference")
+            .1;
+        for bytes in [refusal.stderr, shown.stdout] {
+            assert!(!String::from_utf8_lossy(&bytes).contains("Gap codes | "));
+            assert!(
+                bytes.len() + reference.len() > 1536,
+                "inlining the reference exceeds the receipt budget"
+            );
+        }
+    }
+
+    #[test]
     fn next_step_ac4_prepare_explains_rule_heading_annotations_and_recovers() {
         let f = Fixture::new();
         f.write("rules.md", "# Delivery\n\nKeep the reviewed note.\n");
