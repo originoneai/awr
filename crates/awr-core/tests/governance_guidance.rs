@@ -48,7 +48,11 @@ fn baseline_failure_guidance_distinguishes_command_repair_and_independent_review
             let detail = format!("{} {code}", "context ".repeat(40));
             let guidance = view(&[(outer, &detail)], &[]).unwrap();
             if code == BASELINE_UNRUNNABLE {
-                assert!(guidance.next_action.contains("Fix the check command"));
+                assert!(
+                    guidance
+                        .next_action
+                        .contains("recognized loading or startup failure")
+                );
                 assert!(!guidance.next_action.contains("justified_alternative"));
             } else {
                 assert!(guidance.next_action.contains("justified_alternative"));

@@ -107,7 +107,7 @@ entry per applicable example, including its state, oracle, event, log directory 
 | `baseline_missing` | Run the baseline command in the detail using a work-bound session. |
 | `baseline_passed` | The check passed before the change. Rewrite the example or check so the baseline demonstrates the change's effect. |
 | `baseline_inconclusive` | Read the indicated logs and restore readable check files within the size limit, then rerun. |
-| `baseline_unrunnable` | Fix the check command, then run the baseline command in the detail. |
+| `baseline_unrunnable` | Read the recognized check loading or startup failure in the detail, repair it, then run its baseline command. |
 | `baseline_unclassified` | Review the logs and record an explained `justified_alternative` for independent admission approval. |
 
 Baseline gaps appear under `admission_obligations_unmet`. `governed_enforce` requires them to be

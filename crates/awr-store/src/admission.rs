@@ -276,7 +276,8 @@ fn baselines_at(
             BASELINE_UNRUNNABLE => {
                 let session = observed.and_then(|(event, _)| event.session_id)
                     .map_or_else(|| "<session-id>".into(), |id| id.to_string());
-                baseline_rerun_guidance(&work.item.meta.external_key, &oracle.example, &session, revision)
+                baseline_rerun_guidance(&work.item.meta.external_key, &oracle.example, &session, revision,
+                    observed.and_then(|(_, payload)| payload.reason.as_deref()))
             },
             BASELINE_UNCLASSIFIED => baseline_review_guidance().into(),
             _ => format!(

@@ -249,50 +249,190 @@ pub enum BaselineClassification {
     FailedUnclassified,
     Legacy,
 }
-/// Collect known features from captured output; this performs no I/O or extra execution.
+/// Collect known features from captured output and the declared check inputs, without I/O.
 #[derive(Default)]
 pub struct BaselineClassifier {
-    assertion_failed: bool,
-    unrunnable: bool,
+    files: Vec<String>,
+    run: Vec<String>,
+    behavior_failed: bool,
+    ambiguous: bool,
+    unrunnable: Option<String>,
+    last_file: Option<String>,
+    failed_import: Option<String>,
+    missing_toolchain: bool,
 }
 impl BaselineClassifier {
+    pub fn new(files: &[String], run: &[String]) -> Self {
+        Self {
+            files: files.to_vec(),
+            run: run.to_vec(),
+            ..Self::default()
+        }
+    }
+
+    /// Traceback frames and collection context do not carry between output streams.
+    pub fn begin_stream(&mut self) {
+        self.last_file = None;
+        self.failed_import = None;
+        self.missing_toolchain = false;
+    }
+
+    fn check_module(&self, module: &str) -> Option<&str> {
+        self.files.iter().find_map(|file| {
+            let path = file.replace('\\', "/");
+            let path = path.trim_start_matches("./").strip_suffix(".py")?;
+            let name = path
+                .strip_suffix("/__init__")
+                .unwrap_or(path)
+                .replace('/', ".");
+            (name == module || name.starts_with(&format!("{module}."))).then_some(file.as_str())
+        })
+    }
+
+    fn check_file(&self, path: &str) -> Option<&str> {
+        let path = path.replace('\\', "/");
+        self.files.iter().find_map(|file| {
+            let normalized = file.replace('\\', "/");
+            let normalized = normalized.trim_start_matches("./");
+            (path == normalized || path.ends_with(&format!("/{normalized}")))
+                .then_some(file.as_str())
+        })
+    }
+
+    fn cannot_run(&mut self, description: String) {
+        if self.unrunnable.is_none() {
+            self.unrunnable = Some(
+                crate::safe_diagnostic(&description)
+                    .chars()
+                    .take(180)
+                    .collect(),
+            );
+        }
+    }
+
+    pub fn diagnostic(&self) -> Option<&str> {
+        self.unrunnable.as_deref()
+    }
+
     pub fn observe(&mut self, output: &str) {
         for line in output.lines().map(str::trim) {
+            let diagnostic = line
+                .strip_prefix('E')
+                .filter(|rest| rest.starts_with(char::is_whitespace))
+                .map_or(line, str::trim_start);
+            if line.starts_with("ERROR:") || line.starts_with("FAIL:") {
+                self.last_file = None;
+                self.failed_import = None;
+            }
+            if let Some(path) = quoted_after(diagnostic, "File ") {
+                self.last_file = Some(path.into());
+            }
+            if let Some(module) = diagnostic
+                .split_once("Failed to import test module:")
+                .map(|(_, m)| m.trim())
+            {
+                self.failed_import = self.check_module(module).map(String::from);
+            }
+            if diagnostic.starts_with("ModuleNotFoundError:") {
+                if let Some(module) = quoted_after(diagnostic, "No module named ") {
+                    if let Some(file) = self
+                        .check_module(module)
+                        .map(String::from)
+                        .or_else(|| self.failed_import.clone())
+                    {
+                        self.cannot_run(format!("the check file {file} could not be imported (ModuleNotFoundError: {module})"));
+                    } else {
+                        self.ambiguous = true;
+                    }
+                } else {
+                    self.ambiguous = true;
+                }
+            } else if diagnostic.starts_with("ImportError: cannot import name ") {
+                if let Some(module) = quoted_after(diagnostic, " from ") {
+                    if self.check_module(module).is_none() {
+                        self.behavior_failed = true;
+                    } else {
+                        self.ambiguous = true;
+                    }
+                } else {
+                    self.ambiguous = true;
+                }
+            } else if diagnostic.starts_with("SyntaxError:")
+                || diagnostic.starts_with("IndentationError:")
+            {
+                if let Some(file) = self
+                    .last_file
+                    .as_deref()
+                    .and_then(|path| self.check_file(path))
+                    .map(String::from)
+                {
+                    let kind = diagnostic.split(':').next().unwrap();
+                    self.cannot_run(format!(
+                        "the check file {file} could not be loaded ({kind})"
+                    ));
+                } else {
+                    self.ambiguous = true;
+                }
+            } else if diagnostic.starts_with("ImportError:")
+                && !diagnostic.contains("Failed to import test module:")
+            {
+                self.ambiguous = true;
+            }
             let lower = line.to_ascii_lowercase();
-            self.unrunnable |= [
-                "ModuleNotFoundError",
-                "ImportError",
-                "SyntaxError",
-                "error[E",
-                "command not found",
-                "not recognized as an internal or external command",
-                "error: could not compile",
+            let shell = [
+                "sh:",
+                "bash:",
+                "zsh:",
+                "dash:",
+                "/bin/sh:",
+                "/bin/bash:",
+                "env:",
+                "/usr/bin/env:",
             ]
             .iter()
-            .any(|marker| line.contains(marker));
-            // A missing input file inside an assertion is a behavior failure. Only launcher
-            // diagnostics identify a missing command or entry-point file here.
-            self.unrunnable |= lower.contains("no such file or directory")
-                && [
-                    "sh:",
-                    "bash:",
-                    "zsh:",
-                    "dash:",
-                    "/bin/sh:",
-                    "/bin/bash:",
-                    "env:",
-                    "/usr/bin/env:",
-                ]
-                .iter()
-                .any(|prefix| lower.starts_with(prefix));
-            self.unrunnable |=
-                lower.contains("no such file or directory") && lower.contains(": can't open file ");
+            .any(|prefix| lower.starts_with(prefix));
+            if (shell
+                && (lower.contains("command not found")
+                    || lower.contains("no such file or directory")
+                    || lower.ends_with(": not found")))
+                || lower.contains("is not recognized as an internal or external command")
+            {
+                self.cannot_run(format!("the check launcher reported: {line}"));
+            }
+            if lower.contains(": can't open file ") && lower.contains("no such file or directory") {
+                if let Some(path) = quoted_after(line, "can't open file ") {
+                    let path = path.replace('\\', "/");
+                    if self.run.iter().any(|arg| {
+                        let arg = arg.replace('\\', "/");
+                        let arg = arg.trim_start_matches("./");
+                        path == arg || path.ends_with(&format!("/{arg}"))
+                    }) {
+                        self.cannot_run(format!("the check entry point {path} could not be opened (No such file or directory)"));
+                    } else {
+                        self.ambiguous = true;
+                    }
+                }
+            }
+            self.missing_toolchain |= line.starts_with("error: could not execute process `rustc ");
+            if self.missing_toolchain && lower.contains("no such file or directory") {
+                self.cannot_run(
+                    "the rustc toolchain process could not be started (No such file or directory)"
+                        .into(),
+                );
+            }
+            self.ambiguous |=
+                line.starts_with("error[E") || line.starts_with("error: could not compile");
+            let real_unittest = (line.starts_with("ERROR:") || line.starts_with("FAIL:"))
+                && line.contains(" (")
+                && line.ends_with(')')
+                && !line.contains("unittest.loader._FailedTest");
             let pytest = line
                 .strip_prefix('E')
                 .or_else(|| line.strip_prefix('>'))
                 .filter(|rest| rest.starts_with(char::is_whitespace))
                 .is_some_and(|rest| rest.trim_start().starts_with("assert "));
-            self.assertion_failed |= line.starts_with("FAIL:")
+            self.behavior_failed |= real_unittest
+                || (line.starts_with("FAILED ") && line.contains("::"))
                 || line.contains("AssertionError")
                 || (line.contains("assertion ") && line.contains(" failed"))
                 || line.starts_with("test result: FAILED")
@@ -300,7 +440,7 @@ impl BaselineClassifier {
         }
     }
 
-    pub fn classify(self, exit_code: Option<i32>, reason: Option<&str>) -> BaselineClassification {
+    pub fn classify(&self, exit_code: Option<i32>, reason: Option<&str>) -> BaselineClassification {
         use BaselineClassification::*;
         if matches!(reason, Some("timeout" | "spawn_failed")) {
             FailedUnrunnable
@@ -308,14 +448,25 @@ impl BaselineClassifier {
             Passed
         } else if exit_code.is_none() || reason.is_some() {
             FailedUnclassified
-        } else if self.unrunnable {
+        } else if self.unrunnable.is_some() {
             FailedUnrunnable
-        } else if self.assertion_failed {
+        } else if self.ambiguous {
+            FailedUnclassified
+        } else if self.behavior_failed {
             FailedAsExpected
         } else {
             FailedUnclassified
         }
     }
+}
+
+fn quoted_after<'a>(line: &'a str, marker: &str) -> Option<&'a str> {
+    let rest = line.split_once(marker)?.1;
+    let quote = rest.chars().next()?;
+    if !matches!(quote, '\'' | '"') {
+        return None;
+    }
+    rest[1..].split_once(quote).map(|(value, _)| value)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -839,34 +990,247 @@ mod tests {
     fn check_baseline_classifier_prioritizes_unrunnable_output_across_streams() {
         use BaselineClassification::*;
         for output in [
-            "ModuleNotFoundError: tests.test_save",
-            "ImportError: save",
-            "SyntaxError: unexpected token",
+            "ImportError: Failed to import test module: tests.test_promo_code\nModuleNotFoundError: No module named 'tests.test_promo_code'",
+            "  File \"tests/test_promo_code.py\", line 1\nSyntaxError: unexpected token",
             "sh: missing-check: command not found",
             "sh: ./missing-check: No such file or directory",
             "python3: can't open file 'missing.py': [Errno 2] No such file or directory",
-            "error[E0425]: missing name",
-            "error: could not compile `storage`",
         ] {
-            for first in [true, false] {
-                let mut classifier = BaselineClassifier::default();
-                for line in if first {
-                    [output, "test result: FAILED"]
-                } else {
-                    ["test result: FAILED", output]
-                } {
-                    classifier.observe(line);
+            for other in [
+                "test result: FAILED",
+                "ImportError: cannot import name 'PromoCodeAlreadyAppliedError' from 'shop.cart'",
+                "ModuleNotFoundError: No module named 'shop.promo'",
+                "error[E0425]: cannot find value `apply_promo_code` in this scope",
+            ] {
+                for first in [true, false] {
+                    let mut classifier = BaselineClassifier::new(
+                        &["tests/test_promo_code.py".into()],
+                        &["python3".into(), "missing.py".into()],
+                    );
+                    for line in if first {
+                        [output, other]
+                    } else {
+                        [other, output]
+                    } {
+                        classifier.begin_stream();
+                        classifier.observe(line);
+                    }
+                    assert_eq!(
+                        classifier.classify(Some(1), None),
+                        FailedUnrunnable,
+                        "{output}; {other}"
+                    );
                 }
-                assert_eq!(
-                    classifier.classify(Some(1), None),
-                    FailedUnrunnable,
-                    "{output}"
-                );
             }
         }
         let mut classifier = BaselineClassifier::default();
         classifier.observe("AssertionError: No such file or directory for the user's input");
         assert_eq!(classifier.classify(Some(1), None), FailedAsExpected);
+    }
+
+    fn classify_output(files: &[&str], run: &[&str], output: &str) -> BaselineClassification {
+        let mut classifier = BaselineClassifier::new(
+            &files.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            &run.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        );
+        classifier.observe(output);
+        classifier.classify(Some(1), None)
+    }
+
+    #[test]
+    fn check_baseline_declared_python_files_and_parent_packages_identify_loading_failures() {
+        assert_eq!(
+            classify_output(
+                &["tests/test_promo_code.py"],
+                &[],
+                "ImportError: Failed to import test module: tests.test_promo_code\nModuleNotFoundError: No module named 'shop.promo'"
+            ),
+            BaselineClassification::FailedUnrunnable
+        );
+        for module in ["tests.test_promo_code", "tests"] {
+            assert_eq!(
+                classify_output(
+                    &["tests/test_promo_code.py"],
+                    &[],
+                    &format!("ModuleNotFoundError: No module named '{module}'")
+                ),
+                BaselineClassification::FailedUnrunnable
+            );
+        }
+        for error in ["SyntaxError", "IndentationError"] {
+            assert_eq!(
+                classify_output(
+                    &["tests/test_promo_code.py"],
+                    &[],
+                    &format!(
+                        "  File \"/fixture/tests/test_promo_code.py\", line 4\n{error}: invalid syntax"
+                    )
+                ),
+                BaselineClassification::FailedUnrunnable
+            );
+        }
+        assert_eq!(
+            classify_output(
+                &[r"tests\test_promo_code.py"],
+                &[],
+                "  File \"C:\\fixture\\tests\\test_promo_code.py\", line 4\nSyntaxError: invalid syntax"
+            ),
+            BaselineClassification::FailedUnrunnable
+        );
+    }
+
+    #[test]
+    fn check_baseline_implementation_files_and_similar_module_names_do_not_imply_check_loading_failure()
+     {
+        for output in [
+            "ModuleNotFoundError: No module named 'shop.promo'",
+            "ModuleNotFoundError: No module named 'tests.test_promo_code_extra'",
+            "  File \"shop/cart.py\", line 4\nIndentationError: unexpected indent",
+            "SyntaxError: invalid syntax",
+        ] {
+            assert_eq!(
+                classify_output(&["tests/test_promo_code.py"], &[], output),
+                BaselineClassification::FailedUnclassified,
+                "{output}"
+            );
+        }
+    }
+
+    #[test]
+    fn check_baseline_real_test_errors_and_missing_implementation_symbols_prove_behavior_failure() {
+        for output in [
+            "ImportError: Failed to import test module: tests.test_promo_code\nImportError: cannot import name 'PromoCodeAlreadyAppliedError' from 'shop.cart'",
+            "ERROR: test_apply (tests.test_promo_code.PromoTests.test_apply)\nAttributeError: 'C' object has no attribute 'apply_promo_code'",
+            "FAIL: test_apply (tests.test_promo_code.PromoTests.test_apply)\nTypeError: pending API",
+            "FAILED tests/test_promo_code.py::test_apply - NameError: apply_promo_code",
+        ] {
+            assert_eq!(
+                classify_output(&["tests/test_promo_code.py"], &[], output),
+                BaselineClassification::FailedAsExpected,
+                "{output}"
+            );
+        }
+    }
+
+    #[test]
+    fn check_baseline_loader_placeholders_and_missing_check_symbols_do_not_prove_behavior_failure()
+    {
+        for output in [
+            "ERROR: tests.test_promo_code (unittest.loader._FailedTest.tests.test_promo_code)\nAttributeError: missing apply_promo_code",
+            "FAIL: tests.test_promo_code (unittest.loader._FailedTest.tests.test_promo_code)",
+            "ImportError: cannot import name 'PromoTests' from 'tests.test_promo_code'",
+        ] {
+            assert_eq!(
+                classify_output(&["tests/test_promo_code.py"], &[], output),
+                BaselineClassification::FailedUnclassified,
+                "{output}"
+            );
+        }
+    }
+
+    #[test]
+    fn check_baseline_ambiguous_modules_and_compilers_do_not_become_assertion_failures() {
+        for output in [
+            "ModuleNotFoundError: No module named 'shop.promo'\nAssertionError: pending implementation",
+            "error[E0425]: cannot find value `apply_promo_code` in this scope\ntest result: FAILED",
+            "error: could not compile `shop`\nAssertionError: pending implementation",
+        ] {
+            assert_eq!(
+                classify_output(&["tests/test_promo_code.py"], &[], output),
+                BaselineClassification::FailedUnclassified,
+                "{output}"
+            );
+        }
+    }
+
+    #[test]
+    fn check_baseline_missing_implementation_symbols_do_not_become_ambiguous_compiler_errors() {
+        assert_eq!(
+            classify_output(
+                &["tests/test_promo_code.py"],
+                &[],
+                "ImportError: cannot import name 'PromoCodeAlreadyAppliedError' from 'shop.cart'\nAssertionError: pending behavior"
+            ),
+            BaselineClassification::FailedAsExpected
+        );
+    }
+
+    #[test]
+    fn check_baseline_context_is_only_declared_files_and_argument_vector() {
+        let output = "python3: can't open file 'tests/test_promo_code.py': [Errno 2] No such file or directory";
+        assert_eq!(
+            classify_output(&[], &["python3", "tests/test_promo_code.py"], output),
+            BaselineClassification::FailedUnrunnable
+        );
+        assert_eq!(
+            classify_output(
+                &[],
+                &["python3", "./tests/test_promo_code.py"],
+                "python3: can't open file '/fixture/tests/test_promo_code.py': [Errno 2] No such file or directory"
+            ),
+            BaselineClassification::FailedUnrunnable
+        );
+        assert_eq!(
+            classify_output(
+                &["tests/test_promo_code.py"],
+                &[],
+                "ModuleNotFoundError: No module named 'tests.test_promo_code'"
+            ),
+            BaselineClassification::FailedUnrunnable
+        );
+        assert_eq!(
+            classify_output(
+                &[],
+                &["cargo", "test"],
+                "error: could not execute process `rustc -vV` (never executed)\nCaused by:\n  No such file or directory (os error 2)"
+            ),
+            BaselineClassification::FailedUnrunnable
+        );
+    }
+
+    #[test]
+    fn check_baseline_unrelated_entry_points_and_traceback_streams_do_not_supply_check_context() {
+        assert_eq!(
+            classify_output(
+                &[],
+                &["python3", "checks/other.py"],
+                "python3: can't open file 'tests/test_promo_code.py': [Errno 2] No such file or directory"
+            ),
+            BaselineClassification::FailedUnclassified
+        );
+        let mut classifier = BaselineClassifier::new(&["tests/test_promo_code.py".into()], &[]);
+        classifier.observe("  File \"tests/test_promo_code.py\", line 4");
+        classifier.begin_stream();
+        classifier.observe("SyntaxError: invalid syntax");
+        assert_eq!(
+            classifier.classify(Some(1), None),
+            BaselineClassification::FailedUnclassified
+        );
+    }
+
+    #[test]
+    fn check_baseline_reference_explains_dependency_ambiguity_and_same_check_acceptance() {
+        let reference = include_str!("../../../docs/dev/reference/checks.md");
+        let prose = reference.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(prose.contains("dependency version"));
+        assert!(prose.contains("same check"));
+        let row = reference
+            .lines()
+            .find(|line| line.starts_with("| `failed_unclassified` | "))
+            .unwrap();
+        assert!(row.contains("compiler diagnostics"));
+        assert!(row.contains("other modules"));
+    }
+
+    #[test]
+    fn check_baseline_reference_does_not_label_all_imports_and_compilers_unrunnable() {
+        let reference = include_str!("../../../docs/dev/reference/checks.md");
+        let row = reference
+            .lines()
+            .find(|line| line.starts_with("| `failed_unrunnable` | "))
+            .unwrap();
+        assert!(!row.contains("Import errors"));
+        assert!(!row.contains("compiler errors"));
     }
 
     #[test]

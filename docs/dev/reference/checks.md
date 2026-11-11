@@ -48,20 +48,41 @@ awr work check W --status --json
 
 Baseline receipts and the check summaries in `work show` expose `classification` alongside
 the recorded outcome and log location. AWR classifies captured output and the exit result
-using built-in rules:
+using built-in rules and that example's declared `check.files` and `check.run`:
 
 | Classification | Observed features | Admission action |
 | --- | --- | --- |
-| `failed_as_expected` | unittest `FAIL:` or `AssertionError`, pytest assertion diagnostics, Rust `assertion … failed` or `test result: FAILED` | Satisfies the current example's baseline obligation |
-| `failed_unrunnable` | Import errors, syntax errors, missing commands or entry points, Rust compiler errors, or a timeout | Refuses governed approval with `baseline_unrunnable` and a command to rerun the repaired check |
-| `failed_unclassified` | A failed run with no recognized signature, or an inconclusive run | Refuses governed approval with `baseline_unclassified` and a path to independent review |
+| `failed_as_expected` | Assertions, real unittest test-method `ERROR:`/`FAIL:` lines, pytest `FAILED path::test`, or missing symbols imported from implementation modules | Satisfies the current example's baseline obligation |
+| `failed_unrunnable` | Missing check modules or their parent packages, unittest collection failing to import a check module because of a missing module, syntax errors in declared check files, missing launchers or entry points, or timeouts | Refuses governed approval with `baseline_unrunnable`, the recognized cause, and a baseline retry command |
+| `failed_unclassified` | Missing other modules, compiler diagnostics, syntax errors outside check files, or otherwise inconclusive failures | Refuses governed approval with `baseline_unclassified` and a path to independent review |
 | `passed` | Successful exit | Leaves `baseline_passed` unmet |
 | `legacy` | A stored baseline from before classifications were recorded | Retains the original outcome-based baseline semantics |
 
-Runtime failures take precedence when output also contains assertion features. A missing
-input file mentioned inside an assertion remains a behavior failure; missing-command
-classification uses launcher diagnostics or a recorded spawn failure. Acceptance continues
-to require a passing outcome.
+Explicit check loading or startup failures take precedence over behavior failures and
+ambiguous diagnostics, even across stdout and stderr. Compiler diagnostics and missing
+non-check modules remain ambiguous when mixed with assertions. A missing input file
+mentioned inside an assertion remains a behavior failure. Missing-command classification
+uses launcher diagnostics or a recorded spawn failure; entry-point diagnostics must name
+an argument in `check.run`. Classification performs no extra execution or file reads.
+
+For Python, `tests/test_promo_code.py` identifies `tests.test_promo_code` and its parent
+package `tests`. Syntax and indentation errors identify the last traceback file in the
+same output stream. A unittest `unittest.loader._FailedTest` identifies a loader placeholder;
+classification uses its underlying diagnostic. A missing-symbol `ImportError` from an
+implementation module counts as a behavior failure, including during test collection.
+For example, this import can fail while a new implementation symbol is still pending:
+
+```python
+from shop.cart import PromoCodeAlreadyAppliedError
+```
+
+An incompatible dependency version can produce the same missing-symbol error: a baseline
+proves only that the check failed before implementation. Acceptance still requires the
+same check to pass.
+
+For an unrunnable baseline, `reason` records the recognized loading diagnostic or the
+existing startup/timeout code. The receipt and admission refusal use it to explain the
+specific failure before giving the retry command.
 
 For an unclassified behavior failure, inspect the logs and record `justified_alternative`
 with a `discrimination.note` explaining the evidence. Propose admission, then have another

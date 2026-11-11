@@ -13,7 +13,13 @@ pub fn baseline_review_guidance() -> &'static str {
     "Inspect the baseline logs. If this is a behavior failure, record justified_alternative with a discrimination.note explaining it, then obtain independent admission approval: awr work admit --input <file>"
 }
 
-pub fn baseline_rerun_guidance(work: &str, example: &str, session: &str, revision: u64) -> String {
+pub fn baseline_rerun_guidance(
+    work: &str,
+    example: &str,
+    session: &str,
+    revision: u64,
+    reason: Option<&str>,
+) -> String {
     let command = crate::cli_next_action(&[
         "awr",
         "work",
@@ -28,7 +34,13 @@ pub fn baseline_rerun_guidance(work: &str, example: &str, session: &str, revisio
         "--expected-revision",
         &revision.to_string(),
     ]);
-    format!("Fix the check command, then rerun the baseline: {command}")
+    let recognized = match reason {
+        Some("timeout") => "the check process exceeded its timeout",
+        Some("spawn_failed") => "the check command could not be started (spawn_failed)",
+        Some(detail) => detail,
+        None => "the recorded check could not run; inspect its captured logs",
+    };
+    format!("Recognized {recognized}. After repair, rerun: {command}")
 }
 
 /// The facts the choice reads. They come from the readiness diagnostics and the findings block.
@@ -111,7 +123,7 @@ pub fn governance_guidance(view: &GovernanceView<'_>) -> Option<ActionGuidance> 
             {
                 (
                     "The baseline check could not run",
-                    "Fix the check command, then rerun the baseline using the command in admission.baselines[].detail",
+                    "Read the recognized loading or startup failure in admission.baselines[].detail, restore the check's ability to run, then use its baseline command",
                     "A runnable baseline records a behavior failure",
                 )
             }

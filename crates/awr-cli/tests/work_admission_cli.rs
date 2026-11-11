@@ -37,6 +37,20 @@ impl Project {
         self.reindex();
     }
 
+    fn declare_python_check_file(&self) {
+        fs::write(self.0.join("tests/test_promo_code.py"), "# Check fixture\n").unwrap();
+        let path = self.0.join("work.yaml");
+        let mut ledger: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        for example in ledger["work_items"][0]["definition"]["examples"]
+            .as_array_mut()
+            .unwrap()
+        {
+            example["check"]["files"] = json!(["tests/test_promo_code.py"]);
+        }
+        fs::write(path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
+        self.reindex();
+    }
+
     fn baseline_session(&self) -> String {
         self.ok(&[
             "session",
@@ -343,9 +357,10 @@ fn baseline_assertion_failures_satisfy_admission_and_are_visible() {
 fn baseline_unrunnable_failures_refuse_admission_with_an_executable_next_step() {
     let p = Project::new(&format!("mode='governed_enforce'\n{ALL}"));
     p.bind_checks();
+    p.declare_python_check_file();
     fs::write(
         p.0.join("baseline-mode.txt"),
-        "output:ModuleNotFoundError: No module named 'tests.test_storage'",
+        "output:ModuleNotFoundError: No module named 'tests.test_promo_code'",
     )
     .unwrap();
     let session = p.baseline_session();
@@ -365,7 +380,14 @@ fn baseline_unrunnable_failures_refuse_admission_with_an_executable_next_step() 
     );
     assert!(error.to_string().contains("baseline_unrunnable"), "{error}");
     let next = error["details"]["next_action"].as_str().unwrap();
-    assert!(next.contains("Fix the check command"), "{next}");
+    assert!(
+        next.contains("tests/test_promo_code.py could not be imported"),
+        "{next}"
+    );
+    assert!(
+        next.contains("ModuleNotFoundError: tests.test_promo_code"),
+        "{next}"
+    );
     let command = next.split_once("awr ").unwrap().1;
     fs::write(p.0.join("baseline-mode.txt"), "fail").unwrap();
     assert!(
@@ -374,6 +396,66 @@ fn baseline_unrunnable_failures_refuse_admission_with_an_executable_next_step() 
     );
     assert_eq!(p.baseline(&session, Some("save-1"))["met"], true);
     p.approve("W", &reviewer, "repaired-baseline");
+}
+
+#[test]
+fn baseline_r1_missing_feature_symbols_and_real_test_errors_satisfy_admission() {
+    for output in [
+        "ImportError: Failed to import test module: tests.test_promo_code\nImportError: cannot import name 'PromoCodeAlreadyAppliedError' from 'shop.cart'",
+        "ERROR: test_apply (tests.test_promo_code.PromoTests.test_apply)\nAttributeError: 'C' object has no attribute 'apply_promo_code'",
+    ] {
+        let p = Project::new(&format!("mode='governed_enforce'\n{ALL}"));
+        p.bind_checks();
+        p.declare_python_check_file();
+        fs::write(p.0.join("baseline-mode.txt"), format!("output:{output}")).unwrap();
+        let session = p.baseline_session();
+        let result = p.baseline(&session, None);
+        assert_eq!(result["met"], true, "{result}");
+        assert_eq!(result["results"][0]["classification"], "failed_as_expected");
+        let reviewer = p.reviewer("reviewer");
+        p.approve("W", &reviewer, "unimplemented-feature-baseline");
+        assert_eq!(
+            p.ok(&["work", "show", "W"])["work"]["admission"]["facts"]["admitted"],
+            true
+        );
+    }
+}
+
+#[test]
+fn baseline_r1_ambiguous_implementation_modules_and_compilers_refuse_admission_without_blame() {
+    for output in [
+        "ModuleNotFoundError: No module named 'shop.promo'",
+        "error[E0425]: cannot find value `apply_promo_code` in this scope",
+    ] {
+        let p = Project::new(&format!("mode='governed_enforce'\n{ALL}"));
+        p.bind_checks();
+        p.declare_python_check_file();
+        fs::write(p.0.join("baseline-mode.txt"), format!("output:{output}")).unwrap();
+        let session = p.baseline_session();
+        assert_eq!(
+            p.baseline(&session, None)["results"][0]["classification"],
+            "failed_unclassified"
+        );
+        let reviewer = p.reviewer("reviewer");
+        let error = refused(
+            p.admit(
+                "W",
+                &reviewer,
+                "ambiguous-baseline",
+                "approved",
+                json!({"judgment": Project::judgment()}),
+            ),
+            "admission_obligations_unmet",
+        );
+        assert!(
+            error.to_string().contains("baseline_unclassified"),
+            "{error}"
+        );
+        let next = error["details"]["next_action"].as_str().unwrap();
+        assert!(next.contains("justified_alternative"), "{next}");
+        assert!(!next.contains("repair"), "{next}");
+        assert!(!next.contains("Fix the check command"), "{next}");
+    }
 }
 
 #[test]

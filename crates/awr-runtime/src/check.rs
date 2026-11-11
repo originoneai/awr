@@ -568,14 +568,20 @@ pub fn run_check(store: &mut Store, root: &Path, request: &RunCheckRequest) -> R
             observation.finished_at = now_millis()?;
         }
         if request.phase == CheckPhase::Baseline {
-            let mut classifier = BaselineClassifier::default();
+            let mut classifier = BaselineClassifier::new(&check.files, argv);
             for name in ["stdout.log", "stderr.log"] {
+                classifier.begin_stream();
                 for line in BufReader::new(dir.open(name)?).split(b'\n') {
                     classifier.observe(&String::from_utf8_lossy(&line?));
                 }
             }
             observation.classification =
                 Some(classifier.classify(observation.exit_code, observation.reason.as_deref()));
+            if observation.classification == Some(BaselineClassification::FailedUnrunnable)
+                && observation.reason.is_none()
+            {
+                observation.reason = classifier.diagnostic().map(String::from);
+            }
         }
         let event = store.record_check(
             project.id,
@@ -621,6 +627,7 @@ pub fn run_check(store: &mut Store, root: &Path, request: &RunCheckRequest) -> R
                 &failed.observation.example,
                 &request.session.to_string(),
                 revision,
+                failed.observation.reason.as_deref(),
             )
         } else if failed.observation.classification
             == Some(BaselineClassification::FailedUnclassified)
