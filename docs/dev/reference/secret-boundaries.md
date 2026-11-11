@@ -8,7 +8,7 @@
 python3 tests/security/payloads/verify_secrets.py --report .local/secret-boundary-checks.json
 ```
 
-The current `awr-core` secret policy is 10. Component contract `tests/security/payloads/contract.json` 1.11.0 covers 32 conditions: boolean/null literals, glosses, public structures/commands, authorization narratives, Bearer prose and smuggled-secret checks. [Content-bound review](content-review.md) can authorize suspected public local-file content.
+The current `awr-core` secret policy is 11. Component contract `tests/security/payloads/contract.json` 1.12.0 covers 32 conditions: boolean/null literals, integer-zero counts, glosses, public structures/commands, authorization narratives, Bearer prose and smuggled-secret checks. [Content-bound review](content-review.md) can authorize suspected public local-file content.
 
 ## How it behaves
 
@@ -89,7 +89,7 @@ dispatch again; use a new operation key for a new run.
 
 对旧数据的输出保护：
 
-- FTS policy is 12. On first read it rebuilds old caches, redacting ASCII token-like glosses previously accepted by policy 11 and preserving short Han-letter boolean glosses, exact literal glosses, boolean/null notes, ordinary auth notes, public configuration, and structure definitions that earlier policies redacted by mistake. Failed source reindexes reread the original content; source-map and adapter-config changes also invalidate the cache. Summaries are shortened only after the full field passes; sensitive summaries become `[redacted]`. When identity, linked work, or source references contain sensitive values, the whole search document stays out of the index. Query parameters are checked as well.
+- FTS policy is 13. On first read it rebuilds old caches, redacting ASCII token-like glosses previously accepted by policy 11 and preserving integer-zero counts under credential-like labels, short Han-letter boolean glosses, exact literal glosses, boolean/null notes, ordinary auth notes, public configuration, and structure definitions that earlier policies redacted by mistake. Failed source reindexes reread the original content; source-map and adapter-config changes also invalidate the cache. Summaries are shortened only after the full field passes; sensitive summaries become `[redacted]`. When identity, linked work, or source references contain sensitive values, the whole search document stays out of the index. Query parameters are checked as well.
 - L0、L1、硬规则/关联事实及 delta 检查实际选中的输出。选中的必需事实包含敏感值时返回 `ContextIncomplete`，不返回看似完整的包、哈希或渲染文本。原本不进入 Context 的正文仍然被排除；例如 delta 只使用 checkpoint 的基线和身份，不返回 digest。
 - CLI 的敏感参数在参数解析报错前拒绝，包括 `--` 之后的参数。拒绝仍以退出码 1 和 stderr JSON 返回原有 `RuleViolation` 与通用消息；`details` 保留共享分类器的 `policy_version`、`category`、`next_action`，并给出 `argument_index` 与 `argument_index_basis: zero_based_process_argv`。索引从 0 开始，0 表示可执行文件参数；不回显命中的参数、键、值或片段。环境转储分类的指引说明通过启动 AWR 前的进程环境传递变量。证据、完成输入、分支关闭输入及 Manifest 的结构错误不回显字段内容。CLI 和 MCP 共用安全错误报告；MCP 同时保护结构化结果、文本副本与读取输出。
 

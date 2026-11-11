@@ -578,7 +578,7 @@ fn prior_content_caches_are_rebuilt_without_rewriting_authority() {
         let revision = f.revision();
         let report = f.store.search(f.project, &query).unwrap();
         let hit = report.hits.iter().find(|h| h.external_key == "W").unwrap();
-        assert_eq!(report.index_policy_version, 12);
+        assert_eq!(report.index_policy_version, 13);
         assert_eq!(hit.summary, expected);
         let stored: String = conn
             .query_row(
@@ -645,7 +645,7 @@ fn legacy_search_redacts_summaries_omits_sensitive_identity_and_rebuilds_the_old
             },
         )
         .unwrap();
-    assert_eq!(report.index_policy_version, 12);
+    assert_eq!(report.index_policy_version, 13);
     let hit = report.hits.iter().find(|h| h.external_key == "W").unwrap();
     assert_eq!(hit.summary, "[redacted]");
     assert!(!serde_json::to_string(&report).unwrap().contains(SENTINEL));
@@ -797,7 +797,7 @@ fn legacy_required_facts_withhold_l0_l1_and_checkpoint_delta_without_false_compl
 fn ordinary_security_discussion_stays_writable_searchable_and_context_complete() {
     let mut f = Fixture::new();
     let session = f.session();
-    let text = "Review password protection and token budgets; discuss API keys and environment variables. Use refreshToken=false; checkpoint_token=null、continue. The basic source-intake example covers basic authentication and Bearer authentication concepts. Schema: {\"token\":{\"type\":\"string\"},\"authorization\":{\"type\":\"http\",\"scheme\":\"bearer\"}}";
+    let text = "Review password protection and token budgets; discuss API keys and environment variables. Use refreshToken=false; checkpoint_token=null、continue. The basic source-intake example covers basic authentication and Bearer authentication concepts. Schema: {\"token\":{\"type\":\"string\"},\"authorization\":{\"type\":\"http\",\"scheme\":\"bearer\"}} Absence counts such as app-password: 0 and manager-token: 0 record that a label never appeared.";
     fs::write(
         f.root.join("work.yaml"),
         WORK.replace("Draft the analysis", &serde_json::to_string(text).unwrap()),

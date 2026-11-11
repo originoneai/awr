@@ -256,6 +256,14 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Fixed
 
+- A count of zero under a credential-like label is public content. A diagnostic record such as
+  `app-password: 0` or `{"manager-token":0}` says that a label never appeared, so the source
+  screen accepts the integer zero as it accepts `false` and `null`. Every other number, a string
+  that spells zero, `00`, `0123`, `0.5` and a zero followed by other text remain values. Before,
+  one such record in a shared source made every write to that source fail with `labelled_value`,
+  including writes about unrelated work. The secret policy is now 11 and the search index policy 13,
+  so existing caches rebuild on first read.
+
 - A work that was integrated, completed and written back to the source is no longer shown as stale
   after a later plan activation that left its contract alone. Before, every activation made the
   project snapshot differ from the one recorded with the selection and the source publication, so
