@@ -74,6 +74,22 @@ Negotiate the prerequisites with:
 awr capabilities --require definition.example_checks --require gates.checks --require mcp.work_check
 ```
 
+### CLI commit verification
+
+`awr verify` provides commit verification through CLI. Its ordinary local default
+selection stays bound to exact-commit completion receipts, including successful
+empty selections. Explicit `--work KEY` can reuse a current completion binding at
+an ancestor when every changed path is a configured ledger source file. When
+`--require-work` or `verify.require_work = true` applies, an empty exact-commit
+selection can use those eligible bindings as associated work.
+
+Reused per-work results add `bound_commit`, `delta: "ledger_only"`, and sorted
+repository-relative `delta_paths` capped at 16 entries. `delta_paths_omitted`
+counts additional paths when needed. Top-level `commit` continues to identify the
+requested commit. Other result shapes and MCP requests and responses retain their
+existing contracts. See [commit verification](verify.md#ledger-only-local-observations)
+for path rules and completion-gate checks.
+
 ### 记录输入与回执
 
 `awr_evidence_record` 与 CLI EvidenceDraft 的字段如下：

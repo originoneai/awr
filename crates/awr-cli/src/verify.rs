@@ -56,8 +56,8 @@ impl VerifyArgs {
     }
 }
 
-fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git")
+fn git_output(root: &Path, args: &[&str]) -> Result<std::process::Output> {
+    Ok(Command::new("git")
         .arg("-C")
         .arg(root)
         .args(args)
@@ -65,7 +65,11 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
-        .output()?;
+        .output()?)
+}
+
+fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    let output = git_output(root, args)?;
     if !output.status.success() {
         return Err(Error::InvalidInput(format!(
             "Git {} failed: {}",
@@ -94,6 +98,60 @@ fn commit(root: &Path, reference: &str) -> Result<String> {
     )
 }
 
+fn ledger_only_delta(root: &Path, bound: &str, sha: &str) -> Result<Option<Vec<String>>> {
+    if !git_output(root, &["merge-base", "--is-ancestor", bound, sha])?
+        .status
+        .success()
+    {
+        return Ok(None);
+    }
+    let repository =
+        PathBuf::from(git_text(root, &["rev-parse", "--show-toplevel"])?).canonicalize()?;
+    let manifest = Manifest::load(root)?;
+    let mut ledgers = BTreeSet::new();
+    for spec in manifest.sources.iter().filter(|s| s.domain == "ledger") {
+        let Some(path) = &spec.path else { continue };
+        let mut normalized = PathBuf::new();
+        for component in root.join(path).components() {
+            match component {
+                Component::CurDir => (),
+                Component::ParentDir => {
+                    normalized.pop();
+                }
+                other => normalized.push(other.as_os_str()),
+            }
+        }
+        if let Ok(path) = normalized.strip_prefix(&repository) {
+            ledgers.insert(path.to_path_buf());
+        }
+    }
+    // Disable rename detection so both the old and new path must qualify.
+    let diff = git(
+        root,
+        &[
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "--no-relative",
+            "-z",
+            bound,
+            sha,
+            "--",
+        ],
+    )?;
+    let mut paths = BTreeSet::new();
+    for bytes in diff.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+        let Ok(path) = std::str::from_utf8(bytes) else {
+            return Ok(None);
+        };
+        if !ledgers.contains(Path::new(path)) {
+            return Ok(None);
+        }
+        paths.insert(path.to_owned());
+    }
+    Ok(Some(paths.into_iter().collect()))
+}
+
 pub fn run(root: &Path, args: &VerifyArgs, json_output: bool) -> Result<()> {
     let root = root.canonicalize()?;
     if let Some(VerifyCommand::InstallHook { accept }) = args.command {
@@ -110,7 +168,7 @@ pub fn run(root: &Path, args: &VerifyArgs, json_output: bool) -> Result<()> {
         }
         rerun(&root, args, &sha)?
     } else {
-        local(&root, args, &sha)?
+        local(&root, args, &sha, require_work)?
     };
     let empty = report["results"].as_array().is_some_and(Vec::is_empty);
     let met = report["results"]
@@ -156,7 +214,7 @@ pub fn run(root: &Path, args: &VerifyArgs, json_output: bool) -> Result<()> {
     }
 }
 
-fn local(root: &Path, args: &VerifyArgs, sha: &str) -> Result<Value> {
+fn local(root: &Path, args: &VerifyArgs, sha: &str, require_work: bool) -> Result<Value> {
     let database = crate::source::runtime_dir(root, false)?.join("state.db");
     let mut origin = awr_store::Store::open_existing(&database)?;
     let snapshot = awr_source::refresh_snapshot(&mut origin, root)?;
@@ -179,6 +237,7 @@ fn local(root: &Path, args: &VerifyArgs, sha: &str) -> Result<Value> {
         ..Default::default()
     };
     let mut receipts = BTreeMap::new();
+    let mut latest = BTreeMap::new();
     loop {
         let page = store.query_events(project.id, &query)?;
         for event in page.events {
@@ -187,7 +246,10 @@ fn local(root: &Path, args: &VerifyArgs, sha: &str) -> Result<Value> {
                 .is_some_and(|source| source.eq_ignore_ascii_case(sha))
                 && let Some(work) = event.work_item_id
             {
-                receipts.insert(work, event);
+                receipts.insert(work, event.clone());
+            }
+            if let Some(work) = event.work_item_id {
+                latest.insert(work, event);
             }
         }
         query.cursor = page.next_cursor;
@@ -202,13 +264,44 @@ fn local(root: &Path, args: &VerifyArgs, sha: &str) -> Result<Value> {
             keys.insert(key.clone());
         }
     }
+    let required_fallback = args.work.is_empty() && keys.is_empty() && require_work;
+    let mut deltas = BTreeMap::new();
+    if !args.work.is_empty() || required_fallback {
+        for (id, key) in &works {
+            if receipts.contains_key(id)
+                || !latest.contains_key(id)
+                || (!required_fallback && !keys.contains(key))
+            {
+                continue;
+            }
+            if let Some(binding) =
+                store.current_completion_binding(project.id, key, project.current_branch_id)?
+                && !binding.source_sha.eq_ignore_ascii_case(sha)
+                && let Some(paths) = ledger_only_delta(root, &binding.source_sha, sha)?
+            {
+                deltas.insert(key.clone(), paths);
+            }
+        }
+    }
+    if required_fallback {
+        keys.extend(deltas.keys().cloned());
+    }
     let policy = GatePolicy::load(root)?.checks;
     let mut results = Vec::new();
     for key in keys {
         let binding =
             store.current_completion_binding(project.id, &key, project.current_branch_id)?;
         let work = store.work_item(project.id, &key)?.item;
-        let session = match receipts.get(&work.meta.id) {
+        let delta = deltas.get(&key);
+        let source_sha = if delta.is_some() {
+            binding.as_ref().unwrap().source_sha.as_str()
+        } else {
+            sha
+        };
+        let receipt = receipts
+            .get(&work.meta.id)
+            .or_else(|| delta.and_then(|_| latest.get(&work.meta.id)));
+        let session = match receipt {
             Some(event) => event.payload["creating_session_id"]
                 .as_str()
                 .map(str::parse::<Id>)
@@ -223,16 +316,25 @@ fn local(root: &Path, args: &VerifyArgs, sha: &str) -> Result<Value> {
                 work: key.clone(),
                 branch: project.current_branch_id,
                 session,
-                source_sha: sha.into(),
+                source_sha: source_sha.into(),
                 check_waiver: binding
-                    .filter(|b| b.source_sha.eq_ignore_ascii_case(sha))
-                    .and_then(|b| b.check_waiver),
+                    .as_ref()
+                    .filter(|b| b.source_sha.eq_ignore_ascii_case(source_sha))
+                    .and_then(|b| b.check_waiver.clone()),
             },
             &policy,
         )?;
-        results.push(
-            json!({"work":key,"met":!gate.would_refuse,"unmet":gate.unmet,"check_gate":gate}),
-        );
+        let mut result =
+            json!({"work":key,"met":!gate.would_refuse,"unmet":gate.unmet,"check_gate":gate});
+        if let Some(paths) = delta {
+            result["bound_commit"] = json!(source_sha);
+            result["delta"] = json!("ledger_only");
+            result["delta_paths"] = json!(paths.iter().take(16).collect::<Vec<_>>());
+            if paths.len() > 16 {
+                result["delta_paths_omitted"] = json!(paths.len() - 16);
+            }
+        }
+        results.push(result);
     }
     Ok(
         json!({"mode":"local","commit":sha,"results":results,"project_revision":project.project_revision}),

@@ -232,6 +232,11 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   gaps and an incomplete checkpoint; execution and completion rules stay the same. Documentation
   baseline updates lower improved metrics and retain recorded ceilings for drifted metrics;
   new-page limits and relative links are checked before writing.
+- Local commit verification can reuse acceptance observations across commits that change
+  only configured ledger source files. This applies to explicit `--work` selection or an
+  empty selection that requires associated work; ordinary default selection keeps its
+  existing behavior. Per-work receipts identify the bound commit and changed paths while
+  preserving the shared completion gates. See [commit verification](../reference/verify.md#ledger-only-local-observations).
 - A work that delivers a selected candidate into a repository (a connector is configured for it, a
   candidate is selected and its completion policy can be integrated) can no longer be completed before
   that candidate's integration is confirmed. `delivery.finalize` and `work.complete` (and the library
