@@ -301,10 +301,16 @@ workspace and input digest, a measured non-sensitive environment digest, and the
 current owned claim/fence/lease versions. Inspection advice uses a currently
 covering execution delegation, even when a separate delegation grants the read;
 it is omitted after that execution grant is revoked or the run binding changes.
-Set `executor_stopped` and
-`no_external_effects` to `true` only when both facts hold; otherwise set the
-unproven one to `false` (or report outcome `unknown`). Never omit them or leave
-them `null`. For success, compute
+`executor_stopped` and `no_external_effects` are two independent facts. Set
+`executor_stopped` to `true` when nothing of yours is still running for this
+execution (the AWR execution record stays `running` until you report), and
+`no_external_effects` to `true` when the run had no external effects. Set only
+the one you cannot truthfully assert to `false` (or report outcome `unknown`).
+Never omit them or leave them `null`. External effects are effects outside the admitted workspace
+paths: a push or other publication, an external review request, a merge into a
+shared target, a deployment, a call that changes another service, or an install
+outside the workspace. Local edits and commits, test runs and a local server you
+have stopped are workspace effects, so they allow `true`. For success, compute
 `output_digest` from the exact artifact bytes you will submit as evidence and
 retain those bytes unchanged. Stop and report the workspace execution **before**
 repository push/publication, external review, shared-target merge or deployment; those are

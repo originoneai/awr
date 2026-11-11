@@ -1516,13 +1516,18 @@ mod workspace_settlement_tests {
             let next = diagnostic["next_step"].as_str().unwrap();
             for phrase in [
                 "explicit JSON booleans",
-                "Write true only when this executor has actually stopped",
-                "Write false when there are prior or unknown external effects",
+                "They are two independent facts",
+                "executor_stopped: write true when nothing of yours is still running for this execution",
+                "no_external_effects: write true when the run had no external effects",
+                "Write false only for the one you cannot truthfully assert",
                 "Omission or null is never treated as a declaration",
                 "This refusal changed nothing",
+                "External effects are effects outside the admitted workspace paths",
+                "test runs and a local server you have stopped are workspace effects",
             ] {
                 assert!(next.contains(phrase), "{case}: {phrase}");
             }
+            assert!(!next.contains("or the executor may still run"), "{case}");
             assert_eq!(snapshot(&admin).await, before, "{case}");
         }
         // The same request id with both declarations settles normally.

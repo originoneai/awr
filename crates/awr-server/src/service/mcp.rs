@@ -1301,8 +1301,8 @@ fn catalog() -> Vec<Tool> {
         "claim_id":{"type":"string","description":"This execution's unchanged current owned claim; V1 additionally requires it to be live."},
         "expected_fence":{"type":"string","pattern":"^[1-9][0-9]*$"},
         "expected_lease_version":{"type":"string","pattern":"^[1-9][0-9]*$","description":"Current claim lease version, including same-fence renewals."},
-        "executor_stopped":{"type":["boolean","null"],"description":"Explicit caller assertion that this execution has actually stopped; never infer from tests or disconnection. A terminal report states true or false; null or omission is refused."},
-        "no_external_effects":{"type":["boolean","null"],"description":"Explicit caller assertion that the run has no external effects to settle; repository delivery remains a separate flow. A terminal report states true or false (false for prior or unknown external effects); null or omission is refused."}
+        "executor_stopped":{"type":["boolean","null"],"description":"Explicit caller assertion that this execution has actually stopped; never infer from tests or disconnection. A terminal report states true or false; null or omission is refused. Independent of no_external_effects: true when nothing of yours is still running for this execution, including a local test run or local server it started; the AWR execution record stays running until you report."},
+        "no_external_effects":{"type":["boolean","null"],"description":"Explicit caller assertion that the run has no external effects to settle; repository delivery remains a separate flow. External effects are effects outside the admitted workspace paths: a push or other publication, an external review request, a shared-target merge, a deployment, a call that changes another service, or an install outside the workspace. Local edits and commits, test runs and a stopped local server are workspace effects, so they allow true. Independent of executor_stopped; a terminal report states true or false (false for prior or unknown external effects); null or omission is refused."}
     }});
     let fields = &command["properties"]["args"]["properties"];
     let start_properties = json!({
@@ -3051,9 +3051,15 @@ mod tests {
             assert_eq!(response["invalid_field"], invalid_field);
             assert_eq!(response["request_reserved"], false);
             let next = response["next_step"].as_str().unwrap();
-            assert!(next.contains("Write false when there are prior or unknown external effects"));
+            assert!(next.contains("Write false only for the one you cannot truthfully assert"));
+            assert!(next.contains("They are two independent facts"));
+            assert!(!next.contains("or the executor may still run"));
             assert!(next.contains("use outcome unknown"));
             assert!(next.contains("This refusal changed nothing"));
+            assert!(
+                next.contains("External effects are effects outside the admitted workspace paths")
+            );
+            assert!(next.contains("test runs and a local server you have stopped are workspace effects, not external effects"));
             assert!(serde_json::to_vec(&response).unwrap().len() < 2560);
         }
         // An unlisted label never becomes this diagnostic.
@@ -3139,6 +3145,16 @@ mod tests {
         let declaration_note = settlement["description"].as_str().unwrap();
         assert!(declaration_note.contains("including with a live lease"));
         assert!(declaration_note.contains("omission or null is refused before any write"));
+        let effects_note = settlement["properties"]["no_external_effects"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            effects_note
+                .contains("External effects are effects outside the admitted workspace paths")
+        );
+        assert!(
+            effects_note.contains("test runs and a stopped local server are workspace effects")
+        );
         assert!(note.contains("settlement_declaration_incomplete"));
         assert!(!declaration_note.contains("V2 permits only elapsed expiry"));
         assert!(note.contains("workspace-settled success"));
