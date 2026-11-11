@@ -2,6 +2,60 @@ use serde_json::Value;
 use std::process::Command;
 
 #[test]
+fn version_identity_ac1_binary_reports_the_build_commit() {
+    let output = Command::new(env!("CARGO_BIN_EXE_awr"))
+        .env("AWR_LOCAL_WEB", "0")
+        .args(["--json", "--version"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    let line = String::from_utf8(output.stdout).unwrap();
+    let injected = option_env!("AWR_BUILD_SHA")
+        .filter(|s| s.len() >= 8 && s.bytes().all(|b| b.is_ascii_hexdigit()));
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    if injected.is_none() && !root.join(".git").exists() {
+        assert_eq!(line, format!("awr {}\n", env!("CARGO_PKG_VERSION")));
+        return;
+    }
+    let prefix = format!("awr {} (", env!("CARGO_PKG_VERSION"));
+    let identity = line
+        .strip_prefix(&prefix)
+        .and_then(|s| s.strip_suffix(")\n"))
+        .expect("a Git build must report its source commit after the package version");
+    let sha = identity.strip_suffix("-dirty").unwrap_or(identity);
+    assert_eq!(sha.len(), 8, "{line}");
+    assert!(sha.bytes().all(|b| b.is_ascii_hexdigit()), "{line}");
+    if let Some(sha_override) = injected {
+        assert_eq!(sha, sha_override[..8].to_ascii_lowercase());
+        return;
+    }
+    let head = Command::new("git")
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(head.status.success(), "{head:?}");
+    assert_eq!(sha, &String::from_utf8(head.stdout).unwrap()[..8]);
+}
+
+#[test]
+fn version_identity_ac3_program_and_version_keep_their_positions() {
+    let output = Command::new(env!("CARGO_BIN_EXE_awr"))
+        .env("AWR_LOCAL_WEB", "0")
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let line = String::from_utf8(output.stdout).unwrap();
+    let words: Vec<_> = line.split_whitespace().collect();
+    assert_eq!(words[0], "awr");
+    assert_eq!(words[1], env!("CARGO_PKG_VERSION"));
+    assert_eq!(line.lines().count(), 1);
+}
+
+#[test]
 fn json_usage_errors_work_before_and_after_subcommands() {
     for args in [
         vec!["--json", "work", "ready"],

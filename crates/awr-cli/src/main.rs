@@ -52,7 +52,7 @@ mod workspace;
 #[derive(Debug, Parser)]
 #[command(
     name = "awr",
-    version,
+    version = env!("AWR_BUILD_VERSION"),
     about = "Persistent work state and minimal context for long-running agents"
 )]
 struct Cli {

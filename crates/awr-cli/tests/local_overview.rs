@@ -143,7 +143,7 @@ fn ordinary_calls_register_projects_and_concurrent_startup_reuses_one_service() 
         success(&output);
         assert_eq!(
             String::from_utf8_lossy(&output.stdout).trim(),
-            format!("awr {}", env!("CARGO_PKG_VERSION"))
+            format!("awr {}", env!("AWR_BUILD_VERSION"))
         );
     }
     let first = f.run(&["overview", "status", "--json"])["service"].clone();

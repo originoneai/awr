@@ -176,6 +176,10 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   execution admission, context completeness, delivery observation, completion validity), which Team operations carry
   it and which entries of the personal CLI and MCP server have no Team operation, with the reason; the report is checked
   against the protocol's own operation lists. Asking for such an entry is still refused as `Unsupported`.
+- Source commit identity in `awr --version` and `awr-mcp --version`, with a short
+  hexadecimal hash and a `-dirty` marker for Git working tree changes. Source
+  archives can inject `AWR_BUILD_SHA`; builds without commit information keep
+  the package version alone. See [version output](../reference/cli-mcp-contract.md).
 - Trust metadata in progress, session-label, evidence and admission JSON, with
   the negotiable `output.trust_field` capability. Existing fields and entry text
   remain available. Caller-supplied evidence types stay `reported` until a
