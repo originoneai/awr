@@ -1465,6 +1465,7 @@ mod workspace_settlement_tests {
             ("omit-settlement", "succeeded", None, ""),
             ("omit-settlement-failed", "failed", None, ""),
             ("omit-settlement-cancelled", "cancelled", None, ""),
+            ("null-settlement", "succeeded", None, ""),
         ] {
             let mut cmd = base.clone();
             cmd.args["outcome"] = json!(outcome);
@@ -1485,6 +1486,9 @@ mod workspace_settlement_tests {
                     .as_object_mut()
                     .unwrap()
                     .remove("workspace_settlement");
+            }
+            if case == "null-settlement" {
+                cmd.args["workspace_settlement"] = Value::Null;
             }
             let error = store
                 .commands()
@@ -1546,6 +1550,136 @@ mod workspace_settlement_tests {
             .await
             .unwrap();
         assert_eq!(replay["replayed"], true);
+    }
+
+    fn assert_declaration_refusal(error: &PgError, invalid_field: &str) {
+        let diagnostic = error
+            .settlement_declaration_incomplete_diagnostic()
+            .unwrap_or_else(|| panic!("expected settlement_declaration_incomplete: {error:?}"));
+        assert_eq!(diagnostic["invalid_field"], invalid_field);
+    }
+
+    /// The declaration check runs before the V1 lease is examined: an expired-lease report
+    /// without declarations is refused unchanged; with both it still lands in recovery.
+    #[tokio::test]
+    async fn expired_v1_lease_without_declarations_is_refused_before_the_lease_check() {
+        let (_g, admin, _, store) = setup().await;
+        enable_writes(&admin).await;
+        policy(&admin, "a", "clone-alpha").await;
+        let (c, e) = ready_intent(&store).await;
+        let started = start(&store, &c, &e).await;
+        admin
+            .batch_execute(
+                "UPDATE awr_team.claims SET expires_at=clock_timestamp()-interval '1 second'",
+            )
+            .await
+            .unwrap();
+        let base = declaration(&store, &c, &started, "expired-report", "succeeded").await;
+        let mut undeclared = base.clone();
+        undeclared.args["workspace_settlement"]
+            .as_object_mut()
+            .unwrap()
+            .remove("no_external_effects");
+        let before = snapshot(&admin).await;
+        let error = store
+            .commands()
+            .execute(TENANT, PROJECT, A, undeclared)
+            .await
+            .expect_err("undeclared expired report");
+        assert_declaration_refusal(&error, "/args/workspace_settlement/no_external_effects");
+        assert_eq!(snapshot(&admin).await, before);
+        let response = store
+            .commands()
+            .execute(TENANT, PROJECT, A, base)
+            .await
+            .unwrap();
+        let result = &response["receipt"]["data"];
+        assert_eq!(result["state"], "unknown");
+        assert_eq!(result["effects_settled"], false);
+        assert_eq!(result["recovery_blocked"], true);
+    }
+
+    /// A late terminal report on an execution already in state unknown still needs both
+    /// declarations; with them it stays unknown and blocked.
+    #[tokio::test]
+    async fn late_terminal_report_on_unknown_execution_still_requires_declarations() {
+        let (_g, admin, _, store) = setup().await;
+        enable_writes(&admin).await;
+        policy(&admin, "a", "clone-alpha").await;
+        let (c, e) = ready_intent(&store).await;
+        let started = start(&store, &c, &e).await;
+        let uncertain = store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                report(&store, &started, "uncertain-first", "unknown").await,
+            )
+            .await
+            .unwrap()["receipt"]["data"]
+            .clone();
+        assert_eq!(uncertain["state"], "unknown");
+        let before = snapshot(&admin).await;
+        let error = store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                report(&store, &uncertain, "late-terminal", "failed").await,
+            )
+            .await
+            .expect_err("undeclared late report");
+        assert_declaration_refusal(&error, "/args/workspace_settlement");
+        assert_eq!(snapshot(&admin).await, before);
+        let declared = declaration(&store, &c, &uncertain, "late-terminal", "failed").await;
+        let result = store
+            .commands()
+            .execute(TENANT, PROJECT, A, declared)
+            .await
+            .unwrap()["receipt"]["data"]
+            .clone();
+        assert_eq!(result["state"], "unknown");
+        assert_eq!(result["recovery_blocked"], true);
+    }
+
+    /// The execution state check keeps precedence: a terminal execution answers
+    /// PreconditionsChanged, not the declaration refusal.
+    #[tokio::test]
+    async fn undeclared_report_to_a_terminal_execution_keeps_preconditions_changed() {
+        let (_g, admin, _, store) = setup().await;
+        enable_writes(&admin).await;
+        policy(&admin, "a", "clone-alpha").await;
+        let (c, e) = ready_intent(&store).await;
+        let started = start(&store, &c, &e).await;
+        let settled = store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                declaration(&store, &c, &started, "settled", "succeeded").await,
+            )
+            .await
+            .unwrap()["receipt"]["data"]
+            .clone();
+        assert_eq!(settled["state"], "succeeded");
+        let before = snapshot(&admin).await;
+        let result = store
+            .commands()
+            .execute(
+                TENANT,
+                PROJECT,
+                A,
+                report(&store, &settled, "after-terminal", "succeeded").await,
+            )
+            .await;
+        assert!(
+            matches!(result, Err(PgError::PreconditionsChanged)),
+            "{result:?}"
+        );
+        assert_eq!(snapshot(&admin).await, before);
     }
 
     #[tokio::test]
@@ -1763,6 +1897,19 @@ mod workspace_settlement_tests {
                 Err(PgError::PreconditionsChanged)
             ));
             assert_eq!(snapshot(&admin).await, before);
+            // Only caller_managed admissions under a stored policy must state declarations:
+            // a legacy or controlled terminal report without them keeps its previous outcome.
+            let undeclared = report(&store, &started, "undeclared-terminal", "succeeded").await;
+            let response = store
+                .commands()
+                .execute(TENANT, PROJECT, A, undeclared)
+                .await
+                .unwrap();
+            let result = &response["receipt"]["data"];
+            assert_eq!(result["state"], "unknown", "controlled={controlled}");
+            assert_eq!(result["effects_settled"], false, "controlled={controlled}");
+            assert_eq!(result["recovery_blocked"], true, "controlled={controlled}");
+            assert_eq!(snapshot(&admin).await["work"][0]["recovery_blocked"], true);
         }
     }
 

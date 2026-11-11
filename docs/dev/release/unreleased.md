@@ -264,6 +264,18 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   including writes about unrelated work. The secret policy is now 11 and the search index policy 13,
   so existing caches rebuild on first read.
 
+- A `succeeded`, `failed` or `cancelled` `execution.report` for a caller-managed run admitted
+  under a stored workspace settlement policy must now state `executor_stopped` and
+  `no_external_effects` in `workspace_settlement` as `true` or `false`. A report that omits
+  `workspace_settlement`, omits either declaration or leaves it `null` (the placeholder of
+  `terminal_reporting`) is refused with HTTP 400 `InvalidInput`, reason
+  `settlement_declaration_incomplete`, `invalid_field` naming the declaration and
+  `request_reserved: false`. Nothing is recorded, so the same `request_id` works with both
+  declarations. Before, such a report was committed as unsettled: the execution became `unknown`,
+  the task's recovery was blocked and its reservations were marked unknown, and only a
+  `project_admin` reconcile could clear it, so the member's run stopped. Outcome `unknown`, explicit
+  `false` declarations, other settlement mismatches and runs without a stored policy are unchanged
+  (AWR-TFQ-022).
 - A work that was integrated, completed and written back to the source is no longer shown as stale
   after a later plan activation that left its contract alone. Before, every activation made the
   project snapshot differ from the one recorded with the selection and the source publication, so
