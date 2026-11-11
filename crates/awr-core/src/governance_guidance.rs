@@ -9,6 +9,28 @@
 //! reason, or deciding again on what the work now is.
 use crate::ActionGuidance;
 
+pub fn baseline_review_guidance() -> &'static str {
+    "Inspect the baseline logs. If this is a behavior failure, record justified_alternative with a discrimination.note explaining it, then obtain independent admission approval: awr work admit --input <file>"
+}
+
+pub fn baseline_rerun_guidance(work: &str, example: &str, session: &str, revision: u64) -> String {
+    let command = crate::cli_next_action(&[
+        "awr",
+        "work",
+        "check",
+        work,
+        "--example",
+        example,
+        "--phase",
+        "baseline",
+        "--session",
+        session,
+        "--expected-revision",
+        &revision.to_string(),
+    ]);
+    format!("Fix the check command, then rerun the baseline: {command}")
+}
+
 /// The facts the choice reads. They come from the readiness diagnostics and the findings block.
 pub struct GovernanceView<'a> {
     /// `(code, detail)` of every readiness diagnostic of the work.
@@ -24,6 +46,8 @@ const ORDER: &[&str] = &[
     "admission_policy_invalid",
     "admission_unknown",
     "reassessment_unknown",
+    "baseline_unrunnable",
+    "baseline_unclassified",
     "admission_obligations_unmet",
     "admission_missing",
     "admission_pending",
@@ -65,8 +89,7 @@ pub fn governance_guidance(view: &GovernanceView<'_>) -> Option<ActionGuidance> 
         let Some((_, detail)) = view.diagnostics.iter().find(|(c, _)| c == code) else {
             continue;
         };
-        let detail = clip(detail, 200);
-        let basis = format!("{code}: {detail}");
+        let basis = format!("{code}: {}", clip(detail, 200));
         let (when, next_action, recheck): (&str, &str, &str) = match *code {
             "admission_policy_invalid" => (
                 "The admission policy of this source cannot be used",
@@ -83,6 +106,24 @@ pub fn governance_guidance(view: &GovernanceView<'_>) -> Option<ActionGuidance> 
                 "Declare the work definition in one source edit (purpose, adopted intent, outcome contribution, responsibility, deliverable, examples and a discrimination method, as the purpose needs), then admit it with one work admit call; no stage document, confirmation round or step-level task is needed",
                 "The definition report shows no gaps",
             ),
+            "baseline_unrunnable" | "admission_obligations_unmet"
+                if detail.contains("baseline_unrunnable") || *code == "baseline_unrunnable" =>
+            {
+                (
+                    "The baseline check could not run",
+                    "Fix the check command, then rerun the baseline using the command in admission.baselines[].detail",
+                    "A runnable baseline records a behavior failure",
+                )
+            }
+            "baseline_unclassified" | "admission_obligations_unmet"
+                if detail.contains("baseline_unclassified") || *code == "baseline_unclassified" =>
+            {
+                (
+                    "The baseline failure has no recognized behavior signature",
+                    baseline_review_guidance(),
+                    "An independent reviewer approves the recorded alternative method",
+                )
+            }
             "admission_obligations_unmet" => (
                 "The work definition leaves obligations unmet before admission",
                 "Fill the missing obligations listed in the detail in one source edit, then admit the work with one work admit call; no stage document or step-level task is needed",

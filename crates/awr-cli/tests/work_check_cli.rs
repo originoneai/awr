@@ -150,6 +150,13 @@ impl Fixture {
         )
         .unwrap();
     }
+    fn failure_output(&self, output: &str) {
+        fs::write(
+            self.root.join("probe.json"),
+            serde_json::to_vec(&json!({"mode":"output", "output":output})).unwrap(),
+        )
+        .unwrap();
+    }
     fn governed(&self) {
         let path = self.root.join(".awr/project.toml");
         let mut s = fs::read_to_string(&path).unwrap();
@@ -178,6 +185,10 @@ fn check_process_fixture() {
     println!("Observed draft output");
     eprintln!("Observed draft diagnostics");
     match mode["mode"].as_str().unwrap() {
+        "output" => {
+            eprintln!("{}", mode["output"].as_str().unwrap());
+            std::process::exit(1);
+        }
         "fail" => panic!("The draft was lost"),
         "pass_once" => fs::write("probe.json", r#"{"mode":"fail"}"#).unwrap(),
         "rewrite" => fs::write("oracle.txt", "changed oracle\n").unwrap(),
@@ -187,6 +198,211 @@ fn check_process_fixture() {
         }
         _ => {}
     }
+}
+
+#[test]
+fn baseline_assertion_features_are_classified_as_expected() {
+    let f = Fixture::new(1, false);
+    for output in [
+        "FAIL: test_save (test_storage.SaveTests)",
+        "AssertionError: the draft was lost",
+        "E       assert actual == expected",
+        "assertion `left == right` failed",
+        "test result: FAILED. 0 passed; 1 failed",
+        "AssertionError: No such file or directory while reading user input",
+    ] {
+        f.failure_output(output);
+        let result = f.checked("baseline", &[]);
+        assert_eq!(
+            result["results"][0]["classification"], "failed_as_expected",
+            "{output}: {result}"
+        );
+        assert_eq!(result["met"], true, "{output}: {result}");
+    }
+}
+
+#[test]
+fn baseline_unrunnable_features_override_assertion_features() {
+    let f = Fixture::new(1, false);
+    for output in [
+        "ModuleNotFoundError: No module named 'tests.test_storage'",
+        "ImportError: cannot import name 'save'",
+        "sh: missing-check: command not found",
+        "sh: ./missing-check: No such file or directory",
+        "SyntaxError: invalid syntax",
+        "error[E0425]: cannot find value `save` in this scope",
+    ] {
+        f.failure_output(&format!("AssertionError: pending behavior\n{output}"));
+        let result = f.checked("baseline", &[]);
+        assert_eq!(
+            result["results"][0]["classification"], "failed_unrunnable",
+            "{output}: {result}"
+        );
+        assert_eq!(result["met"], false, "{output}: {result}");
+        assert!(
+            result["next_action"]
+                .as_str()
+                .unwrap()
+                .contains("awr work check W")
+        );
+    }
+}
+
+#[test]
+fn baseline_unknown_failures_never_count_as_expected() {
+    let f = Fixture::new(1, false);
+    for output in [
+        "",
+        "the check exited unsuccessfully",
+        "assertion helpers loaded",
+        "assert is enabled",
+    ] {
+        f.failure_output(output);
+        let result = f.checked("baseline", &[]);
+        assert_eq!(
+            result["results"][0]["classification"], "failed_unclassified",
+            "{output}: {result}"
+        );
+        assert_eq!(result["met"], false);
+        assert!(
+            result["next_action"]
+                .as_str()
+                .unwrap()
+                .contains("justified_alternative")
+        );
+    }
+}
+
+#[test]
+fn baseline_missing_executable_is_unrunnable_without_assertion_output() {
+    let f = Fixture::new(1, false);
+    let path = f.root.join("work.yaml");
+    let mut ledger: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    ledger["work_items"][0]["definition"]["examples"][0]["check"]["run"] =
+        json!([format!("awr-missing-check-{}", Id::new())]);
+    fs::write(path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
+    f.ok(&["source", "reindex"]);
+    let result = f.checked("baseline", &[]);
+    assert_eq!(result["results"][0]["outcome"], "errored");
+    assert_eq!(result["results"][0]["reason"], "spawn_failed");
+    assert_eq!(result["results"][0]["classification"], "failed_unrunnable");
+    assert_eq!(result["met"], false);
+}
+
+#[test]
+fn baseline_rejected_classifications_explain_each_work_show_obligation() {
+    for (output, classification, reason) in [
+        (
+            "ImportError: missing save",
+            "failed_unrunnable",
+            "baseline_unrunnable",
+        ),
+        (
+            "unknown failure",
+            "failed_unclassified",
+            "baseline_unclassified",
+        ),
+    ] {
+        let f = Fixture::new(1, false);
+        f.gate_policy("observe", "");
+        f.failure_output(output);
+        let receipt = f.checked("baseline", &[]);
+        assert_ne!(
+            receipt["results"][0]["classification"],
+            "failed_as_expected"
+        );
+        let shown = f.ok(&["work", "show", "W"]);
+        let baselines = shown["checks"]["obligations"][0]["baselines"]
+            .as_array()
+            .unwrap();
+        assert_eq!(baselines.last().unwrap()["classification"], classification);
+        assert!(
+            shown["checks"]["unmet"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|unmet| unmet["reason"] == reason),
+            "{shown}"
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_awr"))
+            .current_dir(&f.root)
+            .env("AWR_LOCAL_WEB", "0")
+            .args(["work", "show", "W"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .contains(classification)
+        );
+    }
+}
+
+#[test]
+fn baseline_classification_is_visible_in_receipts_status_and_work_show_within_budget() {
+    let f = Fixture::new(8, false);
+    f.gate_policy("observe", "");
+    f.mode("fail");
+    let result = f.checked("baseline", &[]);
+    for row in result["results"].as_array().unwrap() {
+        assert_eq!(row["classification"], "failed_as_expected");
+        assert_eq!(
+            f.event(row)["payload"]["classification"],
+            "failed_as_expected"
+        );
+    }
+    let status = f.ok(&["work", "check", "W", "--status"]);
+    for example in status["examples"].as_array().unwrap() {
+        assert_eq!(example["runs"][0]["classification"], "failed_as_expected");
+    }
+    let shown = f.ok(&["work", "show", "W"]);
+    for example in shown["checks"]["obligations"].as_array().unwrap() {
+        assert_eq!(
+            example["baselines"][0]["classification"],
+            "failed_as_expected"
+        );
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_awr"))
+        .current_dir(&f.root)
+        .env("AWR_LOCAL_WEB", "0")
+        .args(["work", "show", "W"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .matches("failed_as_expected")
+            .count(),
+        8
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_awr"))
+        .current_dir(&f.root)
+        .env("AWR_LOCAL_WEB", "0")
+        .args([
+            "work",
+            "check",
+            "W",
+            "--phase",
+            "baseline",
+            "--session",
+            &f.session,
+            "--expected-revision",
+            &f.revision(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(text.matches("failed_as_expected").count(), 8, "{text}");
+    assert!(text.len() <= 1024, "{} bytes: {text}", text.len());
+    f.failure_output("unrecognized failure");
+    assert!(!f.check("baseline", &["--require-met"]).status.success());
 }
 
 impl Fixture {
@@ -743,6 +959,7 @@ fn timeout_is_unknown_and_the_direct_child_has_been_reaped() {
     let p = f.event(&v["results"][0])["payload"].clone();
     assert_eq!(p["outcome"], "unknown");
     assert_eq!(p["reason"], "timeout");
+    assert_eq!(p["classification"], "failed_unrunnable");
     assert_eq!(v["met"], false);
     let pid = fs::read_to_string(f.root.join("child.pid")).unwrap();
     #[cfg(unix)]

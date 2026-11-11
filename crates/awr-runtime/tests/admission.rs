@@ -258,6 +258,7 @@ fn record_fixture_baseline(f: &mut Fixture, id: &str, outcome: CheckOutcome) -> 
                     criterion_sha256: format!("{:x}", sha2::Sha256::digest(ACC)),
                     phase: CheckPhase::Baseline,
                     outcome,
+                    classification: None,
                     reason: None,
                     log_dir: format!(".awr/artifacts/checks/{session}/{id}"),
                     exit_code: Some(if outcome == CheckOutcome::Failed {

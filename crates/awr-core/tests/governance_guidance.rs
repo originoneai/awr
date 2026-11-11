@@ -18,6 +18,8 @@ const CODES: &[&str] = &[
     "admission_policy_invalid",
     "admission_unknown",
     "reassessment_unknown",
+    "baseline_unrunnable",
+    "baseline_unclassified",
     "admission_obligations_unmet",
     "admission_missing",
     "admission_pending",
@@ -38,6 +40,24 @@ const CODES: &[&str] = &[
     "reassessment_budget_escalated",
     "reassessment_not_authorized",
 ];
+
+#[test]
+fn baseline_failure_guidance_distinguishes_command_repair_and_independent_review() {
+    for code in [BASELINE_UNRUNNABLE, BASELINE_UNCLASSIFIED] {
+        for outer in [code, "admission_obligations_unmet"] {
+            let detail = format!("{} {code}", "context ".repeat(40));
+            let guidance = view(&[(outer, &detail)], &[]).unwrap();
+            if code == BASELINE_UNRUNNABLE {
+                assert!(guidance.next_action.contains("Fix the check command"));
+                assert!(!guidance.next_action.contains("justified_alternative"));
+            } else {
+                assert!(guidance.next_action.contains("justified_alternative"));
+                assert!(guidance.next_action.contains("independent"));
+                assert!(!guidance.next_action.contains("Fix the check command"));
+            }
+        }
+    }
+}
 
 #[test]
 fn every_gap_gets_one_instruction_with_a_condition_a_basis_an_action_and_a_recheck() {

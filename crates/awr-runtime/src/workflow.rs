@@ -169,6 +169,8 @@ pub fn work_checks(
     if gate.applies
         && let Some(definition) = &work.definition
     {
+        let check_history =
+            crate::check::check_status_on_branch(store, root, &request.work, request.branch)?;
         for example in &definition.examples {
             if !report.criterion_tiers.iter().any(|(criterion, tier)| {
                 criterion == &example.criterion && *tier == DeliveryTier::Required
@@ -185,6 +187,11 @@ pub fn work_checks(
                 .collect();
             obligations.push(json!({"example":example.id,"criterion":example.criterion,
                 "state":if reasons.is_empty() {"satisfied"} else {"unmet"}, "unmet":reasons,
+                "baselines":check_history["examples"].as_array().unwrap().iter()
+                    .find(|entry| entry["id"] == json!(example.id))
+                    .and_then(|entry|entry["runs"].as_array())
+                    .map(|runs|runs.iter().filter(|run|run["phase"] == "baseline").collect::<Vec<_>>())
+                    .unwrap_or_default(),
                 "baseline_command":crate::completion::check_gate_command(&request, project.project_revision, example.id.as_deref(), "baseline"),
                 "acceptance_command":crate::completion::check_gate_command(&request, project.project_revision, example.id.as_deref(), "acceptance")}));
         }

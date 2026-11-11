@@ -239,6 +239,85 @@ impl CheckOutcome {
     }
 }
 
+/// Why a baseline failed. Missing classifications retain the historical failure semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BaselineClassification {
+    Passed,
+    FailedAsExpected,
+    FailedUnrunnable,
+    FailedUnclassified,
+    Legacy,
+}
+/// Collect known features from captured output; this performs no I/O or extra execution.
+#[derive(Default)]
+pub struct BaselineClassifier {
+    assertion_failed: bool,
+    unrunnable: bool,
+}
+impl BaselineClassifier {
+    pub fn observe(&mut self, output: &str) {
+        for line in output.lines().map(str::trim) {
+            let lower = line.to_ascii_lowercase();
+            self.unrunnable |= [
+                "ModuleNotFoundError",
+                "ImportError",
+                "SyntaxError",
+                "error[E",
+                "command not found",
+                "not recognized as an internal or external command",
+                "error: could not compile",
+            ]
+            .iter()
+            .any(|marker| line.contains(marker));
+            // A missing input file inside an assertion is a behavior failure. Only launcher
+            // diagnostics identify a missing command or entry-point file here.
+            self.unrunnable |= lower.contains("no such file or directory")
+                && [
+                    "sh:",
+                    "bash:",
+                    "zsh:",
+                    "dash:",
+                    "/bin/sh:",
+                    "/bin/bash:",
+                    "env:",
+                    "/usr/bin/env:",
+                ]
+                .iter()
+                .any(|prefix| lower.starts_with(prefix));
+            self.unrunnable |=
+                lower.contains("no such file or directory") && lower.contains(": can't open file ");
+            let pytest = line
+                .strip_prefix('E')
+                .or_else(|| line.strip_prefix('>'))
+                .filter(|rest| rest.starts_with(char::is_whitespace))
+                .is_some_and(|rest| rest.trim_start().starts_with("assert "));
+            self.assertion_failed |= line.starts_with("FAIL:")
+                || line.contains("AssertionError")
+                || (line.contains("assertion ") && line.contains(" failed"))
+                || line.starts_with("test result: FAILED")
+                || pytest;
+        }
+    }
+
+    pub fn classify(self, exit_code: Option<i32>, reason: Option<&str>) -> BaselineClassification {
+        use BaselineClassification::*;
+        if matches!(reason, Some("timeout" | "spawn_failed")) {
+            FailedUnrunnable
+        } else if exit_code == Some(0) && reason.is_none() {
+            Passed
+        } else if exit_code.is_none() || reason.is_some() {
+            FailedUnclassified
+        } else if self.unrunnable {
+            FailedUnrunnable
+        } else if self.assertion_failed {
+            FailedAsExpected
+        } else {
+            FailedUnclassified
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckTreeState {
@@ -255,6 +334,8 @@ pub struct CheckPayload {
     pub criterion_sha256: String,
     pub phase: CheckPhase,
     pub outcome: CheckOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classification: Option<BaselineClassification>,
     pub reason: Option<String>,
     pub log_dir: String,
     pub exit_code: Option<i32>,
@@ -274,6 +355,22 @@ pub struct CheckPayload {
     pub survivors: Option<Vec<MutationSurvivor>>,
 }
 impl CheckPayload {
+    pub fn baseline_classification(&self) -> Option<BaselineClassification> {
+        (self.phase == CheckPhase::Baseline).then_some(
+            self.classification
+                .unwrap_or(BaselineClassification::Legacy),
+        )
+    }
+
+    pub fn met(&self) -> bool {
+        self.phase.met(self.outcome)
+            && (self.phase != CheckPhase::Baseline
+                || matches!(
+                    self.baseline_classification(),
+                    Some(BaselineClassification::FailedAsExpected | BaselineClassification::Legacy)
+                ))
+    }
+
     pub fn validate(&self) -> Result<()> {
         let hash = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
         let relative = |s: &str| {
@@ -331,6 +428,22 @@ impl CheckPayload {
             || (self.phase == CheckPhase::Mutation
                 && self.outcome == CheckOutcome::Passed
                 && self.mutants.is_some_and(|c| !c.passed()))
+            || self.classification.is_some_and(|classification| {
+                self.phase != CheckPhase::Baseline
+                    || match classification {
+                        BaselineClassification::Passed => self.outcome != CheckOutcome::Passed,
+                        BaselineClassification::FailedAsExpected => {
+                            self.outcome != CheckOutcome::Failed
+                                || self.exit_code.is_none_or(|code| code == 0)
+                                || self.reason.is_some()
+                        }
+                        BaselineClassification::FailedUnrunnable
+                        | BaselineClassification::FailedUnclassified => {
+                            self.outcome == CheckOutcome::Passed
+                        }
+                        BaselineClassification::Legacy => false,
+                    }
+            })
         {
             return Err(Error::InvalidInput(
                 "invalid or oversized work.check observation".into(),
@@ -656,11 +769,19 @@ pub fn evaluate_check_gate(
                         .filter(matches)
                         .filter(|e| e.phase == CheckPhase::Baseline)
                         .collect();
-                    if !baselines.iter().any(|e| e.outcome == CheckOutcome::Failed) {
+                    if !baselines.iter().any(|e| e.met()) {
                         unmet(
                             id,
                             Some(criterion),
-                            if baselines.iter().any(|e| e.outcome == CheckOutcome::Passed) {
+                            if baselines.iter().any(|e| {
+                                e.classification == Some(BaselineClassification::FailedUnrunnable)
+                            }) {
+                                crate::BASELINE_UNRUNNABLE
+                            } else if baselines.iter().any(|e| {
+                                e.classification == Some(BaselineClassification::FailedUnclassified)
+                            }) {
+                                crate::BASELINE_UNCLASSIFIED
+                            } else if baselines.iter().any(|e| e.outcome == CheckOutcome::Passed) {
                                 "baseline_passed"
                             } else {
                                 "baseline_missing"
@@ -694,6 +815,80 @@ pub fn evaluate_check_gate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn check_baseline_classifier_requires_known_behavior_features() {
+        use BaselineClassification::*;
+        for (output, expected) in [
+            ("FAIL: test_save (SaveTests)", FailedAsExpected),
+            ("AssertionError: draft lost", FailedAsExpected),
+            ("E       assert saved == draft", FailedAsExpected),
+            (">       assert saved", FailedAsExpected),
+            ("assertion `left == right` failed", FailedAsExpected),
+            ("test result: FAILED. 1 failed", FailedAsExpected),
+            ("", FailedUnclassified),
+            ("assert is enabled", FailedUnclassified),
+            ("assertion helpers loaded", FailedUnclassified),
+        ] {
+            let mut classifier = BaselineClassifier::default();
+            classifier.observe(output);
+            assert_eq!(classifier.classify(Some(1), None), expected, "{output}");
+        }
+    }
+
+    #[test]
+    fn check_baseline_classifier_prioritizes_unrunnable_output_across_streams() {
+        use BaselineClassification::*;
+        for output in [
+            "ModuleNotFoundError: tests.test_save",
+            "ImportError: save",
+            "SyntaxError: unexpected token",
+            "sh: missing-check: command not found",
+            "sh: ./missing-check: No such file or directory",
+            "python3: can't open file 'missing.py': [Errno 2] No such file or directory",
+            "error[E0425]: missing name",
+            "error: could not compile `storage`",
+        ] {
+            for first in [true, false] {
+                let mut classifier = BaselineClassifier::default();
+                for line in if first {
+                    [output, "test result: FAILED"]
+                } else {
+                    ["test result: FAILED", output]
+                } {
+                    classifier.observe(line);
+                }
+                assert_eq!(
+                    classifier.classify(Some(1), None),
+                    FailedUnrunnable,
+                    "{output}"
+                );
+            }
+        }
+        let mut classifier = BaselineClassifier::default();
+        classifier.observe("AssertionError: No such file or directory for the user's input");
+        assert_eq!(classifier.classify(Some(1), None), FailedAsExpected);
+    }
+
+    #[test]
+    fn check_baseline_classifier_uses_exit_and_execution_failure_without_guessing() {
+        use BaselineClassification::*;
+        for (exit, reason, expected) in [
+            (Some(0), None, Passed),
+            (None, Some("timeout"), FailedUnrunnable),
+            (None, Some("spawn_failed"), FailedUnrunnable),
+            (None, Some("terminated_by_signal"), FailedUnclassified),
+            (
+                Some(1),
+                Some("oracle_changed_during_run"),
+                FailedUnclassified,
+            ),
+        ] {
+            let mut classifier = BaselineClassifier::default();
+            classifier.observe("AssertionError: pending behavior");
+            assert_eq!(classifier.classify(exit, reason), expected);
+        }
+    }
+
     #[test]
     fn check_oracle_hashes_the_versioned_canonical_document_without_file_sizes() {
         let mut files = vec![OracleFile {
@@ -848,6 +1043,7 @@ mod gate_tests {
             criterion_sha256: format!("{:x}", Sha256::digest(b"Retain the draft")),
             phase,
             outcome,
+            classification: None,
             reason: None,
             log_dir: ".awr/artifacts/checks/run/retains-draft".into(),
             exit_code: Some(0),
@@ -923,6 +1119,63 @@ mod gate_tests {
     }
     fn reasons(gate: &CheckGate) -> Vec<&str> {
         gate.unmet.iter().map(|u| u.reason.as_str()).collect()
+    }
+
+    #[test]
+    fn check_gate_baseline_classification_accepts_only_behavior_failures() {
+        for (classification, reason) in [
+            ("failed_as_expected", None),
+            ("failed_unrunnable", Some("baseline_unrunnable")),
+            ("failed_unclassified", Some("baseline_unclassified")),
+        ] {
+            let mut events = passing();
+            let mut payload = serde_json::to_value(&events[0]).unwrap();
+            payload["classification"] = json!(classification);
+            events[0] = serde_json::from_value(payload).unwrap();
+            let gate = evaluate(&definition(), &events, &policy(), false);
+            assert_eq!(
+                gate.would_refuse,
+                reason.is_some(),
+                "{classification}: {gate:?}"
+            );
+            if let Some(reason) = reason {
+                assert!(reasons(&gate).contains(&reason), "{gate:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn check_gate_legacy_failed_baseline_preserves_approved_admission() {
+        let mut events = passing();
+        let mut payload = serde_json::to_value(&events[0]).unwrap();
+        payload.as_object_mut().unwrap().remove("classification");
+        events[0] = serde_json::from_value(payload).unwrap();
+        assert_eq!(
+            events[0].baseline_classification(),
+            Some(BaselineClassification::Legacy)
+        );
+        assert!(!evaluate(&definition(), &events, &policy(), false).would_refuse);
+        events[0].outcome = CheckOutcome::Unknown;
+        assert!(evaluate(&definition(), &events, &policy(), false).would_refuse);
+    }
+
+    #[test]
+    fn check_baseline_classification_is_optional_and_rejects_inconsistent_payloads() {
+        let mut payload = observation(CheckPhase::Baseline, CheckOutcome::Failed);
+        payload.example_oracle = Some(format!("sha256:{}", "a".repeat(64)));
+        payload.exit_code = Some(1);
+        payload.classification = Some(BaselineClassification::FailedAsExpected);
+        assert!(payload.validate().is_ok());
+        assert!(payload.met());
+        payload.outcome = CheckOutcome::Passed;
+        assert!(payload.validate().is_err());
+        assert!(!payload.met());
+        payload.classification = None;
+        payload.phase = CheckPhase::Acceptance;
+        assert!(payload.validate().is_ok());
+        assert!(payload.met());
+        payload.classification = Some(BaselineClassification::Passed);
+        assert!(payload.validate().is_err());
     }
 
     #[test]

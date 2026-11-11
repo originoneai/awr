@@ -88,16 +88,12 @@ pub fn run(root: &Path, args: &CheckArgs, json_output: bool) -> Result<()> {
             .as_i64()
             .map(|c| format!(" (exit {c})"))
             .unwrap_or_default();
-        let expected_failure = if phase == CheckPhase::Baseline && result["outcome"] == "failed" {
-            " as expected before the change"
-        } else {
-            ""
-        };
+        let classification = result["classification"].as_str();
         lines.push(format!(
-            "{:<32} {:<10} {}{exit}{expected_failure}",
+            "{:<32} {:<10} {}{exit}",
             result["example"].as_str().unwrap(),
             phase.as_str(),
-            result["outcome"].as_str().unwrap()
+            classification.unwrap_or_else(|| result["outcome"].as_str().unwrap())
         ));
     }
     lines.push(format!("Next: {}", value["next_action"].as_str().unwrap()));

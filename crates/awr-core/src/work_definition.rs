@@ -67,10 +67,15 @@ pub enum ExampleKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiscriminationMethod {
+    /// A behavior failure before implementation, followed by passing acceptance checks.
+    /// Unrunnable and unclassified new baselines do not establish discrimination.
     FailBeforePassAfter,
     DiffMutation,
     JustifiedAlternative,
 }
+
+pub const BASELINE_UNRUNNABLE: &str = "baseline_unrunnable";
+pub const BASELINE_UNCLASSIFIED: &str = "baseline_unclassified";
 
 /// One piece of adopted or unadopted intent. User decisions and sourced facts must point at a
 /// registered decision and pin the exact bytes adopted; assumptions and suggestions never do.

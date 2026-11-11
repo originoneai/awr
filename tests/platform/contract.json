@@ -34,6 +34,8 @@
   "ignored_tests": [
     "admission_check_process_fixture",
     "check_process_fixture",
+    "checked_work::checked_draft_process_fixture",
+    "checked_work::checked_draft_process_fixture",
     "verify_process_fixture",
     "fixture_contender",
     "fixture_wal_writer",
@@ -47,6 +49,7 @@
   "ignored_routes": {
     "admission_check_process_fixture": "work_admission_cli parents launch this native fixture through declared direct checks to record failed or passing baselines and verify admission oracle renewal; fixture invocations are not additional business scenarios",
     "check_process_fixture": "work_check_cli parents launch this native fixture through declared direct checks to observe pass/fail results, oracle changes and timeout cleanup; fixture invocations are not additional business scenarios",
+    "checked_work::checked_draft_process_fixture": "golden_paths_cli and governance_overhead_cli parents launch their own native assertion fixture through declared checks to compare the draft output with its oracle; the two inventory entries are subprocess helpers, not additional business scenarios",
     "verify_process_fixture": "verify_cli parents launch this native fixture through declared direct checks to verify baseline failure, acceptance results and database-free reruns; fixture invocations are not additional business scenarios",
     "fixture_contender": "workspace parents launch isolated claim contenders",
     "fixture_wal_writer": "workspace parents launch and kill isolated committed/uncommitted WAL writers",

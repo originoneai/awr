@@ -882,6 +882,19 @@ pub fn work(root: &Path, command: &WorkCommand, json_output: bool) -> Result<()>
                     work.work.item.blocker.as_deref().unwrap_or("none"),
                 );
                 print_progress(&value["progress"], Some(&work.work.item.next_action));
+                if let Some(obligations) = value["checks"]["obligations"].as_array() {
+                    for obligation in obligations {
+                        if let Some(baselines) = obligation["baselines"].as_array() {
+                            for baseline in baselines {
+                                println!(
+                                    "Baseline {}: {}",
+                                    obligation["example"].as_str().unwrap_or("unknown"),
+                                    baseline["classification"].as_str().unwrap_or("legacy")
+                                );
+                            }
+                        }
+                    }
+                }
                 for diagnostic in &work.diagnostics {
                     println!(
                         "{} [{}]: {}",

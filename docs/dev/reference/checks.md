@@ -26,7 +26,7 @@ in the argument vector. Commands have the permissions of the calling process.
 
 | Phase | Expected observation | Admission |
 | --- | --- | --- |
-| `baseline` | A nonzero exit recorded as `failed` | Can run before admission |
+| `baseline` | A nonzero exit classified as `failed_as_expected` | Can run before admission |
 | `acceptance` | Exit zero recorded as `passed` | Governed work needs current admission and this session's active claim |
 | `mutation` | Exit zero plus a valid report with zero survivors and timeouts | Same admission and claim requirement as acceptance |
 
@@ -43,6 +43,31 @@ runs through the read-only status query:
 ```sh
 awr work check W --status --json
 ```
+
+## Classify baseline failures
+
+Baseline receipts and the check summaries in `work show` expose `classification` alongside
+the recorded outcome and log location. AWR classifies captured output and the exit result
+using built-in rules:
+
+| Classification | Observed features | Admission action |
+| --- | --- | --- |
+| `failed_as_expected` | unittest `FAIL:` or `AssertionError`, pytest assertion diagnostics, Rust `assertion … failed` or `test result: FAILED` | Satisfies the current example's baseline obligation |
+| `failed_unrunnable` | Import errors, syntax errors, missing commands or entry points, Rust compiler errors, or a timeout | Refuses governed approval with `baseline_unrunnable` and a command to rerun the repaired check |
+| `failed_unclassified` | A failed run with no recognized signature, or an inconclusive run | Refuses governed approval with `baseline_unclassified` and a path to independent review |
+| `passed` | Successful exit | Leaves `baseline_passed` unmet |
+| `legacy` | A stored baseline from before classifications were recorded | Retains the original outcome-based baseline semantics |
+
+Runtime failures take precedence when output also contains assertion features. A missing
+input file mentioned inside an assertion remains a behavior failure; missing-command
+classification uses launcher diagnostics or a recorded spawn failure. Acceptance continues
+to require a passing outcome.
+
+For an unclassified behavior failure, inspect the logs and record `justified_alternative`
+with a `discrimination.note` explaining the evidence. Propose admission, then have another
+session approve the alternative. The existing independent-review requirement applies.
+Changing the method changes the contract and requires admission on the updated definition.
+Legacy records keep their classifications visible without reinterpreting old log files.
 
 ## Inspect the recorded evidence
 

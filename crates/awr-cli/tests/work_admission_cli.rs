@@ -31,7 +31,7 @@ impl Project {
             .enumerate()
         {
             example["id"] = json!(format!("save-{index}"));
-            example["check"] = json!({"run": [std::env::current_exe().unwrap().to_str().unwrap(), "--ignored", "--exact", "admission_check_process_fixture"], "files": ["tests/save.rs"]});
+            example["check"] = json!({"run": [std::env::current_exe().unwrap().to_str().unwrap(), "--ignored", "--exact", "admission_check_process_fixture", "--nocapture"], "files": ["tests/save.rs"]});
         }
         fs::write(path, serde_json::to_vec_pretty(&ledger).unwrap()).unwrap();
         self.reindex();
@@ -310,11 +310,152 @@ impl Project {
 #[test]
 #[ignore = "subprocess helper selected by example checks"]
 fn admission_check_process_fixture() {
+    let mode = fs::read_to_string("baseline-mode.txt").unwrap();
+    if let Some(output) = mode.strip_prefix("output:") {
+        eprintln!("{output}");
+        std::process::exit(1);
+    }
     assert_eq!(
         fs::read_to_string("baseline-mode.txt").unwrap(),
         "pass",
         "Saving loses the draft before the change"
     );
+}
+
+#[test]
+fn baseline_assertion_failures_satisfy_admission_and_are_visible() {
+    let p = Project::new(&format!("mode='governed_enforce'\n{ALL}"));
+    p.bind_checks();
+    let session = p.baseline_session();
+    let result = p.baseline(&session, None);
+    assert_eq!(result["results"][0]["classification"], "failed_as_expected");
+    let reviewer = p.reviewer("reviewer");
+    p.approve("W", &reviewer, "classified-baseline");
+    let shown = p.ok(&["work", "show", "W"]);
+    assert_eq!(shown["work"]["admission"]["facts"]["admitted"], true);
+    assert_eq!(
+        shown["work"]["admission"]["baselines"][0]["classification"],
+        "failed_as_expected"
+    );
+}
+
+#[test]
+fn baseline_unrunnable_failures_refuse_admission_with_an_executable_next_step() {
+    let p = Project::new(&format!("mode='governed_enforce'\n{ALL}"));
+    p.bind_checks();
+    fs::write(
+        p.0.join("baseline-mode.txt"),
+        "output:ModuleNotFoundError: No module named 'tests.test_storage'",
+    )
+    .unwrap();
+    let session = p.baseline_session();
+    let result = p.baseline(&session, None);
+    assert_eq!(result["met"], false, "{result}");
+    assert_eq!(result["results"][0]["classification"], "failed_unrunnable");
+    let reviewer = p.reviewer("reviewer");
+    let error = refused(
+        p.admit(
+            "W",
+            &reviewer,
+            "unrunnable-baseline",
+            "approved",
+            json!({"judgment": Project::judgment()}),
+        ),
+        "admission_obligations_unmet",
+    );
+    assert!(error.to_string().contains("baseline_unrunnable"), "{error}");
+    let next = error["details"]["next_action"].as_str().unwrap();
+    assert!(next.contains("Fix the check command"), "{next}");
+    let command = next.split_once("awr ").unwrap().1;
+    fs::write(p.0.join("baseline-mode.txt"), "fail").unwrap();
+    assert!(
+        p.run(&command.split_whitespace().collect::<Vec<_>>()).0,
+        "{next}"
+    );
+    assert_eq!(p.baseline(&session, Some("save-1"))["met"], true);
+    p.approve("W", &reviewer, "repaired-baseline");
+}
+
+#[test]
+fn baseline_unclassified_failures_refuse_admission_and_offer_independent_review() {
+    let p = Project::new(&format!("mode='governed_enforce'\n{ALL}"));
+    p.bind_checks();
+    fs::write(p.0.join("baseline-mode.txt"), "output:unknown failure").unwrap();
+    let session = p.baseline_session();
+    let result = p.baseline(&session, None);
+    assert_eq!(result["met"], false, "{result}");
+    assert_eq!(
+        result["results"][0]["classification"],
+        "failed_unclassified"
+    );
+    let reviewer = p.reviewer("reviewer");
+    let error = refused(
+        p.admit(
+            "W",
+            &reviewer,
+            "unclassified-baseline",
+            "approved",
+            json!({"judgment": Project::judgment()}),
+        ),
+        "admission_obligations_unmet",
+    );
+    assert!(
+        error.to_string().contains("baseline_unclassified"),
+        "{error}"
+    );
+    let next = error["details"]["next_action"].as_str().unwrap();
+    assert!(next.contains("justified_alternative"), "{next}");
+    assert!(next.contains("independent"), "{next}");
+}
+
+#[test]
+fn baseline_legacy_records_remain_visible_and_keep_approved_admission_valid() {
+    let p = Project::new(&format!("mode='governed_enforce'\n{ALL}"));
+    p.bind_checks();
+    fs::write(p.0.join("baseline-mode.txt"), "output:unknown failure").unwrap();
+    let session = p.baseline_session();
+    let result = p.baseline(&session, None);
+    {
+        let mut store = awr_store::Store::open_existing(&p.0.join(".awr/state.db")).unwrap();
+        let project = store.project_by_root(&p.0.canonicalize().unwrap()).unwrap();
+        let mut revision = project.project_revision;
+        for row in result["results"].as_array().unwrap() {
+            let mut payload = row.clone();
+            payload.as_object_mut().unwrap().remove("event_id");
+            payload.as_object_mut().unwrap().remove("classification");
+            let event = store
+                .record_check(
+                    project.id,
+                    &awr_core::RecordCheckRequest {
+                        work: "W".into(),
+                        session: session.parse().unwrap(),
+                        expected_revision: revision,
+                        payload: serde_json::from_value(payload).unwrap(),
+                    },
+                )
+                .unwrap();
+            assert!(event.payload.get("classification").is_none());
+            revision = event.project_revision;
+        }
+    }
+    let reviewer = p.reviewer("reviewer");
+    p.approve("W", &reviewer, "legacy-baselines");
+    p.baseline(&session, None);
+    let shown = p.ok(&["work", "show", "W"]);
+    assert_eq!(shown["work"]["admission"]["facts"]["admitted"], true);
+    for baseline in shown["work"]["admission"]["baselines"].as_array().unwrap() {
+        assert_eq!(baseline["state"], "baseline_recorded");
+        assert_eq!(baseline["classification"], "legacy");
+    }
+    let status = p.ok(&["work", "check", "W", "--status"]);
+    assert!(
+        status["examples"][0]["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["classification"] == "legacy")
+    );
+    assert!(p.claim("W", "implementer").0);
 }
 
 #[test]

@@ -214,7 +214,7 @@ fn domain_fields(kind: &str, payload: &Value) -> Result<()> {
             "artifact.recorded" => "artifact_id source_event_id sha256 size locator",
             "evidence.recorded" => "evidence_id external_key level check_events",
             "work.check" => {
-                "version example criterion_sha256 phase outcome reason log_dir exit_code example_oracle oracle_files run_sha256 run_preview source_sha tree_state stdout_sha256 stderr_sha256 started_at finished_at mutants survivors"
+                "version example criterion_sha256 phase outcome classification reason log_dir exit_code example_oracle oracle_files run_sha256 run_preview source_sha tree_state stdout_sha256 stderr_sha256 started_at finished_at mutants survivors"
             }
             "branch.created" => {
                 "branch_id name parent_branch_id fork_project_revision git_binding actor reason source_copied git_write_performed"

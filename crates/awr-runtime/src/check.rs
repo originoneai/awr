@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
     fs::{self, File},
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
@@ -464,6 +464,8 @@ pub fn run_check(store: &mut Store, root: &Path, request: &RunCheckRequest) -> R
             criterion_sha256: format!("{:x}", Sha256::digest(example.criterion.as_bytes())),
             phase: request.phase,
             outcome: CheckOutcome::Errored,
+            classification: (request.phase == CheckPhase::Baseline)
+                .then_some(BaselineClassification::FailedUnclassified),
             reason: before.as_ref().err().map(|r| r.to_string()),
             log_dir,
             exit_code: None,
@@ -565,6 +567,16 @@ pub fn run_check(store: &mut Store, root: &Path, request: &RunCheckRequest) -> R
             write_log(&dir, "stderr.log", None)?;
             observation.finished_at = now_millis()?;
         }
+        if request.phase == CheckPhase::Baseline {
+            let mut classifier = BaselineClassifier::default();
+            for name in ["stdout.log", "stderr.log"] {
+                for line in BufReader::new(dir.open(name)?).split(b'\n') {
+                    classifier.observe(&String::from_utf8_lossy(&line?));
+                }
+            }
+            observation.classification =
+                Some(classifier.classify(observation.exit_code, observation.reason.as_deref()));
+        }
         let event = store.record_check(
             project.id,
             &RecordCheckRequest {
@@ -580,9 +592,7 @@ pub fn run_check(store: &mut Store, root: &Path, request: &RunCheckRequest) -> R
             observation,
         });
     }
-    let met = results
-        .iter()
-        .all(|r| request.phase.met(r.observation.outcome));
+    let met = results.iter().all(|r| r.observation.met());
     let mut value = json!({"ok":true,"work":work.meta.external_key,"phase":request.phase,"results":results,"met":met,"project_revision":revision,"completion_input":null,"evidence":null,"unmapped":unmapped});
     let complete_selection = required_ids
         .iter()
@@ -604,11 +614,19 @@ pub fn run_check(store: &mut Store, root: &Path, request: &RunCheckRequest) -> R
             store, &root, project.id, &work, request, &results, &mut value,
         )?;
     }
-    let next = if let Some(failed) = results
-        .iter()
-        .find(|r| !request.phase.met(r.observation.outcome))
-    {
-        if let Some(survivors) = &failed.observation.survivors
+    let next = if let Some(failed) = results.iter().find(|r| !r.observation.met()) {
+        if failed.observation.classification == Some(BaselineClassification::FailedUnrunnable) {
+            baseline_rerun_guidance(
+                &work.meta.external_key,
+                &failed.observation.example,
+                &request.session.to_string(),
+                revision,
+            )
+        } else if failed.observation.classification
+            == Some(BaselineClassification::FailedUnclassified)
+        {
+            baseline_review_guidance().into()
+        } else if let Some(survivors) = &failed.observation.survivors
             && !survivors.is_empty()
         {
             format!(
@@ -780,12 +798,28 @@ fn generate_completion(
 /// Read recorded facts without source refresh, writes, subprocesses or file hashing.
 pub fn check_status(store: &Store, root: &Path, key: &str) -> Result<Value> {
     let project = store.project_by_root(&root.canonicalize()?)?;
+    check_status_on_branch(store, root, key, project.current_branch_id)
+}
+
+pub(crate) fn check_status_on_branch(
+    store: &Store,
+    root: &Path,
+    key: &str,
+    branch: Option<Id>,
+) -> Result<Value> {
+    let project = store.project_by_root(&root.canonicalize()?)?;
     let work = store.work_item(project.id, key)?.item;
     let report = store.work_definition_report(project.id, key)?;
-    let events = store.check_events(project.id, key, project.current_branch_id)?;
+    let events = store.check_events(project.id, key, branch)?;
     let examples:Vec<_>=work.definition.as_ref().map(|d|d.examples.iter().map(|e| {
         let tier=report.criterion_tiers.iter().find(|(c,_)|c==&e.criterion).map(|(_,t)|t);
-        let runs:Vec<_>=events.iter().filter(|r|e.id.as_deref().is_some_and(|id|r.payload["example"]==id)).map(|r|json!({"event_id":r.id,"phase":r.payload["phase"],"outcome":r.payload["outcome"],"reason":r.payload["reason"],"example_oracle":r.payload["example_oracle"],"log_dir":r.payload["log_dir"]})).collect();
+        let runs:Vec<_>=events.iter().filter(|r|e.id.as_deref().is_some_and(|id|r.payload["example"]==id)).map(|r| {
+            let mut run=json!({"event_id":r.id,"phase":r.payload["phase"],"outcome":r.payload["outcome"],"reason":r.payload["reason"],"example_oracle":r.payload["example_oracle"],"log_dir":r.payload["log_dir"]});
+            if r.payload["phase"] == "baseline" {
+                run["classification"] = r.payload.get("classification").filter(|v|!v.is_null()).cloned().unwrap_or(json!("legacy"));
+            }
+            run
+        }).collect();
         json!({"id":e.id,"criterion":e.criterion,"kind":e.kind,"tier":tier,"has_check":e.check.is_some(),"runs":runs})
     }).collect()).unwrap_or_default();
     Ok(
