@@ -265,6 +265,62 @@ fn forming_a_definition_and_repairing_one_are_told_apart_and_neither_needs_cerem
 }
 
 #[test]
+fn governance_guidance_missing_definition_has_a_bounded_yaml_starter() {
+    let guidance = view(
+        &[(
+            "admission_obligations_unmet",
+            "definition gaps: definition_not_declared",
+        )],
+        &[],
+    )
+    .unwrap();
+    assert!(
+        guidance.next_action.len() <= 600,
+        "{}",
+        guidance.next_action
+    );
+    for field in ["```yaml\ndefinition:", "purpose:", "examples:", "check:"] {
+        assert!(
+            guidance.next_action.contains(field),
+            "missing {field}: {}",
+            guidance.next_action
+        );
+    }
+}
+
+#[test]
+fn governance_guidance_declared_definition_keeps_its_specific_repair() {
+    let guidance = view(
+        &[(
+            "admission_obligations_unmet",
+            "definition gaps: examples_missing",
+        )],
+        &[],
+    )
+    .unwrap();
+    assert!(guidance.basis.contains("examples_missing"));
+    assert!(!guidance.next_action.contains("```yaml"));
+    assert!(!guidance.when.contains("no definition yet"));
+}
+
+#[test]
+fn governance_guidance_missing_definition_keeps_unicode_details_within_receipt_budget() {
+    for character in ["界", "🧭"] {
+        let detail = format!(
+            "definition gaps: definition_not_declared; {}",
+            character.repeat(500)
+        );
+        let guidance = view(&[("admission_obligations_unmet", &detail)], &[]).unwrap();
+        assert!(
+            serde_json::to_vec(&guidance).unwrap().len() <= ACTION_GUIDANCE_MAX_BYTES,
+            "oversized guidance: {guidance:?}"
+        );
+        assert!(guidance.next_action.contains("```yaml"));
+        assert!(guidance.basis.contains("definition_not_declared"));
+    }
+}
+
+#[test]
 fn every_gap_outranks_every_gap_after_it_in_the_order() {
     for (i, earlier) in CODES.iter().enumerate() {
         for later in &CODES[i + 1..] {

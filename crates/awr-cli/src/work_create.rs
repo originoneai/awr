@@ -99,7 +99,9 @@ fn output(report: CreationReport, json_output: bool) -> Result<()> {
             if let Some(message) = activation["error"]["message"].as_str() {
                 println!("Reason: {message}");
             }
-            if let Some(next) = activation["next_action"].as_str() {
+            if let Some(next) = crate::help::definition_error_next_action(&activation["error"])
+                .or_else(|| activation["next_action"].as_str())
+            {
                 println!("Next: {next}");
             }
         }

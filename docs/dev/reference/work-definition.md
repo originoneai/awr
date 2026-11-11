@@ -15,6 +15,18 @@ awr work show SAVE-1 --json
 awr work prepare SAVE-1 --json
 ```
 
+For a minimal YAML starter available in the installed CLI, run:
+
+```sh
+awr work help governance
+```
+
+Activation refusals caused by `definition_not_declared` and the text output of
+`work show` point to this same help topic. Copy its `definition` block beside the
+work item, replace the sample criterion, command and file path, and fill the remaining
+reported obligations. The starter declares a definition; admission still requires
+the work's complete contract and applicable checks.
+
 Author the definition beside the work item in its source ledger:
 
 ```yaml

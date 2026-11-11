@@ -238,3 +238,51 @@ fn failed_new_mappings_stale_work_and_missing_work_never_become_current_context(
     fs::write(f.root.join("work.yaml"), WORK).unwrap();
     assert!(f.check().complete);
 }
+
+#[test]
+fn completeness_unannotated_rule_explains_the_heading_suffix_and_recovers() {
+    let mut f = Fixture::new();
+    let heading = "# Preserve source facts";
+    fs::write(
+        f.root.join("rules.md"),
+        format!("{heading}\n\nKeep source facts.\n"),
+    )
+    .unwrap();
+    let report = f.check();
+    assert!(!report.rules_complete);
+    let reason = &report
+        .issues
+        .iter()
+        .find(|i| i.code == "hard_rule_unresolved")
+        .unwrap()
+        .reason;
+    assert!(reason.contains("end of the heading line"), "{reason}");
+    let annotation = "{severity=hard scope=project value=*}";
+    assert!(reason.contains(annotation), "{reason}");
+    fs::write(
+        f.root.join("rules.md"),
+        format!("{heading} {annotation}\n\nKeep source facts.\n"),
+    )
+    .unwrap();
+    assert!(f.check().rules_complete);
+}
+
+#[test]
+fn completeness_rule_annotation_in_the_body_does_not_classify_the_heading() {
+    let mut f = Fixture::new();
+    fs::write(
+        f.root.join("rules.md"),
+        "# Preserve source facts\n\n{severity=hard scope=project value=*}\n",
+    )
+    .unwrap();
+    let report = f.check();
+    assert!(!report.rules_complete);
+    let reason = &report
+        .issues
+        .iter()
+        .find(|i| i.code == "hard_rule_unresolved")
+        .unwrap()
+        .reason;
+    assert!(reason.contains("severity unresolved"), "{reason}");
+    assert!(reason.contains("end of the heading line"), "{reason}");
+}

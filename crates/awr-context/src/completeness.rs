@@ -239,11 +239,15 @@ pub(crate) fn assess_completeness(facts: CompletenessFacts<'_>) -> Result<Contex
     }
     if let Some(hard) = hard {
         for rule in &hard.unresolved {
+            let mut reason = rule.reasons.join("; ");
+            if rule.rule.item.severity.is_none() || rule.rule.item.scope.is_none() {
+                reason.push_str("; Confirm the intended severity and scope, then put annotations at the end of the heading line, e.g. {severity=hard scope=project value=*}");
+            }
             issue(
                 "rules_complete",
                 "hard_rule_unresolved",
                 rule.rule.item.meta.external_key.clone(),
-                rule.reasons.join("; "),
+                reason,
             );
         }
     }

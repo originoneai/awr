@@ -43,6 +43,23 @@ pub fn baseline_rerun_guidance(
     format!("Recognized {recognized}. After repair, rerun: {command}")
 }
 
+/// A source-ledger starter; authors still supply their contract and resolve the reported gaps.
+pub const WORK_DEFINITION_GUIDANCE: &str = r#"Declare in one source edit; replace sample values and fill the reported gaps.
+```yaml
+definition:
+  version: 1
+  purpose: implementation
+  examples:
+    - id: result
+      criterion: Copy an acceptance criterion
+      kind: positive
+      given: A valid input
+      when: The operation runs
+      then: The expected result
+      check: {run: [cargo, test], files: [tests/result.rs]}
+```
+Then use one work admit call; no stage document is needed. More: awr work help governance."#;
+
 /// The facts the choice reads. They come from the readiness diagnostics and the findings block.
 pub struct GovernanceView<'a> {
     /// `(code, detail)` of every readiness diagnostic of the work.
@@ -101,7 +118,11 @@ pub fn governance_guidance(view: &GovernanceView<'_>) -> Option<ActionGuidance> 
         let Some((_, detail)) = view.diagnostics.iter().find(|(c, _)| c == code) else {
             continue;
         };
-        let basis = format!("{code}: {}", clip(detail, 200));
+        let definition_missing =
+            *code == "admission_obligations_unmet" && detail.contains("definition_not_declared");
+        // Reserve room for the YAML starter even when the diagnostic uses multibyte characters.
+        let display_detail = clip(detail, if definition_missing { 64 } else { 200 });
+        let basis = format!("{code}: {display_detail}");
         let (when, next_action, recheck): (&str, &str, &str) = match *code {
             "admission_policy_invalid" => (
                 "The admission policy of this source cannot be used",
@@ -113,9 +134,9 @@ pub fn governance_guidance(view: &GovernanceView<'_>) -> Option<ActionGuidance> 
                 "Refresh the sources and prepare again. An unknown state is neither an approval nor a denial, so nothing is claimed or run on it",
                 "The sources are refreshed and the state reads",
             ),
-            "admission_obligations_unmet" if detail.contains("definition_not_declared") => (
+            "admission_obligations_unmet" if definition_missing => (
                 "The work has no definition yet, and governed work is admitted on one",
-                "Declare the work definition in one source edit (purpose, adopted intent, outcome contribution, responsibility, deliverable, examples and a discrimination method, as the purpose needs), then admit it with one work admit call; no stage document, confirmation round or step-level task is needed",
+                WORK_DEFINITION_GUIDANCE,
                 "The definition report shows no gaps",
             ),
             "baseline_unrunnable" | "admission_obligations_unmet"

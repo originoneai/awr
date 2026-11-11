@@ -168,6 +168,10 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   explains each used marker once through the shared trust vocabulary. Full and
   summary status views and JSON retain their existing output. See the
   [daily workflow](../../series/daily-workflow.md).
+- Definition guidance in governed-work activation refusals and `work show`, pointing
+  to a short YAML starter in `awr work help governance`. Unclassified rule diagnostics
+  explain the heading annotation format. Admission and completion checks retain
+  their existing requirements; daily help and workflow output budgets stay unchanged.
 - The capabilities of the Team workstream protocol say, for each of the five result layers (work readiness,
   execution admission, context completeness, delivery observation, completion validity), which Team operations carry
   it and which entries of the personal CLI and MCP server have no Team operation, with the reason; the report is checked
