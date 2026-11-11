@@ -415,6 +415,32 @@ epoch, and leaves claim rows, work version and project revision unchanged. It is
 not a reservation, and no caller may use it to skip `claim.acquire` or its
 `expected_work_version`.
 
+A command that needs a live claim (`claim.renew`, `execution.prepare`,
+`execution.start` and `delivery.candidate.select`) refuses a claim whose lease has
+expired, or that was released, with HTTP 409 and the unchanged `code` `LeaseExpired`
+and `message`. `delivery.candidate.select` answers a claim that a newer claim replaced
+the same way; the other three answer it with `StaleFence`. The body adds
+`reason: "claim_lease_expired"`, a fixed `next_step` and
+`action_guidance: {condition, basis, action, recheck}`. They give the order of the
+recovery:
+
+| Step | Action |
+| --- | --- |
+| 1 | The claim cannot be renewed. Stop effects under it and do not repeat the request with it. |
+| 2 | Read `session.inspect` (`session_version`) and `work.prepare` (`runtime.work_version` and the guidance for the next step). |
+| 3 | Settle a running or unreported execution as that guidance says. Never replay an execution that already stopped; close one that was prepared but never started with `execution.cancel`. |
+| 4 | Call `claim.acquire` with the current `expected_session_version` and `expected_work_version`. The session survives the expiry; a refusal carries its own `rejection.next_action`. |
+| 5 | Continue only with the new claim's `claim_id`, fence and lease version. |
+
+The text is fixed and never repeats a value of the request. HTTP, the Web entry and MCP
+return it identically, the refused call writes nothing and leaves its `request_id`
+unused, and it grants no authority: `claim.acquire` is still checked in full. Other
+commands keep the bare `LeaseExpired` body, because this recovery does not fit them:
+`delivery.source.write` and `delivery.source.confirm` answer it for an elapsed source
+publication lease, `claim.release` for a claim that is already released, and
+`execution.report` only when the claim lapses while a settlement is being recorded.
+Every other refusal of these commands is unchanged.
+
 Receipts are historical: `lease_state_basis: "at_commit"` describes the original
 commit. Replaying an old acquire after expiry or release returns that same receipt
 without creating or extending a lease. Use `claim.inspect` for current state:

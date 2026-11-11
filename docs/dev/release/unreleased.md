@@ -260,6 +260,18 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Fixed
 
+- A command that needs a live claim now says what to do when the claim is no longer live.
+  `claim.renew`, `execution.prepare`, `execution.start` and `delivery.candidate.select` still
+  refuse it with HTTP 409 `LeaseExpired` and the message `lease expired`, and the body now adds
+  `reason: "claim_lease_expired"`, a `next_step` and `action_guidance`: an expired claim cannot be
+  renewed; read `session.inspect` and `work.prepare`, settle or cancel an unfinished execution,
+  call `claim.acquire` with the current `expected_session_version` and `expected_work_version`,
+  and continue only with the new claim. The text is fixed, repeats no value of the request and is
+  identical over HTTP, the Web entry and MCP. Before, the body held only the code and the message,
+  and a member whose claim had expired needed two failed attempts to find `claim.acquire`.
+  `LeaseExpired` from any other command (the source publication commands, the delivery workers, a
+  settlement that races with expiry in `execution.report`) and every other refusal are unchanged
+  (AWR-TFQ-024).
 - `awr_team_planning_draft` in `create` mode with a `candidate_id` that already exists no longer
   answers `resumed: true` for a different request. Only a retry of the creation that candidate
   recorded (same changes, suggestion IDs, spec roots, goal keys, self-approve policy and author)

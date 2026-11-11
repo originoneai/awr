@@ -385,13 +385,7 @@ pub(crate) async fn dispatch_authorized(
     match result {
         Ok(Ok(value)) => response(StatusCode::OK, value),
         Ok(Err(error)) => {
-            let rejection =
-                claim_rejection(&action, &error).or_else(|| session_end_rejection(&action, &error));
-            let error = legacy_claim_acquire_error(&action, error);
-            let (status, mut value) = public_error(legacy_session_end_error(&action, error));
-            if let Some(rejection) = rejection {
-                value["rejection"] = rejection;
-            }
+            let (status, mut value) = command_failure(&action, error);
             if let Some(raw) = &raw {
                 mcp::add_input_diagnostic(&mut value, raw, write);
             }
@@ -1234,6 +1228,24 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
     }
 }
 
+/// The public status and body of a failed Team command or query. HTTP, the Web entry and MCP all
+/// render a refusal through this one function, so they answer it with the same fields.
+pub(crate) fn command_failure(action: &str, error: PgError) -> (StatusCode, Value) {
+    let rejection =
+        claim_rejection(action, &error).or_else(|| session_end_rejection(action, &error));
+    let expired = claim_lease_expired_guidance(action, &error);
+    let error = legacy_claim_acquire_error(action, error);
+    let (status, mut value) = public_error(legacy_session_end_error(action, error));
+    if let Some(rejection) = rejection {
+        value["rejection"] = rejection;
+    }
+    // Added to the unchanged `code` and `message`; no other field of the body moves.
+    if let (Some(Value::Object(fields)), Some(body)) = (expired, value.as_object_mut()) {
+        body.extend(fields);
+    }
+    (status, value)
+}
+
 /// Keep the error code `claim.acquire` already published before this change.
 ///
 /// The coordinator now separates a changed epoch and a stale fence from the same
@@ -1308,6 +1320,43 @@ pub(crate) fn claim_rejection(action: &str, error: &PgError) -> Option<Value> {
         "authority": "coordinator",
         "next_action": next_action,
         "recheck": "After inspection or refresh. The rejection mutated nothing; the coordinator remains the only claim authority."
+    }))
+}
+
+/// Commands whose `LeaseExpired` refusal means that the claim named in their arguments is no
+/// longer live. Only for these does [`claim_lease_expired_guidance`] apply. Every other refusal that
+/// shares the code keeps its bare body, because the recovery would mislead it: the source
+/// publication commands (`delivery.source.write`, `delivery.source.confirm`) answer it for an
+/// elapsed publication lease, `claim.release` for a claim that is already released, the delivery
+/// workers hold leases of their own, and `execution.report` can answer it only when the claim lapses
+/// while a settlement is being recorded, where the report is repeated rather than the claim replaced.
+const CLAIM_LEASE_COMMANDS: &[&str] = &[
+    "claim.renew",
+    "execution.prepare",
+    "execution.start",
+    "delivery.candidate.select",
+];
+
+/// Say how to recover when the claim named by a claim-bound command is no longer live.
+///
+/// `LeaseExpired` alone gave a member no way to tell that an expired claim cannot be renewed and
+/// must be replaced. The transaction has already rolled back, so nothing was written and the
+/// request ID is unused. The text is fixed: it carries no claim, session, work, execution, actor or
+/// other value from the request and grants no authority. HTTP, the Web entry and MCP add the same
+/// fields to the unchanged `code` and `message`, and the delivery workers never read them.
+pub(crate) fn claim_lease_expired_guidance(action: &str, error: &PgError) -> Option<Value> {
+    if !matches!(error, PgError::LeaseExpired) || !CLAIM_LEASE_COMMANDS.contains(&action) {
+        return None;
+    }
+    Some(json!({
+        "reason": "claim_lease_expired",
+        "next_step": "This claim is no longer live: its lease expired, or it was released or replaced. It cannot be renewed, and it cannot prepare or start an execution or select a delivery candidate. This refusal changed nothing; do not repeat the request with this claim. Stop any effects you still produce under it, then read the current state with session.inspect (session_version) and work.prepare (runtime.work_version and the guidance for the next step). If an execution of yours is still running or unreported, settle it first as that guidance says. An execution stays bound to the claim it was prepared under: never replay one that already stopped, and close one that was prepared but never started with execution.cancel. Then call claim.acquire with args.session_id, args.expected_session_version and args.expected_work_version set to those current values and args.ttl_seconds from 1 to 3600; an expired claim does not end your session. If claim.acquire is refused with a rejection object, follow its rejection.next_action. Continue only with the new claim's claim_id, fence and lease_version.",
+        "action_guidance": {
+            "condition": "A command that needs a live claim named a claim that is no longer live.",
+            "basis": "The server's own clock and claim records decided. A claim that is not live is never renewed or revived; a new claim carries a new fence, and an execution stays bound to the claim it was prepared under. Nothing was recorded.",
+            "action": "Follow next_step: read session.inspect and work.prepare, settle any unfinished execution as their guidance says, call claim.acquire with the current expected_session_version and expected_work_version, then continue with the new claim only. Do not replay an execution that already stopped.",
+            "recheck": "Before claim.acquire, because the session version, work version, responsibility, an open wait or an unsettled execution may have changed. This advice grants no authority; claim.acquire is still checked in full."
+        }
     }))
 }
 
