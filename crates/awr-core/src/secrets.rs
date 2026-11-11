@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{borrow::Cow, cell::OnceCell, sync::LazyLock};
 
-pub const SECRET_POLICY_VERSION: u32 = 10;
+pub const SECRET_POLICY_VERSION: u32 = 11;
 pub const SENSITIVE_CONTENT_WITHHELD: &str = "[sensitive content withheld]";
 const REJECTION: &str =
     "sensitive content is not accepted; remove secret values or use explicit redacted placeholders";
@@ -418,8 +418,11 @@ fn env_name(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'_')
         && !value.as_bytes()[0].is_ascii_digit()
 }
+// `0` is the integer zero only: a count of occurrences that carries no secret. The same
+// end-of-token rule applies, so `00`, `0123`, `0.5`, `0x1f`, `-0` and quoted `"0"` remain
+// values.
 const PUBLIC_LITERALS: &[&str] = &[
-    "true", "True", "TRUE", "false", "False", "FALSE", "null", "Null", "NULL", "~", "{}", "[]",
+    "true", "True", "TRUE", "false", "False", "FALSE", "null", "Null", "NULL", "~", "{}", "[]", "0",
 ];
 fn public_literal_end(tail: &str) -> bool {
     // Quotes and backticks can begin concatenated Shell values. Only verified
@@ -860,6 +863,8 @@ fn env_key(key: &str) -> bool {
 fn has_json_value(value: &Value) -> bool {
     match value {
         Value::Null | Value::Bool(_) => false,
+        // The integer zero, as in text; `0.0` and every other number remain values.
+        Value::Number(n) if n.as_u64() == Some(0) || n.as_i64() == Some(0) => false,
         Value::String(s) => !placeholder(s),
         Value::Array(a) => !a.is_empty(),
         Value::Object(o) => !o.is_empty(),
@@ -1852,6 +1857,60 @@ mod tests {
             assert!(ensure_public_value(&value).is_err());
         }
     }
+    #[test]
+    fn zero_counts_under_credential_like_labels_remain_public() {
+        for text in [
+            "app-password: 0",
+            "password: 0.",
+            "driver_output_label_counts:\n  app-password: 0\n  manager-token: 0\n  provider-key:zhipuai-coding-plan: 0\n",
+            "labels: {chen-token: 0, lin-token: 0}",
+        ] {
+            ensure_public_text(text).unwrap_or_else(|e| panic!("{text}: {e:?}"));
+        }
+        ensure_public_bytes(br#"{"app-password":0,"observer-token":0}"#).unwrap();
+        ensure_public_value(&json!({"app-password":0,"nested":{"api_key":0}})).unwrap();
+    }
+
+    #[test]
+    fn only_the_integer_zero_is_public_and_other_values_stay_rejected() {
+        for text in [
+            "password: 1",
+            "password: 12",
+            "password: 00",
+            "password: 0123",
+            "password: 0.5",
+            "password: 0x1f",
+            "password: -0",
+            "password: \"0\"",
+            "password: '0'",
+            "token: 0abc",
+            "app-password: 0\nmanager-token: fixture-value-only",
+            "export PASSWORD=00",
+            "PASSWORD=0123",
+        ] {
+            assert!(ensure_public_text(text).is_err(), "accepted: {text:?}");
+        }
+        for value in [
+            json!({"password":1}),
+            json!({"password":"0"}),
+            json!({"password":0.5}),
+            json!({"password":0.0}),
+        ] {
+            assert!(ensure_public_value(&value).is_err(), "{value}");
+        }
+        assert!(ensure_public_bytes(br#"{"app-password":0,"observer-token":12}"#).is_err());
+        // A zero beside a real value does not hide it. Prefixed names are judged by the text pass.
+        assert!(
+            ensure_public_bytes(br#"{"app-password":0,"manager-token":"fixture-value-only"}"#)
+                .is_err()
+        );
+        // Zero follows the other public literals everywhere, including exported variables.
+        assert_eq!(
+            ensure_public_text("export PASSWORD=0").is_ok(),
+            ensure_public_text("export PASSWORD=false").is_ok()
+        );
+    }
+
     #[test]
     fn ordinary_discussion_and_explicit_placeholders_remain_usable() {
         ensure_public_text(&format!("task-{}", "a".repeat(40))).unwrap();
