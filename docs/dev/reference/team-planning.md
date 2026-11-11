@@ -34,6 +34,17 @@ sent. A request in `edit` mode without a `candidate_id`, or whose mode is neithe
 `required_when_editing_a_draft`, or `/mode` with `create_or_edit`) before any command
 is reserved or candidate created.
 
+A `create` that names a `candidate_id` which already exists never changes that
+candidate. When the request is the creation the candidate recorded (the same
+`changes` it was created with, suggestion IDs, spec roots, goal keys, self-approve
+policy and author), it is a retry and returns the candidate's current
+`draft_revision` and `candidate_digest` with `resumed: true`. Any other request is
+refused as `InvalidInput` with the reason `candidate_exists_with_different_request`
+before any command is reserved: `differs_in` names what differs, and the refusal
+carries the existing `candidate_id`, `draft_revision`, `candidate_digest` and `state`.
+To change that candidate use `edit` with its `candidate_id`; to start a new draft use
+`create` with a new `candidate_id` or none.
+
 Each `after` is a complete `TaskDraft`, not a field patch. Existing-work changes
 need the exact prior definition in `before`; creation omits it or supplies null.
 Get current definitions from authorized project sources rather than client

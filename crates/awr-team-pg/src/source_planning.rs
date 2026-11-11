@@ -411,23 +411,12 @@ impl SourceStore {
             .clone()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(new_id);
-        // Resume: if the reserved candidate already exists, return its digest.
-        if let Some(row) = tx
-            .query_opt(
-                "SELECT id, draft_revision, candidate_digest, state
-                 FROM awr_team.planning_candidates
-                 WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
-                &[&tenant_id, &project_id, &candidate_id],
-            )
-            .await?
+        // Resume: if the reserved candidate already exists and this is the creation it recorded,
+        // return its digest. A different creation under that id is refused before any write.
+        if let Some(result) =
+            existing_candidate_for_create(&tx, tenant_id, project_id, &auth, create, &candidate_id)
+                .await?
         {
-            let result = json!({
-                "candidate_id": row.get::<_, String>(0),
-                "draft_revision": row.get::<_, i32>(1),
-                "candidate_digest": row.get::<_, String>(2),
-                "state": row.get::<_, String>(3),
-                "resumed": true,
-            });
             tx.commit().await?;
             return Ok(result);
         }
@@ -1345,6 +1334,102 @@ fn now_unix_ms() -> u64 {
 }
 
 /// Share definition validation between fresh request admission and the domain write.
+/// A create may name a candidate id that already exists only to retry the creation that
+/// candidate recorded (its first response was lost). Returns `None` when no candidate has this
+/// id, the resume answer when the request is that same creation, and refuses any other request
+/// with [`PgError::PlanningCandidateExists`] without writing anything.
+///
+/// The creation is compared as stored: the changes the candidate was created with (revision 1
+/// of its history, so a later edit does not break the retry), the stored suggestion ids, spec
+/// roots, goal keys (an empty request resolves to the stored default) and self-approve policy
+/// (an omitted policy resolves to the ordinary default), and the author person, actor and client
+/// that created it.
+pub(super) async fn existing_candidate_for_create(
+    tx: &Transaction<'_>,
+    tenant_id: &str,
+    project_id: &str,
+    auth: &ReaderAuthority,
+    create: &DraftCandidateCreate,
+    candidate_id: &str,
+) -> PgResult<Option<Value>> {
+    let Some(row) = tx
+        .query_opt(
+            "SELECT c.id, c.draft_revision, c.candidate_digest, c.state,
+                    c.author_person_id, c.author_actor_id, c.author_client_id,
+                    c.suggestion_ids, c.allowed_spec_roots, c.project_goal_keys,
+                    c.self_approve_policy_json,
+                    COALESCE(h.changes_json,
+                             CASE WHEN c.draft_revision = 1 THEN c.changes_json END)
+             FROM awr_team.planning_candidates c
+             LEFT JOIN awr_team.planning_candidate_history h
+               ON h.tenant_id = c.tenant_id AND h.project_id = c.project_id
+              AND h.candidate_id = c.id AND h.draft_revision = 1
+             WHERE c.tenant_id=$1 AND c.project_id=$2 AND c.id=$3",
+            &[&tenant_id, &project_id, &candidate_id],
+        )
+        .await?
+    else {
+        return Ok(None);
+    };
+    let person = attested_actor_person(&auth.actor_id, create.author_person_id.as_deref())
+        .map_err(map_team)?;
+    let policy = create
+        .self_approve_policy
+        .clone()
+        .unwrap_or_else(OrdinaryPlanningSelfApprovePolicy::ordinary_default);
+    let goals = if create.project_goal_keys.is_empty() {
+        vec!["delivery".to_owned()]
+    } else {
+        create.project_goal_keys.clone()
+    };
+    let json_of = |value: Result<Value, serde_json::Error>| {
+        value.map_err(|e| PgError::Protocol(e.to_string()))
+    };
+    let created_changes: Option<Value> = row.get(11);
+    let mut differs_in = Vec::new();
+    if created_changes.as_ref() != Some(&json_of(serde_json::to_value(&create.changes))?) {
+        differs_in.push("changes");
+    }
+    if row.get::<_, Value>(7) != json_of(serde_json::to_value(&create.suggestion_ids))? {
+        differs_in.push("suggestion_ids");
+    }
+    if row.get::<_, Value>(8) != json_of(serde_json::to_value(&create.allowed_spec_roots))? {
+        differs_in.push("allowed_spec_roots");
+    }
+    if row.get::<_, Value>(9) != json_of(serde_json::to_value(&goals))? {
+        differs_in.push("project_goal_keys");
+    }
+    if row.get::<_, Value>(10) != json_of(serde_json::to_value(&policy))? {
+        differs_in.push("self_approve_policy");
+    }
+    if row.get::<_, String>(4) != person
+        || row.get::<_, String>(5) != auth.actor_id
+        || row.get::<_, String>(6) != auth.client_id
+    {
+        differs_in.push("author");
+    }
+    let candidate_id: String = row.get(0);
+    let draft_revision: i32 = row.get(1);
+    let candidate_digest: String = row.get(2);
+    let state: String = row.get(3);
+    if !differs_in.is_empty() {
+        return Err(PgError::PlanningCandidateExists {
+            candidate_id,
+            draft_revision,
+            candidate_digest,
+            state,
+            differs_in,
+        });
+    }
+    Ok(Some(json!({
+        "candidate_id": candidate_id,
+        "draft_revision": draft_revision,
+        "candidate_digest": candidate_digest,
+        "state": state,
+        "resumed": true,
+    })))
+}
+
 pub(super) async fn prepare_candidate_create(
     tx: &Transaction<'_>,
     tenant_id: &str,

@@ -8,8 +8,9 @@ use awr_team::{
     DraftChange, DraftDefinitionState, DraftOpKind, OrdinaryPlanningSelfApprovePolicy, TaskDraft,
 };
 use awr_team_pg::{
-    PgError, PlanningApproveRequest, PlanningDraftRequest, PlanningPublishRequest,
-    PlanningSuggestRequest, SourceStore, WorkstreamQuery, WorkstreamReadStore,
+    DraftCandidateCreate, PgError, PlanningApproveRequest, PlanningDraftRequest,
+    PlanningPublishRequest, PlanningSuggestRequest, SourceStore, WorkstreamQuery,
+    WorkstreamReadStore,
 };
 use fixture::*;
 use serde_json::json;
@@ -922,4 +923,334 @@ async fn reserved_outcome_exposes_pending_state_without_claiming_an_effect() {
             .unwrap()["already_recorded"],
         true
     );
+}
+
+// AWR-TFQ-023: a create that names an existing candidate_id resumes only the same creation.
+
+/// Stored facts of a candidate that a refused create must leave untouched.
+async fn candidate_row(admin: &tokio_postgres::Client, candidate_id: &str) -> serde_json::Value {
+    let row = admin
+        .query_one(
+            "SELECT changes_json, draft_revision, candidate_digest, state, updated_at::text,
+                    suggestion_ids, allowed_spec_roots, project_goal_keys, self_approve_policy_json
+             FROM awr_team.planning_candidates
+             WHERE tenant_id=$1 AND project_id=$2 AND id=$3",
+            &[&TENANT, &PROJECT, &candidate_id],
+        )
+        .await
+        .unwrap();
+    json!({
+        "changes_json": row.get::<_, serde_json::Value>(0),
+        "draft_revision": row.get::<_, i32>(1),
+        "candidate_digest": row.get::<_, String>(2),
+        "state": row.get::<_, String>(3),
+        "updated_at": row.get::<_, String>(4),
+        "suggestion_ids": row.get::<_, serde_json::Value>(5),
+        "allowed_spec_roots": row.get::<_, serde_json::Value>(6),
+        "project_goal_keys": row.get::<_, serde_json::Value>(7),
+        "self_approve_policy_json": row.get::<_, serde_json::Value>(8),
+    })
+}
+
+/// Row counts of every table a planning create writes.
+async fn planning_write_counts(admin: &tokio_postgres::Client) -> Vec<i64> {
+    let mut counts = Vec::new();
+    for table in [
+        "planning_candidates",
+        "planning_candidate_history",
+        "planning_command_receipts",
+        "ops_audit_records",
+        "events",
+    ] {
+        let count: i64 = admin
+            .query_one(&format!("SELECT count(*) FROM awr_team.{table}"), &[])
+            .await
+            .unwrap()
+            .get(0);
+        counts.push(count);
+    }
+    counts
+}
+
+fn create_with_candidate(
+    request_id: &str,
+    candidate_id: &str,
+    work_id: &str,
+) -> PlanningDraftRequest {
+    let mut req = create_req(request_id, work_id);
+    req.candidate_id = Some(candidate_id.into());
+    req
+}
+
+fn assert_candidate_exists_refusal(
+    err: &PgError,
+    existing: &serde_json::Value,
+    candidate_id: &str,
+    differs_in: serde_json::Value,
+) {
+    let diagnostic = err
+        .planning_input_diagnostic()
+        .unwrap_or_else(|| panic!("expected the candidate-exists diagnostic, got {err:?}"));
+    assert_eq!(diagnostic["code"], "InvalidInput");
+    assert_eq!(
+        diagnostic["reason"],
+        "candidate_exists_with_different_request"
+    );
+    assert_eq!(diagnostic["invalid_field"], "/candidate_id");
+    assert_eq!(diagnostic["request_reserved"], false);
+    assert_eq!(diagnostic["candidate_changed"], false);
+    assert_eq!(diagnostic["differs_in"], differs_in);
+    assert_eq!(diagnostic["candidate_id"], candidate_id);
+    assert_eq!(diagnostic["draft_revision"], existing["draft_revision"]);
+    assert_eq!(diagnostic["candidate_digest"], existing["candidate_digest"]);
+    assert_eq!(diagnostic["state"], existing["state"]);
+    let next = diagnostic["next_step"].as_str().unwrap();
+    assert!(
+        next.contains("mode edit") && next.contains(candidate_id),
+        "{next}"
+    );
+    assert!(
+        next.contains("new candidate_id") && next.contains("was not changed"),
+        "{next}"
+    );
+}
+
+#[tokio::test]
+async fn create_reusing_a_candidate_id_with_different_changes_is_refused_before_any_write() {
+    let (_g, admin, db, _read) = setup().await;
+    elev_maintainer(&admin).await;
+    let store = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let first = store
+        .planning_draft(
+            TENANT,
+            PROJECT,
+            A,
+            &create_with_candidate("reuse-create-1", "cand-reuse", "OPS-REUSE-1"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first["result"]["candidate_id"], "cand-reuse");
+    let before = candidate_row(&admin, "cand-reuse").await;
+    let counts = planning_write_counts(&admin).await;
+
+    // A supervisor reuses the candidate id with different changes under a new request id.
+    let reused = create_with_candidate("reuse-create-2", "cand-reuse", "OPS-REUSE-2");
+    let outcome = store.planning_draft(TENANT, PROJECT, A, &reused).await;
+    assert_eq!(
+        candidate_row(&admin, "cand-reuse").await,
+        before,
+        "the stored candidate keeps its original changes"
+    );
+    assert_eq!(
+        planning_write_counts(&admin).await,
+        counts,
+        "a refused create writes no candidate, history, receipt, audit or event row"
+    );
+    let err = outcome.expect_err("a different create on an existing candidate id must be refused");
+    assert_candidate_exists_refusal(&err, &before, "cand-reuse", json!(["changes"]));
+
+    // The refused request id stays unused: the same id with a new candidate id creates it.
+    let mut fresh = reused.clone();
+    fresh.candidate_id = None;
+    let created = store
+        .planning_draft(TENANT, PROJECT, A, &fresh)
+        .await
+        .unwrap();
+    assert_ne!(created["result"]["candidate_id"], "cand-reuse");
+    assert!(created["result"].get("resumed").is_none());
+
+    // The domain entry refuses the same way for an unbound caller.
+    let direct = reused.clone();
+    let direct = DraftCandidateCreate {
+        changes: direct.changes,
+        suggestion_ids: direct.suggestion_ids,
+        allowed_spec_roots: direct.allowed_spec_roots,
+        project_goal_keys: direct.project_goal_keys,
+        self_approve_policy: direct.self_approve_policy,
+        author_person_id: direct.author_person_id,
+        predetermined_candidate_id: Some("cand-reuse".into()),
+    };
+    let counts = planning_write_counts(&admin).await;
+    let err = store
+        .create_planning_candidate(TENANT, PROJECT, A, &direct)
+        .await
+        .expect_err("the domain create refuses a different creation too");
+    assert_candidate_exists_refusal(&err, &before, "cand-reuse", json!(["changes"]));
+    assert_eq!(candidate_row(&admin, "cand-reuse").await, before);
+    assert_eq!(planning_write_counts(&admin).await, counts);
+}
+
+#[tokio::test]
+async fn create_reusing_a_candidate_id_with_other_creation_parameters_is_refused() {
+    let (_g, admin, db, _read) = setup().await;
+    elev_maintainer(&admin).await;
+    let store = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    store
+        .planning_draft(
+            TENANT,
+            PROJECT,
+            A,
+            &create_with_candidate("params-create-1", "cand-params", "OPS-PARAMS-1"),
+        )
+        .await
+        .unwrap();
+    let before = candidate_row(&admin, "cand-params").await;
+    let counts = planning_write_counts(&admin).await;
+
+    let mut roots = create_with_candidate("params-create-2", "cand-params", "OPS-PARAMS-1");
+    roots.allowed_spec_roots = vec!["specs".into(), "docs".into()];
+    let err = store
+        .planning_draft(TENANT, PROJECT, A, &roots)
+        .await
+        .expect_err("different spec roots are a different creation");
+    assert_candidate_exists_refusal(&err, &before, "cand-params", json!(["allowed_spec_roots"]));
+
+    let mut policy = create_with_candidate("params-create-3", "cand-params", "OPS-PARAMS-2");
+    let mut other_policy = OrdinaryPlanningSelfApprovePolicy::ordinary_default();
+    other_policy.allow_self_approve_ordinary = !other_policy.allow_self_approve_ordinary;
+    policy.self_approve_policy = Some(other_policy);
+    let err = store
+        .planning_draft(TENANT, PROJECT, A, &policy)
+        .await
+        .expect_err("a different policy and changes are a different creation");
+    assert_candidate_exists_refusal(
+        &err,
+        &before,
+        "cand-params",
+        json!(["changes", "self_approve_policy"]),
+    );
+    assert_eq!(candidate_row(&admin, "cand-params").await, before);
+    assert_eq!(planning_write_counts(&admin).await, counts);
+
+    // Omitted goals and policy resolve to the stored defaults, so this is the same creation.
+    let mut defaults = create_with_candidate("params-create-4", "cand-params", "OPS-PARAMS-1");
+    defaults.project_goal_keys = vec![];
+    defaults.self_approve_policy = None;
+    defaults.author_person_id = None;
+    let resumed = store
+        .planning_draft(TENANT, PROJECT, A, &defaults)
+        .await
+        .unwrap();
+    assert_eq!(resumed["result"]["resumed"], true);
+    assert_eq!(
+        resumed["result"]["candidate_digest"],
+        before["candidate_digest"]
+    );
+}
+
+#[tokio::test]
+async fn create_retry_of_the_same_creation_still_resumes() {
+    let (_g, admin, db, _read) = setup().await;
+    elev_maintainer(&admin).await;
+    let store = SourceStore::from_config(common::with_app_role(&common::test_config(), &db));
+    let req = create_with_candidate("same-create-1", "cand-same", "OPS-SAME-1");
+    let first = store
+        .planning_draft(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    let before = candidate_row(&admin, "cand-same").await;
+
+    // The first response was lost and the client retries under a new request id.
+    let mut retry = req.clone();
+    retry.request_id = "same-create-2".into();
+    let again = store
+        .planning_draft(TENANT, PROJECT, A, &retry)
+        .await
+        .unwrap();
+    assert_eq!(
+        again["result"],
+        json!({
+            "candidate_id": "cand-same",
+            "draft_revision": 1,
+            "candidate_digest": first["result"]["candidate_digest"],
+            "state": "drafting",
+            "resumed": true,
+        })
+    );
+    assert_eq!(candidate_row(&admin, "cand-same").await, before);
+
+    // The domain entry resumes the same creation for an unbound caller too.
+    let direct = DraftCandidateCreate {
+        changes: req.changes.clone(),
+        suggestion_ids: req.suggestion_ids.clone(),
+        allowed_spec_roots: req.allowed_spec_roots.clone(),
+        project_goal_keys: req.project_goal_keys.clone(),
+        self_approve_policy: req.self_approve_policy.clone(),
+        author_person_id: req.author_person_id.clone(),
+        predetermined_candidate_id: Some("cand-same".into()),
+    };
+    let direct = store
+        .create_planning_candidate(TENANT, PROJECT, A, &direct)
+        .await
+        .unwrap();
+    assert_eq!(direct, again["result"]);
+
+    // An edit moves the candidate to revision 2. A crashed original create (receipt still
+    // reserved) resumes against the creation it recorded and reports the current revision.
+    let edit = PlanningDraftRequest {
+        protocol_version: 1,
+        request_id: "same-edit".into(),
+        mode: "edit".into(),
+        candidate_id: Some("cand-same".into()),
+        changes: vec![DraftChange {
+            op: DraftOpKind::EditFields,
+            before: Some(task("OPS-SAME-1", "one")),
+            after: task("OPS-SAME-1", "edited"),
+        }],
+        suggestion_ids: vec![],
+        allowed_spec_roots: vec![],
+        project_goal_keys: vec![],
+        self_approve_policy: None,
+        author_person_id: None,
+    };
+    let edited = store
+        .planning_draft(TENANT, PROJECT, A, &edit)
+        .await
+        .unwrap();
+    assert_eq!(edited["result"]["draft_revision"], 2);
+    rewind_receipt(
+        &admin,
+        "same-create-1",
+        "planning.edit_draft",
+        "cand-same",
+        None,
+    )
+    .await;
+    let history: i64 = admin
+        .query_one(
+            "SELECT count(*) FROM awr_team.planning_candidate_history WHERE candidate_id='cand-same'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let resumed = store
+        .planning_draft(TENANT, PROJECT, A, &req)
+        .await
+        .unwrap();
+    assert_eq!(resumed["result"]["resumed"], true);
+    assert_eq!(resumed["result"]["draft_revision"], 2);
+    assert_eq!(
+        resumed["result"]["candidate_digest"],
+        edited["result"]["candidate_digest"]
+    );
+    let history_after: i64 = admin
+        .query_one(
+            "SELECT count(*) FROM awr_team.planning_candidate_history WHERE candidate_id='cand-same'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(history_after, history);
+
+    // The edited content is not the recorded creation: a new create with it is refused.
+    let mut as_edited = create_with_candidate("same-create-3", "cand-same", "OPS-SAME-1");
+    as_edited.changes = edit.changes.clone();
+    let current = candidate_row(&admin, "cand-same").await;
+    let err = store
+        .planning_draft(TENANT, PROJECT, A, &as_edited)
+        .await
+        .expect_err("only the recorded creation resumes");
+    assert_candidate_exists_refusal(&err, &current, "cand-same", json!(["changes"]));
 }
