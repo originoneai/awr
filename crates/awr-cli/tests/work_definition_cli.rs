@@ -303,6 +303,178 @@ fn gap_hints_ac3_omitting_one_field_reports_exactly_its_mapped_gap() {
     }
 }
 
+fn author_from_help(include_front_matter: bool) -> (Project, Value, Vec<String>) {
+    let text = governance_help();
+    let hints = gap_hints(&text);
+    let decision_template = text
+        .split_once("```markdown\n")
+        .expect("help must show the registered decision file format")
+        .1
+        .split_once("```")
+        .unwrap()
+        .0;
+    assert!(decision_template.lines().count() <= 4);
+    assert!(text.contains("registered decisions/ source"));
+    assert!(text.contains("shasum -a 256 <decision file>"));
+    let mut decision = decision_template
+        .replace("<decision>", "scope")
+        .replace("<decision text>", "The first release is local only.");
+    if !include_front_matter {
+        let delimiter = decision.lines().next().unwrap();
+        decision = decision.splitn(3, delimiter).last().unwrap().to_owned();
+    }
+    let p = Project::uninitialized();
+    assert_eq!(fs::read_dir(p.0.join("decisions")).unwrap().count(), 0);
+    fs::write(p.0.join("decisions/scope.md"), &decision).unwrap();
+    let digest = format!("{:x}", sha2::Sha256::digest(decision.as_bytes()));
+    let intent = hints
+        .iter()
+        .find(|h| h.codes.contains(&"intent_missing"))
+        .unwrap();
+    let pin = intent.value[0]["source_fingerprint"]
+        .as_str()
+        .unwrap()
+        .replace("<sha256>", &digest);
+    let examples = hints
+        .iter()
+        .find(|h| h.codes.contains(&"examples_missing"))
+        .unwrap();
+    assert!(
+        examples.note.starts_with("Each acceptance criterion"),
+        "{}",
+        examples.note
+    );
+    let kinds: Vec<awr_core::ExampleKind> = examples
+        .note
+        .split_whitespace()
+        .filter_map(|word| {
+            serde_json::from_value(json!(word.trim_matches(|c: char| !c.is_ascii_alphabetic())))
+                .ok()
+        })
+        .collect();
+    assert_eq!(
+        kinds.len(),
+        2,
+        "explain both example kinds: {}",
+        examples.note
+    );
+    let acceptance = vec![
+        ACC.to_string(),
+        "A successful save shows confirmation".to_string(),
+    ];
+    let yaml = text
+        .split_once("```yaml\n")
+        .unwrap()
+        .1
+        .split_once("```")
+        .unwrap()
+        .0;
+    let mut work: Value = serde_yaml_ng::from_str(yaml).unwrap();
+    work["paths"] = json!([]);
+    let mut applied = std::collections::BTreeSet::new();
+    let write = |work: &Value| {
+        p.ledger_with(
+            &work["definition"],
+            "Review the contract",
+            json!({"paths":work["paths"], "acceptance":acceptance}),
+        )
+    };
+    write(&work);
+    p.ok(&["init", "--manifest", "mapping.toml", "--accept"]);
+    for _ in 0..20 {
+        let report = p.ok(&["work", "show", "W"])["work"]["definition"].clone();
+        let mut changed = false;
+        for code in gap_codes(&report) {
+            let hint = hints
+                .iter()
+                .find(|h| h.codes.contains(&code.as_str()))
+                .unwrap_or_else(|| panic!("no field hint for {code}"));
+            if !applied.insert(hint.path) {
+                continue;
+            }
+            let value = if hint.path == examples.path {
+                let mut values = Vec::new();
+                for criterion in &acceptance {
+                    for kind in &kinds {
+                        let mut example = filled_hint(&hint.value[0], &pin);
+                        example["criterion"] = json!(criterion);
+                        example["kind"] = json!(kind);
+                        values.push(example);
+                    }
+                }
+                Value::Array(values)
+            } else {
+                filled_hint(&hint.value, &pin)
+            };
+            set_hint(&mut work, hint.path, value);
+            changed = true;
+        }
+        if !changed {
+            return (p, work, acceptance);
+        }
+        write(&work);
+        p.reindex();
+    }
+    panic!("the printed field instructions did not converge");
+}
+
+#[test]
+fn gap_hints_r1_ac3_help_alone_registers_decision_and_covers_each_criterion() {
+    let (p, _, acceptance) = author_from_help(true);
+    let report = p.ok(&["work", "show", "W"])["work"]["definition"].clone();
+    assert_eq!(report["state"], "complete", "{report}");
+    assert!(gap_codes(&report).is_empty(), "{report}");
+    for criterion in acceptance {
+        for kind in ["positive", "negative"] {
+            assert_eq!(
+                report["examples"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|e| e["criterion"] == criterion && e["kind"] == kind)
+                    .count(),
+                1,
+                "{report}"
+            );
+        }
+    }
+}
+
+#[test]
+fn gap_hints_r1_ac3_missing_decision_front_matter_keeps_reference_gap() {
+    let (p, _, _) = author_from_help(false);
+    let report = p.ok(&["work", "show", "W"])["work"]["definition"].clone();
+    assert_eq!(
+        gap_codes(&report),
+        ["intent_ref_not_found", "inputs_unversioned"]
+    );
+    let text = governance_help();
+    let hints = gap_hints(&text);
+    let hint = hints
+        .iter()
+        .find(|h| h.codes.contains(&"intent_ref_not_found"))
+        .unwrap();
+    assert_eq!(hint.path, "definition.intent");
+    assert!(hint.note.contains("front matter"), "{}", hint.note);
+}
+
+#[test]
+fn gap_hints_r1_ac3_one_example_per_criterion_is_insufficient() {
+    let (p, mut work, acceptance) = author_from_help(true);
+    work["definition"]["examples"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|e| e["kind"] == "positive");
+    p.ledger_with(
+        &work["definition"],
+        "Add the counterexamples",
+        json!({"paths":work["paths"], "acceptance":acceptance}),
+    );
+    p.reindex();
+    let report = p.ok(&["work", "show", "W"])["work"]["definition"].clone();
+    assert_eq!(gap_codes(&report), ["examples_missing", "examples_missing"]);
+}
+
 #[test]
 fn gap_hints_ac5_help_leaves_definition_and_admission_reports_unchanged() {
     let p = Project::new();
@@ -335,7 +507,7 @@ impl Drop for Project {
 }
 
 impl Project {
-    fn new() -> Self {
+    fn uninitialized() -> Self {
         let p = Self(std::env::temp_dir().join(format!("awr-work-definition-{}", Id::new())));
         fs::create_dir_all(p.0.join("decisions")).unwrap();
         fs::write(
@@ -343,6 +515,11 @@ impl Project {
             "[project]\nname='Definition fixture'\ncontext_profile='minimal'\n[[sources]]\ndomain='ledger'\nrole='primary'\npath='work.yaml'\nadapter='yaml-ledger-v1'\n[[sources]]\ndomain='decisions'\nrole='supporting'\npath='decisions'\nadapter='markdown-directory-v1'\n",
         )
         .unwrap();
+        p
+    }
+
+    fn new() -> Self {
+        let p = Self::uninitialized();
         p.decision("The first release is local only.");
         p.ledger(
             &p.definition("Local save with a failure fallback"),

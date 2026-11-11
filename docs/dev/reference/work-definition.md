@@ -32,10 +32,20 @@ a one-line YAML value shape and a short repair hint. Codes with the same repair
 share a row. Expand dotted paths into nested YAML; `paths` and `acceptance` belong
 to the work item beside `definition`. Replace placeholders with the work's actual
 facts, use a goal's exact success criterion in `contributes.outcome`, and repeat
-each criterion's example with `kind: negative` as well as `kind: positive`.
+each acceptance criterion's example with `kind: negative` as well as `kind: positive`.
 
-For adopted intent, use `role: user_decision` or `role: sourced_fact` and the key of
-a registered accepted decision. Compute its file's SHA-256 with
+For adopted intent, use `role: user_decision` or `role: sourced_fact` and the front
+matter `id` of an accepted file in the project's registered `decisions/` source.
+The CLI includes this four-line file shape:
+
+```markdown
+---
+{"id":"<decision>","status":"accepted","affected_keys":["*"]}
+---
+<decision text>
+```
+
+Compute the whole file's SHA-256, including front matter, with
 `shasum -a 256 <decision file>` and write `source_fingerprint: sha256:<digest>`.
 Assumptions retain their role; adopted facts require the decision and its pinned
 bytes. Review changed decision content before updating its fingerprint.

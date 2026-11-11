@@ -297,8 +297,9 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
   unchanged (AWR-TFQ-019).
 - Project completion checks can observe or enforce source-bound acceptance runs and failed baselines through `.awr/gates.toml`. Preparation lists each check command, small work can record a waiver, and Stop reminders use the same completion gate. See [completion check gates](../reference/gates.md).
 - Governance help maps every implementation-definition gap code to its field path,
-  a one-line YAML value shape and a short repair hint, including decision-file hashing
-  and adopted intent roles. The reference fits within 3,072 bytes. See
+  a one-line YAML value shape and a short repair hint, including registered decision
+  front matter, hashing and adopted intent roles. Every acceptance criterion needs
+  a positive and a negative example. The reference fits within 3,584 bytes. See
   [work definitions](../reference/work-definition.md).
 - The next-action guidance after a repository target moved no longer tells the developer to
   update against the current target, or to rebuild, "in a new admitted execution"

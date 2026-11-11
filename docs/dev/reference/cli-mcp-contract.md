@@ -192,8 +192,9 @@ declaring a definition does not satisfy its remaining obligations or approve adm
 
 The governance help topic also maps implementation-definition gap codes to field
 paths, one-line YAML value shapes and repair hints. Shared repairs occupy one row;
-`paths` and `acceptance` are work-item fields. It explains accepted intent sources
-and computing the decision file's SHA-256. The topic fits within 3,072 bytes;
+`paths` and `acceptance` are work-item fields. It gives the accepted decision file's
+front matter and id, hashing of the whole file, and one positive and one negative
+example for each acceptance criterion. The topic fits within 3,584 bytes;
 default help, activation receipts, work reports and MCP request/response shapes
 retain their existing content and budgets.
 
