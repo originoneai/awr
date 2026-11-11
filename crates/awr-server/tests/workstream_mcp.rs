@@ -2681,6 +2681,54 @@ async fn baseline_transition_discovery_and_report_are_concise_and_transport_stab
             "baseline_transition":transition.clone()}),
     ))
     .unwrap();
+    // A terminal report without an explicit effect declaration is refused with the same
+    // value-free diagnostic on both transports, and leaves the request id unused.
+    let mut incomplete = report.clone();
+    incomplete["args"]["workspace_settlement"]
+        .as_object_mut()
+        .unwrap()
+        .remove("no_external_effects");
+    let refused = http()
+        .post(format!("{}/one/command", server.url))
+        .bearer_auth(A)
+        .json(&incomplete)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body = refused.json::<Value>().await.unwrap();
+    assert_eq!(body["code"], "InvalidInput");
+    assert_eq!(body["reason"], "settlement_declaration_incomplete");
+    assert_eq!(
+        body["invalid_field"],
+        "/args/workspace_settlement/no_external_effects"
+    );
+    assert_eq!(body["request_reserved"], false);
+    assert!(
+        body["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("re-send with both declarations")
+    );
+    assert!(!body.to_string().contains("mcp-workspace"));
+    let mcp_refused = call(&client, "awr_team_command", incomplete.clone(), true).await;
+    assert_eq!(mcp_refused, body);
+    incomplete["args"]["workspace_settlement"]["executor_stopped"] = Value::Null;
+    incomplete["args"]["workspace_settlement"]["no_external_effects"] = json!(true);
+    let null_refused = call(&client, "awr_team_command", incomplete, true).await;
+    assert_eq!(
+        null_refused["invalid_field"],
+        "/args/workspace_settlement/executor_stopped"
+    );
+    let still_running: String = admin
+        .query_one(
+            "SELECT state FROM awr_team.executions WHERE id=$1",
+            &[&execution["execution_id"].as_str().unwrap()],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(still_running, "running");
     let reported = call(&client, "awr_team_command", report.clone(), false).await;
     let data = &reported["receipt"]["data"];
     assert_eq!(data["state"], "succeeded");

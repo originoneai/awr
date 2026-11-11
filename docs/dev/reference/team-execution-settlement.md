@@ -121,7 +121,32 @@ digest references the measured environment; keep credentials and environment
 dumps outside the record. For a successful workspace run, `output_digest` is
 the digest of the artifact bundle that will be submitted for review.
 
-MCP command discovery exposes this optional declaration and its closed fields.
+For a run admitted as `caller_managed` under a stored settlement policy, a
+report with outcome `succeeded`, `failed` or `cancelled` must state both
+`executor_stopped` and `no_external_effects` as JSON booleans. The
+`terminal_reporting` template carries them as `null` placeholders; replace each
+with `true` or `false`. The two declarations are independent facts.
+`executor_stopped` is `true` when nothing of yours is still running for this
+execution; the AWR execution record stays `running` until you report, which does
+not matter. `no_external_effects` is `true` when the run had no external effects
+(defined in [Workspace effects and repository delivery](#workspace-effects-and-repository-delivery)).
+Write `false` only for the declaration you cannot truthfully assert, including
+prior or unknown external effects, or report outcome `unknown` if you do not
+know what happened; both keep the recovery path for an authorized operator.
+
+A terminal report that omits `workspace_settlement`, omits either declaration or
+leaves it `null` is refused before any write with `InvalidInput`, reason
+`settlement_declaration_incomplete`, `invalid_field` naming the missing
+declaration (for example `/args/workspace_settlement/no_external_effects`) and
+`request_reserved: false`. Omission is never treated as a declaration. The
+refusal writes no receipt and changes no execution, task, reservation or
+recovery state, so the same `request_id` can be sent again with both
+declarations. An outcome `unknown` report needs no declarations. Runs without a
+stored settlement policy keep their previous behavior.
+
+MCP command discovery exposes this declaration and its closed fields. The schema
+keeps both declarations optional and nullable without a default, so a client
+can never fill them in automatically.
 Construct the review artifact before reporting success, hash its exact bytes,
 then submit the same bytes through `artifact_text` or decoded `artifact_hex`.
 Keep `payload.output_digest` and the execution report bound to that hash. The
@@ -166,9 +191,10 @@ without writing a report.
 
 Success, failure and cancellation can release only the exact admitted workspace
 resources. All remain `caller_asserted`; failure and cancellation leave the task
-unfinished. An omitted, false or unknown stop/effect declaration, an unknown
-outcome, or an expired V1 lease records the caller's observations without claiming
-settlement. V1 checks the live lease again before the transaction finishes.
+unfinished. A false stop/effect declaration, an unknown outcome, or an expired
+V1 lease records the caller's observations without claiming settlement. A
+terminal report with an omitted or `null` declaration is refused unchanged (see
+[Report an ordinary workspace outcome](#report-an-ordinary-workspace-outcome)). V1 checks the live lease again before the transaction finishes.
 After a same-fence renewal, the report binds the current lease version while
 reservations retain their original admission generation.
 
@@ -298,7 +324,17 @@ Workspace settlement does not settle a repository push, external review, shared-
 deployment or shared integration operation. Close the workspace phase before
 starting a separate delivery operation, carrying its exact source revision and
 artifact digest. If an external effect already occurred or its result is
-unknown, do not declare `no_external_effects: true` to bypass recovery.
+unknown, do not declare `no_external_effects: true` to bypass recovery; declare
+`false` or report outcome `unknown`. Leaving the declaration out is refused, not
+treated as either answer.
+
+External effects here are effects outside the admitted workspace paths: a push
+or other publication, an external review request, a merge into a shared target,
+a deployment, a call that changes another service, or an install outside the
+workspace. Local edits and commits, test runs and a local server that has been
+stopped are workspace effects, not external effects; report their paths in
+`observed_paths` and declare `no_external_effects: true` once the executor has
+stopped.
 
 ### Actual effects and contribution provenance
 

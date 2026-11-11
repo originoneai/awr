@@ -301,8 +301,16 @@ workspace and input digest, a measured non-sensitive environment digest, and the
 current owned claim/fence/lease versions. Inspection advice uses a currently
 covering execution delegation, even when a separate delegation grants the read;
 it is omitted after that execution grant is revoked or the run binding changes.
-Assert `executor_stopped` and
-`no_external_effects` only when both facts hold. For success, compute
+`executor_stopped` and `no_external_effects` are two independent facts. Set
+`executor_stopped` to `true` when nothing of yours is still running for this
+execution (the AWR execution record stays `running` until you report), and
+`no_external_effects` to `true` when the run had no external effects. Set only
+the one you cannot truthfully assert to `false` (or report outcome `unknown`).
+Never omit them or leave them `null`. External effects are effects outside the admitted workspace
+paths: a push or other publication, an external review request, a merge into a
+shared target, a deployment, a call that changes another service, or an install
+outside the workspace. Local edits and commits, test runs and a local server you
+have stopped are workspace effects, so they allow `true`. For success, compute
 `output_digest` from the exact artifact bytes you will submit as evidence and
 retain those bytes unchanged. Stop and report the workspace execution **before**
 repository push/publication, external review, shared-target merge or deployment; those are
@@ -311,8 +319,16 @@ run already caused or may have caused an external effect, use recovery instead
 of declaring `no_external_effects: true`. Earlier settled delivery operations
 do not by themselves prevent a new workspace run.
 
-An omitted or unknown declaration records the
-outcome conservatively and requires recovery; it does not settle the workspace.
+A `succeeded`, `failed` or `cancelled` report states both declarations
+explicitly as `true` or `false`; replace the `null` placeholders of
+`terminal_reporting`. When external effects occurred or are unknown, write
+`no_external_effects: false`, or report outcome `unknown` when you do not know
+what happened. Both record the outcome conservatively and require recovery by an
+authorized operator; they do not settle the workspace. A terminal report that
+omits `workspace_settlement` or leaves either declaration out or `null` is
+refused with `InvalidInput` (`settlement_declaration_incomplete`, with
+`invalid_field` naming the declaration). The refusal changed nothing, so send
+the same request again with both declarations.
 Recheck after contract, lease, execution or effect changes. See the
 [ordinary workspace report](../reference/team-execution-settlement.md#report-an-ordinary-workspace-outcome).
 

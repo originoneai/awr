@@ -653,6 +653,56 @@ impl PgError {
         }))
     }
 
+    const SETTLEMENT_DECLARATION_INCOMPLETE: &'static str = "settlement_declaration_incomplete";
+
+    /// Definite pre-persistence refusal of a terminal execution.report under a caller-managed
+    /// workspace settlement policy that does not state both declarations as booleans. `field`
+    /// is a fixed allowlisted label; caller values are never stored or echoed.
+    pub fn settlement_declaration_incomplete(field: &'static str) -> Self {
+        Self::Protocol(format!(
+            "{}/{field}",
+            Self::SETTLEMENT_DECLARATION_INCOMPLETE
+        ))
+    }
+
+    pub fn is_settlement_declaration_incomplete(&self) -> bool {
+        self.settlement_declaration_incomplete_diagnostic()
+            .is_some()
+    }
+
+    /// Bounded refusal shared by HTTP and MCP. The field is allowlisted again so an unrelated
+    /// Protocol error cannot echo input.
+    pub fn settlement_declaration_incomplete_diagnostic(&self) -> Option<serde_json::Value> {
+        let Self::Protocol(message) = self else {
+            return None;
+        };
+        let field = message
+            .strip_prefix(Self::SETTLEMENT_DECLARATION_INCOMPLETE)?
+            .strip_prefix('/')?;
+        let invalid_field = match field {
+            "workspace_settlement" => "/args/workspace_settlement",
+            "executor_stopped" => "/args/workspace_settlement/executor_stopped",
+            "no_external_effects" => "/args/workspace_settlement/no_external_effects",
+            _ => return None,
+        };
+        let action = "State both declarations in args.workspace_settlement as explicit JSON booleans, replacing the null placeholders of terminal_reporting. They are two independent facts. executor_stopped: write true when nothing of yours is still running for this execution; the AWR execution record stays running until you report, which does not matter. no_external_effects: write true when the run had no external effects. External effects are effects outside the admitted workspace paths: a push or other publication, an external review request, a merge into a shared target, a deployment, a call that changes another service, or an install outside the workspace. Local edits and commits, test runs and a local server you have stopped are workspace effects, not external effects. Write false only for the one you cannot truthfully assert, including prior or unknown external effects; false keeps the recovery path for an authorized operator. Omission or null is never treated as a declaration; to report that you do not know what happened, use outcome unknown. This refusal changed nothing and did not use the request_id: re-send with both declarations.";
+        Some(serde_json::json!({
+            "code":"InvalidInput","reason":Self::SETTLEMENT_DECLARATION_INCOMPLETE,
+            "message":"a terminal execution.report for a caller-managed workspace run must state executor_stopped and no_external_effects explicitly",
+            "invalid_field":invalid_field,
+            "related_fields":["/args/workspace_settlement/executor_stopped","/args/workspace_settlement/no_external_effects","/args/outcome"],
+            "constraint":"explicit_terminal_declarations",
+            "request_reserved":false,
+            "next_step":action,
+            "action_guidance":{
+                "condition":"execution.report with outcome succeeded, failed or cancelled omitted a settlement declaration or left it null.",
+                "basis":"A missing declaration cannot be told apart from an accidental omission, and an unsettled terminal report blocks recovery until an authorized operator reconciles it. Nothing was recorded.",
+                "action":"Follow next_step: state executor_stopped and no_external_effects as true or false, then re-send; this refusal changed nothing.",
+                "recheck":"Before re-sending, refresh execution.inspect if the execution, claim or lease may have changed. Settlement still checks the exact admitted bindings; this advice grants no authority."
+            }
+        }))
+    }
+
     const WORK_NEXT_SELECTORS: &'static str = "work.next does not accept work selectors";
     const MISSING_REVIEW_SESSION_VERSION: &'static str =
         "review command requires expected_session_version";
