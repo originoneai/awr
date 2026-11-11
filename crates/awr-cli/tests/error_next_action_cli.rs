@@ -223,6 +223,252 @@ mod next_action_tests {
         }
     }
 
+    fn guidance_text(f: &Fixture, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_awr"))
+            .env("AWR_LOCAL_WEB", "0")
+            .args(["--project", f.0.to_str().unwrap()])
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
+    fn govern(f: &Fixture) {
+        let manifest = fs::read_to_string(f.0.join(".awr/project.toml")).unwrap();
+        f.write(".awr/project.toml", &manifest.replacen(
+            "adapter = \"yaml-ledger-v1\"",
+            "adapter = \"yaml-ledger-v1\"\n[sources.options.admission_policy]\nversion=1\nmode='governed_enforce'\nscope='all'",
+            1,
+        ));
+        f.ok(&["source", "reindex"]);
+        assert!(f.ok(&["work", "show", "W"])["work"]["admission"]["governed"] == true);
+    }
+
+    fn definition_example(f: &Fixture) -> String {
+        let out = guidance_text(f, &["work", "help", "governance"]);
+        assert!(out.status.success());
+        let text = String::from_utf8(out.stdout).unwrap();
+        text.split_once("```yaml\n")
+            .expect("governance help needs a YAML starter")
+            .1
+            .split_once("```")
+            .unwrap()
+            .0
+            .to_owned()
+    }
+
+    fn follow_definition_guidance(f: &Fixture, text: &str) {
+        let next = text
+            .lines()
+            .find_map(|line| line.strip_prefix("Next: "))
+            .expect("missing Next");
+        assert_eq!(next, "awr work help governance", "{text}");
+        let parsed =
+            super::help::parse_from(&argv(next).into_iter().map(Into::into).collect::<Vec<_>>())
+                .unwrap_err();
+        assert_eq!(parsed.kind(), clap::error::ErrorKind::DisplayHelp);
+        let out = guidance_text(
+            f,
+            &argv(next)[1..]
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        );
+        assert!(out.status.success());
+        let help = String::from_utf8(out.stdout).unwrap();
+        for field in ["definition:", "examples:", "check:"] {
+            assert!(help.contains(field), "missing {field}: {help}");
+        }
+    }
+
+    #[test]
+    fn next_step_ac1_creation_refusal_leads_to_definition_fields_within_budget() {
+        let f = Fixture::new();
+        govern(&f);
+        f.create_input("G");
+        let p = f.ok(&["work", "create", "--input", "create.json", "--activate"]);
+        let rev = p["project_revision"].to_string();
+        let mut args = f.accept_args(&p, &rev);
+        args.push("--activate");
+        let out = guidance_text(&f, &args);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            out.stdout.len() + out.stderr.len() <= 1536,
+            "{} bytes",
+            out.stdout.len() + out.stderr.len()
+        );
+        let text = String::from_utf8(out.stdout).unwrap();
+        assert!(text.contains("Activation: \"rejected\""), "{text}");
+        follow_definition_guidance(&f, &text);
+        let key = p["preview"]["plan"]["external_key"].as_str().unwrap();
+        assert_eq!(f.ok(&["work", "show", key])["work"]["status"], "draft");
+    }
+
+    #[test]
+    fn next_step_ac1_activation_refusal_never_stops_at_show_or_repository_docs() {
+        let f = Fixture::new();
+        govern(&f);
+        let args = [
+            "work",
+            "activate",
+            "D",
+            "--request-key",
+            "missing-definition",
+        ];
+        let out = guidance_text(&f, &args);
+        assert!(!out.status.success());
+        assert!(out.stdout.len() + out.stderr.len() <= 1536);
+        let text = String::from_utf8(out.stderr).unwrap();
+        assert!(!text.contains("Next: awr work show"), "{text}");
+        assert!(!text.contains("docs/"), "{text}");
+        follow_definition_guidance(&f, &text);
+        let error = f.error(&args, "DependencyBlocked");
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap()
+                .contains("definition_not_declared")
+        );
+    }
+
+    #[test]
+    fn next_step_ac1_unrelated_activation_refusal_keeps_planning_repair() {
+        let f = Fixture::new();
+        let ledger = fs::read_to_string(f.0.join("work.yaml"))
+            .unwrap()
+            .replace("  next_action: Read the draft\n", "");
+        f.write("work.yaml", &ledger);
+        f.ok(&["source", "reindex"]);
+        let out = guidance_text(
+            &f,
+            &["work", "activate", "D", "--request-key", "missing-action"],
+        );
+        assert!(!out.status.success());
+        let text = String::from_utf8(out.stderr).unwrap();
+        assert!(text.contains("Next: awr work edit D "), "{text}");
+        assert!(!text.contains("work help governance"), "{text}");
+    }
+
+    #[test]
+    fn next_step_ac2_help_example_is_accepted_verbatim_by_work_show() {
+        let f = Fixture::new();
+        govern(&f);
+        let example = definition_example(&f);
+        let mut ledger = fs::read_to_string(f.0.join("work.yaml")).unwrap();
+        ledger.push_str(
+            &example
+                .lines()
+                .map(|line| format!("  {line}\n"))
+                .collect::<String>(),
+        );
+        f.write("work.yaml", &ledger);
+        let shown = f.ok(&["work", "show", "D"]);
+        let definition = &shown["work"]["definition"];
+        assert!(definition.is_object(), "{shown}");
+        assert_ne!(definition["state"], "not_declared");
+        assert!(
+            !definition["gaps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|gap| gap["code"] == "definition_not_declared")
+        );
+        assert_eq!(definition["examples"][0]["has_check"], true);
+        // A starter declares a definition; remaining business obligations still block admission.
+        assert!(!shown["work"]["ready"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn next_step_ac2_unknown_example_fields_are_rejected_by_the_current_parser() {
+        let f = Fixture::new();
+        let example = definition_example(&f);
+        let mut value: Value = serde_yaml_ng::from_str(&example).unwrap();
+        let parse = |value: &Value| {
+            serde_json::from_value::<awr_core::WorkDefinition>(value["definition"].clone())
+        };
+        parse(&value).unwrap().validate().unwrap();
+        value["definition"]["examples"][0]["check"]["unknown_field"] = json!(true);
+        assert!(
+            parse(&value).is_err(),
+            "unknown check fields must not enter guidance"
+        );
+    }
+
+    #[test]
+    fn next_step_ac3_show_links_to_the_same_definition_guidance_once_within_budget() {
+        let f = Fixture::new();
+        govern(&f);
+        let out = guidance_text(&f, &["work", "show", "W"]);
+        assert!(out.status.success());
+        assert!(out.stdout.len() <= 1536, "{} bytes", out.stdout.len());
+        let text = String::from_utf8(out.stdout).unwrap();
+        assert_eq!(
+            text.matches("awr work help governance").count(),
+            1,
+            "{text}"
+        );
+        follow_definition_guidance(&f, &text);
+    }
+
+    #[test]
+    fn next_step_ac3_ungoverned_show_does_not_add_definition_guidance() {
+        let f = Fixture::new();
+        let out = guidance_text(&f, &["work", "show", "W"]);
+        assert!(out.status.success());
+        let text = String::from_utf8(out.stdout).unwrap();
+        assert!(!text.contains("awr work help governance"), "{text}");
+        assert!(!text.contains("```yaml"), "{text}");
+    }
+
+    #[test]
+    fn next_step_ac4_prepare_explains_rule_heading_annotations_and_recovers() {
+        let f = Fixture::new();
+        f.write("rules.md", "# Delivery\n\nKeep the reviewed note.\n");
+        let out = f.run(&["work", "prepare", "W"]);
+        assert!(!out.status.success());
+        let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let issues = value["context"]["completeness"]["issues"]
+            .as_array()
+            .unwrap();
+        let reason = issues
+            .iter()
+            .find(|i| i["code"] == "hard_rule_unresolved")
+            .unwrap()["reason"]
+            .as_str()
+            .unwrap();
+        let annotation = "{severity=hard scope=project value=*}";
+        assert!(reason.contains(annotation), "{reason}");
+        assert!(reason.contains("end of the heading line"), "{reason}");
+        let text = guidance_text(&f, &["work", "prepare", "W"]);
+        assert!(String::from_utf8_lossy(&text.stdout).contains(annotation));
+        f.write(
+            "rules.md",
+            &format!("# Delivery {annotation}\n\nKeep the reviewed note.\n"),
+        );
+        assert_eq!(
+            f.ok(&["work", "prepare", "W"])["context"]["completeness"]["rules_complete"],
+            true
+        );
+    }
+
+    #[test]
+    fn next_step_ac4_annotation_in_rule_body_keeps_prepare_incomplete() {
+        let f = Fixture::new();
+        f.write(
+            "rules.md",
+            "# Delivery\n\n{severity=hard scope=project value=*}\nKeep the reviewed note.\n",
+        );
+        let out = f.run(&["work", "prepare", "W"]);
+        assert!(!out.status.success());
+        let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+        assert_eq!(error["code"], "ContextIncomplete");
+        let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["context"]["completeness"]["rules_complete"], false);
+    }
+
     #[test]
     fn acceptance_1_revision_only_conflict_retries_without_preview_or_scan() {
         let f = Fixture::new();

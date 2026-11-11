@@ -73,7 +73,9 @@ pub fn run(root: &Path, args: &ActivateArgs, json_output: bool) -> Result<()> {
         awr_runtime::host_preview(&mut project.store, &root, request)
     };
     let mut report = result.map_err(|error| {
-        if error.report().details.as_ref().is_some_and(|details| details["next_action"].is_string()) {
+        if let Some(next) = crate::help::definition_error_next_action(&serde_json::json!(error.report())) {
+            error.with_details(serde_json::json!({"next_action":next}))
+        } else if error.report().details.as_ref().is_some_and(|details| details["next_action"].is_string()) {
             error
         } else {
             let command = cli_next_action(&["awr", "work", "show", &key]);

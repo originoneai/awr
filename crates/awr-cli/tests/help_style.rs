@@ -77,6 +77,34 @@ fn ac1_default_overviews_are_short_and_point_to_all_commands() {
 }
 
 #[test]
+fn next_step_ac5_governance_help_exposes_definition_without_growing_overviews() {
+    let text = String::from_utf8(help(&["work", "help", "governance"])).unwrap();
+    for field in ["definition:", "examples:", "check:"] {
+        assert!(text.contains(field), "missing {field}: {text}");
+    }
+    assert_eq!(help(&["help", "work", "governance"]), text.as_bytes());
+    for (args, baseline) in [(vec!["--help"], 951), (vec!["work", "--help"], 945)] {
+        let output = help(&args);
+        assert!(
+            output.len() * 100 <= baseline * 105,
+            "{args:?}: {} bytes",
+            output.len()
+        );
+    }
+}
+
+#[test]
+fn next_step_ac5_definition_example_stays_out_of_first_layer_help() {
+    for args in [vec!["--help"], vec!["work", "--help"]] {
+        let output = help(&args);
+        assert!(output.len() <= 1536);
+        let text = String::from_utf8(output).unwrap();
+        assert!(!text.contains("```yaml"), "{text}");
+        assert!(!text.contains("definition:"), "{text}");
+    }
+}
+
+#[test]
 fn work_check_help_joins_completion_in_daily_and_preserves_detailed_help() {
     let daily = String::from_utf8(help(&["work", "help", "daily"])).unwrap();
     let members = daily
