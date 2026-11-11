@@ -5,7 +5,7 @@ use std::{net::SocketAddr, path::PathBuf};
 #[derive(Parser)]
 #[command(
     name = "awr-mcp",
-    version,
+    version = env!("AWR_BUILD_VERSION"),
     about = "Serve AWR through single-project stdio or a shared multi-project HTTP endpoint"
 )]
 struct Args {

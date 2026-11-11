@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Release-channel and artifact-integrity checks without registry writes."""
 from contextlib import redirect_stdout
+import ast
 import hashlib
 import io
 import json
@@ -10,6 +11,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import assemble_release
@@ -19,6 +21,38 @@ import publish_npm
 
 
 class ReleaseChecks(unittest.TestCase):
+    def version_reader_check(self, script, function, output):
+        tree = ast.parse((ROOT / "scripts/release" / script).read_text())
+        body = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == function)
+        checks = [n for n in ast.walk(body) if isinstance(n, (ast.If, ast.Assert))
+                  and "version" in ast.unparse(n.test)
+                  and ("not in" in ast.unparse(n.test) or "result.stdout" in ast.unparse(n.test))]
+        self.assertEqual(len(checks), 1, f"expected one version check in {script}")
+        code = compile(ast.Module(body=checks, type_ignores=[]), script, "exec")
+        exec(code, {"version": "0.7.0", "binary": Path("awr"), "name": "awr",
+                    "run": lambda args: output, "versions": {"awr": output},
+                    "result": SimpleNamespace(stdout=output, stderr="")})
+
+    def test_version_identity_ac3_release_readers_accept_parenthesized_commits(self):
+        for script, function in [("build_packages.py", "main"),
+                                 ("build_host_bundle.py", "main"), ("smoke_install.py", "exercise")]:
+            for output in ["awr 0.7.0 (abcdef12)\n", "awr-mcp 0.7.0 (abcdef12-dirty)\n"]:
+                with self.subTest(script=script, output=output):
+                    self.version_reader_check(script, function, output)
+
+    def test_version_identity_ac3_release_readers_still_reject_another_version(self):
+        for script, function in [("build_packages.py", "main"),
+                                 ("build_host_bundle.py", "main"), ("smoke_install.py", "exercise")]:
+            with self.subTest(script=script), self.assertRaises((ValueError, AssertionError)):
+                self.version_reader_check(script, function, "awr 9.9.9 (abcdef12)\n")
+
+    def test_version_identity_ac4_release_build_refuses_a_dirty_source_tree(self):
+        import build_packages
+        with patch.object(sys, "argv", ["build_packages.py", "--output", "unused-output"]), \
+                patch.object(build_packages, "run", side_effect=["a" * 40, " M Cargo.toml"]):
+            with self.assertRaisesRegex(ValueError, "commit the reviewed release inputs"):
+                build_packages.main()
+
     def test_installed_catalog_requires_continuity_tools_and_unique_names(self):
         names = sorted(DOMAIN_TOOLS)
         self.assertEqual(validate_stdio_tools(list(reversed(names))), names)
