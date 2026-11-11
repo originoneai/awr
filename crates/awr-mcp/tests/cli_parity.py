@@ -701,6 +701,16 @@ class Parity(unittest.TestCase):
             self.assertIn(encoded_locator, source)
             return source.replace(encoded_locator, json.dumps("<generated-check-report>"))
 
+        def normalize_baseline_events(obligations, results):
+            normalized = deepcopy(obligations)
+            for obligation in normalized:
+                result = next(row for row in results if row["example"] == obligation["example"])
+                self.assertEqual(len(obligation["baselines"]), 1)
+                run = obligation["baselines"][0]
+                self.assertEqual(run, {key: result[key] for key in run})
+                run["event_id"] = "<baseline-" + result["example"] + ">"
+            return normalized
+
         for locator in (".awr/artifacts/generated-report", r".awr\artifacts\generated-report"):
             source = json.dumps({"work_items": [{"evidence": [locator]}]})
             expected = json.dumps({"work_items": [{"evidence": ["<generated-check-report>"]}]})
@@ -719,7 +729,8 @@ class Parity(unittest.TestCase):
         manifest += '\n[[sources]]\ndomain="decisions"\nrole="supporting"\npath="decisions"\nadapter="markdown-directory-v1"\n'
         (self.root / ".awr/project.toml").write_text(manifest)
         (self.root / ".awr/gates.toml").write_text('version=1\n[checks]\nmode="enforce"\nscope="all"\n')
-        probe = 'from pathlib import Path\nraise SystemExit(0 if Path("draft.txt").read_text() == "retained" else 1)\n'
+        probe = ('from pathlib import Path\nfrom unittest import TestCase\n'
+                 'TestCase().assertEqual(Path("draft.txt").read_text(), "retained")\n')
         (self.root / "check.py").write_text(probe)
         definition = {"version": 1, "purpose": "implementation", "tier": "required",
                       "intent": [{"role": "user_decision", "decision": "scope",
@@ -768,9 +779,22 @@ class Parity(unittest.TestCase):
             baseline = check("baseline")
             self.assertTrue(baseline["met"])
             self.assertEqual([r["outcome"] for r in baseline["results"]], ["failed", "failed"])
+            self.assertEqual([r["classification"] for r in baseline["results"]],
+                             ["failed_as_expected", "failed_as_expected"])
+            with closing(sqlite3.connect(f"file:{self.root / '.awr/state.db'}?mode=ro", uri=True)) as db:
+                for result in baseline["results"]:
+                    event = db.execute("SELECT payload_json FROM events WHERE id=? AND event_type='work.check'",
+                                       (result["event_id"],)).fetchone()
+                    self.assertIsNotNone(event)
+                    self.assertEqual(json.loads(event[0]), {key: value for key, value in result.items() if key != "event_id"})
             prepared = (self.tool("awr_work_prepare", {"work": "W", "session": sid, "budget": 9000}, readonly=True)
                         if mcp else self.cli(["work", "prepare", "W", "--session", sid, "--budget", 9000]))
-            trace["obligations"] = prepared["check_obligations"]
+            # Validate generated event references before comparing separate executions.
+            trace["obligations"] = normalize_baseline_events(prepared["check_obligations"], baseline["results"])
+            changed = deepcopy(prepared["check_obligations"])
+            changed[0]["baselines"][0]["event_id"] = baseline["results"][1]["event_id"]
+            with self.assertRaises(AssertionError, msg="a baseline linked to another example must fail"):
+                normalize_baseline_events(changed, baseline["results"])
             admission = {"work": "W", "session": sid, "expected_revision": self.revision(), "request_key": "approve-draft",
                          "decision": "approved", "contract_fingerprint": prepared["management"]["contract_fingerprint"],
                          "judgment": {"contribution": "Keeps the draft", "necessity": "Drafts are lost today",
