@@ -42,8 +42,14 @@ async fn simulated_dependency_keeps_authorized_reconciliation_as_its_actual_exec
     let reported = run(&store, A, "reconciled-input-report", "execution.report", json!({
         "session_id":"session-a","expected_session_version":"1","execution_id":chain["intent"]["execution_id"],
         "expected_execution_version":started["execution_version"],"outcome":"succeeded",
-        "output_digest":output,"observed_paths":["src/api/result.json"],"note":"Observed caller effects without a settlement assertion",
+        "output_digest":output,"observed_paths":["src/api/result.json"],"note":"Observed caller effects that cannot be settled",
+        // A terminal report states both declarations; false keeps the operator recovery path.
+        "workspace_settlement":{"workspace_id":"member-workspace","input_digest":INPUT,"environment_digest":"c".repeat(64),
+            "claim_id":chain["claim"]["claim_id"],"expected_fence":chain["claim"]["fence"],
+            "expected_lease_version":chain["claim"]["lease_version"],"executor_stopped":true,"no_external_effects":false},
     })).await;
+    assert_eq!(reported["state"], "unknown");
+    assert_eq!(reported["recovery_blocked"], true);
     let p = prepare(&store, RUNNER, "a").await;
     run(&store, RUNNER, "reconciled-input-facts", "execution.reconcile", json!({
         "session_id":"session-runner","expected_session_version":"1","execution_id":chain["intent"]["execution_id"],
