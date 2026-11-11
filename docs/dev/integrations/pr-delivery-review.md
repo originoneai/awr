@@ -167,7 +167,15 @@ authorized-channel check that this round's `submission.source_revision` is
 immutable and candidate-bound; a non-null or validly formatted value, including
 `artifact`, proves neither. If absent, do not guess: obtain a verifiable binding
 and check both properties. Do not treat a moving ref, raw locator or peer path as
-the candidate identity.
+the candidate identity. Where no source locator is disclosed, the reviewer reads what
+the delivery service observed in `delivery.neutral.inspect` (the candidate, its
+adapter-observed facts and required checks). Those are the service's own observations
+and stay separate from the reviewer's verification. The reviewer then records the
+decision with `review.decide` and says in its reason what was verified and what
+remains open. Approval integrates and delivers nothing; `delivery.integration.prepare`
+separately requires adapter-observed repository facts. `review.inspect` of an open
+round says this in its guidance note, and for a candidate without a source revision
+the note says that `delivery.integration.prepare` refuses it.
 An optional candidate `binding.source_fetch_ref` may name the ordinary advertised
 `refs/heads/...` or `refs/tags/...` ref used to fetch a Git candidate. The full
 ref is part of the candidate digest, but the remote ref itself remains mutable;

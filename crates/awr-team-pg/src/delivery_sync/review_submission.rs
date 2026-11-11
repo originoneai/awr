@@ -9,6 +9,15 @@ fn unavailable_source(reason: &str) -> Value {
         "note":"No source locator is disclosed. Use the current authorized delivery configuration; do not guess a remote, server path or tree."})
 }
 
+/// The reviewer's next step after reading a current, inspectable submission. A source this read
+/// cannot verify is a limit to state in the decision; it is not a precondition that withholds it.
+/// Only `review.inspect` of an open round carries it: the neutral inspection reaches authors,
+/// supervisors and deliverers, and a decided round has nothing left to decide.
+const DECISION_NEXT: &str = "To check the source, read what the delivery service observed in delivery.neutral.inspect (the candidate, its adapter-observed facts and required checks); those are the service's own observations, not your verification. The independent reviewer then records the decision with review.decide (approve or reject, with a reason that states what was verified and what could not be; on governed work a rejection also needs a blocking finding). A source this read cannot verify is a limit to state in that reason, not a reason to withhold the decision: approval does not integrate or deliver anything, which stays a separate step (delivery.integration.prepare, then delivery.finalize).";
+/// A candidate without a source revision is refused by `delivery.integration.prepare`, so for a work
+/// that needs repository integration the useful decision is to reject it with that reason.
+const DECISION_NEXT_WITHOUT_SOURCE: &str = "The independent reviewer then records the decision with review.decide (approve or reject, with a reason that states what was verified and what could not be; on governed work a rejection also needs a blocking finding). A candidate without a source revision cannot be integrated (delivery.integration.prepare refuses it), so reject it with that reason when this work needs repository integration; approval does not integrate or deliver anything.";
+
 async fn source_navigation(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -173,6 +182,7 @@ pub(crate) async fn inspect(
     work: &str,
     evidence_id: Option<&str>,
     expected_bundle: Option<&str>,
+    reviewer_decision_due: bool,
 ) -> PgResult<Value> {
     let (work_binding, ownership) =
         crate::workstream_read::work_binding(tx, tenant, project, auth, work).await?;
@@ -403,8 +413,13 @@ pub(crate) async fn inspect(
         } else {
             "Extra content: this round's submission.source_revision needs an authorized-channel immutability + candidate-binding check; else version unverified."
         };
+        let decision_next = match (reviewer_decision_due, result["source_revision"].is_null()) {
+            (false, _) => String::new(),
+            (true, true) => format!(" {DECISION_NEXT_WITHOUT_SOURCE}"),
+            (true, false) => format!(" {DECISION_NEXT}"),
+        };
         result["guidance"]["action"] = json!({"op":query["op"], "query":query,
-            "note":format!("Read all manifest + report artifacts; not proof of complete source or code/verification, approval or integration. {revision_note} If segment_query exists, join contiguous pages; verify full length/sha256.")});
+            "note":format!("Read all manifest + report artifacts; not proof of complete source or code/verification, approval or integration. {revision_note} If segment_query exists, join contiguous pages; verify full length/sha256.{decision_next}")});
     }
     Ok(result)
 }
@@ -426,6 +441,7 @@ pub(crate) async fn require(
         work,
         evidence_id,
         Some(expected_bundle),
+        false,
     )
     .await?;
     if state["delivery_required"] == true

@@ -248,6 +248,173 @@ async fn planning_scope_rejection_explains_bounds_and_allows_corrected_retry() {
 }
 
 #[tokio::test]
+async fn planning_draft_edit_without_a_candidate_explains_how_to_start_a_draft() {
+    let (_g, admin, _db, store) = setup().await;
+    admin.batch_execute(
+        "UPDATE awr_team.project_memberships SET role='maintainer', membership_version=membership_version+1 WHERE actor_id='agent';
+         UPDATE awr_team.workstream_grants SET can_write=true, grant_version=grant_version+1 WHERE client_id='cli-a';"
+    ).await.unwrap();
+    let server = start(store).await;
+    let client = connect(&server, A).await;
+    // A supervisor changing existing work picked mode edit; mode is the candidate mode, so the
+    // request has no candidate to edit. The refusal says what to do instead.
+    let input = json!({
+        "protocol_version":1,"request_id":"edit-without-candidate","mode":"edit",
+        "changes":[{"op":"edit_fields","before":draft("QUEUE-CHANGE"),"after":draft("QUEUE-CHANGE")}],
+        "allowed_spec_roots":["specs"],"project_goal_keys":["delivery"]
+    });
+    let denied = call(&client, "awr_team_planning_draft", input.clone(), true).await;
+    assert_eq!(denied["code"], "InvalidInput");
+    assert_eq!(denied["invalid_field"], "/candidate_id");
+    assert_eq!(denied["constraint"], "required_when_editing_a_draft");
+    assert_eq!(denied["request_reserved"], false);
+    let guidance = denied["next_step"].as_str().unwrap();
+    assert!(guidance.contains("mode create") && guidance.contains("before"));
+    assert!(guidance.contains("candidate_id"));
+    let response = http()
+        .post(format!("{}/one/planning/draft", server.url))
+        .bearer_auth(A)
+        .json(&input)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(response.json::<Value>().await.unwrap(), denied);
+    let mut blank = input.clone();
+    blank["candidate_id"] = json!("   ");
+    let blank = call(&client, "awr_team_planning_draft", blank, true).await;
+    assert_eq!(blank["constraint"], "required_when_editing_a_draft");
+    let mut null = input.clone();
+    null["candidate_id"] = Value::Null;
+    let null = call(&client, "awr_team_planning_draft", null, true).await;
+    assert_eq!(null["constraint"], "required_when_editing_a_draft");
+    let mut wrong = input.clone();
+    wrong["mode"] = json!("update");
+    let wrong = call(&client, "awr_team_planning_draft", wrong, true).await;
+    assert_eq!(wrong["invalid_field"], "/mode");
+    assert_eq!(wrong["constraint"], "create_or_edit");
+    assert_eq!(wrong["request_reserved"], false);
+    assert!(
+        wrong["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("changes[].op")
+    );
+    assert!(
+        !wrong.to_string().contains("update"),
+        "the refused mode is not echoed"
+    );
+    let count: i64 = admin.query_one("SELECT count(*) FROM awr_team.planning_command_receipts WHERE request_id='edit-without-candidate'", &[]).await.unwrap().get(0);
+    assert_eq!(
+        count, 0,
+        "an edit without a candidate must not reserve a command"
+    );
+    let count: i64 = admin
+        .query_one("SELECT count(*) FROM awr_team.planning_candidates", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(count, 0, "an edit without a candidate must not create one");
+
+    // The unused request id starts the draft with mode create.
+    let mut started = input;
+    started["mode"] = json!("create");
+    started["changes"] = json!([{"op":"create_task","after":draft("QUEUE-CHANGE")}]);
+    let created = call(&client, "awr_team_planning_draft", started, false).await;
+    assert!(created["result"]["candidate_id"].is_string());
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn planning_draft_create_reusing_a_candidate_id_refuses_a_different_request() {
+    let (_g, admin, _db, store) = setup().await;
+    admin.batch_execute(
+        "UPDATE awr_team.project_memberships SET role='maintainer', membership_version=membership_version+1 WHERE actor_id='agent';
+         UPDATE awr_team.workstream_grants SET can_write=true, grant_version=grant_version+1 WHERE client_id='cli-a';"
+    ).await.unwrap();
+    let server = start(store).await;
+    let client = connect(&server, A).await;
+    let create = |request_id: &str, work: &str| {
+        json!({
+            "protocol_version":1,"request_id":request_id,"mode":"create","candidate_id":"cand-mcp",
+            "changes":[{"op":"create_task","after":draft(work)}],
+            "allowed_spec_roots":["specs"],"project_goal_keys":["delivery"]
+        })
+    };
+    let created = call(
+        &client,
+        "awr_team_planning_draft",
+        create("reuse-1", "REUSE-A"),
+        false,
+    )
+    .await;
+    assert_eq!(created["result"]["candidate_id"], "cand-mcp");
+    let digest = created["result"]["candidate_digest"].clone();
+
+    // The same creation under a new request id is an idempotent retry.
+    let retried = call(
+        &client,
+        "awr_team_planning_draft",
+        create("reuse-2", "REUSE-A"),
+        false,
+    )
+    .await;
+    assert_eq!(
+        retried["result"],
+        json!({"candidate_id":"cand-mcp","draft_revision":1,"candidate_digest":digest,"state":"drafting","resumed":true})
+    );
+
+    // Different changes under the same candidate id are refused, not reported as applied.
+    let denied = call(
+        &client,
+        "awr_team_planning_draft",
+        create("reuse-3", "REUSE-B"),
+        true,
+    )
+    .await;
+    assert_eq!(denied["code"], "InvalidInput");
+    assert_eq!(denied["reason"], "candidate_exists_with_different_request");
+    assert_eq!(denied["invalid_field"], "/candidate_id");
+    assert_eq!(denied["differs_in"], json!(["changes"]));
+    assert_eq!(denied["candidate_id"], "cand-mcp");
+    assert_eq!(denied["draft_revision"], 1);
+    assert_eq!(denied["candidate_digest"], digest);
+    assert_eq!(denied["state"], "drafting");
+    assert_eq!(denied["candidate_changed"], false);
+    assert_eq!(denied["request_reserved"], false);
+    let next = denied["next_step"].as_str().unwrap();
+    assert!(
+        next.contains("mode edit with candidate_id cand-mcp"),
+        "{next}"
+    );
+    assert!(
+        next.contains("new candidate_id or leave candidate_id out"),
+        "{next}"
+    );
+    let response = http()
+        .post(format!("{}/one/planning/draft", server.url))
+        .bearer_auth(A)
+        .json(&create("reuse-4", "REUSE-B"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(response.json::<Value>().await.unwrap(), denied);
+    let count: i64 = admin.query_one("SELECT count(*) FROM awr_team.planning_command_receipts WHERE request_id IN ('reuse-3','reuse-4')", &[]).await.unwrap().get(0);
+    assert_eq!(count, 0, "a refused create must not reserve its request id");
+    let stored: Value = admin
+        .query_one(
+            "SELECT changes_json FROM awr_team.planning_candidates WHERE id='cand-mcp'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(stored[0]["after"]["work_id"], "REUSE-A");
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
 async fn planning_input_correction_and_reserved_outcome_have_transport_parity() {
     let (_g, admin, _db, store) = setup().await;
     admin.batch_execute(

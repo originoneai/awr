@@ -909,6 +909,9 @@ fn public_error(error: PgError) -> (StatusCode, Value) {
     if let Some(diagnostic) = error.delivery_payload_invalid_diagnostic() {
         return (StatusCode::BAD_REQUEST, diagnostic);
     }
+    if let Some(diagnostic) = error.settlement_declaration_incomplete_diagnostic() {
+        return (StatusCode::BAD_REQUEST, diagnostic);
+    }
     if error.is_expired_agent_authorization() {
         return (
             StatusCode::FORBIDDEN,

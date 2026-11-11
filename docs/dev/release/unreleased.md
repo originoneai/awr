@@ -130,6 +130,59 @@ packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
 ## Fixed
 
+- `awr_team_planning_draft` in `create` mode with a `candidate_id` that already exists no longer
+  answers `resumed: true` for a different request. Only a retry of the creation that candidate
+  recorded (same changes, suggestion IDs, spec roots, goal keys, self-approve policy and author)
+  resumes; any other request is refused before any command is reserved as `InvalidInput` with the
+  reason `candidate_exists_with_different_request`, `differs_in`, the existing candidate's
+  `candidate_id`, `draft_revision`, `candidate_digest` and `state`, and a next step (use `edit` with
+  that `candidate_id`, or `create` with a new one or none). Before, a supervisor that reused a
+  candidate ID with new changes was told the draft was created while it still held the old changes
+  (AWR-TFQ-023).
+
+- A `succeeded`, `failed` or `cancelled` `execution.report` for a caller-managed run admitted
+  under a stored workspace settlement policy must now state `executor_stopped` and
+  `no_external_effects` in `workspace_settlement` as `true` or `false`. A report that omits
+  `workspace_settlement`, omits either declaration or leaves it `null` (the placeholder of
+  `terminal_reporting`) is refused with HTTP 400 `InvalidInput`, reason
+  `settlement_declaration_incomplete`, `invalid_field` naming the declaration and
+  `request_reserved: false`. Nothing is recorded, so the same `request_id` works with both
+  declarations. Before, such a report was committed as unsettled: the execution became `unknown`,
+  the task's recovery was blocked and its reservations were marked unknown, and only a
+  `project_admin` reconcile could clear it, so the member's run stopped. Outcome `unknown`, explicit
+  `false` declarations, other settlement mismatches and runs without a stored policy are unchanged
+  (AWR-TFQ-022).
+- A work that was integrated, completed and written back to the source is no longer shown as stale
+  after a later plan activation that left its contract alone. Before, every activation made the
+  project snapshot differ from the one recorded with the selection and the source publication, so
+  `work.observe` reported the delivered work's candidate, review round and integration binding as
+  not current, `delivery.source.status` reported `source_synchronized` false,
+  `delivery.neutral.inspect` reported its selection and facts as not current, and the Observer
+  said the earlier integration record does not apply to the current result, although the delivered
+  bytes and the contract had not changed and nothing could repair it. A completed work now stays
+  current while its contract hash is the same in the current snapshot, and turns stale when an
+  activation changes it. The reads of a work that is not completed, integration preparation,
+  dispatch, the reservation of a new inspection, `delivery.schedule` and
+  `delivery.submission.describe` are unchanged (AWR-TFQ-021).
+- `awr_team_planning_draft` in `edit` mode without a `candidate_id`, or whose mode is neither
+  `create` nor `edit`, is now refused before any command is reserved or candidate created:
+  `InvalidInput` at `/candidate_id` (constraint `required_when_editing_a_draft`) or at `/mode`
+  (`create_or_edit`), with the next step. `edit` changes an existing planning candidate by the
+  `candidate_id` of your earlier `create`; to start a draft, including a change to existing work,
+  use `create` with the changes (each one carries the exact prior definition in `before`).
+  The tool description and schema say what `mode` means. Before, such a request was answered with
+  the generic "query fields or bounds are invalid" text, and a supervisor that picked `edit` for
+  existing work could not recover (AWR-TFQ-020).
+- `review.inspect` of an open round now ends its reading guidance with the reviewer's next step:
+  read what the delivery service observed in `delivery.neutral.inspect`, then record the decision
+  with `review.decide` (approve or reject, with a reason that states what was verified and what
+  could not be). A source revision that the reviewer cannot verify (no source locator disclosed)
+  is a limit to state in the decision, not a reason to withhold it; approval still integrates and
+  delivers nothing. For a candidate without a source revision the note says that
+  `delivery.integration.prepare` refuses it. Before, the reviewer was told only that the revision
+  needs an authorized-channel check "else version unverified", and a careful reviewer agent read
+  the review as blocked and made no decision. The neutral inspection and decided rounds are
+  unchanged (AWR-TFQ-019).
 - The next-action guidance after a repository target moved no longer tells the developer to
   update against the current target, or to rebuild, "in a new admitted execution"
   (AWR-TF-014AN). It appeared in the integration inspection of a rejected integration, in the work

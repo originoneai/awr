@@ -149,6 +149,18 @@ pub enum PgError {
     OutboxReplayForbidden,
     #[error("rollback forbidden")]
     RollbackForbidden,
+    /// A planning create named a candidate id that already exists, and the request is not the
+    /// creation that candidate recorded. Nothing was written. `differs_in` holds the closed
+    /// labels of [`PgError::planning_input_diagnostic`]; the other fields describe the existing,
+    /// unchanged candidate.
+    #[error("planning candidate already exists with a different creation request")]
+    PlanningCandidateExists {
+        candidate_id: String,
+        draft_revision: i32,
+        candidate_digest: String,
+        state: String,
+        differs_in: Vec<&'static str>,
+    },
     #[error("{0}")]
     Db(#[from] tokio_postgres::Error),
     #[error("connection pool: {0}")]
@@ -257,8 +269,42 @@ impl PgError {
         Self::Protocol("planning_input/scope_paths/bounds".into())
     }
 
+    /// `mode` edit changes a draft candidate that already exists, so it needs that candidate's id.
+    pub(crate) fn planning_draft_candidate_required() -> Self {
+        Self::Protocol("planning_input/candidate_id/required_for_edit".into())
+    }
+
+    /// `mode` is the candidate mode, `create` or `edit`; a change's own operation lives in `changes`.
+    pub(crate) fn planning_draft_mode_invalid() -> Self {
+        Self::Protocol("planning_input/mode/create_or_edit".into())
+    }
+
     /// Fixed diagnostics for fresh planning input rejection; never echo the assertion.
     pub fn planning_input_diagnostic(&self) -> Option<serde_json::Value> {
+        if let Self::PlanningCandidateExists {
+            candidate_id,
+            draft_revision,
+            candidate_digest,
+            state,
+            differs_in,
+        } = self
+        {
+            return Some(serde_json::json!({
+                "code": "InvalidInput",
+                "reason": "candidate_exists_with_different_request",
+                "message": "a planning candidate with this candidate_id already exists and was created from a different request; this request was not applied",
+                "invalid_field": "/candidate_id",
+                "constraint": "new_candidate_id_or_same_creation_request",
+                "differs_in": differs_in,
+                "candidate_id": candidate_id,
+                "draft_revision": draft_revision,
+                "candidate_digest": candidate_digest,
+                "state": state,
+                "candidate_changed": false,
+                "request_reserved": false,
+                "next_step": format!("The existing candidate {candidate_id} was not changed; it still holds the changes of its earlier create. To change this draft, use mode edit with candidate_id {candidate_id}; edit replaces its changes with the list you send. To start a new draft, use mode create with a new candidate_id or leave candidate_id out. Repeat a create with an existing candidate_id only to retry the same creation request. Correct this unused request and retry.")
+            }));
+        }
         if matches!(self, Self::Protocol(message) if message == "planning_input/impact_proven/required")
         {
             return Some(serde_json::json!({
@@ -283,6 +329,29 @@ impl PgError {
                 "constraint": "project_relative_scope_bounds",
                 "request_reserved": false,
                 "next_step": "Read the selected work's scope_paths. Every after.scope_paths entry must be project-relative, without empty, dot or parent segments. Include its code, test or specification directory in allowed_spec_roots when declaring bounds. Correct this unused request and retry; declared roots grant no additional authority."
+            }));
+        }
+        if matches!(self, Self::Protocol(message) if message == "planning_input/candidate_id/required_for_edit")
+        {
+            return Some(serde_json::json!({
+                "code": "InvalidInput",
+                "message": "mode edit changes an existing planning candidate and needs its candidate_id",
+                "invalid_field": "/candidate_id",
+                "related_fields": ["/mode"],
+                "constraint": "required_when_editing_a_draft",
+                "request_reserved": false,
+                "next_step": "Mode edit changes a planning candidate that already exists: pass the candidate_id returned by your earlier create; edit replaces that candidate's changes with the list you send. To start a new draft, including a change to existing work, use mode create with the changes; each change to existing work carries the exact prior definition in before. Correct this unused request and retry; if this ID was submitted before, inspect planning.outcome and retain its original intent."
+            }));
+        }
+        if matches!(self, Self::Protocol(message) if message == "planning_input/mode/create_or_edit")
+        {
+            return Some(serde_json::json!({
+                "code": "InvalidInput",
+                "message": "mode must be create or edit",
+                "invalid_field": "/mode",
+                "constraint": "create_or_edit",
+                "request_reserved": false,
+                "next_step": "Mode names what happens to the planning candidate: create starts a new candidate (also for changes to existing work) and edit changes an existing candidate by its candidate_id. A change's own operation (create_task, edit_fields, split, cancel, archive) goes in changes[].op. Correct this unused request and retry; if this ID was submitted before, inspect planning.outcome and retain its original intent."
             }));
         }
         if !matches!(self, Self::Protocol(message) if message == "planning_input/author_person_id/actor_mismatch")
@@ -580,6 +649,56 @@ impl PgError {
                 "basis":"The typed entry requires a JSON object whose declared fields match its discovered schema.",
                 "action":correction,
                 "recheck":"After correcting args.delivery_payload. Current session, ownership, contract and authority checks still apply; this advice does not authorize execution or command replay."
+            }
+        }))
+    }
+
+    const SETTLEMENT_DECLARATION_INCOMPLETE: &'static str = "settlement_declaration_incomplete";
+
+    /// Definite pre-persistence refusal of a terminal execution.report under a caller-managed
+    /// workspace settlement policy that does not state both declarations as booleans. `field`
+    /// is a fixed allowlisted label; caller values are never stored or echoed.
+    pub fn settlement_declaration_incomplete(field: &'static str) -> Self {
+        Self::Protocol(format!(
+            "{}/{field}",
+            Self::SETTLEMENT_DECLARATION_INCOMPLETE
+        ))
+    }
+
+    pub fn is_settlement_declaration_incomplete(&self) -> bool {
+        self.settlement_declaration_incomplete_diagnostic()
+            .is_some()
+    }
+
+    /// Bounded refusal shared by HTTP and MCP. The field is allowlisted again so an unrelated
+    /// Protocol error cannot echo input.
+    pub fn settlement_declaration_incomplete_diagnostic(&self) -> Option<serde_json::Value> {
+        let Self::Protocol(message) = self else {
+            return None;
+        };
+        let field = message
+            .strip_prefix(Self::SETTLEMENT_DECLARATION_INCOMPLETE)?
+            .strip_prefix('/')?;
+        let invalid_field = match field {
+            "workspace_settlement" => "/args/workspace_settlement",
+            "executor_stopped" => "/args/workspace_settlement/executor_stopped",
+            "no_external_effects" => "/args/workspace_settlement/no_external_effects",
+            _ => return None,
+        };
+        let action = "State both declarations in args.workspace_settlement as explicit JSON booleans, replacing the null placeholders of terminal_reporting. They are two independent facts. executor_stopped: write true when nothing of yours is still running for this execution; the AWR execution record stays running until you report, which does not matter. no_external_effects: write true when the run had no external effects. External effects are effects outside the admitted workspace paths: a push or other publication, an external review request, a merge into a shared target, a deployment, a call that changes another service, or an install outside the workspace. Local edits and commits, test runs and a local server you have stopped are workspace effects, not external effects. Write false only for the one you cannot truthfully assert, including prior or unknown external effects; false keeps the recovery path for an authorized operator. Omission or null is never treated as a declaration; to report that you do not know what happened, use outcome unknown. This refusal changed nothing and did not use the request_id: re-send with both declarations.";
+        Some(serde_json::json!({
+            "code":"InvalidInput","reason":Self::SETTLEMENT_DECLARATION_INCOMPLETE,
+            "message":"a terminal execution.report for a caller-managed workspace run must state executor_stopped and no_external_effects explicitly",
+            "invalid_field":invalid_field,
+            "related_fields":["/args/workspace_settlement/executor_stopped","/args/workspace_settlement/no_external_effects","/args/outcome"],
+            "constraint":"explicit_terminal_declarations",
+            "request_reserved":false,
+            "next_step":action,
+            "action_guidance":{
+                "condition":"execution.report with outcome succeeded, failed or cancelled omitted a settlement declaration or left it null.",
+                "basis":"A missing declaration cannot be told apart from an accidental omission, and an unsettled terminal report blocks recovery until an authorized operator reconciles it. Nothing was recorded.",
+                "action":"Follow next_step: state executor_stopped and no_external_effects as true or false, then re-send; this refusal changed nothing.",
+                "recheck":"Before re-sending, refresh execution.inspect if the execution, claim or lease may have changed. Settlement still checks the exact admitted bindings; this advice grants no authority."
             }
         }))
     }

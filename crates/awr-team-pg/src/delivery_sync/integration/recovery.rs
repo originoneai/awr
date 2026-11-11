@@ -10,13 +10,21 @@ impl DeliverySyncStore {
         work: &str,
         id: Option<&str>,
     ) -> PgResult<Value> {
+        // The carry across snapshots below repeats completion::carried_across_snapshots.
         let row = tx.query_opt("SELECT i.id,i.state,r.execution_id,
-            coalesce(s.source_snapshot_id=$4
+            coalesce((s.source_snapshot_id=$4
+                OR (EXISTS(SELECT 1 FROM awr_team.work_runtime wr
+                     WHERE (wr.tenant_id,wr.project_id,wr.scope_id,wr.work_id)=(s.tenant_id,s.project_id,s.scope_id,s.work_id)
+                       AND wr.state='completed' AND wr.selected_completion_id IS NOT NULL)
+                  AND EXISTS(SELECT 1 FROM awr_team.work_contracts oc
+                     WHERE (oc.tenant_id,oc.project_id,oc.scope_id,oc.work_id,oc.snapshot_id)
+                       =(s.tenant_id,s.project_id,s.scope_id,s.work_id,s.source_snapshot_id)
+                       AND oc.contract_hash=wc.contract_hash)))
               AND s.ownership_version=o.ownership_version
               AND c.body_json->'binding'->>'contract_hash'=wc.contract_hash
               AND i.request_json#>>'{prepare,candidate_digest}'=s.binding_digest
               AND i.request_json#>>'{prepare,selection_version}'=s.selection_version::text
-              AND i.request_json#>>'{prepare,read_set,source_snapshot_id}'=$4
+              AND i.request_json#>>'{prepare,read_set,source_snapshot_id}'=s.source_snapshot_id
               AND i.request_json#>>'{prepare,read_set,coordinator_epoch}'=$5
               AND i.request_json#>>'{prepare,read_set,ownership_version}'=o.ownership_version::text
               AND i.request_json#>>'{prepare,read_set,work_id}'=wc.work_id
