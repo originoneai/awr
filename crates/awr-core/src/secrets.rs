@@ -175,7 +175,7 @@ impl SensitiveCategory {
     pub(crate) fn repair(self) -> &'static str {
         match self {
             Self::Credential => {
-                "Real credentials must not be stored or managed by AWR. Keep this file outside registered sources (remove it from the source manifest) and keep real values in env/secret management; inside AWR use only explicit placeholders such as ${VAR} or [redacted]."
+                "Real credentials must not be stored or managed by AWR. Keep this file outside registered sources and keep real values in env/secret management; inside AWR use only explicit placeholders such as ${VAR} or [redacted]. To continue without it, redact the value in the file (a documentation example too), or pass a candidate manifest that omits the file and lists the sources AWR can read, at least one: awr init --manifest <candidate.toml> (awr source configure --manifest once initialized). awr intake review cannot approve credential findings."
             }
             Self::LabelledValue => {
                 "If this is a real secret, it must not be stored or managed by AWR: keep the file outside registered sources and reference ${VAR} or [redacted] inside AWR. If this is a public schema, use a complete value-free interface/type declaration or a structured JSON/YAML schema; do not disable scanning. For unchanged suspected public file content, use awr intake review; content or policy changes require a new review."
@@ -1466,6 +1466,35 @@ mod tests {
         for body in ["", "[redacted]", "${PRIVATE_PROMPT}"] {
             ensure_public_text(&format!("# Private prompt\n{body}\n")).unwrap();
         }
+    }
+
+    #[test]
+    fn credential_repair_names_the_way_forward_without_loosening_the_boundary() {
+        let repair = SensitiveCategory::Credential.repair();
+        // Pinned elsewhere: the file stays outside registered sources.
+        assert!(repair.contains("outside registered sources"));
+        // A first init has no manifest to edit: the repair names the one that continues without the file.
+        assert!(repair.contains("awr init --manifest"));
+        assert!(repair.contains("awr source configure --manifest"));
+        assert!(repair.contains("at least one"));
+        // Review is not an option for credentials, and the text says so rather than staying silent.
+        assert!(repair.contains("cannot approve credential findings"));
+        // The wording never echoes a matched value, and the details carry the same text.
+        let details =
+            sensitive_rejection_details(&SensitiveCategory::Credential.rejection()).unwrap();
+        assert_eq!(details["next_action"], repair);
+        assert_eq!(details["category"], "credential");
+        // The other categories keep naming review where it applies.
+        assert!(
+            SensitiveCategory::LabelledValue
+                .repair()
+                .contains("awr intake review")
+        );
+        assert!(
+            SensitiveCategory::EnvironmentDump
+                .repair()
+                .contains("awr intake review")
+        );
     }
 
     #[test]
