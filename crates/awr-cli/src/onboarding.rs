@@ -190,6 +190,33 @@ fn inventory(root: &Path) -> Result<Vec<FileFact>> {
     let mut skipped = vec![];
     inventory_with_skips(root, &mut skipped)
 }
+/// Findings listed in the details of a stop at the secret boundary; the total is always reported.
+const MAX_LISTED_FINDINGS: usize = 50;
+
+/// One error for every file the intake scan refused. A single finding is returned as it is, so what a caller sees
+/// for one file does not change. For several, the first finding keeps its fields (code, category, location) and the
+/// details gain `findings`, the category and location of each file (no content), and `finding_total`, so that the
+/// owner can deal with all of them in one round instead of finding them one run at a time.
+fn all_findings(mut findings: Vec<Error>) -> Error {
+    if findings.len() <= 1 {
+        return findings.remove(0);
+    }
+    let total = findings.len();
+    let listed: Vec<Value> = findings
+        .iter()
+        .take(MAX_LISTED_FINDINGS)
+        .filter_map(|error| {
+            let details = error.report().details?;
+            Some(json!({ "category": details["category"], "location": details["location"] }))
+        })
+        .collect();
+    let first = findings.remove(0);
+    Error::WithDetails {
+        error: Box::new(first),
+        details: json!({ "findings": listed, "finding_total": total }),
+    }
+}
+
 fn inventory_with_skips(root: &Path, skipped: &mut Vec<String>) -> Result<Vec<FileFact>> {
     fn walk(
         root: &Path,
@@ -197,6 +224,7 @@ fn inventory_with_skips(root: &Path, skipped: &mut Vec<String>) -> Result<Vec<Fi
         depth: usize,
         out: &mut Vec<FileFact>,
         skipped: &mut Vec<String>,
+        findings: &mut Vec<Error>,
     ) -> Result<()> {
         if depth > DEPTH_LIMIT {
             skipped.push(
@@ -225,7 +253,7 @@ fn inventory_with_skips(root: &Path, skipped: &mut Vec<String>) -> Result<Vec<Fi
                 continue;
             }
             if kind.is_dir() {
-                walk(root, &entry.path(), depth + 1, out, skipped)?;
+                walk(root, &entry.path(), depth + 1, out, skipped, findings)?;
             } else if kind.is_file() {
                 if out.len() >= 20000 {
                     return Err(Error::InvalidInput(
@@ -234,15 +262,18 @@ fn inventory_with_skips(root: &Path, skipped: &mut Vec<String>) -> Result<Vec<Fi
                 }
                 let path = entry.path();
                 let bytes = entry.metadata()?.len();
+                // A file the secret boundary refuses is noted and the walk goes on, so that every such file is
+                // reported at once. Any other error ends the walk as before.
                 let hash = if document(&path) && bytes <= awr_source::YAML_READ_CAP {
-                    Some(format!(
-                        "{:x}",
-                        Sha256::digest(awr_source::read_project_document(
-                            root,
-                            &path,
-                            awr_source::YAML_READ_CAP
-                        )?)
-                    ))
+                    match awr_source::read_project_document(root, &path, awr_source::YAML_READ_CAP)
+                    {
+                        Ok(content) => Some(format!("{:x}", Sha256::digest(content))),
+                        Err(error @ Error::SensitiveSource { .. }) => {
+                            findings.push(error);
+                            None
+                        }
+                        Err(error) => return Err(error),
+                    }
                 } else {
                     None
                 };
@@ -260,7 +291,11 @@ fn inventory_with_skips(root: &Path, skipped: &mut Vec<String>) -> Result<Vec<Fi
         Ok(())
     }
     let mut files = vec![];
-    walk(root, root, 0, &mut files, skipped)?;
+    let mut findings = vec![];
+    walk(root, root, 0, &mut files, skipped, &mut findings)?;
+    if !findings.is_empty() {
+        return Err(all_findings(findings));
+    }
     Ok(files)
 }
 fn git(root: &Path) -> Value {
