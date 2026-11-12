@@ -91,6 +91,14 @@ impl Project {
         out
     }
 
+    /// A JSON file in the state directory (outside the project), for example a host's review answer.
+    fn state_file(&self, name: &str, value: &Value) -> PathBuf {
+        fs::create_dir_all(&self.state).unwrap();
+        let file = self.state.join(name);
+        fs::write(&file, value.to_string()).unwrap();
+        file
+    }
+
     /// A manifest file (outside the project) that lists `paths` as plan sources.
     fn manifest(&self, name: &str, paths: &[&str]) -> PathBuf {
         let mut toml = String::from("[project]\nname = \"p\"\nauthority_mode = \"source_first\"\n");
@@ -687,4 +695,179 @@ fn another_manifest_starts_the_run_again_from_the_preview() {
         other["record"]["id"], one["record"]["id"],
         "it is still the same run"
     );
+}
+
+const LEDGER: &str = ".awr/intake/work-ledger.yaml";
+
+#[test]
+fn a_host_reviews_the_draft_itself_and_the_run_never_applies_it_unreviewed() {
+    let p = Project::new("host");
+    p.write("README.md", README);
+    let before = p.snapshot(&[]);
+
+    // The run pauses at the review with the draft and the request; waiting is not a failure.
+    let out = p.takeover(&["--await-review"]);
+    assert!(
+        out.status.success(),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    let waiting = outcome(&out);
+    assert_eq!(waiting["outcome"], "awaiting_review");
+    let stop = &waiting["record"]["stop"];
+    assert_eq!(
+        (stop["step"].as_str(), stop["reason"].as_str()),
+        (Some("review"), Some("awaiting_review"))
+    );
+    let request: Value = serde_json::from_slice(
+        &fs::read(stop["detail"]["request_path"].as_str().unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert!(request["draft"]["generated_files"][LEDGER].is_string());
+    assert_eq!(request["round"], 1);
+    assert!(request["project_root"].is_string());
+    assert!(Path::new(stop["detail"]["draft_path"].as_str().unwrap()).is_file());
+    assert_eq!(
+        p.snapshot(&[]),
+        before,
+        "nothing is written while the host reviews"
+    );
+
+    // A later command without the flag keeps waiting; it does not apply the draft as generated.
+    let again = p.takeover(&[]);
+    assert!(again.status.success());
+    assert_eq!(outcome(&again)["outcome"], "awaiting_review");
+    assert_eq!(p.snapshot(&[]), before);
+
+    // The host's answer goes through the guards of a reviewer's, and the same run finishes.
+    let answer = p.state_file(
+        "answer.json",
+        &json!({ "generated_files": { LEDGER: REVIEWED_LEDGER }, "notes": "Reviewed by the host." }),
+    );
+    let out = p.takeover(&["--reviewed", &answer.to_string_lossy()]);
+    assert!(
+        out.status.success(),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    let done = outcome(&out);
+    assert_eq!(done["outcome"], "completed");
+    assert_eq!(
+        done["record"]["id"], waiting["record"]["id"],
+        "the same run continued"
+    );
+    let ledger = p.ledger_text();
+    assert!(
+        ledger.contains("id: count-words")
+            && ledger.contains("status: candidate")
+            && !ledger.contains("status: active"),
+        "{ledger}"
+    );
+    assert!(
+        ledger.contains("INTAKE-001"),
+        "the intake work item is put back:\n{ledger}"
+    );
+    let receipt = p.receipt();
+    assert_eq!(receipt["reviewed"]["by_reviewer"], true);
+    let notes = receipt["reviewed"]["notes"].as_str().unwrap();
+    assert!(
+        notes.contains("Reviewed by the host.") && notes.contains("lowered to candidate"),
+        "{notes}"
+    );
+}
+
+#[test]
+fn a_refused_host_answer_leaves_the_run_waiting_and_the_next_answer_is_taken() {
+    let p = Project::new("refused");
+    p.write("README.md", README);
+    assert_eq!(
+        outcome(&p.takeover(&["--await-review"]))["outcome"],
+        "awaiting_review"
+    );
+
+    // An answer file that does not exist, one that is not JSON, and one that writes outside .awr/intake/.
+    let missing = p.state.join("missing.json");
+    let not_json = p.state.join("not-json.txt");
+    fs::write(&not_json, "no json here").unwrap();
+    let outside = p.state_file(
+        "outside.json",
+        &json!({ "generated_files": { "README.md": "# overwritten\n" } }),
+    );
+    for (answer, reason) in [
+        (&missing, "review_failed"),
+        (&not_json, "review_failed"),
+        (&outside, "review_rejected"),
+    ] {
+        let out = p.takeover(&["--reviewed", &answer.to_string_lossy()]);
+        assert!(!out.status.success(), "{}", answer.display());
+        assert_eq!(
+            outcome(&out)["record"]["stop"]["reason"],
+            reason,
+            "{}",
+            answer.display()
+        );
+        assert!(!p.root.join(".awr").exists(), "nothing was written");
+        // The refusal does not turn the run into one that applies the draft unreviewed.
+        let waiting = p.takeover(&[]);
+        assert!(waiting.status.success());
+        assert_eq!(
+            outcome(&waiting)["outcome"],
+            "awaiting_review",
+            "{}",
+            answer.display()
+        );
+        assert!(!p.root.join(".awr").exists());
+    }
+
+    let good = p.state_file(
+        "good.json",
+        &json!({ "generated_files": { LEDGER: REVIEWED_LEDGER } }),
+    );
+    let out = p.takeover(&["--reviewed", &good.to_string_lossy()]);
+    assert!(
+        out.status.success(),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert_eq!(outcome(&out)["outcome"], "completed");
+}
+
+#[test]
+fn a_reviewed_answer_can_be_given_up_front_and_the_review_flags_exclude_each_other() {
+    let p = Project::new("upfront");
+    p.write("README.md", README);
+    let answer = p.state_file(
+        "answer.json",
+        &json!({ "generated_files": { LEDGER: REVIEWED_LEDGER } }),
+    );
+    let a = answer.to_string_lossy().into_owned();
+
+    for args in [
+        vec!["takeover", "--await-review", "--reviewed", &a],
+        vec!["takeover", "--reviewed", &a, "--reviewer", "/bin/true"],
+        vec!["takeover", "--await-review", "--reviewer", "/bin/true"],
+    ] {
+        let out = p.run(&args);
+        assert!(!out.status.success(), "{args:?}");
+        assert!(
+            text(&out.stderr).contains("cannot be used with"),
+            "{args:?}: {}",
+            text(&out.stderr)
+        );
+    }
+    assert!(!p.root.join(".awr").exists());
+
+    let out = p.takeover(&["--reviewed", &a]);
+    assert!(
+        out.status.success(),
+        "{}\n{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert_eq!(outcome(&out)["outcome"], "completed");
+    assert!(p.ledger_text().contains("id: count-words"));
+    assert_eq!(p.receipt()["reviewed"]["by_reviewer"], true);
 }

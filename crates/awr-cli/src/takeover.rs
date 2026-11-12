@@ -72,6 +72,12 @@ pub struct TakeoverArgs {
     /// Seconds the reviewer may take before the run stops.
     #[arg(long, default_value_t = 900, requires = "reviewer")]
     pub review_timeout_secs: u64,
+    /// Stop after the preview with the draft and the review request for the host; resume with --reviewed.
+    #[arg(long, conflicts_with_all = ["reviewer", "reviewed"])]
+    pub await_review: bool,
+    /// The host's answer to the review request, in the reviewer's answer format.
+    #[arg(long, conflicts_with = "reviewer")]
+    pub reviewed: Option<PathBuf>,
     /// Source list the owner chose (a manifest); the takeover maps and reads exactly these sources.
     #[arg(long)]
     pub manifest: Option<PathBuf>,
@@ -119,6 +125,8 @@ impl Stop {
 
 /// A step's way out: a recorded stop, a request to start over from preview, or an unexpected failure.
 enum StepEnd {
+    /// The run waits for the host to review the draft; nothing failed.
+    Pause(Stop),
     Stop(Stop),
     Retry(String),
     Failed(String),
@@ -888,71 +896,49 @@ impl Run<'_> {
         let draft = read_json(&draft_path)
             .ok_or_else(|| StepEnd::Failed("the draft of this run is missing".into()))?;
         let round = self.record["rounds"].as_u64().unwrap_or(1);
-        let mut reviewed = draft.clone();
-        let mut notes: Option<String> = None;
-        if let Some(program) = self.args.reviewer.clone() {
-            let request = json!({
-                "project_root": self.root,
-                "draft": draft,
-                "draft_path": draft_path,
-                "round": round,
-                "sources": summarize_sources(&draft["authority_mapping"]),
-                "ambiguous_domains": draft["ambiguous_domains"].clone(),
-            });
-            let answer = run_reviewer(
-                &program,
-                &self.args.reviewer_args,
-                &request,
-                Duration::from_secs(self.args.review_timeout_secs),
-            )
-            .map_err(StepEnd::Stop)?;
-            let mut returned = answer["generated_files"]
-                .as_object()
-                .cloned()
-                .unwrap_or_default();
-            if returned.is_empty() {
-                return Err(Stop::new(
-                    "review_failed",
-                    "The reviewer's answer has no generated_files.",
+        let request = json!({
+            "project_root": self.root,
+            "draft": draft,
+            "draft_path": draft_path,
+            "round": round,
+            "sources": summarize_sources(&draft["authority_mapping"]),
+            "ambiguous_domains": draft["ambiguous_domains"].clone(),
+        });
+        // Where the answer comes from: a reviewer command, the host's answer file, or nobody (the draft as generated).
+        // A run that paused for the host keeps waiting until it gets an answer: it never applies an unreviewed draft
+        // because a later command left the flags out.
+        let waiting = self.args.await_review || self.record["awaiting_review"] == true;
+        let answer = if let Some(program) = self.args.reviewer.clone() {
+            Some(
+                run_reviewer(
+                    &program,
+                    &self.args.reviewer_args,
+                    &request,
+                    Duration::from_secs(self.args.review_timeout_secs),
                 )
-                .into());
-            }
-            if let Some(problem) = validate_files(&returned) {
-                return Err(Stop::new("review_rejected", problem).into());
-            }
-            let lowered = cap_goal_statuses(&mut returned);
-            let draft_files = draft["generated_files"]
-                .as_object()
-                .cloned()
-                .unwrap_or_default();
-            let kept = keep_intake_work(&mut returned, &draft_files);
-            let mut merged = draft_files;
-            merged.extend(returned);
-            reviewed["generated_files"] = Value::Object(merged);
-            // The reviewer may settle an ambiguity by choosing the authoritative source of a domain.
-            for key in ["authority_mapping", "ambiguous_domains"] {
-                if let Some(value) = answer.get(key) {
-                    reviewed[key] = value.clone();
-                }
-            }
-            let mut parts = Vec::new();
-            if let Some(text) = answer["notes"].as_str() {
-                let single: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-                parts.push(single.chars().take(600).collect::<String>());
-            }
-            if lowered > 0 {
-                parts.push(format!("{lowered} goal status(es) the reviewer set to active or confirmed were lowered to candidate: only the owner confirms a goal."));
-            }
-            if !kept.is_empty() {
-                parts.push(format!(
-                    "The reviewer left no work items, so the generated intake work was kept ({}): without a work item a conversation cannot be bound to AWR.",
-                    kept.join(", ")
-                ));
-            }
-            if !parts.is_empty() {
-                notes = Some(parts.join(" "));
-            }
-        }
+                .map_err(StepEnd::Stop)?,
+            )
+        } else if let Some(file) = self.args.reviewed.clone() {
+            Some(read_answer(&file).map_err(StepEnd::Stop)?)
+        } else if waiting {
+            let request_path = self.run_dir.join("request.json");
+            write_json(&request_path, &request)?;
+            return Err(StepEnd::Pause(
+                Stop::new(
+                    "awaiting_review",
+                    "The draft is waiting for its review. Review it, write the answer to a file in the reviewer's answer format and run the takeover again with --reviewed <file>.",
+                )
+                .with(json!({ "draft_path": draft_path, "request_path": request_path })),
+            ));
+        } else {
+            None
+        };
+        let mut reviewed = draft.clone();
+        let notes = match &answer {
+            Some(answer) => apply_answer(&draft, answer, &mut reviewed).map_err(StepEnd::Stop)?,
+            None => None,
+        };
+        self.record["awaiting_review"] = json!(false);
         let reviewed_path = self.run_dir.join("reviewed.json");
         write_json(&reviewed_path, &reviewed)?;
         let draft_files = draft["generated_files"]
@@ -969,7 +955,7 @@ impl Run<'_> {
                     .collect()
             })
             .unwrap_or_default();
-        let mut result = json!({ "reviewed_path": reviewed_path, "by_reviewer": self.args.reviewer.is_some(), "changed_files": changed });
+        let mut result = json!({ "reviewed_path": reviewed_path, "by_reviewer": answer.is_some(), "changed_files": changed });
         if let Some(notes) = notes {
             result["notes"] = json!(notes);
         }
@@ -1214,6 +1200,87 @@ fn ambiguous_authority(domains: &[String], message: Option<String>) -> Stop {
         }),
     )
     .with(json!({ "domains": domains }))
+}
+
+/// Put a reviewer's answer into the reviewed draft under the fixed guards: its files stay under `.awr/intake/`, goal
+/// statuses are capped at `candidate`, a ledger without work items gets the draft's work items back, and it may settle
+/// an ambiguity with `authority_mapping` and `ambiguous_domains`. The answer of a reviewer command and the answer
+/// file of a host come through here, so the two cannot differ. Returns the notes for the receipt.
+fn apply_answer(
+    draft: &Value,
+    answer: &Value,
+    reviewed: &mut Value,
+) -> std::result::Result<Option<String>, Stop> {
+    let mut returned = answer["generated_files"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    if returned.is_empty() {
+        return Err(Stop::new(
+            "review_failed",
+            "The reviewer's answer has no generated_files.",
+        ));
+    }
+    if let Some(problem) = validate_files(&returned) {
+        return Err(Stop::new("review_rejected", problem));
+    }
+    let lowered = cap_goal_statuses(&mut returned);
+    let draft_files = draft["generated_files"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    let kept = keep_intake_work(&mut returned, &draft_files);
+    let mut merged = draft_files;
+    merged.extend(returned);
+    reviewed["generated_files"] = Value::Object(merged);
+    for key in ["authority_mapping", "ambiguous_domains"] {
+        if let Some(value) = answer.get(key) {
+            reviewed[key] = value.clone();
+        }
+    }
+    let mut parts = Vec::new();
+    if let Some(text) = answer["notes"].as_str() {
+        let single: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        parts.push(single.chars().take(600).collect::<String>());
+    }
+    if lowered > 0 {
+        parts.push(format!("{lowered} goal status(es) the reviewer set to active or confirmed were lowered to candidate: only the owner confirms a goal."));
+    }
+    if !kept.is_empty() {
+        parts.push(format!(
+            "The reviewer left no work items, so the generated intake work was kept ({}): without a work item a conversation cannot be bound to AWR.",
+            kept.join(", ")
+        ));
+    }
+    Ok((!parts.is_empty()).then(|| parts.join(" ")))
+}
+
+/// The host's answer file, read with the same cap and leniency as a reviewer's output.
+fn read_answer(path: &Path) -> std::result::Result<Value, Stop> {
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .and_then(|file| {
+            file.take(MAX_REVIEWER_OUTPUT_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)
+        })
+        .map_err(|error| {
+            Stop::new(
+                "review_failed",
+                format!("The reviewed answer could not be read: {error}"),
+            )
+        })?;
+    if bytes.len() > MAX_REVIEWER_OUTPUT_BYTES {
+        return Err(Stop::new(
+            "review_rejected",
+            "The reviewed answer is larger than 8 MiB.",
+        ));
+    }
+    extract_json(&String::from_utf8_lossy(&bytes)).ok_or_else(|| {
+        Stop::new(
+            "review_failed",
+            "The reviewed answer is not a JSON object with the reviewed intake files.",
+        )
+    })
 }
 
 /// Run the reviewer: the request as JSON on stdin, its answer as JSON on stdout, within `timeout`.
@@ -1465,11 +1532,17 @@ fn run_takeover(root: &Path, args: &TakeoverArgs, json_output: bool) -> Result<V
             }
             Err(end) => {
                 let (status, stop) = match end {
+                    StepEnd::Pause(stop) => ("awaiting_review", stop),
                     StepEnd::Stop(stop) => ("stopped", stop),
                     StepEnd::Failed(message) => ("failed", Stop::new("unexpected_error", message)),
                     StepEnd::Retry(_) => unreachable!("handled above"),
                 };
                 run.mark(name, json!({ "status": status, "finished_at": now_ms() }))?;
+                // A paused run keeps waiting until a review is applied, whatever flags a later command carries and
+                // whatever happens to an answer that was refused (review() clears the flag when one is applied).
+                if status == "awaiting_review" {
+                    run.record["awaiting_review"] = json!(true);
+                }
                 // The reviewed draft was what accept refused, and nothing was written yet: the next run reviews again,
                 // so a reviewer that settles the ambiguity or avoids the extra write can take effect.
                 if name == "accept"
@@ -1535,6 +1608,18 @@ fn print_outcome(outcome: &Value, json_output: bool) {
             {
                 println!("  receipt: {path}");
             }
+        }
+        "awaiting_review" => {
+            let stop = &outcome["record"]["stop"];
+            println!("Takeover is waiting for the review of the draft.");
+            for (label, key) in [("draft", "draft_path"), ("request", "request_path")] {
+                if let Some(path) = stop["detail"][key].as_str() {
+                    println!("  {label}: {path}");
+                }
+            }
+            println!(
+                "  Write the answer to a file and run the takeover again with --reviewed <file>."
+            );
         }
         other => {
             let stop = &outcome["record"]["stop"];
@@ -1604,7 +1689,8 @@ pub fn run(project: &Path, args: &TakeoverArgs, json_output: bool) -> Result<()>
     let outcome = run_takeover(&root, args, json_output)?;
     print_outcome(&outcome, json_output);
     match outcome["outcome"].as_str() {
-        Some("completed") => Ok(()),
+        // Waiting for the host is not a failure: the host reads `outcome` and goes on with --reviewed.
+        Some("completed" | "awaiting_review") => Ok(()),
         _ => {
             let stop = &outcome["record"]["stop"];
             Err(Error::WithDetails {
