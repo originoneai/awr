@@ -240,23 +240,46 @@ fn classify(failure: &Failure, root: &Path) -> Stop {
     Stop::new("awr_error", describe(failure)).with(json!({ "code": failure.code }))
 }
 
+/// A path in one comparable spelling: forward slashes, no `\\?\` verbatim prefix, and no leading slash before a
+/// drive letter (a file URL spells `C:\x` as `/C:/x`).
+fn normalized_path(path: &str) -> String {
+    let mut text = path.replace('\\', "/");
+    if let Some(rest) = text.strip_prefix("//?/") {
+        text = rest.to_string();
+    }
+    let bytes = text.as_bytes();
+    if bytes.len() >= 3 && bytes[0] == b'/' && bytes[1].is_ascii_alphabetic() && bytes[2] == b':' {
+        text.remove(0);
+    }
+    text
+}
+
 /// A path from an AWR locator (`file:///...`) relative to the project, so that no absolute path of this machine
-/// is kept. AWR reports real paths (`/private/var/...` for `/var/...` on macOS), so both spellings of the root
-/// are tried.
+/// is kept. AWR reports real paths (`/private/var/...` for `/var/...` on macOS, `C:/...` for a `\\?\C:\...` root
+/// on Windows), so both spellings of the root are tried on normalized text; drive letters ignore case on Windows.
 fn relative_locator(locator: &str, root: &Path) -> Option<String> {
     let path = locator.strip_prefix("file://").unwrap_or(locator);
-    let path = percent_decode(path.split('#').next().unwrap_or(path));
-    let path = Path::new(&path);
+    let path = normalized_path(&percent_decode(path.split('#').next().unwrap_or(path)));
     let mut roots = vec![root.to_path_buf()];
     if let Ok(real) = fs::canonicalize(root) {
         roots.push(real);
     }
     for base in roots {
-        if let Ok(relative) = path.strip_prefix(&base) {
-            return Some(relative.to_string_lossy().into_owned());
+        let base = normalized_path(&base.to_string_lossy());
+        let base = base.trim_end_matches('/');
+        let under = path.len() > base.len()
+            && path.is_char_boundary(base.len())
+            && path.as_bytes()[base.len()] == b'/'
+            && if cfg!(windows) {
+                path[..base.len()].eq_ignore_ascii_case(base)
+            } else {
+                &path[..base.len()] == base
+            };
+        if under {
+            return Some(path[base.len() + 1..].to_string());
         }
     }
-    Some(path.to_string_lossy().into_owned())
+    Some(path)
 }
 
 fn percent_decode(text: &str) -> String {
@@ -1714,6 +1737,31 @@ mod tests {
         assert_eq!(
             relative_locator("/elsewhere/x.md", root).as_deref(),
             Some("/elsewhere/x.md")
+        );
+        // Windows spellings: a file URL `/C:/...`, a `\\?\` verbatim root and a root with backslashes.
+        for root in [
+            "C:\\Users\\r\\Temp\\p",
+            "\\\\?\\C:\\Users\\r\\Temp\\p",
+            "C:/Users/r/Temp/p",
+        ] {
+            assert_eq!(
+                relative_locator(
+                    "file:///C:/Users/r/Temp/p/docs/README.md#L4",
+                    Path::new(root)
+                )
+                .as_deref(),
+                Some("docs/README.md"),
+                "{root}"
+            );
+        }
+        // a sibling directory that only shares the prefix is not inside the project
+        assert_eq!(
+            relative_locator(
+                "file:///C:/Users/r/Temp/p2/README.md",
+                Path::new("C:\\Users\\r\\Temp\\p")
+            )
+            .as_deref(),
+            Some("C:/Users/r/Temp/p2/README.md")
         );
         // A literal `%` before a multibyte character, or too close to the end to be an escape, is kept as it is.
         for (locator, expected) in [
