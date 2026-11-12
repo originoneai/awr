@@ -11,13 +11,13 @@ AWR ships the same native Rust CLI (`awr`) and MCP server (`awr-mcp`) through np
 With npm (requires Node 22.14 or newer):
 
 ```sh
-npm install -g @originoneai/awr@0.7.0
+npm install -g @originoneai/awr@0.8.0
 ```
 
 Or with pip, inside a virtual environment (requires Python 3.9 or newer):
 
 ```sh
-python -m pip install originoneai-awr==0.7.0
+python -m pip install originoneai-awr==0.8.0
 ```
 
 Verify both executables:
@@ -118,7 +118,7 @@ awr --project "$AWR_PROJECT" client status --client codex
 ```
 
 Use `--client claude` throughout for Claude Code. Open a fresh trusted host session,
-then inspect receiver observations with `awr client status`. For the 0.7.0 packages
+then inspect receiver observations with `awr client status`. For the 0.8.0 packages
 or another host, use the [manual working agreement](agents.md#hosts-without-lifecycle-hooks).
 
 ### 4. Start a work session

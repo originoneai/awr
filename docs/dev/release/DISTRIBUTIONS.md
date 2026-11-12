@@ -1,13 +1,13 @@
 # Native npm and PyPI distributions
 
-AWR 0.7.0 is a stable package release. npm uses the `latest` channel and PyPI uses
-`0.7.0` without a prerelease suffix. Both install the same Rust CLI and MCP server;
+AWR 0.8.0 is a stable package release. npm uses the `latest` channel and PyPI uses
+`0.8.0` without a prerelease suffix. Both install the same Rust CLI and MCP server;
 no separate JavaScript or Python SDK is included.
 
 ```sh
-npm install -g @originoneai/awr@0.7.0
+npm install -g @originoneai/awr@0.8.0
 # or, in a virtual environment
-python -m pip install originoneai-awr==0.7.0
+python -m pip install originoneai-awr==0.8.0
 awr --version
 awr-mcp --version
 ```
@@ -28,17 +28,17 @@ Python distributions own `awr_binary`; installing them side by side is unsupport
 ```sh
 # npm global installation
 npm uninstall -g @originoneai/agent-work-runtime
-npm install -g @originoneai/awr@0.7.0
+npm install -g @originoneai/awr@0.8.0
 
 # Or, in the same Python virtual environment
 python -m pip uninstall agent-work-runtime
-python -m pip install originoneai-awr==0.7.0
+python -m pip install originoneai-awr==0.8.0
 ```
 
 For pipx or uv tools, remove the old `agent-work-runtime` application with the
-same tool before installing `originoneai-awr==0.7.0`. If both Python packages
+same tool before installing `originoneai-awr==0.8.0`. If both Python packages
 were already installed, uninstall the old one and then reinstall the new one
-with `python -m pip install --force-reinstall originoneai-awr==0.7.0` to restore
+with `python -m pip install --force-reinstall originoneai-awr==0.8.0` to restore
 shared files and entry points.
 
 Run `awr --version` and `awr-mcp --version` and check the executable paths your
@@ -133,9 +133,9 @@ packages, checksums and aggregate manifest. Raw execution records stay local or 
 isolated CI artifacts and are not committed to the repository.
 
 
-## Pinned host payload (0.7.0)
+## Pinned host payload (0.8.0)
 
-AWR `0.7.0` uses database schema 14. Host applications can bundle the same native CLI and MCP server without the registry launchers. A locally built payload has its own recorded source and artifact identity. The matching macOS arm64 or Intel x64 payload can be embedded directly in an application; runtime users need no Node/Python/Rust installation and no PATH changes. The build/verification machine still needs its development tools. The host is responsible for application signing, notarization and updating its bundled binary.
+AWR `0.8.0` uses database schema 14. Host applications can bundle the same native CLI and MCP server without the registry launchers. A locally built payload has its own recorded source and artifact identity. The matching macOS arm64 or Intel x64 payload can be embedded directly in an application; runtime users need no Node/Python/Rust installation and no PATH changes. The build/verification machine still needs its development tools. The host is responsible for application signing, notarization and updating its bundled binary.
 
 From clean committed source:
 
@@ -147,6 +147,21 @@ The output directory is new and never overwritten. Its archive name binds purpos
 
 Invoke the executable by its absolute application-resource path with `--project <original project root> --json`. Capability negotiation requires no project, database, model configuration, shell, or language interpreter. Initialization, source reads and work context likewise run natively; Git is a separate optional requirement for Git-bound workflows. SQLite is bundled. Do not use `npx`, `pip`, a shell command string or an opportunistic downloader as the embedded invocation path.
 
+## Upgrading from 0.7.0
+
+The project database remains **schema 14**, so no migration runs. Stop writers and the
+local Hub (`awr overview stop --json`), take the matching backups described below
+(the database through SQLite's backup API, `.awr/project.toml`, registered sources, the
+old binaries and the per-user Hub directory), install 0.8.0, confirm both binary
+versions, then run `awr source reindex` once and inspect `awr status`.
+
+Ordinary `awr` and `awr-mcp` calls no longer add the project they touch to the per-user
+local catalog; register a project with `awr overview register <dir>` or set
+`AWR_LOCAL_AUTO_REGISTER=1` to keep the 0.7.0 behavior (see the
+[0.8.0 notes](0.8.0.md)). To roll back, stop writers and the Hub, reinstall 0.7.0 and
+restore the backups you took; the schema did not change, so the older program opens the
+same database.
+
 ## Upgrading from 0.6.0
 
 The project database remains **schema 14**. Stop writers and the local Hub
@@ -156,7 +171,7 @@ binaries. Also back up the per-user Hub directory: `AWR_LOCAL_HOME` when configu
 otherwise `%LOCALAPPDATA%/AWR` on Windows, `$XDG_STATE_HOME/awr` for an absolute
 XDG state root, or `$HOME/.local/state/awr`.
 
-Install 0.7.0, confirm both binary versions, then run `awr source reindex` once
+Install 0.8.0, confirm both binary versions, then run `awr source reindex` once
 and inspect `awr status`. Source reindexing refreshes changed projections; viewing
 a PPO snapshot alone does not synchronize sources. Open `awr overview` and check
 that expected project cards and recorded progress are available.

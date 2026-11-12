@@ -231,11 +231,11 @@ from the actual rule. Putting the annotation in the body leaves the rule unresol
 `--json` 可放已知子命令前后；顶层命令诊断需要将它放在命令前。
 
 `awr --version` and `awr-mcp --version` append the first eight hexadecimal characters
-of the source commit when available, for example `awr 0.7.0 (abcdef12)`. Git working
+of the source commit when available, for example `awr 0.8.0 (abcdef12)`. Git working
 tree changes add `-dirty` inside the parentheses. Builds prefer `AWR_BUILD_SHA`
 (at least eight hexadecimal characters), then local Git; invalid values fall back
 to Git. Source archives can supply that variable. Without commit information,
-the output remains `awr 0.7.0`. The program name and package version keep their
+the output remains `awr 0.8.0`. The program name and package version keep their
 positions; MCP protocol versions and runtime binding formats stay the same.
 
 #### Remote Team reads

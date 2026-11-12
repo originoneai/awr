@@ -6,12 +6,12 @@ Start or resume a work-bound session, read its required context and save progres
 
 This page covers the **AWR 0.6.0** baseline and development source. Packages include CLI, stdio MCP, session/claim tools and [shared HTTP](../reference/mcp-service.md). Version 0.5.1 introduced grouped discovery; 0.6.0 adds schema 14 and `session start --client/--conversation`.
 
-Installation examples use the canonical 0.7.0 package names. Existing users should
+Installation examples use the canonical 0.8.0 package names. Existing users should
 follow the [package migration steps](../release/DISTRIBUTIONS.md#migrate-from-the-previous-package-names) first.
 
 ```sh
-npm install -g @originoneai/awr@0.7.0
-# or: python -m pip install originoneai-awr==0.7.0
+npm install -g @originoneai/awr@0.8.0
+# or: python -m pip install originoneai-awr==0.8.0
 ```
 
 0.5.1 projects use SQLite schema 7. 0.6.0 migrates **7 → 14** on the first

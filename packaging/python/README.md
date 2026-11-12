@@ -2,7 +2,7 @@
 
 The open-source project delivery platform for people and AI.
 
-AWR 0.7.0 includes the native Rust `awr` CLI and `awr-mcp` server for stdio and shared Streamable HTTP.
+AWR 0.8.0 includes the native Rust `awr` CLI and `awr-mcp` server for stdio and shared Streamable HTTP.
 It provides command-line tools; context compilation runs locally.
 
 Project Hub and Project Progress Overview are bundled with the native payload.
@@ -12,10 +12,10 @@ service automatically. After that, open **http://127.0.0.1:7381** directly; runn
 `awr overview` first is optional. Installation alone does not start a process.
 If the port is occupied, `awr overview status --json` reports the actual URL.
 The next CLI/MCP use recovers a terminated service without duplicate instances.
-See the [local hub guide](https://github.com/originoneai/awr/blob/v0.7.0/docs/dev/reference/local-project-hub.md).
+See the [local hub guide](https://github.com/originoneai/awr/blob/v0.8.0/docs/dev/reference/local-project-hub.md).
 
 ```sh
-python -m pip install originoneai-awr==0.7.0
+python -m pip install originoneai-awr==0.8.0
 awr --version
 awr --help
 awr-mcp --help
@@ -25,9 +25,9 @@ Upgrading an existing installation? Uninstall `agent-work-runtime` with the same
 package manager before installing `originoneai-awr`. Do not install both in the
 same environment: they share Python files and command entry points. Commands and
 project state keep their existing names. The bare PyPI package `awr` is unrelated.
-See the [migration guide](https://github.com/originoneai/awr/blob/v0.7.0/docs/dev/release/DISTRIBUTIONS.md#migrate-from-the-previous-package-names).
+See the [migration guide](https://github.com/originoneai/awr/blob/v0.8.0/docs/dev/release/DISTRIBUTIONS.md#migrate-from-the-previous-package-names).
 
-For an isolated application installation, use `pipx install originoneai-awr==0.7.0` or `uv tool install originoneai-awr==0.7.0`.
+For an isolated application installation, use `pipx install originoneai-awr==0.8.0` or `uv tool install originoneai-awr==0.8.0`.
 
 The project must be initialized before running
 `awr-mcp --project /absolute/project`. Follow the

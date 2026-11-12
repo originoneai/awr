@@ -51,18 +51,18 @@ personal CLI/MCP steps below are 0.6.0.
 
 ## Optional MCP connection
 
-Install AWR 0.7.0, which includes the grouped MCP catalog, or build
+Install AWR 0.8.0, which includes the grouped MCP catalog, or build
 `awr` and `awr-mcp` from this repository using
 [the repository instructions](../../../README.md), then initialize the target
 project from its reviewed source manifest. For an already initialized project,
 keep its existing database and mapping.
 
-Installation examples use the canonical 0.7.0 package names. Existing users should
+Installation examples use the canonical 0.8.0 package names. Existing users should
 follow the [package migration steps](../release/DISTRIBUTIONS.md#migrate-from-the-previous-package-names) first.
 
 ```sh
-npm install -g @originoneai/awr@0.7.0
-# or: python -m pip install originoneai-awr==0.7.0
+npm install -g @originoneai/awr@0.8.0
+# or: python -m pip install originoneai-awr==0.8.0
 # or from this tree:
 cargo build --locked -p awr-cli -p awr-mcp
 # binaries: target/debug/awr and target/debug/awr-mcp

@@ -64,19 +64,19 @@ AWR 围绕同一个项目目标，把**任务与工作线、交叉依赖、上�
 
 ## 现在可以使用什么
 
-**0.7.0** CLI/MCP 安装包提供有来源的目标与任务、依赖导航、聚焦上下文、
+**0.8.0** CLI/MCP 安装包提供有来源的目标与任务、依赖导航、聚焦上下文、
 会话认领与检查点、绑定版本的证据，以及支持多个客户端和项目的
 [共享 HTTP MCP 服务](docs/dev/reference/mcp-service.md)与 Personal Workspace 文件交换。
 
 这一版新增**内置的本地项目工作台与 Project Progress Overview**：可搜索的项目卡片、三种进度视图、表格筛选排序、离线导出，以及可自动恢复的单实例后台服务。可选的任务定义与治理让拆解、准入和返工持续关联项目目标。
-Team 功能已编译在内但**默认关闭**，见 [Team 运行时开关](docs/dev/reference/team-switch.md)。安装包不提供带身份鉴权的 Team 服务。详见 [0.7.0 变更说明](docs/dev/release/0.7.0.md)。
+Team 功能已编译在内但**默认关闭**，见 [Team 运行时开关](docs/dev/reference/team-switch.md)。安装包不提供带身份鉴权的 Team 服务。详见 [0.8.0 变更说明](docs/dev/release/0.8.0.md)。
 
 npm 和 PyPI 安装包均内置 [Project Hub](docs/dev/reference/local-project-hub.md) 服务与页面资源，
 执行 `awr overview` 即可打开；首次 CLI/MCP 使用启动服务后，也可直接访问本地地址。
 面向团队的 [Observer 观测工作区](tools/observer/README.md)仍从源码启动。
 
 **`main` 中的后续能力：** Team 服务、跨工作线版本交付采用、Team 协作与复核不在本次发行范围内。
-安装包的能力以 [0.7.0 发布说明](https://github.com/originoneai/awr/releases/tag/v0.7.0)为准。
+安装包的能力以 [0.8.0 发布说明](https://github.com/originoneai/awr/releases/tag/v0.8.0)为准。
 
 <a id="quickstart"></a>
 
@@ -87,13 +87,13 @@ npm 和 PyPI 安装包均内置 [Project Hub](docs/dev/reference/local-project-h
 任选一种包管理器，两者都会安装原生的 `awr` 和 `awr-mcp` 命令。
 
 ```sh
-npm install -g @originoneai/awr@0.7.0
+npm install -g @originoneai/awr@0.8.0
 ```
 
 或者，在 Python 虚拟环境中安装：
 
 ```sh
-python -m pip install originoneai-awr==0.7.0
+python -m pip install originoneai-awr==0.8.0
 ```
 
 ```sh
@@ -107,7 +107,7 @@ awr --version
 预编译包支持 **macOS 15+（Apple Silicon 与 Intel）**、
 **Linux x64/arm64（glibc 2.39+）**、**Windows x64**。
 启动器需要 Node 22.14+ 或 Python 3.9+。详见
-[0.7.0 安装与升级指南](https://github.com/originoneai/awr/blob/v0.7.0/docs/dev/release/DISTRIBUTIONS.md)。
+[0.8.0 安装与升级指南](https://github.com/originoneai/awr/blob/v0.8.0/docs/dev/release/DISTRIBUTIONS.md)。
 
 **首次使用自动启动本地工作台。** 安装后，首次执行普通 AWR 命令（包括 `awr --version`），
 或让 Agent 通过本机 `awr-mcp` 连接，即会自动拉起后台 Web 服务。此后可直接打开
@@ -121,7 +121,7 @@ awr --version
 
 **从 0.5.x 升级：** 先停止现有写入方，用 SQLite 备份 API 备份 `.awr/state.db`，并保留源文件和旧程序。
 显式刷新来源时，SQLite schema 将从 7 升至 14，新增的表均为附加表。旧程序不能读取 schema 14，
-回退需要恢复匹配的升级前快照。详见[升级与回退指南](https://github.com/originoneai/awr/blob/v0.7.0/docs/dev/release/DISTRIBUTIONS.md#upgrading-from-05x-schema-7--14)。
+回退需要恢复匹配的升级前快照。详见[升级与回退指南](https://github.com/originoneai/awr/blob/v0.8.0/docs/dev/release/DISTRIBUTIONS.md#upgrading-from-05x-schema-7--14)。
 
 ### 2. 接入你的项目
 
@@ -160,7 +160,7 @@ awr client status --client codex
 ```
 
 Claude Code 用户将各处改为 `--client claude`。安装后打开新的受信任宿主会话，
-再用 `awr client status` 查看接收记录。使用 0.7.0 安装包或其他宿主时，
+再用 `awr client status` 查看接收记录。使用 0.8.0 安装包或其他宿主时，
 采用[手动工作约定](docs/series/agents.md#hosts-without-lifecycle-hooks)。
 
 你可以随时用 `awr status` 查看进度。明确的“认领 → 获取上下文 → 保存检查点”步骤，

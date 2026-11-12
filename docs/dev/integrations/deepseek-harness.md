@@ -93,7 +93,7 @@ the parent compares that prefix with its candidate sessions.
 
 ## Limits
 
-- At the check date the latest release, `awr-mcp` 0.7.0, lacked the `tools/list` fields. Use a build with PR #614 until a release has it.
+- At the check date the latest release, `awr-mcp` 0.7.0, lacked the `tools/list` fields; 0.8.0 sends them (PR #614).
 - Streamable HTTP between DSH and AWR is unchecked.
 - A desktop model turn with a build of `main` is unchecked; the 2026-11-12 call came from a local model stand-in.
 - `awr-mcp --catalog` project registration is unchecked with DSH.
