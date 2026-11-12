@@ -272,6 +272,7 @@ optional lifecycle adapters provide deeper integration where supported.
 | Cursor | [Client configuration](docs/dev/integrations/cursor.md) |
 | Kimi Code | [Host integration note](docs/dev/integrations/kimi.md) |
 | Grok Build | [Host integration note](docs/dev/integrations/grok.md) |
+| DeepSeek Harness | [Host integration note](docs/dev/integrations/deepseek-harness.md) |
 | Application or custom harness | [Host contract](docs/dev/reference/host-contract.md) |
 
 Hook availability and activation depend on the host. A configuration file alone

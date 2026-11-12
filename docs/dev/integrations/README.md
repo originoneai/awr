@@ -72,6 +72,7 @@ events unreadable by older binaries; the namespaced ID avoids that. Use
 | Team MCP · Codex (TMCP-041) | remote Team | [team-mcp-codex-cli.md](team-mcp-codex-cli.md) | HTTPS Team MCP natural workflow for `codex_cli` |
 | Team MCP · Claude Code (TMCP-041) | remote Team | [team-mcp-claude-code.md](team-mcp-claude-code.md) | HTTPS Team MCP natural workflow for `claude_code` |
 | Team Web entry (WS-044) | browser / Observer | [team-web-entry.md](team-web-entry.md) | Cookie Web entry distinct from MCP bearer; Team collaboration loop |
+| DeepSeek Harness | L1 | [DeepSeek Harness note](deepseek-harness.md) | `dsh-mcp-client` entry in `cordis.patch.yml`, scrubbed environment, `tools/list` fields, fork identity, dated check |
 | Cursor | L1 | [Cursor note](cursor.md) | `.cursor/mcp.json`, `type: stdio`, source-built grouped MCP, Cloud Agent HTTPS |
 | WorkBuddy | L1 | [WorkBuddy note](workbuddy.md) | `~/.workbuddy/mcp.json`, connector trust step, grouped MCP catalog |
 | Windsurf, … | L0 | [Session workflow](session-workflow.md) | None needed: `--client generic` with a `host:`-prefixed conversation ID |

@@ -231,6 +231,7 @@ AWR 支持的是**在有限上下文窗口之间持续接续项目**。
 | Cursor | [客户端配置](docs/dev/integrations/cursor.md) |
 | Kimi Code | [宿主接入说明](docs/dev/integrations/kimi.md) |
 | Grok Build | [宿主接入说明](docs/dev/integrations/grok.md) |
+| DeepSeek Harness | [宿主接入说明](docs/dev/integrations/deepseek-harness.md) |
 | 应用或自定义 Harness | [宿主接入合同](docs/dev/reference/host-contract.md) |
 
 Hook 能力与是否激活取决于宿主。配置文件存在，不代表自动检查点或交接已经发生。
