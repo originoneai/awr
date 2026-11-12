@@ -10,6 +10,11 @@ with registry version 2. The legacy lifecycle and write tools below remain for
 projects that have not enabled workstreams; enabling workstreams rejects those
 shared tools until an authorized implementation is available.
 
+For one person's machine, where projects come and go and a host starts a single MCP server for
+all of them, the shared HTTP service is heavier than needed: its registry is a file read at
+startup, and every client needs a token. `awr-mcp --catalog` serves the per-user local catalog over
+stdio instead; see the [awr-mcp README](../../../crates/awr-mcp/README.md#local-catalog-mode).
+
 Initialize each project on the server using `awr init`. Register its canonical
 absolute root and the `project_id` returned by `awr --json status`. AWR verifies
 that identity at startup and when handling requests. Source files and each

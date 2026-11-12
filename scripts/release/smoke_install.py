@@ -97,6 +97,9 @@ def check_local_hub(awr, mcp, project, state_dir):
         run([awr, "--project", project, "status", "--cached", "--json"], env=env)
         first = json.loads(run([awr, "overview", "status", "--json"], env=env).stdout)["service"]
         assert first and first["service"] == "awr-project-hub"
+        # Registration is explicit: an ordinary command must not have added the project it touched.
+        assert not json.loads(run([awr, "overview", "projects", "--json"], env=env).stdout)["projects"]
+        run([awr, "overview", "register", project, "--json"], env=env)
         entries = json.loads(run([awr, "overview", "projects", "--json"], env=env).stdout)["projects"]
         assert len(entries) == 1 and os.path.samefile(entries[0]["root"], project)
         for route, expected in [("/", "AWR Project Hub"), ("/hub.js", "createHub"),

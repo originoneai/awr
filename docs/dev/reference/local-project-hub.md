@@ -51,8 +51,10 @@ an AWR project manifest or database. Git repositories and package manifests alon
 do not enroll a directory. Discovery reads directory metadata and project identity,
 without calling a model or writing target-project files.
 
-Connected projects are registered automatically. Incomplete, unreadable or older
-AWR databases appear as **Needs inspection**, with their diagnostic retained.
+Directories that already hold an AWR identity appear as connected cards. Incomplete,
+unreadable or older AWR databases appear as **Needs inspection**, with their diagnostic
+retained. Discovery only finds projects; registering one is a separate, explicit step (see
+[Register projects](#register-projects)).
 
 Dated Codex session directories (`Codex/YYYY-MM-DD/...`) are treated as temporary
 working areas. Discovery skips them, earlier cards are filtered out, and Hub
@@ -117,15 +119,19 @@ tries that recorded port first, preserving existing links when it is available.
 
 ## Register projects
 
-Successful initialization and subsequent CLI use register an initialized project.
-The installed MCP server registers its bound projects and updates their last-use
-time on project calls. Existing projects appear as they are used with this version.
-You can also register initialized directories explicitly.
+Registration is explicit. Ordinary commands, from the CLI or the installed MCP server, do
+not add a project to the catalog: a machine that runs throwaway fixtures, copies and agent
+scratch directories would otherwise collect all of them. They only refresh the last-use time
+of a project that is already registered. Register initialized directories yourself:
 
 ```sh
 awr overview register /absolute/path/to/alpha /absolute/path/to/beta
 awr overview projects --json
 ```
+
+`Take over project` in the hub registers a project the same way. Set
+`AWR_LOCAL_AUTO_REGISTER=1` to register every project an ordinary command touches, as 0.7.0
+did.
 
 Registration checks the canonical directory and the actual AWR project identity.
 Aliases of the same directory and identity share a card. A replacement project at

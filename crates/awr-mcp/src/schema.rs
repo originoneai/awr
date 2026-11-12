@@ -749,6 +749,38 @@ fn continuity_tools() -> Vec<Tool> {
     ]
 }
 
+/// Flat tools for the local catalog mode: the stdio catalog plus an optional `project`
+/// selector on every tool and `awr_projects_list`. Unlike the shared HTTP tools, `project`
+/// and `request_id` are not required, because owner stdio semantics are unchanged.
+pub(crate) fn catalog_tools() -> Vec<Tool> {
+    let mut catalog = tools();
+    for tool in &mut catalog {
+        std::sync::Arc::make_mut(&mut tool.input_schema)["properties"]
+            .as_object_mut()
+            .unwrap()
+            .insert("project".into(), json!({"type":"string","description":"Project key, unique name or root path from awr_projects_list. Optional when the server has a default project."}));
+    }
+    catalog.insert(0, projects_list_tool());
+    catalog
+}
+
+/// `awr_projects_list` in the local catalog mode.
+pub(crate) fn projects_list_tool() -> Tool {
+    tool(
+        "awr_projects_list",
+        "List the registered local projects this server can use. Filter with query, bound with limit. Register more with awr overview register.",
+        object(
+            json!({
+                "query": {"type":"string","description":"Case-insensitive text found in a project name or root path."},
+                "limit": {"type":"integer","minimum":1,"maximum":200,"default":25},
+            }),
+            &[],
+        ),
+        true,
+        false,
+    )
+}
+
 pub(crate) fn shared_tools() -> Vec<Tool> {
     let mut catalog = tools();
     for tool in &mut catalog {

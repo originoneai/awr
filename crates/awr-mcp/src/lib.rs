@@ -1,6 +1,7 @@
 //! MCP tools over project-isolated AWR domain services. No shell commands are executed.
 pub use awr_core::{Error, Result};
 mod arguments;
+mod catalog;
 mod changes;
 mod compaction;
 pub mod domains;
@@ -25,6 +26,8 @@ use std::{path::Path, sync::Arc};
 pub struct AwrServer {
     project: Option<Arc<ProjectService>>,
     hub: Option<Arc<Hub>>,
+    /// Local catalog mode: projects come from the per-user catalog, chosen per call.
+    catalog: Option<Arc<catalog::Catalog>>,
     capacity: Arc<tokio::sync::Semaphore>,
     /// Runtime Team switch, resolved once when the server binds its projects.
     team: bool,
@@ -45,6 +48,7 @@ impl AwrServer {
         Ok(Self {
             project: Some(Arc::new(ProjectService::open(root, None)?)),
             hub: None,
+            catalog: None,
             capacity: Arc::new(tokio::sync::Semaphore::new(64)),
             local_overview: false,
             // An explicit override must parse; a broken manifest must not stop
@@ -58,6 +62,7 @@ impl AwrServer {
     pub(crate) fn shared(hub: Arc<Hub>) -> Self {
         Self {
             project: None,
+            catalog: None,
             capacity: hub.capacity.clone(),
             team: hub.team,
             local_overview: hub
@@ -66,19 +71,62 @@ impl AwrServer {
             hub: Some(hub),
         }
     }
+    /// Serve the per-user local catalog over stdio instead of one bound project.
+    ///
+    /// Each call may name a project (catalog key, unique name or root path); without one the
+    /// default is used: `default_root` when given, else `None`. `allow_roots` restricts the
+    /// catalog to projects under those directories. Per project the behavior is the owner
+    /// stdio behavior of `open`.
+    pub fn open_catalog(
+        allow_roots: &[std::path::PathBuf],
+        default_root: Option<&Path>,
+    ) -> Result<Self> {
+        let catalog = catalog::Catalog::open(awr_local::state_dir()?, allow_roots, default_root)?;
+        Ok(Self {
+            project: None,
+            hub: None,
+            team: match awr_source::team_enabled_override()? {
+                Some(enabled) => enabled,
+                None => default_root
+                    .and_then(|root| awr_source::team_enabled(root).ok())
+                    .unwrap_or(false),
+            },
+            catalog: Some(Arc::new(catalog)),
+            capacity: Arc::new(tokio::sync::Semaphore::new(64)),
+            local_overview: false,
+        })
+    }
+    fn scope(&self) -> domains::Scope {
+        if self.hub.is_some() {
+            domains::Scope::Shared
+        } else if self.catalog.is_some() {
+            domains::Scope::Catalog
+        } else {
+            domains::Scope::Bound
+        }
+    }
     /// Enable the installed binary's local project catalog and service lifecycle.
     pub fn with_local_overview(mut self) -> Self {
         self.local_overview = true;
-        awr_local::maintain(self.project.as_ref().map(|p| p.root.as_path()));
+        awr_local::maintain(
+            self.project
+                .as_ref()
+                .map(|p| p.root.as_path())
+                .or_else(|| self.catalog.as_ref().and_then(|c| c.default_root())),
+        );
         self
     }
     fn catalog(&self) -> Vec<Tool> {
         without_team_tools(self.full_catalog(), self.team)
     }
     fn full_catalog(&self) -> Vec<Tool> {
-        let shared = self.hub.is_some();
+        let scope = self.scope();
+        let shared = scope == domains::Scope::Shared;
         if domains::ExposureMode::from_env() == domains::ExposureMode::Hierarchical {
-            let mut catalog = domains::domain_tools(shared);
+            let mut catalog = domains::domain_tools(scope);
+            if scope == domains::Scope::Catalog {
+                catalog.insert(0, schema::projects_list_tool());
+            }
             // Project discovery stays visible on shared endpoints; it is the
             // only entry point that resolves the required `project` key.
             if shared {
@@ -95,6 +143,8 @@ impl AwrServer {
             catalog
         } else if shared {
             schema::shared_tools()
+        } else if scope == domains::Scope::Catalog {
+            schema::catalog_tools()
         } else {
             tools()
         }
@@ -157,8 +207,8 @@ impl ServerHandler for AwrServer {
         }
         let mut args = request.arguments.unwrap_or_default();
         if domains::is_domain(&name) {
-            let shared = self.hub.is_some();
-            let project_key = if shared {
+            let scope = self.scope();
+            let project_key = if scope != domains::Scope::Bound {
                 args.remove("project")
                     .and_then(|v| v.as_str().map(str::to_owned))
             } else {
@@ -174,10 +224,10 @@ impl ServerHandler for AwrServer {
             match (child_tool, child_args) {
                 (None, _) if args.is_empty() => {
                     let flat = without_team_tools(
-                        if shared {
-                            schema::shared_tools()
-                        } else {
-                            tools()
+                        match scope {
+                            domains::Scope::Shared => schema::shared_tools(),
+                            domains::Scope::Catalog => schema::catalog_tools(),
+                            domains::Scope::Bound => tools(),
                         },
                         self.team,
                     );
@@ -197,7 +247,7 @@ impl ServerHandler for AwrServer {
                             )
                         })?;
                     }
-                    let value = domains::manifest(&name, &flat, shared);
+                    let value = domains::manifest(&name, &flat, scope);
                     return Ok(CallToolResult::structured(value).into());
                 }
                 (Some(child), Some(map)) => {
@@ -251,6 +301,20 @@ impl ServerHandler for AwrServer {
                     "shared MCP calls require an explicit project key".into(),
                 )),
             }
+        } else if let Some(catalog) = &self.catalog {
+            if name == "awr_projects_list" {
+                return Ok(match catalog.list(&args) {
+                    Ok(list) => CallToolResult::structured(list),
+                    Err(error) => CallToolResult::structured_error(
+                        serde_json::to_value(error.report()).expect("error report serializes"),
+                    ),
+                }
+                .into());
+            }
+            let selector = args
+                .remove("project")
+                .and_then(|v| v.as_str().map(str::to_owned));
+            catalog.select(selector.as_deref())
         } else {
             Ok(self.project.as_ref().expect("bound project").clone())
         };

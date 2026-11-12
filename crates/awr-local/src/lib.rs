@@ -11,7 +11,7 @@ pub use intake::project_intake;
 pub use lifecycle::{ServiceStatus, detach_background, ensure, running, stop};
 pub use registry::{
     LocalProject, ProjectState, default_state_dir, get, inspect, is_default_state_dir, list,
-    observe, register, state_dir,
+    observe, register, resolve, served, state_dir, touch,
 };
 
 use std::path::{Path, PathBuf};
@@ -20,14 +20,29 @@ pub fn enabled() -> bool {
     std::env::var_os("AWR_LOCAL_WEB").is_none_or(|value| value != "0")
 }
 
+/// Whether ordinary commands add the projects they touch to the local catalog.
+///
+/// Off by default: registration is explicit (`awr overview register`). Setting
+/// `AWR_LOCAL_AUTO_REGISTER=1` restores the earlier behavior of registering on use.
+pub fn auto_register() -> bool {
+    std::env::var_os("AWR_LOCAL_AUTO_REGISTER").is_some_and(|value| value == "1")
+}
+
 /// Observation is best-effort and must not change CLI or MCP command results.
+///
+/// A project that is already registered has its usage time refreshed. An unregistered one is
+/// only added when `auto_register` is on.
 pub fn maintain(project: Option<&Path>) {
     if !enabled() {
         return;
     }
     let Ok(dir) = state_dir() else { return };
     if let Some(root) = project {
-        let _ = observe(&dir, root);
+        if auto_register() {
+            let _ = observe(&dir, root);
+        } else {
+            let _ = touch(&dir, root);
+        }
     }
     if let Ok(executable) = executable() {
         let _ = ensure(&dir, &executable);

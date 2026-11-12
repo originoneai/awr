@@ -4,7 +4,27 @@ Personal CLI/MCP changes shipped in 0.7.0 are listed in [0.7.0](0.7.0.md).
 The Team/Observer changes and standalone library work below remain outside that
 packaged release. Earlier changes are listed in [0.6.0](0.6.0.md).
 
+## Changed
+
+- **Local project registration is explicit.** Ordinary `awr` and `awr-mcp` calls no longer add the
+  project they touch to the per-user local catalog; they only refresh the last-use time of a
+  project that is already registered. Register a project with `awr overview register <dir>` or
+  the hub's **Take over project**. `AWR_LOCAL_AUTO_REGISTER=1` restores the 0.7.0 behavior of
+  registering on use. A machine that runs fixtures and scratch projects (including AWR's own
+  test suite, which did not isolate its state directory) no longer fills the catalog with them.
+  Entries registered by earlier versions stay in the catalog until they are removed. See
+  [Local Project Hub](../reference/local-project-hub.md#register-projects).
+
 ## Added
+
+- **`awr-mcp --catalog`**, a local catalog mode for the stdio server. One process serves the
+  projects registered in the per-user local catalog; each call may name one (catalog key,
+  unique name or root path) and otherwise uses the default project. The catalog is read on every
+  call, so a project registered while the server runs needs no restart. `awr_projects_list`
+  accepts `query` and `limit`. `--allow-root` limits which projects are served, only registered
+  projects are served, and each project's recorded identity is checked on every call. Per project
+  the behavior is that of plain stdio. See the
+  [awr-mcp README](../../../crates/awr-mcp/README.md#local-catalog-mode).
 
 - Optional identifiers and check bindings for work-definition examples, advertised as
   `definition.example_checks`. Definition reports show each example's check binding, validate

@@ -35,15 +35,47 @@ Codex hook installation is an [optional L2 adapter](../../docs/dev/integrations/
 Cursor stdio and HTTP merge paths are an [L1 host note](../../docs/dev/integrations/cursor.md).
 
 Initialize and index projects through `awr init` and `awr source reindex` first.
-Starting the server does not create or migrate a database. Stdio stays bound to its
+Starting the server does not create or migrate a database. Plain stdio stays bound to its
 startup project; HTTP accepts registered project keys, never arbitrary paths.
 No shell or report command is executed by a tool.
+
+### Local catalog mode
+
+`awr-mcp --catalog` serves the projects in your per-user local catalog over stdio, so one
+server process, started once by a host with a static configuration, can work with whichever
+project a conversation is about:
+
+```sh
+awr-mcp --catalog [--project /default/project] [--allow-root /absolute/dir]...
+```
+
+- Every tool accepts an optional `project`: a catalog key (or a unique prefix of at least 8
+  hex digits), a unique project name, or the project's root path. Without it the default
+  project is used: `--project`, else the starting directory when it is an initialized
+  project. With no default, the call fails and points to `awr_projects_list`.
+- `awr_projects_list` lists the registered projects (`query` and `limit` narrow it; the
+  default limit is 25). The catalog is read on every call, so a project registered while the
+  server runs is usable at once.
+- Only **registered** projects are served: those added with `awr overview register`, or by
+  the hub's **Take over project**. A project that was merely discovered, or recorded by an
+  earlier version that registered on use, is not served until it is registered. See
+  [Register projects](../../docs/dev/reference/local-project-hub.md#register-projects).
+- `--allow-root` (repeatable) serves only projects under those directories. A project outside
+  them is reported exactly like an unknown one. The default project is not subject to it.
+- Hidden and unavailable projects are not served, and the identity recorded in the catalog is
+  checked against the project's database on every call; a replaced directory is refused.
+- Per project the behavior is that of plain stdio: the same tools, owner semantics and guards.
+  It is not the shared-HTTP principal model, and writes do not require `request_id`.
+
+This mode lets any connected agent reach every project it serves, and an MCP server runs
+outside a host's file sandbox. Use it for projects you are willing to expose, and use
+`--allow-root` to bound them.
 
 ## Work and context tools
 
 These eight original tools retain their domain contracts. 0.6.0 also
 exposes the twelve lifecycle/continuity tools first shipped in 0.3.3;
-HTTP adds `awr_projects_list`. The default `tools/list` is grouped
+HTTP and `--catalog` add `awr_projects_list`. The default `tools/list` is grouped
 (`awr_query` and the other domain tools), matching the
 [L0 session workflow](../../docs/dev/integrations/session-workflow.md).
 
