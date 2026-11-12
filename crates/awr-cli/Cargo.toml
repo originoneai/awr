@@ -41,6 +41,10 @@ name = "intake_lifecycle"
 path = "../../tests/intake/lifecycle_cli.rs"
 
 [[test]]
+name = "intake_manifest_draft"
+path = "../../tests/intake/manifest_draft_cli.rs"
+
+[[test]]
 name = "intake_takeover"
 path = "../../tests/intake/takeover_cli.rs"
 
