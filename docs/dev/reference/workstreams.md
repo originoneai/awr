@@ -196,8 +196,9 @@ not enter the graph fingerprint.
 
 `work graph` nodes, and the `work_graph` of `awr overview snapshot`, answer two questions about
 readiness. `ready` is the answer of the dependency graph: nothing the work requires is open. `executable`
-is the answer `awr status` and `awr ready` give: the work is unfinished, `ready` holds, and the
-project's structure holds nothing back. A work with no goal, acceptance criteria or next step, a project
+is the answer `awr status` and `awr ready` give: the work is unfinished, nothing it depends on is open,
+and the project's structure holds nothing back. A claim on the work itself does not count against it, so a
+claimed work is executable while its `ready` is false. A work with no goal, acceptance criteria or next step, a project
 whose sources are not current, or a ledger without a rules source is not executable, whatever
 `ready` says. `held_by` lists what holds the work back, as the codes `status` uses (structure first, then
 the diagnostics of readiness), and is empty when `executable` is true or the work is finished.
