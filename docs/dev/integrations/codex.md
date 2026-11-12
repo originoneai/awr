@@ -36,15 +36,15 @@ this page. Do not add a second AWR runtime or client-private history access.
 
 ## MCP merge paths
 
-Install AWR 0.7.0, which includes the grouped MCP catalog, or build
+Install AWR 0.8.0, which includes the grouped MCP catalog, or build
 both executables from this checkout:
 
-Installation examples use the canonical 0.7.0 package names. Existing users should
+Installation examples use the canonical 0.8.0 package names. Existing users should
 follow the [package migration steps](../release/DISTRIBUTIONS.md#migrate-from-the-previous-package-names) first.
 
 ```sh
-npm install -g @originoneai/awr@0.7.0
-# or: python -m pip install originoneai-awr==0.7.0
+npm install -g @originoneai/awr@0.8.0
+# or: python -m pip install originoneai-awr==0.8.0
 command -v awr-mcp
 
 # Contributor/source path. This tree uses the same grouped default as 0.6.0.

@@ -2,7 +2,7 @@
 
 A local project hub and viewer for AWR project progress and dependencies.
 
-The AWR 0.7.0 native CLI embeds the hub and the three views. Open `awr overview`
+The AWR 0.8.0 native CLI embeds the hub and the three views. Open `awr overview`
 to search this user's registered projects, select a card, and return to the list
 from its overview. Projects are ordered by their latest AWR use. The native
 service and assets ship together in the npm and Python payloads built from this

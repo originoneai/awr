@@ -79,7 +79,7 @@ This example explains the collaboration model; it is not an executed benchmark.
 
 ## What you can use today
 
-The **0.7.0** CLI/MCP packages provide source-backed goals and tasks,
+The **0.8.0** CLI/MCP packages provide source-backed goals and tasks,
 dependency navigation, focused context, session claims and checkpoints,
 version-bound evidence, a [shared HTTP MCP service](docs/dev/reference/mcp-service.md)
 for multiple clients/projects, and Personal Workspace file exchange.
@@ -91,7 +91,7 @@ and governance help keep decomposition, admission and rework tied to the goal.
 Team surfaces are compiled in but **off by default**; see the
 [Team runtime switch](docs/dev/reference/team-switch.md). It does not provide an
 authenticated Team service in the packages.
-See [what changed in 0.7.0](docs/dev/release/0.7.0.md).
+See [what changed in 0.8.0](docs/dev/release/0.8.0.md).
 
 Both npm and PyPI packages embed [Project Hub](docs/dev/reference/local-project-hub.md)
 and its assets in the native payload. `awr overview` opens the local workspace;
@@ -100,7 +100,7 @@ you can also visit its address directly after the first CLI/MCP use.
 
 **Development on `main`:** the Team service, versioned cross-workstream delivery
 adoption and Team collaboration/review are outside this release. The
-[release notes](https://github.com/originoneai/awr/releases/tag/v0.7.0) define the
+[release notes](https://github.com/originoneai/awr/releases/tag/v0.8.0) define the
 published package boundary.
 
 ## Quickstart
@@ -110,13 +110,13 @@ published package boundary.
 Choose one package manager. Both install the native `awr` and `awr-mcp` commands.
 
 ```sh
-npm install -g @originoneai/awr@0.7.0
+npm install -g @originoneai/awr@0.8.0
 ```
 
 Or, inside a Python virtual environment:
 
 ```sh
-python -m pip install originoneai-awr==0.7.0
+python -m pip install originoneai-awr==0.8.0
 ```
 
 ```sh
@@ -131,7 +131,7 @@ the [package migration steps](docs/dev/release/DISTRIBUTIONS.md#migrate-from-the
 Prebuilt packages support **macOS 15+ (Apple Silicon and Intel)**,
 **Linux x64/arm64 (glibc 2.39+)** and **Windows x64**. Launchers require
 Node 22.14+ or Python 3.9+. See the
-[0.7.0 installation and upgrade guide](https://github.com/originoneai/awr/blob/v0.7.0/docs/dev/release/DISTRIBUTIONS.md).
+[0.8.0 installation and upgrade guide](https://github.com/originoneai/awr/blob/v0.8.0/docs/dev/release/DISTRIBUTIONS.md).
 
 **First use starts the local workspace.** After installation, the first ordinary
 AWR command (including `awr --version`) or an Agent connection through the local
@@ -151,7 +151,7 @@ refresh changed projections; keep the matching backup for rollback. See the
 (with SQLite's backup API), your sources and the old binaries first. The explicit
 source refresh migrates SQLite schema 7 to 14; the new tables are additive. Older
 binaries cannot open schema 14; rollback needs the matching pre-upgrade snapshot.
-See the [upgrade guide](https://github.com/originoneai/awr/blob/v0.7.0/docs/dev/release/DISTRIBUTIONS.md#upgrading-from-05x-schema-7--14).
+See the [upgrade guide](https://github.com/originoneai/awr/blob/v0.8.0/docs/dev/release/DISTRIBUTIONS.md#upgrading-from-05x-schema-7--14).
 
 ### 2. Connect your project
 
@@ -193,7 +193,7 @@ awr client status --client codex
 ```
 
 Use `--client claude` throughout for Claude Code. Start a fresh trusted host session,
-then inspect receiver observations with `awr client status`. For the 0.7.0 packages
+then inspect receiver observations with `awr client status`. For the 0.8.0 packages
 or another host, use the [manual working agreement](docs/series/agents.md#hosts-without-lifecycle-hooks).
 
 You can inspect progress at any time with `awr status`. For the explicit
